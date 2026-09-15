@@ -8,7 +8,6 @@ from typing import Any
 
 from sqlalchemy import delete, func, select
 from temporalio import activity
-from temporalio.exceptions import ApplicationError
 
 from katcha.audio.tts import choose_voice_profile, get_voice_profile, synthesize_speech
 from katcha.config import get_settings
