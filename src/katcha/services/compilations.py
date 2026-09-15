@@ -48,7 +48,8 @@ def register_compilation(
     target_duration = target_duration_seconds or settings.longform_default_target_seconds
     if target_duration < 180 or target_duration > settings.longform_max_target_seconds:
         raise ValueError(
-            f"target duration must be between 180 and {settings.longform_max_target_seconds} seconds"
+            "target duration must be between 180 and "
+            f"{settings.longform_max_target_seconds} seconds"
         )
     if target_segment_count is not None and not (
         settings.longform_min_segments
