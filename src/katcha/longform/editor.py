@@ -1,12 +1,20 @@
 from __future__ import annotations
 
 import json
+import uuid
 from dataclasses import dataclass
 from decimal import Decimal
 
 from katcha.ai.pricing import estimate_token_cost
-from katcha.ai.router import ModelTarget, assert_ai_budget, record_usage, route_for
+from katcha.ai.router import (
+    ModelTarget,
+    assert_ai_budget,
+    record_usage,
+    route_for,
+    route_for_channel,
+)
 from katcha.config import Settings, get_settings
+from katcha.db import session_scope
 from katcha.domain import AITask
 from katcha.editorial.personas import HostPersona
 from katcha.longform.schemas import (
@@ -15,6 +23,7 @@ from katcha.longform.schemas import (
     LongformCritique,
     LongformEditorPlan,
 )
+from katcha.longform_models import Compilation
 
 
 class LongformProviderUnavailable(RuntimeError):
@@ -35,6 +44,21 @@ def _candidate_payload(candidates: list[CandidateEvidence]) -> str:
         ensure_ascii=False,
         separators=(",", ":"),
     )
+
+
+def _routing_context(
+    compilation_id: str,
+    candidates: list[CandidateEvidence],
+) -> tuple[uuid.UUID | None, float]:
+    with session_scope() as session:
+        compilation = session.get(Compilation, uuid.UUID(compilation_id))
+        channel_profile_id = compilation.channel_profile_id if compilation else None
+    expected = (
+        sum(candidate.deterministic_score for candidate in candidates) / len(candidates)
+        if candidates
+        else 0.5
+    )
+    return channel_profile_id, max(0.0, min(1.0, expected))
 
 
 def _record(
@@ -251,10 +275,21 @@ def _run_structured(
     task: AITask,
     compilation_id: str,
     stage: str,
+    candidates: list[CandidateEvidence],
+    estimated_increment: Decimal,
     effort: str = "medium",
     settings: Settings,
 ) -> LongformAIResult:
-    route = route_for(task)
+    channel_profile_id, expected_value = _routing_context(compilation_id, candidates)
+    if channel_profile_id is not None:
+        route = route_for_channel(
+            task,
+            channel_profile_id,
+            estimated_increment_usd=estimated_increment,
+            expected_value=expected_value,
+        ).route
+    else:
+        route = route_for(task)
     primary = route.primary
     if primary.provider == "openai" and settings.openai_api_key:
         return _openai_structured(
@@ -314,7 +349,8 @@ def generate_editor_plan(
     settings: Settings | None = None,
 ) -> LongformAIResult:
     settings = settings or get_settings()
-    assert_ai_budget(Decimal("0.25"))
+    estimated_increment = Decimal("0.25")
+    assert_ai_budget(estimated_increment)
     result = _run_structured(
         prompt=_editor_prompt(
             theme=theme,
@@ -327,6 +363,8 @@ def generate_editor_plan(
         task=AITask.LONGFORM_EDITOR,
         compilation_id=compilation_id,
         stage="editor_plan",
+        candidates=candidates,
+        estimated_increment=estimated_increment,
         effort="high",
         settings=settings,
     )
@@ -344,13 +382,16 @@ def critique_editor_plan(
     settings: Settings | None = None,
 ) -> LongformAIResult:
     settings = settings or get_settings()
-    assert_ai_budget(Decimal("0.15"))
+    estimated_increment = Decimal("0.15")
+    assert_ai_budget(estimated_increment)
     return _run_structured(
         prompt=_critic_prompt(theme=theme, candidates=candidates, plan=plan),
         schema=LongformCritique,
         task=AITask.LONGFORM_CRITIC,
         compilation_id=compilation_id,
         stage="critic",
+        candidates=candidates,
+        estimated_increment=estimated_increment,
         settings=settings,
     )
 
@@ -375,7 +416,8 @@ def finalize_editor_plan(
         return final
 
     settings = settings or get_settings()
-    assert_ai_budget(Decimal("0.25"))
+    estimated_increment = Decimal("0.25")
+    assert_ai_budget(estimated_increment)
     result = _run_structured(
         prompt=_revision_prompt(
             theme=theme,
@@ -388,6 +430,8 @@ def finalize_editor_plan(
         task=AITask.LONGFORM_EDITOR,
         compilation_id=compilation_id,
         stage="editor_revision",
+        candidates=candidates,
+        estimated_increment=estimated_increment,
         effort="high",
         settings=settings,
     )
