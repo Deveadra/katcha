@@ -14,9 +14,11 @@ from katcha.ai.router import (
     route_for_channel,
 )
 from katcha.config import Settings, get_settings
+from katcha.db import session_scope
 from katcha.domain import AITask
 from katcha.editorial.personas import HostPersona
 from katcha.editorial.schemas import ShortScriptSet
+from katcha.production_models import Production
 
 
 class ScriptProviderUnavailable(RuntimeError):
@@ -42,6 +44,27 @@ def _active_ai_features(snapshot: dict[str, Any]) -> dict[str, Any]:
     if isinstance(bulk, dict):
         return bulk
     return {}
+
+
+def _routing_context(
+    production_id: str,
+    snapshot: dict[str, Any],
+    channel_profile_id: uuid.UUID | None,
+    expected_value: float | None,
+) -> tuple[uuid.UUID | None, float]:
+    resolved_profile = channel_profile_id
+    if resolved_profile is None:
+        with session_scope() as session:
+            production = session.get(Production, uuid.UUID(production_id))
+            if production is not None:
+                resolved_profile = production.channel_profile_id
+    if expected_value is None:
+        try:
+            raw = float(snapshot.get("candidate_score") or 0) / 100.0
+        except (TypeError, ValueError):
+            raw = 0.5
+        expected_value = max(0.0, min(1.0, raw))
+    return resolved_profile, expected_value
 
 
 def build_script_prompt(
@@ -173,12 +196,18 @@ def generate_short_scripts(
     prompt_version: str,
     production_id: str,
     channel_profile_id: uuid.UUID | None = None,
-    expected_value: float = 0.5,
+    expected_value: float | None = None,
     settings: Settings | None = None,
 ) -> ScriptGenerationResult:
     settings = settings or get_settings()
     estimated_increment = Decimal("0.05")
     assert_ai_budget(estimated_increment)
+    channel_profile_id, expected_value = _routing_context(
+        production_id,
+        snapshot,
+        channel_profile_id,
+        expected_value,
+    )
     if channel_profile_id is not None:
         route = route_for_channel(
             AITask.SHORT_SCRIPT,
