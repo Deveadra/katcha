@@ -29,6 +29,9 @@ class Production(Base):
     clip_id: Mapped[uuid.UUID] = mapped_column(
         Uuid(as_uuid=True), ForeignKey("clips.id"), index=True
     )
+    channel_profile_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("channel_profiles.id"), nullable=True, index=True
+    )
     parent_production_id: Mapped[uuid.UUID | None] = mapped_column(
         Uuid(as_uuid=True), ForeignKey("productions.id"), nullable=True, index=True
     )
