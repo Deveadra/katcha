@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import re
 import uuid
-from collections import defaultdict
 from typing import Any
 
 from sqlalchemy import select
@@ -146,10 +145,6 @@ def select_compilation_candidates(
         )
     )
     production_by_id = {item.id: item for item in productions}
-    productions_by_clip: dict[uuid.UUID, list[Production]] = defaultdict(list)
-    for production in productions:
-        productions_by_clip[production.clip_id].append(production)
-
     production_ids = list(production_by_id)
     publications = (
         list(
@@ -199,6 +194,7 @@ def select_compilation_candidates(
         subscribers = int(snapshot.subscribers_gained or 0) if snapshot else 0
         surprise = _number(ai.get("surprise_score"))
         humor = _number(ai.get("humor_score"))
+        comment_potential = _number(ai.get("comment_potential"))
         categories = _text_list(ai.get("categories"))
         tone = _text_list(ai.get("tone"))
 
@@ -226,6 +222,7 @@ def select_compilation_candidates(
         )
         metadata_by_clip[clip.id] = {
             "event_summary": str(ai.get("event_summary") or ""),
+            "comment_potential": comment_potential,
             "analytics_sampled_at": (
                 snapshot.sampled_at.isoformat() if snapshot and snapshot.sampled_at else None
             ),
@@ -268,6 +265,7 @@ def select_compilation_candidates(
                 hook_score=item.signals.hook_score,
                 payoff_score=item.signals.payoff_score,
                 surprise_score=item.signals.surprise_score,
+                comment_potential=float(meta["comment_potential"]),
                 rewatch_score=item.signals.rewatch_score,
                 evidence={
                     **meta,
