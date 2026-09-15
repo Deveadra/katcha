@@ -9,11 +9,14 @@ from sqlalchemy import select, text
 from katcha import __version__
 from katcha.api.schemas import (
     AnalysisRunResponse,
+    AnalyticsRefreshResponse,
+    AnalyticsSnapshotDetailResponse,
     AnalyzeRequest,
     AnalyzeResponse,
     ClipFeatureResponse,
     ClipResponse,
     CreateProductionRequest,
+    CreatePublicationRequest,
     HealthResponse,
     IngestRequest,
     IngestResponse,
@@ -22,19 +25,31 @@ from katcha.api.schemas import (
     ProductionResponse,
     ProductionReviewResponse,
     ProductionScriptResponse,
+    PublicationAnalyticsSnapshotResponse,
+    PublicationResponse,
+    RetentionPointResponse,
     ReviewActionResponse,
     ReviewProductionRequest,
     SourceResponse,
+    YouTubeConnectionResponse,
+    YouTubeOAuthStartResponse,
 )
 from katcha.config import get_settings
 from katcha.db import session_scope
 from katcha.domain import AnalysisStatus, ProductionStatus, ReviewDecision, SourceStatus
+from katcha.integrations.youtube.oauth import (
+    YouTubeOAuthError,
+    begin_youtube_oauth,
+    complete_youtube_oauth,
+)
 from katcha.models import Clip, ClipAnalysisRun, ClipFeature, SourceItem
 from katcha.orchestration.client import (
     get_temporal_client,
     start_analysis_workflow,
+    start_analytics_refresh_workflow,
     start_ingest_workflow,
     start_production_workflow,
+    start_publication_workflow,
 )
 from katcha.production_models import (
     Production,
@@ -42,11 +57,22 @@ from katcha.production_models import (
     ProductionReview,
     ProductionScript,
 )
+from katcha.publishing_models import (
+    Publication,
+    PublicationAnalyticsSnapshot,
+    RetentionPoint,
+    YouTubeConnection,
+)
 from katcha.services.analysis import register_analysis
 from katcha.services.productions import (
     register_regeneration,
     register_short_production,
     review_production,
+)
+from katcha.services.publications import (
+    analytics_refresh_workflow_id,
+    register_publication,
+    retry_publication,
 )
 from katcha.services.sources import register_source
 
@@ -71,6 +97,45 @@ async def ready() -> HealthResponse:
     except Exception as exc:
         raise HTTPException(status_code=503, detail=f"dependency unavailable: {exc}") from exc
     return HealthResponse(status="ok", version=__version__)
+
+
+@app.get(
+    "/v1/integrations/youtube/oauth/start",
+    response_model=YouTubeOAuthStartResponse,
+)
+def youtube_oauth_start() -> YouTubeOAuthStartResponse:
+    try:
+        return YouTubeOAuthStartResponse(authorization_url=begin_youtube_oauth())
+    except (YouTubeOAuthError, RuntimeError, ValueError) as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@app.get(
+    "/v1/integrations/youtube/oauth/callback",
+    response_model=YouTubeConnectionResponse,
+)
+async def youtube_oauth_callback(
+    state: str,
+    code: str | None = None,
+    error: str | None = None,
+) -> YouTubeConnection:
+    if error:
+        raise HTTPException(status_code=400, detail=f"Google OAuth failed: {error}")
+    if not code:
+        raise HTTPException(status_code=400, detail="Google OAuth callback did not include a code")
+    try:
+        return await asyncio.to_thread(complete_youtube_oauth, state=state, code=code)
+    except (YouTubeOAuthError, RuntimeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get(
+    "/v1/integrations/youtube",
+    response_model=list[YouTubeConnectionResponse],
+)
+def list_youtube_connections() -> list[YouTubeConnection]:
+    with session_scope() as session:
+        return list(session.scalars(select(YouTubeConnection).order_by(YouTubeConnection.created_at)))
 
 
 @app.post(
@@ -141,6 +206,42 @@ async def create_production(
     if production.status == ProductionStatus.QUEUED.value:
         await start_production_workflow(str(production.id), production.workflow_id)
     return production
+
+
+@app.post(
+    "/v1/productions/{production_id}/publications",
+    response_model=PublicationResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def create_publication(
+    production_id: uuid.UUID,
+    request: CreatePublicationRequest,
+) -> Publication:
+    settings = get_settings()
+    if not settings.youtube_client_id or not settings.youtube_client_secret:
+        raise HTTPException(status_code=503, detail="YouTube OAuth client is not configured")
+    if not settings.credential_encryption_key:
+        raise HTTPException(status_code=503, detail="credential encryption is not configured")
+    try:
+        publication = register_publication(
+            production_id,
+            youtube_connection_id=request.youtube_connection_id,
+            title=request.title,
+            description=request.description,
+            tags=request.tags,
+            category_id=request.category_id,
+            privacy_status=request.privacy_status,
+            publish_at=request.publish_at,
+            notify_subscribers=request.notify_subscribers,
+            made_for_kids=request.made_for_kids,
+            contains_synthetic_media=request.contains_synthetic_media,
+        )
+    except ValueError as exc:
+        code = 404 if "not found" in str(exc) else 409
+        raise HTTPException(status_code=code, detail=str(exc)) from exc
+    if publication.status == "queued":
+        await start_publication_workflow(str(publication.id), publication.workflow_id)
+    return publication
 
 
 @app.get("/v1/productions", response_model=list[ProductionResponse])
@@ -234,6 +335,101 @@ async def review_short(
         production_id=production_id,
         decision=request.decision,
     )
+
+
+@app.get("/v1/publications", response_model=list[PublicationResponse])
+def list_publications(
+    limit: int = Query(default=50, ge=1, le=250),
+    publication_status: str | None = Query(default=None, alias="status"),
+) -> list[Publication]:
+    with session_scope() as session:
+        stmt = select(Publication).order_by(Publication.created_at.desc()).limit(limit)
+        if publication_status:
+            stmt = stmt.where(Publication.status == publication_status)
+        return list(session.scalars(stmt))
+
+
+@app.get("/v1/publications/{publication_id}", response_model=PublicationResponse)
+def get_publication(publication_id: uuid.UUID) -> Publication:
+    with session_scope() as session:
+        publication = session.get(Publication, publication_id)
+        if publication is None:
+            raise HTTPException(status_code=404, detail="publication not found")
+        return publication
+
+
+@app.post(
+    "/v1/publications/{publication_id}/retry",
+    response_model=PublicationResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def retry_youtube_publication(publication_id: uuid.UUID) -> Publication:
+    try:
+        publication = retry_publication(publication_id)
+    except ValueError as exc:
+        code = 404 if "not found" in str(exc) else 409
+        raise HTTPException(status_code=code, detail=str(exc)) from exc
+    await start_publication_workflow(str(publication.id), publication.workflow_id)
+    return publication
+
+
+@app.post(
+    "/v1/publications/{publication_id}/analytics/refresh",
+    response_model=AnalyticsRefreshResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def refresh_publication_analytics(publication_id: uuid.UUID) -> AnalyticsRefreshResponse:
+    with session_scope() as session:
+        publication = session.get(Publication, publication_id)
+        if publication is None:
+            raise HTTPException(status_code=404, detail="publication not found")
+        if not publication.youtube_video_id:
+            raise HTTPException(status_code=409, detail="publication has no YouTube video ID")
+    workflow_id = analytics_refresh_workflow_id(publication_id)
+    sample_key = f"manual-{uuid.uuid4().hex}"
+    await start_analytics_refresh_workflow(str(publication_id), workflow_id, sample_key)
+    return AnalyticsRefreshResponse(
+        publication_id=publication_id,
+        workflow_id=workflow_id,
+        sample_key=sample_key,
+    )
+
+
+@app.get(
+    "/v1/publications/{publication_id}/analytics",
+    response_model=list[AnalyticsSnapshotDetailResponse],
+)
+def get_publication_analytics(
+    publication_id: uuid.UUID,
+    limit: int = Query(default=20, ge=1, le=100),
+) -> list[AnalyticsSnapshotDetailResponse]:
+    with session_scope() as session:
+        if session.get(Publication, publication_id) is None:
+            raise HTTPException(status_code=404, detail="publication not found")
+        snapshots = list(
+            session.scalars(
+                select(PublicationAnalyticsSnapshot)
+                .where(PublicationAnalyticsSnapshot.publication_id == publication_id)
+                .order_by(PublicationAnalyticsSnapshot.sampled_at.desc())
+                .limit(limit)
+            )
+        )
+        result: list[AnalyticsSnapshotDetailResponse] = []
+        for snapshot in snapshots:
+            points = list(
+                session.scalars(
+                    select(RetentionPoint)
+                    .where(RetentionPoint.snapshot_id == snapshot.id)
+                    .order_by(RetentionPoint.elapsed_video_time_ratio)
+                )
+            )
+            result.append(
+                AnalyticsSnapshotDetailResponse(
+                    snapshot=PublicationAnalyticsSnapshotResponse.model_validate(snapshot),
+                    retention=[RetentionPointResponse.model_validate(point) for point in points],
+                )
+            )
+        return result
 
 
 @app.get("/v1/analysis/{analysis_run_id}", response_model=AnalysisRunResponse)

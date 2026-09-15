@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import boto3
 from botocore.config import Config
@@ -46,6 +47,14 @@ class ObjectStore:
             if code in {"404", "NoSuchKey", "NotFound"}:
                 return False
             raise
+
+    def stat(self, key: str) -> dict[str, Any]:
+        response = self.client.head_object(Bucket=self.settings.s3_bucket, Key=key)
+        return {
+            "size_bytes": int(response.get("ContentLength") or 0),
+            "content_type": response.get("ContentType"),
+            "etag": str(response.get("ETag") or "").strip('"'),
+        }
 
     def put_file(self, path: Path, key: str, content_type: str | None = None) -> None:
         extra = {"ContentType": content_type} if content_type else None

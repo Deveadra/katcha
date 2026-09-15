@@ -5,6 +5,7 @@ from sqlalchemy import engine_from_config, pool
 
 from katcha import models  # noqa: F401
 from katcha import production_models  # noqa: F401
+from katcha import publishing_models  # noqa: F401
 from katcha.config import get_settings
 from katcha.db import Base
 

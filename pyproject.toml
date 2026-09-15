@@ -21,6 +21,7 @@ dependencies = [
   "yt-dlp>=2026.8.1",
   "httpx>=0.28,<1",
   "python-multipart>=0.0.18,<1",
+  "cryptography>=45,<47",
 ]
 
 [project.optional-dependencies]

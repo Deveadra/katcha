@@ -35,6 +35,7 @@ def init_db() -> None:
     from katcha import (
         models,  # noqa: F401
         production_models,  # noqa: F401
+        publishing_models,  # noqa: F401
     )
 
     Base.metadata.create_all(bind=engine)
