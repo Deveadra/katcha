@@ -102,6 +102,7 @@ def ensure_channel_profile(
     timezone = validate_timezone(timezone)
     fallback = validate_schedule(fallback_schedule or [])
     settings = get_settings()
+    default_budget = Decimal(str(settings.ai_budget_usd_monthly))
     with session_scope() as session:
         existing = session.scalar(
             select(ChannelProfile).where(
@@ -129,9 +130,8 @@ def ensure_channel_profile(
             ChannelStrategyVersion(
                 channel_profile_id=profile.id,
                 version=1,
-                monthly_hard_budget_usd=Decimal(
-                    str(settings.ai_budget_usd_monthly)
-                ),
+                monthly_base_budget_usd=default_budget,
+                monthly_hard_budget_usd=default_budget,
                 reinvestment_rate=Decimal("1"),
                 reinvestment_cap_usd=Decimal("100"),
                 fallback_schedule=fallback,
@@ -172,6 +172,7 @@ def ensure_channel_profile(
 def create_strategy_version(
     channel_profile_id: uuid.UUID,
     *,
+    monthly_base_budget_usd: Decimal | None = None,
     monthly_hard_budget_usd: Decimal | None = None,
     reinvestment_rate: Decimal | None = None,
     reinvestment_cap_usd: Decimal | None = None,
@@ -183,7 +184,12 @@ def create_strategy_version(
     with session_scope() as session:
         profile = ensure_active_profile(session, channel_profile_id)
         current = active_strategy(session, profile)
-        budget = (
+        base_budget = (
+            monthly_base_budget_usd
+            if monthly_base_budget_usd is not None
+            else current.monthly_base_budget_usd
+        )
+        hard_budget = (
             monthly_hard_budget_usd
             if monthly_hard_budget_usd is not None
             else current.monthly_hard_budget_usd
@@ -198,8 +204,10 @@ def create_strategy_version(
             if reinvestment_cap_usd is not None
             else current.reinvestment_cap_usd
         )
-        if budget < 0 or cap < 0:
+        if base_budget < 0 or hard_budget < 0 or cap < 0:
             raise ValueError("channel budgets cannot be negative")
+        if base_budget > hard_budget:
+            raise ValueError("monthly_base_budget_usd cannot exceed the hard budget")
         if rate < 0 or rate > 1:
             raise ValueError("reinvestment_rate must be between 0 and 1")
         fallback = (
@@ -216,7 +224,8 @@ def create_strategy_version(
         strategy = ChannelStrategyVersion(
             channel_profile_id=profile.id,
             version=version,
-            monthly_hard_budget_usd=budget,
+            monthly_base_budget_usd=base_budget,
+            monthly_hard_budget_usd=hard_budget,
             reinvestment_rate=rate,
             reinvestment_cap_usd=cap,
             fallback_schedule=fallback,
@@ -238,6 +247,8 @@ def create_strategy_version(
                 payload={
                     "channel_profile_id": str(profile.id),
                     "strategy_version": version,
+                    "monthly_base_budget_usd": str(base_budget),
+                    "monthly_hard_budget_usd": str(hard_budget),
                     "actor": actor,
                 },
             )
