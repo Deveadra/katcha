@@ -7,8 +7,9 @@ from decimal import Decimal
 from sqlalchemy import select
 
 from katcha.db import session_scope
-from katcha.domain import ProductionStatus, ReviewDecision
+from katcha.domain import ChannelStatus, ProductionStatus, ReviewDecision
 from katcha.editorial.personas import get_persona
+from katcha.intelligence_models import ChannelProfile
 from katcha.models import Clip, ClipFeature, DomainEvent
 from katcha.production_models import (
     Production,
@@ -21,11 +22,17 @@ PROMPT_VERSION = "short-script-v1"
 REGENERATE_STAGES = {"script", "voice", "render"}
 
 
-def _workflow_id(clip_id: uuid.UUID, idempotency_key: str | None) -> str:
+def _workflow_id(
+    clip_id: uuid.UUID,
+    idempotency_key: str | None,
+    channel_profile_id: uuid.UUID | None,
+) -> str:
+    scope = str(channel_profile_id) if channel_profile_id else "shared"
     if idempotency_key:
-        digest = hashlib.sha256(idempotency_key.encode("utf-8")).hexdigest()[:20]
+        digest = hashlib.sha256(f"{scope}:{idempotency_key}".encode("utf-8")).hexdigest()[:20]
         return f"short-prod-{clip_id}-{digest}"
-    return f"short-prod-{clip_id}-{uuid.uuid4().hex[:20]}"
+    scope_digest = hashlib.sha256(scope.encode("utf-8")).hexdigest()[:8]
+    return f"short-prod-{clip_id}-{scope_digest}-{uuid.uuid4().hex[:12]}"
 
 
 def _analysis_snapshot(clip: Clip, features: ClipFeature) -> dict[str, object]:
@@ -41,14 +48,28 @@ def _analysis_snapshot(clip: Clip, features: ClipFeature) -> dict[str, object]:
     }
 
 
+def _validate_channel_scope(
+    session: object,
+    channel_profile_id: uuid.UUID | None,
+) -> None:
+    if channel_profile_id is None:
+        return
+    profile = session.get(ChannelProfile, channel_profile_id)
+    if profile is None:
+        raise ValueError(f"channel profile not found: {channel_profile_id}")
+    if profile.status != ChannelStatus.ACTIVE.value:
+        raise ValueError("channel profile is not active")
+
+
 def register_short_production(
     clip_id: uuid.UUID,
     *,
     persona_key: str = "youth_host",
     idempotency_key: str | None = None,
+    channel_profile_id: uuid.UUID | None = None,
 ) -> Production:
     persona = get_persona(persona_key)
-    workflow_id = _workflow_id(clip_id, idempotency_key)
+    workflow_id = _workflow_id(clip_id, idempotency_key, channel_profile_id)
 
     with session_scope() as session:
         existing = session.scalar(
@@ -58,6 +79,7 @@ def register_short_production(
             session.expunge(existing)
             return existing
 
+        _validate_channel_scope(session, channel_profile_id)
         clip = session.get(Clip, clip_id)
         features = session.get(ClipFeature, clip_id)
         if clip is None:
@@ -67,6 +89,7 @@ def register_short_production(
 
         production = Production(
             clip_id=clip_id,
+            channel_profile_id=channel_profile_id,
             parent_production_id=None,
             generation=1,
             regenerate_from=None,
@@ -90,6 +113,9 @@ def register_short_production(
                 payload={
                     "production_id": str(production.id),
                     "clip_id": str(clip_id),
+                    "channel_profile_id": (
+                        str(channel_profile_id) if channel_profile_id else None
+                    ),
                     "generation": 1,
                 },
             )
@@ -153,7 +179,10 @@ def _clone_voice_assets(session: object, parent: Production, child: Production) 
                 content_type=source.content_type,
                 provider=source.provider,
                 model=source.model,
-                asset_metadata={**dict(source.asset_metadata or {}), "reused_from": str(parent.id)},
+                asset_metadata={
+                    **dict(source.asset_metadata or {}),
+                    "reused_from": str(parent.id),
+                },
             )
         )
     child.selected_voice_profile = parent.selected_voice_profile
@@ -181,13 +210,15 @@ def register_regeneration(
             raise ValueError(
                 "production must be in review, rejected, or failed state to regenerate"
             )
+        _validate_channel_scope(session, parent.channel_profile_id)
 
         child = Production(
             clip_id=parent.clip_id,
+            channel_profile_id=parent.channel_profile_id,
             parent_production_id=parent.id,
             generation=parent.generation + 1,
             regenerate_from=stage,
-            workflow_id=_workflow_id(parent.clip_id, None),
+            workflow_id=_workflow_id(parent.clip_id, None, parent.channel_profile_id),
             kind=parent.kind,
             status=ProductionStatus.QUEUED.value,
             stage=f"regenerate_{stage}_queued",
@@ -231,6 +262,9 @@ def register_regeneration(
                 payload={
                     "production_id": str(parent.id),
                     "child_production_id": str(child.id),
+                    "channel_profile_id": (
+                        str(parent.channel_profile_id) if parent.channel_profile_id else None
+                    ),
                     "regenerate_from": stage,
                 },
             )
@@ -280,6 +314,11 @@ def review_production(
                 event_type=event_type,
                 payload={
                     "production_id": str(production.id),
+                    "channel_profile_id": (
+                        str(production.channel_profile_id)
+                        if production.channel_profile_id
+                        else None
+                    ),
                     "decision": decision.value,
                     "actor": actor,
                 },
