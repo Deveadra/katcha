@@ -48,7 +48,7 @@ const exists = async (key) => {
 const signedGet = (key) =>
   getSignedUrl(s3, new GetObjectCommand({Bucket: bucket, Key: key}), {expiresIn: 3600});
 
-const hydrateManifest = async (manifest) => {
+const hydrateShortManifest = async (manifest) => {
   const sourceUrl = await signedGet(manifest.source.storage_key);
   const overlays = await Promise.all(
     (manifest.overlays || []).map(async (overlay) => ({
@@ -63,8 +63,39 @@ const hydrateManifest = async (manifest) => {
   };
 };
 
+const hydrateLongformManifest = async (manifest) => {
+  const timeline = await Promise.all(
+    (manifest.timeline || []).map(async (item) => {
+      if (item.kind === 'clip' && item.clip?.storage_key) {
+        return {
+          ...item,
+          clip: {
+            ...item.clip,
+            url: await signedGet(item.clip.storage_key),
+          },
+        };
+      }
+      if (item.kind === 'narration' && item.narration?.asset_key) {
+        const backgroundUrl = item.narration.background_key
+          ? await signedGet(item.narration.background_key)
+          : null;
+        return {
+          ...item,
+          narration: {
+            ...item.narration,
+            url: await signedGet(item.narration.asset_key),
+            background_url: backgroundUrl,
+          },
+        };
+      }
+      return item;
+    }),
+  );
+  return {...manifest, timeline};
+};
+
 const app = express();
-app.use(express.json({limit: '3mb'}));
+app.use(express.json({limit: '6mb'}));
 
 app.get('/health', (_request, response) => {
   response.json({status: 'ok', service: 'katcha-renderer'});
@@ -72,8 +103,16 @@ app.get('/health', (_request, response) => {
 
 app.post('/render', async (request, response) => {
   const manifest = request.body;
-  if (!manifest?.production_id || !manifest?.output_key || !manifest?.source?.storage_key) {
+  const isLongform = manifest?.version === 'longform-render-v1';
+  const identity = isLongform ? manifest?.compilation_id : manifest?.production_id;
+  if (!identity || !manifest?.output_key) {
     return response.status(400).json({error: 'invalid render manifest'});
+  }
+  if (!isLongform && !manifest?.source?.storage_key) {
+    return response.status(400).json({error: 'short render manifest is missing source'});
+  }
+  if (isLongform && !Array.isArray(manifest?.timeline)) {
+    return response.status(400).json({error: 'long-form render manifest is missing timeline'});
   }
 
   try {
@@ -81,19 +120,26 @@ app.post('/render', async (request, response) => {
       return response.json({
         output_key: manifest.output_key,
         duration_seconds: manifest.output_duration_seconds,
-        metadata: {reused: true, renderer: 'remotion'},
+        metadata: {
+          reused: true,
+          renderer: 'remotion',
+          composition: isLongform ? 'Longform' : 'Short',
+        },
       });
     }
 
-    const inputProps = await hydrateManifest(manifest);
+    const inputProps = isLongform
+      ? await hydrateLongformManifest(manifest)
+      : await hydrateShortManifest(manifest);
     const serveUrl = await serveUrlPromise;
+    const compositionId = isLongform ? 'Longform' : 'Short';
     const composition = await selectComposition({
       serveUrl,
-      id: 'Short',
+      id: compositionId,
       inputProps,
     });
     const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'katcha-render-'));
-    const outputPath = path.join(tempDir, 'short.mp4');
+    const outputPath = path.join(tempDir, isLongform ? 'longform.mp4' : 'short.mp4');
 
     try {
       await renderMedia({
@@ -122,7 +168,7 @@ app.post('/render', async (request, response) => {
       metadata: {
         reused: false,
         renderer: 'remotion',
-        composition: 'Short',
+        composition: compositionId,
         fps: manifest.fps,
         width: manifest.width,
         height: manifest.height,

@@ -95,3 +95,8 @@ class ObjectStore:
     def production_key(production_id: str, name: str) -> str:
         safe_name = name.lstrip("/")
         return f"production/{production_id}/{safe_name}"
+
+    @staticmethod
+    def compilation_key(compilation_id: str, name: str) -> str:
+        safe_name = name.lstrip("/")
+        return f"compilation/{compilation_id}/{safe_name}"
