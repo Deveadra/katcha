@@ -16,6 +16,7 @@ from katcha.orchestration.analysis_activities import (
     score_local_candidate,
 )
 from katcha.orchestration.analysis_workflows import ClipAnalysisWorkflow
+from katcha.orchestration.similarity_activities import detect_near_duplicates
 
 
 async def main() -> None:
@@ -36,6 +37,7 @@ async def main() -> None:
             workflows=[ClipAnalysisWorkflow],
             activities=[
                 build_local_intelligence,
+                detect_near_duplicates,
                 bulk_vision_analysis,
                 deep_video_analysis,
                 score_local_candidate,

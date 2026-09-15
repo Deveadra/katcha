@@ -24,6 +24,13 @@ class ClipAnalysisWorkflow:
                 retry_policy=media_retry,
                 result_type=dict[str, object],
             )
+            await workflow.execute_activity(
+                "detect_near_duplicates",
+                run_id,
+                start_to_close_timeout=timedelta(minutes=2),
+                retry_policy=RetryPolicy(maximum_attempts=3),
+                result_type=dict[str, object],
+            )
             if ai_enabled:
                 bulk = await workflow.execute_activity(
                     "bulk_vision_analysis",
