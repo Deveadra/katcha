@@ -1,11 +1,18 @@
 from __future__ import annotations
 
+import uuid
 from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any
 
 from katcha.ai.pricing import estimate_token_cost
-from katcha.ai.router import ModelTarget, assert_ai_budget, record_usage, route_for
+from katcha.ai.router import (
+    ModelTarget,
+    assert_ai_budget,
+    record_usage,
+    route_for,
+    route_for_channel,
+)
 from katcha.config import Settings, get_settings
 from katcha.domain import AITask
 from katcha.editorial.personas import HostPersona
@@ -165,15 +172,30 @@ def generate_short_scripts(
     *,
     prompt_version: str,
     production_id: str,
+    channel_profile_id: uuid.UUID | None = None,
+    expected_value: float = 0.5,
     settings: Settings | None = None,
 ) -> ScriptGenerationResult:
     settings = settings or get_settings()
-    assert_ai_budget(Decimal("0.05"))
-    route = route_for(AITask.SHORT_SCRIPT)
+    estimated_increment = Decimal("0.05")
+    assert_ai_budget(estimated_increment)
+    if channel_profile_id is not None:
+        route = route_for_channel(
+            AITask.SHORT_SCRIPT,
+            channel_profile_id,
+            estimated_increment_usd=estimated_increment,
+            expected_value=expected_value,
+        ).route
+    else:
+        route = route_for(AITask.SHORT_SCRIPT)
     prompt = build_script_prompt(persona, snapshot, prompt_version=prompt_version)
 
     if route.primary.provider == "openai" and settings.openai_api_key:
         return _openai_generate(prompt, route.primary, settings, production_id)
+    if route.primary.provider == "gemini" and settings.gemini_api_key:
+        return _gemini_generate(prompt, route.primary, settings, production_id)
+    if route.fallback and route.fallback.provider == "openai" and settings.openai_api_key:
+        return _openai_generate(prompt, route.fallback, settings, production_id)
     if route.fallback and route.fallback.provider == "gemini" and settings.gemini_api_key:
         return _gemini_generate(prompt, route.fallback, settings, production_id)
     raise ScriptProviderUnavailable("no configured provider is available for short scripting")
