@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import base64
 import time
+from contextlib import suppress
 from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
-from typing import Generic, TypeVar
 
 from katcha.ai.pricing import estimate_token_cost
 from katcha.ai.router import ModelTarget, assert_ai_budget, record_usage, route_for
@@ -13,16 +13,14 @@ from katcha.ai.schemas import ClipVisionResult, DeepVideoResult
 from katcha.config import Settings, get_settings
 from katcha.domain import AITask
 
-T = TypeVar("T", ClipVisionResult, DeepVideoResult)
-
 
 class ProviderUnavailable(RuntimeError):
     pass
 
 
 @dataclass(frozen=True, slots=True)
-class AIResult(Generic[T]):
-    value: T
+class AIResult:
+    value: ClipVisionResult | DeepVideoResult
     target: ModelTarget
     input_tokens: int
     output_tokens: int
@@ -35,16 +33,19 @@ def _prompt(transcript: str | None, *, deep: bool) -> str:
         else "Analyze this chronological contact sheet sampled from one short video."
     )
     transcript_text = transcript.strip() if transcript else "(no usable transcript)"
-    return f"""{task}
-You are a media classifier for an entertainment-video ranking system. Describe what actually happens without inventing missing events. Scores are 0-100 and should reflect the source material itself, not legal or policy judgments.
-
-Identify: event summary, broad categories, tone, setup, payoff, hook strength, surprise, humor, comment potential, rewatch potential, whether missing temporal/audio context prevents confident understanding, and confidence.
-
-Set requires_deep_video=true only when the sampled frames/transcript are genuinely insufficient to understand the event or payoff. For complete-video analysis, set it false.
-
-Transcript:
-{transcript_text}
-"""
+    return (
+        f"{task}\n"
+        "You are a media classifier for an entertainment-video ranking system. "
+        "Describe what actually happens without inventing missing events. Scores are 0-100 "
+        "and should reflect the source material itself, not legal or policy judgments.\n\n"
+        "Identify: event summary, broad categories, tone, setup, payoff, hook strength, "
+        "surprise, humor, comment potential, rewatch potential, whether missing temporal "
+        "or audio context prevents confident understanding, and confidence.\n\n"
+        "Set requires_deep_video=true only when the sampled frames and transcript are "
+        "genuinely insufficient to understand the event or payoff. For complete-video "
+        "analysis, set it false.\n\n"
+        f"Transcript:\n{transcript_text}\n"
+    )
 
 
 def _record(
@@ -77,7 +78,7 @@ def _openai_contact_sheet(
     target: ModelTarget,
     settings: Settings,
     reference_id: str,
-) -> AIResult[ClipVisionResult]:
+) -> AIResult:
     if not settings.openai_api_key:
         raise ProviderUnavailable("OpenAI API key is not configured")
     from openai import OpenAI
@@ -127,7 +128,7 @@ def _gemini_contact_sheet(
     target: ModelTarget,
     settings: Settings,
     reference_id: str,
-) -> AIResult[ClipVisionResult]:
+) -> AIResult:
     if not settings.gemini_api_key:
         raise ProviderUnavailable("Gemini API key is not configured")
     from google import genai
@@ -167,14 +168,26 @@ def analyze_contact_sheet(
     *,
     reference_id: str,
     settings: Settings | None = None,
-) -> AIResult[ClipVisionResult]:
+) -> AIResult:
     settings = settings or get_settings()
     assert_ai_budget(Decimal("0.01"))
     route = route_for(AITask.BULK_VISION)
     if route.primary.provider == "openai" and settings.openai_api_key:
-        return _openai_contact_sheet(image_bytes, transcript, route.primary, settings, reference_id)
+        return _openai_contact_sheet(
+            image_bytes,
+            transcript,
+            route.primary,
+            settings,
+            reference_id,
+        )
     if route.fallback and route.fallback.provider == "gemini" and settings.gemini_api_key:
-        return _gemini_contact_sheet(image_bytes, transcript, route.fallback, settings, reference_id)
+        return _gemini_contact_sheet(
+            image_bytes,
+            transcript,
+            route.fallback,
+            settings,
+            reference_id,
+        )
     raise ProviderUnavailable("no configured provider is available for bulk vision")
 
 
@@ -184,7 +197,7 @@ def analyze_full_video(
     *,
     reference_id: str,
     settings: Settings | None = None,
-) -> AIResult[DeepVideoResult]:
+) -> AIResult:
     settings = settings or get_settings()
     assert_ai_budget(Decimal("0.10"))
     route = route_for(AITask.DEEP_VIDEO)
@@ -203,7 +216,9 @@ def analyze_full_video(
             if uploaded.state and uploaded.state.name == "FAILED":
                 raise RuntimeError("Gemini file processing failed")
             if time.monotonic() >= deadline:
-                raise TimeoutError("Gemini video processing did not become ACTIVE within 180 seconds")
+                raise TimeoutError(
+                    "Gemini video processing did not become ACTIVE within 180 seconds"
+                )
             time.sleep(2)
             uploaded = client.files.get(name=uploaded.name)
 
@@ -230,7 +245,5 @@ def analyze_full_video(
         )
         return AIResult(value, target, input_tokens, output_tokens)
     finally:
-        try:
+        with suppress(Exception):
             client.files.delete(name=uploaded.name)
-        except Exception:
-            pass
