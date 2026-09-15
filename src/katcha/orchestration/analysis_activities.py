@@ -4,7 +4,6 @@ import shutil
 import uuid
 from datetime import UTC, datetime
 from decimal import Decimal
-from pathlib import Path
 from typing import Any
 
 from temporalio import activity
@@ -207,7 +206,9 @@ def bulk_vision_analysis(run_id: str) -> dict[str, object]:
         ai_features["bulk_model"] = result.target.model
         features.ai_features = ai_features
         if result.value.requires_deep_video:
-            run.escalation_reason = result.value.deep_video_reason or "bulk vision requested escalation"
+            run.escalation_reason = (
+                result.value.deep_video_reason or "bulk vision requested escalation"
+            )
             if not deep_available:
                 run.escalation_reason += "; Gemini API key is unavailable, bulk result retained"
         else:
