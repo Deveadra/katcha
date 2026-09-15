@@ -57,13 +57,23 @@ The initial upload is always private. `privacy_status` describes the desired pos
 
 When `publish_at` is supplied it must be a future timezone-aware timestamp and the final privacy status must be `public`.
 
-The upload workflow creates a resumable session once, persists it encrypted, and records YouTube's acknowledged byte offset after each chunk. Transfer retries query the provider before sending more bytes. An expired partially-used session fails visibly and requires the explicit retry endpoint rather than silently starting a second upload.
+The upload workflow creates a resumable session once, persists it encrypted, and records YouTube's acknowledged byte offset after each chunk. Transfer retries query the provider before sending more bytes. An expired partially-used session fails visibly rather than silently starting a second upload.
+
+Normal retries use:
 
 ```text
 POST /v1/publications/{publication_id}/retry
+{}
 ```
 
-Retries receive a new workflow attempt ID. If YouTube already assigned a video ID, Katcha skips upload and resumes status/finalization work.
+If YouTube already assigned a video ID, Katcha skips upload and resumes status/finalization work. If the resumable session itself expired before Katcha learned a video ID, the state is ambiguous: YouTube may have accepted the upload even though Katcha cannot prove it. Katcha therefore refuses to create a new upload session until an operator explicitly acknowledges the duplicate-video risk:
+
+```text
+POST /v1/publications/{publication_id}/retry
+{"allow_new_upload_session": true}
+```
+
+That acknowledgement is recorded in the publication event history, and the retry receives a new workflow-attempt ID.
 
 ## Analytics
 
