@@ -5,7 +5,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import BigInteger, DateTime, ForeignKey, JSON, Numeric, String, Text, Uuid, func
+from sqlalchemy import JSON, BigInteger, DateTime, ForeignKey, Numeric, String, Text, Uuid, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from katcha.db import Base
@@ -42,7 +42,9 @@ class SourceItem(Base):
     source_url: Mapped[str] = mapped_column(Text, unique=True)
     canonical_url: Mapped[str] = mapped_column(Text)
     platform: Mapped[str] = mapped_column(String(32), index=True)
-    status: Mapped[str] = mapped_column(String(32), default=SourceStatus.REGISTERED.value, index=True)
+    status: Mapped[str] = mapped_column(
+        String(32), default=SourceStatus.REGISTERED.value, index=True
+    )
     title: Mapped[str | None] = mapped_column(Text, nullable=True)
     creator: Mapped[str | None] = mapped_column(Text, nullable=True)
     source_metadata: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
@@ -51,7 +53,9 @@ class SourceItem(Base):
     clip_id: Mapped[uuid.UUID | None] = mapped_column(
         Uuid(as_uuid=True), ForeignKey("clips.id"), nullable=True, index=True
     )
-    discovered_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    discovered_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
