@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import uuid
+from contextlib import suppress
 from datetime import UTC, datetime, timedelta
 
 import httpx
@@ -52,10 +53,8 @@ def get_valid_access_token(
     )
     if response.is_error:
         error_code = ""
-        try:
+        with suppress(ValueError):
             error_code = str(response.json().get("error") or "")
-        except ValueError:
-            pass
         if response.status_code == 401 or error_code == "invalid_grant":
             with session_scope() as session:
                 connection = session.get(YouTubeConnection, connection_id)
