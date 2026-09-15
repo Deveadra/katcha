@@ -7,6 +7,7 @@ from temporalio.exceptions import WorkflowAlreadyStartedError
 
 from katcha.config import get_settings
 from katcha.orchestration.analysis_workflows import ClipAnalysisWorkflow
+from katcha.orchestration.longform_workflows import LongformCompilationWorkflow
 from katcha.orchestration.production_workflows import ShortProductionWorkflow
 from katcha.orchestration.publishing_workflows import (
     YouTubeAnalyticsRefreshWorkflow,
@@ -76,6 +77,26 @@ async def start_production_workflow(
             args=[production_id, start_stage],
             id=workflow_id,
             task_queue=settings.temporal_production_task_queue,
+        )
+    except WorkflowAlreadyStartedError:
+        handle = client.get_workflow_handle(workflow_id)
+    return handle.id
+
+
+async def start_longform_workflow(
+    compilation_id: str,
+    workflow_id: str,
+    *,
+    start_stage: str = "select",
+) -> str:
+    settings = get_settings()
+    client = await get_temporal_client()
+    try:
+        handle = await client.start_workflow(
+            LongformCompilationWorkflow.run,
+            args=[compilation_id, start_stage],
+            id=workflow_id,
+            task_queue=settings.temporal_longform_task_queue,
         )
     except WorkflowAlreadyStartedError:
         handle = client.get_workflow_handle(workflow_id)

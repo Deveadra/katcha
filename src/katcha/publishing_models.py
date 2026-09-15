@@ -9,6 +9,7 @@ from sqlalchemy import (
     JSON,
     BigInteger,
     Boolean,
+    CheckConstraint,
     Date,
     DateTime,
     ForeignKey,
@@ -62,11 +63,22 @@ class OAuthState(Base):
 
 class Publication(Base):
     __tablename__ = "publications"
-    __table_args__ = (UniqueConstraint("production_id", "youtube_connection_id"),)
+    __table_args__ = (
+        UniqueConstraint("production_id", "youtube_connection_id"),
+        UniqueConstraint("compilation_id", "youtube_connection_id"),
+        CheckConstraint(
+            "(production_id IS NOT NULL AND compilation_id IS NULL) OR "
+            "(production_id IS NULL AND compilation_id IS NOT NULL)",
+            name="ck_publications_exactly_one_source",
+        ),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    production_id: Mapped[uuid.UUID] = mapped_column(
-        Uuid(as_uuid=True), ForeignKey("productions.id"), index=True
+    production_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("productions.id"), nullable=True, index=True
+    )
+    compilation_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("compilations.id"), nullable=True, index=True
     )
     youtube_connection_id: Mapped[uuid.UUID] = mapped_column(
         Uuid(as_uuid=True), ForeignKey("youtube_connections.id"), index=True

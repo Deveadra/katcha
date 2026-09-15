@@ -34,7 +34,8 @@ jobs:
         run: python -m compileall -q src
 
       - name: Import smoke
-        run: python -c "import katcha.api.main; import katcha.orchestration.publishing_worker"
+        run: |
+          python -c "import katcha.api.main; import katcha.orchestration.publishing_worker; import katcha.orchestration.longform_worker"
 
       - name: Test
         run: pytest -q

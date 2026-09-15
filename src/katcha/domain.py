@@ -30,6 +30,21 @@ class ProductionStatus(StrEnum):
     FAILED = "failed"
 
 
+class CompilationStatus(StrEnum):
+    QUEUED = "queued"
+    SELECTING = "selecting"
+    PLANNING = "planning"
+    CRITIQUING = "critiquing"
+    SCRIPTED = "scripted"
+    VOICING = "voicing"
+    VOICED = "voiced"
+    RENDERING = "rendering"
+    REVIEW = "review"
+    APPROVED = "approved"
+    REJECTED = "rejected"
+    FAILED = "failed"
+
+
 class ReviewDecision(StrEnum):
     APPROVE = "approve"
     REJECT = "reject"
@@ -96,6 +111,7 @@ class AITask(StrEnum):
     DEEP_VIDEO = "deep_video"
     SHORT_SCRIPT = "short_script"
     LONGFORM_EDITOR = "longform_editor"
+    LONGFORM_CRITIC = "longform_critic"
     METADATA = "metadata"
     PERFORMANCE_ANALYSIS = "performance_analysis"
     TTS = "tts"

@@ -6,6 +6,7 @@ from typing import Any
 import httpx
 
 from katcha.config import Settings, get_settings
+from katcha.rendering.longform_manifest import LongformRenderManifest
 from katcha.rendering.manifest import ShortRenderManifest
 
 
@@ -16,14 +17,13 @@ class RenderResult:
     metadata: dict[str, Any]
 
 
-def render_short(
-    manifest: ShortRenderManifest,
+def _render(
+    manifest: ShortRenderManifest | LongformRenderManifest,
     *,
-    settings: Settings | None = None,
+    settings: Settings,
 ) -> RenderResult:
-    settings = settings or get_settings()
     url = f"{settings.renderer_url.rstrip('/')}/render"
-    with httpx.Client(timeout=httpx.Timeout(900.0, connect=10.0)) as client:
+    with httpx.Client(timeout=httpx.Timeout(1800.0, connect=10.0)) as client:
         response = client.post(url, json=manifest.model_dump(mode="json"))
         response.raise_for_status()
         payload = response.json()
@@ -35,3 +35,19 @@ def render_short(
         duration_seconds=float(payload.get("duration_seconds") or manifest.output_duration_seconds),
         metadata=dict(payload.get("metadata") or {}),
     )
+
+
+def render_short(
+    manifest: ShortRenderManifest,
+    *,
+    settings: Settings | None = None,
+) -> RenderResult:
+    return _render(manifest, settings=settings or get_settings())
+
+
+def render_longform(
+    manifest: LongformRenderManifest,
+    *,
+    settings: Settings | None = None,
+) -> RenderResult:
+    return _render(manifest, settings=settings or get_settings())

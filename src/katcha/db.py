@@ -32,10 +32,11 @@ def session_scope() -> Iterator[Session]:
 
 
 def init_db() -> None:
-    from katcha import (
-        models,  # noqa: F401
-        production_models,  # noqa: F401
-        publishing_models,  # noqa: F401
+    from katcha import (  # noqa: F401
+        longform_models,
+        models,
+        production_models,
+        publishing_models,
     )
 
     Base.metadata.create_all(bind=engine)
