@@ -10,6 +10,7 @@ from katcha.ai.router import (
     ModelTarget,
     assert_ai_budget,
     record_usage,
+    release_budget_reservation,
     route_for,
     route_for_channel,
 )
@@ -69,6 +70,7 @@ def _record(
     output_tokens: int,
     compilation_id: str,
     stage: str,
+    reservation_id: uuid.UUID | None,
 ) -> None:
     record_usage(
         task=task,
@@ -83,6 +85,7 @@ def _record(
             "estimated_cost": True,
             "pricing_basis": "public_paid_rate_2026-09-15",
         },
+        reservation_id=reservation_id,
     )
 
 
@@ -191,6 +194,7 @@ def _openai_structured(
     compilation_id: str,
     stage: str,
     effort: str,
+    reservation_id: uuid.UUID | None,
 ) -> LongformAIResult:
     if not settings.openai_api_key:
         raise LongformProviderUnavailable("OpenAI API key is not configured")
@@ -212,7 +216,6 @@ def _openai_structured(
         },
         max_output_tokens=5000,
     )
-    value = schema.model_validate_json(response.output_text)
     usage = response.usage
     input_tokens = int(getattr(usage, "input_tokens", 0) or 0)
     output_tokens = int(getattr(usage, "output_tokens", 0) or 0)
@@ -223,7 +226,9 @@ def _openai_structured(
         output_tokens=output_tokens,
         compilation_id=compilation_id,
         stage=stage,
+        reservation_id=reservation_id,
     )
+    value = schema.model_validate_json(response.output_text)
     return LongformAIResult(value, target, input_tokens, output_tokens)
 
 
@@ -236,6 +241,7 @@ def _gemini_structured(
     task: AITask,
     compilation_id: str,
     stage: str,
+    reservation_id: uuid.UUID | None,
 ) -> LongformAIResult:
     if not settings.gemini_api_key:
         raise LongformProviderUnavailable("Gemini API key is not configured")
@@ -251,7 +257,6 @@ def _gemini_structured(
             response_schema=schema,
         ),
     )
-    value = schema.model_validate_json(response.text)
     usage = response.usage_metadata
     input_tokens = int(getattr(usage, "prompt_token_count", 0) or 0)
     output_tokens = int(getattr(usage, "candidates_token_count", 0) or 0) + int(
@@ -264,7 +269,9 @@ def _gemini_structured(
         output_tokens=output_tokens,
         compilation_id=compilation_id,
         stage=stage,
+        reservation_id=reservation_id,
     )
+    value = schema.model_validate_json(response.text)
     return LongformAIResult(value, target, input_tokens, output_tokens)
 
 
@@ -281,60 +288,80 @@ def _run_structured(
     settings: Settings,
 ) -> LongformAIResult:
     channel_profile_id, expected_value = _routing_context(compilation_id, candidates)
+    reservation_id: uuid.UUID | None = None
     if channel_profile_id is not None:
-        route = route_for_channel(
+        decision = route_for_channel(
             task,
             channel_profile_id,
             estimated_increment_usd=estimated_increment,
             expected_value=expected_value,
-        ).route
+            reference_type="compilation",
+            reference_id=compilation_id,
+            reservation_key=f"longform:{compilation_id}:{stage}",
+        )
+        route = decision.route
+        reservation_id = decision.reservation_id
     else:
         route = route_for(task)
-    primary = route.primary
-    if primary.provider == "openai" and settings.openai_api_key:
-        return _openai_structured(
-            prompt=prompt,
-            schema=schema,
-            target=primary,
-            settings=settings,
-            task=task,
-            compilation_id=compilation_id,
-            stage=stage,
-            effort=effort,
+
+    try:
+        primary = route.primary
+        if primary.provider == "openai" and settings.openai_api_key:
+            return _openai_structured(
+                prompt=prompt,
+                schema=schema,
+                target=primary,
+                settings=settings,
+                task=task,
+                compilation_id=compilation_id,
+                stage=stage,
+                effort=effort,
+                reservation_id=reservation_id,
+            )
+        if primary.provider == "gemini" and settings.gemini_api_key:
+            return _gemini_structured(
+                prompt=prompt,
+                schema=schema,
+                target=primary,
+                settings=settings,
+                task=task,
+                compilation_id=compilation_id,
+                stage=stage,
+                reservation_id=reservation_id,
+            )
+        fallback = route.fallback
+        if fallback and fallback.provider == "openai" and settings.openai_api_key:
+            return _openai_structured(
+                prompt=prompt,
+                schema=schema,
+                target=fallback,
+                settings=settings,
+                task=task,
+                compilation_id=compilation_id,
+                stage=stage,
+                effort=effort,
+                reservation_id=reservation_id,
+            )
+        if fallback and fallback.provider == "gemini" and settings.gemini_api_key:
+            return _gemini_structured(
+                prompt=prompt,
+                schema=schema,
+                target=fallback,
+                settings=settings,
+                task=task,
+                compilation_id=compilation_id,
+                stage=stage,
+                reservation_id=reservation_id,
+            )
+        raise LongformProviderUnavailable(
+            f"no configured provider is available for {task.value}"
         )
-    if primary.provider == "gemini" and settings.gemini_api_key:
-        return _gemini_structured(
-            prompt=prompt,
-            schema=schema,
-            target=primary,
-            settings=settings,
-            task=task,
-            compilation_id=compilation_id,
-            stage=stage,
+    except Exception as exc:
+        release_budget_reservation(
+            reservation_id,
+            reason=f"{stage}_failed:{type(exc).__name__}",
         )
-    fallback = route.fallback
-    if fallback and fallback.provider == "openai" and settings.openai_api_key:
-        return _openai_structured(
-            prompt=prompt,
-            schema=schema,
-            target=fallback,
-            settings=settings,
-            task=task,
-            compilation_id=compilation_id,
-            stage=stage,
-            effort=effort,
-        )
-    if fallback and fallback.provider == "gemini" and settings.gemini_api_key:
-        return _gemini_structured(
-            prompt=prompt,
-            schema=schema,
-            target=fallback,
-            settings=settings,
-            task=task,
-            compilation_id=compilation_id,
-            stage=stage,
-        )
-    raise LongformProviderUnavailable(f"no configured provider is available for {task.value}")
+        raise
 
 
 def generate_editor_plan(
