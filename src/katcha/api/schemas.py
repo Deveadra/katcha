@@ -224,6 +224,10 @@ class PublicationResponse(BaseModel):
     updated_at: datetime
 
 
+class RetryPublicationRequest(BaseModel):
+    allow_new_upload_session: bool = False
+
+
 class PublicationAnalyticsSnapshotResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
