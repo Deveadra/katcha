@@ -8,6 +8,7 @@ from temporalio.client import Client
 from temporalio.worker import Worker
 
 from katcha.config import get_settings
+from katcha.intelligence.runtime import INTELLIGENCE_TASK_QUEUE
 from katcha.orchestration.intelligence_activities import (
     apply_channel_safety_demotion_activity,
     compute_channel_economics_activity,
@@ -34,7 +35,7 @@ async def main() -> None:
     with concurrent.futures.ThreadPoolExecutor(max_workers=4) as activity_executor:
         worker = Worker(
             client,
-            task_queue=settings.temporal_intelligence_task_queue,
+            task_queue=INTELLIGENCE_TASK_QUEUE,
             workflows=[
                 ChannelIntelligenceRefreshWorkflow,
                 ChannelIntelligenceScheduleWorkflow,
