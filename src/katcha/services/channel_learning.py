@@ -8,6 +8,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from katcha.db import session_scope
+from katcha.intelligence.features import snapshot_learning_features
 from katcha.intelligence.learning import (
     FEATURE_NAMES,
     TrainingResult,
@@ -23,7 +24,7 @@ from katcha.intelligence_models import (
     RankingSnapshot,
 )
 from katcha.longform_models import CompilationSegment
-from katcha.models import Clip, ClipFeature, DomainEvent
+from katcha.models import DomainEvent
 from katcha.production_models import Production
 from katcha.publishing_models import Publication, PublicationAnalyticsSnapshot
 from katcha.services.channel_profiles import ensure_active_profile
@@ -31,17 +32,6 @@ from katcha.services.channel_profiles import ensure_active_profile
 
 def _decimal(value: Decimal | float | int | str) -> Decimal:
     return Decimal(str(value))
-
-
-def _active_ai(features: ClipFeature) -> dict[str, object]:
-    ai = dict(features.ai_features or {})
-    deep = ai.get("deep")
-    bulk = ai.get("bulk")
-    if isinstance(deep, dict):
-        return deep
-    if isinstance(bulk, dict):
-        return bulk
-    return {}
 
 
 def _score01(value: object) -> float:
@@ -58,21 +48,10 @@ def _production_features(
     production = session.get(Production, production_id)
     if production is None:
         raise RuntimeError(f"publication production disappeared: {production_id}")
-    clip = session.get(Clip, production.clip_id)
-    features = session.get(ClipFeature, production.clip_id)
-    if clip is None or features is None:
-        raise RuntimeError("production clip/features are unavailable for learning")
-    ai = _active_ai(features)
-    duration = float(clip.duration_seconds or 0)
-    return {
-        "baseline_score": clamp(float(features.candidate_score or 0) / 100.0),
-        "hook_score": _score01(ai.get("hook_score")),
-        "surprise_score": _score01(ai.get("surprise_score")),
-        "humor_score": _score01(ai.get("humor_score")),
-        "comment_potential": _score01(ai.get("comment_potential")),
-        "rewatch_potential": _score01(ai.get("rewatch_potential")),
-        "duration_signal": clamp(duration / 60.0),
-    }
+    snapshot = dict(production.analysis_snapshot or {})
+    if not snapshot:
+        raise RuntimeError("production has no frozen analysis snapshot for learning")
+    return snapshot_learning_features(snapshot)
 
 
 def _compilation_features(
