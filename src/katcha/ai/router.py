@@ -199,6 +199,7 @@ def route_for_channel(
     reference_id: str | None = None,
     reservation_key: str | None = None,
     reservation_ttl_minutes: int = 30,
+    preferred_target: ModelTarget | None = None,
 ) -> RoutingDecision:
     if estimated_increment_usd < 0:
         raise ValueError("estimated_increment_usd cannot be negative")
@@ -275,6 +276,11 @@ def route_for_channel(
             raise BudgetExceeded(
                 f"no configured provider satisfies quality floor {floor} for {task.value}"
             )
+        if preferred_target is not None and preferred_target not in candidates:
+            raise BudgetExceeded(
+                "pinned model target is unavailable or below the configured quality floor: "
+                f"{preferred_target.provider}/{preferred_target.model}"
+            )
 
         mode = str(policy.get("mode") or "balanced").casefold()
         effective_ceiling = Decimal(str(state["effective_budget_usd"]))
@@ -290,7 +296,10 @@ def route_for_channel(
             or expected_value < 0.35
             or headroom_ratio < 0.20
         )
-        if mode == "quality" and primary_available:
+        if preferred_target is not None:
+            chosen = preferred_target
+            reason = "pinned_target"
+        elif mode == "quality" and primary_available:
             chosen = static_primary
             reason = "quality_preferred"
         elif conserve:
@@ -310,7 +319,7 @@ def route_for_channel(
             reason = "primary_provider_unavailable"
 
         remaining = [item for item in candidates if item != chosen]
-        fallback = remaining[0] if remaining else None
+        fallback = None if preferred_target is not None else (remaining[0] if remaining else None)
         reservation = existing or AIBudgetReservation(
             channel_profile_id=profile.id,
             reservation_key=key,
