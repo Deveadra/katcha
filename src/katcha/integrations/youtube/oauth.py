@@ -174,7 +174,9 @@ def complete_youtube_oauth(
     state_digest = _state_hash(state)
 
     with session_scope() as session:
-        oauth_state = session.scalar(select(OAuthState).where(OAuthState.state_hash == state_digest))
+        oauth_state = session.scalar(
+            select(OAuthState).where(OAuthState.state_hash == state_digest)
+        )
         if oauth_state is None:
             raise YouTubeOAuthError("OAuth state is unknown")
         if oauth_state.consumed_at is not None:
