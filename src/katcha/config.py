@@ -21,6 +21,7 @@ class Settings(BaseSettings):
     temporal_host: str = "localhost:7233"
     temporal_namespace: str = "default"
     temporal_task_queue: str = "katcha-media"
+    temporal_analysis_task_queue: str = "katcha-analysis"
 
     s3_endpoint_url: str | None = "http://localhost:9000"
     s3_access_key: str = "katcha"
@@ -30,6 +31,10 @@ class Settings(BaseSettings):
     s3_force_path_style: bool = True
 
     work_dir: Path = Path("/tmp/katcha")
+    analysis_frame_count: int = Field(default=6, ge=3, le=12)
+    whisper_model: str = "base.en"
+    whisper_device: str = "cpu"
+    whisper_compute_type: str = "int8"
 
     openai_api_key: str | None = None
     gemini_api_key: str | None = None

@@ -54,7 +54,16 @@ class ObjectStore:
         else:
             self.client.upload_file(str(path), self.settings.s3_bucket, key)
 
+    def download_file(self, key: str, destination: Path) -> None:
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        self.client.download_file(self.settings.s3_bucket, key, str(destination))
+
     @staticmethod
     def raw_key(sha256: str, extension: str | None) -> str:
         suffix = f".{extension.lstrip('.')}" if extension else ""
         return f"raw/{sha256[:2]}/{sha256}{suffix}"
+
+    @staticmethod
+    def analysis_key(sha256: str, name: str) -> str:
+        safe_name = name.lstrip("/")
+        return f"analysis/{sha256[:2]}/{sha256}/{safe_name}"

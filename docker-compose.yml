@@ -102,6 +102,23 @@ services:
         condition: service_completed_successfully
     command: ["python", "-m", "katcha.orchestration.worker"]
 
+  analysis-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.analysis
+    env_file: .env
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      temporal:
+        condition: service_started
+      minio-init:
+        condition: service_completed_successfully
+    volumes:
+      - model-cache:/home/katcha/.cache
+    command: ["python", "-m", "katcha.orchestration.analysis_worker"]
+
 volumes:
   postgres-data:
   minio-data:
+  model-cache:
