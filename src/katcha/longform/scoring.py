@@ -188,7 +188,8 @@ def sequence_pool(
     reserve_for_closer = 1 if closer is not None else 0
 
     while remaining and len(selected) < desired_count - reserve_for_closer:
-        if len(selected) >= min_segments - reserve_for_closer and duration >= target_duration_seconds:
+        minimum_before_closer = min_segments - reserve_for_closer
+        if len(selected) >= minimum_before_closer and duration >= target_duration_seconds:
             break
         next_item = max(
             remaining,
