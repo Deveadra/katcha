@@ -36,6 +36,23 @@ class ReviewDecision(StrEnum):
     REGENERATE = "regenerate"
 
 
+class YouTubeConnectionStatus(StrEnum):
+    ACTIVE = "active"
+    REVOKED = "revoked"
+
+
+class PublicationStatus(StrEnum):
+    QUEUED = "queued"
+    UPLOADING = "uploading"
+    UPLOADED = "uploaded"
+    PROCESSING = "processing"
+    PRIVATE = "private"
+    UNLISTED = "unlisted"
+    SCHEDULED = "scheduled"
+    PUBLISHED = "published"
+    FAILED = "failed"
+
+
 class ClipStatus(StrEnum):
     INGESTED = "ingested"
     NORMALIZED = "normalized"

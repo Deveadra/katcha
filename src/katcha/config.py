@@ -23,6 +23,7 @@ class Settings(BaseSettings):
     temporal_task_queue: str = "katcha-media"
     temporal_analysis_task_queue: str = "katcha-analysis"
     temporal_production_task_queue: str = "katcha-production"
+    temporal_publishing_task_queue: str = "katcha-publishing"
 
     s3_endpoint_url: str | None = "http://localhost:9000"
     s3_access_key: str = "katcha"
@@ -49,7 +50,27 @@ class Settings(BaseSettings):
     render_fps: int = Field(default=30, ge=24, le=60)
     source_audio_volume: float = Field(default=0.45, ge=0, le=1)
 
+    credential_encryption_key: str | None = None
+    youtube_client_id: str | None = None
+    youtube_client_secret: str | None = None
+    youtube_redirect_uri: str = "http://localhost:8000/v1/integrations/youtube/oauth/callback"
+    youtube_include_monetary_scope: bool = False
+    youtube_default_category_id: str = "24"
+    youtube_upload_chunk_mb: int = Field(default=8, ge=1, le=128)
+    youtube_processing_poll_seconds: int = Field(default=30, ge=10, le=300)
+    youtube_processing_max_polls: int = Field(default=120, ge=1, le=720)
+    youtube_analytics_offsets_hours: str = "1,6,24,72,168,720"
+
     log_level: str = "INFO"
+
+    def analytics_offsets_hours(self) -> list[int]:
+        values: list[int] = []
+        for raw in self.youtube_analytics_offsets_hours.split(","):
+            value = int(raw.strip())
+            if value < 0:
+                raise ValueError("analytics offsets must be non-negative")
+            values.append(value)
+        return sorted(set(values))
 
 
 @lru_cache(maxsize=1)

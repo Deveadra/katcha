@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 from typing import Literal
 from uuid import UUID
@@ -158,6 +158,124 @@ class ReviewActionResponse(BaseModel):
     decision: str
     child_production_id: UUID | None = None
     child_workflow_id: str | None = None
+
+
+class YouTubeOAuthStartResponse(BaseModel):
+    authorization_url: str
+
+
+class YouTubeConnectionResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    channel_id: str
+    channel_title: str
+    status: str
+    scopes: list[str]
+    token_expires_at: datetime
+    last_refreshed_at: datetime | None
+    created_at: datetime
+    updated_at: datetime
+
+
+class CreatePublicationRequest(BaseModel):
+    youtube_connection_id: UUID
+    title: str = Field(min_length=1, max_length=100)
+    description: str = Field(default="", max_length=5000)
+    tags: list[str] = Field(default_factory=list, max_length=50)
+    category_id: str | None = Field(default=None, max_length=32)
+    privacy_status: Literal["private", "unlisted", "public"] = "private"
+    publish_at: datetime | None = None
+    notify_subscribers: bool = False
+    made_for_kids: bool = False
+    contains_synthetic_media: bool = False
+
+
+class PublicationResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    production_id: UUID
+    youtube_connection_id: UUID
+    workflow_id: str
+    workflow_attempt: int
+    analytics_workflow_id: str
+    status: str
+    stage: str
+    title: str
+    description: str
+    tags: list[str]
+    category_id: str
+    privacy_status: str
+    publish_at: datetime | None
+    notify_subscribers: bool
+    made_for_kids: bool
+    contains_synthetic_media: bool
+    youtube_video_id: str | None
+    upload_offset: int
+    upload_size: int | None
+    processing_status: str | None
+    failure_reason: str | None
+    rejection_reason: str | None
+    raw_status: dict[str, object]
+    published_at: datetime | None
+    error: str | None
+    created_at: datetime
+    updated_at: datetime
+
+
+class RetryPublicationRequest(BaseModel):
+    allow_new_upload_session: bool = False
+
+
+class PublicationAnalyticsSnapshotResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    publication_id: UUID
+    sample_key: str
+    sampled_at: datetime
+    period_start: date
+    period_end: date
+    views: int | None
+    engaged_views: int | None
+    estimated_minutes_watched: Decimal | None
+    average_view_duration: Decimal | None
+    average_view_percentage: Decimal | None
+    likes: int | None
+    comments: int | None
+    shares: int | None
+    subscribers_gained: int | None
+    subscribers_lost: int | None
+    estimated_revenue: Decimal | None
+    estimated_ad_revenue: Decimal | None
+    monetized_playbacks: int | None
+    raw_metrics: dict[str, object]
+    raw_monetary: dict[str, object]
+    raw_video: dict[str, object]
+    created_at: datetime
+
+
+class RetentionPointResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    snapshot_id: UUID
+    elapsed_video_time_ratio: Decimal
+    audience_watch_ratio: Decimal | None
+    relative_retention_performance: Decimal | None
+    raw_row: dict[str, object]
+
+
+class AnalyticsSnapshotDetailResponse(BaseModel):
+    snapshot: PublicationAnalyticsSnapshotResponse
+    retention: list[RetentionPointResponse]
+
+
+class AnalyticsRefreshResponse(BaseModel):
+    publication_id: UUID
+    workflow_id: str
+    sample_key: str
 
 
 class SourceResponse(BaseModel):

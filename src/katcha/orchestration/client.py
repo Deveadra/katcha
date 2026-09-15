@@ -8,6 +8,10 @@ from temporalio.exceptions import WorkflowAlreadyStartedError
 from katcha.config import get_settings
 from katcha.orchestration.analysis_workflows import ClipAnalysisWorkflow
 from katcha.orchestration.production_workflows import ShortProductionWorkflow
+from katcha.orchestration.publishing_workflows import (
+    YouTubeAnalyticsRefreshWorkflow,
+    YouTubePublicationWorkflow,
+)
 from katcha.orchestration.workflows import ClipIngestWorkflow
 
 _client: Client | None = None
@@ -72,6 +76,45 @@ async def start_production_workflow(
             args=[production_id, start_stage],
             id=workflow_id,
             task_queue=settings.temporal_production_task_queue,
+        )
+    except WorkflowAlreadyStartedError:
+        handle = client.get_workflow_handle(workflow_id)
+    return handle.id
+
+
+async def start_publication_workflow(publication_id: str, workflow_id: str) -> str:
+    settings = get_settings()
+    client = await get_temporal_client()
+    try:
+        handle = await client.start_workflow(
+            YouTubePublicationWorkflow.run,
+            args=[
+                publication_id,
+                settings.youtube_processing_poll_seconds,
+                settings.youtube_processing_max_polls,
+                settings.analytics_offsets_hours(),
+            ],
+            id=workflow_id,
+            task_queue=settings.temporal_publishing_task_queue,
+        )
+    except WorkflowAlreadyStartedError:
+        handle = client.get_workflow_handle(workflow_id)
+    return handle.id
+
+
+async def start_analytics_refresh_workflow(
+    publication_id: str,
+    workflow_id: str,
+    sample_key: str,
+) -> str:
+    settings = get_settings()
+    client = await get_temporal_client()
+    try:
+        handle = await client.start_workflow(
+            YouTubeAnalyticsRefreshWorkflow.run,
+            args=[publication_id, sample_key],
+            id=workflow_id,
+            task_queue=settings.temporal_publishing_task_queue,
         )
     except WorkflowAlreadyStartedError:
         handle = client.get_workflow_handle(workflow_id)
