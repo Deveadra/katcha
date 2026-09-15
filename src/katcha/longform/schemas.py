@@ -27,6 +27,7 @@ class CandidateEvidence(BaseModel):
     hook_score: float = Field(default=0, ge=0, le=100)
     payoff_score: float = Field(default=0, ge=0, le=100)
     surprise_score: float = Field(default=0, ge=0, le=100)
+    comment_potential: float = Field(default=0, ge=0, le=100)
     rewatch_score: float = Field(default=0, ge=0, le=100)
     evidence: dict[str, object] = Field(default_factory=dict)
 
