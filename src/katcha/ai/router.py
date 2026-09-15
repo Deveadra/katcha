@@ -41,6 +41,10 @@ ROUTES: dict[AITask, ModelRoute] = {
         primary=ModelTarget("openai", "gpt-5.6-sol"),
         fallback=ModelTarget("gemini", "gemini-3.8-flash"),
     ),
+    AITask.LONGFORM_CRITIC: ModelRoute(
+        primary=ModelTarget("gemini", "gemini-3.8-flash"),
+        fallback=ModelTarget("openai", "gpt-5.6-sol"),
+    ),
     AITask.METADATA: ModelRoute(
         primary=ModelTarget("openai", "gpt-5.6-luna"),
         fallback=ModelTarget("gemini", "gemini-3.5-flash-lite"),

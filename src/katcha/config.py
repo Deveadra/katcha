@@ -24,6 +24,7 @@ class Settings(BaseSettings):
     temporal_analysis_task_queue: str = "katcha-analysis"
     temporal_production_task_queue: str = "katcha-production"
     temporal_publishing_task_queue: str = "katcha-publishing"
+    temporal_longform_task_queue: str = "katcha-longform"
 
     s3_endpoint_url: str | None = "http://localhost:9000"
     s3_access_key: str = "katcha"
@@ -49,6 +50,15 @@ class Settings(BaseSettings):
     render_height: int = Field(default=1920, ge=640, le=3840)
     render_fps: int = Field(default=30, ge=24, le=60)
     source_audio_volume: float = Field(default=0.45, ge=0, le=1)
+
+    longform_render_width: int = Field(default=1920, ge=1280, le=3840)
+    longform_render_height: int = Field(default=1080, ge=720, le=2160)
+    longform_render_fps: int = Field(default=30, ge=24, le=60)
+    longform_candidate_pool_limit: int = Field(default=80, ge=8, le=500)
+    longform_min_segments: int = Field(default=8, ge=3, le=50)
+    longform_max_segments: int = Field(default=30, ge=4, le=100)
+    longform_default_target_seconds: int = Field(default=720, ge=180, le=3600)
+    longform_max_target_seconds: int = Field(default=1800, ge=300, le=7200)
 
     credential_encryption_key: str | None = None
     youtube_client_id: str | None = None
