@@ -56,8 +56,16 @@ class ChannelStrategyVersion(Base):
     __table_args__ = (
         UniqueConstraint("channel_profile_id", "version"),
         CheckConstraint(
+            "monthly_base_budget_usd >= 0",
+            name="ck_strategy_base_budget_nonnegative",
+        ),
+        CheckConstraint(
             "monthly_hard_budget_usd >= 0",
             name="ck_strategy_budget_nonnegative",
+        ),
+        CheckConstraint(
+            "monthly_base_budget_usd <= monthly_hard_budget_usd",
+            name="ck_strategy_base_within_hard_budget",
         ),
         CheckConstraint(
             "reinvestment_rate >= 0 AND reinvestment_rate <= 1",
@@ -76,6 +84,7 @@ class ChannelStrategyVersion(Base):
         Uuid(as_uuid=True), ForeignKey("channel_profiles.id"), index=True
     )
     version: Mapped[int] = mapped_column(Integer)
+    monthly_base_budget_usd: Mapped[Decimal] = mapped_column(Numeric(14, 4))
     monthly_hard_budget_usd: Mapped[Decimal] = mapped_column(Numeric(14, 4))
     reinvestment_rate: Mapped[Decimal] = mapped_column(
         Numeric(8, 6), default=Decimal("1")
@@ -260,17 +269,71 @@ class ChannelEconomicsSnapshot(Base):
     reinvestable_usd: Mapped[Decimal] = mapped_column(
         Numeric(18, 8), default=Decimal("0")
     )
+    base_budget_usd: Mapped[Decimal] = mapped_column(
+        Numeric(18, 8), default=Decimal("0")
+    )
     hard_budget_usd: Mapped[Decimal] = mapped_column(
+        Numeric(18, 8), default=Decimal("0")
+    )
+    effective_budget_usd: Mapped[Decimal] = mapped_column(
         Numeric(18, 8), default=Decimal("0")
     )
     month_to_date_spend_usd: Mapped[Decimal] = mapped_column(
         Numeric(18, 8), default=Decimal("0")
     )
+    reserved_ai_cost_usd: Mapped[Decimal] = mapped_column(
+        Numeric(18, 8), default=Decimal("0")
+    )
     budget_headroom_usd: Mapped[Decimal] = mapped_column(
+        Numeric(18, 8), default=Decimal("0")
+    )
+    burn_rate_usd_per_day: Mapped[Decimal] = mapped_column(
+        Numeric(18, 8), default=Decimal("0")
+    )
+    projected_month_end_spend_usd: Mapped[Decimal] = mapped_column(
         Numeric(18, 8), default=Decimal("0")
     )
     monetary_scope_available: Mapped[bool] = mapped_column(Boolean, default=False)
     details: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+
+class AIBudgetReservation(Base):
+    __tablename__ = "ai_budget_reservations"
+    __table_args__ = (
+        UniqueConstraint("channel_profile_id", "reservation_key"),
+        CheckConstraint(
+            "estimated_cost_usd >= 0",
+            name="ck_budget_reservation_estimated_nonnegative",
+        ),
+        CheckConstraint(
+            "actual_cost_usd IS NULL OR actual_cost_usd >= 0",
+            name="ck_budget_reservation_actual_nonnegative",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    channel_profile_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("channel_profiles.id"), index=True
+    )
+    reservation_key: Mapped[str] = mapped_column(String(255))
+    task: Mapped[str] = mapped_column(String(64), index=True)
+    reference_type: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    reference_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    estimated_cost_usd: Mapped[Decimal] = mapped_column(Numeric(18, 8))
+    actual_cost_usd: Mapped[Decimal | None] = mapped_column(
+        Numeric(18, 8), nullable=True
+    )
+    status: Mapped[str] = mapped_column(String(32), default="reserved", index=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    settled_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    reservation_metadata: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
