@@ -71,7 +71,9 @@ class CompilationSegment(Base):
         Uuid(as_uuid=True), ForeignKey("compilations.id"), index=True
     )
     position: Mapped[int] = mapped_column(Integer)
-    clip_id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("clips.id"), index=True)
+    clip_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("clips.id"), index=True
+    )
     short_production_id: Mapped[uuid.UUID | None] = mapped_column(
         Uuid(as_uuid=True), ForeignKey("productions.id"), nullable=True, index=True
     )
