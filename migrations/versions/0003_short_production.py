@@ -21,6 +21,9 @@ def upgrade() -> None:
         "productions",
         sa.Column("id", sa.Uuid(), nullable=False),
         sa.Column("clip_id", sa.Uuid(), nullable=False),
+        sa.Column("parent_production_id", sa.Uuid(), nullable=True),
+        sa.Column("generation", sa.Integer(), nullable=False),
+        sa.Column("regenerate_from", sa.String(length=32), nullable=True),
         sa.Column("workflow_id", sa.String(length=255), nullable=False),
         sa.Column("kind", sa.String(length=32), nullable=False),
         sa.Column("status", sa.String(length=32), nullable=False),
@@ -47,10 +50,16 @@ def upgrade() -> None:
             nullable=False,
         ),
         sa.ForeignKeyConstraint(["clip_id"], ["clips.id"]),
+        sa.ForeignKeyConstraint(["parent_production_id"], ["productions.id"]),
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint("workflow_id"),
     )
     op.create_index("ix_productions_clip_id", "productions", ["clip_id"])
+    op.create_index(
+        "ix_productions_parent_production_id",
+        "productions",
+        ["parent_production_id"],
+    )
     op.create_index("ix_productions_kind", "productions", ["kind"])
     op.create_index("ix_productions_status", "productions", ["status"])
     op.create_index("ix_productions_workflow_id", "productions", ["workflow_id"])
@@ -146,5 +155,6 @@ def downgrade() -> None:
     op.drop_index("ix_productions_workflow_id", table_name="productions")
     op.drop_index("ix_productions_status", table_name="productions")
     op.drop_index("ix_productions_kind", table_name="productions")
+    op.drop_index("ix_productions_parent_production_id", table_name="productions")
     op.drop_index("ix_productions_clip_id", table_name="productions")
     op.drop_table("productions")

@@ -13,20 +13,41 @@ from katcha.api.schemas import (
     AnalyzeResponse,
     ClipFeatureResponse,
     ClipResponse,
+    CreateProductionRequest,
     HealthResponse,
     IngestRequest,
     IngestResponse,
+    ProductionAssetResponse,
+    ProductionDetailResponse,
+    ProductionResponse,
+    ProductionReviewResponse,
+    ProductionScriptResponse,
+    ReviewActionResponse,
+    ReviewProductionRequest,
     SourceResponse,
 )
+from katcha.config import get_settings
 from katcha.db import session_scope
-from katcha.domain import AnalysisStatus, SourceStatus
+from katcha.domain import AnalysisStatus, ProductionStatus, ReviewDecision, SourceStatus
 from katcha.models import Clip, ClipAnalysisRun, ClipFeature, SourceItem
 from katcha.orchestration.client import (
     get_temporal_client,
     start_analysis_workflow,
     start_ingest_workflow,
+    start_production_workflow,
+)
+from katcha.production_models import (
+    Production,
+    ProductionAsset,
+    ProductionReview,
+    ProductionScript,
 )
 from katcha.services.analysis import register_analysis
+from katcha.services.productions import (
+    register_regeneration,
+    register_short_production,
+    review_production,
+)
 from katcha.services.sources import register_source
 
 app = FastAPI(
@@ -91,6 +112,127 @@ async def analyze_clip(clip_id: uuid.UUID, request: AnalyzeRequest) -> AnalyzeRe
         workflow_id=run.workflow_id,
         status=run.status,
         stage=run.stage,
+    )
+
+
+@app.post(
+    "/v1/clips/{clip_id}/productions",
+    response_model=ProductionResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def create_production(
+    clip_id: uuid.UUID,
+    request: CreateProductionRequest,
+) -> Production:
+    settings = get_settings()
+    if not settings.ai_enabled:
+        raise HTTPException(status_code=503, detail="AI execution is disabled")
+    if not settings.openai_api_key and not settings.gemini_api_key:
+        raise HTTPException(status_code=503, detail="no AI/TTS provider key is configured")
+    try:
+        production = register_short_production(
+            clip_id,
+            persona_key=request.persona_key,
+            idempotency_key=request.idempotency_key,
+        )
+    except ValueError as exc:
+        code = 404 if "not found" in str(exc) else 409
+        raise HTTPException(status_code=code, detail=str(exc)) from exc
+    if production.status == ProductionStatus.QUEUED.value:
+        await start_production_workflow(str(production.id), production.workflow_id)
+    return production
+
+
+@app.get("/v1/productions", response_model=list[ProductionResponse])
+def list_productions(
+    limit: int = Query(default=50, ge=1, le=250),
+    production_status: str | None = Query(default=None, alias="status"),
+) -> list[Production]:
+    with session_scope() as session:
+        stmt = select(Production).order_by(Production.created_at.desc()).limit(limit)
+        if production_status:
+            stmt = stmt.where(Production.status == production_status)
+        return list(session.scalars(stmt))
+
+
+@app.get("/v1/productions/{production_id}", response_model=ProductionDetailResponse)
+def get_production(production_id: uuid.UUID) -> ProductionDetailResponse:
+    with session_scope() as session:
+        production = session.get(Production, production_id)
+        if production is None:
+            raise HTTPException(status_code=404, detail="production not found")
+        scripts = list(
+            session.scalars(
+                select(ProductionScript)
+                .where(ProductionScript.production_id == production_id)
+                .order_by(ProductionScript.candidate_index)
+            )
+        )
+        assets = list(
+            session.scalars(
+                select(ProductionAsset)
+                .where(ProductionAsset.production_id == production_id)
+                .order_by(ProductionAsset.created_at)
+            )
+        )
+        reviews = list(
+            session.scalars(
+                select(ProductionReview)
+                .where(ProductionReview.production_id == production_id)
+                .order_by(ProductionReview.created_at)
+            )
+        )
+        return ProductionDetailResponse(
+            production=ProductionResponse.model_validate(production),
+            scripts=[ProductionScriptResponse.model_validate(item) for item in scripts],
+            assets=[ProductionAssetResponse.model_validate(item) for item in assets],
+            reviews=[ProductionReviewResponse.model_validate(item) for item in reviews],
+        )
+
+
+@app.post(
+    "/v1/productions/{production_id}/review",
+    response_model=ReviewActionResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def review_short(
+    production_id: uuid.UUID,
+    request: ReviewProductionRequest,
+) -> ReviewActionResponse:
+    if request.decision == ReviewDecision.REGENERATE.value:
+        try:
+            child = register_regeneration(
+                production_id,
+                stage=request.regenerate_from,
+                note=request.note,
+                actor=request.actor,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        await start_production_workflow(
+            str(child.id),
+            child.workflow_id,
+            start_stage=request.regenerate_from,
+        )
+        return ReviewActionResponse(
+            production_id=production_id,
+            decision=request.decision,
+            child_production_id=child.id,
+            child_workflow_id=child.workflow_id,
+        )
+
+    try:
+        review_production(
+            production_id,
+            decision=ReviewDecision(request.decision),
+            note=request.note,
+            actor=request.actor,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return ReviewActionResponse(
+        production_id=production_id,
+        decision=request.decision,
     )
 
 

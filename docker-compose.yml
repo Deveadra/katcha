@@ -118,6 +118,42 @@ services:
       - model-cache:/home/katcha/.cache
     command: ["python", "-m", "katcha.orchestration.analysis_worker"]
 
+  renderer:
+    build:
+      context: .
+      dockerfile: Dockerfile.renderer
+    env_file: .env
+    depends_on:
+      minio-init:
+        condition: service_completed_successfully
+    ports:
+      - "8787:8787"
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "node -e \"fetch('http://localhost:8787/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\"",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+
+  production-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.production
+    env_file: .env
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      temporal:
+        condition: service_started
+      minio-init:
+        condition: service_completed_successfully
+      renderer:
+        condition: service_healthy
+    command: ["python", "-m", "katcha.orchestration.production_worker"]
+
 volumes:
   postgres-data:
   minio-data:

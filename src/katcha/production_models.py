@@ -19,6 +19,11 @@ class Production(Base):
     clip_id: Mapped[uuid.UUID] = mapped_column(
         Uuid(as_uuid=True), ForeignKey("clips.id"), index=True
     )
+    parent_production_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("productions.id"), nullable=True, index=True
+    )
+    generation: Mapped[int] = mapped_column(default=1)
+    regenerate_from: Mapped[str | None] = mapped_column(String(32), nullable=True)
     workflow_id: Mapped[str] = mapped_column(String(255), unique=True, index=True)
     kind: Mapped[str] = mapped_column(String(32), default="short", index=True)
     status: Mapped[str] = mapped_column(

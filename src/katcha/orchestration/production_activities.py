@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import uuid
 from decimal import Decimal
 from typing import Any
@@ -7,12 +8,17 @@ from typing import Any
 from sqlalchemy import func, select
 from temporalio import activity
 
+from katcha.audio.tts import choose_voice_profile, get_voice_profile, synthesize_speech
+from katcha.config import get_settings
 from katcha.db import session_scope
-from katcha.domain import ProductionStatus
+from katcha.domain import AITask, ProductionStatus
 from katcha.editorial.generator import generate_short_scripts
 from katcha.editorial.personas import get_persona
-from katcha.models import DomainEvent, UsageEvent
-from katcha.production_models import Production, ProductionScript
+from katcha.integrations.storage import ObjectStore
+from katcha.models import Clip, DomainEvent, UsageEvent
+from katcha.production_models import Production, ProductionAsset, ProductionScript
+from katcha.rendering.client import render_short
+from katcha.rendering.manifest import ShortRenderManifest, build_short_manifest
 
 
 class AmbiguousPaidCall(RuntimeError):
@@ -40,6 +46,15 @@ def _active_analysis(snapshot: dict[str, Any]) -> dict[str, Any]:
     if isinstance(bulk, dict):
         return bulk
     return {}
+
+
+def _selected_script(session: Any, production: Production) -> ProductionScript:
+    if production.selected_script_id is None:
+        raise RuntimeError("production has no selected script")
+    script = session.get(ProductionScript, production.selected_script_id)
+    if script is None:
+        raise RuntimeError("selected production script does not exist")
+    return script
 
 
 @activity.defn
@@ -204,6 +219,364 @@ def select_script_candidate(production_id: str) -> dict[str, object]:
             "selection_reason": reason,
             "reused": False,
         }
+
+
+def _persist_tts_result(
+    production_id: uuid.UUID,
+    segment_index: int,
+    storage_key: str,
+    metadata: dict[str, object],
+) -> None:
+    with session_scope() as session:
+        production = session.get(Production, production_id)
+        if production is None:
+            raise RuntimeError("production disappeared during TTS persistence")
+        existing = session.scalar(
+            select(ProductionAsset).where(
+                ProductionAsset.production_id == production_id,
+                ProductionAsset.kind == f"narration_{segment_index:02d}",
+                ProductionAsset.generation == 1,
+            )
+        )
+        if existing is not None:
+            return
+        session.add(
+            ProductionAsset(
+                production_id=production_id,
+                kind=f"narration_{segment_index:02d}",
+                generation=1,
+                storage_key=storage_key,
+                content_type="audio/wav",
+                provider=str(metadata["provider"]),
+                model=str(metadata["model"]),
+                asset_metadata=metadata,
+            )
+        )
+        session.add(
+            UsageEvent(
+                task=AITask.TTS.value,
+                provider=str(metadata["provider"]),
+                model=str(metadata["model"]),
+                input_units=int(metadata["input_units"]),
+                output_units=int(metadata["output_units"]),
+                cost_usd=Decimal(str(metadata["cost_usd"])),
+                reference_type="production",
+                reference_id=str(production_id),
+                usage_metadata={
+                    "segment_index": segment_index,
+                    "voice_profile": metadata["voice_profile"],
+                    **dict(metadata.get("cost_metadata") or {}),
+                },
+            )
+        )
+
+
+@activity.defn
+def generate_narration_assets(production_id: str) -> dict[str, object]:
+    production_uuid = uuid.UUID(production_id)
+    settings = get_settings()
+    store = ObjectStore()
+    store.ensure_bucket()
+
+    with session_scope() as session:
+        production = session.get(Production, production_uuid)
+        if production is None:
+            raise ValueError(f"production not found: {production_id}")
+        script = _selected_script(session, production)
+        segments = list((script.script_metadata or {}).get("segments") or [])
+        if not segments:
+            raise RuntimeError("selected script has no commentary segments")
+        profile = (
+            get_voice_profile(production.selected_voice_profile)
+            if production.selected_voice_profile
+            else choose_voice_profile(settings)
+        )
+        production.selected_voice_profile = profile.key
+        production.status = ProductionStatus.VOICING.value
+        production.error = None
+
+    generated = 0
+    reused = 0
+    for index, segment in enumerate(segments):
+        kind = f"narration_{index:02d}"
+        with session_scope() as session:
+            existing = session.scalar(
+                select(ProductionAsset).where(
+                    ProductionAsset.production_id == production_uuid,
+                    ProductionAsset.kind == kind,
+                    ProductionAsset.generation == 1,
+                )
+            )
+            if existing is not None:
+                reused += 1
+                continue
+            production = session.get(Production, production_uuid)
+            if production is None:
+                raise RuntimeError("production disappeared before TTS")
+            call_stage = f"tts_call_started_{index:02d}"
+            audio_key = store.production_key(
+                production_id, f"audio/segment-{index:02d}-g1.wav"
+            )
+            sidecar_key = store.production_key(
+                production_id, f"audio/segment-{index:02d}-g1.json"
+            )
+            if production.stage == call_stage:
+                if store.exists(audio_key) and store.exists(sidecar_key):
+                    metadata = json.loads(store.get_bytes(sidecar_key).decode("utf-8"))
+                    _persist_tts_result(production_uuid, index, audio_key, metadata)
+                    reused += 1
+                    continue
+                raise AmbiguousPaidCall(
+                    f"TTS call for segment {index} may already have been accepted; "
+                    "regenerate the voice stage instead of automatically retrying"
+                )
+            production.stage = call_stage
+
+        text = str(segment.get("text") or "").strip()
+        result = synthesize_speech(text, profile=profile, settings=settings)
+        metadata: dict[str, object] = {
+            "segment_index": index,
+            "placement": segment.get("placement"),
+            "source_time_seconds": segment.get("source_time_seconds"),
+            "text": text,
+            "duration_seconds": round(result.duration_seconds, 3),
+            "voice_profile": result.profile.key,
+            "voice_profile_version": result.profile.version,
+            "voice": result.profile.voice,
+            "provider": result.target.provider,
+            "model": result.target.model,
+            "input_units": result.input_units,
+            "output_units": result.output_units,
+            "cost_usd": str(result.estimated_cost_usd),
+            "cost_metadata": result.cost_metadata,
+        }
+        store.put_bytes(result.audio, audio_key, content_type=result.content_type)
+        store.put_bytes(
+            json.dumps(metadata, sort_keys=True).encode("utf-8"),
+            sidecar_key,
+            content_type="application/json",
+        )
+        _persist_tts_result(production_uuid, index, audio_key, metadata)
+        generated += 1
+
+    with session_scope() as session:
+        production = session.get(Production, production_uuid)
+        if production is None:
+            raise RuntimeError("production disappeared after TTS")
+        production.status = ProductionStatus.VOICED.value
+        production.stage = "voice_ready"
+        production.estimated_cost_usd = _production_cost(session, production_uuid)
+        session.add(
+            DomainEvent(
+                aggregate_type="production",
+                aggregate_id=production_id,
+                event_type="production.voice_ready",
+                payload={
+                    "production_id": production_id,
+                    "voice_profile": production.selected_voice_profile,
+                    "generated_segments": generated,
+                    "reused_segments": reused,
+                },
+            )
+        )
+    return {
+        "production_id": production_id,
+        "voice_profile": profile.key,
+        "generated_segments": generated,
+        "reused_segments": reused,
+    }
+
+
+@activity.defn
+def build_render_manifest_activity(production_id: str) -> dict[str, object]:
+    production_uuid = uuid.UUID(production_id)
+    settings = get_settings()
+    store = ObjectStore()
+    store.ensure_bucket()
+
+    with session_scope() as session:
+        production = session.get(Production, production_uuid)
+        if production is None:
+            raise ValueError(f"production not found: {production_id}")
+        clip = session.get(Clip, production.clip_id)
+        if clip is None:
+            raise RuntimeError("production source clip does not exist")
+        script = _selected_script(session, production)
+        segments = list((script.script_metadata or {}).get("segments") or [])
+        narration_assets = list(
+            session.scalars(
+                select(ProductionAsset)
+                .where(
+                    ProductionAsset.production_id == production_uuid,
+                    ProductionAsset.kind.like("narration_%"),
+                )
+                .order_by(ProductionAsset.kind)
+            )
+        )
+        if len(narration_assets) != len(segments):
+            raise RuntimeError("narration assets are incomplete")
+        asset_payload = [
+            {
+                "storage_key": asset.storage_key,
+                "segment_index": int((asset.asset_metadata or {}).get("segment_index", index)),
+                "duration_seconds": float(
+                    (asset.asset_metadata or {}).get("duration_seconds") or 0
+                ),
+            }
+            for index, asset in enumerate(narration_assets)
+        ]
+        output_key = store.production_key(production_id, "render/short-g1.mp4")
+        manifest = build_short_manifest(
+            production_id=production_id,
+            source_key=clip.storage_key,
+            source_duration_seconds=float(clip.duration_seconds or 0),
+            source_width=clip.width,
+            source_height=clip.height,
+            source_audio_volume=settings.source_audio_volume,
+            width=settings.render_width,
+            height=settings.render_height,
+            fps=settings.render_fps,
+            script_segments=segments,
+            narration_assets=asset_payload,
+            output_key=output_key,
+            title_angle=str((script.script_metadata or {}).get("title_angle") or "") or None,
+            interaction_prompt=script.interaction_prompt,
+        )
+
+    manifest_bytes = manifest.model_dump_json(indent=2).encode("utf-8")
+    manifest_key = store.production_key(production_id, "render/manifest.json")
+    store.put_bytes(manifest_bytes, manifest_key, content_type="application/json")
+    caption_payload = [
+        cue.model_dump(mode="json") for overlay in manifest.overlays for cue in overlay.cues
+    ]
+    captions_key = store.production_key(production_id, "render/captions.json")
+    store.put_bytes(
+        json.dumps(caption_payload, indent=2).encode("utf-8"),
+        captions_key,
+        content_type="application/json",
+    )
+
+    with session_scope() as session:
+        production = session.get(Production, production_uuid)
+        if production is None:
+            raise RuntimeError("production disappeared while persisting manifest")
+        production.render_manifest = manifest.model_dump(mode="json")
+        production.status = ProductionStatus.RENDERING.value
+        production.stage = "manifest_ready"
+        for kind, key in (("manifest", manifest_key), ("captions", captions_key)):
+            existing = session.scalar(
+                select(ProductionAsset).where(
+                    ProductionAsset.production_id == production_uuid,
+                    ProductionAsset.kind == kind,
+                    ProductionAsset.generation == 1,
+                )
+            )
+            if existing is None:
+                session.add(
+                    ProductionAsset(
+                        production_id=production_uuid,
+                        kind=kind,
+                        generation=1,
+                        storage_key=key,
+                        content_type="application/json",
+                        asset_metadata={"manifest_version": manifest.version},
+                    )
+                )
+        session.add(
+            DomainEvent(
+                aggregate_type="production",
+                aggregate_id=production_id,
+                event_type="production.render_manifest_ready",
+                payload={
+                    "production_id": production_id,
+                    "manifest_key": manifest_key,
+                    "output_duration_seconds": manifest.output_duration_seconds,
+                },
+            )
+        )
+    return {
+        "production_id": production_id,
+        "manifest_key": manifest_key,
+        "output_key": manifest.output_key,
+    }
+
+
+@activity.defn
+def render_short_activity(production_id: str) -> dict[str, object]:
+    production_uuid = uuid.UUID(production_id)
+    settings = get_settings()
+    with session_scope() as session:
+        production = session.get(Production, production_uuid)
+        if production is None:
+            raise ValueError(f"production not found: {production_id}")
+        existing = session.scalar(
+            select(ProductionAsset).where(
+                ProductionAsset.production_id == production_uuid,
+                ProductionAsset.kind == "render",
+                ProductionAsset.generation == 1,
+            )
+        )
+        if existing is not None:
+            return {
+                "production_id": production_id,
+                "output_key": existing.storage_key,
+                "reused": True,
+            }
+        if not production.render_manifest:
+            raise RuntimeError("render manifest is missing")
+        production.stage = "rendering"
+        manifest = ShortRenderManifest.model_validate(production.render_manifest)
+
+    result = render_short(manifest, settings=settings)
+
+    with session_scope() as session:
+        production = session.get(Production, production_uuid)
+        if production is None:
+            raise RuntimeError("production disappeared after render")
+        existing = session.scalar(
+            select(ProductionAsset).where(
+                ProductionAsset.production_id == production_uuid,
+                ProductionAsset.kind == "render",
+                ProductionAsset.generation == 1,
+            )
+        )
+        if existing is None:
+            session.add(
+                ProductionAsset(
+                    production_id=production_uuid,
+                    kind="render",
+                    generation=1,
+                    storage_key=result.output_key,
+                    content_type="video/mp4",
+                    provider="remotion",
+                    model=None,
+                    asset_metadata={
+                        "duration_seconds": result.duration_seconds,
+                        **result.metadata,
+                    },
+                )
+            )
+        production.status = ProductionStatus.REVIEW.value
+        production.stage = "review"
+        production.error = None
+        production.estimated_cost_usd = _production_cost(session, production_uuid)
+        session.add(
+            DomainEvent(
+                aggregate_type="production",
+                aggregate_id=production_id,
+                event_type="production.review_ready",
+                payload={
+                    "production_id": production_id,
+                    "output_key": result.output_key,
+                    "duration_seconds": result.duration_seconds,
+                },
+            )
+        )
+    return {
+        "production_id": production_id,
+        "output_key": result.output_key,
+        "reused": False,
+    }
 
 
 @activity.defn

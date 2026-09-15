@@ -54,6 +54,16 @@ class ObjectStore:
         else:
             self.client.upload_file(str(path), self.settings.s3_bucket, key)
 
+    def put_bytes(self, data: bytes, key: str, content_type: str | None = None) -> None:
+        kwargs: dict[str, object] = {
+            "Bucket": self.settings.s3_bucket,
+            "Key": key,
+            "Body": data,
+        }
+        if content_type:
+            kwargs["ContentType"] = content_type
+        self.client.put_object(**kwargs)
+
     def download_file(self, key: str, destination: Path) -> None:
         destination.parent.mkdir(parents=True, exist_ok=True)
         self.client.download_file(self.settings.s3_bucket, key, str(destination))
@@ -71,3 +81,8 @@ class ObjectStore:
     def analysis_key(sha256: str, name: str) -> str:
         safe_name = name.lstrip("/")
         return f"analysis/{sha256[:2]}/{sha256}/{safe_name}"
+
+    @staticmethod
+    def production_key(production_id: str, name: str) -> str:
+        safe_name = name.lstrip("/")
+        return f"production/{production_id}/{safe_name}"

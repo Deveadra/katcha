@@ -22,6 +22,7 @@ class Settings(BaseSettings):
     temporal_namespace: str = "default"
     temporal_task_queue: str = "katcha-media"
     temporal_analysis_task_queue: str = "katcha-analysis"
+    temporal_production_task_queue: str = "katcha-production"
 
     s3_endpoint_url: str | None = "http://localhost:9000"
     s3_access_key: str = "katcha"
@@ -40,6 +41,13 @@ class Settings(BaseSettings):
     gemini_api_key: str | None = None
     ai_enabled: bool = False
     ai_budget_usd_monthly: float = Field(default=25.0, ge=0)
+
+    tts_profile: str = "openai_youth_v1"
+    renderer_url: str = "http://renderer:8787"
+    render_width: int = Field(default=1080, ge=360, le=2160)
+    render_height: int = Field(default=1920, ge=640, le=3840)
+    render_fps: int = Field(default=30, ge=24, le=60)
+    source_audio_volume: float = Field(default=0.45, ge=0, le=1)
 
     log_level: str = "INFO"
 
