@@ -9,6 +9,7 @@ from typing import Any
 
 from temporalio import activity
 
+from katcha.ai.providers import analyze_contact_sheet, analyze_full_video
 from katcha.config import get_settings
 from katcha.db import session_scope
 from katcha.domain import AnalysisStatus, ClipStatus, require_clip_transition
@@ -171,6 +172,101 @@ def build_local_intelligence(run_id: str) -> dict[str, object]:
 
 
 @activity.defn
+def bulk_vision_analysis(run_id: str) -> dict[str, object]:
+    run_uuid = uuid.UUID(run_id)
+    settings = get_settings()
+    with session_scope() as session:
+        run = session.get(ClipAnalysisRun, run_uuid)
+        if run is None:
+            raise ValueError(f"analysis run not found: {run_id}")
+        features = session.get(ClipFeature, run.clip_id)
+        if features is None or not features.contact_sheet_key:
+            raise RuntimeError("contact sheet must exist before bulk vision")
+        run.stage = "bulk_vision"
+        contact_sheet_key = features.contact_sheet_key
+        transcript = features.transcript
+
+    image_bytes = ObjectStore().get_bytes(contact_sheet_key)
+    result = analyze_contact_sheet(
+        image_bytes,
+        transcript,
+        reference_id=run_id,
+        settings=settings,
+    )
+    payload = result.value.model_dump(mode="json")
+    deep_available = bool(settings.gemini_api_key)
+
+    with session_scope() as session:
+        run = session.get(ClipAnalysisRun, run_uuid)
+        features = session.get(ClipFeature, run.clip_id) if run is not None else None
+        if run is None or features is None:
+            raise RuntimeError("analysis state disappeared during bulk vision")
+        ai_features = dict(features.ai_features or {})
+        ai_features["bulk"] = payload
+        ai_features["bulk_provider"] = result.target.provider
+        ai_features["bulk_model"] = result.target.model
+        features.ai_features = ai_features
+        if result.value.requires_deep_video:
+            run.escalation_reason = result.value.deep_video_reason or "bulk vision requested escalation"
+            if not deep_available:
+                run.escalation_reason += "; Gemini API key is unavailable, bulk result retained"
+        else:
+            run.escalation_reason = None
+
+    return {
+        "requires_deep_video": result.value.requires_deep_video,
+        "deep_available": deep_available,
+        "provider": result.target.provider,
+        "model": result.target.model,
+    }
+
+
+@activity.defn
+def deep_video_analysis(run_id: str) -> dict[str, object]:
+    run_uuid = uuid.UUID(run_id)
+    settings = get_settings()
+    with session_scope() as session:
+        run = session.get(ClipAnalysisRun, run_uuid)
+        if run is None:
+            raise ValueError(f"analysis run not found: {run_id}")
+        clip = session.get(Clip, run.clip_id)
+        features = session.get(ClipFeature, run.clip_id)
+        if clip is None or features is None:
+            raise RuntimeError("clip features must exist before deep analysis")
+        run.stage = "deep_video"
+        storage_key = clip.storage_key
+        extension = clip.extension or "mp4"
+        transcript = features.transcript
+
+    work_dir = settings.work_dir / "deep-video" / run_id
+    shutil.rmtree(work_dir, ignore_errors=True)
+    work_dir.mkdir(parents=True, exist_ok=True)
+    raw_path = work_dir / f"input.{extension}"
+    try:
+        ObjectStore().download_file(storage_key, raw_path)
+        result = analyze_full_video(
+            raw_path,
+            transcript,
+            reference_id=run_id,
+            settings=settings,
+        )
+        payload = result.value.model_dump(mode="json")
+        with session_scope() as session:
+            run = session.get(ClipAnalysisRun, run_uuid)
+            features = session.get(ClipFeature, run.clip_id) if run is not None else None
+            if run is None or features is None:
+                raise RuntimeError("analysis state disappeared during deep video analysis")
+            ai_features = dict(features.ai_features or {})
+            ai_features["deep"] = payload
+            ai_features["deep_provider"] = result.target.provider
+            ai_features["deep_model"] = result.target.model
+            features.ai_features = ai_features
+        return {"provider": result.target.provider, "model": result.target.model}
+    finally:
+        shutil.rmtree(work_dir, ignore_errors=True)
+
+
+@activity.defn
 def score_local_candidate(run_id: str) -> dict[str, object]:
     run_uuid = uuid.UUID(run_id)
     with session_scope() as session:
@@ -188,6 +284,7 @@ def score_local_candidate(run_id: str) -> dict[str, object]:
         result = score_candidate(
             local_features=dict(features.local_features or {}),
             source_metrics=source_metrics,
+            ai_features=dict(features.ai_features or {}),
         )
         features.candidate_score = Decimal(str(result.score))
         features.score_breakdown = result.breakdown

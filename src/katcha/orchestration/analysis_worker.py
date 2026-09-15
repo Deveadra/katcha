@@ -10,6 +10,8 @@ from temporalio.worker import Worker
 from katcha.config import get_settings
 from katcha.orchestration.analysis_activities import (
     build_local_intelligence,
+    bulk_vision_analysis,
+    deep_video_analysis,
     mark_analysis_failed,
     score_local_candidate,
 )
@@ -32,7 +34,13 @@ async def main() -> None:
             client,
             task_queue=settings.temporal_analysis_task_queue,
             workflows=[ClipAnalysisWorkflow],
-            activities=[build_local_intelligence, score_local_candidate, mark_analysis_failed],
+            activities=[
+                build_local_intelligence,
+                bulk_vision_analysis,
+                deep_video_analysis,
+                score_local_candidate,
+                mark_analysis_failed,
+            ],
             activity_executor=activity_executor,
         )
         await worker.run()

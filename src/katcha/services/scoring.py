@@ -41,10 +41,33 @@ def _source_signal(source_metrics: dict[str, Any]) -> tuple[float, float]:
     return view_score, engagement_score
 
 
+def _ai_signal(ai_features: dict[str, Any] | None) -> dict[str, float] | None:
+    if not ai_features:
+        return None
+    active = ai_features.get("deep") or ai_features.get("bulk")
+    if not isinstance(active, dict):
+        return None
+    keys = {
+        "ai_hook": "hook_score",
+        "ai_surprise": "surprise_score",
+        "ai_humor": "humor_score",
+        "ai_comments": "comment_potential",
+        "ai_rewatch": "rewatch_potential",
+    }
+    result: dict[str, float] = {}
+    for name, source_key in keys.items():
+        try:
+            result[name] = _clamp(float(active.get(source_key, 0.0)))
+        except (TypeError, ValueError):
+            result[name] = 0.0
+    return result
+
+
 def score_candidate(
     *,
     local_features: dict[str, Any],
     source_metrics: dict[str, Any],
+    ai_features: dict[str, Any] | None = None,
 ) -> ScoreResult:
     duration = float(local_features.get("duration_seconds") or 0.0)
     if duration <= 0:
@@ -71,11 +94,28 @@ def score_candidate(
         "visual_change": round(visual_change_score, 3),
         "speech_density": round(speech_score, 3),
     }
-    score = (
-        (view_score * 0.30)
-        + (engagement_score * 0.25)
-        + (duration_score * 0.15)
-        + (visual_change_score * 0.20)
-        + (speech_score * 0.10)
-    )
+
+    ai = _ai_signal(ai_features)
+    if ai is None:
+        score = (
+            (view_score * 0.30)
+            + (engagement_score * 0.25)
+            + (duration_score * 0.15)
+            + (visual_change_score * 0.20)
+            + (speech_score * 0.10)
+        )
+    else:
+        breakdown.update({key: round(value, 3) for key, value in ai.items()})
+        score = (
+            (view_score * 0.15)
+            + (engagement_score * 0.15)
+            + (duration_score * 0.05)
+            + (visual_change_score * 0.05)
+            + (speech_score * 0.05)
+            + (ai["ai_hook"] * 0.15)
+            + (ai["ai_surprise"] * 0.10)
+            + (ai["ai_humor"] * 0.10)
+            + (ai["ai_comments"] * 0.10)
+            + (ai["ai_rewatch"] * 0.10)
+        )
     return ScoreResult(score=round(_clamp(score), 3), breakdown=breakdown)

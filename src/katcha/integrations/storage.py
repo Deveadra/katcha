@@ -58,6 +58,10 @@ class ObjectStore:
         destination.parent.mkdir(parents=True, exist_ok=True)
         self.client.download_file(self.settings.s3_bucket, key, str(destination))
 
+    def get_bytes(self, key: str) -> bytes:
+        response = self.client.get_object(Bucket=self.settings.s3_bucket, Key=key)
+        return response["Body"].read()
+
     @staticmethod
     def raw_key(sha256: str, extension: str | None) -> str:
         suffix = f".{extension.lstrip('.')}" if extension else ""

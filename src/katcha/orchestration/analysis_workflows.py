@@ -9,7 +9,7 @@ from temporalio.common import RetryPolicy
 @workflow.defn
 class ClipAnalysisWorkflow:
     @workflow.run
-    async def run(self, run_id: str) -> dict[str, object]:
+    async def run(self, run_id: str, ai_enabled: bool) -> dict[str, object]:
         media_retry = RetryPolicy(
             initial_interval=timedelta(seconds=15),
             backoff_coefficient=2.0,
@@ -24,6 +24,22 @@ class ClipAnalysisWorkflow:
                 retry_policy=media_retry,
                 result_type=dict[str, object],
             )
+            if ai_enabled:
+                bulk = await workflow.execute_activity(
+                    "bulk_vision_analysis",
+                    run_id,
+                    start_to_close_timeout=timedelta(minutes=5),
+                    retry_policy=RetryPolicy(maximum_attempts=3),
+                    result_type=dict[str, object],
+                )
+                if bool(bulk.get("requires_deep_video")) and bool(bulk.get("deep_available")):
+                    await workflow.execute_activity(
+                        "deep_video_analysis",
+                        run_id,
+                        start_to_close_timeout=timedelta(minutes=12),
+                        retry_policy=RetryPolicy(maximum_attempts=2),
+                        result_type=dict[str, object],
+                    )
             return await workflow.execute_activity(
                 "score_local_candidate",
                 run_id,

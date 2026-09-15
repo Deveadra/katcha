@@ -48,7 +48,7 @@ async def start_analysis_workflow(run_id: str, workflow_id: str) -> str:
     try:
         handle = await client.start_workflow(
             ClipAnalysisWorkflow.run,
-            run_id,
+            args=[run_id, settings.ai_enabled],
             id=workflow_id,
             task_queue=settings.temporal_analysis_task_queue,
         )

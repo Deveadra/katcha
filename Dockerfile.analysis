@@ -12,7 +12,7 @@ WORKDIR /app
 COPY pyproject.toml README.md alembic.ini ./
 COPY migrations ./migrations
 COPY src ./src
-RUN pip install --upgrade pip && pip install -e '.[media]'
+RUN pip install --upgrade pip && pip install -e '.[media,ai]'
 
 RUN useradd --create-home --uid 10001 katcha \
     && mkdir -p /tmp/katcha /home/katcha/.cache \
