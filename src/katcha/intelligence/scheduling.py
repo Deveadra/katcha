@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from collections.abc import Iterable
 from dataclasses import dataclass
 from statistics import fmean
-from typing import Iterable
 
 from katcha.intelligence.learning import clamp
 
@@ -109,7 +109,13 @@ def recommend_windows(
         )
 
     ranked.sort(
-        key=lambda item: (-item.score, -item.confidence, -item.sample_count, item.weekday, item.hour_local)
+        key=lambda item: (
+            -item.score,
+            -item.confidence,
+            -item.sample_count,
+            item.weekday,
+            item.hour_local,
+        )
     )
     selected = ranked[:limit]
     if len(selected) < limit:
