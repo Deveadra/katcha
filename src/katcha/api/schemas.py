@@ -160,6 +160,113 @@ class ReviewActionResponse(BaseModel):
     child_workflow_id: str | None = None
 
 
+class CreateCompilationRequest(BaseModel):
+    theme: str = Field(min_length=1, max_length=500)
+    target_duration_seconds: int | None = Field(default=None, ge=180, le=7200)
+    target_segment_count: int | None = Field(default=None, ge=3, le=100)
+    persona_key: str = Field(default="youth_host", min_length=1, max_length=64)
+    idempotency_key: str | None = Field(default=None, max_length=256)
+
+
+class CompilationResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    parent_compilation_id: UUID | None
+    generation: int
+    regenerate_from: str | None
+    workflow_id: str
+    status: str
+    stage: str
+    theme: str
+    target_duration_seconds: int
+    target_segment_count: int | None
+    persona_key: str
+    persona_version: str
+    prompt_version: str
+    candidate_snapshot: dict[str, object]
+    editor_plan: dict[str, object]
+    critic_feedback: dict[str, object]
+    final_plan: dict[str, object]
+    selected_voice_profile: str | None
+    render_manifest: dict[str, object]
+    estimated_cost_usd: Decimal
+    error: str | None
+    created_at: datetime
+    updated_at: datetime
+
+
+class CompilationSegmentResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    compilation_id: UUID
+    position: int
+    clip_id: UUID
+    short_production_id: UUID | None
+    short_publication_id: UUID | None
+    deterministic_score: Decimal
+    opening_score: Decimal
+    source_duration_seconds: Decimal
+    source_start_seconds: Decimal
+    source_end_seconds: Decimal | None
+    transition_before: str | None
+    host_before: str | None
+    host_after: str | None
+    selection_reason: str | None
+    evidence: dict[str, object]
+    timing: dict[str, object]
+    created_at: datetime
+
+
+class CompilationAssetResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    compilation_id: UUID
+    kind: str
+    generation: int
+    storage_key: str
+    content_type: str | None
+    provider: str | None
+    model: str | None
+    asset_metadata: dict[str, object]
+    created_at: datetime
+
+
+class CompilationReviewResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    compilation_id: UUID
+    decision: str
+    actor: str
+    note: str | None
+    review_metadata: dict[str, object]
+    created_at: datetime
+
+
+class CompilationDetailResponse(BaseModel):
+    compilation: CompilationResponse
+    segments: list[CompilationSegmentResponse]
+    assets: list[CompilationAssetResponse]
+    reviews: list[CompilationReviewResponse]
+
+
+class ReviewCompilationRequest(BaseModel):
+    decision: Literal["approve", "reject", "regenerate"]
+    note: str | None = Field(default=None, max_length=2000)
+    actor: str = Field(default="operator", min_length=1, max_length=128)
+    regenerate_from: Literal["plan", "voice", "render"] = "plan"
+
+
+class ReviewCompilationResponse(BaseModel):
+    compilation_id: UUID
+    decision: str
+    child_compilation_id: UUID | None = None
+    child_workflow_id: str | None = None
+
+
 class YouTubeOAuthStartResponse(BaseModel):
     authorization_url: str
 
@@ -195,7 +302,8 @@ class PublicationResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: UUID
-    production_id: UUID
+    production_id: UUID | None
+    compilation_id: UUID | None
     youtube_connection_id: UUID
     workflow_id: str
     workflow_attempt: int

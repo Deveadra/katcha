@@ -7,12 +7,18 @@ from decimal import Decimal
 from typing import Any
 
 from sqlalchemy import select
+from sqlalchemy.orm import Session
 from temporalio import activity
 from temporalio.exceptions import ApplicationError
 
 from katcha.config import get_settings
 from katcha.db import session_scope
-from katcha.domain import ProductionStatus, PublicationStatus, YouTubeConnectionStatus
+from katcha.domain import (
+    CompilationStatus,
+    ProductionStatus,
+    PublicationStatus,
+    YouTubeConnectionStatus,
+)
 from katcha.integrations.storage import ObjectStore
 from katcha.integrations.youtube.analytics import (
     YouTubeAnalyticsError,
@@ -26,6 +32,7 @@ from katcha.integrations.youtube.client import (
     read_chunk,
 )
 from katcha.integrations.youtube.oauth import MONETARY_SCOPE
+from katcha.longform_models import Compilation, CompilationAsset
 from katcha.models import DomainEvent
 from katcha.production_models import Production, ProductionAsset
 from katcha.publishing_models import (
@@ -37,17 +44,38 @@ from katcha.publishing_models import (
 from katcha.security.secrets import decrypt_secret, encrypt_secret
 
 
-def _render_asset(session: Any, production_id: uuid.UUID) -> ProductionAsset:
-    asset = session.scalar(
-        select(ProductionAsset).where(
-            ProductionAsset.production_id == production_id,
-            ProductionAsset.kind == "render",
-            ProductionAsset.generation == 1,
+def _publication_render_key(session: Session, publication: Publication) -> str:
+    if publication.production_id is not None and publication.compilation_id is None:
+        production = session.get(Production, publication.production_id)
+        if production is None or production.status != ProductionStatus.APPROVED.value:
+            raise RuntimeError("publication production is no longer approved")
+        asset = session.scalar(
+            select(ProductionAsset).where(
+                ProductionAsset.production_id == publication.production_id,
+                ProductionAsset.kind == "render",
+                ProductionAsset.generation == 1,
+            )
         )
-    )
-    if asset is None:
-        raise RuntimeError("publication production has no render asset")
-    return asset
+        if asset is None:
+            raise RuntimeError("publication production has no render asset")
+        return asset.storage_key
+
+    if publication.compilation_id is not None and publication.production_id is None:
+        compilation = session.get(Compilation, publication.compilation_id)
+        if compilation is None or compilation.status != CompilationStatus.APPROVED.value:
+            raise RuntimeError("publication compilation is no longer approved")
+        asset = session.scalar(
+            select(CompilationAsset).where(
+                CompilationAsset.compilation_id == publication.compilation_id,
+                CompilationAsset.kind == "render",
+                CompilationAsset.generation == 1,
+            )
+        )
+        if asset is None:
+            raise RuntimeError("publication compilation has no render asset")
+        return asset.storage_key
+
+    raise RuntimeError("publication must reference exactly one approved source")
 
 
 def _as_int(value: object) -> int | None:
@@ -107,18 +135,15 @@ def prepare_publication_activity(publication_id: str) -> dict[str, object]:
         publication = session.get(Publication, publication_uuid)
         if publication is None:
             raise ValueError(f"publication not found: {publication_id}")
-        production = session.get(Production, publication.production_id)
-        if production is None or production.status != ProductionStatus.APPROVED.value:
-            raise RuntimeError("publication production is no longer approved")
         connection = session.get(YouTubeConnection, publication.youtube_connection_id)
         if connection is None or connection.status != YouTubeConnectionStatus.ACTIVE.value:
             raise RuntimeError("YouTube connection is not active")
-        render = _render_asset(session, publication.production_id)
+        render_key = _publication_render_key(session, publication)
         publication.stage = "prepared"
         publication.error = None
         return {
             "publication_id": publication_id,
-            "render_key": render.storage_key,
+            "render_key": render_key,
             "youtube_video_id": publication.youtube_video_id,
         }
 
@@ -145,8 +170,7 @@ def initiate_upload_session_activity(publication_id: str) -> dict[str, object]:
                 "upload_size": publication.upload_size,
                 "reused": True,
             }
-        render = _render_asset(session, publication.production_id)
-        render_key = render.storage_key
+        render_key = _publication_render_key(session, publication)
         connection_id = publication.youtube_connection_id
         title = publication.title
         description = publication.description
@@ -219,11 +243,10 @@ def upload_video_activity(publication_id: str) -> dict[str, object]:
             }
         if not publication.encrypted_upload_url or not publication.upload_size:
             raise RuntimeError("publication has no resumable upload session")
-        render = _render_asset(session, publication.production_id)
+        render_key = _publication_render_key(session, publication)
         upload_url = decrypt_secret(publication.encrypted_upload_url, settings)
         total_size = int(publication.upload_size)
         connection_id = publication.youtube_connection_id
-        render_key = render.storage_key
 
     client = YouTubeClient(connection_id, settings=settings)
     try:

@@ -15,6 +15,12 @@ from katcha.api.schemas import (
     AnalyzeResponse,
     ClipFeatureResponse,
     ClipResponse,
+    CompilationAssetResponse,
+    CompilationDetailResponse,
+    CompilationResponse,
+    CompilationReviewResponse,
+    CompilationSegmentResponse,
+    CreateCompilationRequest,
     CreateProductionRequest,
     CreatePublicationRequest,
     HealthResponse,
@@ -30,6 +36,8 @@ from katcha.api.schemas import (
     RetentionPointResponse,
     RetryPublicationRequest,
     ReviewActionResponse,
+    ReviewCompilationRequest,
+    ReviewCompilationResponse,
     ReviewProductionRequest,
     SourceResponse,
     YouTubeConnectionResponse,
@@ -37,11 +45,23 @@ from katcha.api.schemas import (
 )
 from katcha.config import get_settings
 from katcha.db import session_scope
-from katcha.domain import AnalysisStatus, ProductionStatus, ReviewDecision, SourceStatus
+from katcha.domain import (
+    AnalysisStatus,
+    CompilationStatus,
+    ProductionStatus,
+    ReviewDecision,
+    SourceStatus,
+)
 from katcha.integrations.youtube.oauth import (
     YouTubeOAuthError,
     begin_youtube_oauth,
     complete_youtube_oauth,
+)
+from katcha.longform_models import (
+    Compilation,
+    CompilationAsset,
+    CompilationReview,
+    CompilationSegment,
 )
 from katcha.models import Clip, ClipAnalysisRun, ClipFeature, SourceItem
 from katcha.orchestration.client import (
@@ -49,6 +69,7 @@ from katcha.orchestration.client import (
     start_analysis_workflow,
     start_analytics_refresh_workflow,
     start_ingest_workflow,
+    start_longform_workflow,
     start_production_workflow,
     start_publication_workflow,
 )
@@ -65,6 +86,11 @@ from katcha.publishing_models import (
     YouTubeConnection,
 )
 from katcha.services.analysis import register_analysis
+from katcha.services.compilations import (
+    register_compilation,
+    register_compilation_regeneration,
+    review_compilation,
+)
 from katcha.services.productions import (
     register_regeneration,
     register_short_production,
@@ -72,6 +98,7 @@ from katcha.services.productions import (
 )
 from katcha.services.publications import (
     analytics_refresh_workflow_id,
+    register_compilation_publication,
     register_publication,
     retry_publication,
 )
@@ -82,6 +109,22 @@ app = FastAPI(
     version=__version__,
     description="Standalone control plane for Katcha media workflows.",
 )
+
+
+def _require_ai_execution() -> None:
+    settings = get_settings()
+    if not settings.ai_enabled:
+        raise HTTPException(status_code=503, detail="AI execution is disabled")
+    if not settings.openai_api_key and not settings.gemini_api_key:
+        raise HTTPException(status_code=503, detail="no AI/TTS provider key is configured")
+
+
+def _require_youtube_execution() -> None:
+    settings = get_settings()
+    if not settings.youtube_client_id or not settings.youtube_client_secret:
+        raise HTTPException(status_code=503, detail="YouTube OAuth client is not configured")
+    if not settings.credential_encryption_key:
+        raise HTTPException(status_code=503, detail="credential encryption is not configured")
 
 
 @app.get("/v1/health/live", response_model=HealthResponse)
@@ -191,11 +234,7 @@ async def create_production(
     clip_id: uuid.UUID,
     request: CreateProductionRequest,
 ) -> Production:
-    settings = get_settings()
-    if not settings.ai_enabled:
-        raise HTTPException(status_code=503, detail="AI execution is disabled")
-    if not settings.openai_api_key and not settings.gemini_api_key:
-        raise HTTPException(status_code=503, detail="no AI/TTS provider key is configured")
+    _require_ai_execution()
     try:
         production = register_short_production(
             clip_id,
@@ -208,42 +247,6 @@ async def create_production(
     if production.status == ProductionStatus.QUEUED.value:
         await start_production_workflow(str(production.id), production.workflow_id)
     return production
-
-
-@app.post(
-    "/v1/productions/{production_id}/publications",
-    response_model=PublicationResponse,
-    status_code=status.HTTP_202_ACCEPTED,
-)
-async def create_publication(
-    production_id: uuid.UUID,
-    request: CreatePublicationRequest,
-) -> Publication:
-    settings = get_settings()
-    if not settings.youtube_client_id or not settings.youtube_client_secret:
-        raise HTTPException(status_code=503, detail="YouTube OAuth client is not configured")
-    if not settings.credential_encryption_key:
-        raise HTTPException(status_code=503, detail="credential encryption is not configured")
-    try:
-        publication = register_publication(
-            production_id,
-            youtube_connection_id=request.youtube_connection_id,
-            title=request.title,
-            description=request.description,
-            tags=request.tags,
-            category_id=request.category_id,
-            privacy_status=request.privacy_status,
-            publish_at=request.publish_at,
-            notify_subscribers=request.notify_subscribers,
-            made_for_kids=request.made_for_kids,
-            contains_synthetic_media=request.contains_synthetic_media,
-        )
-    except ValueError as exc:
-        code = 404 if "not found" in str(exc) else 409
-        raise HTTPException(status_code=code, detail=str(exc)) from exc
-    if publication.status == "queued":
-        await start_publication_workflow(str(publication.id), publication.workflow_id)
-    return publication
 
 
 @app.get("/v1/productions", response_model=list[ProductionResponse])
@@ -337,6 +340,190 @@ async def review_short(
         production_id=production_id,
         decision=request.decision,
     )
+
+
+@app.post(
+    "/v1/productions/{production_id}/publications",
+    response_model=PublicationResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def create_publication(
+    production_id: uuid.UUID,
+    request: CreatePublicationRequest,
+) -> Publication:
+    _require_youtube_execution()
+    try:
+        publication = register_publication(
+            production_id,
+            youtube_connection_id=request.youtube_connection_id,
+            title=request.title,
+            description=request.description,
+            tags=request.tags,
+            category_id=request.category_id,
+            privacy_status=request.privacy_status,
+            publish_at=request.publish_at,
+            notify_subscribers=request.notify_subscribers,
+            made_for_kids=request.made_for_kids,
+            contains_synthetic_media=request.contains_synthetic_media,
+        )
+    except ValueError as exc:
+        code = 404 if "not found" in str(exc) else 409
+        raise HTTPException(status_code=code, detail=str(exc)) from exc
+    if publication.status == "queued":
+        await start_publication_workflow(str(publication.id), publication.workflow_id)
+    return publication
+
+
+@app.post(
+    "/v1/compilations",
+    response_model=CompilationResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def create_compilation(request: CreateCompilationRequest) -> Compilation:
+    _require_ai_execution()
+    try:
+        compilation = register_compilation(
+            theme=request.theme,
+            target_duration_seconds=request.target_duration_seconds,
+            target_segment_count=request.target_segment_count,
+            persona_key=request.persona_key,
+            idempotency_key=request.idempotency_key,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if compilation.status == CompilationStatus.QUEUED.value:
+        await start_longform_workflow(
+            str(compilation.id),
+            compilation.workflow_id,
+            start_stage="select",
+        )
+    return compilation
+
+
+@app.get("/v1/compilations", response_model=list[CompilationResponse])
+def list_compilations(
+    limit: int = Query(default=50, ge=1, le=250),
+    compilation_status: str | None = Query(default=None, alias="status"),
+) -> list[Compilation]:
+    with session_scope() as session:
+        stmt = select(Compilation).order_by(Compilation.created_at.desc()).limit(limit)
+        if compilation_status:
+            stmt = stmt.where(Compilation.status == compilation_status)
+        return list(session.scalars(stmt))
+
+
+@app.get("/v1/compilations/{compilation_id}", response_model=CompilationDetailResponse)
+def get_compilation(compilation_id: uuid.UUID) -> CompilationDetailResponse:
+    with session_scope() as session:
+        compilation = session.get(Compilation, compilation_id)
+        if compilation is None:
+            raise HTTPException(status_code=404, detail="compilation not found")
+        segments = list(
+            session.scalars(
+                select(CompilationSegment)
+                .where(CompilationSegment.compilation_id == compilation_id)
+                .order_by(CompilationSegment.position)
+            )
+        )
+        assets = list(
+            session.scalars(
+                select(CompilationAsset)
+                .where(CompilationAsset.compilation_id == compilation_id)
+                .order_by(CompilationAsset.created_at)
+            )
+        )
+        reviews = list(
+            session.scalars(
+                select(CompilationReview)
+                .where(CompilationReview.compilation_id == compilation_id)
+                .order_by(CompilationReview.created_at)
+            )
+        )
+        return CompilationDetailResponse(
+            compilation=CompilationResponse.model_validate(compilation),
+            segments=[CompilationSegmentResponse.model_validate(item) for item in segments],
+            assets=[CompilationAssetResponse.model_validate(item) for item in assets],
+            reviews=[CompilationReviewResponse.model_validate(item) for item in reviews],
+        )
+
+
+@app.post(
+    "/v1/compilations/{compilation_id}/review",
+    response_model=ReviewCompilationResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def review_longform(
+    compilation_id: uuid.UUID,
+    request: ReviewCompilationRequest,
+) -> ReviewCompilationResponse:
+    if request.decision == ReviewDecision.REGENERATE.value:
+        try:
+            child = register_compilation_regeneration(
+                compilation_id,
+                stage=request.regenerate_from,
+                note=request.note,
+                actor=request.actor,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        start_stage = child.regenerate_from or request.regenerate_from
+        await start_longform_workflow(
+            str(child.id),
+            child.workflow_id,
+            start_stage=start_stage,
+        )
+        return ReviewCompilationResponse(
+            compilation_id=compilation_id,
+            decision=request.decision,
+            child_compilation_id=child.id,
+            child_workflow_id=child.workflow_id,
+        )
+
+    try:
+        review_compilation(
+            compilation_id,
+            decision=ReviewDecision(request.decision),
+            note=request.note,
+            actor=request.actor,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return ReviewCompilationResponse(
+        compilation_id=compilation_id,
+        decision=request.decision,
+    )
+
+
+@app.post(
+    "/v1/compilations/{compilation_id}/publications",
+    response_model=PublicationResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def create_compilation_publication(
+    compilation_id: uuid.UUID,
+    request: CreatePublicationRequest,
+) -> Publication:
+    _require_youtube_execution()
+    try:
+        publication = register_compilation_publication(
+            compilation_id,
+            youtube_connection_id=request.youtube_connection_id,
+            title=request.title,
+            description=request.description,
+            tags=request.tags,
+            category_id=request.category_id,
+            privacy_status=request.privacy_status,
+            publish_at=request.publish_at,
+            notify_subscribers=request.notify_subscribers,
+            made_for_kids=request.made_for_kids,
+            contains_synthetic_media=request.contains_synthetic_media,
+        )
+    except ValueError as exc:
+        code = 404 if "not found" in str(exc) else 409
+        raise HTTPException(status_code=code, detail=str(exc)) from exc
+    if publication.status == "queued":
+        await start_publication_workflow(str(publication.id), publication.workflow_id)
+    return publication
 
 
 @app.get("/v1/publications", response_model=list[PublicationResponse])

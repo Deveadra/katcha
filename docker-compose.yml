@@ -154,6 +154,22 @@ services:
         condition: service_healthy
     command: ["python", "-m", "katcha.orchestration.production_worker"]
 
+  longform-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.longform
+    env_file: ${KATCHA_ENV_FILE:-.env}
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      temporal:
+        condition: service_started
+      minio-init:
+        condition: service_completed_successfully
+      renderer:
+        condition: service_healthy
+    command: ["python", "-m", "katcha.orchestration.longform_worker"]
+
   publishing-worker:
     build:
       context: .
