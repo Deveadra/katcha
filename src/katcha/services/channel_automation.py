@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass
-from decimal import Decimal
 
 from sqlalchemy import func, select
 
@@ -21,15 +20,24 @@ _LEVELS = (
     AutomationLevel.AUTO_PUBLISH_PRIVATE,
     AutomationLevel.AUTO_PUBLISH_SCHEDULED,
 )
+_DEFAULT_RECENT_REVIEW_WINDOW = 20
+_DEFAULT_MAX_RECENT_REVIEW_DRIFT = 0.15
+_MIN_RECENT_DRIFT_SAMPLE = 10
 
 
 @dataclass(frozen=True, slots=True)
 class AutomationEvidence:
     reviewed_items: int
     approval_rate: float
+    rejection_rate: float
     regeneration_rate: float
     publication_failure_rate: float
     ranking_confidence: float
+    recent_negative_review_rate: float
+    review_drift_delta: float
+    recent_review_count: int
+    recent_review_window: int
+    max_recent_review_drift: float
     eligible: bool
     reasons: tuple[str, ...]
 
@@ -38,38 +46,89 @@ def _ratio(numerator: int, denominator: int) -> float:
     return numerator / denominator if denominator > 0 else 0.0
 
 
-def _review_counts(channel_profile_id: uuid.UUID) -> tuple[int, int, int]:
+def _review_rows(channel_profile_id: uuid.UUID) -> list[tuple[str, object]]:
     with session_scope() as session:
         production_rows = list(
             session.execute(
-                select(ProductionReview.decision, func.count(ProductionReview.id))
+                select(ProductionReview.decision, ProductionReview.created_at)
                 .join(Production, ProductionReview.production_id == Production.id)
                 .where(Production.channel_profile_id == channel_profile_id)
-                .group_by(ProductionReview.decision)
             )
         )
         compilation_rows = list(
             session.execute(
-                select(CompilationReview.decision, func.count(CompilationReview.id))
+                select(CompilationReview.decision, CompilationReview.created_at)
                 .join(
                     Compilation,
                     CompilationReview.compilation_id == Compilation.id,
                 )
                 .where(Compilation.channel_profile_id == channel_profile_id)
-                .group_by(CompilationReview.decision)
             )
         )
-    counts: dict[str, int] = {}
-    for decision, count in [*production_rows, *compilation_rows]:
-        counts[str(decision)] = counts.get(str(decision), 0) + int(count)
-    reviewed = sum(counts.values())
-    approved = counts.get(ReviewDecision.APPROVE.value, 0)
-    regenerated = counts.get(ReviewDecision.REGENERATE.value, 0)
-    return reviewed, approved, regenerated
+    rows = [(str(decision), created_at) for decision, created_at in [*production_rows, *compilation_rows]]
+    return sorted(rows, key=lambda item: item[1])
+
+
+def _review_statistics(
+    channel_profile_id: uuid.UUID,
+    *,
+    recent_window: int,
+) -> tuple[int, int, int, int, int, float, float]:
+    rows = _review_rows(channel_profile_id)
+    reviewed = len(rows)
+    approved = sum(decision == ReviewDecision.APPROVE.value for decision, _ in rows)
+    rejected = sum(decision == ReviewDecision.REJECT.value for decision, _ in rows)
+    regenerated = sum(decision == ReviewDecision.REGENERATE.value for decision, _ in rows)
+    recent = rows[-recent_window:] if recent_window > 0 else []
+    recent_negative = sum(
+        decision in {ReviewDecision.REJECT.value, ReviewDecision.REGENERATE.value}
+        for decision, _ in recent
+    )
+    recent_negative_rate = _ratio(recent_negative, len(recent))
+    overall_negative_rate = _ratio(rejected + regenerated, reviewed)
+    drift_delta = recent_negative_rate - overall_negative_rate
+    return (
+        reviewed,
+        approved,
+        rejected,
+        regenerated,
+        len(recent),
+        recent_negative_rate,
+        drift_delta,
+    )
+
+
+def _drift_policy(policy: AutomationPolicyVersion) -> tuple[int, float]:
+    metadata = dict(policy.policy_metadata or {})
+    try:
+        window = int(metadata.get("recent_review_window", _DEFAULT_RECENT_REVIEW_WINDOW))
+    except (TypeError, ValueError):
+        window = _DEFAULT_RECENT_REVIEW_WINDOW
+    try:
+        max_drift = float(
+            metadata.get("max_recent_review_drift", _DEFAULT_MAX_RECENT_REVIEW_DRIFT)
+        )
+    except (TypeError, ValueError):
+        max_drift = _DEFAULT_MAX_RECENT_REVIEW_DRIFT
+    return max(10, min(window, 200)), max(0.0, min(max_drift, 1.0))
 
 
 def evaluate_automation(channel_profile_id: uuid.UUID) -> AutomationEvidence:
-    reviewed, approved, regenerated = _review_counts(channel_profile_id)
+    with session_scope() as session:
+        profile = ensure_active_profile(session, channel_profile_id)
+        policy = active_automation(session, profile)
+        recent_window, max_drift = _drift_policy(policy)
+
+    (
+        reviewed,
+        approved,
+        rejected,
+        regenerated,
+        recent_count,
+        recent_negative_rate,
+        drift_delta,
+    ) = _review_statistics(channel_profile_id, recent_window=recent_window)
+
     with session_scope() as session:
         profile = ensure_active_profile(session, channel_profile_id)
         policy = active_automation(session, profile)
@@ -98,6 +157,7 @@ def evaluate_automation(channel_profile_id: uuid.UUID) -> AutomationEvidence:
         )
 
         approval_rate = _ratio(approved, reviewed)
+        rejection_rate = _ratio(rejected, reviewed)
         regeneration_rate = _ratio(regenerated, reviewed)
         failure_rate = _ratio(publication_failed, publication_total)
         ranking_confidence = float(ranking.confidence) if ranking else 0.0
@@ -112,12 +172,23 @@ def evaluate_automation(channel_profile_id: uuid.UUID) -> AutomationEvidence:
             reasons.append("publication_failure_rate_above_threshold")
         if ranking_confidence < float(policy.min_ranking_confidence):
             reasons.append("ranking_confidence_below_threshold")
+        if (
+            recent_count >= _MIN_RECENT_DRIFT_SAMPLE
+            and drift_delta > max_drift
+        ):
+            reasons.append("recent_review_drift_above_threshold")
         return AutomationEvidence(
             reviewed_items=reviewed,
             approval_rate=round(approval_rate, 6),
+            rejection_rate=round(rejection_rate, 6),
             regeneration_rate=round(regeneration_rate, 6),
             publication_failure_rate=round(failure_rate, 6),
             ranking_confidence=round(ranking_confidence, 6),
+            recent_negative_review_rate=round(recent_negative_rate, 6),
+            review_drift_delta=round(drift_delta, 6),
+            recent_review_count=recent_count,
+            recent_review_window=recent_window,
+            max_recent_review_drift=round(max_drift, 6),
             eligible=not reasons,
             reasons=tuple(reasons),
         )
@@ -126,6 +197,24 @@ def evaluate_automation(channel_profile_id: uuid.UUID) -> AutomationEvidence:
 def _next_level(level: AutomationLevel) -> AutomationLevel | None:
     index = _LEVELS.index(level)
     return _LEVELS[index + 1] if index + 1 < len(_LEVELS) else None
+
+
+def _evidence_payload(evidence: AutomationEvidence) -> dict[str, object]:
+    return {
+        "reviewed_items": evidence.reviewed_items,
+        "approval_rate": evidence.approval_rate,
+        "rejection_rate": evidence.rejection_rate,
+        "regeneration_rate": evidence.regeneration_rate,
+        "publication_failure_rate": evidence.publication_failure_rate,
+        "ranking_confidence": evidence.ranking_confidence,
+        "recent_negative_review_rate": evidence.recent_negative_review_rate,
+        "review_drift_delta": evidence.review_drift_delta,
+        "recent_review_count": evidence.recent_review_count,
+        "recent_review_window": evidence.recent_review_window,
+        "max_recent_review_drift": evidence.max_recent_review_drift,
+        "eligible": evidence.eligible,
+        "reasons": list(evidence.reasons),
+    }
 
 
 def _new_policy_version(
@@ -140,6 +229,17 @@ def _new_policy_version(
         profile = ensure_active_profile(session, channel_profile_id)
         current = active_automation(session, profile)
         version = profile.active_automation_version + 1
+        metadata = dict(current.policy_metadata or {})
+        metadata.update(
+            {
+                "actor": actor,
+                "action": action,
+                "supersedes": current.version,
+                "recent_review_window": evidence.recent_review_window,
+                "max_recent_review_drift": evidence.max_recent_review_drift,
+                "evidence": _evidence_payload(evidence),
+            }
+        )
         row = AutomationPolicyVersion(
             channel_profile_id=profile.id,
             version=version,
@@ -150,20 +250,7 @@ def _new_policy_version(
             max_publication_failure_rate=current.max_publication_failure_rate,
             min_ranking_confidence=current.min_ranking_confidence,
             auto_demote=current.auto_demote,
-            policy_metadata={
-                "actor": actor,
-                "action": action,
-                "supersedes": current.version,
-                "evidence": {
-                    "reviewed_items": evidence.reviewed_items,
-                    "approval_rate": evidence.approval_rate,
-                    "regeneration_rate": evidence.regeneration_rate,
-                    "publication_failure_rate": evidence.publication_failure_rate,
-                    "ranking_confidence": evidence.ranking_confidence,
-                    "eligible": evidence.eligible,
-                    "reasons": list(evidence.reasons),
-                },
-            },
+            policy_metadata=metadata,
         )
         session.add(row)
         profile.active_automation_version = version
@@ -254,12 +341,5 @@ def automation_summary(channel_profile_id: uuid.UUID) -> dict[str, object]:
             "version": policy.version,
             "next_level": next_level.value if next_level else None,
             "eligible_for_next_level": evidence.eligible and next_level is not None,
-            "evidence": {
-                "reviewed_items": evidence.reviewed_items,
-                "approval_rate": evidence.approval_rate,
-                "regeneration_rate": evidence.regeneration_rate,
-                "publication_failure_rate": evidence.publication_failure_rate,
-                "ranking_confidence": evidence.ranking_confidence,
-                "reasons": list(evidence.reasons),
-            },
+            "evidence": _evidence_payload(evidence),
         }
