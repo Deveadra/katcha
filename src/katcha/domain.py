@@ -17,6 +17,25 @@ class AnalysisStatus(StrEnum):
     FAILED = "failed"
 
 
+class ProductionStatus(StrEnum):
+    QUEUED = "queued"
+    SCRIPTING = "scripting"
+    SCRIPTED = "scripted"
+    VOICING = "voicing"
+    VOICED = "voiced"
+    RENDERING = "rendering"
+    REVIEW = "review"
+    APPROVED = "approved"
+    REJECTED = "rejected"
+    FAILED = "failed"
+
+
+class ReviewDecision(StrEnum):
+    APPROVE = "approve"
+    REJECT = "reject"
+    REGENERATE = "regenerate"
+
+
 class ClipStatus(StrEnum):
     INGESTED = "ingested"
     NORMALIZED = "normalized"
@@ -62,3 +81,4 @@ class AITask(StrEnum):
     LONGFORM_EDITOR = "longform_editor"
     METADATA = "metadata"
     PERFORMANCE_ANALYSIS = "performance_analysis"
+    TTS = "tts"

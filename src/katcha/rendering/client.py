@@ -1,0 +1,37 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Any
+
+import httpx
+
+from katcha.config import Settings, get_settings
+from katcha.rendering.manifest import ShortRenderManifest
+
+
+@dataclass(frozen=True, slots=True)
+class RenderResult:
+    output_key: str
+    duration_seconds: float
+    metadata: dict[str, Any]
+
+
+def render_short(
+    manifest: ShortRenderManifest,
+    *,
+    settings: Settings | None = None,
+) -> RenderResult:
+    settings = settings or get_settings()
+    url = f"{settings.renderer_url.rstrip('/')}/render"
+    with httpx.Client(timeout=httpx.Timeout(900.0, connect=10.0)) as client:
+        response = client.post(url, json=manifest.model_dump(mode="json"))
+        response.raise_for_status()
+        payload = response.json()
+    output_key = payload.get("output_key")
+    if not isinstance(output_key, str) or not output_key:
+        raise RuntimeError("renderer response did not contain output_key")
+    return RenderResult(
+        output_key=output_key,
+        duration_seconds=float(payload.get("duration_seconds") or manifest.output_duration_seconds),
+        metadata=dict(payload.get("metadata") or {}),
+    )
