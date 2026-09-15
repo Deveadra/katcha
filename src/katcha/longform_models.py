@@ -27,6 +27,9 @@ class Compilation(Base):
     __tablename__ = "compilations"
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    channel_profile_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("channel_profiles.id"), nullable=True, index=True
+    )
     parent_compilation_id: Mapped[uuid.UUID | None] = mapped_column(
         Uuid(as_uuid=True), ForeignKey("compilations.id"), nullable=True, index=True
     )
