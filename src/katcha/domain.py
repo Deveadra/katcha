@@ -56,6 +56,18 @@ class YouTubeConnectionStatus(StrEnum):
     REVOKED = "revoked"
 
 
+class ChannelStatus(StrEnum):
+    ACTIVE = "active"
+    PAUSED = "paused"
+
+
+class AutomationLevel(StrEnum):
+    REVIEW_REQUIRED = "review_required"
+    AUTO_APPROVE_LOW_RISK = "auto_approve_low_risk"
+    AUTO_PUBLISH_PRIVATE = "auto_publish_private"
+    AUTO_PUBLISH_SCHEDULED = "auto_publish_scheduled"
+
+
 class PublicationStatus(StrEnum):
     QUEUED = "queued"
     UPLOADING = "uploading"
