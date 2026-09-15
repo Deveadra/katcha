@@ -10,6 +10,7 @@ from katcha.ai.router import (
     ModelTarget,
     assert_ai_budget,
     record_usage,
+    release_budget_reservation,
     route_for,
     route_for_channel,
 )
@@ -109,6 +110,7 @@ def _record_usage(
     input_tokens: int,
     output_tokens: int,
     production_id: str,
+    reservation_id: uuid.UUID | None,
 ) -> None:
     record_usage(
         task=AITask.SHORT_SCRIPT,
@@ -122,6 +124,7 @@ def _record_usage(
             "estimated_cost": True,
             "pricing_basis": "public_paid_rate_2026-09-15",
         },
+        reservation_id=reservation_id,
     )
 
 
@@ -130,6 +133,7 @@ def _openai_generate(
     target: ModelTarget,
     settings: Settings,
     production_id: str,
+    reservation_id: uuid.UUID | None,
 ) -> ScriptGenerationResult:
     if not settings.openai_api_key:
         raise ScriptProviderUnavailable("OpenAI API key is not configured")
@@ -151,11 +155,17 @@ def _openai_generate(
         },
         max_output_tokens=1800,
     )
-    scripts = ShortScriptSet.model_validate_json(response.output_text)
     usage = response.usage
     input_tokens = int(getattr(usage, "input_tokens", 0) or 0)
     output_tokens = int(getattr(usage, "output_tokens", 0) or 0)
-    _record_usage(target, input_tokens, output_tokens, production_id)
+    _record_usage(
+        target,
+        input_tokens,
+        output_tokens,
+        production_id,
+        reservation_id,
+    )
+    scripts = ShortScriptSet.model_validate_json(response.output_text)
     return ScriptGenerationResult(scripts, target, input_tokens, output_tokens)
 
 
@@ -164,6 +174,7 @@ def _gemini_generate(
     target: ModelTarget,
     settings: Settings,
     production_id: str,
+    reservation_id: uuid.UUID | None,
 ) -> ScriptGenerationResult:
     if not settings.gemini_api_key:
         raise ScriptProviderUnavailable("Gemini API key is not configured")
@@ -179,13 +190,19 @@ def _gemini_generate(
             response_schema=ShortScriptSet,
         ),
     )
-    scripts = ShortScriptSet.model_validate_json(response.text)
     usage = response.usage_metadata
     input_tokens = int(getattr(usage, "prompt_token_count", 0) or 0)
     output_tokens = int(getattr(usage, "candidates_token_count", 0) or 0) + int(
         getattr(usage, "thoughts_token_count", 0) or 0
     )
-    _record_usage(target, input_tokens, output_tokens, production_id)
+    _record_usage(
+        target,
+        input_tokens,
+        output_tokens,
+        production_id,
+        reservation_id,
+    )
+    scripts = ShortScriptSet.model_validate_json(response.text)
     return ScriptGenerationResult(scripts, target, input_tokens, output_tokens)
 
 
@@ -208,23 +225,62 @@ def generate_short_scripts(
         channel_profile_id,
         expected_value,
     )
+    reservation_id: uuid.UUID | None = None
     if channel_profile_id is not None:
-        route = route_for_channel(
+        decision = route_for_channel(
             AITask.SHORT_SCRIPT,
             channel_profile_id,
             estimated_increment_usd=estimated_increment,
             expected_value=expected_value,
-        ).route
+            reference_type="production",
+            reference_id=production_id,
+            reservation_key=f"short-script:{production_id}",
+        )
+        route = decision.route
+        reservation_id = decision.reservation_id
     else:
         route = route_for(AITask.SHORT_SCRIPT)
     prompt = build_script_prompt(persona, snapshot, prompt_version=prompt_version)
 
-    if route.primary.provider == "openai" and settings.openai_api_key:
-        return _openai_generate(prompt, route.primary, settings, production_id)
-    if route.primary.provider == "gemini" and settings.gemini_api_key:
-        return _gemini_generate(prompt, route.primary, settings, production_id)
-    if route.fallback and route.fallback.provider == "openai" and settings.openai_api_key:
-        return _openai_generate(prompt, route.fallback, settings, production_id)
-    if route.fallback and route.fallback.provider == "gemini" and settings.gemini_api_key:
-        return _gemini_generate(prompt, route.fallback, settings, production_id)
-    raise ScriptProviderUnavailable("no configured provider is available for short scripting")
+    try:
+        if route.primary.provider == "openai" and settings.openai_api_key:
+            return _openai_generate(
+                prompt,
+                route.primary,
+                settings,
+                production_id,
+                reservation_id,
+            )
+        if route.primary.provider == "gemini" and settings.gemini_api_key:
+            return _gemini_generate(
+                prompt,
+                route.primary,
+                settings,
+                production_id,
+                reservation_id,
+            )
+        if route.fallback and route.fallback.provider == "openai" and settings.openai_api_key:
+            return _openai_generate(
+                prompt,
+                route.fallback,
+                settings,
+                production_id,
+                reservation_id,
+            )
+        if route.fallback and route.fallback.provider == "gemini" and settings.gemini_api_key:
+            return _gemini_generate(
+                prompt,
+                route.fallback,
+                settings,
+                production_id,
+                reservation_id,
+            )
+        raise ScriptProviderUnavailable(
+            "no configured provider is available for short scripting"
+        )
+    except Exception as exc:
+        release_budget_reservation(
+            reservation_id,
+            reason=f"short_script_failed:{type(exc).__name__}",
+        )
+        raise
