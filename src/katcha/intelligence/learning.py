@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Iterable
 from dataclasses import dataclass
 from statistics import fmean
-from typing import Iterable
 
 FEATURE_NAMES: tuple[str, ...] = (
     "baseline_score",
@@ -135,7 +135,9 @@ def _solve(matrix: list[list[float]], target: list[float]) -> list[float]:
     return [augmented[index][-1] for index in range(size)]
 
 
-def _fit(rows: list[TrainingRow]) -> tuple[dict[str, float], dict[str, float], dict[str, float], float]:
+def _fit(
+    rows: list[TrainingRow],
+) -> tuple[dict[str, float], dict[str, float], dict[str, float], float]:
     means, scales = _means_scales(rows)
     vectors = [_vector(row.features, means, scales) for row in rows]
     outcomes = [clamp(float(row.outcome)) for row in rows]
@@ -217,7 +219,10 @@ def train_ranking(rows: Iterable[TrainingRow]) -> TrainingResult:
         )
         for row in validation
     ]
-    baseline_predictions = [clamp(_feature_value(row.features, "baseline_score")) for row in validation]
+    baseline_predictions = [
+        clamp(_feature_value(row.features, "baseline_score"))
+        for row in validation
+    ]
     learned_mae = _mae(actual, learned_predictions)
     baseline_mae = _mae(actual, baseline_predictions)
     improvement = (
