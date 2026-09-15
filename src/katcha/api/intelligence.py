@@ -22,7 +22,6 @@ from katcha.intelligence_models import (
     ScheduleRecommendation,
 )
 from katcha.longform_models import Compilation
-from katcha.models import Clip
 from katcha.orchestration.client import (
     start_channel_intelligence_refresh,
     start_channel_intelligence_schedule,
@@ -93,6 +92,7 @@ class StrategyResponse(BaseModel):
     id: uuid.UUID
     channel_profile_id: uuid.UUID
     version: int
+    monthly_base_budget_usd: Decimal
     monthly_hard_budget_usd: Decimal
     reinvestment_rate: Decimal
     reinvestment_cap_usd: Decimal
@@ -104,6 +104,7 @@ class StrategyResponse(BaseModel):
 
 
 class UpdateStrategyRequest(BaseModel):
+    monthly_base_budget_usd: Decimal | None = Field(default=None, ge=0)
     monthly_hard_budget_usd: Decimal | None = Field(default=None, ge=0)
     reinvestment_rate: Decimal | None = Field(default=None, ge=0, le=1)
     reinvestment_cap_usd: Decimal | None = Field(default=None, ge=0)
@@ -140,9 +141,14 @@ class EconomicsResponse(BaseModel):
     attributed_ai_cost_usd: Decimal
     contribution_margin_usd: Decimal
     reinvestable_usd: Decimal
+    base_budget_usd: Decimal
     hard_budget_usd: Decimal
+    effective_budget_usd: Decimal
     month_to_date_spend_usd: Decimal
+    reserved_ai_cost_usd: Decimal
     budget_headroom_usd: Decimal
+    burn_rate_usd_per_day: Decimal
+    projected_month_end_spend_usd: Decimal
     monetary_scope_available: bool
     details: dict[str, object]
 
@@ -351,6 +357,7 @@ def update_channel_strategy(
     try:
         return create_strategy_version(
             channel_profile_id,
+            monthly_base_budget_usd=request.monthly_base_budget_usd,
             monthly_hard_budget_usd=request.monthly_hard_budget_usd,
             reinvestment_rate=request.reinvestment_rate,
             reinvestment_cap_usd=request.reinvestment_cap_usd,
@@ -468,8 +475,6 @@ def get_clip_channel_score(
     clip_id: uuid.UUID,
 ) -> ClipChannelScoreResponse:
     try:
-        if not Clip:
-            raise RuntimeError("unreachable")
         payload = score_clip_for_channel(channel_profile_id, clip_id)
         return ClipChannelScoreResponse.model_validate(payload)
     except ValueError as exc:
