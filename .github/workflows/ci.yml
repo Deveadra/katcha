@@ -35,3 +35,34 @@ jobs:
 
       - name: Test
         run: pytest -q
+
+      - name: Validate Compose
+        run: docker compose --env-file .env.example config >/dev/null
+
+  renderer:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: renderer
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install renderer dependencies
+        run: npm install --ignore-scripts
+
+      - name: Bundle Remotion composition
+        run: |
+          node --input-type=module -e "
+          import path from 'node:path';
+          import {bundle} from '@remotion/bundler';
+          const serveUrl = await bundle({entryPoint: path.resolve('src/entry.jsx')});
+          if (!serveUrl) process.exit(1);
+          console.log(serveUrl);
+          "
