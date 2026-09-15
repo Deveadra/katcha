@@ -25,7 +25,9 @@ def register_source(url: str, *, force_retry: bool = False) -> SourceItem:
             if force_retry and existing.status == SourceStatus.FAILED.value:
                 existing.status = SourceStatus.REGISTERED.value
                 existing.error = None
-                existing.workflow_id = f"{base_workflow_id_for_url(canonical)}-{uuid.uuid4().hex[:8]}"
+                existing.workflow_id = (
+                    f"{base_workflow_id_for_url(canonical)}-{uuid.uuid4().hex[:8]}"
+                )
                 session.flush()
                 session.refresh(existing)
             return existing

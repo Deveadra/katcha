@@ -7,11 +7,26 @@ from fastapi import FastAPI, HTTPException, Query, status
 from sqlalchemy import select, text
 
 from katcha import __version__
-from katcha.api.schemas import ClipResponse, HealthResponse, IngestRequest, IngestResponse, SourceResponse
+from katcha.api.schemas import (
+    AnalysisRunResponse,
+    AnalyzeRequest,
+    AnalyzeResponse,
+    ClipFeatureResponse,
+    ClipResponse,
+    HealthResponse,
+    IngestRequest,
+    IngestResponse,
+    SourceResponse,
+)
 from katcha.db import session_scope
-from katcha.domain import SourceStatus
-from katcha.models import Clip, SourceItem
-from katcha.orchestration.client import get_temporal_client, start_ingest_workflow
+from katcha.domain import AnalysisStatus, SourceStatus
+from katcha.models import Clip, ClipAnalysisRun, ClipFeature, SourceItem
+from katcha.orchestration.client import (
+    get_temporal_client,
+    start_analysis_workflow,
+    start_ingest_workflow,
+)
+from katcha.services.analysis import register_analysis
 from katcha.services.sources import register_source
 
 app = FastAPI(
@@ -47,7 +62,7 @@ async def ingest(request: IngestRequest) -> IngestResponse:
     if source.workflow_id is None:
         raise HTTPException(status_code=500, detail="source has no workflow id")
 
-    if source.status != SourceStatus.READY.value:
+    if source.status == SourceStatus.REGISTERED.value:
         await start_ingest_workflow(str(source.id), source.workflow_id)
 
     return IngestResponse(
@@ -56,6 +71,45 @@ async def ingest(request: IngestRequest) -> IngestResponse:
         status=source.status,
         clip_id=source.clip_id,
     )
+
+
+@app.post(
+    "/v1/clips/{clip_id}/analyze",
+    response_model=AnalyzeResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def analyze_clip(clip_id: uuid.UUID, request: AnalyzeRequest) -> AnalyzeResponse:
+    try:
+        run = register_analysis(clip_id, force_retry=request.force_retry)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    if run.status == AnalysisStatus.QUEUED.value:
+        await start_analysis_workflow(str(run.id), run.workflow_id)
+    return AnalyzeResponse(
+        analysis_run_id=run.id,
+        clip_id=run.clip_id,
+        workflow_id=run.workflow_id,
+        status=run.status,
+        stage=run.stage,
+    )
+
+
+@app.get("/v1/analysis/{analysis_run_id}", response_model=AnalysisRunResponse)
+def get_analysis_run(analysis_run_id: uuid.UUID) -> ClipAnalysisRun:
+    with session_scope() as session:
+        run = session.get(ClipAnalysisRun, analysis_run_id)
+        if run is None:
+            raise HTTPException(status_code=404, detail="analysis run not found")
+        return run
+
+
+@app.get("/v1/clips/{clip_id}/features", response_model=ClipFeatureResponse)
+def get_clip_features(clip_id: uuid.UUID) -> ClipFeature:
+    with session_scope() as session:
+        features = session.get(ClipFeature, clip_id)
+        if features is None:
+            raise HTTPException(status_code=404, detail="clip features not found")
+        return features
 
 
 @app.get("/v1/sources/{source_id}", response_model=SourceResponse)

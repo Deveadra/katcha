@@ -16,7 +16,9 @@ from katcha.integrations.storage import ObjectStore
 from katcha.models import Clip, DomainEvent, SourceItem
 
 
-def _extract_video_shape(metadata: dict[str, object]) -> tuple[Decimal | None, int | None, int | None]:
+def _extract_video_shape(
+    metadata: dict[str, object],
+) -> tuple[Decimal | None, int | None, int | None]:
     format_info = metadata.get("format") if isinstance(metadata, dict) else None
     duration: Decimal | None = None
     if isinstance(format_info, dict) and format_info.get("duration") is not None:

@@ -10,6 +10,13 @@ class SourceStatus(StrEnum):
     FAILED = "failed"
 
 
+class AnalysisStatus(StrEnum):
+    QUEUED = "queued"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+
 class ClipStatus(StrEnum):
     INGESTED = "ingested"
     NORMALIZED = "normalized"
