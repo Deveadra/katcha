@@ -19,7 +19,7 @@ from katcha.api.schemas import (
     SourceResponse,
 )
 from katcha.db import session_scope
-from katcha.domain import SourceStatus
+from katcha.domain import AnalysisStatus, SourceStatus
 from katcha.models import Clip, ClipAnalysisRun, ClipFeature, SourceItem
 from katcha.orchestration.client import (
     get_temporal_client,
@@ -62,7 +62,7 @@ async def ingest(request: IngestRequest) -> IngestResponse:
     if source.workflow_id is None:
         raise HTTPException(status_code=500, detail="source has no workflow id")
 
-    if source.status != SourceStatus.READY.value:
+    if source.status == SourceStatus.REGISTERED.value:
         await start_ingest_workflow(str(source.id), source.workflow_id)
 
     return IngestResponse(
@@ -83,7 +83,8 @@ async def analyze_clip(clip_id: uuid.UUID, request: AnalyzeRequest) -> AnalyzeRe
         run = register_analysis(clip_id, force_retry=request.force_retry)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
-    await start_analysis_workflow(str(run.id), run.workflow_id)
+    if run.status == AnalysisStatus.QUEUED.value:
+        await start_analysis_workflow(str(run.id), run.workflow_id)
     return AnalyzeResponse(
         analysis_run_id=run.id,
         clip_id=run.clip_id,
