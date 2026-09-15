@@ -2,237 +2,294 @@
 
 ## Product boundary
 
-Katcha is an independently deployable media factory. It owns media acquisition, canonicalization, analysis, editorial generation, rendering, publishing orchestration, analytics ingestion, and performance learning.
+Katcha is an independently deployable media intelligence, production, publishing, analytics, and channel-learning system. It owns canonical media, editorial outputs, durable workflows, model/TTS spend, YouTube publication lineage, performance observations, and channel operating policy.
 
-Aerith is intentionally **not** a runtime dependency. Future Aerith control will use Katcha's versioned HTTP API plus domain events. This preserves independent operation, makes testing/deployment simpler, and prevents either product from inheriting the other's failure domain.
+Aerith is intentionally **not** a runtime dependency. External controllers use Katcha's versioned HTTP API and cursor-based domain-event contract. Katcha never imports Aerith code or exposes secret-bearing event payloads.
 
 ## Core principles
 
-1. **Durable orchestration, not chained background jobs.** Temporal owns long-running workflows, retries, and recovery.
-2. **Deterministic work stays local.** Hashing, ffprobe, dedupe, state transitions, and file manipulation do not consume LLM tokens.
-3. **Content-addressed media.** Raw assets are keyed by SHA-256. Multiple source URLs can resolve to one canonical clip.
-4. **AI is routed by task.** Callers request `bulk_vision`, `deep_video`, `short_script`, etc.; they do not hard-code providers.
-5. **Cost is domain data.** Provider/model usage is recorded in `usage_events` and guarded by a monthly AI budget.
-6. **External integration uses an outbox.** Katcha commits domain state and events together, then adapters publish them later.
-7. **Human review is a first-class stage.** Automation can later be promoted to auto-publish by policy; it is not assumed initially.
-8. **Every activity is idempotent.** A retry must converge on the same business state.
+1. **Durable orchestration, not chained background jobs.** Temporal owns long-running workflows, retries, recovery, and scheduled intelligence refreshes.
+2. **Deterministic work stays local.** Hashing, probing, dedupe, numeric ranking, scheduling statistics, and policy evaluation do not consume LLM tokens.
+3. **Content-addressed canonical media.** Raw clips are shared evidence; channel-specific editorial outcomes are isolated.
+4. **AI is routed by task and channel policy.** Provider choice respects availability, quality floors, expected value, and spend headroom.
+5. **Cost is domain data.** Every paid model/TTS response is written to `usage_events`; channel-scoped calls reserve spend before provider execution.
+6. **Learning is reproducible.** Training observations freeze pre-publication features separately from post-publication labels, and ranking snapshots store their model inputs, coefficients, validation metrics, confidence, and blend ratio.
+7. **Human review is the default.** Automation promotion is explicit and evidence-gated. Phase 5 records authorization/readiness state; it does not silently enable public publishing.
+8. **Retry safety is designed, not assumed.** Paid-call ambiguity fails visibly; deterministic stages converge idempotently; refresh runs have stable run keys.
+9. **The operator hard cap is absolute.** Earned reinvestment may expand the active allocation only up to the configured hard monthly ceiling.
+10. **External cursors are scope-bound.** A consumer key cannot be reused across channel streams and accidentally skip another channel's events.
 
-## Current vertical slice
-
-```text
-Client
-  |
-  v
-FastAPI POST /v1/clips/ingest
-  |
-  +--> source_items (registered)
-  |
-  v
-Temporal ClipIngestWorkflow
-  |
-  v
-ingest_source activity (thread pool)
-  |
-  +--> yt-dlp download
-  +--> ffprobe
-  +--> SHA-256
-  +--> S3/MinIO raw/<hash>
-  +--> PostgreSQL ON CONFLICT dedupe
-  +--> source -> canonical clip linkage
-  +--> domain_events outbox row
-  |
-  v
-source_items.ready + clips.ingested
-```
-
-The workflow identity is stable per source URL. Repeated submissions attach to the same source/workflow. A failed source can be explicitly retried, which creates a new workflow attempt while retaining the source identity.
-
-## Data model
-
-### `source_items`
-
-Represents where Katcha found a piece of media. Source metadata belongs here because the same bytes can have different creators/captions/engagement values across reposts.
-
-### `clips`
-
-Represents canonical media bytes. `sha256` is unique and the raw storage key is derived from it. Future perceptual hashes and embeddings will augment exact-byte dedupe rather than replace it.
-
-### `domain_events`
-
-Transactional outbox. Future publisher workers can deliver events to webhooks, Aerith, NATS/Kafka, or another bus without coupling those systems to write transactions.
-
-### `usage_events`
-
-Model/API cost ledger. Every paid model invocation will record task, provider, model, units, estimated/actual cost, and the source/clip/production it belongs to.
-
-## Workflow topology
-
-Katcha will use multiple workflows instead of one giant pipeline:
+## System topology
 
 ```text
-ClipIngestWorkflow
-       |
-       v
-ClipAnalysisWorkflow
-       |
-       v
-ShortProductionWorkflow -----> ReviewWorkflow -----> PublishWorkflow
-       |                                              |
-       |                                              v
-       +-------------------------------> AnalyticsWorkflow
-                                                        |
-                                                        v
-                                                LearningWorkflow
-
-CompilationWorkflow consumes the canonical clip library + historical performance.
+                              +--------------------+
+source URL -----------------> | ClipIngestWorkflow |
+                              +----------+---------+
+                                         |
+                                         v
+                              canonical clips / S3
+                                         |
+                                         v
+                              +---------------------+
+                              | ClipAnalysisWorkflow|
+                              +----------+----------+
+                                         |
+                              local + AI features
+                                         |
+                    +--------------------+--------------------+
+                    |                                         |
+                    v                                         v
+        +-------------------------+             +--------------------------+
+        | ShortProductionWorkflow |             | LongformCompilationFlow  |
+        | script -> TTS -> render  |             | select -> edit -> TTS    |
+        +------------+------------+             | -> 16:9 render            |
+                     |                          +-------------+-------------+
+                     +--------------------------+-------------+
+                                                |
+                                           human review
+                                                |
+                                                v
+                                    +-------------------------+
+                                    | YouTube PublishWorkflow |
+                                    +------------+------------+
+                                                 |
+                                       resumable upload/status
+                                                 |
+                                                 v
+                                    +-------------------------+
+                                    | Analytics workflows     |
+                                    +------------+------------+
+                                                 |
+                                                 v
+                              +------------------------------------+
+                              | Channel Intelligence Refresh       |
+                              | observations -> ranking ->         |
+                              | economics -> schedule -> policy    |
+                              +------------------------------------+
 ```
 
-Separate workflows provide clean retry boundaries and allow us to re-analyze or re-render without redownloading media.
+Dedicated workers isolate media ingest, analysis, production, long-form compilation, publishing, and channel intelligence failure domains.
 
-## Planned analysis funnel
+## Data ownership
+
+### Shared canonical intelligence
+
+`source_items`, `clips`, and clip-analysis records describe the underlying media. They can be reused across channels. Sharing a canonical clip does **not** share a channel's private strategy, budget, ranking outcome, review history, or publication state.
+
+### Channel-scoped editorial output
+
+`productions` and `compilations` may carry `channel_profile_id`. New multi-channel flows create them with explicit channel scope before any paid editorial work occurs. Child regeneration inherits the same scope. Legacy/unscoped editorial records remain supported and are attributed conservatively when published.
+
+A channel-scoped production or compilation may only be published through the YouTube connection owned by that `ChannelProfile`.
+
+### Publication lineage
+
+A `publication` references exactly one source:
 
 ```text
-Discovery candidates
-  |
-  | metadata/source heuristics (no AI)
-  v
-Downloaded unique media
-  |
-  | local transcript + contact sheet
-  v
-Bulk vision route (cheap model)
-  |
-  | confidence / value threshold
-  v
-Deep video route (Gemini native-video path)
-  |
-  v
-Feature record + deterministic scoring
+production_id XOR compilation_id
 ```
 
-AI produces structured features; Katcha's scoring engine combines those features with source metrics and eventually real YouTube performance. We do not let an LLM's arbitrary 0–100 opinion become the sole ranking function.
+The database enforces this constraint. Analytics, retention, revenue, and publication failures remain traceable to the exact editorial generation and canonical source evidence.
 
-## Default AI task routing
+## Self-sustaining intelligence model
 
-Logical task routing currently encodes the agreed initial strategy:
+### Channel profiles and immutable strategy versions
 
-- `bulk_vision`: OpenAI Luna -> Gemini Flash-Lite fallback
-- `deep_video`: Gemini Flash -> OpenAI Terra fallback
-- `short_script`: OpenAI Terra -> Gemini Flash fallback
-- `longform_editor`: OpenAI Sol -> Gemini Flash fallback
-- `metadata`: OpenAI Luna -> Gemini Flash-Lite fallback
-- `performance_analysis`: OpenAI Sol -> Gemini Flash fallback
+`channel_profiles` bind operational state to one YouTube connection. Mutable policy is represented by immutable version rows:
 
-Provider API calls are intentionally not wired into the ingestion slice. When they are added, all calls must go through the router/budget ledger rather than directly from workflow code.
+- `channel_strategy_versions`
+- `automation_policy_versions`
 
-## Aerith integration contract
+Changing a strategy creates a new version and advances the active-version pointer. Previous policy remains inspectable.
 
-Aerith should eventually be able to:
+### Ranking observations
 
-- inspect system/worker health;
-- submit source URLs and discovery jobs;
-- request or cancel productions;
-- query clip/production state;
-- approve/reject review items;
-- trigger publication/scheduling;
-- retrieve channel analytics and recommendations;
-- subscribe to domain events.
+`performance_observations` deliberately separate information by time:
 
-Katcha should never import Aerith code. The integration package will be an adapter over public Katcha contracts.
+- `features`: information that existed **before** publication;
+- `labels`: views, retention, sharing, comments, subscriber conversion, and monetary outcomes measured **after** publication.
 
-Candidate events:
+This prevents outcome leakage into the learning features.
+
+For Shorts, features are reconstructed from the frozen `Production.analysis_snapshot`, not today's mutable clip analysis. Long-form observations use the frozen compilation-segment evidence that actually drove the episode.
+
+### Learned ranking
+
+Katcha trains numeric ranking locally. Paid LLMs are not used to fit coefficients.
+
+Cold start remains the existing deterministic score. A learned snapshot stores:
+
+- feature names;
+- means/scales;
+- coefficients and intercept;
+- chronological training cutoff;
+- sample count;
+- holdout validation metrics;
+- confidence;
+- learned/baseline blend ratio.
+
+A learned model receives zero influence when data is too sparse or it fails to outperform the deterministic baseline. Even a successful learned model remains blended rather than replacing the baseline outright.
+
+Long-form candidate ordering applies an additional conservative adjustment to the channel score before diversity-aware sequence optimization.
+
+## Budget and reinvestment model
+
+Katcha has two budget layers.
+
+### System-wide emergency ceiling
+
+`KATCHA_AI_BUDGET_USD_MONTHLY` remains the deployment-wide safety ceiling. It can stop paid execution even when an individual channel still has channel headroom. It should be sized for the maximum aggregate spend the deployment owner is willing to permit.
+
+### Per-channel strategy
+
+Each channel strategy has:
+
+- `monthly_base_budget_usd`: normal operating allocation;
+- `monthly_hard_budget_usd`: absolute operator ceiling;
+- `reinvestment_rate`;
+- `reinvestment_cap_usd`.
+
+Month-to-date economics calculate:
 
 ```text
-source.ingested
-source.ingest_failed
-clip.analyzed
-clip.scored
-production.rendered
-production.review_required
-publication.scheduled
-publication.published
-analytics.snapshot_ingested
-budget.threshold_reached
+margin = MTD revenue - MTD attributed AI/TTS cost
+reinvestable = min(max(margin, 0) * reinvestment_rate, reinvestment_cap)
+effective_budget = min(hard_budget, base_budget + reinvestable)
+headroom = max(effective_budget - actual_spend - active_reservations, 0)
 ```
 
-## Storage lifecycle
+Reinvestment therefore **cannot** silently raise the hard monthly ceiling.
 
-Initial policy:
+Costs include channel-scoped productions/compilations even when they are rejected or never published. Shared clip-analysis cost is allocated across channels using that clip. Legacy unscoped editorial cost is allocated across its publishing channels rather than counted in full for each channel.
 
-- raw published/high-value clips: retained;
-- rejected raw clips: retention policy configurable later;
-- hashes/source metadata/analysis: retained after raw deletion;
-- renders: retained while operationally useful, then lifecycle-managed.
+YouTube analytics snapshots are cumulative from a video's publication date. For videos published before the current month, Katcha only treats the delta from a pre-month baseline snapshot as month-to-date revenue. If that baseline is unavailable, the old video's revenue is marked incomplete and is not used to justify reinvestment.
 
-Object storage is S3-compatible so local MinIO can be replaced by Cloudflare R2/S3 without changing domain code.
+Economics snapshots expose revenue, source/shared cost, contribution margin, reinvestable amount, base/hard/effective budget, actual spend, active reservations, headroom, daily burn rate, projected month-end spend, and whether monetary scope is available.
+
+## Paid-call reservations
+
+A channel-scoped paid call obtains an `ai_budget_reservations` row before provider execution.
+
+The reservation path:
+
+1. locks the channel profile;
+2. expires stale reservations;
+3. computes live economics/headroom from authoritative history;
+4. validates the task quality floor and provider availability;
+5. selects the provider/model;
+6. reserves the estimated amount under an idempotency key;
+7. performs the paid call;
+8. atomically writes `usage_events` and settles the reservation with actual cost.
+
+This prevents two concurrent calls from spending the same remaining channel headroom. A provider failure before an accepted response releases the reservation. A crash after an accepted paid response remains an explicit ambiguous-call condition rather than being automatically retried and potentially charged twice.
+
+### TTS consistency
+
+TTS uses the same reservation/routing ledger. The first narration segment may choose the allowed provider from channel policy; subsequent segments pin the exact voice/model for that production or compilation. Budget pressure is not allowed to switch host voice halfway through an episode.
+
+## Scheduling intelligence
+
+Scheduling uses only performance evidence available at computation time. Recommendations are calculated in the channel's configured IANA timezone and include:
+
+- weekday/hour;
+- score;
+- sample count;
+- confidence;
+- evidence source.
+
+Sparse channels use configured fallback windows with low confidence. Operator blackout windows are removed from recommendations. Katcha does not claim causal timing effects from tiny samples.
+
+## Automation policy
+
+Every channel starts at `review_required`.
+
+Policy levels are:
+
+1. `review_required`
+2. `auto_approve_low_risk`
+3. `auto_publish_private`
+4. `auto_publish_scheduled`
+
+Promotion is an explicit operator action and can only advance one level at a time. Evidence includes:
+
+- reviewed-item count;
+- approval rate;
+- explicit rejection rate;
+- regeneration rate;
+- publication failure rate;
+- ranking confidence;
+- recent negative-review rate;
+- recent-review drift versus historical quality.
+
+A promoted channel can be automatically demoted to `review_required` when gates deteriorate. Promotion state is an auditable authorization/readiness contract. Phase 5 does not, merely by existing or by starting an intelligence worker, enable automatic public publication; an execution path must explicitly consume the authorized level.
+
+## External control / Aerith contract
+
+The control plane exposes channel strategy, learning, economics, scheduling, automation, channel-scoped production/compilation creation, and domain events under `/v1`.
+
+External controllers consume events with a stable `consumer_key`. The first read binds that key to either:
+
+- one `channel_profile_id`, or
+- the unscoped/global stream.
+
+The same key cannot later move to another scope. ACKs advance monotonically by `(created_at, event_id)`. Secret-bearing keys such as tokens, credentials, encrypted values, upload URLs, and code verifiers are recursively removed from event payloads.
+
+Important control endpoints include:
+
+```text
+POST /v1/channels
+GET  /v1/channels/{channel_profile_id}
+POST /v1/channels/{channel_profile_id}/strategy
+POST /v1/channels/{channel_profile_id}/intelligence/refresh
+GET  /v1/channels/{channel_profile_id}/ranking
+GET  /v1/channels/{channel_profile_id}/economics
+GET  /v1/channels/{channel_profile_id}/schedule
+GET  /v1/channels/{channel_profile_id}/automation
+POST /v1/channels/{channel_profile_id}/automation/promote
+POST /v1/channels/{channel_profile_id}/clips/{clip_id}/productions
+POST /v1/channels/{channel_profile_id}/compilations
+GET  /v1/control/events
+POST /v1/control/events/{event_id}/ack
+```
 
 ## Reliability requirements
 
-Before any workflow is considered production-ready:
+Before a workflow is considered production-ready:
 
-- retries must be bounded;
-- side effects must be idempotent;
-- workflow state must be queryable;
-- failure must be visible in API/UI;
-- no silent fallback to a paid model;
-- cost must be recorded for paid calls;
-- temporary media must be cleaned;
-- durable media must be committed before database pointers claim success.
+- retries are bounded;
+- deterministic side effects are idempotent;
+- paid calls use conservative retry boundaries;
+- paid model/TTS responses are cost-accounted;
+- channel paid calls reserve headroom before execution;
+- workflow failure remains visible through domain state/API;
+- durable media is committed before database pointers claim success;
+- strategy and learned state are versioned and reversible;
+- channel budgets/private outcome state do not leak across channels;
+- external event streams contain no secret-bearing payload fields.
 
-## Build sequence
+## Phase status
 
-### Phase 0 — Foundation (current)
+### Phase 0 — Foundation ✅
 
-- standalone service boundary
-- Postgres + MinIO + Temporal
-- source ingestion API
-- durable ingestion workflow
-- yt-dlp/ffprobe download path
-- exact SHA dedupe
-- outbox and usage ledger
-- AI routing policy
+FastAPI, Temporal, PostgreSQL/Alembic, S3-compatible storage, content-addressed ingestion, source lineage, outbox, usage ledger, task routing.
 
-### Phase 1 — Media intelligence
+### Phase 1 — Media intelligence ✅
 
-- scene/keyframe extraction
-- perceptual hash + local visual embeddings
-- faster-whisper transcription
-- contact-sheet generator
-- cheap vision classification
-- Gemini deep-video escalation
-- feature schema + deterministic score
+Keyframes/contact sheets, perceptual similarity, local transcription, structured features, bulk/deep vision funnel, deterministic scoring, durable analysis workflow.
 
-### Phase 2 — Short production
+### Phase 2 — Short production ✅
 
-- host persona/versioning
-- script candidate generation and judging
-- TTS provider bake-off abstraction
-- caption timing
-- Remotion renderer
-- review queue/API
-- production cost accounting
+Versioned host persona, script candidates, TTS abstraction, caption timing, Remotion rendering, review/regeneration, per-production cost lineage.
 
-### Phase 3 — Publishing and feedback
+### Phase 3 — Publishing and feedback ✅
 
-- YouTube OAuth and upload/scheduling
-- analytics snapshots
-- retention curves
-- source/clip/production lineage
-- model/host-style experiment tracking
+YouTube OAuth, resumable upload/scheduling, publication workflow, analytics/retention snapshots, experiment lineage, safe retries.
 
-### Phase 4 — Long-form compiler
+### Phase 4 — Long-form compiler ✅
 
-- compilation candidate selection
-- sequence optimization
-- Sol editor / Gemini critic loop
-- 16:9 recomposition from canonical raw media
-- long-form render/review/publish workflow
+Performance-aware candidate selection, diversity sequencing, Sol editor/Gemini critic, canonical 16:9 reconstruction, durable TTS/rendering, review/regeneration, shared publishing/analytics.
 
 ### Phase 5 — Self-sustaining intelligence
 
-- learned scoring from Katcha's own channel results
-- budget-aware model routing
-- schedule optimization
-- automated reinvestment/accounting signals
-- multi-channel isolation and shared clip intelligence
-- Aerith control adapter
+Channel strategy isolation, leakage-safe observations, learned ranking, budget-aware model/TTS routing, spend reservations, reinvestment/economics, scheduling recommendations, promotion/demotion policy, dedicated intelligence refresh worker, and Aerith-safe event cursors.
