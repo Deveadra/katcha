@@ -4,7 +4,6 @@ import shutil
 import uuid
 from datetime import UTC, datetime
 from decimal import Decimal
-from pathlib import Path
 from typing import Any
 
 from sqlalchemy import select
@@ -13,7 +12,7 @@ from temporalio.exceptions import ApplicationError
 
 from katcha.config import get_settings
 from katcha.db import session_scope
-from katcha.domain import PublicationStatus, ProductionStatus, YouTubeConnectionStatus
+from katcha.domain import ProductionStatus, PublicationStatus, YouTubeConnectionStatus
 from katcha.integrations.storage import ObjectStore
 from katcha.integrations.youtube.analytics import (
     YouTubeAnalyticsError,
@@ -61,6 +60,10 @@ def _as_decimal(value: object) -> Decimal | None:
     if value is None or value == "":
         return None
     return Decimal(str(value))
+
+
+def _first_not_none(*values: int | None) -> int | None:
+    return next((value for value in values if value is not None), None)
 
 
 def _persist_completed_upload(
@@ -250,9 +253,10 @@ def upload_video_activity(publication_id: str) -> dict[str, object]:
 
         work_dir.mkdir(parents=True, exist_ok=True)
         store.download_file(render_key, video_path)
-        if video_path.stat().st_size != total_size:
+        downloaded_size = video_path.stat().st_size
+        if downloaded_size != total_size:
             raise RuntimeError(
-                f"downloaded render size mismatch: expected {total_size}, got {video_path.stat().st_size}"
+                f"downloaded render size mismatch: expected {total_size}, got {downloaded_size}"
             )
 
         chunk_size = settings.youtube_upload_chunk_mb * 1024 * 1024
@@ -575,13 +579,22 @@ def collect_analytics_snapshot_activity(
             sampled_at=now,
             period_start=period_start,
             period_end=today,
-            views=_as_int(metrics.get("views")) or _as_int(stats.get("viewCount")),
+            views=_first_not_none(
+                _as_int(metrics.get("views")),
+                _as_int(stats.get("viewCount")),
+            ),
             engaged_views=_as_int(metrics.get("engagedViews")),
             estimated_minutes_watched=_as_decimal(metrics.get("estimatedMinutesWatched")),
             average_view_duration=_as_decimal(metrics.get("averageViewDuration")),
             average_view_percentage=_as_decimal(metrics.get("averageViewPercentage")),
-            likes=_as_int(metrics.get("likes")) or _as_int(stats.get("likeCount")),
-            comments=_as_int(metrics.get("comments")) or _as_int(stats.get("commentCount")),
+            likes=_first_not_none(
+                _as_int(metrics.get("likes")),
+                _as_int(stats.get("likeCount")),
+            ),
+            comments=_first_not_none(
+                _as_int(metrics.get("comments")),
+                _as_int(stats.get("commentCount")),
+            ),
             shares=_as_int(metrics.get("shares")),
             subscribers_gained=_as_int(metrics.get("subscribersGained")),
             subscribers_lost=_as_int(metrics.get("subscribersLost")),
