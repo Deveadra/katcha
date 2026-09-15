@@ -8,10 +8,10 @@ from typing import Any
 from sqlalchemy import func, select
 from temporalio import activity
 
-from katcha.audio.tts import choose_voice_profile, get_voice_profile, synthesize_speech
+from katcha.audio.tts import get_voice_profile, synthesize_speech
 from katcha.config import get_settings
 from katcha.db import session_scope
-from katcha.domain import AITask, ProductionStatus
+from katcha.domain import ProductionStatus
 from katcha.editorial.generator import generate_short_scripts
 from katcha.editorial.personas import get_persona
 from katcha.integrations.storage import ObjectStore
@@ -231,6 +231,11 @@ def _persist_tts_result(
         production = session.get(Production, production_id)
         if production is None:
             raise RuntimeError("production disappeared during TTS persistence")
+        voice_profile = str(metadata["voice_profile"])
+        if production.selected_voice_profile is None:
+            production.selected_voice_profile = voice_profile
+        elif production.selected_voice_profile != voice_profile:
+            raise RuntimeError("narration voice profile changed within one production")
         existing = session.scalar(
             select(ProductionAsset).where(
                 ProductionAsset.production_id == production_id,
@@ -250,23 +255,6 @@ def _persist_tts_result(
                 provider=str(metadata["provider"]),
                 model=str(metadata["model"]),
                 asset_metadata=metadata,
-            )
-        )
-        session.add(
-            UsageEvent(
-                task=AITask.TTS.value,
-                provider=str(metadata["provider"]),
-                model=str(metadata["model"]),
-                input_units=int(metadata["input_units"]),
-                output_units=int(metadata["output_units"]),
-                cost_usd=Decimal(str(metadata["cost_usd"])),
-                reference_type="production",
-                reference_id=str(production_id),
-                usage_metadata={
-                    "segment_index": segment_index,
-                    "voice_profile": metadata["voice_profile"],
-                    **dict(metadata.get("cost_metadata") or {}),
-                },
             )
         )
 
@@ -289,9 +277,20 @@ def generate_narration_assets(production_id: str) -> dict[str, object]:
         profile = (
             get_voice_profile(production.selected_voice_profile)
             if production.selected_voice_profile
-            else choose_voice_profile(settings)
+            else None
         )
-        production.selected_voice_profile = profile.key
+        channel_profile_id = production.channel_profile_id
+        try:
+            expected_value = max(
+                0.0,
+                min(
+                    1.0,
+                    float((production.analysis_snapshot or {}).get("candidate_score") or 0)
+                    / 100.0,
+                ),
+            )
+        except (TypeError, ValueError):
+            expected_value = 0.5
         production.status = ProductionStatus.VOICING.value
         production.error = None
 
@@ -308,6 +307,10 @@ def generate_narration_assets(production_id: str) -> dict[str, object]:
                 )
             )
             if existing is not None:
+                if profile is None:
+                    saved_profile = (existing.asset_metadata or {}).get("voice_profile")
+                    if saved_profile:
+                        profile = get_voice_profile(str(saved_profile))
                 reused += 1
                 continue
             production = session.get(Production, production_uuid)
@@ -324,6 +327,7 @@ def generate_narration_assets(production_id: str) -> dict[str, object]:
                 if store.exists(audio_key) and store.exists(sidecar_key):
                     metadata = json.loads(store.get_bytes(sidecar_key).decode("utf-8"))
                     _persist_tts_result(production_uuid, index, audio_key, metadata)
+                    profile = get_voice_profile(str(metadata["voice_profile"]))
                     reused += 1
                     continue
                 raise AmbiguousPaidCall(
@@ -333,7 +337,18 @@ def generate_narration_assets(production_id: str) -> dict[str, object]:
             production.stage = call_stage
 
         text = str(segment.get("text") or "").strip()
-        result = synthesize_speech(text, profile=profile, settings=settings)
+        result = synthesize_speech(
+            text,
+            profile=profile,
+            settings=settings,
+            channel_profile_id=channel_profile_id,
+            reference_type="production",
+            reference_id=production_id,
+            reservation_key=f"tts:production:{production_id}:{index:02d}",
+            expected_value=expected_value,
+            usage_metadata={"segment_index": index},
+        )
+        profile = result.profile
         metadata: dict[str, object] = {
             "segment_index": index,
             "placement": segment.get("placement"),
@@ -359,6 +374,8 @@ def generate_narration_assets(production_id: str) -> dict[str, object]:
         _persist_tts_result(production_uuid, index, audio_key, metadata)
         generated += 1
 
+    if profile is None:
+        raise RuntimeError("production narration has no recoverable voice profile")
     with session_scope() as session:
         production = session.get(Production, production_uuid)
         if production is None:
