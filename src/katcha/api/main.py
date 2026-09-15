@@ -28,6 +28,7 @@ from katcha.api.schemas import (
     PublicationAnalyticsSnapshotResponse,
     PublicationResponse,
     RetentionPointResponse,
+    RetryPublicationRequest,
     ReviewActionResponse,
     ReviewProductionRequest,
     SourceResponse,
@@ -135,7 +136,8 @@ async def youtube_oauth_callback(
 )
 def list_youtube_connections() -> list[YouTubeConnection]:
     with session_scope() as session:
-        return list(session.scalars(select(YouTubeConnection).order_by(YouTubeConnection.created_at)))
+        stmt = select(YouTubeConnection).order_by(YouTubeConnection.created_at)
+        return list(session.scalars(stmt))
 
 
 @app.post(
@@ -363,9 +365,15 @@ def get_publication(publication_id: uuid.UUID) -> Publication:
     response_model=PublicationResponse,
     status_code=status.HTTP_202_ACCEPTED,
 )
-async def retry_youtube_publication(publication_id: uuid.UUID) -> Publication:
+async def retry_youtube_publication(
+    publication_id: uuid.UUID,
+    request: RetryPublicationRequest,
+) -> Publication:
     try:
-        publication = retry_publication(publication_id)
+        publication = retry_publication(
+            publication_id,
+            allow_new_upload_session=request.allow_new_upload_session,
+        )
     except ValueError as exc:
         code = 404 if "not found" in str(exc) else 409
         raise HTTPException(status_code=code, detail=str(exc)) from exc
