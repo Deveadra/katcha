@@ -182,7 +182,9 @@ def register_regeneration(
             ProductionStatus.REJECTED.value,
             ProductionStatus.FAILED.value,
         }:
-            raise ValueError("production must be in review, rejected, or failed state to regenerate")
+            raise ValueError(
+                "production must be in review, rejected, or failed state to regenerate"
+            )
 
         child = Production(
             clip_id=parent.clip_id,
