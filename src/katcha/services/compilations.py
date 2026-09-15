@@ -29,9 +29,9 @@ def _workflow_id(
 ) -> str:
     scope = str(channel_profile_id) if channel_profile_id else "shared"
     if idempotency_key:
-        digest = hashlib.sha256(f"{scope}:{idempotency_key}".encode("utf-8")).hexdigest()[:24]
+        digest = hashlib.sha256(f"{scope}:{idempotency_key}".encode()).hexdigest()[:24]
         return f"longform-{digest}"
-    scope_digest = hashlib.sha256(scope.encode("utf-8")).hexdigest()[:8]
+    scope_digest = hashlib.sha256(scope.encode()).hexdigest()[:8]
     return f"longform-{scope_digest}-{uuid.uuid4().hex[:16]}"
 
 
