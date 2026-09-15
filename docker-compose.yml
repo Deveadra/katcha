@@ -70,7 +70,7 @@ services:
 
   migrate:
     build: .
-    env_file: .env
+    env_file: ${KATCHA_ENV_FILE:-.env}
     depends_on:
       postgres:
         condition: service_healthy
@@ -78,7 +78,7 @@ services:
 
   api:
     build: .
-    env_file: .env
+    env_file: ${KATCHA_ENV_FILE:-.env}
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -92,7 +92,7 @@ services:
 
   worker:
     build: .
-    env_file: .env
+    env_file: ${KATCHA_ENV_FILE:-.env}
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -106,7 +106,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.analysis
-    env_file: .env
+    env_file: ${KATCHA_ENV_FILE:-.env}
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -122,7 +122,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.renderer
-    env_file: .env
+    env_file: ${KATCHA_ENV_FILE:-.env}
     depends_on:
       minio-init:
         condition: service_completed_successfully
@@ -142,7 +142,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.production
-    env_file: .env
+    env_file: ${KATCHA_ENV_FILE:-.env}
     depends_on:
       migrate:
         condition: service_completed_successfully
