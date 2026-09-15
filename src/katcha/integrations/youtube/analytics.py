@@ -23,7 +23,9 @@ BASIC_METRICS = (
     "subscribersGained",
     "subscribersLost",
 )
-BASIC_METRICS_WITHOUT_ENGAGED = tuple(metric for metric in BASIC_METRICS if metric != "engagedViews")
+BASIC_METRICS_WITHOUT_ENGAGED = tuple(
+    metric for metric in BASIC_METRICS if metric != "engagedViews"
+)
 MONETARY_METRICS = (
     "estimatedRevenue",
     "estimatedAdRevenue",
