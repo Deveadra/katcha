@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import shutil
 import subprocess
 import uuid
 from dataclasses import dataclass
@@ -92,37 +93,43 @@ def download(url: str, settings: Settings | None = None) -> DownloadedMedia:
         "fragment_retries": 3,
     }
 
-    with YoutubeDL(options) as ydl:
-        info = ydl.extract_info(canonical, download=True)
+    try:
+        with YoutubeDL(options) as ydl:
+            info = ydl.extract_info(canonical, download=True)
 
-    candidates = [p for p in job_dir.iterdir() if p.is_file() and not p.name.endswith(".part")]
-    if not candidates:
-        raise RuntimeError(f"yt-dlp produced no media file for {canonical}")
-    media_path = max(candidates, key=lambda p: p.stat().st_size)
+        candidates = [
+            p for p in job_dir.iterdir() if p.is_file() and not p.name.endswith(".part")
+        ]
+        if not candidates:
+            raise RuntimeError(f"yt-dlp produced no media file for {canonical}")
+        media_path = max(candidates, key=lambda p: p.stat().st_size)
 
-    digest = sha256_file(media_path)
-    probe = ffprobe(media_path)
-    safe_info = {
-        "id": info.get("id"),
-        "extractor": info.get("extractor"),
-        "extractor_key": info.get("extractor_key"),
-        "webpage_url": info.get("webpage_url"),
-        "view_count": info.get("view_count"),
-        "like_count": info.get("like_count"),
-        "comment_count": info.get("comment_count"),
-        "timestamp": info.get("timestamp"),
-        "uploader_id": info.get("uploader_id"),
-    }
+        digest = sha256_file(media_path)
+        probe = ffprobe(media_path)
+        safe_info = {
+            "id": info.get("id"),
+            "extractor": info.get("extractor"),
+            "extractor_key": info.get("extractor_key"),
+            "webpage_url": info.get("webpage_url"),
+            "view_count": info.get("view_count"),
+            "like_count": info.get("like_count"),
+            "comment_count": info.get("comment_count"),
+            "timestamp": info.get("timestamp"),
+            "uploader_id": info.get("uploader_id"),
+        }
 
-    return DownloadedMedia(
-        path=media_path,
-        sha256=digest,
-        size_bytes=media_path.stat().st_size,
-        extension=media_path.suffix.lstrip(".") or None,
-        title=info.get("title"),
-        creator=info.get("uploader") or info.get("channel"),
-        platform=platform,
-        canonical_url=canonical,
-        source_metadata={k: v for k, v in safe_info.items() if v is not None},
-        media_metadata=probe,
-    )
+        return DownloadedMedia(
+            path=media_path,
+            sha256=digest,
+            size_bytes=media_path.stat().st_size,
+            extension=media_path.suffix.lstrip(".") or None,
+            title=info.get("title"),
+            creator=info.get("uploader") or info.get("channel"),
+            platform=platform,
+            canonical_url=canonical,
+            source_metadata={k: v for k, v in safe_info.items() if v is not None},
+            media_metadata=probe,
+        )
+    except Exception:
+        shutil.rmtree(job_dir, ignore_errors=True)
+        raise
