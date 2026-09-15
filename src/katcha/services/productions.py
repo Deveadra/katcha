@@ -140,12 +140,8 @@ def _clone_voice_assets(session: object, parent: Production, child: Production) 
             select(ProductionAsset).where(ProductionAsset.production_id == parent.id)
         )
     )
-    reusable = [
-        asset
-        for asset in assets
-        if asset.kind.startswith("narration_") or asset.kind == "captions"
-    ]
-    if not any(asset.kind.startswith("narration_") for asset in reusable):
+    reusable = [asset for asset in assets if asset.kind.startswith("narration_")]
+    if not reusable:
         raise ValueError("parent production has no narration assets to reuse")
     for source in reusable:
         session.add(
@@ -272,14 +268,16 @@ def review_production(
         if decision == ReviewDecision.APPROVE:
             production.status = ProductionStatus.APPROVED.value
             production.stage = "approved"
+            event_type = "production.approved"
         else:
             production.status = ProductionStatus.REJECTED.value
             production.stage = "rejected"
+            event_type = "production.rejected"
         session.add(
             DomainEvent(
                 aggregate_type="production",
                 aggregate_id=str(production.id),
-                event_type=f"production.{decision.value}d",
+                event_type=event_type,
                 payload={
                     "production_id": str(production.id),
                     "decision": decision.value,
