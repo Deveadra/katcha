@@ -17,6 +17,9 @@ _SENSITIVE_PARTS = (
     "upload_url",
     "code_verifier",
 )
+_SCOPE_KEY = "_channel_profile_id"
+_SCAN_BATCH = 5000
+_MAX_SCAN_BATCHES = 20
 
 
 def _safe_payload(value: object) -> object:
@@ -39,6 +42,31 @@ def _belongs_to_channel(event: DomainEvent, channel_profile_id: uuid.UUID) -> bo
         return True
     payload = dict(event.payload or {})
     return str(payload.get("channel_profile_id") or "") == wanted
+
+
+def _scope_value(channel_profile_id: uuid.UUID | None) -> str | None:
+    return str(channel_profile_id) if channel_profile_id is not None else None
+
+
+def _cursor_scope(cursor: EventConsumerCursor) -> str | None:
+    metadata = dict(cursor.cursor_metadata or {})
+    value = metadata.get(_SCOPE_KEY)
+    return str(value) if value is not None else None
+
+
+def _require_cursor_scope(
+    cursor: EventConsumerCursor | None,
+    channel_profile_id: uuid.UUID | None,
+) -> None:
+    if cursor is None:
+        return
+    expected = _scope_value(channel_profile_id)
+    actual = _cursor_scope(cursor)
+    if actual != expected:
+        raise ValueError(
+            "consumer cursor is bound to a different channel scope; use a distinct "
+            "consumer_key for each channel or for the unscoped stream"
+        )
 
 
 def _after_cursor_query(
@@ -75,22 +103,37 @@ def list_consumer_events(
 
     with session_scope() as session:
         cursor = session.get(EventConsumerCursor, key)
-        last_created = cursor.last_event_created_at if cursor else None
-        last_id = cursor.last_event_id if cursor else None
-        fetch_limit = min(5000, max(limit * 10, 250))
-        rows = list(
-            session.scalars(
-                _after_cursor_query(last_created, last_id)
-                .order_by(DomainEvent.created_at, DomainEvent.id)
-                .limit(fetch_limit)
+        _require_cursor_scope(cursor, channel_profile_id)
+        scan_created = cursor.last_event_created_at if cursor else None
+        scan_id = cursor.last_event_id if cursor else None
+        selected: list[DomainEvent] = []
+
+        for _ in range(_MAX_SCAN_BATCHES):
+            rows = list(
+                session.scalars(
+                    _after_cursor_query(scan_created, scan_id)
+                    .order_by(DomainEvent.created_at, DomainEvent.id)
+                    .limit(_SCAN_BATCH)
+                )
             )
-        )
-        if channel_profile_id is not None:
-            rows = [
-                row
-                for row in rows
-                if _belongs_to_channel(row, channel_profile_id)
-            ]
+            if not rows:
+                break
+            if channel_profile_id is None:
+                selected.extend(rows[: limit - len(selected)])
+            else:
+                for row in rows:
+                    if _belongs_to_channel(row, channel_profile_id):
+                        selected.append(row)
+                        if len(selected) >= limit:
+                            break
+            if len(selected) >= limit:
+                break
+            last = rows[-1]
+            scan_created = last.created_at
+            scan_id = last.id
+            if len(rows) < _SCAN_BATCH:
+                break
+
         return [
             {
                 "id": row.id,
@@ -100,7 +143,7 @@ def list_consumer_events(
                 "payload": _safe_payload(dict(row.payload or {})),
                 "created_at": row.created_at,
             }
-            for row in rows[:limit]
+            for row in selected[:limit]
         ]
 
 
@@ -108,6 +151,7 @@ def acknowledge_consumer_event(
     consumer_key: str,
     event_id: uuid.UUID,
     *,
+    channel_profile_id: uuid.UUID | None = None,
     metadata: dict[str, object] | None = None,
 ) -> EventConsumerCursor:
     key = consumer_key.strip()
@@ -118,13 +162,24 @@ def acknowledge_consumer_event(
         event = session.get(DomainEvent, event_id)
         if event is None:
             raise ValueError(f"domain event not found: {event_id}")
+        if channel_profile_id is not None and not _belongs_to_channel(
+            event,
+            channel_profile_id,
+        ):
+            raise ValueError("domain event does not belong to the requested channel scope")
         cursor = session.get(EventConsumerCursor, key)
+        _require_cursor_scope(cursor, channel_profile_id)
+        scope = _scope_value(channel_profile_id)
+        safe_metadata = dict(metadata or {})
+        safe_metadata.pop(_SCOPE_KEY, None)
+        safe_metadata[_SCOPE_KEY] = scope
+
         if cursor is None:
             cursor = EventConsumerCursor(
                 consumer_key=key,
                 last_event_id=event.id,
                 last_event_created_at=event.created_at,
-                cursor_metadata=dict(metadata or {}),
+                cursor_metadata=safe_metadata,
             )
             session.add(cursor)
         else:
@@ -137,7 +192,7 @@ def acknowledge_consumer_event(
                 cursor.last_event_id = event.id
                 cursor.last_event_created_at = event.created_at
             if metadata is not None:
-                cursor.cursor_metadata = dict(metadata)
+                cursor.cursor_metadata = safe_metadata
         session.flush()
         session.refresh(cursor)
         session.expunge(cursor)
