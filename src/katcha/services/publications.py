@@ -22,11 +22,27 @@ def _clean_tags(tags: list[str]) -> list[str]:
         value = raw.strip()
         if not value or value.casefold() in seen:
             continue
-        if len(value) > 500:
-            raise ValueError("YouTube tags must be 500 characters or fewer")
         seen.add(value.casefold())
         result.append(value)
+
+    tag_budget = sum(len(tag) + (2 if " " in tag else 0) for tag in result)
+    tag_budget += max(0, len(result) - 1)
+    if tag_budget > 500:
+        raise ValueError("YouTube tags exceed the 500-character aggregate limit")
     return result
+
+
+def _validate_text_metadata(title: str, description: str) -> None:
+    if not title:
+        raise ValueError("publication title cannot be empty")
+    if len(title) > 100:
+        raise ValueError("publication title cannot exceed 100 characters")
+    if "<" in title or ">" in title:
+        raise ValueError("publication title cannot contain '<' or '>'")
+    if len(description.encode("utf-8")) > 5000:
+        raise ValueError("publication description cannot exceed 5000 UTF-8 bytes")
+    if "<" in description or ">" in description:
+        raise ValueError("publication description cannot contain '<' or '>'")
 
 
 def register_publication(
@@ -49,12 +65,7 @@ def register_publication(
     tags = _clean_tags(tags or [])
     privacy_status = privacy_status.strip().lower()
 
-    if not title:
-        raise ValueError("publication title cannot be empty")
-    if len(title) > 100:
-        raise ValueError("publication title cannot exceed 100 characters")
-    if len(description) > 5000:
-        raise ValueError("publication description cannot exceed 5000 characters")
+    _validate_text_metadata(title, description)
     if privacy_status not in VALID_PRIVACY_STATUSES:
         raise ValueError(f"unsupported privacy status: {privacy_status}")
     if publish_at is not None:
