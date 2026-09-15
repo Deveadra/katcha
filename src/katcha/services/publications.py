@@ -7,7 +7,7 @@ from sqlalchemy import select
 
 from katcha.config import get_settings
 from katcha.db import session_scope
-from katcha.domain import PublicationStatus, ProductionStatus, YouTubeConnectionStatus
+from katcha.domain import ProductionStatus, PublicationStatus, YouTubeConnectionStatus
 from katcha.models import DomainEvent
 from katcha.production_models import Production, ProductionAsset
 from katcha.publishing_models import Publication, YouTubeConnection
@@ -142,7 +142,11 @@ def register_publication(
         return publication
 
 
-def retry_publication(publication_id: uuid.UUID) -> Publication:
+def retry_publication(
+    publication_id: uuid.UUID,
+    *,
+    allow_new_upload_session: bool = False,
+) -> Publication:
     with session_scope() as session:
         publication = session.get(Publication, publication_id)
         if publication is None:
@@ -157,12 +161,23 @@ def retry_publication(publication_id: uuid.UUID) -> Publication:
         if connection is None or connection.status != YouTubeConnectionStatus.ACTIVE.value:
             raise ValueError("YouTube connection must be active before retrying")
 
+        expired_without_video_id = (
+            publication.stage == "upload_session_expired"
+            and publication.youtube_video_id is None
+        )
+        if expired_without_video_id and not allow_new_upload_session:
+            raise ValueError(
+                "expired upload session is ambiguous; retry with "
+                "allow_new_upload_session=true only after confirming that creating a new "
+                "YouTube upload will not duplicate an already-created video"
+            )
+
         previous_workflow_id = publication.workflow_id
         publication.workflow_attempt += 1
         publication.workflow_id = (
             f"yt-publish-{publication.id}-a{publication.workflow_attempt}"
         )
-        if publication.stage == "upload_session_expired" and publication.youtube_video_id is None:
+        if expired_without_video_id:
             publication.encrypted_upload_url = None
             publication.upload_offset = 0
             publication.upload_size = None
@@ -179,6 +194,7 @@ def retry_publication(publication_id: uuid.UUID) -> Publication:
                     "workflow_attempt": publication.workflow_attempt,
                     "previous_workflow_id": previous_workflow_id,
                     "workflow_id": publication.workflow_id,
+                    "new_upload_session_authorized": bool(expired_without_video_id),
                 },
             )
         )
