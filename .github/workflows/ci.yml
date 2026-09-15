@@ -37,6 +37,8 @@ jobs:
         run: pytest -q
 
       - name: Validate Compose
+        env:
+          KATCHA_ENV_FILE: .env.example
         run: docker compose --env-file .env.example config >/dev/null
 
   renderer:
