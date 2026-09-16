@@ -67,6 +67,7 @@ class DiscoveryCandidate(Base):
     __tablename__ = "discovery_candidates"
     __table_args__ = (
         UniqueConstraint("adapter_key", "external_id"),
+        UniqueConstraint("source_item_id"),
         CheckConstraint(
             "provenance_confidence >= 0 AND provenance_confidence <= 1",
             name="ck_discovery_provenance_confidence",
@@ -86,7 +87,6 @@ class DiscoveryCandidate(Base):
         Uuid(as_uuid=True),
         ForeignKey("source_items.id"),
         nullable=True,
-        unique=True,
         index=True,
     )
     adapter_key: Mapped[str] = mapped_column(String(64), index=True)
