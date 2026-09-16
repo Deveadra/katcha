@@ -35,7 +35,7 @@ jobs:
 
       - name: Import smoke
         run: |
-          python -c "import katcha.api.main; import katcha.orchestration.publishing_worker; import katcha.orchestration.longform_worker"
+          python -c "import katcha.api.main; import katcha.orchestration.publishing_worker; import katcha.orchestration.longform_worker; import katcha.orchestration.intelligence_worker"
 
       - name: Test
         run: pytest -q
@@ -43,7 +43,9 @@ jobs:
       - name: Validate Compose
         env:
           KATCHA_ENV_FILE: .env.example
-        run: docker compose --env-file .env.example config >/dev/null
+        run: |
+          docker compose --env-file .env.example config >/dev/null
+          docker compose --env-file .env.example -f docker-compose.yml -f docker-compose.intelligence.yml config >/dev/null
 
   renderer:
     runs-on: ubuntu-latest

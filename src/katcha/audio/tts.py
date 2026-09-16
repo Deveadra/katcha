@@ -3,13 +3,21 @@ from __future__ import annotations
 import base64
 import io
 import math
+import uuid
 import wave
 from dataclasses import dataclass
 from decimal import Decimal
 
 from katcha.ai.pricing import estimate_token_cost
-from katcha.ai.router import ModelTarget, assert_ai_budget
+from katcha.ai.router import (
+    ModelTarget,
+    assert_ai_budget,
+    record_usage,
+    release_budget_reservation,
+    route_for_channel,
+)
 from katcha.config import Settings, get_settings
+from katcha.domain import AITask
 
 
 class TTSUnavailable(RuntimeError):
@@ -74,8 +82,33 @@ def get_voice_profile(key: str) -> VoiceProfile:
         raise ValueError(f"unknown voice profile: {key}") from exc
 
 
-def choose_voice_profile(settings: Settings | None = None) -> VoiceProfile:
+def _target_for_profile(profile: VoiceProfile) -> ModelTarget:
+    return ModelTarget(profile.provider, profile.model)
+
+
+def voice_profile_for_target(target: ModelTarget) -> VoiceProfile:
+    for profile in VOICE_PROFILES.values():
+        if profile.provider == target.provider and profile.model == target.model:
+            return profile
+    raise TTSUnavailable(
+        f"no voice profile is configured for {target.provider}/{target.model}"
+    )
+
+
+def choose_voice_profile(
+    settings: Settings | None = None,
+    *,
+    target: ModelTarget | None = None,
+) -> VoiceProfile:
     settings = settings or get_settings()
+    if target is not None:
+        profile = voice_profile_for_target(target)
+        if profile.provider == "openai" and not settings.openai_api_key:
+            raise TTSUnavailable("OpenAI TTS provider is not configured")
+        if profile.provider == "gemini" and not settings.gemini_api_key:
+            raise TTSUnavailable("Gemini TTS provider is not configured")
+        return profile
+
     requested = get_voice_profile(settings.tts_profile)
     if requested.provider == "openai" and settings.openai_api_key:
         return requested
@@ -128,7 +161,6 @@ def _openai_tts(text: str, profile: VoiceProfile, settings: Settings) -> TTSResu
         raise TTSUnavailable("OpenAI API key is not configured")
     from openai import OpenAI
 
-    assert_ai_budget(Decimal("0.05"))
     client = OpenAI(api_key=settings.openai_api_key)
     response = client.audio.speech.create(
         model=profile.model,
@@ -140,10 +172,8 @@ def _openai_tts(text: str, profile: VoiceProfile, settings: Settings) -> TTSResu
     )
     audio = _binary_response_bytes(response)
     duration = _wav_duration(audio)
-    target = ModelTarget("openai", profile.model)
+    target = _target_for_profile(profile)
     input_units = _estimated_text_tokens(text + profile.instructions)
-    # OpenAI's speech endpoint does not expose request-level audio token usage. The public
-    # ~$0.015/min estimate corresponds to about 1,250 output units/min at the listed rate.
     output_units = max(1, math.ceil(duration * (1250 / 60)))
     cost = estimate_token_cost(target, input_units, output_units)
     return TTSResult(
@@ -168,7 +198,6 @@ def _gemini_tts(text: str, profile: VoiceProfile, settings: Settings) -> TTSResu
         raise TTSUnavailable("Gemini API key is not configured")
     from google import genai
 
-    assert_ai_budget(Decimal("0.05"))
     client = genai.Client(api_key=settings.gemini_api_key)
     prompt = f"{profile.instructions}\n\nRead exactly this text:\n{text}"
     interaction = client.interactions.create(
@@ -184,9 +213,8 @@ def _gemini_tts(text: str, profile: VoiceProfile, settings: Settings) -> TTSResu
     pcm = base64.b64decode(encoded)
     audio = _wrap_pcm_wav(pcm)
     duration = _wav_duration(audio)
-    target = ModelTarget("gemini", profile.model)
+    target = _target_for_profile(profile)
     input_units = _estimated_text_tokens(prompt)
-    # Gemini documents 25 output audio tokens per second for this model.
     output_units = max(1, math.ceil(duration * 25))
     cost = estimate_token_cost(target, input_units, output_units)
     return TTSResult(
@@ -211,13 +239,70 @@ def synthesize_speech(
     *,
     profile: VoiceProfile | None = None,
     settings: Settings | None = None,
+    channel_profile_id: uuid.UUID | None = None,
+    reference_type: str | None = None,
+    reference_id: str | None = None,
+    reservation_key: str | None = None,
+    expected_value: float = 0.5,
+    usage_metadata: dict[str, object] | None = None,
 ) -> TTSResult:
     settings = settings or get_settings()
-    profile = profile or choose_voice_profile(settings)
-    if not text.strip():
+    text = text.strip()
+    if not text:
         raise ValueError("TTS text cannot be empty")
-    if profile.provider == "openai":
-        return _openai_tts(text.strip(), profile, settings)
-    if profile.provider == "gemini":
-        return _gemini_tts(text.strip(), profile, settings)
-    raise TTSUnavailable(f"unsupported TTS provider: {profile.provider}")
+
+    estimated_increment = Decimal("0.05")
+    assert_ai_budget(estimated_increment)
+    reservation_id: uuid.UUID | None = None
+    if channel_profile_id is not None:
+        preferred_target = _target_for_profile(profile) if profile is not None else None
+        decision = route_for_channel(
+            AITask.TTS,
+            channel_profile_id,
+            estimated_increment_usd=estimated_increment,
+            expected_value=expected_value,
+            reference_type=reference_type,
+            reference_id=reference_id,
+            reservation_key=reservation_key,
+            preferred_target=preferred_target,
+        )
+        reservation_id = decision.reservation_id
+        profile = profile or choose_voice_profile(
+            settings,
+            target=decision.route.primary,
+        )
+    else:
+        profile = profile or choose_voice_profile(settings)
+
+    try:
+        if profile.provider == "openai":
+            result = _openai_tts(text, profile, settings)
+        elif profile.provider == "gemini":
+            result = _gemini_tts(text, profile, settings)
+        else:
+            raise TTSUnavailable(f"unsupported TTS provider: {profile.provider}")
+    except Exception as exc:
+        release_budget_reservation(
+            reservation_id,
+            reason=f"tts_failed:{type(exc).__name__}",
+        )
+        raise
+
+    metadata = {
+        "estimated_cost": True,
+        "voice_profile": result.profile.key,
+        **dict(result.cost_metadata or {}),
+        **dict(usage_metadata or {}),
+    }
+    record_usage(
+        task=AITask.TTS,
+        target=result.target,
+        input_units=result.input_units,
+        output_units=result.output_units,
+        cost_usd=result.estimated_cost_usd,
+        reference_type=reference_type,
+        reference_id=reference_id,
+        metadata=metadata,
+        reservation_id=reservation_id,
+    )
+    return result

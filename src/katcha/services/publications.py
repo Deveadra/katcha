@@ -15,6 +15,7 @@ from katcha.domain import (
     PublicationStatus,
     YouTubeConnectionStatus,
 )
+from katcha.intelligence_models import ChannelProfile
 from katcha.longform_models import Compilation, CompilationAsset
 from katcha.models import DomainEvent
 from katcha.production_models import Production, ProductionAsset
@@ -81,6 +82,44 @@ def _normalize_publication_metadata(
     return title, description, cleaned_tags, privacy_status, publish_at
 
 
+def _source(
+    session: Session,
+    *,
+    source_kind: SourceKind,
+    source_id: uuid.UUID,
+) -> Production | Compilation:
+    if source_kind == "production":
+        source = session.get(Production, source_id)
+        if source is None:
+            raise ValueError(f"production not found: {source_id}")
+        return source
+    source = session.get(Compilation, source_id)
+    if source is None:
+        raise ValueError(f"compilation not found: {source_id}")
+    return source
+
+
+def _enforce_channel_scope(
+    session: Session,
+    *,
+    source_kind: SourceKind,
+    source_id: uuid.UUID,
+    youtube_connection_id: uuid.UUID,
+) -> uuid.UUID | None:
+    source = _source(session, source_kind=source_kind, source_id=source_id)
+    profile_id = source.channel_profile_id
+    if profile_id is None:
+        return None
+    profile = session.get(ChannelProfile, profile_id)
+    if profile is None:
+        raise ValueError("channel-scoped source references a missing channel profile")
+    if profile.youtube_connection_id != youtube_connection_id:
+        raise ValueError(
+            "channel-scoped source can only be published through its assigned YouTube channel"
+        )
+    return profile.id
+
+
 def _approved_render_key(
     session: Session,
     *,
@@ -88,9 +127,7 @@ def _approved_render_key(
     source_id: uuid.UUID,
 ) -> str:
     if source_kind == "production":
-        source = session.get(Production, source_id)
-        if source is None:
-            raise ValueError(f"production not found: {source_id}")
+        source = _source(session, source_kind=source_kind, source_id=source_id)
         if source.status != ProductionStatus.APPROVED.value:
             raise ValueError("production must be approved before publication")
         render = session.scalar(
@@ -104,9 +141,7 @@ def _approved_render_key(
             raise ValueError("approved production has no rendered video asset")
         return render.storage_key
 
-    source = session.get(Compilation, source_id)
-    if source is None:
-        raise ValueError(f"compilation not found: {source_id}")
+    source = _source(session, source_kind=source_kind, source_id=source_id)
     if source.status != CompilationStatus.APPROVED.value:
         raise ValueError("compilation must be approved before publication")
     render = session.scalar(
@@ -186,6 +221,12 @@ def _register_source_publication(
             raise ValueError(f"YouTube connection not found: {youtube_connection_id}")
         if connection.status != YouTubeConnectionStatus.ACTIVE.value:
             raise ValueError("YouTube connection is not active")
+        channel_profile_id = _enforce_channel_scope(
+            session,
+            source_kind=source_kind,
+            source_id=source_id,
+            youtube_connection_id=youtube_connection_id,
+        )
 
         publication_id = uuid.uuid4()
         workflow_id = f"yt-publish-{publication_id}-a1"
@@ -212,6 +253,9 @@ def _register_source_publication(
             raw_status={
                 "source_kind": source_kind,
                 "render_key_at_registration": render_key,
+                "channel_profile_id": (
+                    str(channel_profile_id) if channel_profile_id else None
+                ),
             },
         )
         session.add(publication)
@@ -230,6 +274,9 @@ def _register_source_publication(
                     ),
                     "compilation_id": (
                         str(source_id) if source_kind == "compilation" else None
+                    ),
+                    "channel_profile_id": (
+                        str(channel_profile_id) if channel_profile_id else None
                     ),
                     "youtube_connection_id": str(youtube_connection_id),
                     "workflow_id": workflow_id,
@@ -333,6 +380,12 @@ def retry_publication(
         else:
             raise ValueError("publication source lineage is invalid")
         _approved_render_key(session, source_kind=source_kind, source_id=source_id)
+        channel_profile_id = _enforce_channel_scope(
+            session,
+            source_kind=source_kind,
+            source_id=source_id,
+            youtube_connection_id=publication.youtube_connection_id,
+        )
 
         expired_without_video_id = (
             publication.stage == "upload_session_expired"
@@ -366,6 +419,9 @@ def retry_publication(
                     "publication_id": str(publication.id),
                     "source_kind": source_kind,
                     "source_id": str(source_id),
+                    "channel_profile_id": (
+                        str(channel_profile_id) if channel_profile_id else None
+                    ),
                     "workflow_attempt": publication.workflow_attempt,
                     "previous_workflow_id": previous_workflow_id,
                     "workflow_id": publication.workflow_id,

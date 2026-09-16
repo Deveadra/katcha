@@ -1,38 +1,60 @@
 # Katcha
 
-Katcha is a standalone, automation-first media intelligence and production system for discovering, ingesting, understanding, producing, publishing, and learning from video content.
+Katcha is a standalone, automation-first video intelligence, production, publishing, analytics, and channel-learning system.
 
-Katcha is deliberately independent from Aerith. Aerith will later control Katcha through versioned APIs and emitted domain events; Katcha does not require Aerith to operate.
+It turns canonical source clips into Shorts and long-form compilations, publishes through durable YouTube workflows, measures real outcomes, and feeds those outcomes back into channel-specific ranking, scheduling, budget, and automation policy.
 
-## Foundation status
+Katcha is deliberately independent from Aerith. Aerith or another controller can operate it through versioned HTTP APIs and cursor-based domain events; Katcha does not require Aerith to run.
 
-The first vertical slice is wired end to end:
+## Current system
 
-`POST /v1/clips/ingest` → Temporal workflow → yt-dlp download → SHA-256 dedupe → S3-compatible object storage → PostgreSQL reconciliation → clip/source records.
+Katcha now includes:
 
-This is the spine that later stages (vision, scoring, scripting, voice, rendering, review, YouTube publishing, analytics, and learning) plug into.
+- URL ingestion, ffprobe inspection, SHA-256 canonicalization, and S3-compatible storage;
+- local transcription, keyframes/contact sheets, perceptual similarity, and routed vision analysis;
+- deterministic clip scoring and channel-specific learned ranking;
+- AI-hosted Short production with stable TTS voice, captions, Remotion rendering, and human review;
+- performance-aware long-form compilation with deterministic sequencing, editor/critic passes, 16:9 reconstruction, and review/regeneration;
+- encrypted YouTube OAuth, resumable upload/scheduling, analytics, retention, and revenue snapshots;
+- per-channel strategy, base/hard budgets, capped reinvestment, spend reservations, burn-rate telemetry, and budget-aware model/TTS routing;
+- publish-window recommendations with sample size/confidence and fallback/blackout support;
+- evidence-gated automation promotion plus automatic safety demotion;
+- a dedicated Temporal intelligence refresh worker;
+- Aerith-safe event consumption with secret scrubbing and channel-bound cursors.
+
+See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the full contracts and safety model.
 
 ## Architecture
 
-- **FastAPI** — control plane/API
-- **Temporal** — durable workflows, retries, recovery, orchestration
-- **PostgreSQL** — source, clip, workflow, event, and cost metadata
-- **S3-compatible storage** — MinIO locally; R2/S3 in deployment
-- **yt-dlp + FFmpeg/ffprobe** — media acquisition and inspection
-- **Provider-routed AI layer** — task-based OpenAI/Gemini routing with cost telemetry
-- **Transactional outbox** — future Aerith/event integrations without runtime coupling
-
-See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
+- **FastAPI** — versioned control plane
+- **Temporal** — durable ingest, analysis, production, long-form, publishing, analytics, and intelligence workflows
+- **PostgreSQL + Alembic** — lineage, policy versions, observations, economics, costs, and events
+- **S3-compatible storage** — MinIO locally; R2/S3-compatible deployment
+- **yt-dlp + FFmpeg/ffprobe** — media acquisition/inspection
+- **Remotion** — Short and long-form rendering
+- **OpenAI/Gemini routing** — task/channel policy, quality floors, spend reservations, and usage accounting
+- **Transactional domain events** — external control without runtime coupling
 
 ## Quick start
 
 1. Copy `.env.example` to `.env`.
-2. Run `docker compose up --build`.
-3. API docs: `http://localhost:8000/docs`
-4. Temporal UI: `http://localhost:8080`
-5. MinIO console: `http://localhost:9001`
+2. Run the core stack:
 
-Submit a URL:
+```bash
+docker compose up --build
+```
+
+3. To include the dedicated self-sustaining intelligence worker:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.intelligence.yml up --build
+```
+
+4. API docs: `http://localhost:8000/docs`
+5. Temporal UI: `http://localhost:8080`
+6. MinIO console: `http://localhost:9001`
+
+Submit a source URL:
 
 ```bash
 curl -X POST http://localhost:8000/v1/clips/ingest \
@@ -40,7 +62,20 @@ curl -X POST http://localhost:8000/v1/clips/ingest \
   -d '{"url":"https://example.com/video"}'
 ```
 
-Then poll the returned source/clip identifiers through the API.
+After connecting a YouTube channel, create a channel profile through `POST /v1/channels`. Channel-scoped production endpoints then preserve budget, learning, review, and publication isolation from the first editorial action onward.
+
+## Budget safety
+
+`KATCHA_AI_BUDGET_USD_MONTHLY` is the **deployment-wide emergency ceiling**.
+
+Each channel separately has a versioned:
+
+- base monthly allocation;
+- absolute hard monthly ceiling;
+- reinvestment rate and cap;
+- routing policy/quality floors.
+
+Earned reinvestment can raise a channel's active allocation only up to its hard ceiling. Paid channel calls reserve estimated headroom transactionally before provider execution, so concurrent workers cannot spend the same remaining budget.
 
 ## Development
 
@@ -48,19 +83,23 @@ Then poll the returned source/clip identifiers through the API.
 python -m venv .venv
 source .venv/bin/activate
 pip install -e '.[dev]'
-pytest
+ruff check src tests
+python -m compileall -q src
+pytest -q
 uvicorn katcha.api.main:app --reload
-python -m katcha.orchestration.worker
 ```
 
 FFmpeg/ffprobe must be installed on the host for media inspection. The Docker image includes them.
 
 ## Design rules
 
-- No LLM for deterministic work such as hashing, dedupe, probing, or state transitions.
-- Every workflow activity must be retry-safe/idempotent.
-- Provider-specific AI code stays behind the model router.
-- Raw media is content-addressed by SHA-256.
-- API contracts are versioned from the beginning.
-- Aerith integration happens through APIs/events, not shared process state.
-- Costs and model usage are first-class data, not logs we hope to reconstruct later.
+- No LLM for deterministic ranking math, scheduling statistics, hashing, dedupe, probing, or state transitions.
+- Every workflow side effect must be retry-safe/idempotent.
+- Ambiguous paid calls fail visibly rather than silently retrying and risking duplicate charges.
+- Every paid model/TTS response is cost-accounted.
+- Channel-scoped paid calls reserve budget before execution.
+- Learned ranking cannot overpower the deterministic baseline when evidence is sparse or validation is poor.
+- Raw canonical media can be shared; channel budgets, strategy, outcomes, and editorial state cannot.
+- Automation starts at human review and advances only through explicit evidence-gated promotion.
+- Phase 5 does not silently enable automatic public publishing.
+- Aerith integration happens only through stable APIs/events, never shared process state or secret-bearing payloads.

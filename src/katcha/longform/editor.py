@@ -1,12 +1,21 @@
 from __future__ import annotations
 
 import json
+import uuid
 from dataclasses import dataclass
 from decimal import Decimal
 
 from katcha.ai.pricing import estimate_token_cost
-from katcha.ai.router import ModelTarget, assert_ai_budget, record_usage, route_for
+from katcha.ai.router import (
+    ModelTarget,
+    assert_ai_budget,
+    record_usage,
+    release_budget_reservation,
+    route_for,
+    route_for_channel,
+)
 from katcha.config import Settings, get_settings
+from katcha.db import session_scope
 from katcha.domain import AITask
 from katcha.editorial.personas import HostPersona
 from katcha.longform.schemas import (
@@ -15,6 +24,7 @@ from katcha.longform.schemas import (
     LongformCritique,
     LongformEditorPlan,
 )
+from katcha.longform_models import Compilation
 
 
 class LongformProviderUnavailable(RuntimeError):
@@ -37,6 +47,21 @@ def _candidate_payload(candidates: list[CandidateEvidence]) -> str:
     )
 
 
+def _routing_context(
+    compilation_id: str,
+    candidates: list[CandidateEvidence],
+) -> tuple[uuid.UUID | None, float]:
+    with session_scope() as session:
+        compilation = session.get(Compilation, uuid.UUID(compilation_id))
+        channel_profile_id = compilation.channel_profile_id if compilation else None
+    expected = (
+        sum(candidate.deterministic_score for candidate in candidates) / len(candidates)
+        if candidates
+        else 0.5
+    )
+    return channel_profile_id, max(0.0, min(1.0, expected))
+
+
 def _record(
     *,
     task: AITask,
@@ -45,6 +70,7 @@ def _record(
     output_tokens: int,
     compilation_id: str,
     stage: str,
+    reservation_id: uuid.UUID | None,
 ) -> None:
     record_usage(
         task=task,
@@ -59,6 +85,7 @@ def _record(
             "estimated_cost": True,
             "pricing_basis": "public_paid_rate_2026-09-15",
         },
+        reservation_id=reservation_id,
     )
 
 
@@ -167,6 +194,7 @@ def _openai_structured(
     compilation_id: str,
     stage: str,
     effort: str,
+    reservation_id: uuid.UUID | None,
 ) -> LongformAIResult:
     if not settings.openai_api_key:
         raise LongformProviderUnavailable("OpenAI API key is not configured")
@@ -188,7 +216,6 @@ def _openai_structured(
         },
         max_output_tokens=5000,
     )
-    value = schema.model_validate_json(response.output_text)
     usage = response.usage
     input_tokens = int(getattr(usage, "input_tokens", 0) or 0)
     output_tokens = int(getattr(usage, "output_tokens", 0) or 0)
@@ -199,7 +226,9 @@ def _openai_structured(
         output_tokens=output_tokens,
         compilation_id=compilation_id,
         stage=stage,
+        reservation_id=reservation_id,
     )
+    value = schema.model_validate_json(response.output_text)
     return LongformAIResult(value, target, input_tokens, output_tokens)
 
 
@@ -212,6 +241,7 @@ def _gemini_structured(
     task: AITask,
     compilation_id: str,
     stage: str,
+    reservation_id: uuid.UUID | None,
 ) -> LongformAIResult:
     if not settings.gemini_api_key:
         raise LongformProviderUnavailable("Gemini API key is not configured")
@@ -227,7 +257,6 @@ def _gemini_structured(
             response_schema=schema,
         ),
     )
-    value = schema.model_validate_json(response.text)
     usage = response.usage_metadata
     input_tokens = int(getattr(usage, "prompt_token_count", 0) or 0)
     output_tokens = int(getattr(usage, "candidates_token_count", 0) or 0) + int(
@@ -240,7 +269,9 @@ def _gemini_structured(
         output_tokens=output_tokens,
         compilation_id=compilation_id,
         stage=stage,
+        reservation_id=reservation_id,
     )
+    value = schema.model_validate_json(response.text)
     return LongformAIResult(value, target, input_tokens, output_tokens)
 
 
@@ -251,55 +282,86 @@ def _run_structured(
     task: AITask,
     compilation_id: str,
     stage: str,
+    candidates: list[CandidateEvidence],
+    estimated_increment: Decimal,
     effort: str = "medium",
     settings: Settings,
 ) -> LongformAIResult:
-    route = route_for(task)
-    primary = route.primary
-    if primary.provider == "openai" and settings.openai_api_key:
-        return _openai_structured(
-            prompt=prompt,
-            schema=schema,
-            target=primary,
-            settings=settings,
-            task=task,
-            compilation_id=compilation_id,
-            stage=stage,
-            effort=effort,
+    channel_profile_id, expected_value = _routing_context(compilation_id, candidates)
+    reservation_id: uuid.UUID | None = None
+    if channel_profile_id is not None:
+        decision = route_for_channel(
+            task,
+            channel_profile_id,
+            estimated_increment_usd=estimated_increment,
+            expected_value=expected_value,
+            reference_type="compilation",
+            reference_id=compilation_id,
+            reservation_key=f"longform:{compilation_id}:{stage}",
         )
-    if primary.provider == "gemini" and settings.gemini_api_key:
-        return _gemini_structured(
-            prompt=prompt,
-            schema=schema,
-            target=primary,
-            settings=settings,
-            task=task,
-            compilation_id=compilation_id,
-            stage=stage,
+        route = decision.route
+        reservation_id = decision.reservation_id
+    else:
+        route = route_for(task)
+
+    try:
+        primary = route.primary
+        if primary.provider == "openai" and settings.openai_api_key:
+            return _openai_structured(
+                prompt=prompt,
+                schema=schema,
+                target=primary,
+                settings=settings,
+                task=task,
+                compilation_id=compilation_id,
+                stage=stage,
+                effort=effort,
+                reservation_id=reservation_id,
+            )
+        if primary.provider == "gemini" and settings.gemini_api_key:
+            return _gemini_structured(
+                prompt=prompt,
+                schema=schema,
+                target=primary,
+                settings=settings,
+                task=task,
+                compilation_id=compilation_id,
+                stage=stage,
+                reservation_id=reservation_id,
+            )
+        fallback = route.fallback
+        if fallback and fallback.provider == "openai" and settings.openai_api_key:
+            return _openai_structured(
+                prompt=prompt,
+                schema=schema,
+                target=fallback,
+                settings=settings,
+                task=task,
+                compilation_id=compilation_id,
+                stage=stage,
+                effort=effort,
+                reservation_id=reservation_id,
+            )
+        if fallback and fallback.provider == "gemini" and settings.gemini_api_key:
+            return _gemini_structured(
+                prompt=prompt,
+                schema=schema,
+                target=fallback,
+                settings=settings,
+                task=task,
+                compilation_id=compilation_id,
+                stage=stage,
+                reservation_id=reservation_id,
+            )
+        raise LongformProviderUnavailable(
+            f"no configured provider is available for {task.value}"
         )
-    fallback = route.fallback
-    if fallback and fallback.provider == "openai" and settings.openai_api_key:
-        return _openai_structured(
-            prompt=prompt,
-            schema=schema,
-            target=fallback,
-            settings=settings,
-            task=task,
-            compilation_id=compilation_id,
-            stage=stage,
-            effort=effort,
+    except Exception as exc:
+        release_budget_reservation(
+            reservation_id,
+            reason=f"{stage}_failed:{type(exc).__name__}",
         )
-    if fallback and fallback.provider == "gemini" and settings.gemini_api_key:
-        return _gemini_structured(
-            prompt=prompt,
-            schema=schema,
-            target=fallback,
-            settings=settings,
-            task=task,
-            compilation_id=compilation_id,
-            stage=stage,
-        )
-    raise LongformProviderUnavailable(f"no configured provider is available for {task.value}")
+        raise
 
 
 def generate_editor_plan(
@@ -314,7 +376,8 @@ def generate_editor_plan(
     settings: Settings | None = None,
 ) -> LongformAIResult:
     settings = settings or get_settings()
-    assert_ai_budget(Decimal("0.25"))
+    estimated_increment = Decimal("0.25")
+    assert_ai_budget(estimated_increment)
     result = _run_structured(
         prompt=_editor_prompt(
             theme=theme,
@@ -327,6 +390,8 @@ def generate_editor_plan(
         task=AITask.LONGFORM_EDITOR,
         compilation_id=compilation_id,
         stage="editor_plan",
+        candidates=candidates,
+        estimated_increment=estimated_increment,
         effort="high",
         settings=settings,
     )
@@ -344,13 +409,16 @@ def critique_editor_plan(
     settings: Settings | None = None,
 ) -> LongformAIResult:
     settings = settings or get_settings()
-    assert_ai_budget(Decimal("0.15"))
+    estimated_increment = Decimal("0.15")
+    assert_ai_budget(estimated_increment)
     return _run_structured(
         prompt=_critic_prompt(theme=theme, candidates=candidates, plan=plan),
         schema=LongformCritique,
         task=AITask.LONGFORM_CRITIC,
         compilation_id=compilation_id,
         stage="critic",
+        candidates=candidates,
+        estimated_increment=estimated_increment,
         settings=settings,
     )
 
@@ -375,7 +443,8 @@ def finalize_editor_plan(
         return final
 
     settings = settings or get_settings()
-    assert_ai_budget(Decimal("0.25"))
+    estimated_increment = Decimal("0.25")
+    assert_ai_budget(estimated_increment)
     result = _run_structured(
         prompt=_revision_prompt(
             theme=theme,
@@ -388,6 +457,8 @@ def finalize_editor_plan(
         task=AITask.LONGFORM_EDITOR,
         compilation_id=compilation_id,
         stage="editor_revision",
+        candidates=candidates,
+        estimated_increment=estimated_increment,
         effort="high",
         settings=settings,
     )

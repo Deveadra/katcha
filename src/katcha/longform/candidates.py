@@ -2,18 +2,26 @@ from __future__ import annotations
 
 import re
 import uuid
-from collections import defaultdict
 from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from katcha.config import Settings
+from katcha.intelligence.features import clip_learning_features
+from katcha.intelligence.learning import clamp
+from katcha.intelligence_models import ChannelProfile
 from katcha.longform.schemas import CandidateEvidence
-from katcha.longform.scoring import CandidateSignals, score_pool, sequence_pool
+from katcha.longform.scoring import (
+    CandidateSignals,
+    ScoredCandidate,
+    score_pool,
+    sequence_pool,
+)
 from katcha.models import Clip, ClipFeature, SourceItem
 from katcha.production_models import Production
 from katcha.publishing_models import Publication, PublicationAnalyticsSnapshot
+from katcha.services.channel_learning import score_channel_features
 
 _STOP_WORDS = {
     "about",
@@ -97,6 +105,18 @@ def _latest_snapshots(
     return latest
 
 
+def _channel_connection_id(
+    session: Session,
+    channel_profile_id: uuid.UUID | None,
+) -> uuid.UUID | None:
+    if channel_profile_id is None:
+        return None
+    profile = session.get(ChannelProfile, channel_profile_id)
+    if profile is None:
+        raise ValueError(f"channel profile not found: {channel_profile_id}")
+    return profile.youtube_connection_id
+
+
 def select_compilation_candidates(
     session: Session,
     *,
@@ -104,6 +124,7 @@ def select_compilation_candidates(
     target_duration_seconds: int,
     target_segment_count: int | None,
     settings: Settings,
+    channel_profile_id: uuid.UUID | None = None,
 ) -> list[CandidateEvidence]:
     rows = list(
         session.execute(
@@ -124,7 +145,8 @@ def select_compilation_candidates(
             f"need {settings.longform_min_segments}, found {len(rows)}"
         )
 
-    clip_ids = [clip.id for _features, clip in rows]
+    features_by_clip = {clip.id: (features, clip) for features, clip in rows}
+    clip_ids = list(features_by_clip)
     sources = list(
         session.scalars(
             select(SourceItem)
@@ -146,20 +168,20 @@ def select_compilation_candidates(
         )
     )
     production_by_id = {item.id: item for item in productions}
-    productions_by_clip: dict[uuid.UUID, list[Production]] = defaultdict(list)
-    for production in productions:
-        productions_by_clip[production.clip_id].append(production)
-
     production_ids = list(production_by_id)
-    publications = (
-        list(
-            session.scalars(
-                select(Publication).where(Publication.production_id.in_(production_ids))
-            )
+    channel_connection_id = _channel_connection_id(session, channel_profile_id)
+    if production_ids:
+        publication_stmt = select(Publication).where(
+            Publication.production_id.in_(production_ids)
         )
-        if production_ids
-        else []
-    )
+        if channel_connection_id is not None:
+            publication_stmt = publication_stmt.where(
+                Publication.youtube_connection_id == channel_connection_id
+            )
+        publications = list(session.scalars(publication_stmt))
+    else:
+        publications = []
+
     latest = _latest_snapshots(session, [item.id for item in publications])
     best_publication_by_clip: dict[
         uuid.UUID, tuple[Production, Publication, PublicationAnalyticsSnapshot]
@@ -199,6 +221,7 @@ def select_compilation_candidates(
         subscribers = int(snapshot.subscribers_gained or 0) if snapshot else 0
         surprise = _number(ai.get("surprise_score"))
         humor = _number(ai.get("humor_score"))
+        comment_potential = _number(ai.get("comment_potential"))
         categories = _text_list(ai.get("categories"))
         tone = _text_list(ai.get("tone"))
 
@@ -226,10 +249,14 @@ def select_compilation_candidates(
         )
         metadata_by_clip[clip.id] = {
             "event_summary": str(ai.get("event_summary") or ""),
+            "comment_potential": comment_potential,
             "analytics_sampled_at": (
                 snapshot.sampled_at.isoformat() if snapshot and snapshot.sampled_at else None
             ),
             "measured_short": snapshot is not None,
+            "measured_channel_profile_id": (
+                str(channel_profile_id) if snapshot and channel_profile_id else None
+            ),
             "score_breakdown": dict(features.score_breakdown or {}),
         }
 
@@ -268,6 +295,7 @@ def select_compilation_candidates(
                 hook_score=item.signals.hook_score,
                 payoff_score=item.signals.payoff_score,
                 surprise_score=item.signals.surprise_score,
+                comment_potential=float(meta["comment_potential"]),
                 rewatch_score=item.signals.rewatch_score,
                 evidence={
                     **meta,
@@ -280,6 +308,49 @@ def select_compilation_candidates(
     eligible = themed if len(themed) >= settings.longform_min_segments else evidence_pool
     scored_by_id = {uuid.UUID(item.signals.clip_id): item for item in scored}
     scored_eligible = [scored_by_id[item.clip_id] for item in eligible]
+
+    if channel_profile_id is not None:
+        adjusted: list[ScoredCandidate] = []
+        evidence_by_id = {item.clip_id: item for item in evidence_pool}
+        for item in scored_eligible:
+            clip_id = uuid.UUID(item.signals.clip_id)
+            features, clip = features_by_clip[clip_id]
+            learning_features = clip_learning_features(clip, features)
+            channel_score, details = score_channel_features(
+                channel_profile_id,
+                learning_features,
+            )
+            learned_delta = channel_score - learning_features["baseline_score"]
+            adjusted_score = round(
+                clamp(item.deterministic_score + learned_delta * 0.20),
+                6,
+            )
+            adjusted.append(
+                ScoredCandidate(
+                    signals=item.signals,
+                    deterministic_score=adjusted_score,
+                    opening_score=item.opening_score,
+                    score_breakdown={
+                        **item.score_breakdown,
+                        "pre_channel_score": item.deterministic_score,
+                        "channel_learning_delta": round(learned_delta, 6),
+                        "channel_adjusted_score": adjusted_score,
+                    },
+                )
+            )
+            evidence = evidence_by_id[clip_id]
+            evidence.deterministic_score = adjusted_score
+            evidence.evidence = {
+                **dict(evidence.evidence or {}),
+                "channel_ranking": {
+                    **details,
+                    "score": channel_score,
+                    "learning_delta": round(learned_delta, 6),
+                    "adjusted_score": adjusted_score,
+                },
+            }
+        scored_eligible = adjusted
+
     selected = sequence_pool(
         scored_eligible,
         target_duration_seconds=target_duration_seconds,

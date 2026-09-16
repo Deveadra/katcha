@@ -1,0 +1,12 @@
+services:
+  intelligence-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.intelligence
+    env_file: ${KATCHA_ENV_FILE:-.env}
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      temporal:
+        condition: service_started
+    command: ["python", "-m", "katcha.orchestration.intelligence_worker"]

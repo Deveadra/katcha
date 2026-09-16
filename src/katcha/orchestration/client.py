@@ -6,7 +6,15 @@ from temporalio.client import Client
 from temporalio.exceptions import WorkflowAlreadyStartedError
 
 from katcha.config import get_settings
+from katcha.intelligence.runtime import (
+    DEFAULT_REFRESH_INTERVAL_HOURS,
+    INTELLIGENCE_TASK_QUEUE,
+)
 from katcha.orchestration.analysis_workflows import ClipAnalysisWorkflow
+from katcha.orchestration.intelligence_workflows import (
+    ChannelIntelligenceRefreshWorkflow,
+    ChannelIntelligenceScheduleWorkflow,
+)
 from katcha.orchestration.longform_workflows import LongformCompilationWorkflow
 from katcha.orchestration.production_workflows import ShortProductionWorkflow
 from katcha.orchestration.publishing_workflows import (
@@ -136,6 +144,43 @@ async def start_analytics_refresh_workflow(
             args=[publication_id, sample_key],
             id=workflow_id,
             task_queue=settings.temporal_publishing_task_queue,
+        )
+    except WorkflowAlreadyStartedError:
+        handle = client.get_workflow_handle(workflow_id)
+    return handle.id
+
+
+async def start_channel_intelligence_refresh(
+    channel_profile_id: str,
+    workflow_id: str,
+    run_key: str,
+) -> str:
+    client = await get_temporal_client()
+    try:
+        handle = await client.start_workflow(
+            ChannelIntelligenceRefreshWorkflow.run,
+            args=[channel_profile_id, run_key],
+            id=workflow_id,
+            task_queue=INTELLIGENCE_TASK_QUEUE,
+        )
+    except WorkflowAlreadyStartedError:
+        handle = client.get_workflow_handle(workflow_id)
+    return handle.id
+
+
+async def start_channel_intelligence_schedule(
+    channel_profile_id: str,
+    workflow_id: str,
+    *,
+    interval_hours: int = DEFAULT_REFRESH_INTERVAL_HOURS,
+) -> str:
+    client = await get_temporal_client()
+    try:
+        handle = await client.start_workflow(
+            ChannelIntelligenceScheduleWorkflow.run,
+            args=[channel_profile_id, interval_hours, 120],
+            id=workflow_id,
+            task_queue=INTELLIGENCE_TASK_QUEUE,
         )
     except WorkflowAlreadyStartedError:
         handle = client.get_workflow_handle(workflow_id)

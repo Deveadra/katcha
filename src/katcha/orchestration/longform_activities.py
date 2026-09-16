@@ -9,10 +9,10 @@ from typing import Any
 from sqlalchemy import delete, func, select
 from temporalio import activity
 
-from katcha.audio.tts import choose_voice_profile, get_voice_profile, synthesize_speech
+from katcha.audio.tts import get_voice_profile, synthesize_speech
 from katcha.config import get_settings
 from katcha.db import session_scope
-from katcha.domain import AITask, CompilationStatus
+from katcha.domain import CompilationStatus
 from katcha.editorial.personas import get_persona
 from katcha.integrations.storage import ObjectStore
 from katcha.longform.candidates import select_compilation_candidates
@@ -91,14 +91,28 @@ def select_compilation_candidates_activity(compilation_id: str) -> dict[str, obj
             target_duration_seconds=compilation.target_duration_seconds,
             target_segment_count=compilation.target_segment_count,
             settings=settings,
+            channel_profile_id=compilation.channel_profile_id,
         )
         payload = [item.model_dump(mode="json") for item in candidates]
         measured = sum(bool(item.evidence.get("measured_short")) for item in candidates)
         compilation.candidate_snapshot = {
-            "version": "candidate-snapshot-v1",
+            "version": (
+                "candidate-snapshot-v2-channel"
+                if compilation.channel_profile_id
+                else "candidate-snapshot-v1"
+            ),
             "candidates": payload,
             "measured_candidate_count": measured,
-            "selection_policy": "deterministic-performance-diversity-v1",
+            "selection_policy": (
+                "channel-performance-diversity-learning-v1"
+                if compilation.channel_profile_id
+                else "deterministic-performance-diversity-v1"
+            ),
+            "channel_profile_id": (
+                str(compilation.channel_profile_id)
+                if compilation.channel_profile_id
+                else None
+            ),
         }
         compilation.status = CompilationStatus.PLANNING.value
         compilation.stage = "candidates_selected"
@@ -111,6 +125,11 @@ def select_compilation_candidates_activity(compilation_id: str) -> dict[str, obj
                     "compilation_id": compilation_id,
                     "candidate_count": len(candidates),
                     "measured_candidate_count": measured,
+                    "channel_profile_id": (
+                        str(compilation.channel_profile_id)
+                        if compilation.channel_profile_id
+                        else None
+                    ),
                 },
             )
         )
@@ -394,6 +413,14 @@ def _persist_longform_tts(
 ) -> None:
     kind = f"narration_{_safe_role(role)}"
     with session_scope() as session:
+        compilation = session.get(Compilation, compilation_id)
+        if compilation is None:
+            raise RuntimeError("compilation disappeared during TTS persistence")
+        voice_profile = str(metadata["voice_profile"])
+        if compilation.selected_voice_profile is None:
+            compilation.selected_voice_profile = voice_profile
+        elif compilation.selected_voice_profile != voice_profile:
+            raise RuntimeError("narration voice profile changed within one compilation")
         existing = session.scalar(
             select(CompilationAsset).where(
                 CompilationAsset.compilation_id == compilation_id,
@@ -415,23 +442,6 @@ def _persist_longform_tts(
                 asset_metadata=metadata,
             )
         )
-        session.add(
-            UsageEvent(
-                task=AITask.TTS.value,
-                provider=str(metadata["provider"]),
-                model=str(metadata["model"]),
-                input_units=int(metadata["input_units"]),
-                output_units=int(metadata["output_units"]),
-                cost_usd=Decimal(str(metadata["cost_usd"])),
-                reference_type="compilation",
-                reference_id=str(compilation_id),
-                usage_metadata={
-                    "role": role,
-                    "voice_profile": metadata["voice_profile"],
-                    **dict(metadata.get("cost_metadata") or {}),
-                },
-            )
-        )
 
 
 @activity.defn
@@ -451,9 +461,16 @@ def generate_longform_narration_activity(compilation_id: str) -> dict[str, objec
         profile = (
             get_voice_profile(compilation.selected_voice_profile)
             if compilation.selected_voice_profile
-            else choose_voice_profile(settings)
+            else None
         )
-        compilation.selected_voice_profile = profile.key
+        channel_profile_id = compilation.channel_profile_id
+        candidates = _candidate_list(compilation)
+        expected_value = (
+            sum(item.deterministic_score for item in candidates) / len(candidates)
+            if candidates
+            else 0.5
+        )
+        expected_value = max(0.0, min(1.0, expected_value))
         compilation.status = CompilationStatus.VOICING.value
         compilation.error = None
 
@@ -474,6 +491,10 @@ def generate_longform_narration_activity(compilation_id: str) -> dict[str, objec
                 )
             )
             if existing is not None:
+                if profile is None:
+                    saved_profile = (existing.asset_metadata or {}).get("voice_profile")
+                    if saved_profile:
+                        profile = get_voice_profile(str(saved_profile))
                 reused += 1
                 continue
             compilation = session.get(Compilation, compilation_uuid)
@@ -488,6 +509,7 @@ def generate_longform_narration_activity(compilation_id: str) -> dict[str, objec
                         asset_key=audio_key,
                         metadata=metadata,
                     )
+                    profile = get_voice_profile(str(metadata["voice_profile"]))
                     reused += 1
                     continue
                 raise AmbiguousLongformPaidCall(
@@ -496,7 +518,18 @@ def generate_longform_narration_activity(compilation_id: str) -> dict[str, objec
                 )
             compilation.stage = call_stage
 
-        result = synthesize_speech(text, profile=profile, settings=settings)
+        result = synthesize_speech(
+            text,
+            profile=profile,
+            settings=settings,
+            channel_profile_id=channel_profile_id,
+            reference_type="compilation",
+            reference_id=compilation_id,
+            reservation_key=f"tts:compilation:{compilation_id}:{safe}",
+            expected_value=expected_value,
+            usage_metadata={"role": role},
+        )
+        profile = result.profile
         metadata: dict[str, object] = {
             "role": role,
             "text": text,
@@ -525,6 +558,8 @@ def generate_longform_narration_activity(compilation_id: str) -> dict[str, objec
         )
         generated += 1
 
+    if profile is None:
+        raise RuntimeError("compilation narration has no recoverable voice profile")
     with session_scope() as session:
         compilation = session.get(Compilation, compilation_uuid)
         if compilation is None:

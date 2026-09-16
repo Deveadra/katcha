@@ -8,8 +8,9 @@ from sqlalchemy import select
 
 from katcha.config import get_settings
 from katcha.db import session_scope
-from katcha.domain import CompilationStatus, ReviewDecision
+from katcha.domain import ChannelStatus, CompilationStatus, ReviewDecision
 from katcha.editorial.personas import get_persona
+from katcha.intelligence_models import ChannelProfile
 from katcha.longform_models import (
     Compilation,
     CompilationAsset,
@@ -22,11 +23,29 @@ PROMPT_VERSION = "longform-v1"
 REGENERATE_STAGES = {"plan", "voice", "render"}
 
 
-def _workflow_id(idempotency_key: str | None) -> str:
+def _workflow_id(
+    idempotency_key: str | None,
+    channel_profile_id: uuid.UUID | None,
+) -> str:
+    scope = str(channel_profile_id) if channel_profile_id else "shared"
     if idempotency_key:
-        digest = hashlib.sha256(idempotency_key.encode("utf-8")).hexdigest()[:24]
+        digest = hashlib.sha256(f"{scope}:{idempotency_key}".encode()).hexdigest()[:24]
         return f"longform-{digest}"
-    return f"longform-{uuid.uuid4().hex[:24]}"
+    scope_digest = hashlib.sha256(scope.encode()).hexdigest()[:8]
+    return f"longform-{scope_digest}-{uuid.uuid4().hex[:16]}"
+
+
+def _validate_channel_scope(
+    session: object,
+    channel_profile_id: uuid.UUID | None,
+) -> None:
+    if channel_profile_id is None:
+        return
+    profile = session.get(ChannelProfile, channel_profile_id)
+    if profile is None:
+        raise ValueError(f"channel profile not found: {channel_profile_id}")
+    if profile.status != ChannelStatus.ACTIVE.value:
+        raise ValueError("channel profile is not active")
 
 
 def register_compilation(
@@ -36,6 +55,7 @@ def register_compilation(
     target_segment_count: int | None = None,
     persona_key: str = "youth_host",
     idempotency_key: str | None = None,
+    channel_profile_id: uuid.UUID | None = None,
 ) -> Compilation:
     settings = get_settings()
     persona = get_persona(persona_key)
@@ -61,7 +81,7 @@ def register_compilation(
             f"{settings.longform_min_segments} and {settings.longform_max_segments}"
         )
 
-    workflow_id = _workflow_id(idempotency_key)
+    workflow_id = _workflow_id(idempotency_key, channel_profile_id)
     with session_scope() as session:
         existing = session.scalar(
             select(Compilation).where(Compilation.workflow_id == workflow_id)
@@ -69,8 +89,10 @@ def register_compilation(
         if existing is not None:
             session.expunge(existing)
             return existing
+        _validate_channel_scope(session, channel_profile_id)
 
         compilation = Compilation(
+            channel_profile_id=channel_profile_id,
             workflow_id=workflow_id,
             status=CompilationStatus.QUEUED.value,
             stage="queued",
@@ -91,6 +113,9 @@ def register_compilation(
                 event_type="compilation.created",
                 payload={
                     "compilation_id": str(compilation.id),
+                    "channel_profile_id": (
+                        str(channel_profile_id) if channel_profile_id else None
+                    ),
                     "workflow_id": workflow_id,
                     "theme": theme,
                     "target_duration_seconds": target_duration,
@@ -186,16 +211,18 @@ def register_compilation_regeneration(
             raise ValueError(
                 "compilation must be in review, rejected, or failed state to regenerate"
             )
+        _validate_channel_scope(session, parent.channel_profile_id)
 
         effective_stage = stage
         if stage == "plan" and not parent.candidate_snapshot:
             effective_stage = "select"
 
         child = Compilation(
+            channel_profile_id=parent.channel_profile_id,
             parent_compilation_id=parent.id,
             generation=parent.generation + 1,
             regenerate_from=effective_stage,
-            workflow_id=_workflow_id(None),
+            workflow_id=_workflow_id(None, parent.channel_profile_id),
             status=CompilationStatus.QUEUED.value,
             stage=f"regenerate_{effective_stage}_queued",
             theme=parent.theme,
@@ -245,6 +272,9 @@ def register_compilation_regeneration(
                 payload={
                     "compilation_id": str(parent.id),
                     "child_compilation_id": str(child.id),
+                    "channel_profile_id": (
+                        str(parent.channel_profile_id) if parent.channel_profile_id else None
+                    ),
                     "regenerate_from": effective_stage,
                 },
             )
@@ -294,6 +324,11 @@ def review_compilation(
                 event_type=event_type,
                 payload={
                     "compilation_id": str(compilation.id),
+                    "channel_profile_id": (
+                        str(compilation.channel_profile_id)
+                        if compilation.channel_profile_id
+                        else None
+                    ),
                     "decision": decision.value,
                     "actor": actor,
                 },
