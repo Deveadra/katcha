@@ -17,6 +17,8 @@ from katcha.models import DomainEvent
 from katcha.services.trends import compute_candidate_trend_score
 from katcha.trend_models import TrendReviewQueueItem
 
+_QUEUE_STATUSES = {"pending", "selected", "skipped"}
+
 
 @dataclass(frozen=True, slots=True)
 class QueueMaterializationResult:
@@ -180,3 +182,48 @@ def materialize_trend_review_queue(
         queue_count=len(selected),
         reused=False,
     )
+
+
+def update_trend_review_queue_status(
+    item_id: uuid.UUID,
+    *,
+    status: str,
+    actor: str = "operator",
+    note: str | None = None,
+) -> TrendReviewQueueItem:
+    normalized = status.strip().casefold()
+    if normalized not in _QUEUE_STATUSES:
+        raise ValueError(
+            f"queue status must be one of: {', '.join(sorted(_QUEUE_STATUSES))}"
+        )
+    with session_scope() as session:
+        item = session.get(TrendReviewQueueItem, item_id)
+        if item is None:
+            raise ValueError(f"trend review queue item not found: {item_id}")
+        previous = item.status
+        item.status = normalized
+        item.queue_metadata = {
+            **dict(item.queue_metadata or {}),
+            "last_decision_actor": actor,
+            "last_decision_note": note,
+        }
+        session.add(
+            DomainEvent(
+                aggregate_type="trend_review_queue_item",
+                aggregate_id=str(item.id),
+                event_type="trend_review_queue_item.status_changed",
+                payload={
+                    "trend_review_queue_item_id": str(item.id),
+                    "topic_watch_id": str(item.topic_watch_id),
+                    "discovery_candidate_id": str(item.discovery_candidate_id),
+                    "queue_key": item.queue_key,
+                    "previous_status": previous,
+                    "status": normalized,
+                    "actor": actor,
+                },
+            )
+        )
+        session.flush()
+        session.refresh(item)
+        session.expunge(item)
+        return item
