@@ -8,6 +8,7 @@ from decimal import Decimal
 from fastapi import APIRouter, HTTPException, Query, status
 from pydantic import BaseModel, ConfigDict, Field
 
+from katcha.api.discovery_health import router as discovery_health_router
 from katcha.api.discovery_trends import router as discovery_trends_router
 from katcha.api.trend_bridge import router as trend_bridge_router
 from katcha.orchestration.client import start_trend_refresh_workflow
@@ -28,6 +29,7 @@ from katcha.trend_models import (
 router = APIRouter(prefix="/v1", tags=["trend-intelligence"])
 router.include_router(discovery_trends_router)
 router.include_router(trend_bridge_router)
+router.include_router(discovery_health_router)
 
 
 class TrendWatchRequest(BaseModel):
