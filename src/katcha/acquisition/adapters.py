@@ -116,7 +116,9 @@ def available_adapters() -> list[dict[str, str]]:
 register_adapter(ManifestDiscoveryAdapter())
 
 from katcha.acquisition.feeds import RssAtomDiscoveryAdapter  # noqa: E402
+from katcha.acquisition.reddit_discovery import RedditDiscoveryAdapter  # noqa: E402
 from katcha.acquisition.youtube_discovery import YouTubeDiscoveryAdapter  # noqa: E402
 
+register_adapter(RedditDiscoveryAdapter())
 register_adapter(RssAtomDiscoveryAdapter())
 register_adapter(YouTubeDiscoveryAdapter())
