@@ -17,6 +17,7 @@ from katcha.trend_source_models import TrendSourcePoll, TrendSourceSubscription
 from katcha.trends.adapters import (
     TrendAdapterContext,
     TrendAdapterError,
+    TrendObservation,
     available_trend_adapters,
     get_trend_adapter,
 )
@@ -63,6 +64,28 @@ def _canonical_json(value: dict[str, Any]) -> str:
 def _subscription_key(adapter_key: str, adapter_version: str, query: dict[str, Any]) -> str:
     raw = f"{adapter_key}\x1f{adapter_version}\x1f{_canonical_json(query)}"
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def _observation_key(
+    observation: TrendObservation,
+    observed_at: datetime,
+    *,
+    bucket_seconds: int,
+) -> str:
+    bucket = int(_utc(observed_at).timestamp()) // max(60, bucket_seconds)
+    raw = json.dumps(
+        {
+            "provider_key": observation.provider_key.casefold(),
+            "external_id": observation.external_id,
+            "bucket": bucket,
+            "metrics": observation.metrics,
+            "canonical_url": observation.canonical_url,
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+    )
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:32]
 
 
 def _poll_payload(poll: TrendSourcePoll) -> dict[str, Any]:
@@ -204,6 +227,7 @@ def source_health_summary(channel_profile_id: uuid.UUID) -> dict[str, Any]:
             "configured": 0,
             "healthy": 0,
             "degraded": 0,
+            "unknown": 0,
             "coverage": 1.0,
         }
     healthy = sum(1 for source in active if source.health_status == "healthy")
@@ -408,6 +432,11 @@ def poll_trend_source(
             source_kind=observation.source_kind,
             independence_key=observation.independence_key,
             observed_at=now,
+            observation_key=_observation_key(
+                observation,
+                now,
+                bucket_seconds=settings.trend_observation_bucket_seconds,
+            ),
             canonical_url=observation.canonical_url,
             source_name=observation.source_name,
             title=observation.title,
@@ -424,7 +453,6 @@ def poll_trend_source(
             content_fingerprint=observation.content_fingerprint,
             metadata={
                 **observation.metadata,
-                "trend_source_subscription_id": str(source_id),
                 "adapter_key": adapter_key,
                 "adapter_version": adapter_version,
             },
