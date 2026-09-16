@@ -9,6 +9,8 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 class ShortEpisodeCandidateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     clip_id: UUID
     hook_strength: float = Field(ge=0, le=100)
     visual_clarity: float = Field(ge=0, le=100)
@@ -20,6 +22,8 @@ class ShortEpisodeCandidateRequest(BaseModel):
 
 
 class CreateShortEpisodeRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     channel_profile_id: UUID
     premise: str = Field(min_length=1, max_length=500)
     candidates: list[ShortEpisodeCandidateRequest] = Field(min_length=3, max_length=50)
