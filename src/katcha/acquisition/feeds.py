@@ -13,6 +13,14 @@ from katcha.acquisition.adapters import DiscoveredCandidate, DiscoveryBatch
 
 _USER_AGENT = "Katcha/0.1 feed-discovery"
 _MAX_REDIRECTS = 3
+_ACCEPT_HEADER = ", ".join(
+    (
+        "application/rss+xml",
+        "application/atom+xml",
+        "application/xml",
+        "text/xml",
+    )
+)
 
 
 def _local_name(tag: str) -> str:
@@ -103,7 +111,11 @@ def parse_feed(
         entries = [child for child in root if _local_name(child.tag) == "entry"]
         feed_title = _text(root, "title")
     else:
-        entries = [child for child in root.iter() if _local_name(child.tag) in {"item", "entry"}]
+        entries = [
+            child
+            for child in root.iter()
+            if _local_name(child.tag) in {"item", "entry"}
+        ]
         feed_title = _text(root, "title")
 
     include = include_terms or []
@@ -194,7 +206,7 @@ def _fetch_feed(url: str) -> tuple[bytes, str]:
             _validate_public_url(current)
             response = client.get(
                 current,
-                headers={"User-Agent": _USER_AGENT, "Accept": "application/rss+xml, application/atom+xml, application/xml, text/xml"},
+                headers={"User-Agent": _USER_AGENT, "Accept": _ACCEPT_HEADER},
             )
             if response.status_code in {301, 302, 303, 307, 308}:
                 location = response.headers.get("location")
