@@ -57,13 +57,14 @@ def _signal_allowed(
     languages: set[str],
     regions: set[str],
 ) -> bool:
-    if platforms and signal.provider_key.casefold() not in platforms and signal.source_kind.casefold() not in platforms:
+    if platforms and (
+        signal.provider_key.casefold() not in platforms
+        and signal.source_kind.casefold() not in platforms
+    ):
         return False
     if languages and (signal.language is None or signal.language.casefold() not in languages):
         return False
-    if regions and (signal.region is None or signal.region.casefold() not in regions):
-        return False
-    return True
+    return not regions or (signal.region is not None and signal.region.casefold() in regions)
 
 
 def _topic_matches_entities(
