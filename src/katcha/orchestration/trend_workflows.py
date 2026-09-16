@@ -62,8 +62,9 @@ class TrendSourceScheduleWorkflow:
         for _ in range(cycles_before_continue):
             now = workflow.now()
             run_key = f"scheduled-{now.strftime('%Y%m%dT%H%M%SZ')}"
-            await _poll_source(source_id, run_key)
-            await workflow.sleep(timedelta(seconds=interval_seconds))
+            result = await _poll_source(source_id, run_key)
+            retry_after = max(0, int(result.get("retry_after_seconds") or 0))
+            await workflow.sleep(timedelta(seconds=max(interval_seconds, retry_after)))
 
         workflow.continue_as_new(
             args=[source_id, interval_seconds, cycles_before_continue]
