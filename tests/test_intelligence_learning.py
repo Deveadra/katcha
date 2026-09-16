@@ -20,9 +20,10 @@ def _row(index: int, count: int) -> TrainingRow:
 def test_sparse_history_keeps_learned_weight_zero() -> None:
     result = train_ranking([_row(index, 8) for index in range(8)])
 
-    assert result.algorithm == "cold-start-baseline"
+    assert result.algorithm == "baseline-only-v1"
     assert result.blend_ratio == 0.0
     assert result.confidence == 0.0
+    assert result.validation_metrics["reason"] == "insufficient_samples"
 
 
 def test_validated_learning_can_earn_bounded_influence() -> None:
@@ -38,8 +39,13 @@ def test_validated_learning_can_earn_bounded_influence() -> None:
 def test_blended_score_never_escapes_probability_range() -> None:
     result = train_ranking([_row(index, 30) for index in range(30)])
 
-    low = blended_score({"baseline_score": -4.0}, result)
-    high = blended_score({"baseline_score": 8.0, "hook_score": 8.0}, result)
+    low, low_details = blended_score({"baseline_score": -4.0}, result)
+    high, high_details = blended_score(
+        {"baseline_score": 8.0, "hook_score": 8.0},
+        result,
+    )
 
     assert 0.0 <= low <= 1.0
     assert 0.0 <= high <= 1.0
+    assert low_details["algorithm"] == result.algorithm
+    assert high_details["algorithm"] == result.algorithm
