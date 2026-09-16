@@ -30,6 +30,7 @@ from katcha.trends.scoring import (
     TopicDescriptor,
     WatchConfig,
     canonical_topic_key,
+    normalize_term,
     score_topic,
 )
 
@@ -43,6 +44,51 @@ def _utc(value: datetime | None = None) -> datetime:
 
 def _terms(values: list[str] | None) -> list[str]:
     return list(dict.fromkeys(item.strip() for item in (values or []) if item.strip()))
+
+
+def _folded_terms(values: list[str] | None) -> list[str]:
+    return list(dict.fromkeys(item.strip().casefold() for item in (values or []) if item.strip()))
+
+
+def _signal_allowed(
+    signal: TrendSignal,
+    *,
+    platforms: set[str],
+    languages: set[str],
+    regions: set[str],
+) -> bool:
+    if platforms and signal.provider_key.casefold() not in platforms and signal.source_kind.casefold() not in platforms:
+        return False
+    if languages and (signal.language is None or signal.language.casefold() not in languages):
+        return False
+    if regions and (signal.region is None or signal.region.casefold() not in regions):
+        return False
+    return True
+
+
+def _topic_matches_entities(
+    topic: TrendTopic,
+    signals: list[TrendSignal],
+    entities: list[str],
+) -> bool:
+    normalized_entities = [normalize_term(item) for item in entities if normalize_term(item)]
+    if not normalized_entities:
+        return True
+    corpus_values = [topic.display_name, *topic.aliases, *topic.tags]
+    for signal in signals:
+        corpus_values.extend(
+            value
+            for value in (
+                signal.title,
+                signal.body_excerpt,
+                signal.author,
+                signal.community,
+                signal.source_name,
+            )
+            if value
+        )
+    corpus = " ".join(normalize_term(value) for value in corpus_values if value)
+    return any(entity in corpus for entity in normalized_entities)
 
 
 def active_watch_profile(channel_profile_id: uuid.UUID) -> ChannelTrendWatchVersion | None:
@@ -71,6 +117,9 @@ def create_watch_profile(
     metadata: dict[str, Any] | None = None,
     actor: str = "operator",
 ) -> ChannelTrendWatchVersion:
+    normalized_interests = _terms(interests)
+    if not normalized_interests:
+        raise ValueError("trend watch profile requires at least one non-empty interest")
     with session_scope() as session:
         if session.get(ChannelProfile, channel_profile_id) is None:
             raise ValueError(f"channel profile not found: {channel_profile_id}")
@@ -82,12 +131,12 @@ def create_watch_profile(
         profile = ChannelTrendWatchVersion(
             channel_profile_id=channel_profile_id,
             version=int(current or 0) + 1,
-            interests=_terms(interests),
+            interests=normalized_interests,
             excluded_terms=_terms(excluded_terms),
             entities=_terms(entities),
-            platforms=_terms(platforms),
-            languages=_terms(languages),
-            regions=_terms(regions),
+            platforms=_folded_terms(platforms),
+            languages=_folded_terms(languages),
+            regions=_folded_terms(regions),
             source_weights={
                 str(key).strip().casefold(): max(0.0, float(value))
                 for key, value in (source_weights or {}).items()
@@ -252,9 +301,12 @@ def _signals_for_topic(
     *,
     cutoff: datetime,
     source_weights: dict[str, float],
+    platforms: list[str],
+    languages: list[str],
+    regions: list[str],
 ) -> tuple[list[TrendSignal], list[SignalSample]]:
     with session_scope() as session:
-        signals = list(
+        candidates = list(
             session.scalars(
                 select(TrendSignal)
                 .join(TrendTopicSignal, TrendTopicSignal.trend_signal_id == TrendSignal.id)
@@ -266,6 +318,19 @@ def _signals_for_topic(
                 .limit(MAX_SIGNALS_PER_TOPIC)
             )
         )
+    platform_filter = set(platforms)
+    language_filter = set(languages)
+    region_filter = set(regions)
+    signals = [
+        signal
+        for signal in candidates
+        if _signal_allowed(
+            signal,
+            platforms=platform_filter,
+            languages=language_filter,
+            regions=region_filter,
+        )
+    ]
     samples = [
         SignalSample(
             entity_key=f"{signal.provider_key}:{signal.external_id}",
@@ -438,6 +503,10 @@ def refresh_channel_trends(
             "version": watch.version,
             "interests": list(watch.interests),
             "excluded_terms": list(watch.excluded_terms),
+            "entities": list(watch.entities),
+            "platforms": list(watch.platforms),
+            "languages": list(watch.languages),
+            "regions": list(watch.regions),
             "freshness": watch.freshness_horizon_hours,
             "source_weights": dict(watch.source_weights),
             "min_confidence": float(watch.min_confidence),
@@ -450,8 +519,11 @@ def refresh_channel_trends(
             topic.id,
             cutoff=cutoff,
             source_weights=config["source_weights"],
+            platforms=config["platforms"],
+            languages=config["languages"],
+            regions=config["regions"],
         )
-        if not samples:
+        if not samples or not _topic_matches_entities(topic, signals, config["entities"]):
             continue
         result = score_topic(
             topic=TopicDescriptor(topic.display_name, topic.aliases, topic.tags),
@@ -487,6 +559,9 @@ def refresh_channel_trends(
                     evidence_summary={
                         "signal_count": len(signals),
                         "source_kinds": sorted({item.source_kind for item in signals}),
+                        "providers": sorted({item.provider_key for item in signals}),
+                        "languages": sorted({item.language for item in signals if item.language}),
+                        "regions": sorted({item.region for item in signals if item.region}),
                         "independent_sources": len(
                             {item.independence_key for item in signals}
                         ),
