@@ -8,8 +8,8 @@ from typing import Any
 from sqlalchemy import func, select
 from temporalio import activity
 
-from katcha.audio.tts import get_voice_profile, synthesize_speech
-from katcha.config import get_settings
+from katcha.audio.tts import VoiceProfile, get_voice_profile, synthesize_speech
+from katcha.config import Settings, get_settings
 from katcha.db import session_scope
 from katcha.domain import ProductionStatus
 from katcha.editorial.generator import generate_short_scripts
@@ -18,7 +18,11 @@ from katcha.integrations.storage import ObjectStore
 from katcha.models import Clip, DomainEvent, UsageEvent
 from katcha.production_models import Production, ProductionAsset, ProductionScript
 from katcha.rendering.client import render_short
-from katcha.rendering.manifest import ShortRenderManifest, build_short_manifest
+from katcha.rendering.manifest import (
+    ShortBrandSpec,
+    ShortRenderManifest,
+    build_short_manifest,
+)
 
 
 class AmbiguousPaidCall(RuntimeError):
@@ -55,6 +59,35 @@ def _selected_script(session: Any, production: Production) -> ProductionScript:
     if script is None:
         raise RuntimeError("selected production script does not exist")
     return script
+
+
+def _brand_voice_profile(
+    snapshot: dict[str, Any],
+    settings: Settings,
+) -> VoiceProfile | None:
+    voice_policy = snapshot.get("voice_policy")
+    if not isinstance(voice_policy, dict):
+        return None
+    preferred = voice_policy.get("preferred_profiles")
+    if not isinstance(preferred, list):
+        return None
+    for key in preferred:
+        try:
+            profile = get_voice_profile(str(key))
+        except ValueError:
+            continue
+        if profile.provider == "openai" and settings.openai_api_key:
+            return profile
+        if profile.provider == "gemini" and settings.gemini_api_key:
+            return profile
+    return None
+
+
+def _brand_render_spec(snapshot: dict[str, Any]) -> ShortBrandSpec | None:
+    visual = snapshot.get("visual")
+    if not isinstance(visual, dict):
+        return None
+    return ShortBrandSpec.model_validate(visual)
 
 
 @activity.defn
@@ -146,6 +179,8 @@ def generate_script_candidates(production_id: str) -> dict[str, object]:
                     "model": result.target.model,
                     "persona_key": persona_key,
                     "persona_version": persona_version,
+                    "brand_key": production.brand_key,
+                    "brand_version": production.brand_version,
                 },
             )
         )
@@ -274,10 +309,11 @@ def generate_narration_assets(production_id: str) -> dict[str, object]:
         segments = list((script.script_metadata or {}).get("segments") or [])
         if not segments:
             raise RuntimeError("selected script has no commentary segments")
+        brand_snapshot = dict(production.brand_snapshot or {})
         profile = (
             get_voice_profile(production.selected_voice_profile)
             if production.selected_voice_profile
-            else None
+            else _brand_voice_profile(brand_snapshot, settings)
         )
         channel_profile_id = production.channel_profile_id
         try:
@@ -390,6 +426,8 @@ def generate_narration_assets(production_id: str) -> dict[str, object]:
                 event_type="production.voice_ready",
                 payload={
                     "production_id": production_id,
+                    "brand_key": production.brand_key,
+                    "brand_version": production.brand_version,
                     "voice_profile": production.selected_voice_profile,
                     "generated_segments": generated,
                     "reused_segments": reused,
@@ -443,6 +481,7 @@ def build_render_manifest_activity(production_id: str) -> dict[str, object]:
             for index, asset in enumerate(narration_assets)
         ]
         output_key = store.production_key(production_id, "render/short-g1.mp4")
+        brand = _brand_render_spec(dict(production.brand_snapshot or {}))
         manifest = build_short_manifest(
             production_id=production_id,
             source_key=clip.storage_key,
@@ -458,6 +497,7 @@ def build_render_manifest_activity(production_id: str) -> dict[str, object]:
             output_key=output_key,
             title_angle=str((script.script_metadata or {}).get("title_angle") or "") or None,
             interaction_prompt=script.interaction_prompt,
+            brand=brand,
         )
 
     manifest_bytes = manifest.model_dump_json(indent=2).encode("utf-8")
@@ -496,7 +536,11 @@ def build_render_manifest_activity(production_id: str) -> dict[str, object]:
                         generation=1,
                         storage_key=key,
                         content_type="application/json",
-                        asset_metadata={"manifest_version": manifest.version},
+                        asset_metadata={
+                            "manifest_version": manifest.version,
+                            "brand_key": production.brand_key,
+                            "brand_version": production.brand_version,
+                        },
                     )
                 )
         session.add(
@@ -507,6 +551,8 @@ def build_render_manifest_activity(production_id: str) -> dict[str, object]:
                 payload={
                     "production_id": production_id,
                     "manifest_key": manifest_key,
+                    "brand_key": production.brand_key,
+                    "brand_version": production.brand_version,
                     "output_duration_seconds": manifest.output_duration_seconds,
                 },
             )
@@ -569,6 +615,8 @@ def render_short_activity(production_id: str) -> dict[str, object]:
                     model=None,
                     asset_metadata={
                         "duration_seconds": result.duration_seconds,
+                        "brand_key": production.brand_key,
+                        "brand_version": production.brand_version,
                         **result.metadata,
                     },
                 )

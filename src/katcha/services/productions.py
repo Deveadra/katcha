@@ -17,6 +17,7 @@ from katcha.production_models import (
     ProductionReview,
     ProductionScript,
 )
+from katcha.services.channel_brands import brand_for_channel
 
 PROMPT_VERSION = "short-script-v2"
 REGENERATE_STAGES = {"script", "voice", "render"}
@@ -68,7 +69,6 @@ def register_short_production(
     idempotency_key: str | None = None,
     channel_profile_id: uuid.UUID | None = None,
 ) -> Production:
-    persona = get_persona(persona_key)
     workflow_id = _workflow_id(clip_id, idempotency_key, channel_profile_id)
 
     with session_scope() as session:
@@ -80,6 +80,12 @@ def register_short_production(
             return existing
 
         _validate_channel_scope(session, channel_profile_id)
+        brand, brand_version = brand_for_channel(session, channel_profile_id)
+        if channel_profile_id is None and persona_key != brand.persona.key:
+            persona = get_persona(persona_key)
+        else:
+            persona = get_persona(brand.persona.key, brand.persona.version)
+
         clip = session.get(Clip, clip_id)
         features = session.get(ClipFeature, clip_id)
         if clip is None:
@@ -100,6 +106,9 @@ def register_short_production(
             persona_key=persona.key,
             persona_version=persona.version,
             prompt_version=PROMPT_VERSION,
+            brand_key=brand.brand_key,
+            brand_version=brand_version,
+            brand_snapshot=brand.model_dump(mode="json"),
             analysis_snapshot=_analysis_snapshot(clip, features),
             estimated_cost_usd=Decimal("0"),
         )
@@ -116,6 +125,8 @@ def register_short_production(
                     "channel_profile_id": (
                         str(channel_profile_id) if channel_profile_id else None
                     ),
+                    "brand_key": production.brand_key,
+                    "brand_version": production.brand_version,
                     "generation": 1,
                 },
             )
@@ -225,6 +236,11 @@ def register_regeneration(
             persona_key=parent.persona_key,
             persona_version=parent.persona_version,
             prompt_version=parent.prompt_version,
+            brand_key=parent.brand_key,
+            brand_version=parent.brand_version,
+            brand_snapshot=(
+                dict(parent.brand_snapshot) if parent.brand_snapshot is not None else None
+            ),
             analysis_snapshot=dict(parent.analysis_snapshot or {}),
             estimated_cost_usd=Decimal("0"),
         )
@@ -265,6 +281,8 @@ def register_regeneration(
                     "channel_profile_id": (
                         str(parent.channel_profile_id) if parent.channel_profile_id else None
                     ),
+                    "brand_key": child.brand_key,
+                    "brand_version": child.brand_version,
                     "regenerate_from": stage,
                 },
             )
