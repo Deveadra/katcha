@@ -2,7 +2,8 @@ from sqlalchemy import CheckConstraint, UniqueConstraint
 
 from katcha.acquisition_models import CandidateTrendScore, TopicWatchVersion
 from katcha.api.main import app
-from katcha.api.trends import _contains_secret_key
+from katcha.services.trend_execution import contains_secret_key
+from katcha.trend_models import TrendReviewQueueItem
 
 
 def _unique_columns(table) -> set[tuple[str, ...]]:
@@ -32,10 +33,25 @@ def test_trend_scores_have_version_and_retry_idempotency_keys() -> None:
     assert ("topic_watch_id", "discovery_candidate_id", "score_key") in unique
 
 
+def test_review_queue_is_execution_scoped_and_ranked() -> None:
+    unique = _unique_columns(TrendReviewQueueItem.__table__)
+    assert (
+        "topic_watch_id",
+        "queue_key",
+        "discovery_candidate_id",
+    ) in unique
+    checks = {
+        constraint.name
+        for constraint in TrendReviewQueueItem.__table__.constraints
+        if isinstance(constraint, CheckConstraint)
+    }
+    assert "ck_trend_review_queue_rank_positive" in checks
+
+
 def test_topic_watch_config_rejects_secret_bearing_shapes() -> None:
-    assert _contains_secret_key({"query": {"api_key": "nope"}}) is True
-    assert _contains_secret_key({"headers": {"Authorization": "nope"}}) is True
-    assert _contains_secret_key({"query": {"feed_url": "https://example.com"}}) is False
+    assert contains_secret_key({"query": {"api_key": "nope"}}) is True
+    assert contains_secret_key({"headers": {"Authorization": "nope"}}) is True
+    assert contains_secret_key({"query": {"feed_url": "https://example.com"}}) is False
 
 
 def test_trend_routes_are_mounted() -> None:
@@ -43,6 +59,8 @@ def test_trend_routes_are_mounted() -> None:
 
     assert "/v1/trends/watches" in paths
     assert "/v1/trends/watches/{topic_watch_id}/execute" in paths
+    assert "/v1/trends/watches/{topic_watch_id}/schedule" in paths
+    assert "/v1/trends/watches/{topic_watch_id}/queue" in paths
     assert (
         "/v1/trends/watches/{topic_watch_id}/candidates/{candidate_id}/score"
         in paths
