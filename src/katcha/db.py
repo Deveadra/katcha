@@ -42,6 +42,7 @@ def init_db() -> None:
         publishing_models,
         short_episode_models,
         trend_models,
+        trend_source_models,
     )
 
     Base.metadata.create_all(bind=engine)
