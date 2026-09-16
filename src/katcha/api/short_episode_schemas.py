@@ -33,6 +33,35 @@ class CreateShortEpisodeRequest(BaseModel):
     idempotency_key: str | None = Field(default=None, max_length=256)
 
 
+class StartShortEpisodeEditorialRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    start_stage: Literal["script", "voice"] = "script"
+
+
+class StartShortEpisodeEditorialResponse(BaseModel):
+    episode_id: UUID
+    workflow_id: str
+    start_stage: str
+    status: str
+
+
+class ReviewShortEpisodeRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    decision: Literal["approve", "reject", "regenerate"]
+    note: str | None = Field(default=None, max_length=2000)
+    actor: str = Field(default="operator", min_length=1, max_length=128)
+    regenerate_from: Literal["script", "voice"] = "script"
+
+
+class ReviewShortEpisodeResponse(BaseModel):
+    episode_id: UUID
+    decision: str
+    child_episode_id: UUID | None = None
+    child_workflow_id: str | None = None
+
+
 class ShortEpisodeResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -52,9 +81,12 @@ class ShortEpisodeResponse(BaseModel):
     plan_snapshot: dict[str, object]
     persona_key: str
     persona_version: str
+    prompt_version: str
     brand_key: str
     brand_version: int
     brand_snapshot: dict[str, object]
+    selected_script_id: UUID | None
+    selected_voice_profile: str | None
     estimated_cost_usd: Decimal
     error: str | None
     created_at: datetime
@@ -78,6 +110,52 @@ class ShortEpisodeItemResponse(BaseModel):
     created_at: datetime
 
 
+class ShortEpisodeScriptResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    short_episode_id: UUID
+    candidate_index: int
+    style: str
+    script_payload: dict[str, object]
+    narration_beats: list[dict[str, object]]
+    provider: str
+    model: str
+    prompt_version: str
+    selected: bool
+    created_at: datetime
+
+
+class ShortEpisodeAssetResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    short_episode_id: UUID
+    kind: str
+    generation: int
+    storage_key: str
+    content_type: str
+    provider: str | None
+    model: str | None
+    asset_metadata: dict[str, object]
+    created_at: datetime
+
+
+class ShortEpisodeReviewResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    short_episode_id: UUID
+    decision: str
+    actor: str
+    note: str | None
+    review_metadata: dict[str, object]
+    created_at: datetime
+
+
 class ShortEpisodeDetailResponse(BaseModel):
     episode: ShortEpisodeResponse
     items: list[ShortEpisodeItemResponse]
+    scripts: list[ShortEpisodeScriptResponse] = Field(default_factory=list)
+    assets: list[ShortEpisodeAssetResponse] = Field(default_factory=list)
+    reviews: list[ShortEpisodeReviewResponse] = Field(default_factory=list)
