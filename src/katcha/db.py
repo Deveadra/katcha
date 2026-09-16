@@ -35,6 +35,7 @@ def init_db() -> None:
     from katcha import (  # noqa: F401
         acquisition_models,
         brand_models,
+        discovery_health_models,
         discovery_trend_models,
         intelligence_models,
         longform_models,
