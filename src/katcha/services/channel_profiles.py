@@ -93,6 +93,19 @@ def ensure_active_profile(
     return profile
 
 
+def _connection_profile_metadata(connection: YouTubeConnection) -> dict[str, object]:
+    metadata: dict[str, object] = {
+        "channel_id": connection.channel_id,
+        "channel_title": connection.channel_title,
+    }
+    connection_metadata = dict(connection.connection_metadata or {})
+    for key in ("channel_handle", "handle", "custom_url"):
+        value = connection_metadata.get(key)
+        if value:
+            metadata[key] = value
+    return metadata
+
+
 def ensure_channel_profile(
     youtube_connection_id: uuid.UUID,
     *,
@@ -104,17 +117,24 @@ def ensure_channel_profile(
     settings = get_settings()
     default_budget = Decimal(str(settings.ai_budget_usd_monthly))
     with session_scope() as session:
+        connection = session.get(YouTubeConnection, youtube_connection_id)
+        if connection is None:
+            raise ValueError(f"YouTube connection not found: {youtube_connection_id}")
+
         existing = session.scalar(
             select(ChannelProfile).where(
                 ChannelProfile.youtube_connection_id == youtube_connection_id
             )
         )
         if existing is not None:
+            current_metadata = dict(existing.profile_metadata or {})
+            resolved_metadata = _connection_profile_metadata(connection)
+            if any(current_metadata.get(key) != value for key, value in resolved_metadata.items()):
+                existing.profile_metadata = {**current_metadata, **resolved_metadata}
+                session.flush()
+                session.refresh(existing)
             session.expunge(existing)
             return existing
-        connection = session.get(YouTubeConnection, youtube_connection_id)
-        if connection is None:
-            raise ValueError(f"YouTube connection not found: {youtube_connection_id}")
 
         profile = ChannelProfile(
             youtube_connection_id=youtube_connection_id,
@@ -122,7 +142,7 @@ def ensure_channel_profile(
             timezone=timezone,
             active_strategy_version=1,
             active_automation_version=1,
-            profile_metadata={"channel_id": connection.channel_id},
+            profile_metadata=_connection_profile_metadata(connection),
         )
         session.add(profile)
         session.flush()
@@ -159,6 +179,7 @@ def ensure_channel_profile(
                 payload={
                     "channel_profile_id": str(profile.id),
                     "youtube_connection_id": str(youtube_connection_id),
+                    "channel_title": connection.channel_title,
                     "timezone": timezone,
                     "automation_level": AutomationLevel.REVIEW_REQUIRED.value,
                 },

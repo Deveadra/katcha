@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from katcha.brand_models import ChannelBrandVersion
 from katcha.branding import (
     ChannelBrandContract,
+    brand_contract_for_profile_metadata,
     default_brand_contract,
     validate_brand_contract,
 )
@@ -39,14 +40,17 @@ def ensure_active_brand(
         validate_brand_contract(dict(existing.contract or {}))
         return existing
 
-    contract = default_brand_contract()
+    contract = brand_contract_for_profile_metadata(dict(profile.profile_metadata or {}))
     brand = ChannelBrandVersion(
         channel_profile_id=profile.id,
         version=1,
         brand_key=contract.brand_key,
         is_active=True,
         contract=contract.model_dump(mode="json"),
-        brand_metadata={"created_by": "profile_bootstrap"},
+        brand_metadata={
+            "created_by": "profile_bootstrap",
+            "identity_resolution": "profile_metadata",
+        },
     )
     session.add(brand)
     session.flush()
