@@ -7,6 +7,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from katcha.acquisition.eligibility import production_eligible_clip_ids
 from katcha.config import Settings
 from katcha.intelligence.features import clip_learning_features
 from katcha.intelligence.learning import clamp
@@ -126,6 +127,7 @@ def select_compilation_candidates(
     settings: Settings,
     channel_profile_id: uuid.UUID | None = None,
 ) -> list[CandidateEvidence]:
+    scan_limit = min(settings.longform_candidate_pool_limit * 4, 2000)
     rows = list(
         session.execute(
             select(ClipFeature, Clip)
@@ -136,12 +138,21 @@ def select_compilation_candidates(
                 Clip.duration_seconds > 0,
             )
             .order_by(ClipFeature.candidate_score.desc())
-            .limit(settings.longform_candidate_pool_limit)
+            .limit(scan_limit)
         )
     )
+    allowed_clip_ids = production_eligible_clip_ids(
+        session,
+        [clip.id for _features, clip in rows],
+    )
+    rows = [
+        (features, clip)
+        for features, clip in rows
+        if clip.id in allowed_clip_ids
+    ][: settings.longform_candidate_pool_limit]
     if len(rows) < settings.longform_min_segments:
         raise ValueError(
-            "not enough scored clips for a compilation: "
+            "not enough production-eligible scored clips for a compilation: "
             f"need {settings.longform_min_segments}, found {len(rows)}"
         )
 
