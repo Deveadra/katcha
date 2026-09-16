@@ -7,7 +7,11 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from katcha.brand_models import ChannelBrandVersion
-from katcha.branding import ChannelBrandContract, default_brand_contract, validate_brand_contract
+from katcha.branding import (
+    ChannelBrandContract,
+    default_brand_contract,
+    validate_brand_contract,
+)
 from katcha.intelligence_models import ChannelProfile
 from katcha.models import DomainEvent
 
