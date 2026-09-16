@@ -2,12 +2,12 @@ from sqlalchemy import UniqueConstraint
 
 from katcha.brand_models import ChannelBrandVersion
 from katcha.branding import channel_01_brand_v1, validate_brand_contract
+from katcha.config import Settings
 from katcha.orchestration.production_activities import (
     _brand_render_spec,
     _brand_voice_profile,
 )
 from katcha.production_models import Production
-from katcha.config import Settings
 
 
 def test_channel_01_brand_contract_is_complete_and_round_trips() -> None:
