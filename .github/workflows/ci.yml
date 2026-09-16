@@ -47,7 +47,17 @@ jobs:
 
       - name: Import smoke
         run: |
-          python -c "import katcha.api.main; import katcha.api.trends; import katcha.orchestration.publishing_worker; import katcha.orchestration.longform_worker; import katcha.orchestration.intelligence_worker; import katcha.orchestration.discovery_worker; import katcha.orchestration.trend_worker"
+          python - <<'PY'
+          import katcha.api.main
+          import katcha.api.trend_sources
+          import katcha.api.trends
+          import katcha.orchestration.discovery_worker
+          import katcha.orchestration.intelligence_worker
+          import katcha.orchestration.longform_worker
+          import katcha.orchestration.publishing_worker
+          import katcha.orchestration.trend_worker
+          import katcha.trend_source_models
+          PY
 
       - name: Test
         run: pytest -q
