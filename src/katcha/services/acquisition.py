@@ -30,6 +30,26 @@ from katcha.integrations.download import canonicalize_url, detect_platform
 from katcha.models import DomainEvent, SourceItem
 from katcha.services.sources import register_source
 
+_EVIDENCE_TYPES: dict[RightsBasis, set[str]] = {
+    RightsBasis.DIRECT_PERMISSION: {
+        "direct_permission",
+        "creator_permission",
+        "permission_record",
+    },
+    RightsBasis.LICENSED: {
+        "license",
+        "license_agreement",
+        "license_terms",
+    },
+    RightsBasis.CC0: {"cc0", "license_page", "license_terms"},
+    RightsBasis.CC_BY: {"cc_by", "license_page", "license_terms"},
+    RightsBasis.PUBLIC_DOMAIN: {
+        "public_domain",
+        "public_domain_record",
+        "source_page",
+    },
+}
+
 
 @dataclass(frozen=True, slots=True)
 class ClipAcquisitionState:
@@ -132,7 +152,10 @@ def register_discovery_candidate(
     confidence = max(0.0, min(float(provenance_confidence), 1.0))
     normalized_external_id = external_id.strip() if external_id else None
     with session_scope() as session:
-        if discovery_run_id is not None and session.get(DiscoveryRun, discovery_run_id) is None:
+        if (
+            discovery_run_id is not None
+            and session.get(DiscoveryRun, discovery_run_id) is None
+        ):
             raise ValueError(f"discovery run not found: {discovery_run_id}")
         existing = session.scalar(
             select(DiscoveryCandidate).where(
@@ -200,6 +223,28 @@ def latest_rights_assessment(
     )
 
 
+def _matching_evidence_present(
+    session: Session,
+    candidate_id: uuid.UUID,
+    rights_basis: RightsBasis,
+) -> bool:
+    accepted = _EVIDENCE_TYPES.get(rights_basis)
+    if not accepted:
+        return False
+    evidence_types = {
+        str(value).strip().casefold()
+        for value in session.scalars(
+            select(RightsEvidence.evidence_type)
+            .join(
+                RightsAssessment,
+                RightsEvidence.rights_assessment_id == RightsAssessment.id,
+            )
+            .where(RightsAssessment.discovery_candidate_id == candidate_id)
+        )
+    }
+    return bool(evidence_types & accepted)
+
+
 def assess_discovery_candidate(
     candidate_id: uuid.UUID,
     *,
@@ -213,17 +258,23 @@ def assess_discovery_candidate(
     actor: str = "operator",
     reason: str | None = None,
 ) -> RightsAssessment:
-    policy = evaluate_acquisition_policy(
-        rights_basis=rights_basis,
-        audio_status=audio_status,
-        originality_gate=originality_gate,
-        risk_flags=risk_flags or [],
-        operator_authorized=operator_authorized,
-    )
     with session_scope() as session:
         candidate = session.get(DiscoveryCandidate, candidate_id)
         if candidate is None:
             raise ValueError(f"discovery candidate not found: {candidate_id}")
+        evidence_present = _matching_evidence_present(
+            session,
+            candidate_id,
+            rights_basis,
+        )
+        policy = evaluate_acquisition_policy(
+            rights_basis=rights_basis,
+            audio_status=audio_status,
+            originality_gate=originality_gate,
+            risk_flags=risk_flags or [],
+            operator_authorized=operator_authorized,
+            evidence_present=evidence_present,
+        )
         version = int(
             session.scalar(
                 select(func.coalesce(func.max(RightsAssessment.version), 0)).where(
@@ -236,6 +287,7 @@ def assess_discovery_candidate(
         assessment_metadata["policy_reasons"] = list(policy.reasons)
         assessment_metadata["policy_advisories"] = list(policy.advisories)
         assessment_metadata["policy_version"] = "acquisition-policy-v1"
+        assessment_metadata["matching_rights_evidence_present"] = evidence_present
         assessment = RightsAssessment(
             discovery_candidate_id=candidate_id,
             version=version,
@@ -275,6 +327,7 @@ def assess_discovery_candidate(
                     "audio_status": assessment.audio_status,
                     "originality_gate": assessment.originality_gate,
                     "production_eligible": assessment.production_eligible,
+                    "matching_rights_evidence_present": evidence_present,
                     "status": candidate.status,
                 },
             )
@@ -295,15 +348,19 @@ def add_rights_evidence(
     metadata: dict[str, Any] | None = None,
 ) -> RightsEvidence:
     digest = content_sha256.casefold() if content_sha256 else None
-    if digest is not None and (len(digest) != 64 or any(ch not in "0123456789abcdef" for ch in digest)):
-        raise ValueError("content_sha256 must be a 64-character hexadecimal digest")
+    if digest is not None:
+        valid_digest = len(digest) == 64 and all(
+            ch in "0123456789abcdef" for ch in digest
+        )
+        if not valid_digest:
+            raise ValueError("content_sha256 must be a 64-character hexadecimal digest")
     with session_scope() as session:
         assessment = session.get(RightsAssessment, assessment_id)
         if assessment is None:
             raise ValueError(f"rights assessment not found: {assessment_id}")
         evidence = RightsEvidence(
             rights_assessment_id=assessment_id,
-            evidence_type=evidence_type,
+            evidence_type=evidence_type.strip().casefold(),
             source_url=source_url,
             snapshot_key=snapshot_key,
             content_sha256=digest,
@@ -321,7 +378,8 @@ def add_rights_evidence(
                     "discovery_candidate_id": str(assessment.discovery_candidate_id),
                     "rights_assessment_id": str(assessment.id),
                     "rights_evidence_id": str(evidence.id),
-                    "evidence_type": evidence_type,
+                    "evidence_type": evidence.evidence_type,
+                    "reassessment_required_for_gate_change": True,
                 },
             )
         )
@@ -364,7 +422,10 @@ def promote_discovery_candidate(
         managed_source = session.get(SourceItem, source.id)
         if candidate is None or managed_source is None:
             raise RuntimeError("candidate/source disappeared during promotion")
-        if candidate.source_item_id is not None and candidate.source_item_id != managed_source.id:
+        if (
+            candidate.source_item_id is not None
+            and candidate.source_item_id != managed_source.id
+        ):
             raise RuntimeError("candidate was concurrently promoted to a different source")
         managed_source.source_metadata = {
             **dict(managed_source.source_metadata or {}),
