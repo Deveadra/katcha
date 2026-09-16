@@ -7,6 +7,12 @@ from typing import Any
 import httpx
 
 from katcha.acquisition.adapters import DiscoveredCandidate, DiscoveryBatch
+from katcha.acquisition.errors import (
+    DiscoveryProviderError,
+    ProviderFailure,
+    failure_from_response,
+    failure_from_transport,
+)
 from katcha.config import get_settings
 
 _TOKEN_URL = "https://www.reddit.com/api/v1/access_token"
@@ -88,7 +94,9 @@ def parse_reddit_candidates(
         author = str(raw.get("author") or "").strip() or None
         subreddit = str(raw.get("subreddit") or "").strip() or None
         title = str(raw.get("title") or "").strip() or None
-        outbound_url = str(raw.get("url_overridden_by_dest") or raw.get("url") or "").strip()
+        outbound_url = str(
+            raw.get("url_overridden_by_dest") or raw.get("url") or ""
+        ).strip()
         metrics = {
             "score": _number(raw.get("score")),
             "upvotes": _number(raw.get("ups")),
@@ -133,6 +141,17 @@ def parse_reddit_candidates(
     return tuple(candidates)
 
 
+def _invalid_payload(operation: str) -> DiscoveryProviderError:
+    return DiscoveryProviderError(
+        ProviderFailure(
+            provider="Reddit",
+            operation=operation,
+            kind="invalid_payload",
+            retryable=True,
+        )
+    )
+
+
 class RedditDiscoveryAdapter:
     key = "reddit"
     version = "v1"
@@ -157,18 +176,18 @@ class RedditDiscoveryAdapter:
                 headers={"User-Agent": settings.reddit_user_agent},
             )
         except httpx.HTTPError as exc:
-            raise RuntimeError("Reddit OAuth token request failed") from exc
+            raise failure_from_transport("Reddit", "OAuth token request", exc) from exc
         if response.status_code >= 400:
-            raise RuntimeError(
-                f"Reddit OAuth token request failed with status {response.status_code}"
-            )
+            raise failure_from_response("Reddit", "OAuth token request", response)
         try:
             payload = response.json()
         except ValueError as exc:
-            raise RuntimeError("Reddit OAuth token request returned invalid JSON") from exc
+            raise _invalid_payload("OAuth token request") from exc
+        if not isinstance(payload, dict):
+            raise _invalid_payload("OAuth token request")
         token = str(payload.get("access_token") or "").strip()
         if not token:
-            raise RuntimeError("Reddit OAuth token response did not include an access token")
+            raise _invalid_payload("OAuth token request")
         try:
             expires_in = max(int(payload.get("expires_in") or 3600), 60)
         except (TypeError, ValueError):
@@ -221,17 +240,15 @@ class RedditDiscoveryAdapter:
                     },
                 )
             except httpx.HTTPError as exc:
-                raise RuntimeError("Reddit search request failed") from exc
+                raise failure_from_transport("Reddit", "search", exc) from exc
             if response.status_code >= 400:
-                raise RuntimeError(
-                    f"Reddit search request failed with status {response.status_code}"
-                )
+                raise failure_from_response("Reddit", "search", response)
             try:
                 payload = response.json()
             except ValueError as exc:
-                raise RuntimeError("Reddit search returned invalid JSON") from exc
+                raise _invalid_payload("search") from exc
             if not isinstance(payload, dict):
-                raise RuntimeError("Reddit search returned an invalid payload")
+                raise _invalid_payload("search")
 
         candidates = parse_reddit_candidates(
             payload,
