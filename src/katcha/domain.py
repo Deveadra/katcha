@@ -10,6 +10,54 @@ class SourceStatus(StrEnum):
     FAILED = "failed"
 
 
+class DiscoveryRunStatus(StrEnum):
+    QUEUED = "queued"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+
+class DiscoveryCandidateStatus(StrEnum):
+    DISCOVERED = "discovered"
+    QUALIFYING = "qualifying"
+    REVIEW = "review"
+    QUALIFIED = "qualified"
+    REJECTED = "rejected"
+    PROMOTED = "promoted"
+
+
+class RightsBasis(StrEnum):
+    OWNED = "owned"
+    DIRECT_PERMISSION = "direct_permission"
+    LICENSED = "licensed"
+    CC0 = "cc0"
+    CC_BY = "cc_by"
+    PUBLIC_DOMAIN = "public_domain"
+    FAIR_USE_CANDIDATE = "fair_use_candidate"
+    UNKNOWN = "unknown"
+    BLOCKED = "blocked"
+
+
+class RightsLane(StrEnum):
+    GREEN = "green"
+    YELLOW = "yellow"
+    RED = "red"
+
+
+class GateStatus(StrEnum):
+    CLEARED = "cleared"
+    REVIEW_REQUIRED = "review_required"
+    BLOCKED = "blocked"
+
+
+class AudioRightsStatus(StrEnum):
+    ORIGINAL = "original"
+    CLEARED = "cleared"
+    REPLACE_REQUIRED = "replace_required"
+    REVIEW_REQUIRED = "review_required"
+    BLOCKED = "blocked"
+
+
 class AnalysisStatus(StrEnum):
     QUEUED = "queued"
     RUNNING = "running"
