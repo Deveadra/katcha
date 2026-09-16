@@ -9,12 +9,12 @@ from sqlalchemy import distinct, func, select
 from sqlalchemy.orm import Session
 
 from katcha.db import session_scope
+from katcha.integrations.youtube.oauth import MONETARY_SCOPE
 from katcha.intelligence_models import (
     AIBudgetReservation,
     ChannelEconomicsSnapshot,
     ChannelProfile,
 )
-from katcha.integrations.youtube.oauth import MONETARY_SCOPE
 from katcha.longform_models import Compilation, CompilationSegment
 from katcha.models import ClipAnalysisRun, DomainEvent, UsageEvent
 from katcha.production_models import Production
