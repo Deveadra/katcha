@@ -65,7 +65,8 @@ def _review_rows(channel_profile_id: uuid.UUID) -> list[tuple[str, object]]:
                 .where(Compilation.channel_profile_id == channel_profile_id)
             )
         )
-    rows = [(str(decision), created_at) for decision, created_at in [*production_rows, *compilation_rows]]
+    all_rows = [*production_rows, *compilation_rows]
+    rows = [(str(decision), created_at) for decision, created_at in all_rows]
     return sorted(rows, key=lambda item: item[1])
 
 
@@ -172,10 +173,7 @@ def evaluate_automation(channel_profile_id: uuid.UUID) -> AutomationEvidence:
             reasons.append("publication_failure_rate_above_threshold")
         if ranking_confidence < float(policy.min_ranking_confidence):
             reasons.append("ranking_confidence_below_threshold")
-        if (
-            recent_count >= _MIN_RECENT_DRIFT_SAMPLE
-            and drift_delta > max_drift
-        ):
+        if recent_count >= _MIN_RECENT_DRIFT_SAMPLE and drift_delta > max_drift:
             reasons.append("recent_review_drift_above_threshold")
         return AutomationEvidence(
             reviewed_items=reviewed,
