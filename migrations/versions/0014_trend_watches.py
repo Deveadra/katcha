@@ -72,6 +72,7 @@ def upgrade() -> None:
         sa.Column("topic_watch_id", sa.Uuid(), nullable=False),
         sa.Column("discovery_candidate_id", sa.Uuid(), nullable=False),
         sa.Column("version", sa.Integer(), nullable=False),
+        sa.Column("score_key", sa.String(length=160), nullable=False),
         sa.Column("algorithm_version", sa.String(length=64), nullable=False),
         sa.Column("score", sa.Numeric(8, 6), nullable=False),
         sa.Column("feature_breakdown", sa.JSON(), nullable=False),
@@ -102,6 +103,11 @@ def upgrade() -> None:
             "topic_watch_id",
             "discovery_candidate_id",
             "version",
+        ),
+        sa.UniqueConstraint(
+            "topic_watch_id",
+            "discovery_candidate_id",
+            "score_key",
         ),
     )
     op.create_index(
