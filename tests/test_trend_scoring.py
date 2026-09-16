@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from katcha.trends.scoring import SignalSample, TopicDescriptor, WatchConfig, score_topic
 
-NOW = datetime(2026, 9, 16, 4, 0, tzinfo=timezone.utc)
+NOW = datetime(2026, 9, 16, 4, 0, tzinfo=UTC)
 
 
 def _sample(
