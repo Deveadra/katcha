@@ -11,9 +11,15 @@ from katcha.acquisition.runtime import DISCOVERY_TASK_QUEUE
 from katcha.config import get_settings
 from katcha.orchestration.discovery_activities import (
     execute_discovery_page_activity,
+    finalize_topic_watch_execution_activity,
     mark_discovery_run_failed,
+    prepare_topic_watch_execution_activity,
 )
-from katcha.orchestration.discovery_workflows import DiscoveryRunWorkflow
+from katcha.orchestration.discovery_workflows import (
+    DiscoveryRunWorkflow,
+    TopicWatchScheduleWorkflow,
+    TopicWatchWorkflow,
+)
 
 
 async def main() -> None:
@@ -26,14 +32,20 @@ async def main() -> None:
         settings.temporal_host,
         namespace=settings.temporal_namespace,
     )
-    with concurrent.futures.ThreadPoolExecutor(max_workers=4) as activity_executor:
+    with concurrent.futures.ThreadPoolExecutor(max_workers=6) as activity_executor:
         worker = Worker(
             client,
             task_queue=DISCOVERY_TASK_QUEUE,
-            workflows=[DiscoveryRunWorkflow],
+            workflows=[
+                DiscoveryRunWorkflow,
+                TopicWatchWorkflow,
+                TopicWatchScheduleWorkflow,
+            ],
             activities=[
                 execute_discovery_page_activity,
                 mark_discovery_run_failed,
+                prepare_topic_watch_execution_activity,
+                finalize_topic_watch_execution_activity,
             ],
             activity_executor=activity_executor,
         )
