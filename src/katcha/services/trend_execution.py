@@ -5,9 +5,15 @@ from dataclasses import dataclass
 from typing import Any
 
 from katcha.acquisition.adapters import get_adapter
-from katcha.acquisition_models import TopicWatchVersion
+from katcha.acquisition_models import DiscoveryRun, TopicWatchVersion
 from katcha.db import session_scope
+from katcha.domain import DiscoveryRunStatus
 from katcha.services.acquisition import register_discovery_run
+from katcha.services.discovery_health import (
+    begin_source_poll,
+    bind_source_poll_run,
+    get_or_create_source_state,
+)
 
 _SECRET_FRAGMENTS = (
     "authorization",
@@ -21,10 +27,16 @@ _SECRET_FRAGMENTS = (
 
 @dataclass(frozen=True, slots=True)
 class PreparedDiscoveryRun:
-    run_id: uuid.UUID
+    run_id: uuid.UUID | None
     adapter_key: str
     adapter_version: str
-    workflow_id: str
+    workflow_id: str | None
+    source_state_id: uuid.UUID
+    source_key: str
+    attempt_key: str
+    allowed: bool
+    reason: str
+    next_eligible_poll_at: str | None = None
 
 
 def contains_secret_key(value: object) -> bool:
@@ -56,6 +68,19 @@ def normalize_adapter_config(
         raise ValueError("topic watch adapter config query must be an object")
     get_adapter(adapter_key, adapter_version)
     return adapter_key, adapter_version, dict(query)
+
+
+def _quota_limit(config: dict[str, Any]) -> int | None:
+    raw = config.get("quota_limit_per_day")
+    if raw is None:
+        return None
+    try:
+        value = int(raw)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("quota_limit_per_day must be an integer") from exc
+    if value < 1:
+        raise ValueError("quota_limit_per_day must be positive")
+    return value
 
 
 def prepare_topic_watch_execution(
@@ -103,7 +128,37 @@ def prepare_topic_watch_execution(
             if len(region) == 2:
                 query.setdefault("region_code", region)
 
+        quota_limit = _quota_limit(config)
+        state = get_or_create_source_state(
+            adapter_key=adapter_key,
+            adapter_version=adapter_version,
+            effective_query=query,
+            topic_watch_id=topic_watch_id,
+            quota_limit_per_day=quota_limit,
+        )
         run_key = f"watch:{topic_watch_id}:{key}:{index}"
+        decision = begin_source_poll(state.id, attempt_key=run_key)
+        if not decision.allowed:
+            runs.append(
+                PreparedDiscoveryRun(
+                    run_id=None,
+                    adapter_key=adapter_key,
+                    adapter_version=adapter_version,
+                    workflow_id=None,
+                    source_state_id=state.id,
+                    source_key=state.source_key,
+                    attempt_key=run_key,
+                    allowed=False,
+                    reason=decision.reason,
+                    next_eligible_poll_at=(
+                        decision.next_eligible_poll_at.isoformat()
+                        if decision.next_eligible_poll_at
+                        else None
+                    ),
+                )
+            )
+            continue
+
         run = register_discovery_run(
             adapter_key=adapter_key,
             adapter_version=adapter_version,
@@ -115,7 +170,21 @@ def prepare_topic_watch_execution(
                 "watch_version": watch_version,
                 "execution_key": key,
                 "adapter_index": index,
+                "source_state_id": str(state.id),
+                "source_key": state.source_key,
+                "source_attempt_key": run_key,
             },
+        )
+        with session_scope() as session:
+            persisted = session.get(DiscoveryRun, run.id)
+            if persisted is None:
+                raise RuntimeError("discovery run disappeared during preparation")
+            if persisted.status == DiscoveryRunStatus.QUEUED.value:
+                persisted.cursor = dict(decision.cursor or {})
+        bind_source_poll_run(
+            state.id,
+            attempt_key=run_key,
+            discovery_run_id=run.id,
         )
         runs.append(
             PreparedDiscoveryRun(
@@ -123,6 +192,11 @@ def prepare_topic_watch_execution(
                 adapter_key=adapter_key,
                 adapter_version=adapter_version,
                 workflow_id=f"discovery-run-{run.id}",
+                source_state_id=state.id,
+                source_key=state.source_key,
+                attempt_key=run_key,
+                allowed=True,
+                reason="ready" if not decision.reused else "reused_running_attempt",
             )
         )
     return runs
