@@ -12,6 +12,9 @@ from katcha.db import session_scope
 from katcha.domain import DiscoveryRunStatus
 from katcha.models import DomainEvent
 from katcha.services.discovery import observe_discovery_candidate
+from katcha.services.discovery_trends import compute_candidate_trend_score
+from katcha.services.trend_execution import prepare_topic_watch_execution
+from katcha.services.trend_queue import materialize_trend_review_queue
 
 
 @activity.defn
@@ -38,6 +41,15 @@ def execute_discovery_page_activity(run_id: str) -> dict[str, object]:
         adapter_version = run.adapter_version
         query = dict(run.query or {})
         cursor = dict(run.cursor or {})
+        run_metadata = dict(run.run_metadata or {})
+
+    topic_watch_id: uuid.UUID | None = None
+    raw_topic_watch_id = run_metadata.get("topic_watch_id")
+    if raw_topic_watch_id:
+        try:
+            topic_watch_id = uuid.UUID(str(raw_topic_watch_id))
+        except ValueError as exc:
+            raise ValueError("discovery run has an invalid topic_watch_id") from exc
 
     adapter = get_adapter(adapter_key, adapter_version)
     batch = adapter.discover(query, cursor)
@@ -56,6 +68,12 @@ def execute_discovery_page_activity(run_id: str) -> dict[str, object]:
             metadata=item.metadata,
         )
         candidate_ids.append(str(candidate.id))
+        if topic_watch_id is not None:
+            compute_candidate_trend_score(
+                candidate.id,
+                topic_watch_id,
+                score_key=f"run:{run_uuid}",
+            )
 
     with session_scope() as session:
         run = session.scalar(select(DiscoveryRun).where(DiscoveryRun.id == run_uuid))
@@ -82,6 +100,9 @@ def execute_discovery_page_activity(run_id: str) -> dict[str, object]:
                     "adapter_version": adapter_version,
                     "candidate_count": len(candidate_ids),
                     "done": batch.done,
+                    "topic_watch_id": (
+                        str(topic_watch_id) if topic_watch_id is not None else None
+                    ),
                 },
             )
         )
@@ -114,3 +135,50 @@ def mark_discovery_run_failed(run_id: str, message: str) -> None:
                 },
             )
         )
+
+
+@activity.defn
+def prepare_topic_watch_execution_activity(
+    topic_watch_id: str,
+    execution_key: str,
+) -> dict[str, object]:
+    runs = prepare_topic_watch_execution(
+        uuid.UUID(topic_watch_id),
+        execution_key=execution_key,
+    )
+    return {
+        "topic_watch_id": topic_watch_id,
+        "execution_key": execution_key,
+        "runs": [
+            {
+                "run_id": str(run.run_id),
+                "adapter_key": run.adapter_key,
+                "adapter_version": run.adapter_version,
+                "workflow_id": run.workflow_id,
+            }
+            for run in runs
+        ],
+    }
+
+
+@activity.defn
+def finalize_topic_watch_execution_activity(
+    topic_watch_id: str,
+    execution_key: str,
+    discovery_run_ids: list[str],
+    top_n: int,
+) -> dict[str, object]:
+    result = materialize_trend_review_queue(
+        uuid.UUID(topic_watch_id),
+        queue_key=execution_key,
+        discovery_run_ids=[uuid.UUID(run_id) for run_id in discovery_run_ids],
+        top_n=top_n,
+    )
+    return {
+        "topic_watch_id": str(result.topic_watch_id),
+        "queue_key": result.queue_key,
+        "candidate_count": result.candidate_count,
+        "cluster_count": result.cluster_count,
+        "queue_count": result.queue_count,
+        "reused": result.reused,
+    }
