@@ -17,6 +17,10 @@ from katcha.production_models import (
     ProductionReview,
     ProductionScript,
 )
+from katcha.services.acquisition import (
+    ClipAcquisitionState,
+    assert_clip_production_eligible,
+)
 
 PROMPT_VERSION = "short-script-v1"
 REGENERATE_STAGES = {"script", "voice", "render"}
@@ -45,6 +49,17 @@ def _analysis_snapshot(clip: Clip, features: ClipFeature) -> dict[str, object]:
         "candidate_score": float(features.candidate_score or 0),
         "score_breakdown": dict(features.score_breakdown or {}),
         "features_updated_at": features.updated_at.isoformat() if features.updated_at else None,
+    }
+
+
+def _acquisition_snapshot(state: ClipAcquisitionState) -> dict[str, object]:
+    return {
+        "managed": state.managed,
+        "eligible": state.eligible,
+        "candidate_id": str(state.candidate_id) if state.candidate_id else None,
+        "assessment_id": str(state.assessment_id) if state.assessment_id else None,
+        "rights_lane": state.rights_lane,
+        "reason": state.reason,
     }
 
 
@@ -86,6 +101,9 @@ def register_short_production(
             raise ValueError(f"clip not found: {clip_id}")
         if features is None or features.candidate_score is None:
             raise ValueError("clip must have completed scoring before production")
+        acquisition_state = assert_clip_production_eligible(clip_id)
+        snapshot = _analysis_snapshot(clip, features)
+        snapshot["acquisition"] = _acquisition_snapshot(acquisition_state)
 
         production = Production(
             clip_id=clip_id,
@@ -100,7 +118,7 @@ def register_short_production(
             persona_key=persona.key,
             persona_version=persona.version,
             prompt_version=PROMPT_VERSION,
-            analysis_snapshot=_analysis_snapshot(clip, features),
+            analysis_snapshot=snapshot,
             estimated_cost_usd=Decimal("0"),
         )
         session.add(production)
@@ -117,6 +135,8 @@ def register_short_production(
                         str(channel_profile_id) if channel_profile_id else None
                     ),
                     "generation": 1,
+                    "acquisition_managed": acquisition_state.managed,
+                    "rights_lane": acquisition_state.rights_lane,
                 },
             )
         )
@@ -211,6 +231,9 @@ def register_regeneration(
                 "production must be in review, rejected, or failed state to regenerate"
             )
         _validate_channel_scope(session, parent.channel_profile_id)
+        acquisition_state = assert_clip_production_eligible(parent.clip_id)
+        child_snapshot = dict(parent.analysis_snapshot or {})
+        child_snapshot["acquisition"] = _acquisition_snapshot(acquisition_state)
 
         child = Production(
             clip_id=parent.clip_id,
@@ -225,7 +248,7 @@ def register_regeneration(
             persona_key=parent.persona_key,
             persona_version=parent.persona_version,
             prompt_version=parent.prompt_version,
-            analysis_snapshot=dict(parent.analysis_snapshot or {}),
+            analysis_snapshot=child_snapshot,
             estimated_cost_usd=Decimal("0"),
         )
         session.add(child)
@@ -266,6 +289,8 @@ def register_regeneration(
                         str(parent.channel_profile_id) if parent.channel_profile_id else None
                     ),
                     "regenerate_from": stage,
+                    "acquisition_managed": acquisition_state.managed,
+                    "rights_lane": acquisition_state.rights_lane,
                 },
             )
         )
