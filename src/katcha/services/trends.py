@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Any
 
@@ -35,10 +35,10 @@ from katcha.trends.scoring import (
 
 
 def _utc(value: datetime | None = None) -> datetime:
-    value = value or datetime.now(timezone.utc)
+    value = value or datetime.now(UTC)
     if value.tzinfo is None:
-        return value.replace(tzinfo=timezone.utc)
-    return value.astimezone(timezone.utc)
+        return value.replace(tzinfo=UTC)
+    return value.astimezone(UTC)
 
 
 def _terms(values: list[str] | None) -> list[str]:
@@ -554,7 +554,7 @@ def list_opportunities(
                 .where(
                     TrendOpportunity.channel_profile_id == channel_profile_id,
                     TrendOpportunity.opportunity_score >= Decimal(str(min_score)),
-                    TrendOpportunity.expires_at > datetime.now(timezone.utc),
+                    TrendOpportunity.expires_at > datetime.now(UTC),
                 )
                 .order_by(
                     TrendOpportunity.created_at.desc(),
