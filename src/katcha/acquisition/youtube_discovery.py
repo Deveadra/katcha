@@ -20,6 +20,30 @@ def _integer(value: object) -> int:
         return 0
 
 
+def _provider_get_json(
+    client: httpx.Client,
+    url: str,
+    *,
+    params: dict[str, object],
+    operation: str,
+) -> dict[str, Any]:
+    try:
+        response = client.get(url, params=params)
+    except httpx.HTTPError as exc:
+        raise RuntimeError(f"YouTube {operation} request failed") from exc
+    if response.status_code >= 400:
+        raise RuntimeError(
+            f"YouTube {operation} request failed with status {response.status_code}"
+        )
+    try:
+        payload = response.json()
+    except ValueError as exc:
+        raise RuntimeError(f"YouTube {operation} returned invalid JSON") from exc
+    if not isinstance(payload, dict):
+        raise RuntimeError(f"YouTube {operation} returned an invalid payload")
+    return payload
+
+
 def parse_youtube_candidates(
     search_payload: dict[str, Any],
     videos_payload: dict[str, Any],
@@ -154,9 +178,12 @@ class YouTubeDiscoveryAdapter:
             params["pageToken"] = page_token
 
         with httpx.Client(timeout=15.0) as client:
-            search_response = client.get(_SEARCH_URL, params=params)
-            search_response.raise_for_status()
-            search_payload = search_response.json()
+            search_payload = _provider_get_json(
+                client,
+                _SEARCH_URL,
+                params=params,
+                operation="search",
+            )
             ids = [
                 str(item.get("id", {}).get("videoId") or "")
                 for item in search_payload.get("items", [])
@@ -166,16 +193,16 @@ class YouTubeDiscoveryAdapter:
             ]
             videos_payload: dict[str, Any] = {"items": []}
             if ids:
-                detail_response = client.get(
+                videos_payload = _provider_get_json(
+                    client,
                     _VIDEOS_URL,
                     params={
                         "key": api_key,
                         "part": "snippet,statistics",
                         "id": ",".join(ids),
                     },
+                    operation="video details",
                 )
-                detail_response.raise_for_status()
-                videos_payload = detail_response.json()
 
         candidates = parse_youtube_candidates(search_payload, videos_payload)
         next_page = str(search_payload.get("nextPageToken") or "").strip()
