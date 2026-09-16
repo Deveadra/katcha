@@ -68,6 +68,12 @@ def _routing_context(
     return resolved_profile, expected_value
 
 
+def _persona_rule_line(label: str, values: tuple[str, ...]) -> str:
+    if not values:
+        return ""
+    return f"{label}: {' | '.join(values)}\n"
+
+
 def build_script_prompt(
     persona: HostPersona,
     snapshot: dict[str, Any],
@@ -89,19 +95,29 @@ def build_script_prompt(
         f"Delivery: {persona.delivery}\n"
         f"Comedy tools: {', '.join(persona.comedy)}\n"
         f"Avoid: {', '.join(persona.avoid)}\n"
-        f"Interaction rule: {persona.interaction_style}\n\n"
+        f"Interaction rule: {persona.interaction_style}\n"
+        f"{_persona_rule_line('Emotional range', persona.emotional_range)}"
+        f"{_persona_rule_line('Hook rules', persona.hook_rules)}"
+        f"{_persona_rule_line('Language rules', persona.language_rules)}"
+        f"{_persona_rule_line('Trust rules', persona.trust_rules)}"
+        f"{_persona_rule_line('Allowed interaction rituals', persona.interaction_rituals)}\n"
         f"Source duration: {duration:.2f} seconds\n"
         f"Event: {event_summary}\n"
         f"Setup: {setup}\n"
         f"Payoff: {payoff}\n"
         f"Transcript: {transcript}\n\n"
         "Create exactly three distinct host treatments: observational, sarcastic, and "
-        "interactive. The host must add a new joke, perspective, framing, or decision for "
-        "the audience; never merely describe visible action. Keep speech economical so the "
-        "source clip remains the star. Use pre and post commentary by default. Use mid only "
-        "when interruption materially improves the joke, and provide the exact source time. "
-        "If using an interaction prompt, place it after the payoff and make it a natural "
-        "specific judgment, ranking, or choice rather than generic engagement bait."
+        "interactive. They must sound like the same host, not three different personalities. "
+        "The host must add a new joke, perspective, framing, or decision for the audience; "
+        "never merely describe visible action. Keep speech economical so the source clip "
+        "remains the star. One precise line is better than several generic reactions. "
+        "Use pre and post commentary by default. Use mid only when interruption materially "
+        "improves the joke, prediction, comprehension, or callback, and provide the exact "
+        "source time. A strong native source opening may justify no pre narration. If using an "
+        "interaction prompt, place it after the payoff and make it a natural specific judgment, "
+        "ranking, prediction, score, appeal, or choice rather than generic engagement bait. "
+        "Never invent a factual detail, motive, consequence, or reveal that the supplied source "
+        "context does not establish."
     )
 
 
