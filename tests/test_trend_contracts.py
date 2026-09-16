@@ -61,6 +61,7 @@ def test_trend_routes_are_mounted() -> None:
     assert "/v1/trends/watches/{topic_watch_id}/execute" in paths
     assert "/v1/trends/watches/{topic_watch_id}/schedule" in paths
     assert "/v1/trends/watches/{topic_watch_id}/queue" in paths
+    assert "/v1/trends/queue/{item_id}/status" in paths
     assert (
         "/v1/trends/watches/{topic_watch_id}/candidates/{candidate_id}/score"
         in paths
