@@ -15,11 +15,7 @@ from katcha.short_episode_models import ShortEpisodeItem
 
 
 def test_short_episode_api_is_wired_into_control_plane() -> None:
-    paths = {
-        path
-        for route in app.routes
-        if (path := getattr(route, "path", None)) is not None
-    }
+    paths = set(app.openapi()["paths"])
 
     assert "/v1/short-episodes" in paths
     assert "/v1/short-episodes/{short_episode_id}" in paths
