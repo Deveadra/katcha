@@ -16,7 +16,16 @@ UPLOAD_URL = "https://www.googleapis.com/upload/youtube/v3/videos"
 
 
 class YouTubeAPIError(RuntimeError):
-    pass
+    def __init__(
+        self,
+        message: str,
+        *,
+        status_code: int | None = None,
+        retry_after_seconds: int | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+        self.retry_after_seconds = retry_after_seconds
 
 
 class UploadSessionExpired(YouTubeAPIError):
@@ -34,8 +43,22 @@ def _iso_z(value: datetime) -> str:
     return value.isoformat().replace("+00:00", "Z")
 
 
+def _retry_after_seconds(response: httpx.Response) -> int | None:
+    raw = response.headers.get("Retry-After")
+    if not raw:
+        return None
+    try:
+        return max(0, int(raw))
+    except ValueError:
+        return None
+
+
 def _raise_api_error(prefix: str, response: httpx.Response) -> None:
-    raise YouTubeAPIError(f"{prefix} ({response.status_code}): {response.text[:2000]}")
+    raise YouTubeAPIError(
+        f"{prefix} ({response.status_code}): {response.text[:2000]}",
+        status_code=response.status_code,
+        retry_after_seconds=_retry_after_seconds(response),
+    )
 
 
 class YouTubeClient:
@@ -52,6 +75,69 @@ class YouTubeClient:
 
     def _headers(self) -> dict[str, str]:
         return {"Authorization": f"Bearer {self._token()}"}
+
+    def search_videos(
+        self,
+        query: str,
+        *,
+        published_after: datetime | None = None,
+        max_results: int = 25,
+        order: str = "date",
+        region_code: str | None = None,
+        relevance_language: str | None = None,
+        page_token: str | None = None,
+    ) -> dict[str, Any]:
+        query = query.strip()
+        if not query:
+            raise ValueError("YouTube search query cannot be empty")
+        if not 1 <= max_results <= 50:
+            raise ValueError("YouTube search max_results must be between 1 and 50")
+        if order not in {"date", "rating", "relevance", "title", "viewCount"}:
+            raise ValueError(f"unsupported YouTube search order: {order}")
+        params: dict[str, str | int] = {
+            "part": "snippet",
+            "type": "video",
+            "q": query,
+            "maxResults": max_results,
+            "order": order,
+        }
+        if published_after is not None:
+            params["publishedAfter"] = _iso_z(published_after)
+        if region_code:
+            params["regionCode"] = region_code.upper()
+        if relevance_language:
+            params["relevanceLanguage"] = relevance_language
+        if page_token:
+            params["pageToken"] = page_token
+        response = httpx.get(
+            f"{DATA_API_BASE}/search",
+            params=params,
+            headers=self._headers(),
+            timeout=30,
+        )
+        if response.is_error:
+            _raise_api_error("YouTube search failed", response)
+        return dict(response.json())
+
+    def video_resources(self, video_ids: list[str]) -> list[dict[str, Any]]:
+        cleaned = list(dict.fromkeys(item.strip() for item in video_ids if item.strip()))
+        if not cleaned:
+            return []
+        if len(cleaned) > 50:
+            raise ValueError("YouTube videos.list supports at most 50 IDs per request")
+        response = httpx.get(
+            f"{DATA_API_BASE}/videos",
+            params={
+                "part": "snippet,statistics,contentDetails,status",
+                "id": ",".join(cleaned),
+                "maxResults": len(cleaned),
+            },
+            headers=self._headers(),
+            timeout=30,
+        )
+        if response.is_error:
+            _raise_api_error("YouTube video batch lookup failed", response)
+        return [dict(item) for item in (response.json().get("items") or [])]
 
     def initiate_resumable_upload(
         self,
