@@ -72,6 +72,44 @@ VOICE_PROFILES: dict[str, VoiceProfile] = {
             "conversational, with crisp comedic timing. Do not shout or sound promotional."
         ),
     ),
+    "openai_youth_v2": VoiceProfile(
+        key="openai_youth_v2",
+        version="2",
+        provider="openai",
+        model="gpt-4o-mini-tts-2025-12-15",
+        voice="ash",
+        instructions=(
+            "Sound like a funny, energetic, down-to-earth late-teen or young-adult male friend, "
+            "not an announcer. Be naturally amused and conversational, with a relaxed bright "
+            "tone, crisp comedic timing, and real dynamic range. Normal energy should feel "
+            "lively rather than loud. Use brief dry flattening for fake-serious jokes and small "
+            "pauses when they improve timing. Let genuinely exciting moments lift naturally, "
+            "but never maintain permanent hype. Do not shout, over-act, sound promotional, or "
+            "perform a caricature of teenage slang. Read the supplied words exactly and do not "
+            "add commentary."
+        ),
+    ),
+    "gemini_youth_v2": VoiceProfile(
+        key="gemini_youth_v2",
+        version="2",
+        provider="gemini",
+        model="gemini-3.1-flash-tts-preview",
+        voice="Puck",
+        instructions=(
+            "Speak like a funny, energetic, down-to-earth late-teen or young-adult male friend, "
+            "not an announcer. Be naturally amused, conversational, and quick, with relaxed "
+            "articulation, crisp comedic timing, and real dynamic range. Keep normal energy "
+            "lively rather than loud; use brief dry delivery for fake-serious jokes and allow "
+            "earned excitement without permanent hype. Never shout, sound promotional, or "
+            "perform a caricature of teenage slang. Read only the supplied wording."
+        ),
+    ),
+}
+
+
+LATEST_VOICE_PROFILE_BY_PROVIDER: dict[str, str] = {
+    "openai": "openai_youth_v2",
+    "gemini": "gemini_youth_v2",
 }
 
 
@@ -87,6 +125,11 @@ def _target_for_profile(profile: VoiceProfile) -> ModelTarget:
 
 
 def voice_profile_for_target(target: ModelTarget) -> VoiceProfile:
+    preferred_key = LATEST_VOICE_PROFILE_BY_PROVIDER.get(target.provider)
+    if preferred_key is not None:
+        preferred = VOICE_PROFILES[preferred_key]
+        if preferred.model == target.model:
+            return preferred
     for profile in VOICE_PROFILES.values():
         if profile.provider == target.provider and profile.model == target.model:
             return profile
@@ -115,9 +158,9 @@ def choose_voice_profile(
     if requested.provider == "gemini" and settings.gemini_api_key:
         return requested
     if settings.openai_api_key:
-        return VOICE_PROFILES["openai_youth_v1"]
+        return VOICE_PROFILES["openai_youth_v2"]
     if settings.gemini_api_key:
-        return VOICE_PROFILES["gemini_youth_v1"]
+        return VOICE_PROFILES["gemini_youth_v2"]
     raise TTSUnavailable("no configured TTS provider is available")
 
 

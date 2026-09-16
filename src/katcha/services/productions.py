@@ -18,7 +18,7 @@ from katcha.production_models import (
     ProductionScript,
 )
 
-PROMPT_VERSION = "short-script-v1"
+PROMPT_VERSION = "short-script-v2"
 REGENERATE_STAGES = {"script", "voice", "render"}
 
 
