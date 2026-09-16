@@ -39,3 +39,33 @@ def test_manifest_schedules_narration_without_overlap() -> None:
         assert left.start_seconds + left.duration_seconds <= right.start_seconds
     assert manifest.output_duration_seconds > 11.0
     assert manifest.overlays[-1].cues[-1].end_seconds <= manifest.output_duration_seconds
+
+
+def test_manifest_uses_versioned_channel_01_visual_defaults() -> None:
+    manifest = build_short_manifest(
+        production_id="prod-brand",
+        source_key="raw/source.mp4",
+        source_duration_seconds=5.0,
+        source_width=1080,
+        source_height=1920,
+        source_audio_volume=0.45,
+        width=1080,
+        height=1920,
+        fps=30,
+        script_segments=[{"placement": "post", "text": "Official ruling?"}],
+        narration_assets=[
+            {"segment_index": 0, "storage_key": "a.wav", "duration_seconds": 0.9}
+        ],
+        output_key="production/prod-brand/render/short.mp4",
+        title_angle="verdict",
+        interaction_prompt="Fair or foul?",
+    )
+
+    assert manifest.brand.brand_key == "channel_01"
+    assert manifest.brand.version == 1
+    assert manifest.brand.theme_key == "signal_v1"
+    assert manifest.brand.captions.treatment_key == "impact_clean_v1"
+    assert manifest.brand.motion.treatment_key == "restrained_punch_v1"
+    assert manifest.brand.end_card.treatment_key == "verdict_v1"
+    assert manifest.brand.palette.signal_blue == "#5B6CFF"
+    assert manifest.brand.motion.random_motion_enabled is False

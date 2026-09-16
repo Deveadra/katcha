@@ -9,6 +9,7 @@ from sqlalchemy import (
     JSON,
     DateTime,
     ForeignKey,
+    Integer,
     Numeric,
     String,
     Text,
@@ -46,6 +47,9 @@ class Production(Base):
     persona_key: Mapped[str] = mapped_column(String(64))
     persona_version: Mapped[str] = mapped_column(String(32))
     prompt_version: Mapped[str] = mapped_column(String(32))
+    brand_key: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    brand_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    brand_snapshot: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     analysis_snapshot: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     selected_script_id: Mapped[uuid.UUID | None] = mapped_column(Uuid(as_uuid=True), nullable=True)
     selected_voice_profile: Mapped[str | None] = mapped_column(String(128), nullable=True)
