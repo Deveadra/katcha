@@ -93,7 +93,9 @@ _ADAPTERS: dict[tuple[str, str], DiscoveryAdapter] = {}
 def register_adapter(adapter: DiscoveryAdapter) -> None:
     key = (adapter.key, adapter.version)
     if key in _ADAPTERS:
-        raise ValueError(f"discovery adapter already registered: {adapter.key}@{adapter.version}")
+        raise ValueError(
+            f"discovery adapter already registered: {adapter.key}@{adapter.version}"
+        )
     _ADAPTERS[key] = adapter
 
 
@@ -112,3 +114,7 @@ def available_adapters() -> list[dict[str, str]]:
 
 
 register_adapter(ManifestDiscoveryAdapter())
+
+from katcha.acquisition.feeds import RssAtomDiscoveryAdapter  # noqa: E402
+
+register_adapter(RssAtomDiscoveryAdapter())
