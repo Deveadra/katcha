@@ -23,7 +23,7 @@ def test_discovery_run_candidate_and_observation_idempotency_contracts() -> None
     candidate_unique = _unique_columns(DiscoveryCandidate.__table__)
     assert ("adapter_key", "external_id") in candidate_unique
     assert ("canonical_url",) in candidate_unique
-    assert ("source_item_id",) in candidate_unique
+    assert DiscoveryCandidate.__table__.c.source_item_id.unique is True
     assert (
         "discovery_run_id",
         "discovery_candidate_id",
