@@ -12,6 +12,7 @@ from katcha.db import session_scope
 from katcha.domain import DiscoveryRunStatus
 from katcha.models import DomainEvent
 from katcha.services.discovery import observe_discovery_candidate
+from katcha.services.trends import compute_candidate_trend_score
 
 
 @activity.defn
@@ -38,6 +39,15 @@ def execute_discovery_page_activity(run_id: str) -> dict[str, object]:
         adapter_version = run.adapter_version
         query = dict(run.query or {})
         cursor = dict(run.cursor or {})
+        run_metadata = dict(run.run_metadata or {})
+
+    topic_watch_id: uuid.UUID | None = None
+    raw_topic_watch_id = run_metadata.get("topic_watch_id")
+    if raw_topic_watch_id:
+        try:
+            topic_watch_id = uuid.UUID(str(raw_topic_watch_id))
+        except ValueError as exc:
+            raise ValueError("discovery run has an invalid topic_watch_id") from exc
 
     adapter = get_adapter(adapter_key, adapter_version)
     batch = adapter.discover(query, cursor)
@@ -56,6 +66,12 @@ def execute_discovery_page_activity(run_id: str) -> dict[str, object]:
             metadata=item.metadata,
         )
         candidate_ids.append(str(candidate.id))
+        if topic_watch_id is not None:
+            compute_candidate_trend_score(
+                candidate.id,
+                topic_watch_id,
+                score_key=f"run:{run_uuid}",
+            )
 
     with session_scope() as session:
         run = session.scalar(select(DiscoveryRun).where(DiscoveryRun.id == run_uuid))
@@ -82,6 +98,9 @@ def execute_discovery_page_activity(run_id: str) -> dict[str, object]:
                     "adapter_version": adapter_version,
                     "candidate_count": len(candidate_ids),
                     "done": batch.done,
+                    "topic_watch_id": (
+                        str(topic_watch_id) if topic_watch_id is not None else None
+                    ),
                 },
             )
         )
