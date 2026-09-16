@@ -75,7 +75,7 @@ def test_control_schemas_expose_budget_semantics() -> None:
 
 
 def test_intelligence_control_routes_are_mounted() -> None:
-    paths = {route.path for route in app.routes}
+    paths = set(app.openapi()["paths"])
 
     assert "/v1/channels" in paths
     assert "/v1/channels/{channel_profile_id}/intelligence/refresh" in paths
