@@ -20,9 +20,9 @@ class ProviderFailure:
 class DiscoveryProviderError(RuntimeError):
     def __init__(self, failure: ProviderFailure) -> None:
         self.failure = failure
-        status = f" status={failure.status_code}" if failure.status_code else ""
+        status = f" status {failure.status_code}" if failure.status_code else ""
         retry_after = (
-            f" retry_after={failure.retry_after_seconds}s"
+            f" retry after {failure.retry_after_seconds}s"
             if failure.retry_after_seconds is not None
             else ""
         )
@@ -51,7 +51,14 @@ def parse_retry_after(value: str | None, *, now: datetime | None = None) -> int 
     reference = now or datetime.now(UTC)
     if reference.tzinfo is None:
         reference = reference.replace(tzinfo=UTC)
-    return max(int((target.astimezone(UTC) - reference.astimezone(UTC)).total_seconds()), 0)
+    return max(
+        int(
+            (
+                target.astimezone(UTC) - reference.astimezone(UTC)
+            ).total_seconds()
+        ),
+        0,
+    )
 
 
 def failure_from_response(
