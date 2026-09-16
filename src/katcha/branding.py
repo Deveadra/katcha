@@ -156,6 +156,11 @@ def _identity_token(value: object) -> str:
     return re.sub(r"[^a-z0-9]", "", str(value).strip().lower())
 
 
+def _is_ranksnaxx_identity(value: object) -> bool:
+    token = _identity_token(value)
+    return token == "ranksnaxx" or token.endswith("ranksnaxx")
+
+
 def brand_contract_for_profile_metadata(metadata: dict[str, Any]) -> ChannelBrandContract:
     """Resolve a named channel contract without making Katcha itself channel-specific."""
     identity_values = (
@@ -164,7 +169,7 @@ def brand_contract_for_profile_metadata(metadata: dict[str, Any]) -> ChannelBran
         metadata.get("handle"),
         metadata.get("custom_url"),
     )
-    if any(_identity_token(value) == "ranksnaxx" for value in identity_values):
+    if any(_is_ranksnaxx_identity(value) for value in identity_values):
         return rank_snaxx_brand_v1()
     return channel_01_brand_v1()
 
