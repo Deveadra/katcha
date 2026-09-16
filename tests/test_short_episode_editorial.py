@@ -58,11 +58,12 @@ def _script_set(*, tamper: bool = False) -> katcha.editorial.episode_schemas.Ran
     )
 
 
-def test_editorial_and_review_routes_are_public_api_contracts() -> None:
+def test_editorial_review_and_publication_routes_are_public_api_contracts() -> None:
     paths = katcha.api.main.app.openapi()["paths"]
 
     assert "/v1/short-episodes/{short_episode_id}/editorial" in paths
     assert "/v1/short-episodes/{short_episode_id}/review" in paths
+    assert "/v1/short-episodes/{short_episode_id}/publications" in paths
 
 
 def test_editorial_workflow_identity_is_stage_scoped() -> None:
@@ -70,11 +71,14 @@ def test_editorial_workflow_identity_is_stage_scoped() -> None:
 
     script_id = katcha.api.short_episodes._editorial_workflow_id(planning_id, "script")
     voice_id = katcha.api.short_episodes._editorial_workflow_id(planning_id, "voice")
+    render_id = katcha.api.short_episodes._editorial_workflow_id(planning_id, "render")
 
     assert script_id == "short-episode-abc123-editorial-script"
     assert voice_id == "short-episode-abc123-editorial-voice"
+    assert render_id == "short-episode-abc123-editorial-render"
     assert script_id != planning_id
     assert voice_id != script_id
+    assert render_id not in {planning_id, script_id, voice_id}
     assert (
         katcha.api.short_episodes._editorial_workflow_id(planning_id, "script") == script_id
     )
@@ -122,15 +126,15 @@ def test_native_cold_open_may_omit_opening_line() -> None:
     assert parsed.candidates[0].narration_beats()[0]["placement"] == "reveal"
 
 
-def test_regeneration_contract_is_limited_to_editorial_stages() -> None:
+def test_regeneration_contract_includes_render_without_repaying_editorial() -> None:
     request = katcha.api.short_episode_schemas.ReviewShortEpisodeRequest(
         decision="regenerate",
-        regenerate_from="voice",
+        regenerate_from="render",
         actor="operator",
     )
 
-    assert request.regenerate_from == "voice"
-    assert {"script", "voice"} == katcha.services.short_episode_reviews.REGENERATE_STAGES
+    assert request.regenerate_from == "render"
+    assert {"script", "voice", "render"} == katcha.services.short_episode_reviews.REGENERATE_STAGES
 
 
 def test_regeneration_creates_a_new_episode_execution_identity() -> None:
@@ -148,11 +152,17 @@ def test_regeneration_creates_a_new_episode_execution_identity() -> None:
     assert first != second
 
 
-def test_episode_models_preserve_regeneration_and_review_lineage() -> None:
+def test_episode_models_preserve_regeneration_render_and_trend_lineage() -> None:
     episode_columns = set(katcha.short_episode_models.ShortEpisode.__table__.columns.keys())
     review_columns = set(
         katcha.short_episode_models.ShortEpisodeReview.__table__.columns.keys()
     )
 
-    assert {"parent_episode_id", "generation", "regenerate_from"} <= episode_columns
+    assert {
+        "parent_episode_id",
+        "generation",
+        "regenerate_from",
+        "trend_opportunity_id",
+        "render_manifest",
+    } <= episode_columns
     assert {"short_episode_id", "decision", "actor", "review_metadata"} <= review_columns

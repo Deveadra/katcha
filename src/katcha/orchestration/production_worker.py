@@ -23,6 +23,10 @@ from katcha.orchestration.short_episode_activities import (
     mark_short_episode_failed,
     select_episode_script_candidate,
 )
+from katcha.orchestration.short_episode_render_activities import (
+    build_ranked_episode_render_manifest_activity,
+    render_ranked_episode_activity,
+)
 from katcha.orchestration.short_episode_workflows import RankedShortEpisodeEditorialWorkflow
 
 
@@ -52,6 +56,8 @@ async def main() -> None:
                 generate_episode_script_candidates,
                 select_episode_script_candidate,
                 generate_episode_narration_assets,
+                build_ranked_episode_render_manifest_activity,
+                render_ranked_episode_activity,
                 mark_short_episode_failed,
             ],
             activity_executor=activity_executor,
