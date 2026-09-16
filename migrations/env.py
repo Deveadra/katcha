@@ -3,13 +3,13 @@ from logging.config import fileConfig
 from alembic import context
 from sqlalchemy import engine_from_config, pool
 
+from katcha import acquisition_models  # noqa: F401
 from katcha import brand_models  # noqa: F401
 from katcha import intelligence_models  # noqa: F401
 from katcha import longform_models  # noqa: F401
 from katcha import models  # noqa: F401
 from katcha import production_models  # noqa: F401
 from katcha import publishing_models  # noqa: F401
-from katcha import trend_models  # noqa: F401
 from katcha.config import get_settings
 from katcha.db import Base
 
