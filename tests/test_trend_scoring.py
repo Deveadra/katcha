@@ -1,128 +1,90 @@
+from __future__ import annotations
+
 from datetime import UTC, datetime, timedelta
 
-from katcha.acquisition.trends import TrendObservation, score_trend
+from katcha.trends.scoring import SignalSample, TopicDescriptor, WatchConfig, score_topic
+
+NOW = datetime(2026, 9, 16, 4, 0, tzinfo=UTC)
 
 
-def _observation(
-    *,
-    now: datetime,
-    observed_hours_ago: float,
-    published_hours_ago: float,
-    views: int,
-    source: str = "youtube",
-) -> TrendObservation:
-    return TrendObservation(
-        observed_at=now - timedelta(hours=observed_hours_ago),
-        published_at=now - timedelta(hours=published_hours_ago),
-        source_key=source,
-        metrics={"views": views},
+def _sample(
+    entity: str,
+    source: str,
+    independence: str,
+    age_hours: float,
+    views: float,
+    comments: float,
+) -> SignalSample:
+    observed = NOW - timedelta(hours=age_hours)
+    return SignalSample(
+        entity_key=entity,
+        source_kind=source,
+        independence_key=independence,
+        observed_at=observed,
+        published_at=observed - timedelta(hours=1),
+        metrics={"views": views, "comments": comments},
     )
 
 
-def test_fast_recent_growth_beats_stale_flat_history() -> None:
-    now = datetime(2026, 9, 16, 3, 0, tzinfo=UTC)
-    emerging = score_trend(
-        [
-            _observation(
-                now=now,
-                observed_hours_ago=3,
-                published_hours_ago=4,
-                views=1_000,
-            ),
-            _observation(
-                now=now,
-                observed_hours_ago=1,
-                published_hours_ago=4,
-                views=15_000,
-            ),
-            _observation(
-                now=now,
-                observed_hours_ago=0,
-                published_hours_ago=4,
-                views=30_000,
-            ),
-        ],
-        now=now,
-    )
-    stale = score_trend(
-        [
-            _observation(
-                now=now,
-                observed_hours_ago=48,
-                published_hours_ago=120,
-                views=500_000,
-            ),
-            _observation(
-                now=now,
-                observed_hours_ago=0,
-                published_hours_ago=120,
-                views=501_000,
-            ),
-        ],
-        now=now,
-    )
-
-    assert emerging.score > stale.score
-    assert emerging.velocity > stale.velocity
-    assert emerging.freshness > stale.freshness
-    assert emerging.acceleration > 0
-
-
-def test_cross_source_corroboration_increases_score() -> None:
-    now = datetime(2026, 9, 16, 3, 0, tzinfo=UTC)
-    history = [
-        _observation(
-            now=now,
-            observed_hours_ago=1,
-            published_hours_ago=2,
-            views=10_000,
-        ),
-        _observation(
-            now=now,
-            observed_hours_ago=0,
-            published_hours_ago=2,
-            views=20_000,
-        ),
+def test_cross_source_acceleration_beats_flat_single_source() -> None:
+    topic = TopicDescriptor("Project Nova", aliases=("Nova",), tags=("gaming", "xbox"))
+    watch = WatchConfig(interests=("gaming", "xbox"))
+    accelerating = [
+        _sample("reddit:1", "reddit", "r/games", 20, 100, 20),
+        _sample("reddit:1", "reddit", "r/games", 3, 2200, 450),
+        _sample("youtube:1", "youtube", "official-studio", 4, 8000, 600),
+        _sample("news:1", "news", "developer-site", 2, 700, 90),
+    ]
+    flat = [
+        _sample("reddit:2", "reddit", "r/games", 20, 2000, 300),
+        _sample("reddit:2", "reddit", "r/games", 3, 2100, 310),
     ]
 
-    one_source = score_trend(history, now=now, corroborating_source_count=1)
-    three_sources = score_trend(history, now=now, corroborating_source_count=3)
+    hot = score_topic(topic=topic, samples=accelerating, watch=watch, now=NOW)
+    cold = score_topic(topic=topic, samples=flat, watch=watch, now=NOW)
 
-    assert three_sources.corroboration > one_source.corroboration
-    assert three_sources.score > one_source.score
-
-
-def test_saturation_penalizes_crowded_topic() -> None:
-    now = datetime(2026, 9, 16, 3, 0, tzinfo=UTC)
-    history = [
-        _observation(
-            now=now,
-            observed_hours_ago=1,
-            published_hours_ago=2,
-            views=10_000,
-        ),
-        _observation(
-            now=now,
-            observed_hours_ago=0,
-            published_hours_ago=2,
-            views=25_000,
-        ),
-    ]
-
-    novel = score_trend(history, now=now, related_item_count=0)
-    saturated = score_trend(history, now=now, related_item_count=12)
-
-    assert novel.novelty > saturated.novelty
-    assert saturated.saturation_penalty > novel.saturation_penalty
-    assert novel.score > saturated.score
+    assert hot.opportunity_score > cold.opportunity_score
+    assert hot.confidence > cold.confidence
+    assert hot.components["source_breadth"] > cold.components["source_breadth"]
 
 
-def test_empty_history_is_bounded_and_inspectable() -> None:
-    now = datetime(2026, 9, 16, 3, 0, tzinfo=UTC)
-    result = score_trend([], now=now)
+def test_single_source_spike_is_confidence_capped() -> None:
+    score = score_topic(
+        topic=TopicDescriptor("Project Nova", tags=("gaming",)),
+        samples=[
+            _sample("reddit:1", "reddit", "r/games", 18, 100, 10),
+            _sample("reddit:1", "reddit", "r/games", 2, 500000, 10000),
+        ],
+        watch=WatchConfig(interests=("gaming",)),
+        now=NOW,
+    )
 
-    assert 0 <= result.score <= 1
-    assert result.observation_count == 0
-    assert result.window_start is None
-    assert result.window_end is None
-    assert result.breakdown()["algorithm_version"] == "emerging-trend-v1"
+    assert score.confidence <= 0.55
+    assert "single_independent_source_confidence_cap" in score.reasons
+
+
+def test_declining_recent_rate_is_cooling() -> None:
+    score = score_topic(
+        topic=TopicDescriptor("Project Nova", tags=("gaming",)),
+        samples=[
+            _sample("reddit:1", "reddit", "r/games", 20, 100, 10),
+            _sample("reddit:1", "reddit", "r/games", 10, 5000, 900),
+            _sample("reddit:1", "reddit", "r/games", 2, 5100, 910),
+        ],
+        watch=WatchConfig(interests=("gaming",)),
+        now=NOW,
+    )
+
+    assert score.lifecycle == "cooling"
+
+
+def test_excluded_topic_is_not_an_opportunity() -> None:
+    score = score_topic(
+        topic=TopicDescriptor("Mobile gambling launch", tags=("gaming", "casino")),
+        samples=[_sample("news:1", "news", "publisher", 1, 10000, 1000)],
+        watch=WatchConfig(interests=("gaming",), excluded_terms=("gambling",)),
+        now=NOW,
+    )
+
+    assert score.opportunity_score == 0.0
+    assert "excluded_by_watch_profile" in score.reasons

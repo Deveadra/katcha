@@ -12,9 +12,9 @@ from katcha.db import session_scope
 from katcha.domain import DiscoveryRunStatus
 from katcha.models import DomainEvent
 from katcha.services.discovery import observe_discovery_candidate
+from katcha.services.discovery_trends import compute_candidate_trend_score
 from katcha.services.trend_execution import prepare_topic_watch_execution
 from katcha.services.trend_queue import materialize_trend_review_queue
-from katcha.services.trends import compute_candidate_trend_score
 
 
 @activity.defn

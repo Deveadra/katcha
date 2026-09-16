@@ -13,9 +13,9 @@ from katcha.acquisition_models import (
     TopicWatchVersion,
 )
 from katcha.db import session_scope
+from katcha.discovery_trend_models import TrendReviewQueueItem
 from katcha.models import DomainEvent
-from katcha.services.trends import compute_candidate_trend_score
-from katcha.trend_models import TrendReviewQueueItem
+from katcha.services.discovery_trends import compute_candidate_trend_score
 
 _QUEUE_STATUSES = {"pending", "selected", "skipped"}
 

@@ -1,9 +1,13 @@
 from sqlalchemy import CheckConstraint, UniqueConstraint
 
-from katcha.acquisition_models import CandidateTrendScore, TopicWatchVersion
 from katcha.api.main import app
-from katcha.services.trend_execution import contains_secret_key
-from katcha.trend_models import TrendReviewQueueItem
+from katcha.trend_models import (
+    ChannelTrendWatchVersion,
+    TrendEvidencePacket,
+    TrendOpportunity,
+    TrendSignal,
+    TrendTopicSignal,
+)
 
 
 def _unique_columns(table) -> set[tuple[str, ...]]:
@@ -14,56 +18,42 @@ def _unique_columns(table) -> set[tuple[str, ...]]:
     }
 
 
-def test_topic_watch_versions_are_immutable_and_bounded() -> None:
-    assert ("watch_key", "version") in _unique_columns(TopicWatchVersion.__table__)
+def test_trend_signal_snapshots_are_idempotent() -> None:
+    assert ("provider_key", "external_id", "observation_key") in _unique_columns(
+        TrendSignal.__table__
+    )
+    assert ("trend_topic_id", "trend_signal_id") in _unique_columns(
+        TrendTopicSignal.__table__
+    )
+
+
+def test_watch_profiles_are_versioned_per_channel() -> None:
+    assert ("channel_profile_id", "version") in _unique_columns(
+        ChannelTrendWatchVersion.__table__
+    )
     checks = {
         constraint.name
-        for constraint in TopicWatchVersion.__table__.constraints
+        for constraint in ChannelTrendWatchVersion.__table__.constraints
         if isinstance(constraint, CheckConstraint)
     }
-    assert "ck_topic_watch_version_positive" in checks
-    assert "ck_topic_watch_freshness_positive" in checks
-    assert "ck_topic_watch_max_candidates_positive" in checks
+    assert "ck_trend_watch_min_confidence" in checks
+    assert "ck_trend_watch_opportunity_threshold" in checks
 
 
-def test_trend_scores_have_version_and_retry_idempotency_keys() -> None:
-    unique = _unique_columns(CandidateTrendScore.__table__)
-
-    assert ("topic_watch_id", "discovery_candidate_id", "version") in unique
-    assert ("topic_watch_id", "discovery_candidate_id", "score_key") in unique
-
-
-def test_review_queue_is_execution_scoped_and_ranked() -> None:
-    unique = _unique_columns(TrendReviewQueueItem.__table__)
-    assert (
-        "topic_watch_id",
-        "queue_key",
-        "discovery_candidate_id",
-    ) in unique
-    checks = {
-        constraint.name
-        for constraint in TrendReviewQueueItem.__table__.constraints
-        if isinstance(constraint, CheckConstraint)
-    }
-    assert "ck_trend_review_queue_rank_positive" in checks
+def test_opportunities_are_idempotent_per_channel_topic_run() -> None:
+    assert ("channel_profile_id", "trend_topic_id", "run_key") in _unique_columns(
+        TrendOpportunity.__table__
+    )
+    assert ("trend_opportunity_id", "version") in _unique_columns(
+        TrendEvidencePacket.__table__
+    )
 
 
-def test_topic_watch_config_rejects_secret_bearing_shapes() -> None:
-    assert contains_secret_key({"query": {"api_key": "nope"}}) is True
-    assert contains_secret_key({"headers": {"Authorization": "nope"}}) is True
-    assert contains_secret_key({"query": {"feed_url": "https://example.com"}}) is False
-
-
-def test_trend_routes_are_mounted() -> None:
+def test_trend_control_routes_are_mounted() -> None:
     paths = set(app.openapi()["paths"])
 
-    assert "/v1/trends/watches" in paths
-    assert "/v1/trends/watches/{topic_watch_id}/execute" in paths
-    assert "/v1/trends/watches/{topic_watch_id}/schedule" in paths
-    assert "/v1/trends/watches/{topic_watch_id}/queue" in paths
-    assert "/v1/trends/queue/{item_id}/status" in paths
-    assert (
-        "/v1/trends/watches/{topic_watch_id}/candidates/{candidate_id}/score"
-        in paths
-    )
-    assert "/v1/trends/watches/{topic_watch_id}/ranked" in paths
+    assert "/v1/channels/{channel_profile_id}/trends/watch-profile" in paths
+    assert "/v1/trends/signals" in paths
+    assert "/v1/channels/{channel_profile_id}/trends/refresh" in paths
+    assert "/v1/channels/{channel_profile_id}/trends/opportunities" in paths
+    assert "/v1/trends/opportunities/{opportunity_id}/evidence" in paths

@@ -1,7 +1,7 @@
-"""add topic watches and candidate trend scores
+"""add external discovery topic watches and candidate trend scores
 
-Revision ID: 0015_trend_watches
-Revises: 0014_short_episodes
+Revision ID: 0017_discovery_trend_watches
+Revises: 0016_short_episode_editorial
 Create Date: 2026-09-16
 """
 
@@ -10,8 +10,8 @@ from collections.abc import Sequence
 import sqlalchemy as sa
 from alembic import op
 
-revision: str = "0015_trend_watches"
-down_revision: str | None = "0014_short_episodes"
+revision: str = "0017_discovery_trend_watches"
+down_revision: str | None = "0016_short_episode_editorial"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

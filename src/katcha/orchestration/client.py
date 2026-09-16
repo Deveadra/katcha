@@ -23,7 +23,10 @@ from katcha.orchestration.publishing_workflows import (
     YouTubeAnalyticsRefreshWorkflow,
     YouTubePublicationWorkflow,
 )
+from katcha.orchestration.short_episode_workflows import RankedShortEpisodeEditorialWorkflow
+from katcha.orchestration.trend_workflows import ChannelTrendRefreshWorkflow
 from katcha.orchestration.workflows import ClipIngestWorkflow
+from katcha.trends.runtime import TREND_TASK_QUEUE
 
 _client: Client | None = None
 _client_lock = asyncio.Lock()
@@ -99,6 +102,26 @@ async def start_production_workflow(
         handle = await client.start_workflow(
             ShortProductionWorkflow.run,
             args=[production_id, start_stage],
+            id=workflow_id,
+            task_queue=settings.temporal_production_task_queue,
+        )
+    except WorkflowAlreadyStartedError:
+        handle = client.get_workflow_handle(workflow_id)
+    return handle.id
+
+
+async def start_short_episode_editorial_workflow(
+    episode_id: str,
+    workflow_id: str,
+    *,
+    start_stage: str = "script",
+) -> str:
+    settings = get_settings()
+    client = await get_temporal_client()
+    try:
+        handle = await client.start_workflow(
+            RankedShortEpisodeEditorialWorkflow.run,
+            args=[episode_id, start_stage],
             id=workflow_id,
             task_queue=settings.temporal_production_task_queue,
         )
@@ -197,6 +220,24 @@ async def start_channel_intelligence_schedule(
             args=[channel_profile_id, interval_hours, 120],
             id=workflow_id,
             task_queue=INTELLIGENCE_TASK_QUEUE,
+        )
+    except WorkflowAlreadyStartedError:
+        handle = client.get_workflow_handle(workflow_id)
+    return handle.id
+
+
+async def start_trend_refresh_workflow(
+    channel_profile_id: str,
+    workflow_id: str,
+    run_key: str,
+) -> str:
+    client = await get_temporal_client()
+    try:
+        handle = await client.start_workflow(
+            ChannelTrendRefreshWorkflow.run,
+            args=[channel_profile_id, run_key],
+            id=workflow_id,
+            task_queue=TREND_TASK_QUEUE,
         )
     except WorkflowAlreadyStartedError:
         handle = client.get_workflow_handle(workflow_id)
