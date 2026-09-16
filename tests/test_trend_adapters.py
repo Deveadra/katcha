@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import uuid
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 
 import httpx
@@ -78,7 +79,11 @@ def test_reddit_adapter_preserves_engagement_and_media_refs() -> None:
     assert batch.next_cursor["after"] == "t3_next"
     assert len(batch.observations) == 1
     observation = batch.observations[0]
-    assert observation.metrics == {"score": 1200.0, "upvotes": 1275.0, "comments": 312.0}
+    assert observation.metrics == {
+        "score": 1200.0,
+        "upvotes": 1275.0,
+        "comments": 312.0,
+    }
     assert observation.independence_key == "reddit:r/gaming"
     assert observation.media_refs[0]["rights_status"] == "unassessed"
 
@@ -120,7 +125,10 @@ def test_rss_adapter_preserves_etag_mentions_and_unassessed_media() -> None:
             200,
             request=request,
             content=xml,
-            headers={"ETag": '"nova-v1"', "Last-Modified": "Wed, 16 Sep 2026 09:31:00 GMT"},
+            headers={
+                "ETag": '"nova-v1"',
+                "Last-Modified": "Wed, 16 Sep 2026 09:31:00 GMT",
+            },
         )
 
     adapter = RssTrendAdapter(httpx.MockTransport(handler))
@@ -244,11 +252,9 @@ def test_observation_key_deduplicates_same_snapshot_within_time_bucket() -> None
         bucket_seconds=300,
     )
     changed = _observation_key(
-        TrendObservation(
-            **{
-                **observation.__dict__,
-                "metrics": {"views": 51000.0, "likes": 7100.0},
-            }
+        replace(
+            observation,
+            metrics={"views": 51000.0, "likes": 7100.0},
         ),
         NOW + timedelta(seconds=15),
         bucket_seconds=300,
