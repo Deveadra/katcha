@@ -174,6 +174,7 @@ class CandidateTrendScore(Base):
     __tablename__ = "candidate_trend_scores"
     __table_args__ = (
         UniqueConstraint("topic_watch_id", "discovery_candidate_id", "version"),
+        UniqueConstraint("topic_watch_id", "discovery_candidate_id", "score_key"),
         CheckConstraint("version > 0", name="ck_trend_score_version_positive"),
         CheckConstraint(
             "score >= 0 AND score <= 1",
@@ -191,6 +192,7 @@ class CandidateTrendScore(Base):
         Uuid(as_uuid=True), ForeignKey("discovery_candidates.id"), index=True
     )
     version: Mapped[int] = mapped_column(Integer)
+    score_key: Mapped[str] = mapped_column(String(160))
     algorithm_version: Mapped[str] = mapped_column(String(64), index=True)
     score: Mapped[Decimal] = mapped_column(Numeric(8, 6), index=True)
     feature_breakdown: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
