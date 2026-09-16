@@ -5,6 +5,7 @@ import uuid
 from fastapi import APIRouter, HTTPException, Query, status
 from sqlalchemy import select
 
+from katcha.api.schemas import CreatePublicationRequest, PublicationResponse
 from katcha.api.short_episode_schemas import (
     CreateShortEpisodeRequest,
     ReviewShortEpisodeRequest,
@@ -21,7 +22,12 @@ from katcha.api.short_episode_schemas import (
 from katcha.config import get_settings
 from katcha.db import session_scope
 from katcha.domain import ReviewDecision
-from katcha.orchestration.client import start_short_episode_editorial_workflow
+from katcha.orchestration.client import (
+    start_publication_workflow,
+    start_short_episode_editorial_workflow,
+)
+from katcha.publishing_models import Publication
+from katcha.services.publications import register_short_episode_publication
 from katcha.services.short_episode_reviews import (
     register_short_episode_regeneration,
     review_short_episode,
@@ -60,6 +66,14 @@ def _require_ai_execution() -> None:
         raise HTTPException(status_code=503, detail="AI execution is disabled")
     if not settings.openai_api_key and not settings.gemini_api_key:
         raise HTTPException(status_code=503, detail="no AI/TTS provider key is configured")
+
+
+def _require_youtube_execution() -> None:
+    settings = get_settings()
+    if not settings.youtube_client_id or not settings.youtube_client_secret:
+        raise HTTPException(status_code=503, detail="YouTube OAuth client is not configured")
+    if not settings.credential_encryption_key:
+        raise HTTPException(status_code=503, detail="credential encryption is not configured")
 
 
 def _editorial_workflow_id(episode_workflow_id: str, start_stage: str) -> str:
@@ -115,6 +129,7 @@ def create_short_episode(request: CreateShortEpisodeRequest) -> ShortEpisodeDeta
             format_key=request.format_key,
             format_version=request.format_version,
             idempotency_key=request.idempotency_key,
+            trend_opportunity_id=request.trend_opportunity_id,
         )
         return _episode_detail(episode)
     except ValueError as exc:
@@ -147,7 +162,8 @@ async def start_short_episode_editorial(
     short_episode_id: uuid.UUID,
     request: StartShortEpisodeEditorialRequest,
 ) -> StartShortEpisodeEditorialResponse:
-    _require_ai_execution()
+    if request.start_stage in {"script", "voice"}:
+        _require_ai_execution()
     with session_scope() as session:
         episode = session.get(ShortEpisode, short_episode_id)
         if episode is None:
@@ -161,6 +177,11 @@ async def start_short_episode_editorial(
             raise HTTPException(
                 status_code=409,
                 detail="voice stage requires an already selected episode script",
+            )
+        if request.start_stage == "render" and episode.status != "editorial_approved":
+            raise HTTPException(
+                status_code=409,
+                detail="render stage requires editorial approval of the voiced episode",
             )
         workflow_id = _editorial_workflow_id(episode.workflow_id, request.start_stage)
         current_status = episode.status
@@ -188,7 +209,8 @@ async def review_ranked_short_episode(
     request: ReviewShortEpisodeRequest,
 ) -> ReviewShortEpisodeResponse:
     if request.decision == ReviewDecision.REGENERATE.value:
-        _require_ai_execution()
+        if request.regenerate_from in {"script", "voice"}:
+            _require_ai_execution()
         try:
             child = register_short_episode_regeneration(
                 short_episode_id,
@@ -230,6 +252,39 @@ async def review_ranked_short_episode(
         episode_id=short_episode_id,
         decision=request.decision,
     )
+
+
+@router.post(
+    "/{short_episode_id}/publications",
+    response_model=PublicationResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def create_short_episode_publication(
+    short_episode_id: uuid.UUID,
+    request: CreatePublicationRequest,
+) -> Publication:
+    _require_youtube_execution()
+    try:
+        publication = register_short_episode_publication(
+            short_episode_id,
+            youtube_connection_id=request.youtube_connection_id,
+            title=request.title,
+            description=request.description,
+            tags=request.tags,
+            category_id=request.category_id,
+            privacy_status=request.privacy_status,
+            publish_at=request.publish_at,
+            notify_subscribers=request.notify_subscribers,
+            made_for_kids=request.made_for_kids,
+            contains_synthetic_media=request.contains_synthetic_media,
+        )
+    except ValueError as exc:
+        message = str(exc)
+        code = 404 if "not found" in message else 409
+        raise HTTPException(status_code=code, detail=message) from exc
+    if publication.status == "queued":
+        await start_publication_workflow(str(publication.id), publication.workflow_id)
+    return publication
 
 
 @router.get("/{short_episode_id}", response_model=ShortEpisodeDetailResponse)

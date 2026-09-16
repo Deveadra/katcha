@@ -42,10 +42,15 @@ from katcha.publishing_models import (
     YouTubeConnection,
 )
 from katcha.security.secrets import decrypt_secret, encrypt_secret
+from katcha.short_episode_models import ShortEpisode, ShortEpisodeAsset
 
 
 def _publication_render_key(session: Session, publication: Publication) -> str:
-    if publication.production_id is not None and publication.compilation_id is None:
+    if (
+        publication.production_id is not None
+        and publication.compilation_id is None
+        and publication.short_episode_id is None
+    ):
         production = session.get(Production, publication.production_id)
         if production is None or production.status != ProductionStatus.APPROVED.value:
             raise RuntimeError("publication production is no longer approved")
@@ -60,7 +65,11 @@ def _publication_render_key(session: Session, publication: Publication) -> str:
             raise RuntimeError("publication production has no render asset")
         return asset.storage_key
 
-    if publication.compilation_id is not None and publication.production_id is None:
+    if (
+        publication.compilation_id is not None
+        and publication.production_id is None
+        and publication.short_episode_id is None
+    ):
         compilation = session.get(Compilation, publication.compilation_id)
         if compilation is None or compilation.status != CompilationStatus.APPROVED.value:
             raise RuntimeError("publication compilation is no longer approved")
@@ -73,6 +82,25 @@ def _publication_render_key(session: Session, publication: Publication) -> str:
         )
         if asset is None:
             raise RuntimeError("publication compilation has no render asset")
+        return asset.storage_key
+
+    if (
+        publication.short_episode_id is not None
+        and publication.production_id is None
+        and publication.compilation_id is None
+    ):
+        episode = session.get(ShortEpisode, publication.short_episode_id)
+        if episode is None or episode.status != "approved" or episode.stage != "render_approved":
+            raise RuntimeError("publication short episode render is no longer approved")
+        asset = session.scalar(
+            select(ShortEpisodeAsset).where(
+                ShortEpisodeAsset.short_episode_id == publication.short_episode_id,
+                ShortEpisodeAsset.kind == "render",
+                ShortEpisodeAsset.generation == 1,
+            )
+        )
+        if asset is None:
+            raise RuntimeError("publication short episode has no render asset")
         return asset.storage_key
 
     raise RuntimeError("publication must reference exactly one approved source")

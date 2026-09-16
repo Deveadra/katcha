@@ -1,6 +1,7 @@
 import React from 'react';
 import {Composition} from 'remotion';
 import {LongformVideo} from './longform-video.jsx';
+import {RankedEpisodeVideo} from './ranked-episode-video.jsx';
 import {ShortVideo} from './short-video.jsx';
 
 const shortDefaults = {
@@ -15,6 +16,16 @@ const shortDefaults = {
   },
   overlays: [],
   interaction_prompt: null,
+};
+
+const rankedEpisodeDefaults = {
+  width: 1080,
+  height: 1920,
+  fps: 30,
+  output_duration_seconds: 1,
+  items: [],
+  overlays: [],
+  end_card: {start_seconds: 0, duration_seconds: 1, prompt: null},
 };
 
 const longformDefaults = {
@@ -36,6 +47,21 @@ export const RemotionRoot = () => (
       width={1080}
       height={1920}
       defaultProps={shortDefaults}
+      calculateMetadata={({props}) => ({
+        durationInFrames: Math.max(1, Math.ceil(props.output_duration_seconds * props.fps)),
+        fps: props.fps,
+        width: props.width,
+        height: props.height,
+      })}
+    />
+    <Composition
+      id="RankedEpisode"
+      component={RankedEpisodeVideo}
+      durationInFrames={30}
+      fps={30}
+      width={1080}
+      height={1920}
+      defaultProps={rankedEpisodeDefaults}
       calculateMetadata={({props}) => ({
         durationInFrames: Math.max(1, Math.ceil(props.output_duration_seconds * props.fps)),
         fps: props.fps,
