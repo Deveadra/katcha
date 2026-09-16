@@ -175,10 +175,15 @@ def compute_candidate_trend_score(
     candidate_id: uuid.UUID,
     topic_watch_id: uuid.UUID,
     *,
+    score_key: str | None = None,
     related_item_count: int = 0,
     corroborating_source_count: int | None = None,
     now: datetime | None = None,
 ) -> CandidateTrendScore:
+    key = score_key.strip() if score_key else f"manual:{uuid.uuid4().hex}"
+    if len(key) > 160:
+        raise ValueError("trend score key must be 160 characters or fewer")
+
     with session_scope() as session:
         candidate = session.get(DiscoveryCandidate, candidate_id)
         if candidate is None:
@@ -186,6 +191,17 @@ def compute_candidate_trend_score(
         watch = session.get(TopicWatchVersion, topic_watch_id)
         if watch is None:
             raise ValueError(f"topic watch version not found: {topic_watch_id}")
+        existing = session.scalar(
+            select(CandidateTrendScore).where(
+                CandidateTrendScore.topic_watch_id == topic_watch_id,
+                CandidateTrendScore.discovery_candidate_id == candidate_id,
+                CandidateTrendScore.score_key == key,
+            )
+        )
+        if existing is not None:
+            session.expunge(existing)
+            return existing
+
         observations = _candidate_observations(session, candidate_id)
         result = score_trend(
             observations,
@@ -207,6 +223,7 @@ def compute_candidate_trend_score(
             topic_watch_id=topic_watch_id,
             discovery_candidate_id=candidate_id,
             version=version,
+            score_key=key,
             algorithm_version=ALGORITHM_VERSION,
             score=Decimal(str(result.score)),
             feature_breakdown=result.breakdown(),
@@ -228,6 +245,7 @@ def compute_candidate_trend_score(
                     "watch_version": watch.version,
                     "trend_score_id": str(row.id),
                     "trend_score_version": version,
+                    "score_key": key,
                     "algorithm_version": ALGORITHM_VERSION,
                     "score": result.score,
                     "observation_count": result.observation_count,
