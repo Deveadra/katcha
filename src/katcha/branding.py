@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from copy import deepcopy
 from typing import Any
 
@@ -16,6 +17,19 @@ class VoicePolicy(BaseModel):
     preferred_profiles: list[str] = Field(min_length=1)
 
 
+class ChannelIdentity(BaseModel):
+    name: str
+    handle: str | None = None
+    youtube_url: str | None = None
+    positioning: str | None = None
+
+
+class EditorialFormatReference(BaseModel):
+    key: str
+    version: str
+    default_item_count: int = Field(ge=1)
+
+
 class ChannelBrandContract(BaseModel):
     brand_key: str
     version: int = Field(ge=1)
@@ -24,6 +38,8 @@ class ChannelBrandContract(BaseModel):
     visual: dict[str, Any]
     packaging: dict[str, Any]
     interaction: dict[str, Any]
+    identity: ChannelIdentity | None = None
+    editorial_format: EditorialFormatReference | None = None
     experiment_metadata: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -83,11 +99,78 @@ _CHANNEL_01_BRAND_V1: dict[str, Any] = {
 }
 
 
+_RANKSNAXX_BRAND_V1: dict[str, Any] = {
+    **deepcopy(_CHANNEL_01_BRAND_V1),
+    "brand_key": "ranksnaxx",
+    "identity": {
+        "name": "RankSnaxx",
+        "handle": "@ranksnaxx",
+        "youtube_url": "https://www.youtube.com/@ranksnaxx",
+        "positioning": (
+            "Curated countdown entertainment: coherent clip sets ordered for escalation, "
+            "payoff, and original host commentary."
+        ),
+    },
+    "editorial_format": {
+        "key": "ranksnaxx_countdown",
+        "version": "1.0.0",
+        "default_item_count": 5,
+    },
+    "visual": {
+        **deepcopy(_CHANNEL_01_BRAND_V1["visual"]),
+        "brand_key": "ranksnaxx",
+    },
+    "packaging": {
+        "title_family": "ranked_promise_v1",
+        "thumbnail_family": "single_focus_v1",
+    },
+    "interaction": {
+        "allowed_rituals": [
+            "official_ruling",
+            "rank_appeal",
+            "pick_a_side",
+            "prediction",
+            "comment_callback",
+            "scoreboard",
+        ]
+    },
+    "experiment_metadata": {
+        "cohort": "ranksnaxx_launch_baseline",
+        "channel_role": "first_katcha_channel",
+    },
+}
+
+
 def channel_01_brand_v1() -> ChannelBrandContract:
+    """Historical pre-name contract kept for production reproducibility."""
     return ChannelBrandContract.model_validate(deepcopy(_CHANNEL_01_BRAND_V1))
 
 
+def rank_snaxx_brand_v1() -> ChannelBrandContract:
+    return ChannelBrandContract.model_validate(deepcopy(_RANKSNAXX_BRAND_V1))
+
+
+def _identity_token(value: object) -> str:
+    if value is None:
+        return ""
+    return re.sub(r"[^a-z0-9]", "", str(value).strip().lower())
+
+
+def brand_contract_for_profile_metadata(metadata: dict[str, Any]) -> ChannelBrandContract:
+    """Resolve a named channel contract without making Katcha itself channel-specific."""
+    identity_values = (
+        metadata.get("channel_title"),
+        metadata.get("channel_handle"),
+        metadata.get("handle"),
+        metadata.get("custom_url"),
+    )
+    if any(_identity_token(value) == "ranksnaxx" for value in identity_values):
+        return rank_snaxx_brand_v1()
+    return channel_01_brand_v1()
+
+
 def default_brand_contract() -> ChannelBrandContract:
+    """Safe generic fallback for legacy/unscoped production paths."""
     return channel_01_brand_v1()
 
 
