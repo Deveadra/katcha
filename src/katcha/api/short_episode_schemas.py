@@ -31,12 +31,13 @@ class CreateShortEpisodeRequest(BaseModel):
     format_key: str | None = Field(default=None, min_length=1, max_length=64)
     format_version: str | None = Field(default=None, min_length=1, max_length=32)
     idempotency_key: str | None = Field(default=None, max_length=256)
+    trend_opportunity_id: UUID | None = None
 
 
 class StartShortEpisodeEditorialRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    start_stage: Literal["script", "voice"] = "script"
+    start_stage: Literal["script", "voice", "render"] = "script"
 
 
 class StartShortEpisodeEditorialResponse(BaseModel):
@@ -52,7 +53,7 @@ class ReviewShortEpisodeRequest(BaseModel):
     decision: Literal["approve", "reject", "regenerate"]
     note: str | None = Field(default=None, max_length=2000)
     actor: str = Field(default="operator", min_length=1, max_length=128)
-    regenerate_from: Literal["script", "voice"] = "script"
+    regenerate_from: Literal["script", "voice", "render"] = "script"
 
 
 class ReviewShortEpisodeResponse(BaseModel):
@@ -67,6 +68,7 @@ class ShortEpisodeResponse(BaseModel):
 
     id: UUID
     channel_profile_id: UUID
+    trend_opportunity_id: UUID | None
     parent_episode_id: UUID | None
     generation: int
     regenerate_from: str | None
@@ -87,6 +89,7 @@ class ShortEpisodeResponse(BaseModel):
     brand_snapshot: dict[str, object]
     selected_script_id: UUID | None
     selected_voice_profile: str | None
+    render_manifest: dict[str, object]
     estimated_cost_usd: Decimal
     error: str | None
     created_at: datetime

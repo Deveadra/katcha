@@ -36,6 +36,9 @@ class ShortEpisode(Base):
     channel_profile_id: Mapped[uuid.UUID] = mapped_column(
         Uuid(as_uuid=True), ForeignKey("channel_profiles.id"), index=True
     )
+    trend_opportunity_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("trend_opportunities.id"), nullable=True, index=True
+    )
     parent_episode_id: Mapped[uuid.UUID | None] = mapped_column(
         Uuid(as_uuid=True), ForeignKey("short_episodes.id"), nullable=True, index=True
     )
@@ -67,6 +70,7 @@ class ShortEpisode(Base):
         index=True,
     )
     selected_voice_profile: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    render_manifest: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     estimated_cost_usd: Mapped[Decimal] = mapped_column(
         Numeric(14, 8), default=Decimal("0")
     )

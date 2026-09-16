@@ -63,6 +63,25 @@ const hydrateShortManifest = async (manifest) => {
   };
 };
 
+const hydrateRankedEpisodeManifest = async (manifest) => {
+  const items = await Promise.all(
+    (manifest.items || []).map(async (item) => ({
+      ...item,
+      source: {
+        ...item.source,
+        url: await signedGet(item.source.storage_key),
+      },
+    })),
+  );
+  const overlays = await Promise.all(
+    (manifest.overlays || []).map(async (overlay) => ({
+      ...overlay,
+      url: await signedGet(overlay.asset_key),
+    })),
+  );
+  return {...manifest, items, overlays};
+};
+
 const hydrateLongformManifest = async (manifest) => {
   const timeline = await Promise.all(
     (manifest.timeline || []).map(async (item) => {
@@ -95,7 +114,7 @@ const hydrateLongformManifest = async (manifest) => {
 };
 
 const app = express();
-app.use(express.json({limit: '6mb'}));
+app.use(express.json({limit: '8mb'}));
 
 app.get('/health', (_request, response) => {
   response.json({status: 'ok', service: 'katcha-renderer'});
@@ -104,18 +123,27 @@ app.get('/health', (_request, response) => {
 app.post('/render', async (request, response) => {
   const manifest = request.body;
   const isLongform = manifest?.version === 'longform-render-v1';
-  const identity = isLongform ? manifest?.compilation_id : manifest?.production_id;
+  const isRankedEpisode = manifest?.version === 'ranked-episode-render-v1';
+  const identity = isLongform
+    ? manifest?.compilation_id
+    : isRankedEpisode
+      ? manifest?.short_episode_id
+      : manifest?.production_id;
   if (!identity || !manifest?.output_key) {
     return response.status(400).json({error: 'invalid render manifest'});
   }
-  if (!isLongform && !manifest?.source?.storage_key) {
+  if (!isLongform && !isRankedEpisode && !manifest?.source?.storage_key) {
     return response.status(400).json({error: 'short render manifest is missing source'});
+  }
+  if (isRankedEpisode && (!Array.isArray(manifest?.items) || manifest.items.length < 3)) {
+    return response.status(400).json({error: 'ranked episode manifest is missing items'});
   }
   if (isLongform && !Array.isArray(manifest?.timeline)) {
     return response.status(400).json({error: 'long-form render manifest is missing timeline'});
   }
 
   try {
+    const compositionId = isLongform ? 'Longform' : isRankedEpisode ? 'RankedEpisode' : 'Short';
     if (await exists(manifest.output_key)) {
       return response.json({
         output_key: manifest.output_key,
@@ -123,23 +151,27 @@ app.post('/render', async (request, response) => {
         metadata: {
           reused: true,
           renderer: 'remotion',
-          composition: isLongform ? 'Longform' : 'Short',
+          composition: compositionId,
         },
       });
     }
 
     const inputProps = isLongform
       ? await hydrateLongformManifest(manifest)
-      : await hydrateShortManifest(manifest);
+      : isRankedEpisode
+        ? await hydrateRankedEpisodeManifest(manifest)
+        : await hydrateShortManifest(manifest);
     const serveUrl = await serveUrlPromise;
-    const compositionId = isLongform ? 'Longform' : 'Short';
     const composition = await selectComposition({
       serveUrl,
       id: compositionId,
       inputProps,
     });
     const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'katcha-render-'));
-    const outputPath = path.join(tempDir, isLongform ? 'longform.mp4' : 'short.mp4');
+    const outputPath = path.join(
+      tempDir,
+      isLongform ? 'longform.mp4' : isRankedEpisode ? 'ranked-episode.mp4' : 'short.mp4',
+    );
 
     try {
       await renderMedia({

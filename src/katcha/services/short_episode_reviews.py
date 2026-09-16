@@ -11,12 +11,13 @@ from katcha.models import DomainEvent
 from katcha.services.acquisition import ClipAcquisitionState, assert_clip_production_eligible
 from katcha.short_episode_models import (
     ShortEpisode,
+    ShortEpisodeAsset,
     ShortEpisodeItem,
     ShortEpisodeReview,
     ShortEpisodeScript,
 )
 
-REGENERATE_STAGES = {"script", "voice"}
+REGENERATE_STAGES = {"script", "voice", "render"}
 
 
 def _regeneration_workflow_id(channel_profile_id: uuid.UUID) -> str:
@@ -96,6 +97,36 @@ def _clone_scripts(session: object, parent: ShortEpisode, child: ShortEpisode) -
     child.selected_script_id = selected_child.id
 
 
+def _clone_narration_assets(session: object, parent: ShortEpisode, child: ShortEpisode) -> None:
+    assets = list(
+        session.scalars(
+            select(ShortEpisodeAsset)
+            .where(
+                ShortEpisodeAsset.short_episode_id == parent.id,
+                ShortEpisodeAsset.kind.like("narration_%"),
+                ShortEpisodeAsset.generation == 1,
+            )
+            .order_by(ShortEpisodeAsset.kind)
+        )
+    )
+    if not assets:
+        raise ValueError("render regeneration requires parent narration assets")
+    for source in assets:
+        session.add(
+            ShortEpisodeAsset(
+                short_episode_id=child.id,
+                kind=source.kind,
+                generation=1,
+                storage_key=source.storage_key,
+                content_type=source.content_type,
+                provider=source.provider,
+                model=source.model,
+                asset_metadata=dict(source.asset_metadata or {}),
+            )
+        )
+    child.selected_voice_profile = parent.selected_voice_profile
+
+
 def register_short_episode_regeneration(
     episode_id: uuid.UUID,
     *,
@@ -110,15 +141,23 @@ def register_short_episode_regeneration(
         parent = session.get(ShortEpisode, episode_id)
         if parent is None:
             raise ValueError(f"short episode not found: {episode_id}")
-        if parent.status not in {"voiced", "review", "rejected", "failed"}:
-            raise ValueError(
-                "short episode must be voiced, in review, rejected, or failed to regenerate"
-            )
-        if stage == "voice" and parent.selected_script_id is None:
-            raise ValueError("voice regeneration requires a selected parent script")
+        if parent.status not in {
+            "voiced",
+            "review",
+            "editorial_approved",
+            "rendering",
+            "rendered",
+            "rejected",
+            "failed",
+            "approved",
+        }:
+            raise ValueError("short episode is not in a regenerable state")
+        if stage in {"voice", "render"} and parent.selected_script_id is None:
+            raise ValueError(f"{stage} regeneration requires a selected parent script")
 
         child = ShortEpisode(
             channel_profile_id=parent.channel_profile_id,
+            trend_opportunity_id=parent.trend_opportunity_id,
             parent_episode_id=parent.id,
             generation=parent.generation + 1,
             regenerate_from=stage,
@@ -137,16 +176,21 @@ def register_short_episode_regeneration(
             brand_key=parent.brand_key,
             brand_version=parent.brand_version,
             brand_snapshot=dict(parent.brand_snapshot or {}),
+            render_manifest={},
             estimated_cost_usd=Decimal("0"),
         )
         session.add(child)
         session.flush()
         _clone_items(session, parent, child)
 
-        if stage == "voice":
+        if stage in {"voice", "render"}:
             _clone_scripts(session, parent, child)
             child.status = "scripted"
             child.stage = "script_selected"
+        if stage == "render":
+            _clone_narration_assets(session, parent, child)
+            child.status = "editorial_approved"
+            child.stage = "render_regeneration_queued"
 
         parent.status = "rejected"
         parent.stage = f"regenerated_from_{stage}"
@@ -159,6 +203,9 @@ def register_short_episode_regeneration(
                 review_metadata={
                     "regenerate_from": stage,
                     "child_episode_id": str(child.id),
+                    "review_phase": (
+                        "render" if stage == "render" else "editorial"
+                    ),
                 },
             )
         )
@@ -173,6 +220,9 @@ def register_short_episode_regeneration(
                     "channel_profile_id": str(parent.channel_profile_id),
                     "brand_key": child.brand_key,
                     "brand_version": child.brand_version,
+                    "trend_opportunity_id": (
+                        str(child.trend_opportunity_id) if child.trend_opportunity_id else None
+                    ),
                     "regenerate_from": stage,
                 },
             )
@@ -197,24 +247,32 @@ def review_short_episode(
         episode = session.get(ShortEpisode, episode_id)
         if episode is None:
             raise ValueError(f"short episode not found: {episode_id}")
-        if episode.status not in {"voiced", "review"}:
-            raise ValueError("short episode is not awaiting editorial review")
+        if episode.status in {"voiced", "review"}:
+            review_phase = "editorial"
+        elif episode.status in {"rendered", "render_review"}:
+            review_phase = "render"
+        else:
+            raise ValueError("short episode is not awaiting review")
 
         review = ShortEpisodeReview(
             short_episode_id=episode.id,
             decision=decision.value,
             actor=actor,
             note=note,
-            review_metadata={},
+            review_metadata={"review_phase": review_phase},
         )
         session.add(review)
-        if decision == ReviewDecision.APPROVE:
-            episode.status = "approved"
+        if decision == ReviewDecision.APPROVE and review_phase == "editorial":
+            episode.status = "editorial_approved"
             episode.stage = "editorial_approved"
+            event_type = "short_episode.editorial_approved"
+        elif decision == ReviewDecision.APPROVE:
+            episode.status = "approved"
+            episode.stage = "render_approved"
             event_type = "short_episode.approved"
         else:
             episode.status = "rejected"
-            episode.stage = "editorial_rejected"
+            episode.stage = f"{review_phase}_rejected"
             event_type = "short_episode.rejected"
         session.add(
             DomainEvent(
@@ -225,6 +283,7 @@ def review_short_episode(
                     "short_episode_id": str(episode.id),
                     "channel_profile_id": str(episode.channel_profile_id),
                     "decision": decision.value,
+                    "review_phase": review_phase,
                     "actor": actor,
                 },
             )

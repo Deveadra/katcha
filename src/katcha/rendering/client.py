@@ -8,6 +8,7 @@ import httpx
 from katcha.config import Settings, get_settings
 from katcha.rendering.longform_manifest import LongformRenderManifest
 from katcha.rendering.manifest import ShortRenderManifest
+from katcha.rendering.ranked_episode_manifest import RankedEpisodeRenderManifest
 
 
 @dataclass(frozen=True, slots=True)
@@ -18,7 +19,7 @@ class RenderResult:
 
 
 def _render(
-    manifest: ShortRenderManifest | LongformRenderManifest,
+    manifest: ShortRenderManifest | LongformRenderManifest | RankedEpisodeRenderManifest,
     *,
     settings: Settings,
 ) -> RenderResult:
@@ -39,6 +40,14 @@ def _render(
 
 def render_short(
     manifest: ShortRenderManifest,
+    *,
+    settings: Settings | None = None,
+) -> RenderResult:
+    return _render(manifest, settings=settings or get_settings())
+
+
+def render_ranked_episode(
+    manifest: RankedEpisodeRenderManifest,
     *,
     settings: Settings | None = None,
 ) -> RenderResult:

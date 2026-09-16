@@ -66,9 +66,15 @@ class Publication(Base):
     __table_args__ = (
         UniqueConstraint("production_id", "youtube_connection_id"),
         UniqueConstraint("compilation_id", "youtube_connection_id"),
+        UniqueConstraint(
+            "short_episode_id",
+            "youtube_connection_id",
+            name="uq_publications_short_episode_youtube_connection",
+        ),
         CheckConstraint(
-            "(production_id IS NOT NULL AND compilation_id IS NULL) OR "
-            "(production_id IS NULL AND compilation_id IS NOT NULL)",
+            "(production_id IS NOT NULL AND compilation_id IS NULL AND short_episode_id IS NULL) OR "
+            "(production_id IS NULL AND compilation_id IS NOT NULL AND short_episode_id IS NULL) OR "
+            "(production_id IS NULL AND compilation_id IS NULL AND short_episode_id IS NOT NULL)",
             name="ck_publications_exactly_one_source",
         ),
     )
@@ -79,6 +85,9 @@ class Publication(Base):
     )
     compilation_id: Mapped[uuid.UUID | None] = mapped_column(
         Uuid(as_uuid=True), ForeignKey("compilations.id"), nullable=True, index=True
+    )
+    short_episode_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("short_episodes.id"), nullable=True, index=True
     )
     youtube_connection_id: Mapped[uuid.UUID] = mapped_column(
         Uuid(as_uuid=True), ForeignKey("youtube_connections.id"), index=True
@@ -99,6 +108,7 @@ class Publication(Base):
     notify_subscribers: Mapped[bool] = mapped_column(Boolean, default=False)
     made_for_kids: Mapped[bool] = mapped_column(Boolean, default=False)
     contains_synthetic_media: Mapped[bool] = mapped_column(Boolean, default=False)
+    treatment_metadata: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     youtube_video_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     encrypted_upload_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     upload_offset: Mapped[int] = mapped_column(BigInteger, default=0)

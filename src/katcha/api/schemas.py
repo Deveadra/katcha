@@ -304,6 +304,7 @@ class PublicationResponse(BaseModel):
     id: UUID
     production_id: UUID | None
     compilation_id: UUID | None
+    short_episode_id: UUID | None
     youtube_connection_id: UUID
     workflow_id: str
     workflow_attempt: int
@@ -319,6 +320,7 @@ class PublicationResponse(BaseModel):
     notify_subscribers: bool
     made_for_kids: bool
     contains_synthetic_media: bool
+    treatment_metadata: dict[str, object]
     youtube_video_id: str | None
     upload_offset: int
     upload_size: int | None
