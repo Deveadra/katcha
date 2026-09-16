@@ -71,6 +71,11 @@ class Settings(BaseSettings):
     youtube_processing_max_polls: int = Field(default=120, ge=1, le=720)
     youtube_analytics_offsets_hours: str = "1,6,24,72,168,720"
 
+    trend_http_timeout_seconds: int = Field(default=20, ge=3, le=120)
+    trend_reddit_user_agent: str = "katcha-trend-intelligence/0.1"
+    trend_feed_user_agent: str = "katcha-trend-intelligence/0.1"
+    trend_source_max_backoff_seconds: int = Field(default=21600, ge=60, le=86400)
+
     log_level: str = "INFO"
 
     def analytics_offsets_hours(self) -> list[int]:
