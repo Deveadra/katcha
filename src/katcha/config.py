@@ -44,7 +44,7 @@ class Settings(BaseSettings):
     ai_enabled: bool = False
     ai_budget_usd_monthly: float = Field(default=25.0, ge=0)
 
-    tts_profile: str = "openai_youth_v1"
+    tts_profile: str = "openai_youth_v2"
     renderer_url: str = "http://renderer:8787"
     render_width: int = Field(default=1080, ge=360, le=2160)
     render_height: int = Field(default=1920, ge=640, le=3840)
