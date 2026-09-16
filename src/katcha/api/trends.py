@@ -21,6 +21,7 @@ from katcha.orchestration.trend_client import (
     start_topic_watch_workflow,
 )
 from katcha.services.trend_execution import normalize_adapter_config
+from katcha.services.trend_queue import update_trend_review_queue_status
 from katcha.services.trends import (
     compute_candidate_trend_score,
     create_topic_watch_version,
@@ -129,6 +130,22 @@ class TrendQueueItemResponse(BaseModel):
     platform: str
     queue_metadata: dict[str, Any]
     trend: TrendScoreResponse
+
+
+class TrendQueueDecisionRequest(BaseModel):
+    status: str = Field(pattern="^(pending|selected|skipped)$")
+    actor: str = Field(default="operator", min_length=1, max_length=128)
+    note: str | None = Field(default=None, max_length=2000)
+
+
+class TrendQueueDecisionResponse(BaseModel):
+    id: uuid.UUID
+    topic_watch_id: uuid.UUID
+    discovery_candidate_id: uuid.UUID
+    queue_key: str
+    rank: int
+    status: str
+    queue_metadata: dict[str, Any]
 
 
 class ManualTrendScoreRequest(BaseModel):
@@ -395,3 +412,32 @@ def topic_watch_queue(
             )
             for item, candidate, score in rows
         ]
+
+
+@router.post(
+    "/queue/{item_id}/status",
+    response_model=TrendQueueDecisionResponse,
+)
+def decide_trend_queue_item(
+    item_id: uuid.UUID,
+    request: TrendQueueDecisionRequest,
+) -> TrendQueueDecisionResponse:
+    try:
+        item = update_trend_review_queue_status(
+            item_id,
+            status=request.status,
+            actor=request.actor,
+            note=request.note,
+        )
+    except ValueError as exc:
+        code = 404 if "not found" in str(exc) else 409
+        raise HTTPException(status_code=code, detail=str(exc)) from exc
+    return TrendQueueDecisionResponse(
+        id=item.id,
+        topic_watch_id=item.topic_watch_id,
+        discovery_candidate_id=item.discovery_candidate_id,
+        queue_key=item.queue_key,
+        rank=item.rank,
+        status=item.status,
+        queue_metadata=dict(item.queue_metadata or {}),
+    )
