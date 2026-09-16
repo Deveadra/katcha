@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+from contextlib import suppress
 from datetime import timedelta
 
 from temporalio import workflow
@@ -139,15 +140,13 @@ class TopicWatchScheduleWorkflow:
             digest = hashlib.sha256(f"{workflow_id}:{cycle}".encode()).hexdigest()[:24]
             execution_key = f"sched-{digest}"
             child_id = f"topic-watch-{topic_watch_id}-{digest}"
-            try:
+            with suppress(Exception):
                 await workflow.execute_child_workflow(
                     TopicWatchWorkflow.run,
                     args=[topic_watch_id, execution_key, top_n],
                     id=child_id,
                     task_queue=DISCOVERY_TASK_QUEUE,
                 )
-            except Exception:
-                pass
             await workflow.sleep(timedelta(minutes=interval_minutes))
         workflow.continue_as_new(
             args=[
