@@ -17,6 +17,7 @@ _METRIC_WEIGHTS = {
     "replies": 2.0,
     "shares": 3.0,
     "saves": 2.5,
+    "mentions": 1.5,
 }
 _TOKEN_RE = re.compile(r"[a-z0-9]+")
 
@@ -220,6 +221,7 @@ def score_topic(
             _metric_value(item.metrics, "impressions"),
             _metric_value(item.metrics, "score"),
             _metric_value(item.metrics, "upvotes"),
+            _metric_value(item.metrics, "mentions"),
             1.0,
         )
         for item in latest_by_entity.values()
