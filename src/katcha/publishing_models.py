@@ -72,9 +72,12 @@ class Publication(Base):
             name="uq_publications_short_episode_youtube_connection",
         ),
         CheckConstraint(
-            "(production_id IS NOT NULL AND compilation_id IS NULL AND short_episode_id IS NULL) OR "
-            "(production_id IS NULL AND compilation_id IS NOT NULL AND short_episode_id IS NULL) OR "
-            "(production_id IS NULL AND compilation_id IS NULL AND short_episode_id IS NOT NULL)",
+            "(production_id IS NOT NULL AND compilation_id IS NULL "
+            "AND short_episode_id IS NULL) OR "
+            "(production_id IS NULL AND compilation_id IS NOT NULL "
+            "AND short_episode_id IS NULL) OR "
+            "(production_id IS NULL AND compilation_id IS NULL "
+            "AND short_episode_id IS NOT NULL)",
             name="ck_publications_exactly_one_source",
         ),
     )
