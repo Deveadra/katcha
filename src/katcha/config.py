@@ -75,6 +75,8 @@ class Settings(BaseSettings):
     trend_reddit_user_agent: str = "katcha-trend-intelligence/0.1"
     trend_feed_user_agent: str = "katcha-trend-intelligence/0.1"
     trend_source_max_backoff_seconds: int = Field(default=21600, ge=60, le=86400)
+    trend_observation_bucket_seconds: int = Field(default=300, ge=60, le=3600)
+    trend_min_source_coverage: float = Field(default=0.75, ge=0.0, le=1.0)
 
     log_level: str = "INFO"
 
