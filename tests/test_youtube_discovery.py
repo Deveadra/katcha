@@ -77,14 +77,16 @@ def test_youtube_provider_error_does_not_expose_api_key() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(403, request=request, json={"error": "forbidden"})
 
-    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
-        with pytest.raises(RuntimeError) as exc_info:
-            _provider_get_json(
-                client,
-                "https://www.googleapis.com/youtube/v3/search",
-                params={"key": api_key, "part": "snippet"},
-                operation="search",
-            )
+    with (
+        httpx.Client(transport=httpx.MockTransport(handler)) as client,
+        pytest.raises(RuntimeError) as exc_info,
+    ):
+        _provider_get_json(
+            client,
+            "https://www.googleapis.com/youtube/v3/search",
+            params={"key": api_key, "part": "snippet"},
+            operation="search",
+        )
 
     assert api_key not in str(exc_info.value)
     assert "status 403" in str(exc_info.value)
