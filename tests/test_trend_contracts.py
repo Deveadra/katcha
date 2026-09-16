@@ -1,5 +1,6 @@
 from sqlalchemy import CheckConstraint, UniqueConstraint
 
+from katcha.api.main import app
 from katcha.trend_models import (
     ChannelTrendWatchVersion,
     TrendEvidencePacket,
@@ -46,3 +47,13 @@ def test_opportunities_are_idempotent_per_channel_topic_run() -> None:
     assert ("trend_opportunity_id", "version") in _unique_columns(
         TrendEvidencePacket.__table__
     )
+
+
+def test_trend_control_routes_are_mounted() -> None:
+    paths = set(app.openapi()["paths"])
+
+    assert "/v1/channels/{channel_profile_id}/trends/watch-profile" in paths
+    assert "/v1/trends/signals" in paths
+    assert "/v1/channels/{channel_profile_id}/trends/refresh" in paths
+    assert "/v1/channels/{channel_profile_id}/trends/opportunities" in paths
+    assert "/v1/trends/opportunities/{opportunity_id}/evidence" in paths
