@@ -7,6 +7,7 @@ from sqlalchemy import select
 
 from katcha.api.short_episode_schemas import (
     CreateShortEpisodeRequest,
+    ShortEpisodeCandidateRequest,
     ShortEpisodeDetailResponse,
     ShortEpisodeResponse,
 )
@@ -21,7 +22,7 @@ from katcha.short_episode_models import ShortEpisode
 router = APIRouter(prefix="/v1/short-episodes", tags=["short-episodes"])
 
 
-def _candidate_input(raw: object) -> ShortEpisodeCandidateInput:
+def _candidate_input(raw: ShortEpisodeCandidateRequest) -> ShortEpisodeCandidateInput:
     return ShortEpisodeCandidateInput(
         clip_id=raw.clip_id,
         hook_strength=raw.hook_strength,
