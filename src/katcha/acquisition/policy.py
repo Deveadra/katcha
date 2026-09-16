@@ -17,6 +17,13 @@ _GREEN_BASES = {
     RightsBasis.CC_BY,
     RightsBasis.PUBLIC_DOMAIN,
 }
+_EVIDENCE_REQUIRED_BASES = {
+    RightsBasis.DIRECT_PERMISSION,
+    RightsBasis.LICENSED,
+    RightsBasis.CC0,
+    RightsBasis.CC_BY,
+    RightsBasis.PUBLIC_DOMAIN,
+}
 _BLOCKING_RISK_FLAGS = {
     "child_sexual_exploitation",
     "extreme_graphic",
@@ -55,8 +62,13 @@ def evaluate_acquisition_policy(
     originality_gate: GateStatus,
     risk_flags: list[str] | tuple[str, ...] = (),
     operator_authorized: bool = False,
+    evidence_present: bool = False,
 ) -> AcquisitionPolicyResult:
-    normalized_flags = {str(value).strip().casefold() for value in risk_flags if str(value).strip()}
+    normalized_flags = {
+        str(value).strip().casefold()
+        for value in risk_flags
+        if str(value).strip()
+    }
     reasons: list[str] = []
     advisories: list[str] = []
 
@@ -65,6 +77,9 @@ def evaluate_acquisition_policy(
         reasons.append("rights_basis_blocked")
     elif rights_basis in _GREEN_BASES:
         rights_gate = GateStatus.CLEARED
+        if rights_basis in _EVIDENCE_REQUIRED_BASES and not evidence_present:
+            rights_gate = GateStatus.REVIEW_REQUIRED
+            reasons.append("rights_evidence_required")
     elif rights_basis == RightsBasis.FAIR_USE_CANDIDATE:
         if operator_authorized:
             rights_gate = GateStatus.CLEARED
