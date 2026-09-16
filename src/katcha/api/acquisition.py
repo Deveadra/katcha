@@ -11,6 +11,7 @@ from sqlalchemy import and_, func, select
 from katcha.acquisition.adapters import get_adapter
 from katcha.acquisition_models import (
     DiscoveryCandidate,
+    DiscoveryObservation,
     DiscoveryRun,
     RightsAssessment,
     RightsEvidence,
@@ -32,9 +33,9 @@ from katcha.services.acquisition import (
     add_rights_evidence,
     assess_discovery_candidate,
     promote_discovery_candidate,
-    register_discovery_candidate,
     register_discovery_run,
 )
+from katcha.services.discovery import observe_discovery_candidate
 
 router = APIRouter(prefix="/v1", tags=["discovery-rights"])
 
@@ -106,6 +107,17 @@ class DiscoveryCandidateResponse(BaseModel):
     updated_at: datetime
 
 
+class DiscoveryObservationResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    discovery_run_id: uuid.UUID
+    discovery_candidate_id: uuid.UUID
+    external_id: str | None
+    observation_metadata: dict[str, object]
+    observed_at: datetime
+
+
 class CreateRightsAssessmentRequest(BaseModel):
     rights_basis: RightsBasis
     audio_status: AudioRightsStatus
@@ -169,6 +181,7 @@ class CandidateSummaryResponse(BaseModel):
 
 class CandidateDetailResponse(BaseModel):
     candidate: DiscoveryCandidateResponse
+    observations: list[DiscoveryObservationResponse]
     assessments: list[RightsAssessmentResponse]
     evidence: list[RightsEvidenceResponse]
 
@@ -238,7 +251,7 @@ def create_discovery_candidate(
     request: CreateDiscoveryCandidateRequest,
 ) -> DiscoveryCandidate:
     try:
-        return register_discovery_candidate(
+        return observe_discovery_candidate(
             source_url=request.source_url,
             adapter_key=request.adapter_key,
             discovery_run_id=request.discovery_run_id,
@@ -315,6 +328,13 @@ def get_discovery_candidate(candidate_id: uuid.UUID) -> CandidateDetailResponse:
         candidate = session.get(DiscoveryCandidate, candidate_id)
         if candidate is None:
             raise HTTPException(status_code=404, detail="discovery candidate not found")
+        observations = list(
+            session.scalars(
+                select(DiscoveryObservation)
+                .where(DiscoveryObservation.discovery_candidate_id == candidate_id)
+                .order_by(DiscoveryObservation.observed_at.desc())
+            )
+        )
         assessments = list(
             session.scalars(
                 select(RightsAssessment)
@@ -336,6 +356,10 @@ def get_discovery_candidate(candidate_id: uuid.UUID) -> CandidateDetailResponse:
         )
         return CandidateDetailResponse(
             candidate=DiscoveryCandidateResponse.model_validate(candidate),
+            observations=[
+                DiscoveryObservationResponse.model_validate(item)
+                for item in observations
+            ],
             assessments=[
                 RightsAssessmentResponse.model_validate(item) for item in assessments
             ],
