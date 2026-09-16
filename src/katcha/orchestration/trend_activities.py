@@ -5,7 +5,10 @@ import uuid
 from temporalio import activity
 
 from katcha.config import get_settings
-from katcha.services.trend_source_health import source_health_summary
+from katcha.services.trend_source_health import (
+    source_health_allows_refresh,
+    source_health_summary,
+)
 from katcha.services.trend_sources import poll_trend_source
 from katcha.services.trends import refresh_channel_trends
 
@@ -18,9 +21,10 @@ def refresh_channel_trends_activity(
     channel_id = uuid.UUID(channel_profile_id)
     settings = get_settings()
     health = source_health_summary(channel_id)
-    configured = int(health.get("configured") or 0)
-    coverage = float(health.get("coverage") or 0.0)
-    if configured > 0 and coverage < settings.trend_min_source_coverage:
+    if not source_health_allows_refresh(
+        health,
+        minimum_coverage=settings.trend_min_source_coverage,
+    ):
         return {
             "channel_profile_id": channel_profile_id,
             "run_key": run_key,
