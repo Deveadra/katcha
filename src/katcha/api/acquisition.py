@@ -8,6 +8,7 @@ from fastapi import APIRouter, HTTPException, Query, status
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import and_, func, select
 
+from katcha.acquisition.adapters import get_adapter
 from katcha.acquisition_models import (
     DiscoveryCandidate,
     DiscoveryRun,
@@ -17,12 +18,16 @@ from katcha.acquisition_models import (
 from katcha.db import session_scope
 from katcha.domain import (
     AudioRightsStatus,
+    DiscoveryRunStatus,
     GateStatus,
     RightsBasis,
     RightsLane,
     SourceStatus,
 )
-from katcha.orchestration.client import start_ingest_workflow
+from katcha.orchestration.client import (
+    start_discovery_workflow,
+    start_ingest_workflow,
+)
 from katcha.services.acquisition import (
     add_rights_evidence,
     assess_discovery_candidate,
@@ -58,6 +63,12 @@ class DiscoveryRunResponse(BaseModel):
     completed_at: datetime | None
     created_at: datetime
     updated_at: datetime
+
+
+class ExecuteDiscoveryRunResponse(BaseModel):
+    discovery_run_id: uuid.UUID
+    workflow_id: str
+    status: str
 
 
 class CreateDiscoveryCandidateRequest(BaseModel):
@@ -186,6 +197,35 @@ def create_discovery_run(request: CreateDiscoveryRunRequest) -> DiscoveryRun:
         query=request.query,
         idempotency_key=request.idempotency_key,
         metadata=request.metadata,
+    )
+
+
+@router.post(
+    "/discovery/runs/{run_id}/execute",
+    response_model=ExecuteDiscoveryRunResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def execute_discovery_run(run_id: uuid.UUID) -> ExecuteDiscoveryRunResponse:
+    with session_scope() as session:
+        run = session.get(DiscoveryRun, run_id)
+        if run is None:
+            raise HTTPException(status_code=404, detail="discovery run not found")
+        if run.status == DiscoveryRunStatus.FAILED.value:
+            raise HTTPException(
+                status_code=409,
+                detail="failed discovery run requires an explicit new run/idempotency key",
+            )
+        try:
+            get_adapter(run.adapter_key, run.adapter_version)
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        run_status = run.status
+    workflow_id = f"discovery-run-{run_id}"
+    await start_discovery_workflow(str(run_id), workflow_id)
+    return ExecuteDiscoveryRunResponse(
+        discovery_run_id=run_id,
+        workflow_id=workflow_id,
+        status=run_status,
     )
 
 
