@@ -12,6 +12,8 @@ from katcha.db import session_scope
 from katcha.domain import DiscoveryRunStatus
 from katcha.models import DomainEvent
 from katcha.services.discovery import observe_discovery_candidate
+from katcha.services.trend_execution import prepare_topic_watch_execution
+from katcha.services.trend_queue import materialize_trend_review_queue
 from katcha.services.trends import compute_candidate_trend_score
 
 
@@ -133,3 +135,50 @@ def mark_discovery_run_failed(run_id: str, message: str) -> None:
                 },
             )
         )
+
+
+@activity.defn
+def prepare_topic_watch_execution_activity(
+    topic_watch_id: str,
+    execution_key: str,
+) -> dict[str, object]:
+    runs = prepare_topic_watch_execution(
+        uuid.UUID(topic_watch_id),
+        execution_key=execution_key,
+    )
+    return {
+        "topic_watch_id": topic_watch_id,
+        "execution_key": execution_key,
+        "runs": [
+            {
+                "run_id": str(run.run_id),
+                "adapter_key": run.adapter_key,
+                "adapter_version": run.adapter_version,
+                "workflow_id": run.workflow_id,
+            }
+            for run in runs
+        ],
+    }
+
+
+@activity.defn
+def finalize_topic_watch_execution_activity(
+    topic_watch_id: str,
+    execution_key: str,
+    discovery_run_ids: list[str],
+    top_n: int,
+) -> dict[str, object]:
+    result = materialize_trend_review_queue(
+        uuid.UUID(topic_watch_id),
+        queue_key=execution_key,
+        discovery_run_ids=[uuid.UUID(run_id) for run_id in discovery_run_ids],
+        top_n=top_n,
+    )
+    return {
+        "topic_watch_id": str(result.topic_watch_id),
+        "queue_key": result.queue_key,
+        "candidate_count": result.candidate_count,
+        "cluster_count": result.cluster_count,
+        "queue_count": result.queue_count,
+        "reused": result.reused,
+    }
