@@ -39,6 +39,7 @@ class DiscoveryRunWorkflow:
                         "candidate_count": total_candidates,
                         "pages": page + 1,
                         "done": True,
+                        "poll_outcome": result.get("poll_outcome"),
                     }
             raise RuntimeError(
                 f"discovery run exceeded {MAX_DISCOVERY_PAGES} pages without completion"
@@ -74,9 +75,30 @@ class TopicWatchWorkflow:
 
         async def execute_run(raw: object) -> dict[str, object]:
             item = raw if isinstance(raw, dict) else {}
+            adapter_key = str(item.get("adapter_key") or "")
+            source_key = str(item.get("source_key") or "")
+            if not bool(item.get("allowed")):
+                return {
+                    "run_id": None,
+                    "adapter_key": adapter_key,
+                    "source_key": source_key,
+                    "success": False,
+                    "skipped": True,
+                    "reason": str(item.get("reason") or "deferred"),
+                    "next_eligible_poll_at": item.get("next_eligible_poll_at"),
+                }
+
             run_id = str(item.get("run_id") or "")
             child_id = str(item.get("workflow_id") or f"discovery-run-{run_id}")
-            adapter_key = str(item.get("adapter_key") or "")
+            if not run_id:
+                return {
+                    "run_id": None,
+                    "adapter_key": adapter_key,
+                    "source_key": source_key,
+                    "success": False,
+                    "skipped": False,
+                    "error": "prepared discovery run is missing run_id",
+                }
             try:
                 result = await workflow.execute_child_workflow(
                     DiscoveryRunWorkflow.run,
@@ -87,14 +109,18 @@ class TopicWatchWorkflow:
                 return {
                     "run_id": run_id,
                     "adapter_key": adapter_key,
+                    "source_key": source_key,
                     "success": True,
+                    "skipped": False,
                     "result": result,
                 }
             except Exception as exc:
                 return {
                     "run_id": run_id,
                     "adapter_key": adapter_key,
+                    "source_key": source_key,
                     "success": False,
+                    "skipped": False,
                     "error": str(exc)[:1000],
                 }
 
@@ -104,6 +130,12 @@ class TopicWatchWorkflow:
             for item in results
             if bool(item.get("success")) and item.get("run_id")
         ]
+        skipped_count = sum(1 for item in results if bool(item.get("skipped")))
+        failed_count = sum(
+            1
+            for item in results
+            if not bool(item.get("success")) and not bool(item.get("skipped"))
+        )
         final = await workflow.execute_activity(
             "finalize_topic_watch_execution_activity",
             args=[topic_watch_id, execution_key, successful_run_ids, top_n],
@@ -116,7 +148,8 @@ class TopicWatchWorkflow:
             "execution_key": execution_key,
             "runs": results,
             "successful_run_count": len(successful_run_ids),
-            "failed_run_count": len(results) - len(successful_run_ids),
+            "failed_run_count": failed_count,
+            "skipped_run_count": skipped_count,
             "queue": final,
         }
 
