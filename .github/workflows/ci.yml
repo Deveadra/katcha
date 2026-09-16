@@ -33,6 +33,18 @@ jobs:
       - name: Compile
         run: python -m compileall -q src
 
+      - name: Validate migration graph
+        run: |
+          python - <<'PY'
+          from alembic.config import Config
+          from alembic.script import ScriptDirectory
+
+          heads = ScriptDirectory.from_config(Config("alembic.ini")).get_heads()
+          if len(heads) != 1:
+              raise SystemExit(f"expected exactly one Alembic head, found: {heads}")
+          print(f"Alembic head: {heads[0]}")
+          PY
+
       - name: Import smoke
         run: |
           python -c "import katcha.api.main; import katcha.api.trends; import katcha.orchestration.publishing_worker; import katcha.orchestration.longform_worker; import katcha.orchestration.intelligence_worker; import katcha.orchestration.discovery_worker; import katcha.orchestration.trend_worker"
