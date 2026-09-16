@@ -128,7 +128,11 @@ def evaluate_acquisition_policy(
 
     if any_blocked:
         lane = RightsLane.RED
-    elif rights_basis == RightsBasis.FAIR_USE_CANDIDATE or any_review:
+    elif (
+        rights_basis == RightsBasis.FAIR_USE_CANDIDATE
+        or any_review
+        or bool(review_flags)
+    ):
         lane = RightsLane.YELLOW
     elif rights_basis == RightsBasis.UNKNOWN:
         lane = RightsLane.YELLOW
