@@ -55,7 +55,7 @@ The scorer converts those cumulative observations into deltas before calculating
 
 TrendTopic is the canonical topic identity. TrendTopicSignal links source observations to a topic while preserving match confidence and reasons.
 
-P6.2a supports deterministic normalization and explicit topic association. P6.2b adapters may add stronger provider-specific alias/entity extraction while retaining this evidence-bearing link.
+P6.2a supports deterministic normalization and explicit topic association. Live discovery adapters and the P6.3 bridge may add stronger provider-specific identity and cluster evidence while retaining this evidence-bearing link.
 
 ### TrendOpportunity
 
@@ -117,6 +117,25 @@ Trend refreshes run on the dedicated Temporal trend task queue. A refresh:
 
 Run keys make opportunity creation idempotent for a channel/topic/run tuple.
 
+## P6.3 discovery-to-trend bridge
+
+External RSS/Atom, YouTube, and Reddit polling remains owned by the discovery subsystem. P6.3 does not repoll providers. It maps already-persisted `DiscoveryObservation` records into the shared trend core.
+
+Bridge rules:
+
+- only completed discovery runs are eligible;
+- each observation receives the stable trend observation key `discovery-observation:<id>`;
+- queue-backed observations use the stored cross-source cluster label as the canonical topic when available;
+- unclustered observations fall back deterministically through candidate title, explicit provider query, watch/include terms, then canonical source identity;
+- cluster-backed topic association receives stronger match confidence than deterministic fallback association;
+- YouTube independence is keyed conservatively to channel identity, Reddit to subreddit/community before individual author identity, and RSS/Atom to feed identity;
+- source URLs and candidate IDs are carried as media references, but the bridge explicitly records that reuse permission and rights are not inferred;
+- bridge execution is idempotent and does not create a second provider-acquisition stack;
+- optional channel refreshes are handed to the existing Temporal trend workflow with deterministic workflow and run keys;
+- bridged signals can be inspected by discovery run, candidate, or queue lineage.
+
+This separation lets Katcha collect external evidence once, reuse it across channels, and still preserve channel-specific trend strategy and scoring.
+
 ## API surface
 
 The mounted control surface includes:
@@ -127,18 +146,21 @@ The mounted control surface includes:
 - `POST /v1/channels/{channel_profile_id}/trends/refresh`
 - `GET /v1/channels/{channel_profile_id}/trends/opportunities`
 - `GET /v1/trends/opportunities/{opportunity_id}/evidence`
+- `POST /v1/trends/bridge/runs/{discovery_run_id}`
+- `POST /v1/trends/bridge/watches/{topic_watch_id}/queues/{queue_key}`
+- `GET /v1/trends/bridge/signals`
 
-P6.2b will add adapter/source-health control surfaces rather than embedding provider credentials or provider-specific behavior in these core contracts.
+Provider credentials and provider-specific polling behavior remain outside these channel-scoped trend contracts.
 
 ## Events
 
-Core events include watch-profile versioning, signal observation, qualified opportunity lifecycle events, and evidence-packet readiness. Event payloads use IDs, scores, timestamps, and non-secret metadata. Provider credentials must never be emitted.
+Core events include watch-profile versioning, signal observation, qualified opportunity lifecycle events, evidence-packet readiness, and discovery-bridge completion. Event payloads use IDs, counts, scores, timestamps, and non-secret metadata. Provider credentials must never be emitted.
 
-## P6.2b integration contract
+## Live discovery integration contract
 
-Live adapters for Reddit/community sources, YouTube metadata/trailers, and RSS/news/developer feeds must produce TrendSignal-compatible observations. They should also own cursors, quotas, backoff, source-health state, and provider-specific rate-limit behavior.
+Live adapters for Reddit/community sources, YouTube metadata/trailers, and RSS/news/developer feeds produce metadata-first discovery observations with durable cursors and provider-specific backoff. P6.3 normalizes those persisted observations into TrendSignal-compatible evidence instead of creating another polling path.
 
-Adapters should prefer metadata-first collection and preserve official/developer source identity where available. Media references are candidates for the acquisition/rights subsystem, not automatic republication authorization.
+Adapters and the bridge preserve official/developer source identity where available. Media references are candidates for the acquisition/rights subsystem, not automatic republication authorization.
 
 ## P6.2c calibration contract
 
