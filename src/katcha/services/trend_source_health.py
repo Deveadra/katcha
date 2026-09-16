@@ -38,3 +38,15 @@ def source_health_summary(channel_profile_id: uuid.UUID) -> dict[str, Any]:
         "unknown": unknown,
         "coverage": round(coverage, 6),
     }
+
+
+def source_health_allows_refresh(
+    summary: dict[str, Any],
+    *,
+    minimum_coverage: float,
+) -> bool:
+    configured = max(0, int(summary.get("configured") or 0))
+    if configured == 0:
+        return True
+    coverage = max(0.0, min(1.0, float(summary.get("coverage") or 0.0)))
+    return coverage >= max(0.0, min(1.0, minimum_coverage))
