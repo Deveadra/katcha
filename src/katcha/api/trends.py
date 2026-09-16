@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import uuid
 from datetime import datetime
 from decimal import Decimal
@@ -9,22 +10,24 @@ from fastapi import APIRouter, HTTPException, Query, status
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import and_, func, select
 
-from katcha.acquisition.adapters import get_adapter
 from katcha.acquisition_models import (
     CandidateTrendScore,
     DiscoveryCandidate,
     TopicWatchVersion,
 )
 from katcha.db import session_scope
-from katcha.orchestration.client import start_discovery_workflow
-from katcha.services.acquisition import register_discovery_run
+from katcha.orchestration.trend_client import (
+    start_topic_watch_schedule,
+    start_topic_watch_workflow,
+)
+from katcha.services.trend_execution import normalize_adapter_config
 from katcha.services.trends import (
     compute_candidate_trend_score,
     create_topic_watch_version,
 )
+from katcha.trend_models import TrendReviewQueueItem
 
 router = APIRouter(prefix="/v1/trends", tags=["trends"])
-_SECRET_FRAGMENTS = ("authorization", "credential", "password", "secret", "token", "api_key")
 
 
 class CreateTopicWatchRequest(BaseModel):
@@ -62,13 +65,7 @@ class TopicWatchResponse(BaseModel):
 
 class ExecuteTopicWatchRequest(BaseModel):
     idempotency_key: str | None = Field(default=None, max_length=80)
-
-
-class TopicWatchRunResponse(BaseModel):
-    discovery_run_id: uuid.UUID
-    adapter_key: str
-    adapter_version: str
-    workflow_id: str
+    top_n: int = Field(default=25, ge=1, le=250)
 
 
 class ExecuteTopicWatchResponse(BaseModel):
@@ -76,7 +73,22 @@ class ExecuteTopicWatchResponse(BaseModel):
     watch_key: str
     version: int
     execution_key: str
-    runs: list[TopicWatchRunResponse]
+    workflow_id: str
+    top_n: int
+
+
+class ScheduleTopicWatchRequest(BaseModel):
+    interval_minutes: int = Field(default=60, ge=5, le=7 * 24 * 60)
+    top_n: int = Field(default=25, ge=1, le=250)
+
+
+class ScheduleTopicWatchResponse(BaseModel):
+    topic_watch_id: uuid.UUID
+    watch_key: str
+    version: int
+    workflow_id: str
+    interval_minutes: int
+    top_n: int
 
 
 class TrendScoreResponse(BaseModel):
@@ -105,39 +117,32 @@ class RankedTrendCandidateResponse(BaseModel):
     trend: TrendScoreResponse
 
 
+class TrendQueueItemResponse(BaseModel):
+    id: uuid.UUID
+    queue_key: str
+    rank: int
+    status: str
+    candidate_id: uuid.UUID
+    title: str | None
+    creator: str | None
+    source_url: str
+    platform: str
+    queue_metadata: dict[str, Any]
+    trend: TrendScoreResponse
+
+
 class ManualTrendScoreRequest(BaseModel):
     score_key: str | None = Field(default=None, max_length=160)
     related_item_count: int = Field(default=0, ge=0)
     corroborating_source_count: int | None = Field(default=None, ge=0)
 
 
-def _contains_secret_key(value: object) -> bool:
-    if isinstance(value, dict):
-        for key, child in value.items():
-            normalized = str(key).casefold().replace("-", "_")
-            if any(fragment in normalized for fragment in _SECRET_FRAGMENTS):
-                return True
-            if _contains_secret_key(child):
-                return True
-    elif isinstance(value, list):
-        return any(_contains_secret_key(item) for item in value)
-    return False
-
-
-def _adapter_config(raw: dict[str, Any]) -> tuple[str, str, dict[str, Any]]:
-    if _contains_secret_key(raw):
-        raise ValueError(
-            "topic watch adapter configuration must not contain credentials or tokens"
-        )
-    adapter_key = str(raw.get("adapter_key") or "").strip()
-    adapter_version = str(raw.get("adapter_version") or "v1").strip()
-    query = raw.get("query", {})
-    if not adapter_key:
-        raise ValueError("topic watch adapter config is missing adapter_key")
-    if not isinstance(query, dict):
-        raise ValueError("topic watch adapter config query must be an object")
-    get_adapter(adapter_key, adapter_version)
-    return adapter_key, adapter_version, dict(query)
+def _watch_snapshot(topic_watch_id: uuid.UUID) -> tuple[str, int, bool]:
+    with session_scope() as session:
+        watch = session.get(TopicWatchVersion, topic_watch_id)
+        if watch is None:
+            raise HTTPException(status_code=404, detail="topic watch version not found")
+        return watch.watch_key, watch.version, watch.enabled
 
 
 @router.post(
@@ -148,7 +153,7 @@ def _adapter_config(raw: dict[str, Any]) -> tuple[str, str, dict[str, Any]]:
 def create_topic_watch(request: CreateTopicWatchRequest) -> TopicWatchVersion:
     try:
         for config in request.adapter_configs:
-            _adapter_config(config)
+            normalize_adapter_config(config)
         return create_topic_watch_version(
             watch_key=request.watch_key,
             name=request.name,
@@ -206,62 +211,54 @@ async def execute_topic_watch(
     topic_watch_id: uuid.UUID,
     request: ExecuteTopicWatchRequest,
 ) -> ExecuteTopicWatchResponse:
-    with session_scope() as session:
-        watch = session.get(TopicWatchVersion, topic_watch_id)
-        if watch is None:
-            raise HTTPException(status_code=404, detail="topic watch version not found")
-        if not watch.enabled:
-            raise HTTPException(status_code=409, detail="topic watch is disabled")
-        watch_key = watch.watch_key
-        watch_version = watch.version
-        include_terms = list(watch.include_terms or [])
-        exclude_terms = list(watch.exclude_terms or [])
-        max_candidates = watch.max_candidates
-        configs = [dict(item) for item in (watch.adapter_configs or [])]
-    if not configs:
-        raise HTTPException(status_code=409, detail="topic watch has no adapters configured")
-
+    watch_key, watch_version, enabled = _watch_snapshot(topic_watch_id)
+    if not enabled:
+        raise HTTPException(status_code=409, detail="topic watch is disabled")
     execution_key = request.idempotency_key or uuid.uuid4().hex
-    runs: list[TopicWatchRunResponse] = []
-    for index, config in enumerate(configs):
-        try:
-            adapter_key, adapter_version, query = _adapter_config(config)
-        except ValueError as exc:
-            raise HTTPException(status_code=409, detail=str(exc)) from exc
-        query["include_terms"] = include_terms
-        query["exclude_terms"] = exclude_terms
-        requested_limit = int(query.get("limit", max_candidates))
-        query["limit"] = max(1, min(requested_limit, max_candidates))
-        run_key = f"watch:{topic_watch_id}:{execution_key}:{index}"
-        run = register_discovery_run(
-            adapter_key=adapter_key,
-            adapter_version=adapter_version,
-            query=query,
-            idempotency_key=run_key,
-            metadata={
-                "topic_watch_id": str(topic_watch_id),
-                "watch_key": watch_key,
-                "watch_version": watch_version,
-                "execution_key": execution_key,
-                "adapter_index": index,
-            },
-        )
-        workflow_id = f"discovery-run-{run.id}"
-        await start_discovery_workflow(str(run.id), workflow_id)
-        runs.append(
-            TopicWatchRunResponse(
-                discovery_run_id=run.id,
-                adapter_key=adapter_key,
-                adapter_version=adapter_version,
-                workflow_id=workflow_id,
-            )
-        )
+    digest = hashlib.sha256(execution_key.encode()).hexdigest()[:20]
+    workflow_id = f"topic-watch-{topic_watch_id}-{digest}"
+    await start_topic_watch_workflow(
+        str(topic_watch_id),
+        workflow_id,
+        execution_key=execution_key,
+        top_n=request.top_n,
+    )
     return ExecuteTopicWatchResponse(
         topic_watch_id=topic_watch_id,
         watch_key=watch_key,
         version=watch_version,
         execution_key=execution_key,
-        runs=runs,
+        workflow_id=workflow_id,
+        top_n=request.top_n,
+    )
+
+
+@router.post(
+    "/watches/{topic_watch_id}/schedule",
+    response_model=ScheduleTopicWatchResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def schedule_topic_watch(
+    topic_watch_id: uuid.UUID,
+    request: ScheduleTopicWatchRequest,
+) -> ScheduleTopicWatchResponse:
+    watch_key, watch_version, enabled = _watch_snapshot(topic_watch_id)
+    if not enabled:
+        raise HTTPException(status_code=409, detail="topic watch is disabled")
+    workflow_id = f"topic-watch-schedule-{topic_watch_id}"
+    await start_topic_watch_schedule(
+        str(topic_watch_id),
+        workflow_id,
+        interval_minutes=request.interval_minutes,
+        top_n=request.top_n,
+    )
+    return ScheduleTopicWatchResponse(
+        topic_watch_id=topic_watch_id,
+        watch_key=watch_key,
+        version=watch_version,
+        workflow_id=workflow_id,
+        interval_minutes=request.interval_minutes,
+        top_n=request.top_n,
     )
 
 
@@ -336,4 +333,65 @@ def ranked_topic_watch_candidates(
                 trend=TrendScoreResponse.model_validate(score),
             )
             for candidate, score in rows
+        ]
+
+
+@router.get(
+    "/watches/{topic_watch_id}/queue",
+    response_model=list[TrendQueueItemResponse],
+)
+def topic_watch_queue(
+    topic_watch_id: uuid.UUID,
+    queue_key: str | None = Query(default=None, max_length=160),
+    item_status: str | None = Query(default=None, max_length=32),
+    limit: int = Query(default=100, ge=1, le=500),
+) -> list[TrendQueueItemResponse]:
+    with session_scope() as session:
+        if session.get(TopicWatchVersion, topic_watch_id) is None:
+            raise HTTPException(status_code=404, detail="topic watch version not found")
+        selected_queue_key = queue_key
+        if selected_queue_key is None:
+            selected_queue_key = session.scalar(
+                select(TrendReviewQueueItem.queue_key)
+                .where(TrendReviewQueueItem.topic_watch_id == topic_watch_id)
+                .order_by(TrendReviewQueueItem.created_at.desc())
+                .limit(1)
+            )
+        if not selected_queue_key:
+            return []
+        stmt = (
+            select(TrendReviewQueueItem, DiscoveryCandidate, CandidateTrendScore)
+            .join(
+                DiscoveryCandidate,
+                TrendReviewQueueItem.discovery_candidate_id == DiscoveryCandidate.id,
+            )
+            .join(
+                CandidateTrendScore,
+                TrendReviewQueueItem.trend_score_id == CandidateTrendScore.id,
+            )
+            .where(
+                TrendReviewQueueItem.topic_watch_id == topic_watch_id,
+                TrendReviewQueueItem.queue_key == selected_queue_key,
+            )
+            .order_by(TrendReviewQueueItem.rank)
+            .limit(limit)
+        )
+        if item_status is not None:
+            stmt = stmt.where(TrendReviewQueueItem.status == item_status)
+        rows = list(session.execute(stmt))
+        return [
+            TrendQueueItemResponse(
+                id=item.id,
+                queue_key=item.queue_key,
+                rank=item.rank,
+                status=item.status,
+                candidate_id=candidate.id,
+                title=candidate.title,
+                creator=candidate.creator,
+                source_url=candidate.source_url,
+                platform=candidate.platform,
+                queue_metadata=dict(item.queue_metadata or {}),
+                trend=TrendScoreResponse.model_validate(score),
+            )
+            for item, candidate, score in rows
         ]
