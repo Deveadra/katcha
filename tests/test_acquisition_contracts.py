@@ -2,9 +2,11 @@ from sqlalchemy import CheckConstraint, UniqueConstraint
 
 from katcha.acquisition_models import (
     DiscoveryCandidate,
+    DiscoveryObservation,
     DiscoveryRun,
     RightsAssessment,
 )
+from katcha.api.acquisition import CandidateDetailResponse
 from katcha.api.main import app
 
 
@@ -16,12 +18,20 @@ def _unique_columns(table) -> set[tuple[str, ...]]:
     }
 
 
-def test_discovery_run_and_candidate_idempotency_contracts() -> None:
+def test_discovery_run_candidate_and_observation_idempotency_contracts() -> None:
     assert ("adapter_key", "run_key") in _unique_columns(DiscoveryRun.__table__)
     candidate_unique = _unique_columns(DiscoveryCandidate.__table__)
     assert ("adapter_key", "external_id") in candidate_unique
     assert ("canonical_url",) in candidate_unique
     assert ("source_item_id",) in candidate_unique
+    assert (
+        "discovery_run_id",
+        "discovery_candidate_id",
+    ) in _unique_columns(DiscoveryObservation.__table__)
+
+
+def test_candidate_detail_exposes_complete_observation_lineage() -> None:
+    assert "observations" in CandidateDetailResponse.model_fields
 
 
 def test_rights_assessments_are_immutable_versioned_rows() -> None:
