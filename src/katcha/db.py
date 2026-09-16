@@ -40,6 +40,7 @@ def init_db() -> None:
         models,
         production_models,
         publishing_models,
+        short_episode_models,
         trend_models,
     )
 
