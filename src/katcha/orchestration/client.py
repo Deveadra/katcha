@@ -23,7 +23,11 @@ from katcha.orchestration.publishing_workflows import (
     YouTubeAnalyticsRefreshWorkflow,
     YouTubePublicationWorkflow,
 )
-from katcha.orchestration.trend_workflows import ChannelTrendRefreshWorkflow
+from katcha.orchestration.trend_workflows import (
+    ChannelTrendRefreshWorkflow,
+    TrendSourcePollWorkflow,
+    TrendSourceScheduleWorkflow,
+)
 from katcha.orchestration.workflows import ClipIngestWorkflow
 from katcha.trends.runtime import TREND_TASK_QUEUE
 
@@ -215,6 +219,43 @@ async def start_trend_refresh_workflow(
         handle = await client.start_workflow(
             ChannelTrendRefreshWorkflow.run,
             args=[channel_profile_id, run_key],
+            id=workflow_id,
+            task_queue=TREND_TASK_QUEUE,
+        )
+    except WorkflowAlreadyStartedError:
+        handle = client.get_workflow_handle(workflow_id)
+    return handle.id
+
+
+async def start_trend_source_poll_workflow(
+    source_id: str,
+    workflow_id: str,
+    run_key: str,
+) -> str:
+    client = await get_temporal_client()
+    try:
+        handle = await client.start_workflow(
+            TrendSourcePollWorkflow.run,
+            args=[source_id, run_key],
+            id=workflow_id,
+            task_queue=TREND_TASK_QUEUE,
+        )
+    except WorkflowAlreadyStartedError:
+        handle = client.get_workflow_handle(workflow_id)
+    return handle.id
+
+
+async def start_trend_source_schedule(
+    source_id: str,
+    workflow_id: str,
+    *,
+    interval_seconds: int,
+) -> str:
+    client = await get_temporal_client()
+    try:
+        handle = await client.start_workflow(
+            TrendSourceScheduleWorkflow.run,
+            args=[source_id, interval_seconds, 120],
             id=workflow_id,
             task_queue=TREND_TASK_QUEUE,
         )
