@@ -23,6 +23,7 @@ from katcha.orchestration.publishing_workflows import (
     YouTubeAnalyticsRefreshWorkflow,
     YouTubePublicationWorkflow,
 )
+from katcha.orchestration.short_episode_workflows import RankedShortEpisodeEditorialWorkflow
 from katcha.orchestration.trend_workflows import (
     ChannelTrendRefreshWorkflow,
     TrendSourcePollWorkflow,
@@ -105,6 +106,26 @@ async def start_production_workflow(
         handle = await client.start_workflow(
             ShortProductionWorkflow.run,
             args=[production_id, start_stage],
+            id=workflow_id,
+            task_queue=settings.temporal_production_task_queue,
+        )
+    except WorkflowAlreadyStartedError:
+        handle = client.get_workflow_handle(workflow_id)
+    return handle.id
+
+
+async def start_short_episode_editorial_workflow(
+    episode_id: str,
+    workflow_id: str,
+    *,
+    start_stage: str = "script",
+) -> str:
+    settings = get_settings()
+    client = await get_temporal_client()
+    try:
+        handle = await client.start_workflow(
+            RankedShortEpisodeEditorialWorkflow.run,
+            args=[episode_id, start_stage],
             id=workflow_id,
             task_queue=settings.temporal_production_task_queue,
         )
