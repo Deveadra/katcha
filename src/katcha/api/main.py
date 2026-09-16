@@ -45,6 +45,7 @@ from katcha.api.schemas import (
     YouTubeConnectionResponse,
     YouTubeOAuthStartResponse,
 )
+from katcha.api.short_episodes import router as short_episodes_router
 from katcha.config import get_settings
 from katcha.db import session_scope
 from katcha.domain import (
@@ -113,6 +114,7 @@ app = FastAPI(
 )
 app.include_router(acquisition_router)
 app.include_router(intelligence_router)
+app.include_router(short_episodes_router)
 
 
 def _require_ai_execution() -> None:
