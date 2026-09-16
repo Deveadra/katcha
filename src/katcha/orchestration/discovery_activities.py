@@ -11,7 +11,7 @@ from katcha.acquisition_models import DiscoveryRun
 from katcha.db import session_scope
 from katcha.domain import DiscoveryRunStatus
 from katcha.models import DomainEvent
-from katcha.services.acquisition import register_discovery_candidate
+from katcha.services.discovery import observe_discovery_candidate
 
 
 @activity.defn
@@ -43,7 +43,7 @@ def execute_discovery_page_activity(run_id: str) -> dict[str, object]:
     batch = adapter.discover(query, cursor)
     candidate_ids: list[str] = []
     for item in batch.items:
-        candidate = register_discovery_candidate(
+        candidate = observe_discovery_candidate(
             source_url=item.source_url,
             adapter_key=adapter_key,
             discovery_run_id=run_uuid,
