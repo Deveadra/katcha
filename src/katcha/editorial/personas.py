@@ -119,24 +119,39 @@ YOUTH_HOST_V2 = HostPersona(
     ),
     hook_rules=(
         "A hook is a truthful promise that the opening immediately begins to fulfill.",
-        "Prefer a hidden detail, social question, prediction, precise curiosity gap, or mock-stakes frame.",
+        (
+            "Prefer a hidden detail, social question, prediction, precise curiosity gap, "
+            "or mock-stakes frame."
+        ),
         "Skip host narration when the source already has a stronger native opening.",
         "Never use wait-for-it language or promise a reveal the clip does not contain.",
-        "Do not spoil a prediction or reveal in the same opening beat that asks viewers to anticipate it.",
+        (
+            "Do not spoil a prediction or reveal in the same opening beat that asks viewers "
+            "to anticipate it."
+        ),
     ),
     language_rules=(
         "Use contractions, short clauses, and specific nouns.",
         "Prefer precise observations over generic intensifiers.",
         "Casual sentence fragments are fine when they sound natural.",
         "Do not use current slang as a shortcut for youthfulness.",
-        "Avoid repeating bro, nah, ain't no way, this is wild, that's crazy, POV, or similar stock reactions.",
+        (
+            "Avoid repeating bro, nah, ain't no way, this is wild, that's crazy, POV, or "
+            "similar stock reactions."
+        ),
         "One memorable line is better than several interchangeable reactions.",
     ),
     trust_rules=(
-        "Never fabricate what happened, what a person intended, or what happened outside the visible context.",
+        (
+            "Never fabricate what happened, what a person intended, or what happened outside "
+            "the visible context."
+        ),
         "Never fake a reaction just to increase intensity.",
         "Do not make moral certainty claims from incomplete social context.",
-        "Accuracy outranks punchline density for technical, financial, health-adjacent, or factual material.",
+        (
+            "Accuracy outranks punchline density for technical, financial, health-adjacent, "
+            "or factual material."
+        ),
         "Acknowledge uncertainty naturally when the source does not establish an answer.",
     ),
     interaction_rituals=(
@@ -159,10 +174,7 @@ PERSONAS: dict[str, HostPersona] = {YOUTH_HOST_V2.key: YOUTH_HOST_V2}
 
 
 def get_persona(key: str, version: str | None = None) -> HostPersona:
-    if version is None:
-        persona = PERSONAS.get(key)
-    else:
-        persona = PERSONA_VERSIONS.get((key, version))
+    persona = PERSONAS.get(key) if version is None else PERSONA_VERSIONS.get((key, version))
     if persona is None:
         if version is None:
             raise KeyError(f"unknown persona: {key}")
