@@ -22,7 +22,7 @@ from katcha.services.trend_sources import (
 )
 from katcha.trend_source_models import TrendSourceSubscription
 
-router = APIRouter(prefix="/v1", tags=["trend-sources"])
+router = APIRouter(tags=["trend-sources"])
 
 
 class TrendSourceRequest(BaseModel):
@@ -139,9 +139,7 @@ def get_channel_trend_sources(
     return list_trend_sources(channel_profile_id)
 
 
-@router.get(
-    "/channels/{channel_profile_id}/trends/sources/health",
-)
+@router.get("/channels/{channel_profile_id}/trends/sources/health")
 def get_channel_trend_source_health(channel_profile_id: uuid.UUID) -> dict[str, Any]:
     return source_health_summary(channel_profile_id)
 
