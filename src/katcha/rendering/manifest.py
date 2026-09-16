@@ -31,6 +31,50 @@ class SourceVideoSpec(BaseModel):
     audio_volume: float = Field(default=0.45, ge=0, le=1)
 
 
+class BrandPalette(BaseModel):
+    ink: str = "#101216"
+    paper: str = "#F6F3EC"
+    signal_blue: str = "#5B6CFF"
+    hot_peach: str = "#FF7657"
+    volt: str = "#D9FF57"
+
+
+class CaptionBrandSpec(BaseModel):
+    treatment_key: str = "impact_clean_v1"
+    font_family: str = "Arial, Helvetica, sans-serif"
+    font_size_px: int = Field(default=66, ge=32, le=120)
+    font_weight: int = Field(default=900, ge=400, le=1000)
+    max_visual_lines: int = Field(default=2, ge=1, le=3)
+    bottom_safe_zone_px: int = Field(default=250, ge=120, le=600)
+
+
+class MotionBrandSpec(BaseModel):
+    treatment_key: str = "restrained_punch_v1"
+    max_punch_scale: float = Field(default=1.08, ge=1.0, le=1.2)
+    freeze_frame_max_frames: int = Field(default=8, ge=0, le=30)
+    random_motion_enabled: bool = False
+
+
+class EndCardBrandSpec(BaseModel):
+    treatment_key: str = "verdict_v1"
+    accent_role: Literal["signal_blue", "hot_peach", "volt"] = "signal_blue"
+    max_question_lines: int = Field(default=3, ge=1, le=4)
+
+
+class ShortBrandSpec(BaseModel):
+    brand_key: str = "channel_01"
+    version: int = Field(default=1, ge=1)
+    theme_key: str = "signal_v1"
+    palette: BrandPalette = Field(default_factory=BrandPalette)
+    captions: CaptionBrandSpec = Field(default_factory=CaptionBrandSpec)
+    motion: MotionBrandSpec = Field(default_factory=MotionBrandSpec)
+    end_card: EndCardBrandSpec = Field(default_factory=EndCardBrandSpec)
+
+
+def channel_01_brand_v1() -> ShortBrandSpec:
+    return ShortBrandSpec()
+
+
 class ShortRenderManifest(BaseModel):
     version: Literal["short-render-v1"] = "short-render-v1"
     production_id: str
@@ -43,6 +87,7 @@ class ShortRenderManifest(BaseModel):
     output_key: str
     title_angle: str | None = None
     interaction_prompt: str | None = None
+    brand: ShortBrandSpec = Field(default_factory=channel_01_brand_v1)
 
 
 def build_short_manifest(
@@ -61,6 +106,7 @@ def build_short_manifest(
     output_key: str,
     title_angle: str | None,
     interaction_prompt: str | None,
+    brand: ShortBrandSpec | None = None,
 ) -> ShortRenderManifest:
     assets_by_index = {
         int(asset["segment_index"]): asset
@@ -135,4 +181,5 @@ def build_short_manifest(
         output_key=output_key,
         title_angle=title_angle,
         interaction_prompt=interaction_prompt,
+        brand=brand or channel_01_brand_v1(),
     )
