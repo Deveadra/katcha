@@ -35,7 +35,7 @@ jobs:
 
       - name: Import smoke
         run: |
-          python -c "import katcha.api.main; import katcha.orchestration.publishing_worker; import katcha.orchestration.longform_worker; import katcha.orchestration.intelligence_worker; import katcha.orchestration.discovery_worker"
+          python -c "import katcha.api.main; import katcha.api.trends; import katcha.orchestration.publishing_worker; import katcha.orchestration.longform_worker; import katcha.orchestration.intelligence_worker; import katcha.orchestration.discovery_worker; import katcha.orchestration.trend_worker"
 
       - name: Test
         run: pytest -q
@@ -47,6 +47,7 @@ jobs:
           docker compose --env-file .env.example config >/dev/null
           docker compose --env-file .env.example -f docker-compose.yml -f docker-compose.intelligence.yml config >/dev/null
           docker compose --env-file .env.example -f docker-compose.yml -f docker-compose.discovery.yml config >/dev/null
+          docker compose --env-file .env.example -f docker-compose.yml -f docker-compose.trends.yml config >/dev/null
 
   renderer:
     runs-on: ubuntu-latest
