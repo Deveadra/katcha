@@ -71,6 +71,11 @@ class Settings(BaseSettings):
     youtube_processing_max_polls: int = Field(default=120, ge=1, le=720)
     youtube_analytics_offsets_hours: str = "1,6,24,72,168,720"
 
+    youtube_data_api_key: str | None = None
+    reddit_client_id: str | None = None
+    reddit_client_secret: str | None = None
+    reddit_user_agent: str = "Katcha/0.1 trend-discovery"
+
     log_level: str = "INFO"
 
     def analytics_offsets_hours(self) -> list[int]:
