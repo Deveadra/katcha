@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import math
 import re
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from datetime import datetime, timezone
-from typing import Mapping, Sequence
+from datetime import UTC, datetime
 
 _METRIC_WEIGHTS = {
     "views": 1.0,
@@ -31,8 +31,8 @@ def _hours_between(later: datetime, earlier: datetime) -> float:
 
 def _utc(value: datetime) -> datetime:
     if value.tzinfo is None:
-        return value.replace(tzinfo=timezone.utc)
-    return value.astimezone(timezone.utc)
+        return value.replace(tzinfo=UTC)
+    return value.astimezone(UTC)
 
 
 def normalize_term(value: str) -> str:
@@ -156,7 +156,7 @@ def score_topic(
             reasons=("no_signal_observations",),
         )
 
-    now_utc = _utc(now or datetime.now(timezone.utc))
+    now_utc = _utc(now or datetime.now(UTC))
     ordered = sorted(samples, key=lambda item: _utc(item.observed_at))
     increments = _delta_activity(ordered)
 
