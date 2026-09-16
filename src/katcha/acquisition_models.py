@@ -135,6 +135,77 @@ class DiscoveryObservation(Base):
     )
 
 
+class TopicWatchVersion(Base):
+    __tablename__ = "topic_watch_versions"
+    __table_args__ = (
+        UniqueConstraint("watch_key", "version"),
+        CheckConstraint("version > 0", name="ck_topic_watch_version_positive"),
+        CheckConstraint(
+            "freshness_horizon_hours > 0",
+            name="ck_topic_watch_freshness_positive",
+        ),
+        CheckConstraint(
+            "max_candidates > 0",
+            name="ck_topic_watch_max_candidates_positive",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    watch_key: Mapped[str] = mapped_column(String(128), index=True)
+    version: Mapped[int] = mapped_column(Integer)
+    name: Mapped[str] = mapped_column(String(255))
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    include_terms: Mapped[list[str]] = mapped_column(JSON, default=list)
+    exclude_terms: Mapped[list[str]] = mapped_column(JSON, default=list)
+    adapter_configs: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    language: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    locale: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    freshness_horizon_hours: Mapped[int] = mapped_column(Integer, default=72)
+    max_candidates: Mapped[int] = mapped_column(Integer, default=100)
+    watch_metadata: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), index=True
+    )
+
+
+class CandidateTrendScore(Base):
+    __tablename__ = "candidate_trend_scores"
+    __table_args__ = (
+        UniqueConstraint("topic_watch_id", "discovery_candidate_id", "version"),
+        CheckConstraint("version > 0", name="ck_trend_score_version_positive"),
+        CheckConstraint(
+            "score >= 0 AND score <= 1",
+            name="ck_trend_score_probability_range",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    topic_watch_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("topic_watch_versions.id"), index=True
+    )
+    discovery_candidate_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("discovery_candidates.id"), index=True
+    )
+    version: Mapped[int] = mapped_column(Integer)
+    algorithm_version: Mapped[str] = mapped_column(String(64), index=True)
+    score: Mapped[Decimal] = mapped_column(Numeric(8, 6), index=True)
+    feature_breakdown: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    observation_count: Mapped[int] = mapped_column(Integer, default=0)
+    window_start: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    window_end: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    computed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), index=True
+    )
+
+
 class RightsAssessment(Base):
     __tablename__ = "rights_assessments"
     __table_args__ = (
