@@ -1,0 +1,2 @@
+DISCOVERY_TASK_QUEUE = "katcha-discovery"
+MAX_DISCOVERY_PAGES = 100

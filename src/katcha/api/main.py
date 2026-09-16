@@ -7,6 +7,7 @@ from fastapi import FastAPI, HTTPException, Query, status
 from sqlalchemy import select, text
 
 from katcha import __version__
+from katcha.api.acquisition import router as acquisition_router
 from katcha.api.intelligence import router as intelligence_router
 from katcha.api.schemas import (
     AnalysisRunResponse,
@@ -110,6 +111,7 @@ app = FastAPI(
     version=__version__,
     description="Standalone control plane for Katcha media workflows.",
 )
+app.include_router(acquisition_router)
 app.include_router(intelligence_router)
 
 
