@@ -113,6 +113,28 @@ class DiscoveryCandidate(Base):
     )
 
 
+class DiscoveryObservation(Base):
+    __tablename__ = "discovery_observations"
+    __table_args__ = (
+        UniqueConstraint("discovery_run_id", "discovery_candidate_id"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    discovery_run_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("discovery_runs.id"), index=True
+    )
+    discovery_candidate_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("discovery_candidates.id"), index=True
+    )
+    external_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    observation_metadata: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    observed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), index=True
+    )
+
+
 class RightsAssessment(Base):
     __tablename__ = "rights_assessments"
     __table_args__ = (
