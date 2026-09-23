@@ -6,6 +6,11 @@ from typing import Any
 import httpx
 
 from katcha.acquisition.adapters import DiscoveredCandidate, DiscoveryBatch
+from katcha.acquisition.http_errors import (
+    provider_payload_error,
+    provider_response_error,
+    provider_transport_error,
+)
 from katcha.config import get_settings
 
 _SEARCH_URL = "https://www.googleapis.com/youtube/v3/search"
@@ -30,17 +35,15 @@ def _provider_get_json(
     try:
         response = client.get(url, params=params)
     except httpx.HTTPError as exc:
-        raise RuntimeError(f"YouTube {operation} request failed") from exc
+        raise provider_transport_error("YouTube", operation) from exc
     if response.status_code >= 400:
-        raise RuntimeError(
-            f"YouTube {operation} request failed with status {response.status_code}"
-        )
+        raise provider_response_error("YouTube", operation, response)
     try:
         payload = response.json()
     except ValueError as exc:
-        raise RuntimeError(f"YouTube {operation} returned invalid JSON") from exc
+        raise provider_payload_error("YouTube", operation) from exc
     if not isinstance(payload, dict):
-        raise RuntimeError(f"YouTube {operation} returned an invalid payload")
+        raise provider_payload_error("YouTube", operation)
     return payload
 
 
