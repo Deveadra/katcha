@@ -42,7 +42,6 @@ class TrendOutcomeAttribution(Base):
     analytics_snapshot_id: Mapped[uuid.UUID] = mapped_column(
         Uuid(as_uuid=True),
         ForeignKey("publication_analytics_snapshots.id"),
-        unique=True,
         index=True,
     )
     trend_opportunity_id: Mapped[uuid.UUID | None] = mapped_column(
@@ -101,7 +100,6 @@ class TrendOpportunityOutcome(Base):
     analytics_snapshot_id: Mapped[uuid.UUID] = mapped_column(
         Uuid(as_uuid=True),
         ForeignKey("publication_analytics_snapshots.id"),
-        unique=True,
         index=True,
     )
     age_bucket_hours: Mapped[int] = mapped_column(Integer, index=True)
