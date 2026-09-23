@@ -1,4 +1,5 @@
 import React from 'react';
+import {ReactionTrack} from './reaction-track.jsx';
 import {
   AbsoluteFill,
   Audio,
@@ -156,6 +157,7 @@ export const ShortVideo = ({
   overlays,
   interaction_prompt: interactionPrompt,
   brand: brandInput,
+  reaction_events: reactionEvents = [],
 }) => {
   const {fps} = useVideoConfig();
   const sourceFrames = secondsToFrames(source.duration_seconds, fps);
@@ -203,6 +205,7 @@ export const ShortVideo = ({
         interactionPrompt={interactionPrompt}
         brand={brand}
       />
+      <ReactionTrack events={reactionEvents} captions={brand.captions} />
       <Captions overlays={overlays} brand={brand} />
     </AbsoluteFill>
   );

@@ -6,6 +6,12 @@ from pydantic import BaseModel, Field, model_validator
 
 from katcha.audio.captions import build_caption_cues
 from katcha.rendering.manifest import RenderCaptionCue, ShortBrandSpec
+from katcha.rendering.reactions import (
+    ReactionAssetPack,
+    ReactionCue,
+    ReactionEvent,
+    resolve_reaction_events,
+)
 
 MAX_RANKED_EPISODE_SECONDS = 60.0
 TARGET_SOURCE_SECONDS_BY_COUNT = {3: 8.0, 5: 6.0, 7: 4.25}
@@ -95,6 +101,7 @@ class RankedEpisodeRenderManifest(BaseModel):
     output_key: str
     brand: ShortBrandSpec
     treatment: RankedEpisodeTreatmentMetadata
+    reaction_events: list[ReactionEvent] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def validate_countdown(self) -> RankedEpisodeRenderManifest:
@@ -102,6 +109,19 @@ class RankedEpisodeRenderManifest(BaseModel):
         expected = list(range(len(self.items), 0, -1))
         if positions != expected:
             raise ValueError("ranked episode items must be ordered as a descending countdown")
+        if self.treatment.brand_key != self.brand.brand_key:
+            raise ValueError("treatment brand does not match render brand")
+        seen_reactions: set[str] = set()
+        for event in self.reaction_events:
+            if event.id in seen_reactions:
+                raise ValueError(f"duplicate reaction event id: {event.id}")
+            seen_reactions.add(event.id)
+            if event.brand_key != self.brand.brand_key:
+                raise ValueError("reaction event belongs to a different channel")
+            if event.start_seconds + event.duration_seconds > (
+                self.output_duration_seconds + 0.00001
+            ):
+                raise ValueError("reaction event extends beyond render")
         if self.treatment.item_count != len(self.items):
             raise ValueError("treatment item count must match rendered items")
         return self
@@ -166,6 +186,8 @@ def build_ranked_episode_manifest(
     output_key: str,
     brand: ShortBrandSpec,
     trend_opportunity_id: str | None = None,
+    reaction_pack: ReactionAssetPack | None = None,
+    reaction_cues: list[ReactionCue | dict[str, object]] | None = None,
     width: int = 1080,
     height: int = 1920,
     fps: int = 30,
@@ -285,6 +307,16 @@ def build_ranked_episode_manifest(
         )
 
     narration_density = narration_seconds / output_duration if output_duration else 0.0
+    reaction_events = resolve_reaction_events(
+        cues=reaction_cues,
+        pack=reaction_pack,
+        brand_key=brand.brand_key,
+        narration_windows={
+            overlay.sequence: (overlay.start_seconds, overlay.duration_seconds)
+            for overlay in overlays
+        },
+        output_duration_seconds=round(output_duration, 3),
+    )
     return RankedEpisodeRenderManifest(
         short_episode_id=short_episode_id,
         width=width,
@@ -300,6 +332,7 @@ def build_ranked_episode_manifest(
         output_duration_seconds=round(output_duration, 3),
         output_key=output_key,
         brand=brand,
+        reaction_events=reaction_events,
         treatment=RankedEpisodeTreatmentMetadata(
             premise=premise,
             format_key=format_key,

@@ -2,9 +2,15 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from katcha.audio.captions import build_caption_cues
+from katcha.rendering.reactions import (
+    ReactionAssetPack,
+    ReactionCue,
+    ReactionEvent,
+    resolve_reaction_events,
+)
 
 
 class RenderCaptionCue(BaseModel):
@@ -88,6 +94,22 @@ class ShortRenderManifest(BaseModel):
     title_angle: str | None = None
     interaction_prompt: str | None = None
     brand: ShortBrandSpec = Field(default_factory=channel_01_brand_v1)
+    reaction_events: list[ReactionEvent] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def validate_reaction_events(self) -> ShortRenderManifest:
+        ids: set[str] = set()
+        for event in self.reaction_events:
+            if event.id in ids:
+                raise ValueError(f"duplicate reaction event id: {event.id}")
+            ids.add(event.id)
+            if event.brand_key != self.brand.brand_key:
+                raise ValueError("reaction event belongs to a different channel")
+            if event.start_seconds + event.duration_seconds > (
+                self.output_duration_seconds + 0.00001
+            ):
+                raise ValueError("reaction event extends beyond render")
+        return self
 
 
 def build_short_manifest(
@@ -107,6 +129,8 @@ def build_short_manifest(
     title_angle: str | None,
     interaction_prompt: str | None,
     brand: ShortBrandSpec | None = None,
+    reaction_pack: ReactionAssetPack | None = None,
+    reaction_cues: list[ReactionCue | dict[str, object]] | None = None,
 ) -> ShortRenderManifest:
     assets_by_index = {
         int(asset["segment_index"]): asset
@@ -164,6 +188,17 @@ def build_short_manifest(
         narration_cursor = start + duration + 0.08
 
     output_duration = max(source_duration_seconds, narration_cursor) + 0.2
+    selected_brand = brand or channel_01_brand_v1()
+    reaction_events = resolve_reaction_events(
+        cues=reaction_cues,
+        pack=reaction_pack,
+        brand_key=selected_brand.brand_key,
+        narration_windows={
+            index: (overlay.start_seconds, overlay.duration_seconds)
+            for index, overlay in enumerate(overlays)
+        },
+        output_duration_seconds=round(output_duration, 3),
+    )
     return ShortRenderManifest(
         production_id=production_id,
         width=width,
@@ -181,5 +216,6 @@ def build_short_manifest(
         output_key=output_key,
         title_angle=title_angle,
         interaction_prompt=interaction_prompt,
-        brand=brand or channel_01_brand_v1(),
+        brand=selected_brand,
+        reaction_events=reaction_events,
     )
