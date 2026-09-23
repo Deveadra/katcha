@@ -526,16 +526,20 @@ def _window_metrics(
             if float(row.predicted_score) >= 0.55
             and float(row.predicted_confidence) >= 0.45
         ]
+        true_calls = [row for row in calls if row.realized_breakout]
         false_calls = [row for row in calls if not row.realized_breakout]
+        negatives = [row for row in labeled if not row.realized_breakout]
         result[str(bucket)] = {
             "samples": len(bucket_rows),
             "labeled_samples": len(labeled),
             "breakouts": len(breakouts),
             "breakout_precision": (
-                round(len(breakouts) / len(calls), 6) if calls else None
+                round(len(true_calls) / len(calls), 6) if calls else None
             ),
             "false_positive_rate": (
-                round(len(false_calls) / len(calls), 6) if calls else None
+                round(len(false_calls) / len(negatives), 6)
+                if negatives
+                else None
             ),
             "mean_lift": round(sum(lifts) / len(lifts), 6) if lifts else None,
             "baseline_coverage": (
@@ -706,6 +710,7 @@ def calibration_summary(channel_profile_id: uuid.UUID) -> dict[str, Any]:
                     "training_cutoff": snapshot.training_cutoff.isoformat(),
                     "validation_metrics": dict(snapshot.validation_metrics or {}),
                     "calibration_metrics": dict(snapshot.calibration_metrics or {}),
+                    "feature_coefficients": dict(snapshot.coefficients or {}),
                 }
                 if snapshot
                 else None
