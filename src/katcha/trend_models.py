@@ -167,6 +167,11 @@ class TrendOpportunity(Base):
             name="ck_trend_opportunity_confidence",
         ),
         CheckConstraint(
+            "calibrated_score IS NULL OR "
+            "(calibrated_score >= 0 AND calibrated_score <= 1)",
+            name="ck_trend_opportunity_calibrated_score",
+        ),
+        CheckConstraint(
             "prediction_horizon_hours > 0",
             name="ck_trend_prediction_horizon_positive",
         ),
@@ -186,6 +191,11 @@ class TrendOpportunity(Base):
     lifecycle: Mapped[str] = mapped_column(String(32), index=True)
     opportunity_score: Mapped[Decimal] = mapped_column(Numeric(8, 6), index=True)
     confidence: Mapped[Decimal] = mapped_column(Numeric(8, 6), index=True)
+    calibrated_score: Mapped[Decimal | None] = mapped_column(
+        Numeric(8, 6), nullable=True, index=True
+    )
+    calibration_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    calibration_metadata: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     rank: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
     prediction_horizon_hours: Mapped[int] = mapped_column(Integer, default=24)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
