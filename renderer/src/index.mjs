@@ -48,6 +48,14 @@ const exists = async (key) => {
 const signedGet = (key) =>
   getSignedUrl(s3, new GetObjectCommand({Bucket: bucket, Key: key}), {expiresIn: 3600});
 
+const hydrateReactions = async (events = []) =>
+  Promise.all(events.map(async (event) => {
+    if (!(await exists(event.storage_key))) {
+      throw new Error(`missing reaction asset: ${event.storage_key}`);
+    }
+    return {...event, url: await signedGet(event.storage_key)};
+  }));
+
 const hydrateShortManifest = async (manifest) => {
   const sourceUrl = await signedGet(manifest.source.storage_key);
   const overlays = await Promise.all(
@@ -60,6 +68,7 @@ const hydrateShortManifest = async (manifest) => {
     ...manifest,
     source: {...manifest.source, url: sourceUrl},
     overlays,
+    reaction_events: await hydrateReactions(manifest.reaction_events),
   };
 };
 
@@ -79,7 +88,7 @@ const hydrateRankedEpisodeManifest = async (manifest) => {
       url: await signedGet(overlay.asset_key),
     })),
   );
-  return {...manifest, items, overlays};
+  return {...manifest, items, overlays, reaction_events: await hydrateReactions(manifest.reaction_events)};
 };
 
 const hydrateLongformManifest = async (manifest) => {
