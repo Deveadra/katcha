@@ -50,7 +50,7 @@ class ReactionCue(BaseModel):
     asset_key: str = Field(min_length=1)
     line_ref: int = Field(ge=0)
     offset_seconds: float = Field(default=0, ge=0, allow_inf_nan=False)
-    duration_seconds: float = Field(default=1.2, gt=0, le=5, allow_inf_nan=False)
+    duration_seconds: float = Field(default=1.2, ge=0.2, le=5, allow_inf_nan=False)
     anchor: ReactionAnchor = "bottom_right"
     animation: ReactionAnimation = "pop_bounce"
     scale: float = Field(default=0.22, ge=0.08, le=0.38, allow_inf_nan=False)
