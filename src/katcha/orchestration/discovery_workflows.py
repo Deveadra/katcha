@@ -9,6 +9,8 @@ from temporalio import workflow
 from temporalio.common import RetryPolicy
 
 from katcha.acquisition.runtime import DISCOVERY_TASK_QUEUE, MAX_DISCOVERY_PAGES
+from katcha.orchestration.trend_workflows import ChannelTrendRefreshWorkflow
+from katcha.trends.runtime import TREND_TASK_QUEUE
 
 _ACTIVITY_RETRY = RetryPolicy(
     initial_interval=timedelta(seconds=5),
@@ -111,6 +113,24 @@ class TopicWatchWorkflow:
             retry_policy=_ACTIVITY_RETRY,
             result_type=dict[str, object],
         )
+
+        opportunity_refresh: dict[str, object] | None = None
+        refresh_error: str | None = None
+        channel_profile_id = str(final.get("channel_profile_id") or "")
+        if final.get("status") == "completed" and channel_profile_id:
+            digest = hashlib.sha256(
+                f"{topic_watch_id}:{execution_key}".encode()
+            ).hexdigest()[:24]
+            try:
+                opportunity_refresh = await workflow.execute_child_workflow(
+                    ChannelTrendRefreshWorkflow.run,
+                    args=[channel_profile_id, f"discovery:{execution_key}"],
+                    id=f"channel-trend-from-watch-{digest}",
+                    task_queue=TREND_TASK_QUEUE,
+                )
+            except Exception as exc:
+                refresh_error = str(exc)[:1000]
+
         return {
             "topic_watch_id": topic_watch_id,
             "execution_key": execution_key,
@@ -118,6 +138,8 @@ class TopicWatchWorkflow:
             "successful_run_count": len(successful_run_ids),
             "failed_run_count": len(results) - len(successful_run_ids),
             "queue": final,
+            "opportunity_refresh": opportunity_refresh,
+            "opportunity_refresh_error": refresh_error,
         }
 
 

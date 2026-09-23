@@ -75,6 +75,9 @@ class Settings(BaseSettings):
     reddit_client_id: str | None = None
     reddit_client_secret: str | None = None
     reddit_user_agent: str = "Katcha/0.1 trend-discovery"
+    trend_source_max_backoff_seconds: int = Field(default=21600, ge=60, le=86400)
+    trend_min_source_coverage: float = Field(default=0.75, ge=0.0, le=1.0)
+    trend_observation_bucket_seconds: int = Field(default=300, ge=60, le=3600)
 
     log_level: str = "INFO"
 

@@ -4,6 +4,29 @@ from dataclasses import dataclass, field
 from typing import Any, Protocol
 
 
+class DiscoveryProviderError(RuntimeError):
+    def __init__(
+        self,
+        message: str,
+        *,
+        kind: str = "provider_error",
+        transient: bool = True,
+        status_code: int | None = None,
+        retry_after_seconds: int | None = None,
+    ) -> None:
+        details: list[str] = []
+        if status_code is not None:
+            details.append(f"status {status_code}")
+        if retry_after_seconds is not None:
+            details.append(f"retry_after_seconds={retry_after_seconds}")
+        suffix = f" ({', '.join(details)})" if details else ""
+        super().__init__(f"{message}{suffix}")
+        self.kind = kind
+        self.transient = transient
+        self.status_code = status_code
+        self.retry_after_seconds = retry_after_seconds
+
+
 @dataclass(frozen=True, slots=True)
 class DiscoveredCandidate:
     source_url: str

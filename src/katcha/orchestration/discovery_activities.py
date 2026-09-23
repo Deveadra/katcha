@@ -8,6 +8,7 @@ from temporalio import activity
 
 from katcha.acquisition.adapters import get_adapter
 from katcha.acquisition_models import DiscoveryRun
+from katcha.config import get_settings
 from katcha.db import session_scope
 from katcha.domain import DiscoveryRunStatus
 from katcha.models import DomainEvent
@@ -15,6 +16,13 @@ from katcha.services.discovery import observe_discovery_candidate
 from katcha.services.discovery_trends import compute_candidate_trend_score
 from katcha.services.trend_execution import prepare_topic_watch_execution
 from katcha.services.trend_queue import materialize_trend_review_queue
+from katcha.services.trend_signal_bridge import bridge_topic_watch_queue_to_trend_signals
+from katcha.services.trend_source_reliability import (
+    record_discovery_run_failure,
+    record_discovery_run_success,
+    source_health_allows_refresh,
+    topic_watch_source_health,
+)
 
 
 @activity.defn
@@ -25,6 +33,7 @@ def execute_discovery_page_activity(run_id: str) -> dict[str, object]:
         if run is None:
             raise ValueError(f"discovery run not found: {run_id}")
         if run.status == DiscoveryRunStatus.COMPLETED.value:
+            record_discovery_run_success(run_uuid)
             return {
                 "run_id": run_id,
                 "candidate_count": 0,
@@ -75,6 +84,7 @@ def execute_discovery_page_activity(run_id: str) -> dict[str, object]:
                 score_key=f"run:{run_uuid}",
             )
 
+    completed = False
     with session_scope() as session:
         run = session.scalar(select(DiscoveryRun).where(DiscoveryRun.id == run_uuid))
         if run is None:
@@ -83,6 +93,7 @@ def execute_discovery_page_activity(run_id: str) -> dict[str, object]:
         if batch.done:
             run.status = DiscoveryRunStatus.COMPLETED.value
             run.completed_at = datetime.now(UTC)
+            completed = True
         else:
             run.status = DiscoveryRunStatus.RUNNING.value
         session.add(
@@ -106,6 +117,8 @@ def execute_discovery_page_activity(run_id: str) -> dict[str, object]:
                 },
             )
         )
+    if completed:
+        record_discovery_run_success(run_uuid)
     return {
         "run_id": run_id,
         "candidate_count": len(candidate_ids),
@@ -135,6 +148,7 @@ def mark_discovery_run_failed(run_id: str, message: str) -> None:
                 },
             )
         )
+    record_discovery_run_failure(run_uuid, message)
 
 
 @activity.defn
@@ -142,13 +156,15 @@ def prepare_topic_watch_execution_activity(
     topic_watch_id: str,
     execution_key: str,
 ) -> dict[str, object]:
+    watch_uuid = uuid.UUID(topic_watch_id)
     runs = prepare_topic_watch_execution(
-        uuid.UUID(topic_watch_id),
+        watch_uuid,
         execution_key=execution_key,
     )
     return {
         "topic_watch_id": topic_watch_id,
         "execution_key": execution_key,
+        "source_health": topic_watch_source_health(watch_uuid),
         "runs": [
             {
                 "run_id": str(run.run_id),
@@ -168,17 +184,43 @@ def finalize_topic_watch_execution_activity(
     discovery_run_ids: list[str],
     top_n: int,
 ) -> dict[str, object]:
+    watch_uuid = uuid.UUID(topic_watch_id)
+    health = topic_watch_source_health(watch_uuid)
+    settings = get_settings()
+    if not source_health_allows_refresh(
+        health,
+        minimum_coverage=settings.trend_min_source_coverage,
+    ):
+        return {
+            "topic_watch_id": topic_watch_id,
+            "queue_key": execution_key,
+            "status": "withheld_source_coverage",
+            "source_health": health,
+            "minimum_source_coverage": settings.trend_min_source_coverage,
+            "candidate_count": 0,
+            "cluster_count": 0,
+            "queue_count": 0,
+            "signals_bridged": 0,
+            "channel_profile_id": None,
+        }
     result = materialize_trend_review_queue(
-        uuid.UUID(topic_watch_id),
+        watch_uuid,
         queue_key=execution_key,
         discovery_run_ids=[uuid.UUID(run_id) for run_id in discovery_run_ids],
         top_n=top_n,
     )
+    bridge = bridge_topic_watch_queue_to_trend_signals(
+        watch_uuid,
+        queue_key=execution_key,
+    )
     return {
         "topic_watch_id": str(result.topic_watch_id),
         "queue_key": result.queue_key,
+        "status": "completed",
+        "source_health": health,
         "candidate_count": result.candidate_count,
         "cluster_count": result.cluster_count,
         "queue_count": result.queue_count,
         "reused": result.reused,
+        **bridge,
     }

@@ -21,7 +21,9 @@ from katcha.acquisition_models import (
     TopicWatchVersion,
 )
 from katcha.db import session_scope
+from katcha.intelligence_models import ChannelProfile
 from katcha.models import DomainEvent
+from katcha.services.trend_source_reliability import watch_scope_key
 
 
 def _normalize_terms(values: list[str] | tuple[str, ...]) -> list[str]:
@@ -50,6 +52,7 @@ def create_topic_watch_version(
     max_candidates: int = 100,
     enabled: bool = True,
     metadata: dict[str, Any] | None = None,
+    channel_profile_id: uuid.UUID | None = None,
 ) -> TopicWatchVersion:
     key = watch_key.strip()
     display_name = name.strip()
@@ -61,17 +64,26 @@ def create_topic_watch_version(
         raise ValueError("freshness_horizon_hours must be positive")
     if max_candidates <= 0:
         raise ValueError("max_candidates must be positive")
+    scope = watch_scope_key(channel_profile_id)
 
     with session_scope() as session:
+        if (
+            channel_profile_id is not None
+            and session.get(ChannelProfile, channel_profile_id) is None
+        ):
+            raise ValueError(f"channel profile not found: {channel_profile_id}")
         version = int(
             session.scalar(
                 select(func.coalesce(func.max(TopicWatchVersion.version), 0)).where(
-                    TopicWatchVersion.watch_key == key
+                    TopicWatchVersion.scope_key == scope,
+                    TopicWatchVersion.watch_key == key,
                 )
             )
             or 0
         ) + 1
         row = TopicWatchVersion(
+            channel_profile_id=channel_profile_id,
+            scope_key=scope,
             watch_key=key,
             version=version,
             name=display_name,
@@ -90,10 +102,14 @@ def create_topic_watch_version(
         session.add(
             DomainEvent(
                 aggregate_type="topic_watch",
-                aggregate_id=key,
+                aggregate_id=str(row.id),
                 event_type="topic_watch.version_created",
                 payload={
                     "topic_watch_id": str(row.id),
+                    "channel_profile_id": (
+                        str(channel_profile_id) if channel_profile_id else None
+                    ),
+                    "scope_key": scope,
                     "watch_key": key,
                     "version": version,
                     "enabled": enabled,
@@ -108,10 +124,18 @@ def create_topic_watch_version(
         return row
 
 
-def latest_topic_watch(session: Session, watch_key: str) -> TopicWatchVersion | None:
+def latest_topic_watch(
+    session: Session,
+    watch_key: str,
+    *,
+    channel_profile_id: uuid.UUID | None = None,
+) -> TopicWatchVersion | None:
     return session.scalar(
         select(TopicWatchVersion)
-        .where(TopicWatchVersion.watch_key == watch_key)
+        .where(
+            TopicWatchVersion.scope_key == watch_scope_key(channel_profile_id),
+            TopicWatchVersion.watch_key == watch_key,
+        )
         .order_by(TopicWatchVersion.version.desc())
         .limit(1)
     )

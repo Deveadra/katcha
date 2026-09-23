@@ -138,7 +138,7 @@ class DiscoveryObservation(Base):
 class TopicWatchVersion(Base):
     __tablename__ = "topic_watch_versions"
     __table_args__ = (
-        UniqueConstraint("watch_key", "version"),
+        UniqueConstraint("scope_key", "watch_key", "version"),
         CheckConstraint("version > 0", name="ck_topic_watch_version_positive"),
         CheckConstraint(
             "freshness_horizon_hours > 0",
@@ -153,6 +153,13 @@ class TopicWatchVersion(Base):
     id: Mapped[uuid.UUID] = mapped_column(
         Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
+    channel_profile_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("channel_profiles.id"),
+        nullable=True,
+        index=True,
+    )
+    scope_key: Mapped[str] = mapped_column(String(64), default="global", index=True)
     watch_key: Mapped[str] = mapped_column(String(128), index=True)
     version: Mapped[int] = mapped_column(Integer)
     name: Mapped[str] = mapped_column(String(255))
