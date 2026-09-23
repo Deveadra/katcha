@@ -12,6 +12,7 @@ from sqlalchemy import func, select
 from katcha.db import session_scope
 from katcha.intelligence_models import ChannelProfile
 from katcha.models import DomainEvent
+from katcha.services.trend_calibration import calibrated_score
 from katcha.trend_models import (
     ChannelTrendWatchVersion,
     TrendEvidencePacket,
@@ -536,6 +537,12 @@ def refresh_channel_trends(
             ),
             now=now,
         )
+        calibrated_value, calibration_version, calibration_metadata = calibrated_score(
+            channel_profile_id,
+            score=result.opportunity_score,
+            confidence=result.confidence,
+            components=result.components,
+        )
         with session_scope() as session:
             opportunity = session.scalar(
                 select(TrendOpportunity).where(
@@ -553,6 +560,13 @@ def refresh_channel_trends(
                     lifecycle=result.lifecycle,
                     opportunity_score=Decimal(str(result.opportunity_score)),
                     confidence=Decimal(str(result.confidence)),
+                    calibrated_score=(
+                        Decimal(str(calibrated_value))
+                        if calibrated_value is not None
+                        else None
+                    ),
+                    calibration_version=calibration_version,
+                    calibration_metadata=calibration_metadata,
                     prediction_horizon_hours=DEFAULT_PREDICTION_HORIZON_HOURS,
                     expires_at=now + timedelta(hours=config["freshness"]),
                     components=result.components,
@@ -573,7 +587,10 @@ def refresh_channel_trends(
             rows.append((opportunity, signals))
 
     rows.sort(
-        key=lambda row: (float(row[0].opportunity_score), float(row[0].confidence)),
+        key=lambda row: (
+            float(row[0].calibrated_score or row[0].opportunity_score),
+            float(row[0].confidence),
+        ),
         reverse=True,
     )
     qualified: list[tuple[uuid.UUID, list[TrendSignal]]] = []
@@ -598,6 +615,12 @@ def refresh_channel_trends(
                             "channel_profile_id": str(channel_profile_id),
                             "trend_topic_id": str(stored.trend_topic_id),
                             "score": float(stored.opportunity_score),
+                            "calibrated_score": (
+                                float(stored.calibrated_score)
+                                if stored.calibrated_score is not None
+                                else None
+                            ),
+                            "calibration_version": stored.calibration_version,
                             "confidence": float(stored.confidence),
                             "rank": rank,
                             "run_key": run_key,
