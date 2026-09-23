@@ -9,7 +9,7 @@ import {bundle} from '@remotion/bundler';
 import {renderMedia, renderStill, selectComposition} from '@remotion/renderer';
 
 const exec = promisify(execFile);
-const outputDir = path.resolve('.render-test-artifacts');
+const outputDir = path.resolve('reaction-smoke-previews');
 const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'katcha-reaction-smoke-'));
 const publicDir = path.join(tempDir, 'public');
 const fps = 30;
