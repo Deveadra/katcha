@@ -1,4 +1,5 @@
 import React from 'react';
+import {ReactionTrack} from './reaction-track.jsx';
 import {
   AbsoluteFill,
   Audio,
@@ -211,7 +212,7 @@ const EndCard = ({endCard, brand}) => {
   );
 };
 
-export const RankedEpisodeVideo = ({items, overlays, end_card: endCard, brand: brandInput}) => {
+export const RankedEpisodeVideo = ({items, overlays, end_card: endCard, brand: brandInput, reaction_events: reactionEvents = []}) => {
   const {fps} = useVideoConfig();
   const brand = resolveBrand(brandInput);
 
@@ -241,6 +242,7 @@ export const RankedEpisodeVideo = ({items, overlays, end_card: endCard, brand: b
       })}
 
       <EndCard endCard={endCard} brand={brand} />
+      <ReactionTrack events={reactionEvents} captions={brand.captions} />
       <Captions overlays={overlays} brand={brand} />
     </AbsoluteFill>
   );
