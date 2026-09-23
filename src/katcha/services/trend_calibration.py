@@ -258,6 +258,23 @@ def derive_trend_outcomes(channel_profile_id: uuid.UUID) -> dict[str, int]:
                 )
             )
         )
+        selected_buckets: dict[uuid.UUID, int] = {}
+        snapshots_by_publication: dict[
+            uuid.UUID, list[PublicationAnalyticsSnapshot]
+        ] = {}
+        for item in snapshots:
+            snapshots_by_publication.setdefault(item.publication_id, []).append(item)
+        for publication_id, publication_snapshots in snapshots_by_publication.items():
+            publication = publication_by_id[publication_id]
+            for bucket_value in AGE_BUCKETS:
+                selected = _closest_bucket_snapshot(
+                    publication,
+                    publication_snapshots,
+                    bucket_value,
+                )
+                if selected is not None:
+                    selected_buckets[selected.id] = bucket_value
+
         for snapshot in snapshots:
             if snapshot.id in existing_attributions:
                 continue
@@ -288,7 +305,7 @@ def derive_trend_outcomes(channel_profile_id: uuid.UUID) -> dict[str, int]:
             created_attributions += 1
             if opportunity is None:
                 continue
-            bucket = age_bucket(_age_hours(publication, snapshot))
+            bucket = selected_buckets.get(snapshot.id)
             if bucket is None:
                 continue
             observed_score, metrics = _snapshot_outcome(publication, snapshot)
