@@ -9,11 +9,11 @@ from katcha.db import session_scope
 from katcha.models import Clip, DomainEvent
 from katcha.rendering.client import render_ranked_episode
 from katcha.rendering.manifest import ShortBrandSpec
-from katcha.rendering.reactions import ReactionAssetPack
 from katcha.rendering.ranked_episode_manifest import (
     RankedEpisodeRenderManifest,
     build_ranked_episode_manifest,
 )
+from katcha.rendering.reactions import ReactionAssetPack
 from katcha.services.acquisition import assert_clip_production_eligible
 from katcha.short_episode_models import (
     ShortEpisode,
