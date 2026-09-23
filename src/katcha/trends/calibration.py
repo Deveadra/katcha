@@ -3,7 +3,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from statistics import fmean
+from statistics import fmean, median
 from typing import Any
 
 CALIBRATION_FEATURES: tuple[str, ...] = (
@@ -23,7 +23,8 @@ CALIBRATION_FEATURES: tuple[str, ...] = (
     "headroom",
 )
 
-MIN_CALIBRATION_SAMPLES = 16
+MIN_CALIBRATION_SAMPLES = 20
+MIN_TRAINING_SAMPLES = 16
 MIN_VALIDATION_SAMPLES = 4
 MAX_CALIBRATION_BLEND = 0.35
 RIDGE_LAMBDA = 1.5
@@ -241,6 +242,7 @@ def _metrics(rows: list[CalibrationRow]) -> dict[str, Any]:
             else None
         ),
         "mean_lead_time_hours": round(fmean(leads), 4) if leads else None,
+        "median_lead_time_hours": round(median(leads), 4) if leads else None,
         "confidence_buckets": confidence_bins,
         "lifecycle_precision": lifecycle,
     }
@@ -275,8 +277,29 @@ def train_calibration(rows: list[CalibrationRow]) -> CalibrationResult:
         )
 
     validation_count = max(MIN_VALIDATION_SAMPLES, int(count * 0.20))
-    validation_count = min(validation_count, count - MIN_CALIBRATION_SAMPLES + 1)
     split = count - validation_count
+    if split < MIN_TRAINING_SAMPLES:
+        return CalibrationResult(
+            algorithm="deterministic-only-v1",
+            status="insufficient_samples",
+            sample_count=count,
+            training_sample_count=split,
+            validation_sample_count=validation_count,
+            feature_names=CALIBRATION_FEATURES,
+            feature_means={},
+            feature_scales={},
+            coefficients={},
+            intercept=0.0,
+            confidence=0.0,
+            blend_ratio=0.0,
+            validation_metrics={
+                "reason": "insufficient_training_samples",
+                "minimum_training_samples": MIN_TRAINING_SAMPLES,
+                "training_sample_count": split,
+            },
+            calibration_metrics=metrics,
+            training_cutoff=samples[max(0, split - 1)].observed_at,
+        )
     training = samples[:split]
     validation = samples[split:]
     means, scales, coefficients, intercept = _fit(training)
@@ -304,7 +327,6 @@ def train_calibration(rows: list[CalibrationRow]) -> CalibrationResult:
     blend_ratio = min(MAX_CALIBRATION_BLEND, confidence * MAX_CALIBRATION_BLEND)
     status = "active" if blend_ratio > 0 else "validation_failed"
 
-    full_means, full_scales, full_coefficients, full_intercept = _fit(samples)
     return CalibrationResult(
         algorithm="trend-ridge-v1",
         status=status,
@@ -312,12 +334,10 @@ def train_calibration(rows: list[CalibrationRow]) -> CalibrationResult:
         training_sample_count=len(training),
         validation_sample_count=len(validation),
         feature_names=CALIBRATION_FEATURES,
-        feature_means={key: round(value, 8) for key, value in full_means.items()},
-        feature_scales={key: round(value, 8) for key, value in full_scales.items()},
-        coefficients={
-            key: round(value, 8) for key, value in full_coefficients.items()
-        },
-        intercept=round(full_intercept, 8),
+        feature_means={key: round(value, 8) for key, value in means.items()},
+        feature_scales={key: round(value, 8) for key, value in scales.items()},
+        coefficients={key: round(value, 8) for key, value in coefficients.items()},
+        intercept=round(intercept, 8),
         confidence=round(confidence, 6),
         blend_ratio=round(blend_ratio, 6),
         validation_metrics={
@@ -329,7 +349,7 @@ def train_calibration(rows: list[CalibrationRow]) -> CalibrationResult:
             "validation_start": validation[0].observed_at.isoformat(),
         },
         calibration_metrics=metrics,
-        training_cutoff=samples[-1].observed_at,
+        training_cutoff=training[-1].observed_at,
     )
 
 
