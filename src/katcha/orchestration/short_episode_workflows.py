@@ -40,7 +40,12 @@ class RankedShortEpisodeEditorialWorkflow:
                     retry_policy=paid_once,
                     result_type=dict[str, object],
                 )
-            elif start_stage == "voice":
+                return {
+                    "episode_id": episode_id,
+                    "status": "voiced",
+                    "voice_profile": voiced.get("voice_profile"),
+                }
+            if start_stage == "voice":
                 voiced = await workflow.execute_activity(
                     "generate_episode_narration_assets",
                     episode_id,
@@ -48,13 +53,32 @@ class RankedShortEpisodeEditorialWorkflow:
                     retry_policy=paid_once,
                     result_type=dict[str, object],
                 )
-            else:
-                raise ValueError(f"unsupported short episode editorial stage: {start_stage}")
-            return {
-                "episode_id": episode_id,
-                "status": "voiced",
-                "voice_profile": voiced.get("voice_profile"),
-            }
+                return {
+                    "episode_id": episode_id,
+                    "status": "voiced",
+                    "voice_profile": voiced.get("voice_profile"),
+                }
+            if start_stage == "render":
+                await workflow.execute_activity(
+                    "build_ranked_episode_render_manifest_activity",
+                    episode_id,
+                    start_to_close_timeout=timedelta(minutes=2),
+                    retry_policy=local_retry,
+                    result_type=dict[str, object],
+                )
+                rendered = await workflow.execute_activity(
+                    "render_ranked_episode_activity",
+                    episode_id,
+                    start_to_close_timeout=timedelta(minutes=30),
+                    retry_policy=local_retry,
+                    result_type=dict[str, object],
+                )
+                return {
+                    "episode_id": episode_id,
+                    "status": "rendered",
+                    "output_key": rendered.get("output_key"),
+                }
+            raise ValueError(f"unsupported short episode editorial stage: {start_stage}")
         except Exception as exc:
             await workflow.execute_activity(
                 "mark_short_episode_failed",
