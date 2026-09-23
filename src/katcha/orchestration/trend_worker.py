@@ -8,8 +8,14 @@ from temporalio.client import Client
 from temporalio.worker import Worker
 
 from katcha.config import get_settings
-from katcha.orchestration.trend_activities import refresh_channel_trends_activity
-from katcha.orchestration.trend_workflows import ChannelTrendRefreshWorkflow
+from katcha.orchestration.trend_activities import (
+    refresh_channel_trends_activity,
+    refresh_trend_calibration_activity,
+)
+from katcha.orchestration.trend_workflows import (
+    ChannelTrendCalibrationWorkflow,
+    ChannelTrendRefreshWorkflow,
+)
 from katcha.trends.runtime import TREND_TASK_QUEUE
 
 
@@ -27,8 +33,14 @@ async def main() -> None:
         worker = Worker(
             client,
             task_queue=TREND_TASK_QUEUE,
-            workflows=[ChannelTrendRefreshWorkflow],
-            activities=[refresh_channel_trends_activity],
+            workflows=[
+                ChannelTrendRefreshWorkflow,
+                ChannelTrendCalibrationWorkflow,
+            ],
+            activities=[
+                refresh_channel_trends_activity,
+                refresh_trend_calibration_activity,
+            ],
             activity_executor=activity_executor,
         )
         await worker.run()
