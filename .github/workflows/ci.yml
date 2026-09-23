@@ -91,6 +91,8 @@ jobs:
 
       - name: Ensure headless browser and FFmpeg
         run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ffmpeg
           ffmpeg -version | head -n 1
           ffprobe -version | head -n 1
           npx remotion browser ensure
@@ -103,6 +105,6 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: synthetic-reaction-previews
-          path: renderer/.render-test-artifacts/
+          path: renderer/reaction-smoke-previews/
           if-no-files-found: ignore
           retention-days: 7
