@@ -89,7 +89,12 @@ function silenceWav() {
   return Buffer.concat([header, pcm]);
 }
 
-async function still({serveUrl, composition, id, frame, showReaction}) {
+async function still({serveUrl, id, frame, showReaction}) {
+  // selectComposition freezes inputProps in composition.props. Re-select for
+  // each variant; passing a different flag to renderStill alone is not enough.
+  const props = {showReaction};
+  const composition = await selectComposition({serveUrl, id, inputProps: props});
+  assert.equal(composition.props.showReaction, showReaction);
   const filename = path.join(outputDir, `${id}-${frame}-${showReaction ? 'on' : 'off'}.png`);
   await renderStill({
     composition,
@@ -97,7 +102,7 @@ async function still({serveUrl, composition, id, frame, showReaction}) {
     frame,
     imageFormat: 'png',
     output: filename,
-    inputProps: {showReaction},
+    inputProps: props,
   });
   return fs.readFile(filename);
 }
@@ -123,8 +128,8 @@ try {
     const composition = await selectComposition({serveUrl, id, inputProps: {showReaction: true}});
     for (const [phase, frame] of Object.entries(frames)) {
       const [enabled, disabled] = await Promise.all([
-        still({serveUrl, composition, id, frame, showReaction: true}),
-        still({serveUrl, composition, id, frame, showReaction: false}),
+        still({serveUrl, id, frame, showReaction: true}),
+        still({serveUrl, id, frame, showReaction: false}),
       ]);
       if (phase === 'during') {
         assert.notDeepEqual(
