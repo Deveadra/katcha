@@ -15,7 +15,9 @@ def _unique_columns(table) -> set[tuple[str, ...]]:
 
 
 def test_topic_watch_versions_are_immutable_and_bounded() -> None:
-    assert ("watch_key", "version") in _unique_columns(TopicWatchVersion.__table__)
+    assert ("scope_key", "watch_key", "version") in _unique_columns(
+        TopicWatchVersion.__table__
+    )
     checks = {
         constraint.name
         for constraint in TopicWatchVersion.__table__.constraints
