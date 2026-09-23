@@ -359,7 +359,11 @@ def _register_specs(specs: list[DiscoverySignalSpec]) -> tuple[uuid.UUID, ...]:
     return tuple(signal_ids)
 
 
-def _result(\n    scope: str,\n    specs: list[DiscoverySignalSpec],\n    signal_ids: tuple[uuid.UUID, ...],\n) -> TrendBridgeResult:
+def _result(
+    scope: str,
+    specs: list[DiscoverySignalSpec],
+    signal_ids: tuple[uuid.UUID, ...],
+) -> TrendBridgeResult:
     result = TrendBridgeResult(
         scope=scope,
         signal_count=len(signal_ids),
