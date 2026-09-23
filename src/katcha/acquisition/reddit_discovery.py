@@ -7,6 +7,11 @@ from typing import Any
 import httpx
 
 from katcha.acquisition.adapters import DiscoveredCandidate, DiscoveryBatch
+from katcha.acquisition.http_errors import (
+    provider_payload_error,
+    provider_response_error,
+    provider_transport_error,
+)
 from katcha.config import get_settings
 
 _TOKEN_URL = "https://www.reddit.com/api/v1/access_token"
@@ -157,18 +162,18 @@ class RedditDiscoveryAdapter:
                 headers={"User-Agent": settings.reddit_user_agent},
             )
         except httpx.HTTPError as exc:
-            raise RuntimeError("Reddit OAuth token request failed") from exc
+            raise provider_transport_error("Reddit", "OAuth token") from exc
         if response.status_code >= 400:
-            raise RuntimeError(
-                f"Reddit OAuth token request failed with status {response.status_code}"
-            )
+            raise provider_response_error("Reddit", "OAuth token", response)
         try:
             payload = response.json()
         except ValueError as exc:
-            raise RuntimeError("Reddit OAuth token request returned invalid JSON") from exc
+            raise provider_payload_error("Reddit", "OAuth token") from exc
+        if not isinstance(payload, dict):
+            raise provider_payload_error("Reddit", "OAuth token")
         token = str(payload.get("access_token") or "").strip()
         if not token:
-            raise RuntimeError("Reddit OAuth token response did not include an access token")
+            raise provider_payload_error("Reddit", "OAuth token")
         try:
             expires_in = max(int(payload.get("expires_in") or 3600), 60)
         except (TypeError, ValueError):
@@ -221,17 +226,15 @@ class RedditDiscoveryAdapter:
                     },
                 )
             except httpx.HTTPError as exc:
-                raise RuntimeError("Reddit search request failed") from exc
+                raise provider_transport_error("Reddit", "search") from exc
             if response.status_code >= 400:
-                raise RuntimeError(
-                    f"Reddit search request failed with status {response.status_code}"
-                )
+                raise provider_response_error("Reddit", "search", response)
             try:
                 payload = response.json()
             except ValueError as exc:
-                raise RuntimeError("Reddit search returned invalid JSON") from exc
+                raise provider_payload_error("Reddit", "search") from exc
             if not isinstance(payload, dict):
-                raise RuntimeError("Reddit search returned an invalid payload")
+                raise provider_payload_error("Reddit", "search")
 
         candidates = parse_reddit_candidates(
             payload,
