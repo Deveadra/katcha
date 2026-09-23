@@ -4,15 +4,19 @@ import uuid
 from datetime import UTC, datetime
 from decimal import Decimal
 
+import pytest
+
 from katcha.acquisition_models import (
     DiscoveryCandidate,
     DiscoveryObservation,
+    DiscoveryRun,
     TopicWatchVersion,
 )
 from katcha.api.main import app
+from katcha.api.trend_bridge import _refresh_identity
 from katcha.discovery_trend_models import TrendReviewQueueItem
-from katcha.services import trend_bridge
 from katcha.services.trend_bridge import (
+    _completed_run,
     build_discovery_signal_spec,
     source_independence_key,
     topic_for_discovery,
@@ -24,7 +28,7 @@ def _candidate(
     adapter_key: str,
     source_url: str,
     external_id: str,
-    title: str,
+    title: str | None,
     creator: str | None = None,
     creator_url: str | None = None,
     provenance_claims: dict[str, object] | None = None,
@@ -78,6 +82,26 @@ def _watch() -> TopicWatchVersion:
     )
 
 
+def _run(*, status: str = "completed", query: dict[str, object] | None = None) -> DiscoveryRun:
+    return DiscoveryRun(
+        id=uuid.uuid4(),
+        adapter_key="youtube",
+        adapter_version="v1",
+        run_key="run-1",
+        status=status,
+        query=query or {},
+        cursor={},
+        run_metadata={},
+    )
+
+
+def test_bridge_rejects_non_completed_discovery_runs() -> None:
+    run = _run(status="running")
+
+    with pytest.raises(ValueError, match="not completed"):
+        _completed_run(run)
+
+
 def test_youtube_mapping_preserves_metrics_and_channel_independence() -> None:
     candidate = _candidate(
         adapter_key="youtube",
@@ -105,10 +129,12 @@ def test_youtube_mapping_preserves_metrics_and_channel_independence() -> None:
     assert spec.published_at == datetime(2026, 9, 16, 8, 0, tzinfo=UTC)
     assert spec.body_excerpt == "First gameplay reveal."
     assert spec.metadata["discovery_candidate_id"] == str(candidate.id)
-    assert spec.media_refs[0]["source_url"] == candidate.source_url
+    assert spec.metadata["rights_inferred"] is False
+    assert spec.media_refs[0]["reuse_permission"] == "not_inferred"
+    assert spec.match_confidence == 0.75
 
 
-def test_reddit_mapping_uses_author_before_community_for_independence() -> None:
+def test_reddit_mapping_uses_community_as_conservative_independence_boundary() -> None:
     candidate = _candidate(
         adapter_key="reddit",
         source_url="https://www.reddit.com/r/gaming/comments/abc/example/",
@@ -129,7 +155,7 @@ def test_reddit_mapping_uses_author_before_community_for_independence() -> None:
     spec = build_discovery_signal_spec(candidate, observation)
 
     assert source_independence_key(candidate, observation.observation_metadata) == (
-        "reddit-user:nova_fan"
+        "reddit-subreddit:gaming"
     )
     assert spec.community == "gaming"
     assert spec.media_refs[0]["outbound_url"] == "https://example.com/trailer"
@@ -163,7 +189,7 @@ def test_rss_mapping_uses_feed_identity_and_summary() -> None:
     assert spec.body_excerpt == "Combat, traversal and launch details."
 
 
-def test_queue_cluster_label_becomes_shared_topic_and_preserves_lineage() -> None:
+def test_queue_cluster_label_becomes_shared_topic_with_stronger_confidence() -> None:
     candidate = _candidate(
         adapter_key="youtube",
         source_url="https://www.youtube.com/watch?v=abc123",
@@ -203,48 +229,48 @@ def test_queue_cluster_label_becomes_shared_topic_and_preserves_lineage() -> Non
     assert spec.aliases == ["project", "nova", "gameplay"]
     assert spec.metadata["cluster_key"] == "project-nova"
     assert spec.metadata["queue_key"] == "execution-1"
+    assert spec.match_confidence == 0.95
     assert spec.match_reasons == ["discovery_queue_cluster"]
 
 
-def test_unclustered_mapping_is_deterministic_and_observation_idempotent() -> None:
+def test_unclustered_topic_fallback_uses_run_query_and_stable_observation_key() -> None:
     candidate = _candidate(
         adapter_key="youtube",
         source_url="https://www.youtube.com/watch?v=abc123",
         external_id="abc123",
-        title="Project Nova gameplay trailer",
+        title=None,
     )
     observation = _observation(candidate, {"source_metrics": {"views": 1000}})
+    run = _run(query={"q": "Project Nova gameplay"})
 
-    first = build_discovery_signal_spec(candidate, observation)
-    second = build_discovery_signal_spec(candidate, observation)
+    first = build_discovery_signal_spec(candidate, observation, run=run)
+    second = build_discovery_signal_spec(candidate, observation, run=run)
 
-    assert first.topic == candidate.title
+    assert first.topic == "Project Nova gameplay"
     assert first.observation_key == f"discovery-observation:{observation.id}"
     assert second.observation_key == first.observation_key
     assert second.independence_key == first.independence_key
+    assert first.match_confidence == 0.75
+    assert first.match_reasons == ["discovery_deterministic_fallback"]
 
 
-def test_channel_refresh_run_key_is_stable_for_same_scope(monkeypatch) -> None:
-    channel_id = uuid.uuid4()
-    seen: list[tuple[uuid.UUID, str]] = []
+def test_refresh_identity_is_stable_and_channel_scoped() -> None:
+    first_channel = uuid.uuid4()
+    second_channel = uuid.uuid4()
 
-    def fake_refresh(profile_id: uuid.UUID, *, run_key: str, now=None):
-        del now
-        seen.append((profile_id, run_key))
-        return {}
+    first = _refresh_identity("queue:watch:run", first_channel)
+    repeated = _refresh_identity("queue:watch:run", first_channel)
+    other = _refresh_identity("queue:watch:run", second_channel)
 
-    monkeypatch.setattr(trend_bridge, "refresh_channel_trends", fake_refresh)
-
-    first = trend_bridge._refresh_channels([channel_id], scope="queue:watch:run")
-    second = trend_bridge._refresh_channels([channel_id], scope="queue:watch:run")
-
-    assert first == (channel_id,)
-    assert second == (channel_id,)
-    assert seen[0][1] == seen[1][1]
+    assert first == repeated
+    assert first != other
+    assert first[0].startswith("discovery-bridge-")
+    assert first[1].startswith(f"channel-trend-refresh-{first_channel}-")
 
 
-def test_trend_bridge_routes_are_mounted() -> None:
+def test_trend_bridge_routes_include_durable_signal_inspection() -> None:
     paths = set(app.openapi()["paths"])
 
     assert "/v1/trends/bridge/runs/{discovery_run_id}" in paths
     assert "/v1/trends/bridge/watches/{topic_watch_id}/queues/{queue_key}" in paths
+    assert "/v1/trends/bridge/signals" in paths

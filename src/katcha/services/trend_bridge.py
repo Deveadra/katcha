@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -17,8 +16,10 @@ from katcha.acquisition_models import (
 )
 from katcha.db import session_scope
 from katcha.discovery_trend_models import TrendReviewQueueItem
+from katcha.domain import DiscoveryRunStatus
 from katcha.models import DomainEvent
-from katcha.services.trends import refresh_channel_trends, register_signal
+from katcha.services.trends import register_signal
+from katcha.trend_models import TrendSignal
 
 
 @dataclass(frozen=True, slots=True)
@@ -47,6 +48,7 @@ class DiscoverySignalSpec:
     aliases: list[str]
     tags: list[str]
     metadata: dict[str, Any]
+    match_confidence: float
     match_reasons: list[str]
 
 
@@ -58,7 +60,6 @@ class TrendBridgeResult:
     candidate_count: int
     topic_count: int
     signal_ids: tuple[uuid.UUID, ...]
-    refreshed_channels: tuple[uuid.UUID, ...]
 
 
 def _utc(value: datetime) -> datetime:
@@ -83,6 +84,8 @@ def _metrics(metadata: dict[str, Any]) -> dict[str, float]:
         return {}
     result: dict[str, float] = {}
     for key, value in raw.items():
+        if isinstance(value, bool):
+            continue
         try:
             result[str(key)] = float(value)
         except (TypeError, ValueError):
@@ -104,6 +107,14 @@ def _clean_text(value: object) -> str | None:
     return text or None
 
 
+def _completed_run(run: DiscoveryRun) -> DiscoveryRun:
+    if run.status != DiscoveryRunStatus.COMPLETED.value:
+        raise ValueError(
+            f"discovery run is not completed: {run.id} ({run.status})"
+        )
+    return run
+
+
 def source_independence_key(
     candidate: DiscoveryCandidate,
     observation_metadata: dict[str, Any],
@@ -115,11 +126,11 @@ def source_independence_key(
         return f"youtube-channel:{channel_id.casefold()}"
 
     if candidate.adapter_key == "reddit":
-        if candidate.creator:
-            return f"reddit-user:{candidate.creator.strip().casefold()}"
         subreddit = _clean_text(observation_metadata.get("subreddit"))
         if subreddit:
             return f"reddit-subreddit:{subreddit.casefold()}"
+        if candidate.creator:
+            return f"reddit-user:{candidate.creator.strip().casefold()}"
 
     feed_url = _clean_text(observation_metadata.get("feed_url")) or _clean_text(
         (candidate.provenance_claims or {}).get("feed_url")
@@ -142,6 +153,7 @@ def topic_for_discovery(
     *,
     queue_metadata: dict[str, Any] | None = None,
     watch: TopicWatchVersion | None = None,
+    run: DiscoveryRun | None = None,
 ) -> str:
     queue_metadata = queue_metadata or {}
     cluster_label = _clean_text(queue_metadata.get("cluster_label"))
@@ -149,10 +161,52 @@ def topic_for_discovery(
         return cluster_label
     if candidate.title and candidate.title.strip():
         return candidate.title.strip()
+    if run is not None:
+        query = dict(run.query or {})
+        explicit = _clean_text(query.get("q"))
+        if explicit:
+            return explicit
+        include_terms = [
+            str(term).strip()
+            for term in query.get("include_terms", [])
+            if str(term).strip()
+        ]
+        if include_terms:
+            return " ".join(include_terms)
     if watch is not None and watch.include_terms:
-        return " ".join(str(term).strip() for term in watch.include_terms if str(term).strip())
-    host = _host(candidate.canonical_url) or _host(candidate.source_url)
+        terms = [str(term).strip() for term in watch.include_terms if str(term).strip()]
+        if terms:
+            return " ".join(terms)
+    if candidate.canonical_url:
+        return candidate.canonical_url
+    host = _host(candidate.source_url)
     return host or f"discovery-{candidate.id}"
+
+
+def _language_region(
+    observation_metadata: dict[str, Any],
+    *,
+    watch: TopicWatchVersion | None,
+    run: DiscoveryRun | None,
+) -> tuple[str | None, str | None]:
+    language = _clean_text(observation_metadata.get("language"))
+    region = _clean_text(
+        observation_metadata.get("region") or observation_metadata.get("region_code")
+    )
+    if watch is not None:
+        language = language or watch.language
+        if region is None and watch.locale:
+            locale_region = watch.locale.split("-")[-1].strip()
+            if len(locale_region) == 2:
+                region = locale_region
+    if run is not None:
+        query = dict(run.query or {})
+        language = language or _clean_text(query.get("relevance_language"))
+        region = region or _clean_text(query.get("region_code"))
+    return (
+        language.casefold() if language else None,
+        region.casefold() if region else None,
+    )
 
 
 def build_discovery_signal_spec(
@@ -161,6 +215,7 @@ def build_discovery_signal_spec(
     *,
     queue_item: TrendReviewQueueItem | None = None,
     watch: TopicWatchVersion | None = None,
+    run: DiscoveryRun | None = None,
 ) -> DiscoverySignalSpec:
     observation_metadata = dict(observation.observation_metadata or {})
     queue_metadata = dict(queue_item.queue_metadata or {}) if queue_item is not None else {}
@@ -168,6 +223,7 @@ def build_discovery_signal_spec(
         candidate,
         queue_metadata=queue_metadata,
         watch=watch,
+        run=run,
     )
     published_at = _parse_datetime(observation_metadata.get("published_at"))
     source_name = (
@@ -179,6 +235,11 @@ def build_discovery_signal_spec(
         observation_metadata.get("summary")
     )
     community = _clean_text(observation_metadata.get("subreddit"))
+    language, region = _language_region(
+        observation_metadata,
+        watch=watch,
+        run=run,
+    )
     aliases = [
         str(value).strip()
         for value in queue_metadata.get("cluster_shared_tokens", [])
@@ -200,6 +261,7 @@ def build_discovery_signal_spec(
         "canonical_url": candidate.canonical_url,
         "adapter_key": candidate.adapter_key,
         "platform": candidate.platform,
+        "reuse_permission": "not_inferred",
     }
     outbound_url = _clean_text(observation_metadata.get("outbound_url"))
     if outbound_url:
@@ -211,6 +273,7 @@ def build_discovery_signal_spec(
         "discovery_run_id": str(observation.discovery_run_id),
         "provenance_confidence": float(candidate.provenance_confidence or 0),
         "provenance_claims": dict(candidate.provenance_claims or {}),
+        "rights_inferred": False,
     }
     if watch is not None:
         lineage["topic_watch_id"] = str(watch.id)
@@ -229,6 +292,7 @@ def build_discovery_signal_spec(
             }
         )
 
+    cluster_assigned = bool(_clean_text(queue_metadata.get("cluster_label")))
     return DiscoverySignalSpec(
         discovery_observation_id=observation.id,
         discovery_candidate_id=candidate.id,
@@ -246,16 +310,19 @@ def build_discovery_signal_spec(
         body_excerpt=body_excerpt,
         author=candidate.creator,
         community=community,
-        language=watch.language.casefold() if watch and watch.language else None,
-        region=None,
+        language=language,
+        region=region,
         published_at=published_at,
         metrics=_metrics(observation_metadata),
         media_refs=[media_ref],
         aliases=aliases,
         tags=[value for value in tags if value],
         metadata=lineage,
+        match_confidence=0.95 if cluster_assigned else 0.75,
         match_reasons=[
-            "discovery_queue_cluster" if queue_item is not None else "discovery_observation"
+            "discovery_queue_cluster"
+            if cluster_assigned
+            else "discovery_deterministic_fallback"
         ],
     )
 
@@ -285,38 +352,32 @@ def _register_specs(specs: list[DiscoverySignalSpec]) -> tuple[uuid.UUID, ...]:
             aliases=spec.aliases,
             tags=spec.tags,
             metadata=spec.metadata,
-            match_confidence=1.0,
+            match_confidence=spec.match_confidence,
             match_reasons=spec.match_reasons,
         )
         signal_ids.append(signal.id)
     return tuple(signal_ids)
 
 
-def _refresh_channels(
-    channel_profile_ids: list[uuid.UUID] | tuple[uuid.UUID, ...],
-    *,
-    scope: str,
-) -> tuple[uuid.UUID, ...]:
-    refreshed: list[uuid.UUID] = []
-    for channel_profile_id in dict.fromkeys(channel_profile_ids):
-        digest = hashlib.sha256(f"{scope}:{channel_profile_id}".encode()).hexdigest()[:24]
-        refresh_channel_trends(
-            channel_profile_id,
-            run_key=f"discovery-bridge-{digest}",
-        )
-        refreshed.append(channel_profile_id)
-    return tuple(refreshed)
+def _result(scope: str, specs: list[DiscoverySignalSpec], signal_ids: tuple[uuid.UUID, ...]) -> TrendBridgeResult:
+    result = TrendBridgeResult(
+        scope=scope,
+        signal_count=len(signal_ids),
+        observation_count=len(specs),
+        candidate_count=len({spec.discovery_candidate_id for spec in specs}),
+        topic_count=len({spec.topic.casefold() for spec in specs}),
+        signal_ids=signal_ids,
+    )
+    _emit_bridge_event(result)
+    return result
 
 
-def bridge_discovery_run(
-    discovery_run_id: uuid.UUID,
-    *,
-    channel_profile_ids: list[uuid.UUID] | tuple[uuid.UUID, ...] = (),
-) -> TrendBridgeResult:
+def bridge_discovery_run(discovery_run_id: uuid.UUID) -> TrendBridgeResult:
     with session_scope() as session:
         run = session.get(DiscoveryRun, discovery_run_id)
         if run is None:
             raise ValueError(f"discovery run not found: {discovery_run_id}")
+        _completed_run(run)
         watch: TopicWatchVersion | None = None
         raw_watch_id = (run.run_metadata or {}).get("topic_watch_id")
         if raw_watch_id:
@@ -336,37 +397,23 @@ def bridge_discovery_run(
             )
         )
         specs = [
-            build_discovery_signal_spec(candidate, observation, watch=watch)
+            build_discovery_signal_spec(
+                candidate,
+                observation,
+                watch=watch,
+                run=run,
+            )
             for observation, candidate in rows
         ]
 
     signal_ids = _register_specs(specs)
-    scope = f"run:{discovery_run_id}"
-    refreshed = _refresh_channels(channel_profile_ids, scope=scope)
-    _emit_bridge_event(
-        scope=scope,
-        signal_count=len(signal_ids),
-        observation_count=len(specs),
-        candidate_count=len({spec.discovery_candidate_id for spec in specs}),
-        topic_count=len({spec.topic.casefold() for spec in specs}),
-        refreshed_channels=refreshed,
-    )
-    return TrendBridgeResult(
-        scope=scope,
-        signal_count=len(signal_ids),
-        observation_count=len(specs),
-        candidate_count=len({spec.discovery_candidate_id for spec in specs}),
-        topic_count=len({spec.topic.casefold() for spec in specs}),
-        signal_ids=signal_ids,
-        refreshed_channels=refreshed,
-    )
+    return _result(f"run:{discovery_run_id}", specs, signal_ids)
 
 
 def bridge_topic_watch_queue(
     topic_watch_id: uuid.UUID,
     *,
     queue_key: str | None = None,
-    channel_profile_ids: list[uuid.UUID] | tuple[uuid.UUID, ...] = (),
 ) -> TrendBridgeResult:
     with session_scope() as session:
         watch = session.get(TopicWatchVersion, topic_watch_id)
@@ -392,7 +439,11 @@ def bridge_topic_watch_queue(
                 .order_by(TrendReviewQueueItem.rank)
             )
         )
+        if not queue_items:
+            raise ValueError("topic watch review queue is empty")
+
         specs: list[DiscoverySignalSpec] = []
+        incomplete_run_ids: set[uuid.UUID] = set()
         for item in queue_items:
             candidate = session.get(DiscoveryCandidate, item.discovery_candidate_id)
             if candidate is None:
@@ -402,72 +453,102 @@ def bridge_topic_watch_queue(
             for raw in raw_run_ids:
                 try:
                     run_ids.append(uuid.UUID(str(raw)))
-                except ValueError:
-                    continue
+                except ValueError as exc:
+                    raise ValueError(
+                        f"trend review queue contains an invalid discovery run id: {raw}"
+                    ) from exc
             stmt = select(DiscoveryObservation).where(
                 DiscoveryObservation.discovery_candidate_id == candidate.id
             )
             if run_ids:
                 stmt = stmt.where(DiscoveryObservation.discovery_run_id.in_(run_ids))
             observations = list(
-                session.scalars(stmt.order_by(DiscoveryObservation.observed_at))
+                session.scalars(
+                    stmt.order_by(DiscoveryObservation.observed_at, DiscoveryObservation.id)
+                )
             )
             for observation in observations:
+                run = session.get(DiscoveryRun, observation.discovery_run_id)
+                if run is None:
+                    raise ValueError(
+                        f"discovery run not found: {observation.discovery_run_id}"
+                    )
+                if run.status != DiscoveryRunStatus.COMPLETED.value:
+                    incomplete_run_ids.add(run.id)
+                    continue
                 specs.append(
                     build_discovery_signal_spec(
                         candidate,
                         observation,
                         queue_item=item,
                         watch=watch,
+                        run=run,
                     )
                 )
+        if incomplete_run_ids:
+            joined = ", ".join(str(value) for value in sorted(incomplete_run_ids, key=str))
+            raise ValueError(
+                "trend review queue references discovery runs that are not completed: "
+                f"{joined}"
+            )
 
     signal_ids = _register_specs(specs)
     scope = f"queue:{topic_watch_id}:{selected_queue_key}"
-    refreshed = _refresh_channels(channel_profile_ids, scope=scope)
-    _emit_bridge_event(
-        scope=scope,
-        signal_count=len(signal_ids),
-        observation_count=len(specs),
-        candidate_count=len({spec.discovery_candidate_id for spec in specs}),
-        topic_count=len({spec.topic.casefold() for spec in specs}),
-        refreshed_channels=refreshed,
-    )
-    return TrendBridgeResult(
-        scope=scope,
-        signal_count=len(signal_ids),
-        observation_count=len(specs),
-        candidate_count=len({spec.discovery_candidate_id for spec in specs}),
-        topic_count=len({spec.topic.casefold() for spec in specs}),
-        signal_ids=signal_ids,
-        refreshed_channels=refreshed,
-    )
+    return _result(scope, specs, signal_ids)
 
 
-def _emit_bridge_event(
+def bridged_signals(
     *,
-    scope: str,
-    signal_count: int,
-    observation_count: int,
-    candidate_count: int,
-    topic_count: int,
-    refreshed_channels: tuple[uuid.UUID, ...],
-) -> None:
+    discovery_run_id: uuid.UUID | None = None,
+    discovery_candidate_id: uuid.UUID | None = None,
+    queue_key: str | None = None,
+    limit: int = 100,
+) -> list[TrendSignal]:
+    if discovery_run_id is None and discovery_candidate_id is None and not queue_key:
+        raise ValueError("at least one discovery lineage selector is required")
+    with session_scope() as session:
+        candidates = list(
+            session.scalars(
+                select(TrendSignal)
+                .where(TrendSignal.observation_key.like("discovery-observation:%"))
+                .order_by(TrendSignal.observed_at.desc())
+                .limit(min(max(limit * 10, 100), 2000))
+            )
+        )
+        result: list[TrendSignal] = []
+        for signal in candidates:
+            lineage = dict(signal.signal_metadata or {})
+            if (
+                discovery_run_id is not None
+                and lineage.get("discovery_run_id") != str(discovery_run_id)
+            ):
+                continue
+            if (
+                discovery_candidate_id is not None
+                and lineage.get("discovery_candidate_id") != str(discovery_candidate_id)
+            ):
+                continue
+            if queue_key and lineage.get("queue_key") != queue_key:
+                continue
+            result.append(signal)
+            if len(result) >= limit:
+                break
+        return result
+
+
+def _emit_bridge_event(result: TrendBridgeResult) -> None:
     with session_scope() as session:
         session.add(
             DomainEvent(
                 aggregate_type="discovery_trend_bridge",
-                aggregate_id=scope,
+                aggregate_id=result.scope,
                 event_type="trend.discovery_bridged",
                 payload={
-                    "scope": scope,
-                    "signal_count": signal_count,
-                    "observation_count": observation_count,
-                    "candidate_count": candidate_count,
-                    "topic_count": topic_count,
-                    "refreshed_channel_profile_ids": [
-                        str(channel_id) for channel_id in refreshed_channels
-                    ],
+                    "scope": result.scope,
+                    "signal_count": result.signal_count,
+                    "observation_count": result.observation_count,
+                    "candidate_count": result.candidate_count,
+                    "topic_count": result.topic_count,
                 },
             )
         )
