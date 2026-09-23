@@ -18,12 +18,12 @@ from katcha.integrations.storage import ObjectStore
 from katcha.models import Clip, DomainEvent, UsageEvent
 from katcha.production_models import Production, ProductionAsset, ProductionScript
 from katcha.rendering.client import render_short
-from katcha.rendering.reactions import ReactionAssetPack
 from katcha.rendering.manifest import (
     ShortBrandSpec,
     ShortRenderManifest,
     build_short_manifest,
 )
+from katcha.rendering.reactions import ReactionAssetPack
 
 
 class AmbiguousPaidCall(RuntimeError):
