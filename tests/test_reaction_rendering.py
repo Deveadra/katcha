@@ -2,8 +2,8 @@ import pytest
 from pydantic import ValidationError
 
 from katcha.rendering.manifest import ShortBrandSpec, ShortRenderManifest, build_short_manifest
-from katcha.rendering.reactions import ReactionAssetPack, ReactionCue, ReactionEvent
 from katcha.rendering.ranked_episode_manifest import build_ranked_episode_manifest
+from katcha.rendering.reactions import ReactionAssetPack, ReactionCue, ReactionEvent
 
 
 def _pack(brand: str = "channel_01") -> ReactionAssetPack:
