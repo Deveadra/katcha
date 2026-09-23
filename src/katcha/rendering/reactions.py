@@ -63,6 +63,21 @@ class ReactionEvent(ReactionCue):
     storage_key: str
     start_seconds: float = Field(ge=0, allow_inf_nan=False)
 
+    @model_validator(mode="after")
+    def validate_frozen_storage(self) -> ReactionEvent:
+        prefix = (
+            f"brands/{self.brand_key}/reactions/"
+            f"{self.pack_key}/v{self.pack_version}/"
+        )
+        if (
+            not self.storage_key.startswith(prefix)
+            or not self.storage_key.lower().endswith(".png")
+            or ".." in self.storage_key
+            or chr(92) in self.storage_key
+        ):
+            raise ValueError("reaction event has invalid channel-scoped PNG key")
+        return self
+
 
 def resolve_reaction_events(
     *,
