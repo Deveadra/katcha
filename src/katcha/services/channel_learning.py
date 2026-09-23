@@ -27,8 +27,8 @@ from katcha.longform_models import CompilationSegment
 from katcha.models import DomainEvent
 from katcha.production_models import Production
 from katcha.publishing_models import Publication, PublicationAnalyticsSnapshot
-from katcha.short_episode_models import ShortEpisode, ShortEpisodeItem
 from katcha.services.channel_profiles import ensure_active_profile
+from katcha.short_episode_models import ShortEpisode, ShortEpisodeItem
 
 
 def _decimal(value: Decimal | float | int | str) -> Decimal:
