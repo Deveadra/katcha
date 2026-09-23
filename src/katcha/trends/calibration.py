@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from statistics import fmean
 from typing import Any
 
@@ -249,7 +249,7 @@ def _metrics(rows: list[CalibrationRow]) -> dict[str, Any]:
 def train_calibration(rows: list[CalibrationRow]) -> CalibrationResult:
     samples = sorted(rows, key=lambda row: row.observed_at)
     count = len(samples)
-    cutoff = samples[-1].observed_at if samples else datetime.min
+    cutoff = samples[-1].observed_at if samples else datetime.min.replace(tzinfo=UTC)
     metrics = _metrics(samples)
     if count < MIN_CALIBRATION_SAMPLES:
         return CalibrationResult(
