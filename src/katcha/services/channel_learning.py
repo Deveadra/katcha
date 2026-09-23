@@ -28,6 +28,7 @@ from katcha.models import DomainEvent
 from katcha.production_models import Production
 from katcha.publishing_models import Publication, PublicationAnalyticsSnapshot
 from katcha.services.channel_profiles import ensure_active_profile
+from katcha.short_episode_models import ShortEpisode, ShortEpisodeItem
 
 
 def _decimal(value: Decimal | float | int | str) -> Decimal:
@@ -100,6 +101,35 @@ def _compilation_features(
     }
 
 
+def _short_episode_features(
+    session: Session,
+    short_episode_id: uuid.UUID,
+) -> dict[str, float]:
+    episode = session.get(ShortEpisode, short_episode_id)
+    if episode is None:
+        raise RuntimeError(f"publication short episode disappeared: {short_episode_id}")
+    items = list(
+        session.scalars(
+            select(ShortEpisodeItem)
+            .where(ShortEpisodeItem.short_episode_id == short_episode_id)
+            .order_by(ShortEpisodeItem.position)
+        )
+    )
+    if not items:
+        raise RuntimeError("short episode has no items available for learning")
+    snapshots = [
+        snapshot_learning_features(dict(item.analysis_snapshot or {}))
+        for item in items
+    ]
+    return {
+        name: clamp(
+            sum(float(snapshot.get(name, 0.0)) for snapshot in snapshots)
+            / len(snapshots)
+        )
+        for name in FEATURE_NAMES
+    }
+
+
 def _publication_source_features(
     session: Session,
     publication: Publication,
@@ -115,6 +145,16 @@ def _publication_source_features(
             "compilation",
             publication.compilation_id,
             _compilation_features(session, publication.compilation_id),
+        )
+    if (
+        publication.short_episode_id is not None
+        and publication.production_id is None
+        and publication.compilation_id is None
+    ):
+        return (
+            "short_episode",
+            publication.short_episode_id,
+            _short_episode_features(session, publication.short_episode_id),
         )
     raise RuntimeError("publication source lineage is invalid")
 

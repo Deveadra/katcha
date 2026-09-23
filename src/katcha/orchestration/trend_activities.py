@@ -5,6 +5,7 @@ import uuid
 from temporalio import activity
 
 from katcha.config import get_settings
+from katcha.services.trend_calibration import refresh_trend_calibration
 from katcha.services.trend_source_reliability import (
     channel_trend_source_health,
     source_health_allows_refresh,
@@ -39,4 +40,28 @@ def refresh_channel_trends_activity(
         **result,
         "status": "completed",
         "source_health": health,
+    }
+
+
+@activity.defn
+def refresh_trend_calibration_activity(
+    channel_profile_id: str,
+    run_key: str,
+    target_age_hours: int,
+) -> dict[str, object]:
+    snapshot = refresh_trend_calibration(
+        uuid.UUID(channel_profile_id),
+        run_key=run_key,
+        target_age_hours=target_age_hours,
+    )
+    return {
+        "channel_profile_id": channel_profile_id,
+        "calibration_snapshot_id": str(snapshot.id),
+        "version": snapshot.version,
+        "run_key": snapshot.run_key,
+        "status": snapshot.status,
+        "sample_count": snapshot.sample_count,
+        "validation_sample_count": snapshot.validation_sample_count,
+        "blend_ratio": float(snapshot.blend_ratio),
+        "confidence": float(snapshot.confidence),
     }
