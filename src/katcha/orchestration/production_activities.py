@@ -18,6 +18,7 @@ from katcha.integrations.storage import ObjectStore
 from katcha.models import Clip, DomainEvent, UsageEvent
 from katcha.production_models import Production, ProductionAsset, ProductionScript
 from katcha.rendering.client import render_short
+from katcha.rendering.reactions import ReactionAssetPack
 from katcha.rendering.manifest import (
     ShortBrandSpec,
     ShortRenderManifest,
@@ -481,6 +482,13 @@ def build_render_manifest_activity(production_id: str) -> dict[str, object]:
             for index, asset in enumerate(narration_assets)
         ]
         output_key = store.production_key(production_id, "render/short-g1.mp4")
+        visual = dict((production.brand_snapshot or {}).get("visual") or {})
+        reaction_pack_payload = visual.get("reaction_pack")
+        reaction_pack = (
+            ReactionAssetPack.model_validate(reaction_pack_payload)
+            if reaction_pack_payload is not None
+            else None
+        )
         brand = _brand_render_spec(dict(production.brand_snapshot or {}))
         manifest = build_short_manifest(
             production_id=production_id,
@@ -498,6 +506,8 @@ def build_render_manifest_activity(production_id: str) -> dict[str, object]:
             title_angle=str((script.script_metadata or {}).get("title_angle") or "") or None,
             interaction_prompt=script.interaction_prompt,
             brand=brand,
+            reaction_pack=reaction_pack,
+            reaction_cues=list((script.script_metadata or {}).get("reaction_cues") or []),
         )
 
     manifest_bytes = manifest.model_dump_json(indent=2).encode("utf-8")
