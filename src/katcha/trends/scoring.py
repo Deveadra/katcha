@@ -53,6 +53,7 @@ class SignalSample:
     published_at: datetime | None
     metrics: Mapping[str, float]
     source_weight: float = 1.0
+    rights_readiness: float = 0.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -209,6 +210,10 @@ def score_topic(
     latest_by_entity: dict[str, SignalSample] = {}
     for sample in ordered:
         latest_by_entity[sample.entity_key] = sample
+    rights_readiness = _clamp(
+        sum(_clamp(item.rights_readiness) for item in latest_by_entity.values())
+        / max(1, len(latest_by_entity))
+    )
     comments = sum(
         _metric_value(item.metrics, "comments") + _metric_value(item.metrics, "replies")
         for item in latest_by_entity.values()
@@ -273,6 +278,7 @@ def score_topic(
         "channel_fit": fit,
         "freshness": _clamp(freshness),
         "data_quality": data_quality,
+        "rights_readiness": rights_readiness,
         "saturation": saturation,
         "headroom": headroom,
     }
@@ -341,6 +347,10 @@ def score_topic(
         reasons.append("stale_signal_penalty")
     if saturation > 0.70:
         reasons.append("saturation_penalty")
+    if rights_readiness >= 0.75:
+        reasons.append("rights_ready_sources")
+    elif rights_readiness < 0.25:
+        reasons.append("rights_unassessed_or_blocked")
     if not reasons:
         reasons.append("insufficient_breakout_evidence")
 
