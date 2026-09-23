@@ -10,6 +10,10 @@ from xml.etree import ElementTree
 import httpx
 
 from katcha.acquisition.adapters import DiscoveredCandidate, DiscoveryBatch
+from katcha.acquisition.http_errors import (
+    provider_response_error,
+    provider_transport_error,
+)
 
 _USER_AGENT = "Katcha/0.1 feed-discovery"
 _MAX_REDIRECTS = 3
@@ -204,17 +208,21 @@ def _fetch_feed(url: str) -> tuple[bytes, str]:
     with httpx.Client(timeout=15.0, follow_redirects=False) as client:
         for _ in range(_MAX_REDIRECTS + 1):
             _validate_public_url(current)
-            response = client.get(
-                current,
-                headers={"User-Agent": _USER_AGENT, "Accept": _ACCEPT_HEADER},
-            )
+            try:
+                response = client.get(
+                    current,
+                    headers={"User-Agent": _USER_AGENT, "Accept": _ACCEPT_HEADER},
+                )
+            except httpx.HTTPError as exc:
+                raise provider_transport_error("RSS/Atom", "fetch") from exc
             if response.status_code in {301, 302, 303, 307, 308}:
                 location = response.headers.get("location")
                 if not location:
                     raise ValueError("feed redirect did not include a location")
                 current = urljoin(current, location)
                 continue
-            response.raise_for_status()
+            if response.status_code >= 400:
+                raise provider_response_error("RSS/Atom", "fetch", response)
             return response.content, str(response.url)
     raise ValueError("feed exceeded maximum redirect count")
 
