@@ -117,7 +117,7 @@ def test_bridge_observation_key_deduplicates_equivalent_channel_snapshots() -> N
 
 
 def test_reliability_routes_are_mounted() -> None:
-    paths = [route.path for route in app.routes]
+    paths = set(app.openapi()["paths"])
     assert "/v1/channels/{channel_profile_id}/trends/watches" in paths
     assert "/v1/trends/watches/{topic_watch_id}/health" in paths
     assert "/v1/channels/{channel_profile_id}/trends/source-health" in paths
