@@ -9,6 +9,7 @@ from katcha.db import session_scope
 from katcha.models import Clip, DomainEvent
 from katcha.rendering.client import render_ranked_episode
 from katcha.rendering.manifest import ShortBrandSpec
+from katcha.rendering.reactions import ReactionAssetPack
 from katcha.rendering.ranked_episode_manifest import (
     RankedEpisodeRenderManifest,
     build_ranked_episode_manifest,
@@ -116,6 +117,12 @@ def build_ranked_episode_render_manifest_activity(episode_id: str) -> dict[str, 
         narration_assets = _narration_assets(session, episode)
         visual = dict((episode.brand_snapshot or {}).get("visual") or {})
         brand = ShortBrandSpec.model_validate(visual)
+        reaction_pack_payload = visual.get("reaction_pack")
+        reaction_pack = (
+            ReactionAssetPack.model_validate(reaction_pack_payload)
+            if reaction_pack_payload is not None
+            else None
+        )
         script_payload = dict(script.script_payload or {})
         interaction_prompt = script_payload.get("interaction_prompt")
         output_key = f"short-episodes/{episode_id}/renders/g1.mp4"
@@ -132,6 +139,8 @@ def build_ranked_episode_render_manifest_activity(episode_id: str) -> dict[str, 
             ),
             output_key=output_key,
             brand=brand,
+            reaction_pack=reaction_pack,
+            reaction_cues=list(script_payload.get("reaction_cues") or []),
             trend_opportunity_id=(
                 str(episode.trend_opportunity_id) if episode.trend_opportunity_id else None
             ),
