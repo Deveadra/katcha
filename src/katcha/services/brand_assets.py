@@ -37,7 +37,7 @@ _RANKSNAXX_MEME_CRY = BuiltinBrandAsset(
     asset_key="meme_cry",
     storage_key="brands/ranksnaxx/reactions/host_emotes/v1/meme_cry.png",
     package_path="assets/ranksnaxx/reactions/host_emotes/v1/meme_cry.png",
-    sha256="fc0cddb1e95245c757e01cc7363a5cdac221366598660606de5148cb966f8e2f",
+    sha256="bffb5df4269e0a02281268dfacab395070e9bc96596f31ba247b384f9eb06b36",
 )
 
 BUILTIN_BRAND_ASSETS: tuple[BuiltinBrandAsset, ...] = (_RANKSNAXX_MEME_CRY,)
