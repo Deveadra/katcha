@@ -12,9 +12,9 @@ from katcha.audio.tts import VoiceProfile, get_voice_profile, synthesize_speech
 from katcha.config import Settings, get_settings
 from katcha.db import session_scope
 from katcha.domain import ProductionStatus
+from katcha.editing.blueprints import EditBlueprintContract
 from katcha.editorial.generator import generate_short_scripts
 from katcha.editorial.personas import get_persona
-from katcha.editing.blueprints import EditBlueprintContract
 from katcha.integrations.storage import ObjectStore
 from katcha.models import Clip, DomainEvent, UsageEvent
 from katcha.production_models import Production, ProductionAsset, ProductionScript
