@@ -285,3 +285,30 @@ POST /v1/publications/{publication_id}/packaging/thumbnails
 
 This stage still performs no YouTube mutation; P9.1 remains the only packaging activation
 path.
+
+
+## P10.3 guarded automatic packaging experiments
+
+Katcha can now turn a mature P9 `test` recommendation into a bounded packaging experiment,
+but only when the channel is explicitly at `AUTO_PUBLISH_SCHEDULED`. Lower automation
+levels continue generating and measuring variants without mutating an already-published
+YouTube video.
+
+The experiment evaluator requires the currently active immutable package to match P9's
+measured baseline, the recommendation to have no blockers, and the last packaging mutation
+to be at least 24 hours old. Only one experiment may be active for a publication at once.
+The observation deadline inherits the P9 maturity window (normally 7 days), preventing
+same-day CTR noise from causing rapid title/thumbnail churn.
+
+Each channel-intelligence refresh runs in this order: refresh evidence, apply the existing
+automation safety demotion, reconcile active packaging experiments, then consider at most
+one new experiment. Candidate and rollback mutations both use the existing P9.1 packaging
+activation ledger and Temporal YouTube workflow; P10.3 introduces no second updater.
+
+When mature evidence is available, a clean `prefer` result completes the experiment and
+keeps the candidate. A candidate is rolled back to the exact prior immutable variant only
+when P9 reports a material watch-percentage decline, midpoint-retention decline, or negative
+contribution margin. CTR uplift alone can never suppress those rollback guardrails.
+
+Operator visibility is available through eligibility, experiment history, manual start and
+reconcile endpoints under `/v1/publications/{publication_id}/packaging/`.
