@@ -17,6 +17,7 @@ class ShortProductionWorkflow:
             maximum_interval=timedelta(minutes=2),
             maximum_attempts=3,
         )
+        render_attempt_id: str | None = None
         try:
             if start_stage == "script":
                 await workflow.execute_activity(
@@ -51,17 +52,45 @@ class ShortProductionWorkflow:
             elif start_stage != "render":
                 raise ValueError(f"unsupported production start stage: {start_stage}")
 
+            attempt = await workflow.execute_activity(
+                "begin_render_attempt_activity",
+                args=[
+                    "production",
+                    production_id,
+                    workflow.info().workflow_id,
+                ],
+                start_to_close_timeout=timedelta(seconds=30),
+                retry_policy=local_retry,
+                result_type=dict[str, object],
+            )
+            render_attempt_id = str(attempt["render_attempt_id"])
+            render_generation = int(attempt["attempt_number"])
+
             await workflow.execute_activity(
                 "build_render_manifest_activity",
-                production_id,
+                args=[production_id, render_generation],
                 start_to_close_timeout=timedelta(minutes=1),
+                retry_policy=local_retry,
+                result_type=dict[str, object],
+            )
+            await workflow.execute_activity(
+                "pre_render_qc_activity",
+                args=["production", production_id, render_attempt_id],
+                start_to_close_timeout=timedelta(minutes=2),
                 retry_policy=local_retry,
                 result_type=dict[str, object],
             )
             rendered = await workflow.execute_activity(
                 "render_short_activity",
-                production_id,
+                args=[production_id, render_generation],
                 start_to_close_timeout=timedelta(minutes=20),
+                retry_policy=local_retry,
+                result_type=dict[str, object],
+            )
+            await workflow.execute_activity(
+                "post_render_qc_activity",
+                args=["production", production_id, render_attempt_id],
+                start_to_close_timeout=timedelta(minutes=2),
                 retry_policy=local_retry,
                 result_type=dict[str, object],
             )
@@ -69,8 +98,17 @@ class ShortProductionWorkflow:
                 "production_id": production_id,
                 "status": "review",
                 "output_key": rendered.get("output_key"),
+                "render_attempt_id": render_attempt_id,
+                "render_attempt_number": render_generation,
             }
         except Exception as exc:
+            if render_attempt_id is not None:
+                await workflow.execute_activity(
+                    "dead_letter_render_attempt_activity",
+                    args=[render_attempt_id, str(exc)],
+                    start_to_close_timeout=timedelta(seconds=30),
+                    retry_policy=RetryPolicy(maximum_attempts=3),
+                )
             await workflow.execute_activity(
                 "mark_production_failed",
                 args=[production_id, str(exc)],
