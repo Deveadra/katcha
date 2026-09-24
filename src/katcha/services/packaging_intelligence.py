@@ -6,6 +6,7 @@ from collections import defaultdict
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import func, select
 
@@ -43,6 +44,8 @@ _MAX_RETENTION_50_DROP = 0.05
 _RETENTION_TARGET = 0.50
 _RETENTION_MAX_DISTANCE = 0.08
 _MIN_CHRONOLOGICAL_COMPARISONS = 10
+_MIN_ANALYTICS_LAG_DAYS = 4
+_PACIFIC = ZoneInfo("America/Los_Angeles")
 _HOLDOUT_FRACTION = 0.20
 
 
@@ -185,7 +188,12 @@ def _eligible_reach_windows(
             for offset in range(0, len(run), maturity_days):
                 window = run[offset : offset + maturity_days]
                 if len(window) == maturity_days:
-                    result.append(window)
+                    latest_complete_day = (
+                        datetime.now(_PACIFIC).date()
+                        - timedelta(days=_MIN_ANALYTICS_LAG_DAYS)
+                    )
+                    if window[-1].report_date <= latest_complete_day:
+                        result.append(window)
     result.sort(key=lambda window: (window[0].report_date, str(window[0].packaging_variant_id)))
     return result
 
@@ -517,11 +525,16 @@ def _recommendations(
         )
         if not windows:
             continue
-        baseline = windows[0]
-        measured_variant_ids = {str(row["variant_id"]) for row in windows}
-        for candidate in windows[1:]:
-            if candidate["variant_id"] == baseline["variant_id"]:
-                continue
+        first_window_by_variant: dict[str, dict[str, object]] = {}
+        for window in windows:
+            first_window_by_variant.setdefault(str(window["variant_id"]), window)
+        comparison_windows = sorted(
+            first_window_by_variant.values(),
+            key=lambda row: (str(row["window_start"]), str(row["variant_id"])),
+        )
+        baseline = comparison_windows[0]
+        measured_variant_ids = set(first_window_by_variant)
+        for candidate in comparison_windows[1:]:
             result.append(_comparison(baseline, candidate))
 
         baseline_ready = (
@@ -603,6 +616,7 @@ def _policy_snapshot(maturity_days: int) -> dict[str, object]:
         "maximum_average_view_percentage_drop": _MAX_AVG_VIEW_PCT_DROP,
         "maximum_retention_50_drop": _MAX_RETENTION_50_DROP,
         "minimum_chronological_comparisons": _MIN_CHRONOLOGICAL_COMPARISONS,
+        "minimum_analytics_lag_days": _MIN_ANALYTICS_LAG_DAYS,
         "automatic_public_mutation": False,
         "mixed_reach_days_excluded": True,
         "missing_values_coerced_to_zero": False,
