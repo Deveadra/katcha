@@ -21,6 +21,7 @@ from katcha.models import DomainEvent
 from katcha.production_models import Production, ProductionAsset
 from katcha.publishing_models import Publication, YouTubeConnection
 from katcha.short_episode_models import ShortEpisode, ShortEpisodeAsset, ShortEpisodeItem
+from katcha.services.render_qc import assert_render_qc_passed
 
 VALID_PRIVACY_STATUSES = {"private", "unlisted", "public"}
 SourceKind = Literal["production", "compilation", "short_episode"]
@@ -162,6 +163,7 @@ def _approved_render_key(
         )
     if render is None:
         raise ValueError(f"approved {source_kind.replace('_', ' ')} has no rendered video asset")
+    assert_render_qc_passed(render.asset_metadata)
     return render.storage_key
 
 
