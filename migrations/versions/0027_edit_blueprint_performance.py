@@ -23,10 +23,13 @@ def upgrade() -> None:
         sa.Column("channel_profile_id", sa.Uuid(), nullable=False),
         sa.Column("version", sa.Integer(), nullable=False),
         sa.Column("run_key", sa.String(length=160), nullable=False),
+        sa.Column("age_bucket_hours", sa.Integer(), nullable=False),
         sa.Column("publication_count", sa.Integer(), nullable=False),
         sa.Column("blueprint_group_count", sa.Integer(), nullable=False),
         sa.Column("revenue_covered_publications", sa.Integer(), nullable=False),
+        sa.Column("retention_covered_publications", sa.Integer(), nullable=False),
         sa.Column("monetary_coverage", sa.Numeric(8, 6), nullable=False),
+        sa.Column("retention_coverage", sa.Numeric(8, 6), nullable=False),
         sa.Column("aggregate_metrics", sa.JSON(), nullable=False),
         sa.Column("comparison_status", sa.String(length=64), nullable=False),
         sa.Column("comparison_summary", sa.JSON(), nullable=False),
@@ -37,6 +40,10 @@ def upgrade() -> None:
             sa.DateTime(timezone=True),
             server_default=sa.func.now(),
             nullable=False,
+        ),
+        sa.CheckConstraint(
+            "age_bucket_hours > 0",
+            name="ck_edit_perf_age_bucket_positive",
         ),
         sa.CheckConstraint(
             "publication_count >= 0",
@@ -51,13 +58,27 @@ def upgrade() -> None:
             name="ck_edit_perf_revenue_covered_nonnegative",
         ),
         sa.CheckConstraint(
+            "retention_covered_publications >= 0",
+            name="ck_edit_perf_retention_covered_nonnegative",
+        ),
+        sa.CheckConstraint(
             "monetary_coverage >= 0 AND monetary_coverage <= 1",
             name="ck_edit_perf_monetary_coverage",
+        ),
+        sa.CheckConstraint(
+            "retention_coverage >= 0 AND retention_coverage <= 1",
+            name="ck_edit_perf_retention_coverage",
         ),
         sa.ForeignKeyConstraint(["channel_profile_id"], ["channel_profiles.id"]),
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint("channel_profile_id", "version"),
         sa.UniqueConstraint("channel_profile_id", "run_key"),
+    )
+    op.create_index(
+        op.f("ix_edit_blueprint_performance_snapshots_age_bucket_hours"),
+        "edit_blueprint_performance_snapshots",
+        ["age_bucket_hours"],
+        unique=False,
     )
     op.create_index(
         op.f("ix_edit_blueprint_performance_snapshots_channel_profile_id"),
@@ -82,6 +103,10 @@ def upgrade() -> None:
 def downgrade() -> None:
     op.drop_index(
         op.f("ix_edit_blueprint_performance_snapshots_run_key"),
+        table_name="edit_blueprint_performance_snapshots",
+    )
+    op.drop_index(
+        op.f("ix_edit_blueprint_performance_snapshots_age_bucket_hours"),
         table_name="edit_blueprint_performance_snapshots",
     )
     op.drop_index(
