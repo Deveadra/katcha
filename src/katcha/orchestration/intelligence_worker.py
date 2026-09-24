@@ -19,6 +19,7 @@ from katcha.orchestration.intelligence_activities import (
     refresh_trend_activation_performance_activity,
     run_channel_trend_activation_activity,
     train_channel_ranking_activity,
+    trigger_daily_reach_sync_activity,
 )
 from katcha.orchestration.intelligence_workflows import (
     ChannelIntelligenceRefreshWorkflow,
@@ -52,6 +53,7 @@ async def main() -> None:
             ],
             activities=[
                 derive_channel_observations_activity,
+                trigger_daily_reach_sync_activity,
                 refresh_edit_blueprint_performance_activity,
                 refresh_packaging_intelligence_activity,
                 train_channel_ranking_activity,
