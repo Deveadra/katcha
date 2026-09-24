@@ -66,10 +66,24 @@ class RankedShortEpisodeEditorialWorkflow:
                     retry_policy=local_retry,
                     result_type=dict[str, object],
                 )
+                await workflow.execute_activity(
+                    "pre_render_qc_activity",
+                    args=["short_episode", episode_id],
+                    start_to_close_timeout=timedelta(minutes=2),
+                    retry_policy=local_retry,
+                    result_type=dict[str, object],
+                )
                 rendered = await workflow.execute_activity(
                     "render_ranked_episode_activity",
                     episode_id,
                     start_to_close_timeout=timedelta(minutes=30),
+                    retry_policy=local_retry,
+                    result_type=dict[str, object],
+                )
+                await workflow.execute_activity(
+                    "post_render_qc_activity",
+                    args=["short_episode", episode_id],
+                    start_to_close_timeout=timedelta(minutes=2),
                     retry_policy=local_retry,
                     result_type=dict[str, object],
                 )
