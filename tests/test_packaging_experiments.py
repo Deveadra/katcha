@@ -12,6 +12,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 import katcha.api.main  # noqa: F401  # Register all model tables for SQLite schema.
+import katcha.api.packaging as packaging_api
 import katcha.db as db
 import katcha.orchestration.intelligence_workflows as intelligence_workflows
 from katcha.api.main import app
@@ -213,6 +214,33 @@ def test_policy_evidence_and_duplicate_claim(records):
             variant_id=records.previous,
             activation_key="manual-while-experiment-running",
         )
+
+
+def test_experiment_api_starts_and_lists_without_running_provider(records, monkeypatch):
+    started = []
+
+    async def fake_workflow(activation_id, workflow_id):
+        started.append((activation_id, workflow_id))
+        return workflow_id
+
+    monkeypatch.setattr(packaging_api, "start_packaging_activation_workflow", fake_workflow)
+    with TestClient(app) as client:
+        response = client.post(
+            f"/v1/publications/{records.publication}/packaging/experiments",
+            json={"candidate_variant_id": str(records.candidate)},
+        )
+        assert response.status_code == 202
+        assert response.json()["status"] == "pending"
+        assert len(started) == 1
+        listing = client.get(f"/v1/publications/{records.publication}/packaging/experiments")
+        assert listing.status_code == 200
+        assert [item["id"] for item in listing.json()] == [response.json()["id"]]
+        refresh = client.post(
+            f"/v1/publications/{records.publication}/packaging/experiments/"
+            f"{response.json()['id']}/refresh"
+        )
+        assert refresh.status_code == 200
+        assert len(started) == 2
 
 
 def test_policy_blocks_automatic_mutation_and_missing_thumbnail_lineage(records):
