@@ -201,5 +201,7 @@ Blueprint comparisons require at least five maturity-matched published samples i
 Control-plane endpoints:
 - `GET /v1/channels/{channel_profile_id}/editing-performance`
 - `GET /v1/channels/{channel_profile_id}/editing-performance/history`
+- `POST /v1/channels/{channel_profile_id}/edit-blueprints/performance/refresh`
+- `GET /v1/channels/{channel_profile_id}/edit-blueprints/performance/latest`
 
-The latest editing evidence is also embedded in the normal channel summary and is refreshed by the existing channel-intelligence schedule.
+The latest editing evidence is also embedded in the normal channel summary, rendered in the Trend Explorer as an advisory blueprint-evidence panel, and refreshed by the existing channel-intelligence schedule. Explorer displays sample counts and coverage beside retention/margin evidence rather than presenting a small sample as a creative winner.
