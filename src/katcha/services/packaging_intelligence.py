@@ -715,6 +715,7 @@ def refresh_packaging_intelligence(
             reach_by_publication[row.publication_id].append(row)
 
         measured_rows: list[PackagingVariantPerformanceWindow] = []
+        provider_errors: list[dict[str, object]] = []
         publication_by_id = {row.id: row for row in publications}
         for publication_id, publication_reach in reach_by_publication.items():
             publication = publication_by_id[publication_id]
@@ -726,14 +727,27 @@ def refresh_packaging_intelligence(
                 variant = variant_by_id.get(variant_id) if variant_id else None
                 if variant is None:
                     continue
-                measured = _measure_window(
-                    session,
-                    publication=publication,
-                    variant=variant,
-                    rows=window,
-                    maturity_days=maturity_days,
-                    connection=connection,
-                )
+                try:
+                    measured = _measure_window(
+                        session,
+                        publication=publication,
+                        variant=variant,
+                        rows=window,
+                        maturity_days=maturity_days,
+                        connection=connection,
+                    )
+                except YouTubeAnalyticsError as exc:
+                    provider_errors.append(
+                        {
+                            "publication_id": str(publication.id),
+                            "variant_id": str(variant.id),
+                            "window_start": window[0].report_date.isoformat(),
+                            "window_end": window[-1].report_date.isoformat(),
+                            "status_code": exc.status_code,
+                            "error": str(exc)[:500],
+                        }
+                    )
+                    continue
                 if measured is not None:
                     measured_rows.append(measured)
 
@@ -746,7 +760,11 @@ def refresh_packaging_intelligence(
             variants_by_publication,
             measured_payload,
         )
-        validation = _chronological_validation(recommendations)
+        validation = {
+            **_chronological_validation(recommendations),
+            "provider_error_count": len(provider_errors),
+            "provider_errors": provider_errors[:25],
+        }
         recommendation_count = sum(
             row.get("recommendation_type") in {"prefer", "test"}
             for row in recommendations
@@ -810,6 +828,7 @@ def refresh_packaging_intelligence(
                     "variant_window_count": len(measured_payload),
                     "recommendation_count": recommendation_count,
                     "recommendation_status": recommendation_status,
+                    "provider_error_count": len(provider_errors),
                     "automatic_public_mutation": False,
                 },
             )
