@@ -14,8 +14,8 @@ from katcha.orchestration.intelligence_activities import (
     compute_channel_economics_activity,
     compute_channel_schedule_activity,
     derive_channel_observations_activity,
-    train_channel_ranking_activity,
     run_channel_trend_activation_activity,
+    train_channel_ranking_activity,
 )
 from katcha.orchestration.intelligence_workflows import (
     ChannelIntelligenceRefreshWorkflow,
