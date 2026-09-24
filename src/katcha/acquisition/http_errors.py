@@ -31,7 +31,11 @@ def parse_retry_after(value: str | None, *, now: datetime | None = None) -> int 
 
 
 def provider_response_error(
-    provider: str, operation: str, response: httpx.Response
+    provider: str,
+    operation: str,
+    response: httpx.Response,
+    *,
+    provider_usage: dict[str, int] | None = None,
 ) -> DiscoveryProviderError:
     """Never include response body, request URL, headers or credentials."""
     status = response.status_code
@@ -49,21 +53,34 @@ def provider_response_error(
         transient=transient,
         status_code=status,
         retry_after_seconds=parse_retry_after(response.headers.get("Retry-After")),
+        provider_usage=provider_usage,
     )
 
 
-def provider_transport_error(provider: str, operation: str) -> DiscoveryProviderError:
+def provider_transport_error(
+    provider: str,
+    operation: str,
+    *,
+    provider_usage: dict[str, int] | None = None,
+) -> DiscoveryProviderError:
     """Keep exception chains for debugging but exclude secret-bearing URLs from the message."""
     return DiscoveryProviderError(
         f"{provider} {operation} request failed",
         kind="transport_error",
         transient=True,
+        provider_usage=provider_usage,
     )
 
 
-def provider_payload_error(provider: str, operation: str) -> DiscoveryProviderError:
+def provider_payload_error(
+    provider: str,
+    operation: str,
+    *,
+    provider_usage: dict[str, int] | None = None,
+) -> DiscoveryProviderError:
     return DiscoveryProviderError(
         f"{provider} {operation} returned invalid data",
         kind="invalid_provider_response",
         transient=False,
+        provider_usage=provider_usage,
     )
