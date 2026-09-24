@@ -173,6 +173,7 @@ def build_ranked_episode_render_manifest_activity(episode_id: str) -> dict[str, 
 @activity.defn
 def render_ranked_episode_activity(episode_id: str) -> dict[str, object]:
     episode_uuid = uuid.UUID(episode_id)
+    attempt = int(activity.info().attempt)
     with session_scope() as session:
         episode = session.get(ShortEpisode, episode_uuid)
         if episode is None:
@@ -191,12 +192,42 @@ def render_ranked_episode_activity(episode_id: str) -> dict[str, object]:
                 "episode_id": episode_id,
                 "output_key": existing.storage_key,
                 "reused": True,
+                "render_attempt": attempt,
             }
         if not episode.render_manifest:
             raise RuntimeError("short episode has no frozen render manifest")
         manifest = RankedEpisodeRenderManifest.model_validate(episode.render_manifest)
+        session.add(
+            DomainEvent(
+                aggregate_type="short_episode",
+                aggregate_id=episode_id,
+                event_type="short_episode.render_attempt_started",
+                payload={
+                    "short_episode_id": episode_id,
+                    "attempt": attempt,
+                    "manifest_version": manifest.version,
+                },
+            )
+        )
 
-    result = render_ranked_episode(manifest)
+    try:
+        result = render_ranked_episode(manifest)
+    except Exception as exc:
+        with session_scope() as session:
+            session.add(
+                DomainEvent(
+                    aggregate_type="short_episode",
+                    aggregate_id=episode_id,
+                    event_type="short_episode.render_attempt_failed",
+                    payload={
+                        "short_episode_id": episode_id,
+                        "attempt": attempt,
+                        "manifest_version": manifest.version,
+                        "error": str(exc)[:1000],
+                    },
+                )
+            )
+        raise
 
     with session_scope() as session:
         episode = session.get(ShortEpisode, episode_uuid)
@@ -222,6 +253,7 @@ def render_ranked_episode_activity(episode_id: str) -> dict[str, object]:
                     asset_metadata={
                         **dict(result.metadata or {}),
                         "duration_seconds": result.duration_seconds,
+                        "render_attempt": attempt,
                         "treatment": manifest.treatment.model_dump(mode="json"),
                     },
                 )
@@ -238,6 +270,7 @@ def render_ranked_episode_activity(episode_id: str) -> dict[str, object]:
                     "short_episode_id": episode_id,
                     "output_key": result.output_key,
                     "duration_seconds": result.duration_seconds,
+                    "render_attempt": attempt,
                     "treatment": manifest.treatment.model_dump(mode="json"),
                 },
             )
@@ -247,4 +280,6 @@ def render_ranked_episode_activity(episode_id: str) -> dict[str, object]:
         "output_key": result.output_key,
         "duration_seconds": result.duration_seconds,
         "reused": False,
+        "render_attempt": attempt,
     }
+
