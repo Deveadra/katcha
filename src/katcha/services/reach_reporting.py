@@ -380,3 +380,105 @@ def reach_observations_for_publication(
         for row in rows:
             session.expunge(row)
         return rows
+
+
+
+def reach_imports_for_connection(
+    connection_id: uuid.UUID,
+) -> list[YouTubeReachReportImport]:
+    with session_scope() as session:
+        if session.get(YouTubeConnection, connection_id) is None:
+            raise ValueError(f"YouTube connection not found: {connection_id}")
+        rows = list(
+            session.scalars(
+                select(YouTubeReachReportImport)
+                .where(YouTubeReachReportImport.youtube_connection_id == connection_id)
+                .order_by(YouTubeReachReportImport.imported_at.desc())
+            )
+        )
+        for row in rows:
+            session.expunge(row)
+        return rows
+
+
+def reach_summary_for_publication(
+    publication_id: uuid.UUID,
+    *,
+    maturity_days: int = 7,
+) -> dict[str, object]:
+    if maturity_days < 1 or maturity_days > 90:
+        raise ValueError("maturity_days must be between 1 and 90")
+    with session_scope() as session:
+        if session.get(Publication, publication_id) is None:
+            raise ValueError(f"publication not found: {publication_id}")
+        rows = list(
+            session.scalars(
+                select(PublicationReachObservation)
+                .where(PublicationReachObservation.publication_id == publication_id)
+                .order_by(PublicationReachObservation.report_date)
+            )
+        )
+
+    grouped: dict[uuid.UUID, list[PublicationReachObservation]] = {}
+    mixed_days = 0
+    legacy_days = 0
+    for row in rows:
+        if row.attribution_status == "mixed":
+            mixed_days += 1
+            continue
+        if row.attribution_status == "legacy":
+            legacy_days += 1
+            continue
+        if row.packaging_variant_id is None:
+            continue
+        grouped.setdefault(row.packaging_variant_id, []).append(row)
+
+    variants: list[dict[str, object]] = []
+    for variant_id, attributed_rows in grouped.items():
+        window = attributed_rows[:maturity_days]
+        known_impressions = [
+            row for row in window if row.impressions is not None
+        ]
+        impressions = sum(int(row.impressions or 0) for row in known_impressions)
+        ctr_weighted_rows = [
+            row
+            for row in window
+            if row.impressions is not None and row.ctr is not None
+        ]
+        ctr_weight = sum(int(row.impressions or 0) for row in ctr_weighted_rows)
+        weighted_ctr = (
+            sum(
+                Decimal(int(row.impressions or 0)) * Decimal(row.ctr)
+                for row in ctr_weighted_rows
+            )
+            / Decimal(ctr_weight)
+            if ctr_weight > 0
+            else None
+        )
+        variants.append(
+            {
+                "variant_id": str(variant_id),
+                "maturity_days": maturity_days,
+                "observed_full_days": len(window),
+                "impression_covered_days": len(known_impressions),
+                "ctr_covered_days": len(ctr_weighted_rows),
+                "impressions": impressions if known_impressions else None,
+                "weighted_ctr": str(weighted_ctr) if weighted_ctr is not None else None,
+                "first_report_date": (
+                    window[0].report_date.isoformat() if window else None
+                ),
+                "last_report_date": (
+                    window[-1].report_date.isoformat() if window else None
+                ),
+            }
+        )
+
+    variants.sort(key=lambda item: str(item["variant_id"]))
+    return {
+        "publication_id": str(publication_id),
+        "maturity_days": maturity_days,
+        "report_days": len(rows),
+        "mixed_days": mixed_days,
+        "legacy_days": legacy_days,
+        "variants": variants,
+    }
