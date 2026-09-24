@@ -84,6 +84,41 @@ def test_youtube_reserves_search_and_hydration_as_separate_buckets() -> None:
     )
 
 
+def test_youtube_daily_quota_rolls_at_pacific_midnight() -> None:
+    before = provider_page_demands(
+        "youtube",
+        {},
+        now=datetime(2026, 9, 24, 6, 59, 59, tzinfo=UTC),
+    )
+    after = provider_page_demands(
+        "youtube",
+        {},
+        now=datetime(2026, 9, 24, 7, 0, 0, tzinfo=UTC),
+    )
+    before_search = next(item for item in before if item.bucket_key == "youtube.search.list")
+    after_search = next(item for item in after if item.bucket_key == "youtube.search.list")
+    assert before_search.window_key != after_search.window_key
+    assert before_search.window_end == after_search.window_start
+
+
+def test_reddit_api_and_oauth_caps_are_independent() -> None:
+    demands = provider_page_demands(
+        "reddit",
+        {
+            "provider_quota_limits": {
+                "reddit.api": {"limit": 50, "window_seconds": 600},
+                "reddit.oauth": {"limit": 10, "window_seconds": 3600},
+            }
+        },
+        now=datetime(2026, 9, 24, 6, 1, tzinfo=UTC),
+    )
+    by_bucket = {item.bucket_key: item for item in demands}
+    assert set(by_bucket) == {"reddit.api", "reddit.oauth"}
+    assert by_bucket["reddit.api"].limit_units == 50
+    assert by_bucket["reddit.oauth"].limit_units == 10
+    assert by_bucket["reddit.api"].window_end != by_bucket["reddit.oauth"].window_end
+
+
 def test_provider_quota_override_can_define_short_window() -> None:
     demands = provider_page_demands(
         "reddit",
