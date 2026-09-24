@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import uuid
 from collections import defaultdict
-from datetime import UTC, datetime
+from datetime import datetime
 from decimal import Decimal
 from itertools import combinations
 from typing import Any
