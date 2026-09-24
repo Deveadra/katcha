@@ -11,6 +11,7 @@ from katcha.services.channel_learning import (
     train_channel_ranking,
 )
 from katcha.services.channel_scheduling import compute_schedule_recommendations
+from katcha.services.trend_auto_activation import run_autonomous_trend_activation
 
 
 @activity.defn
@@ -95,3 +96,15 @@ def apply_channel_safety_demotion_activity(
         "automation_version": row.version if row else None,
         "automation_level": row.level if row else None,
     }
+
+
+@activity.defn
+def run_channel_trend_activation_activity(
+    channel_profile_id: str,
+    run_key: str,
+) -> dict[str, object]:
+    summary = run_autonomous_trend_activation(
+        uuid.UUID(channel_profile_id),
+        run_key=run_key,
+    )
+    return summary.as_dict()
