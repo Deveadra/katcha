@@ -8,7 +8,6 @@ from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel, ConfigDict
 
 from katcha.orchestration.client import start_reach_sync_workflow
-from katcha.publishing_models import YouTubeConnection
 from katcha.reach_models import (
     PublicationReachObservation,
     YouTubeReachReportingJob,
