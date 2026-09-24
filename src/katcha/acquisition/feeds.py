@@ -209,14 +209,18 @@ def _fetch_feed(url: str) -> tuple[bytes, str, int]:
     with httpx.Client(timeout=15.0, follow_redirects=False) as client:
         for _ in range(_MAX_REDIRECTS + 1):
             _validate_public_url(current)
+            request_count += 1
             try:
                 response = client.get(
                     current,
                     headers={"User-Agent": _USER_AGENT, "Accept": _ACCEPT_HEADER},
                 )
-                request_count += 1
             except httpx.HTTPError as exc:
-                raise provider_transport_error("RSS/Atom", "fetch") from exc
+                raise provider_transport_error(
+                    "RSS/Atom",
+                    "fetch",
+                    provider_usage={"rss.http": request_count},
+                ) from exc
             if response.status_code in {301, 302, 303, 307, 308}:
                 location = response.headers.get("location")
                 if not location:
@@ -224,7 +228,12 @@ def _fetch_feed(url: str) -> tuple[bytes, str, int]:
                 current = urljoin(current, location)
                 continue
             if response.status_code >= 400:
-                raise provider_response_error("RSS/Atom", "fetch", response)
+                raise provider_response_error(
+                    "RSS/Atom",
+                    "fetch",
+                    response,
+                    provider_usage={"rss.http": request_count},
+                )
             return response.content, str(response.url), request_count
     raise ValueError("feed exceeded maximum redirect count")
 
