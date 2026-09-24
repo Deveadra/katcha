@@ -42,6 +42,12 @@ def ensure_active_brand(
         validate_brand_contract(dict(existing.contract or {}))
         return existing
 
+    profile = _lock_profile(session, profile)
+    existing = active_brand(session, profile)
+    if existing is not None:
+        validate_brand_contract(dict(existing.contract or {}))
+        return existing
+
     contract = brand_contract_for_profile_metadata(dict(profile.profile_metadata or {}))
     brand = ChannelBrandVersion(
         channel_profile_id=profile.id,
@@ -74,13 +80,21 @@ def create_brand_version(
     actor: str = "operator",
     hypothesis: str | None = None,
 ) -> ChannelBrandVersion:
+    profile = _lock_profile(session, profile)
     current = ensure_active_brand(session, profile)
     contract = validate_brand_contract(contract_payload)
-    next_version = current.version + 1
+    latest_version = session.scalar(
+        select(ChannelBrandVersion.version)
+        .where(ChannelBrandVersion.channel_profile_id == profile.id)
+        .order_by(ChannelBrandVersion.version.desc())
+        .limit(1)
+    )
+    next_version = int(latest_version or current.version) + 1
     if contract.version != next_version:
         raise ValueError(f"next brand contract version must be {next_version}")
 
     current.is_active = False
+    session.flush()
     row = ChannelBrandVersion(
         channel_profile_id=profile.id,
         version=next_version,
@@ -239,13 +253,18 @@ def activate_brand_version(
         brand_contract(target)
 
         current = active_brand(session, profile)
-        if current is not None and current.id != target.id:
+        if current is not None and current.id == target.id:
+            session.expunge(target)
+            return target
+
+        previous_version = current.version if current is not None else None
+        if current is not None:
             current.is_active = False
             session.flush()
         target.is_active = True
         metadata = dict(target.brand_metadata or {})
         metadata["activated_by"] = actor
-        metadata["supersedes"] = current.version if current else None
+        metadata["supersedes"] = previous_version
         target.brand_metadata = metadata
         session.flush()
         session.add(
@@ -257,7 +276,7 @@ def activate_brand_version(
                     "channel_profile_id": str(profile.id),
                     "brand_key": target.brand_key,
                     "brand_version": target.version,
-                    "supersedes": current.version if current else None,
+                    "supersedes": previous_version,
                     "actor": actor,
                 },
             )
