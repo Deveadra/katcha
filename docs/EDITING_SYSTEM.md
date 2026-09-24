@@ -182,7 +182,7 @@ Automatic scheduling uses the latest channel `ScheduleRecommendation` set when a
 
 The channel-intelligence cadence now closes the editing feedback loop. Publication registration freezes the shipped edit lineage into `Publication.treatment_metadata` for both single-clip productions and ranked short episodes. The record includes the channel blueprint revision, semantic blueprint contract version, composition, narration/layout modes, selected editorial style, voice, brand version and render-manifest version.
 
-Each intelligence refresh creates an immutable `EditBlueprintPerformanceSnapshot`. It uses only the latest analytics snapshot per publication, so repeated YouTube samples do not turn one video into multiple observations. Groups are isolated by channel, source/format scope, blueprint revision and treatment; a ranked countdown is never compared directly with a single-clip explainer.
+Each intelligence refresh creates an immutable `EditBlueprintPerformanceSnapshot`. It maturity-matches each publication to exactly one analytics snapshot near a standard outcome age (72 hours by default; 6/24/72/168-hour buckets are supported), so repeated YouTube samples do not turn one video into multiple observations and a week-old video is not casually compared with a six-hour-old upload. Groups are isolated by channel, source/format scope, blueprint revision and treatment; a ranked countdown is never compared directly with a single-clip explainer.
 
 Tracked evidence includes:
 - views and engaged views
@@ -196,7 +196,7 @@ Tracked evidence includes:
 
 Missing monetary analytics remain missing. Katcha calculates contribution margin only for the subset of publications with actual revenue data and reports monetary coverage beside it; an unknown revenue value is never converted into zero revenue.
 
-Blueprint comparisons require at least five published samples in each group and only compare groups with the same channel + source/format scope. Margin deltas additionally require at least three revenue-covered publications in both groups. The resulting evidence is advisory only. P8.4 does not mutate the active blueprint automatically, which prevents a small or noisy sample from changing channel identity.
+Blueprint comparisons require at least five maturity-matched published samples in each group and only compare groups with the same channel + source/format scope. Retention deltas require at least 50% retention-data coverage. Margin deltas additionally require at least three revenue-covered publications in both groups and at least 60% monetary coverage. The resulting evidence is advisory only. P8.4 does not mutate the active blueprint automatically, which prevents a small or noisy sample from changing channel identity.
 
 Control-plane endpoints:
 - `GET /v1/channels/{channel_profile_id}/editing-performance`
