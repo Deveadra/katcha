@@ -15,6 +15,7 @@ from katcha.api.control_auth import require_control_token
 from katcha.api.edit_blueprints import router as edit_blueprints_router
 from katcha.api.explorer import router as explorer_router
 from katcha.api.intelligence import router as intelligence_router
+from katcha.api.packaging import router as packaging_router
 from katcha.api.schemas import (
     AnalysisRunResponse,
     AnalyticsRefreshResponse,
@@ -128,6 +129,7 @@ app = FastAPI(
 app.include_router(acquisition_router)
 app.include_router(edit_blueprints_router)
 app.include_router(intelligence_router)
+app.include_router(packaging_router)
 app.include_router(short_episodes_router)
 app.include_router(trends_router)
 app.include_router(explorer_router)
