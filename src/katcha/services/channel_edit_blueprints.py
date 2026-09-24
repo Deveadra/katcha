@@ -28,6 +28,17 @@ def edit_blueprint_contract(
     return contract
 
 
+def _lock_profile(session: Session, profile: ChannelProfile) -> ChannelProfile:
+    locked = session.scalar(
+        select(ChannelProfile)
+        .where(ChannelProfile.id == profile.id)
+        .with_for_update()
+    )
+    if locked is None:
+        raise ValueError(f"channel profile not found: {profile.id}")
+    return locked
+
+
 def _bootstrap_contract(profile: ChannelProfile) -> EditBlueprintContract:
     metadata = dict(profile.profile_metadata or {})
     key = str(metadata.get("default_edit_blueprint_key") or "").strip()
@@ -109,6 +120,7 @@ def ensure_default_edit_blueprint(
     session: Session,
     profile: ChannelProfile,
 ) -> ChannelEditBlueprintVersion:
+    profile = _lock_profile(session, profile)
     existing = _default_row(session, profile)
     if existing is not None:
         if not existing.is_active:
@@ -219,6 +231,7 @@ def create_edit_blueprint_version(
     contract = EditBlueprintContract.model_validate(contract_payload)
     with session_scope() as session:
         profile = ensure_active_profile(session, channel_profile_id)
+        profile = _lock_profile(session, profile)
         current_default = _default_row(session, profile)
         current_active = _active_family(session, profile, contract.key)
         carry_default = bool(current_active and current_active.is_default)
@@ -281,6 +294,7 @@ def activate_edit_blueprint_version(
 
     with session_scope() as session:
         profile = ensure_active_profile(session, channel_profile_id)
+        profile = _lock_profile(session, profile)
         target = session.scalar(
             select(ChannelEditBlueprintVersion).where(
                 ChannelEditBlueprintVersion.channel_profile_id == profile.id,
