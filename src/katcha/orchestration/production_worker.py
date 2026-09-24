@@ -17,6 +17,12 @@ from katcha.orchestration.production_activities import (
     select_script_candidate,
 )
 from katcha.orchestration.production_workflows import ShortProductionWorkflow
+from katcha.orchestration.render_qc_activities import (
+    begin_render_attempt_activity,
+    dead_letter_render_attempt_activity,
+    post_render_qc_activity,
+    pre_render_qc_activity,
+)
 from katcha.orchestration.short_episode_activities import (
     generate_episode_narration_assets,
     generate_episode_script_candidates,
@@ -47,6 +53,10 @@ async def main() -> None:
             task_queue=settings.temporal_production_task_queue,
             workflows=[ShortProductionWorkflow, RankedShortEpisodeEditorialWorkflow],
             activities=[
+                begin_render_attempt_activity,
+                pre_render_qc_activity,
+                post_render_qc_activity,
+                dead_letter_render_attempt_activity,
                 generate_script_candidates,
                 select_script_candidate,
                 generate_narration_assets,
