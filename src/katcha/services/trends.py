@@ -313,6 +313,10 @@ def register_signal(
         return signal
 
 
+def _material_confidence_change(previous: float, current: float) -> bool:
+    return abs(float(current) - float(previous)) >= _CONFIDENCE_CHANGE_THRESHOLD
+
+
 def _rights_readiness(signals: list[TrendSignal]) -> float:
     """Diagnostic only; never grants permission or changes the popularity score."""
     values: list[float] = []
@@ -679,7 +683,7 @@ def refresh_channel_trends(
                     old_confidence = float(prior.confidence)
                     new_confidence = float(opportunity.confidence)
                     delta = new_confidence - old_confidence
-                    if abs(delta) >= _CONFIDENCE_CHANGE_THRESHOLD:
+                    if _material_confidence_change(old_confidence, new_confidence):
                         session.add(
                             DomainEvent(
                                 aggregate_type="trend_opportunity",
