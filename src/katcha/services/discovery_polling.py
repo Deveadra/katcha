@@ -418,6 +418,12 @@ def begin_poll_attempt(
         if quota_limit is not None:
             usage = _attempt_source_usage(session, state, current)
             if usage >= quota_limit:
+                next_eligible = _source_day_start(current) + timedelta(days=1)
+                state.health_status = "quota_exhausted"
+                state.backoff_until = next_eligible
+                state.last_poll_at = current
+                state.last_error_kind = "source_daily_quota"
+                state.last_error_summary = "source daily poll quota exhausted"
                 attempt = TrendWatchPollAttempt(
                     source_state_id=state.id,
                     execution_key=key,
@@ -429,12 +435,26 @@ def begin_poll_attempt(
                         "reason": "source_daily_quota",
                         "quota_limit_per_day": quota_limit,
                         "quota_used": usage,
+                        "next_eligible_poll_at": next_eligible.isoformat(),
                     },
                     completed_at=current,
                     started_at=current,
                 )
                 session.add(attempt)
                 session.flush()
+                session.add(
+                    DomainEvent(
+                        aggregate_type="topic_watch_source",
+                        aggregate_id=str(state.id),
+                        event_type="topic_watch.quota_exhausted",
+                        payload={
+                            "source_state_id": str(state.id),
+                            "poll_attempt_id": str(attempt.id),
+                            "reason": "source_daily_quota",
+                            "next_eligible_poll_at": next_eligible.isoformat(),
+                        },
+                    )
+                )
                 session.expunge(attempt)
                 return _attempt_decision(attempt)
 
@@ -482,9 +502,17 @@ def begin_poll_attempt(
         if claim.status == "completed" and claim.discovery_run_id is not None:
             run = session.get(DiscoveryRun, claim.discovery_run_id)
             cursor = dict(run.cursor or {}) if run is not None else dict(state.cursor or {})
+            prior_health = state.health_status
             state.cursor = cursor
             state.health_status = "healthy"
             state.consecutive_failures = 0
+            state.last_discovery_run_id = claim.discovery_run_id
+            state.last_success_at = current
+            state.last_poll_at = current
+            state.backoff_until = None
+            state.rate_limit_reset_at = None
+            state.last_error_kind = None
+            state.last_error_summary = None
             attempt = TrendWatchPollAttempt(
                 source_state_id=state.id,
                 collection_claim_id=claim.id,
@@ -500,6 +528,33 @@ def begin_poll_attempt(
             )
             session.add(attempt)
             session.flush()
+            session.add(
+                DomainEvent(
+                    aggregate_type="topic_watch_source",
+                    aggregate_id=str(state.id),
+                    event_type="topic_watch.poll_reused",
+                    payload={
+                        "source_state_id": str(state.id),
+                        "poll_attempt_id": str(attempt.id),
+                        "discovery_run_id": str(claim.discovery_run_id),
+                        "source_identity": identity,
+                    },
+                )
+            )
+            if prior_health in {"degraded", "rate_limited", "down", "quota_exhausted"}:
+                session.add(
+                    DomainEvent(
+                        aggregate_type="topic_watch_source",
+                        aggregate_id=str(state.id),
+                        event_type="topic_watch.source_recovered",
+                        payload={
+                            "source_state_id": str(state.id),
+                            "poll_attempt_id": str(attempt.id),
+                            "previous_health": prior_health,
+                            "outcome": "shared_reuse",
+                        },
+                    )
+                )
             session.expunge(attempt)
             return _attempt_decision(attempt)
 
@@ -1105,6 +1160,11 @@ def mark_quota_exhausted(
         state = session.get(TrendWatchSourceState, attempt.source_state_id)
         if state is not None:
             state.last_poll_at = current
+            state.health_status = "quota_exhausted"
+            state.last_error_kind = reason
+            state.last_error_summary = f"discovery quota unavailable: {reason}"
+            if blocked_until is not None:
+                state.backoff_until = blocked_until
         if attempt.collection_claim_id is not None:
             claim = session.get(DiscoveryCollectionClaim, attempt.collection_claim_id)
             if claim is not None:
