@@ -17,7 +17,6 @@ from katcha.publishing_models import Publication
 from katcha.services.channel_economics import latest_economics_snapshot
 from katcha.services.channel_profiles import ensure_active_profile
 from katcha.services.trend_activation import (
-    ActivationPreview,
     activate_trend_opportunity,
     preview_trend_activation,
 )
