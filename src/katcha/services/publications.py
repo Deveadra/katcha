@@ -15,6 +15,7 @@ from katcha.domain import (
     PublicationStatus,
     YouTubeConnectionStatus,
 )
+from katcha.edit_render_models import RenderAttempt
 from katcha.intelligence_models import ChannelProfile
 from katcha.longform_models import Compilation, CompilationAsset
 from katcha.models import DomainEvent
@@ -131,11 +132,21 @@ def _approved_render_key(
         source = _source(session, source_kind=source_kind, source_id=source_id)
         if source.status != ProductionStatus.APPROVED.value:
             raise ValueError("production must be approved before publication")
+        attempt = session.scalar(
+            select(RenderAttempt)
+            .where(
+                RenderAttempt.production_id == source_id,
+                RenderAttempt.status == "succeeded",
+            )
+            .order_by(RenderAttempt.attempt_number.desc())
+            .limit(1)
+        )
+        render_generation = attempt.attempt_number if attempt is not None else 1
         render = session.scalar(
             select(ProductionAsset).where(
                 ProductionAsset.production_id == source_id,
                 ProductionAsset.kind == "render",
-                ProductionAsset.generation == 1,
+                ProductionAsset.generation == render_generation,
             )
         )
     elif source_kind == "compilation":
@@ -153,11 +164,21 @@ def _approved_render_key(
         source = _source(session, source_kind=source_kind, source_id=source_id)
         if source.status != "approved" or source.stage != "render_approved":
             raise ValueError("short episode render must be approved before publication")
+        attempt = session.scalar(
+            select(RenderAttempt)
+            .where(
+                RenderAttempt.short_episode_id == source_id,
+                RenderAttempt.status == "succeeded",
+            )
+            .order_by(RenderAttempt.attempt_number.desc())
+            .limit(1)
+        )
+        render_generation = attempt.attempt_number if attempt is not None else 1
         render = session.scalar(
             select(ShortEpisodeAsset).where(
                 ShortEpisodeAsset.short_episode_id == source_id,
                 ShortEpisodeAsset.kind == "render",
-                ShortEpisodeAsset.generation == 1,
+                ShortEpisodeAsset.generation == render_generation,
             )
         )
     if render is None:
