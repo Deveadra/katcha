@@ -8,6 +8,7 @@ from katcha import brand_models  # noqa: F401
 from katcha import discovery_poll_models  # noqa: F401
 from katcha import discovery_trend_models  # noqa: F401
 from katcha import edit_blueprint_models  # noqa: F401
+from katcha import edit_performance_models  # noqa: F401
 from katcha import intelligence_models  # noqa: F401
 from katcha import longform_models  # noqa: F401
 from katcha import models  # noqa: F401
