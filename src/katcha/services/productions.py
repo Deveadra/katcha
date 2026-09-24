@@ -23,6 +23,7 @@ from katcha.services.acquisition import (
 )
 from katcha.services.channel_brands import brand_for_channel
 from katcha.services.channel_edit_blueprints import blueprint_for_channel
+from katcha.services.render_qc import assert_render_qc_passed
 
 PROMPT_VERSION = "short-script-v2"
 REGENERATE_STAGES = {"script", "voice", "render"}
@@ -384,6 +385,16 @@ def review_production(
         )
         session.add(review)
         if decision == ReviewDecision.APPROVE:
+            render_asset = session.scalar(
+                select(ProductionAsset).where(
+                    ProductionAsset.production_id == production.id,
+                    ProductionAsset.kind == "render",
+                    ProductionAsset.generation == 1,
+                )
+            )
+            if render_asset is None:
+                raise ValueError("production cannot be approved without a render asset")
+            assert_render_qc_passed(render_asset.asset_metadata)
             production.status = ProductionStatus.APPROVED.value
             production.stage = "approved"
             event_type = "production.approved"
