@@ -16,6 +16,12 @@ from katcha.orchestration.packaging_activities import (
     prepare_packaging_activation_activity,
 )
 from katcha.orchestration.packaging_workflows import YouTubePackagingActivationWorkflow
+from katcha.orchestration.reach_activities import (
+    create_reach_reporting_job_activity,
+    prepare_reach_reporting_job_activity,
+    sync_reach_reports_activity,
+)
+from katcha.orchestration.reach_workflows import YouTubeReachSyncWorkflow
 from katcha.orchestration.publishing_activities import (
     collect_analytics_snapshot_activity,
     finalize_publication_activity,
@@ -52,6 +58,7 @@ async def main() -> None:
             workflows=[
                 YouTubePublicationWorkflow,
                 YouTubePackagingActivationWorkflow,
+                YouTubeReachSyncWorkflow,
                 YouTubeAnalyticsWorkflow,
                 YouTubeAnalyticsRefreshWorkflow,
             ],
@@ -70,6 +77,9 @@ async def main() -> None:
                 apply_packaging_thumbnail_activity,
                 finalize_packaging_activation_activity,
                 mark_packaging_activation_failed,
+                prepare_reach_reporting_job_activity,
+                create_reach_reporting_job_activity,
+                sync_reach_reports_activity,
             ],
             activity_executor=activity_executor,
         )
