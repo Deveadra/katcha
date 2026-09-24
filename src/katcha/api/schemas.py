@@ -162,6 +162,10 @@ class ReviewActionResponse(BaseModel):
     decision: str
     child_production_id: UUID | None = None
     child_workflow_id: str | None = None
+    publication_id: UUID | None = None
+    publication_workflow_id: str | None = None
+    auto_publication_action: str | None = None
+    auto_publication_reason: str | None = None
 
 
 class CreateCompilationRequest(BaseModel):
