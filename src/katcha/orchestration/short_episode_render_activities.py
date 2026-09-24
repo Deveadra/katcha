@@ -95,20 +95,15 @@ def _narration_assets(session: object, episode: ShortEpisode) -> list[dict[str, 
 
 
 @activity.defn
-def build_ranked_episode_render_manifest_activity(episode_id: str) -> dict[str, object]:
+def build_ranked_episode_render_manifest_activity(
+    episode_id: str,
+    render_generation: int = 1,
+) -> dict[str, object]:
     episode_uuid = uuid.UUID(episode_id)
     with session_scope() as session:
         episode = session.get(ShortEpisode, episode_uuid)
         if episode is None:
             raise ValueError(f"short episode not found: {episode_id}")
-        if episode.render_manifest:
-            manifest = RankedEpisodeRenderManifest.model_validate(episode.render_manifest)
-            return {
-                "episode_id": episode_id,
-                "output_key": manifest.output_key,
-                "duration_seconds": manifest.output_duration_seconds,
-                "reused": True,
-            }
         if episode.status != "editorial_approved":
             raise RuntimeError("short episode must pass editorial approval before rendering")
 
@@ -125,7 +120,9 @@ def build_ranked_episode_render_manifest_activity(episode_id: str) -> dict[str, 
         )
         script_payload = dict(script.script_payload or {})
         interaction_prompt = script_payload.get("interaction_prompt")
-        output_key = f"short-episodes/{episode_id}/renders/g1.mp4"
+        if render_generation < 1:
+            raise ValueError("render_generation must be positive")
+        output_key = f"short-episodes/{episode_id}/renders/a{render_generation}.mp4"
         manifest = build_ranked_episode_manifest(
             short_episode_id=episode_id,
             premise=episode.premise,
@@ -159,6 +156,7 @@ def build_ranked_episode_render_manifest_activity(episode_id: str) -> dict[str, 
                     "output_key": manifest.output_key,
                     "duration_seconds": manifest.output_duration_seconds,
                     "treatment": manifest.treatment.model_dump(mode="json"),
+                    "render_generation": render_generation,
                 },
             )
         )
@@ -167,11 +165,15 @@ def build_ranked_episode_render_manifest_activity(episode_id: str) -> dict[str, 
             "output_key": manifest.output_key,
             "duration_seconds": manifest.output_duration_seconds,
             "reused": False,
+            "render_generation": render_generation,
         }
 
 
 @activity.defn
-def render_ranked_episode_activity(episode_id: str) -> dict[str, object]:
+def render_ranked_episode_activity(
+    episode_id: str,
+    render_generation: int = 1,
+) -> dict[str, object]:
     episode_uuid = uuid.UUID(episode_id)
     with session_scope() as session:
         episode = session.get(ShortEpisode, episode_uuid)
@@ -181,12 +183,12 @@ def render_ranked_episode_activity(episode_id: str) -> dict[str, object]:
             select(ShortEpisodeAsset).where(
                 ShortEpisodeAsset.short_episode_id == episode_uuid,
                 ShortEpisodeAsset.kind == "render",
-                ShortEpisodeAsset.generation == 1,
+                ShortEpisodeAsset.generation == render_generation,
             )
         )
         if existing is not None:
-            episode.status = "rendered"
-            episode.stage = "render_review"
+            episode.status = "rendering"
+            episode.stage = "render_output_ready"
             return {
                 "episode_id": episode_id,
                 "output_key": existing.storage_key,
@@ -206,7 +208,7 @@ def render_ranked_episode_activity(episode_id: str) -> dict[str, object]:
             select(ShortEpisodeAsset).where(
                 ShortEpisodeAsset.short_episode_id == episode_uuid,
                 ShortEpisodeAsset.kind == "render",
-                ShortEpisodeAsset.generation == 1,
+                ShortEpisodeAsset.generation == render_generation,
             )
         )
         if existing is None:
@@ -214,7 +216,7 @@ def render_ranked_episode_activity(episode_id: str) -> dict[str, object]:
                 ShortEpisodeAsset(
                     short_episode_id=episode_uuid,
                     kind="render",
-                    generation=1,
+                    generation=render_generation,
                     storage_key=result.output_key,
                     content_type="video/mp4",
                     provider="remotion",
@@ -223,11 +225,12 @@ def render_ranked_episode_activity(episode_id: str) -> dict[str, object]:
                         **dict(result.metadata or {}),
                         "duration_seconds": result.duration_seconds,
                         "treatment": manifest.treatment.model_dump(mode="json"),
+                    "render_generation": render_generation,
                     },
                 )
             )
-        episode.status = "rendered"
-        episode.stage = "render_review"
+        episode.status = "rendering"
+        episode.stage = "render_output_ready"
         episode.error = None
         session.add(
             DomainEvent(
@@ -247,4 +250,5 @@ def render_ranked_episode_activity(episode_id: str) -> dict[str, object]:
         "output_key": result.output_key,
         "duration_seconds": result.duration_seconds,
         "reused": False,
+        "render_generation": render_generation,
     }
