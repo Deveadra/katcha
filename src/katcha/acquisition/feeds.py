@@ -203,8 +203,9 @@ def _validate_public_url(url: str) -> None:
             raise ValueError("feed_url resolved to a non-public IP address")
 
 
-def _fetch_feed(url: str) -> tuple[bytes, str]:
+def _fetch_feed(url: str) -> tuple[bytes, str, int]:
     current = url
+    request_count = 0
     with httpx.Client(timeout=15.0, follow_redirects=False) as client:
         for _ in range(_MAX_REDIRECTS + 1):
             _validate_public_url(current)
@@ -213,6 +214,7 @@ def _fetch_feed(url: str) -> tuple[bytes, str]:
                     current,
                     headers={"User-Agent": _USER_AGENT, "Accept": _ACCEPT_HEADER},
                 )
+                request_count += 1
             except httpx.HTTPError as exc:
                 raise provider_transport_error("RSS/Atom", "fetch") from exc
             if response.status_code in {301, 302, 303, 307, 308}:
@@ -223,7 +225,7 @@ def _fetch_feed(url: str) -> tuple[bytes, str]:
                 continue
             if response.status_code >= 400:
                 raise provider_response_error("RSS/Atom", "fetch", response)
-            return response.content, str(response.url)
+            return response.content, str(response.url), request_count
     raise ValueError("feed exceeded maximum redirect count")
 
 
@@ -243,7 +245,7 @@ class RssAtomDiscoveryAdapter:
         include_terms = [str(value) for value in query.get("include_terms", [])]
         exclude_terms = [str(value) for value in query.get("exclude_terms", [])]
         limit = min(max(int(query.get("limit", 100)), 1), 500)
-        content, resolved_url = _fetch_feed(feed_url)
+        content, resolved_url, request_count = _fetch_feed(feed_url)
         items = parse_feed(
             content,
             feed_url=resolved_url,
@@ -251,4 +253,8 @@ class RssAtomDiscoveryAdapter:
             exclude_terms=exclude_terms,
             limit=limit,
         )
-        return DiscoveryBatch(items=items, done=True)
+        return DiscoveryBatch(
+            items=items,
+            done=True,
+            provider_usage={"rss.http": request_count},
+        )
