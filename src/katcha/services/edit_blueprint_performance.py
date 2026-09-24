@@ -178,6 +178,28 @@ def _publication_age_hours(
     )
 
 
+def _select_maturity_snapshot(
+    publication: Publication,
+    snapshots: list[PublicationAnalyticsSnapshot],
+    age_bucket_hours: int,
+) -> PublicationAnalyticsSnapshot | None:
+    tolerance = max(2.0, age_bucket_hours * 0.35)
+    eligible = [
+        row
+        for row in snapshots
+        if abs(_publication_age_hours(publication, row) - age_bucket_hours)
+        <= tolerance
+    ]
+    if not eligible:
+        return None
+    return min(
+        eligible,
+        key=lambda row: abs(
+            _publication_age_hours(publication, row) - age_bucket_hours
+        ),
+    )
+
+
 def _analytics_at_age_bucket(
     session: object,
     publications: list[Publication],
@@ -201,24 +223,16 @@ def _analytics_at_age_bucket(
         by_publication[row.publication_id].append(row)
 
     publication_by_id = {row.id: row for row in publications}
-    tolerance = max(2.0, age_bucket_hours * 0.35)
     selected: dict[uuid.UUID, PublicationAnalyticsSnapshot] = {}
     for publication_id, snapshots in by_publication.items():
         publication = publication_by_id[publication_id]
-        eligible = [
-            row
-            for row in snapshots
-            if abs(_publication_age_hours(publication, row) - age_bucket_hours)
-            <= tolerance
-        ]
-        if not eligible:
-            continue
-        selected[publication_id] = min(
-            eligible,
-            key=lambda row: abs(
-                _publication_age_hours(publication, row) - age_bucket_hours
-            ),
+        chosen = _select_maturity_snapshot(
+            publication,
+            snapshots,
+            age_bucket_hours,
         )
+        if chosen is not None:
+            selected[publication_id] = chosen
     return selected
 
 
