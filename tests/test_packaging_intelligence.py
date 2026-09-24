@@ -4,7 +4,6 @@ import uuid
 from contextlib import contextmanager
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
-from types import SimpleNamespace
 
 import pytest
 from sqlalchemy import create_engine
