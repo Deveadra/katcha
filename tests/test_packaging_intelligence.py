@@ -301,3 +301,84 @@ def test_packaging_intelligence_routes_are_mounted() -> None:
         "/v1/channels/{channel_profile_id}/packaging-intelligence/history"
         in paths
     )
+
+
+
+def test_provider_error_is_recorded_without_stopping_channel_refresh(
+    intelligence_scope,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with intelligence_scope() as session:
+        connection = YouTubeConnection(
+            channel_id="channel-degraded",
+            channel_title="Degraded Channel",
+            status="active",
+            scopes=["https://www.googleapis.com/auth/yt-analytics.readonly"],
+            encrypted_access_token="encrypted",
+            encrypted_refresh_token="encrypted",
+            token_expires_at=datetime.now(UTC) + timedelta(hours=1),
+        )
+        session.add(connection)
+        session.flush()
+        profile = ChannelProfile(
+            youtube_connection_id=connection.id,
+            timezone="UTC",
+        )
+        session.add(profile)
+        session.flush()
+        publication = Publication(
+            production_id=uuid.uuid4(),
+            youtube_connection_id=connection.id,
+            workflow_id="publish-degraded",
+            analytics_workflow_id="analytics-degraded",
+            title="Degraded",
+            youtube_video_id="video-degraded",
+        )
+        session.add(publication)
+        session.flush()
+        variant = PublicationPackagingVariant(
+            publication_id=publication.id,
+            variant_key="baseline",
+            version=1,
+            title="Degraded baseline",
+            created_by="test",
+        )
+        session.add(variant)
+        session.flush()
+        for offset in range(7):
+            session.add(
+                PublicationReachObservation(
+                    publication_id=publication.id,
+                    report_import_id=uuid.uuid4(),
+                    report_date=date(2026, 9, 1) + timedelta(days=offset),
+                    impressions=1_000,
+                    ctr=Decimal("0.06"),
+                    attribution_status="variant",
+                    packaging_variant_id=variant.id,
+                )
+            )
+        profile_id = profile.id
+
+    def fail_measurement(*_args, **_kwargs):
+        raise packaging_intelligence.YouTubeAnalyticsError(
+            "temporary provider outage",
+            status_code=503,
+        )
+
+    monkeypatch.setattr(
+        packaging_intelligence,
+        "_measure_window",
+        fail_measurement,
+    )
+    snapshot = packaging_intelligence.refresh_packaging_intelligence(
+        profile_id,
+        run_key="provider-degraded",
+        maturity_days=7,
+    )
+
+    assert snapshot.variant_window_count == 0
+    assert snapshot.recommendation_status == "insufficient_data"
+    assert snapshot.validation_metrics["provider_error_count"] == 1
+    error = snapshot.validation_metrics["provider_errors"][0]
+    assert error["status_code"] == 503
+    assert error["publication_id"] == str(publication.id)
