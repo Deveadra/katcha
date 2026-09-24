@@ -190,7 +190,11 @@ class RedditDiscoveryAdapter:
             )
         token = str(payload.get("access_token") or "").strip()
         if not token:
-            raise provider_payload_error("Reddit", "OAuth token")
+            raise provider_payload_error(
+                "Reddit",
+                "OAuth token",
+                provider_usage={"reddit.oauth": 1},
+            )
         try:
             expires_in = max(int(payload.get("expires_in") or 3600), 60)
         except (TypeError, ValueError):
