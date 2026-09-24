@@ -255,6 +255,52 @@ P10.1 **does not** generate thumbnail bytes and **does not** mutate YouTube. Thu
 production is a separate paid/QC stage, and any later title/thumbnail activation must still
 flow through the existing P9.1 activation ledger.
 
+## P10.3 guarded packaging experiments
+
+The channel intelligence cadence now evaluates `test` recommendations from the latest P9
+packaging snapshot after refreshing that snapshot and applying channel safety demotion.
+Only an active channel with the active
+`auto_publish_scheduled` policy can start an automatic experiment. Earlier automation
+levels, unpublished videos, stale/provider-degraded evidence, candidates from another
+publication, and an occupied experiment slot fail closed. A seven-day Pacific-day
+cooldown follows the latest activation.
+
+Starting requires an applied prior package to serve as a rollback target and a mature
+baseline window (at least seven attributed days, 1,000 impressions, CTR, watch percentage
+and midpoint retention). Thumbnail-changing candidates require their frozen renderer
+manifest, parent/source/verifier lineage and SHA-256; the prior variant must have a frozen
+thumbnail for restoration. The snapshot ID, prior/candidate variant IDs, baseline window,
+policy version and hashes are frozen on the experiment ledger. A partial unique index
+allows only one active experiment per publication across concurrent workers.
+
+All forward and rollback activations use the existing P9.1 registration and publishing
+workflow, with deterministic experiment keys. At the provider mutation boundary, automatic
+activations recheck the active channel policy and experiment lineage. Demotion blocks
+further automatic edits and records `needs_review` when recovery is uncertain.
+
+The intelligence cadence observes a *new* packaging snapshot only after an activation is
+applied. It considers a complete candidate window whose dates follow the activation and
+whose report end is at least two Pacific days old. Mature degradation in watch percentage,
+midpoint retention or a negative margin requests a rollback to the frozen prior variant.
+Once the rollback activation applies, the ledger records `rolled_back`. A mature `prefer`
+without blockers completes the experiment. Missing evidence keeps it observing; it never
+converts an absent metric into a successful experiment. The publishing worker remains the
+only executor of YouTube mutations.
+
+Operator inspection and recovery endpoints are:
+
+```http
+GET  /v1/publications/{publication_id}/packaging/experiments/eligibility?candidate_variant_id={variant_id}
+POST /v1/publications/{publication_id}/packaging/experiments
+GET  /v1/publications/{publication_id}/packaging/experiments
+POST /v1/publications/{publication_id}/packaging/experiments/{experiment_id}/refresh
+```
+
+The existing manual packaging activation endpoint remains available for deliberate
+operator recovery. `needs_review` means an automatic workflow stopped without evidence of
+a safe final YouTube state; the operator should inspect the activation history and the
+video before proceeding.
+
 
 ## P10.2 source-grounded thumbnail rendering
 

@@ -105,4 +105,7 @@ async def test_reach_scheduling_failure_does_not_block_intelligence(monkeypatch)
     assert result["packaging_intelligence"]["activity"] == (
         "refresh_packaging_intelligence_activity"
     )
-    assert calls[-1] == "apply_channel_safety_demotion_activity"
+    assert calls[-2:] == [
+        "apply_channel_safety_demotion_activity",
+        "run_channel_packaging_experiments_activity",
+    ]

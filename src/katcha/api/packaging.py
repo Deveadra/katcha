@@ -10,6 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from katcha.orchestration.client import start_packaging_activation_workflow
 from katcha.packaging_models import (
     PackagingCandidateGeneration,
+    PackagingExperiment,
     PublicationPackagingActivation,
     PublicationPackagingVariant,
 )
@@ -18,6 +19,13 @@ from katcha.services.packaging import (
     list_packaging_activations,
     list_packaging_variants,
     register_packaging_activation,
+)
+from katcha.services.packaging_experiments import (
+    experiment_eligibility,
+    get_packaging_experiment,
+    list_packaging_experiments,
+    reconcile_packaging_experiment,
+    start_packaging_experiment,
 )
 from katcha.services.packaging_generation import (
     AmbiguousPackagingGeneration,
@@ -80,6 +88,102 @@ class PackagingActivationResponse(BaseModel):
     applied_at: datetime | None
 
 
+class PackagingExperimentResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    publication_id: uuid.UUID
+    channel_profile_id: uuid.UUID
+    experiment_key: str
+    status: str
+    candidate_variant_id: uuid.UUID
+    previous_variant_id: uuid.UUID
+    snapshot_id: uuid.UUID
+    baseline_window_id: uuid.UUID
+    activation_id: uuid.UUID | None
+    rollback_activation_id: uuid.UUID | None
+    evidence: dict[str, Any]
+    created_at: datetime
+
+
+class StartPackagingExperimentRequest(BaseModel):
+    candidate_variant_id: uuid.UUID
+
+
+@router.get("/{publication_id}/packaging/experiments/eligibility")
+def get_experiment_eligibility(
+    publication_id: uuid.UUID, candidate_variant_id: uuid.UUID
+) -> dict[str, Any]:
+    try:
+        return experiment_eligibility(publication_id, candidate_variant_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.post(
+    "/{publication_id}/packaging/experiments",
+    response_model=PackagingExperimentResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def start_experiment(
+    publication_id: uuid.UUID, request: StartPackagingExperimentRequest
+) -> PackagingExperiment:
+    try:
+        row = start_packaging_experiment(publication_id, request.candidate_variant_id)
+    except ValueError as exc:
+        code = 404 if "publication not found" in str(exc) else 409
+        raise HTTPException(status_code=code, detail=str(exc)) from exc
+    if row.activation_id is not None and row.status == "pending":
+        activation = next(
+            item
+            for item in list_packaging_activations(publication_id)
+            if item.id == row.activation_id
+        )
+        if activation.status in {"queued", "running"}:
+            await start_packaging_activation_workflow(str(activation.id), activation.workflow_id)
+    return row
+
+
+@router.get(
+    "/{publication_id}/packaging/experiments",
+    response_model=list[PackagingExperimentResponse],
+)
+def get_experiments(publication_id: uuid.UUID) -> list[PackagingExperiment]:
+    try:
+        return list_packaging_experiments(publication_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.post(
+    "/{publication_id}/packaging/experiments/{experiment_id}/refresh",
+    response_model=PackagingExperimentResponse,
+)
+async def refresh_experiment(
+    publication_id: uuid.UUID, experiment_id: uuid.UUID
+) -> PackagingExperiment:
+    try:
+        row = get_packaging_experiment(experiment_id)
+        if row.publication_id != publication_id:
+            raise ValueError("experiment does not belong to publication")
+        row = reconcile_packaging_experiment(experiment_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    activation_id = (
+        row.rollback_activation_id
+        if row.status == "rollback_pending"
+        else row.activation_id
+        if row.status == "pending"
+        else None
+    )
+    if activation_id:
+        activation = next(
+            item for item in list_packaging_activations(publication_id) if item.id == activation_id
+        )
+        if activation.status in {"queued", "running"}:
+            await start_packaging_activation_workflow(str(activation.id), activation.workflow_id)
+    return row
+
 
 class GeneratePackagingCandidatesRequest(BaseModel):
     generation_key: str = Field(min_length=1, max_length=160)
@@ -109,7 +213,6 @@ class PackagingGenerationResponse(BaseModel):
 class PackagingGenerationDetailResponse(BaseModel):
     generation: PackagingGenerationResponse
     variants: list[PackagingVariantResponse]
-
 
 
 class BuildThumbnailRequest(BaseModel):
@@ -175,8 +278,7 @@ def generate_candidates(
         return PackagingGenerationDetailResponse(
             generation=PackagingGenerationResponse.model_validate(result.generation),
             variants=[
-                PackagingVariantResponse.model_validate(variant)
-                for variant in result.variants
+                PackagingVariantResponse.model_validate(variant) for variant in result.variants
             ],
         )
     except AmbiguousPackagingGeneration as exc:
@@ -216,12 +318,8 @@ def build_thumbnail(
             parent_variant_id=request.parent_variant_id,
         )
         return BuildThumbnailResponse(
-            parent_variant=PackagingVariantResponse.model_validate(
-                result.parent_variant
-            ),
-            thumbnail_variant=PackagingVariantResponse.model_validate(
-                result.thumbnail_variant
-            ),
+            parent_variant=PackagingVariantResponse.model_validate(result.parent_variant),
+            thumbnail_variant=PackagingVariantResponse.model_validate(result.thumbnail_variant),
         )
     except ValueError as exc:
         code = 404 if "publication not found" in str(exc) else 409

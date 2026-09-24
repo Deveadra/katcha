@@ -4,18 +4,58 @@ import hashlib
 import uuid
 from datetime import UTC, datetime
 
+from sqlalchemy import select
 from temporalio import activity
 
 from katcha.db import session_scope
-from katcha.domain import YouTubeConnectionStatus
+from katcha.domain import AutomationLevel, ChannelStatus, YouTubeConnectionStatus
 from katcha.integrations.storage import ObjectStore
 from katcha.integrations.youtube.client import YouTubeClient
+from katcha.intelligence_models import AutomationPolicyVersion, ChannelProfile
 from katcha.models import DomainEvent
 from katcha.packaging_models import (
+    PackagingExperiment,
     PublicationPackagingActivation,
     PublicationPackagingVariant,
 )
 from katcha.publishing_models import Publication, YouTubeConnection
+
+
+def _require_automatic_experiment_policy(
+    activation: PublicationPackagingActivation,
+) -> None:
+    if not activation.activation_key.startswith("experiment-"):
+        return
+    rollback = activation.activation_key.startswith("experiment-rollback-")
+    suffix = activation.activation_key.removeprefix(
+        "experiment-rollback-" if rollback else "experiment-"
+    )
+    try:
+        experiment_id = uuid.UUID(suffix)
+    except ValueError as exc:
+        raise RuntimeError("automatic packaging activation has invalid lineage") from exc
+    with session_scope() as session:
+        experiment = session.get(PackagingExperiment, experiment_id)
+        if (
+            experiment is None
+            or experiment.publication_id != activation.publication_id
+            or activation.variant_id
+            != (experiment.previous_variant_id if rollback else experiment.candidate_variant_id)
+            or experiment.status
+            not in ({"rollback_pending"} if rollback else {"pending", "preparing"})
+        ):
+            raise RuntimeError("automatic packaging activation lineage is invalid")
+        profile = session.get(ChannelProfile, experiment.channel_profile_id)
+        if profile is None or profile.status != ChannelStatus.ACTIVE.value:
+            raise RuntimeError("channel no longer permits automatic packaging")
+        policy = session.scalar(
+            select(AutomationPolicyVersion).where(
+                AutomationPolicyVersion.channel_profile_id == profile.id,
+                AutomationPolicyVersion.version == profile.active_automation_version,
+            )
+        )
+        if policy is None or policy.level != AutomationLevel.AUTO_PUBLISH_SCHEDULED.value:
+            raise RuntimeError("channel no longer permits automatic packaging")
 
 
 def _activation_bundle(
@@ -67,6 +107,7 @@ def prepare_packaging_activation_activity(activation_id: str) -> dict[str, objec
         variant = session.get(PublicationPackagingVariant, activation.variant_id)
         if variant is None or variant.publication_id != publication.id:
             raise RuntimeError("packaging activation variant/publication mismatch")
+        _require_automatic_experiment_policy(activation)
         activation.status = "running"
         if activation.stage == "queued":
             activation.stage = "prepared"
@@ -92,6 +133,7 @@ def apply_packaging_text_activity(activation_id: str) -> dict[str, object]:
         return {"activation_id": activation_id, "reused": True, "stage": activation.stage}
     if activation.status != "running":
         raise RuntimeError("packaging activation is not running")
+    _require_automatic_experiment_policy(activation)
 
     if publication.title != variant.title or publication.description != variant.description:
         client = YouTubeClient(publication.youtube_connection_id)
@@ -155,6 +197,7 @@ def apply_packaging_thumbnail_activity(activation_id: str) -> dict[str, object]:
             "stage": "thumbnail_skipped",
         }
 
+    _require_automatic_experiment_policy(activation)
     store = ObjectStore()
     data = store.get_bytes(variant.thumbnail_storage_key)
     if len(data) != int(variant.thumbnail_size_bytes or 0):
