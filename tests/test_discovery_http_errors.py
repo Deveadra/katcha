@@ -84,9 +84,11 @@ def test_youtube_http_429_retains_retry_after_without_api_key() -> None:
             "https://www.googleapis.com/youtube/v3/search",
             params={"key": secret, "part": "snippet"},
             operation="search",
+            provider_usage={"youtube.search.list": 1},
         )
     assert raised.value.kind == "rate_limited"
     assert raised.value.retry_after_seconds == 240
+    assert raised.value.provider_usage == {"youtube.search.list": 1}
     assert secret not in str(raised.value)
 
 
@@ -117,6 +119,7 @@ def test_reddit_oauth_429_retains_retry_after(monkeypatch: pytest.MonkeyPatch) -
         reddit.RedditDiscoveryAdapter()._access_token(client)
     assert raised.value.kind == "rate_limited"
     assert raised.value.retry_after_seconds == 180
+    assert raised.value.provider_usage == {"reddit.oauth": 1}
     assert "secret-oauth" not in str(raised.value)
 
 
@@ -169,5 +172,6 @@ def test_rss_429_retains_retry_after_without_leaking_feed_url(
         feeds._fetch_feed("https://example.com/rss?secret=hidden")
     assert raised.value.kind == "rate_limited"
     assert raised.value.retry_after_seconds == 90
+    assert raised.value.provider_usage == {"rss.http": 1}
     assert "hidden" not in str(raised.value)
     assert "private feed response" not in str(raised.value)
