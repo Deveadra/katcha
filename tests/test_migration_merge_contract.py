@@ -2,12 +2,15 @@ from alembic.config import Config
 from alembic.script import ScriptDirectory
 
 
-def test_ranked_and_trend_reliability_revisions_share_one_history() -> None:
+def test_ranked_trend_and_editing_revisions_share_one_history() -> None:
     script = ScriptDirectory.from_config(Config("alembic.ini"))
-    assert script.get_heads() == ["0023_channel_edit_blueprints"]
+    assert script.get_heads() == ["0024_channel_edit_blueprints"]
 
-    editing = script.get_revision("0023_channel_edit_blueprints")
-    assert editing.down_revision == "0022_discovery_poll_quota"
+    editing = script.get_revision("0024_channel_edit_blueprints")
+    assert editing.down_revision == "0023_autonomous_trend_activation"
+
+    activation = script.get_revision("0023_autonomous_trend_activation")
+    assert activation.down_revision == "0022_discovery_poll_quota"
 
     quota = script.get_revision("0022_discovery_poll_quota")
     assert quota.down_revision == "0021_trend_calibration"
