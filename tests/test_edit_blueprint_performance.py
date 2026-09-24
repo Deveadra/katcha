@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+import uuid
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
+from katcha.publishing_models import Publication, PublicationAnalyticsSnapshot
 from katcha.services.edit_blueprint_performance import (
     _aggregate_group,
     _comparison_summary,
     _group_identity,
+    _select_maturity_snapshot,
 )
 
 
@@ -137,3 +141,47 @@ def test_small_samples_remain_advisory_and_insufficient() -> None:
     assert status == "insufficient_data"
     assert summary["advisory_only"] is True
     assert summary["comparisons"] == []
+
+
+def test_repeated_analytics_samples_choose_one_maturity_matched_snapshot() -> None:
+    publication_id = uuid.uuid4()
+    anchor = datetime(2026, 9, 1, 12, 0, tzinfo=UTC)
+    publication = Publication(
+        id=publication_id,
+        youtube_connection_id=uuid.uuid4(),
+        workflow_id="publish-test",
+        analytics_workflow_id="analytics-test",
+        title="Test",
+        published_at=anchor,
+    )
+    snapshots = [
+        PublicationAnalyticsSnapshot(
+            id=uuid.uuid4(),
+            publication_id=publication_id,
+            sample_key="6h",
+            sampled_at=anchor + timedelta(hours=6),
+            period_start=anchor.date(),
+            period_end=anchor.date(),
+        ),
+        PublicationAnalyticsSnapshot(
+            id=uuid.uuid4(),
+            publication_id=publication_id,
+            sample_key="70h",
+            sampled_at=anchor + timedelta(hours=70),
+            period_start=anchor.date(),
+            period_end=anchor.date(),
+        ),
+        PublicationAnalyticsSnapshot(
+            id=uuid.uuid4(),
+            publication_id=publication_id,
+            sample_key="80h",
+            sampled_at=anchor + timedelta(hours=80),
+            period_start=anchor.date(),
+            period_end=anchor.date(),
+        ),
+    ]
+
+    selected = _select_maturity_snapshot(publication, snapshots, 72)
+
+    assert selected is not None
+    assert selected.sample_key == "70h"
