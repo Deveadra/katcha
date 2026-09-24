@@ -258,7 +258,8 @@ flow through the existing P9.1 activation ledger.
 ## P10.3 guarded packaging experiments
 
 The channel intelligence cadence now evaluates `test` recommendations from the latest P9
-packaging snapshot after refreshing that snapshot. Only an active channel with the active
+packaging snapshot after refreshing that snapshot and applying channel safety demotion.
+Only an active channel with the active
 `auto_publish_scheduled` policy can start an automatic experiment. Earlier automation
 levels, unpublished videos, stale/provider-degraded evidence, candidates from another
 publication, and an occupied experiment slot fail closed. A seven-day Pacific-day
