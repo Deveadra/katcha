@@ -42,6 +42,7 @@ from katcha.publishing_models import (
     YouTubeConnection,
 )
 from katcha.security.secrets import decrypt_secret, encrypt_secret
+from katcha.services.render_qc import assert_render_qc_passed
 from katcha.short_episode_models import ShortEpisode, ShortEpisodeAsset
 
 
@@ -63,6 +64,7 @@ def _publication_render_key(session: Session, publication: Publication) -> str:
         )
         if asset is None:
             raise RuntimeError("publication production has no render asset")
+        assert_render_qc_passed(asset.asset_metadata)
         return asset.storage_key
 
     if (
@@ -101,6 +103,7 @@ def _publication_render_key(session: Session, publication: Publication) -> str:
         )
         if asset is None:
             raise RuntimeError("publication short episode has no render asset")
+        assert_render_qc_passed(asset.asset_metadata)
         return asset.storage_key
 
     raise RuntimeError("publication must reference exactly one approved source")
