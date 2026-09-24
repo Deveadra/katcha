@@ -269,3 +269,55 @@ def test_reach_routes_are_mounted() -> None:
     assert "/v1/integrations/youtube/{connection_id}/reach/sync" in paths
     assert "/v1/integrations/youtube/{connection_id}/reach/job" in paths
     assert "/v1/publications/{publication_id}/reach" in paths
+    assert "/v1/integrations/youtube/{connection_id}/reach/imports" in paths
+    assert "/v1/publications/{publication_id}/reach/summary" in paths
+
+
+
+def test_reach_summary_uses_first_full_variant_days_and_weighted_ctr(
+    reach_scope,
+) -> None:
+    connection, publication = _connection_and_publication(reach_scope, "summary")
+    variant = _variant(reach_scope, publication, "summary")
+    with reach_scope() as session:
+        job = YouTubeReachReportingJob(
+            youtube_connection_id=connection.id,
+            report_type_id="channel_reach_basic_a1",
+            provider_job_id="provider-job",
+            status="active",
+            stage="active",
+        )
+        session.add(job)
+        session.flush()
+        job_id = job.id
+    _activation(
+        reach_scope,
+        publication,
+        variant,
+        datetime(2026, 9, 22, 6, 0, tzinfo=UTC),
+    )
+    payload = (
+        "date,channel_id,video_id,video_thumbnail_impressions,"
+        "video_thumbnail_impressions_ctr\n"
+        "2026-09-23,channel-reach,video-summary,100,0.04\n"
+        "2026-09-24,channel-reach,video-summary,300,0.08\n"
+        "2026-09-25,channel-reach,video-summary,900,0.20\n"
+    ).encode()
+    reach_reporting.import_reach_report(
+        connection.id,
+        job_id,
+        report={"id": "report-summary"},
+        payload=payload,
+    )
+
+    summary = reach_reporting.reach_summary_for_publication(
+        publication.id,
+        maturity_days=2,
+    )
+    assert summary["mixed_days"] == 0
+    assert summary["legacy_days"] == 0
+    assert len(summary["variants"]) == 1
+    variant_summary = summary["variants"][0]
+    assert variant_summary["observed_full_days"] == 2
+    assert variant_summary["impressions"] == 400
+    assert variant_summary["weighted_ctr"] == "0.07000000"
