@@ -13,6 +13,7 @@ from katcha.db import session_scope
 from katcha.domain import DiscoveryRunStatus
 from katcha.models import DomainEvent
 from katcha.services.discovery import observe_discovery_candidate
+from katcha.services.discovery_quota import reserve_youtube_page
 from katcha.services.discovery_trends import compute_candidate_trend_score
 from katcha.services.trend_execution import prepare_topic_watch_execution
 from katcha.services.trend_queue import materialize_trend_review_queue
@@ -60,6 +61,7 @@ def execute_discovery_page_activity(run_id: str) -> dict[str, object]:
         except ValueError as exc:
             raise ValueError("discovery run has an invalid topic_watch_id") from exc
 
+    quota_estimate = reserve_youtube_page(run_uuid) if adapter_key == "youtube" else None
     adapter = get_adapter(adapter_key, adapter_version)
     batch = adapter.discover(query, cursor)
     candidate_ids: list[str] = []
@@ -101,9 +103,7 @@ def execute_discovery_page_activity(run_id: str) -> dict[str, object]:
                 aggregate_type="discovery_run",
                 aggregate_id=run_id,
                 event_type=(
-                    "discovery_run.completed"
-                    if batch.done
-                    else "discovery_run.page_completed"
+                    "discovery_run.completed" if batch.done else "discovery_run.page_completed"
                 ),
                 payload={
                     "discovery_run_id": run_id,
@@ -111,9 +111,8 @@ def execute_discovery_page_activity(run_id: str) -> dict[str, object]:
                     "adapter_version": adapter_version,
                     "candidate_count": len(candidate_ids),
                     "done": batch.done,
-                    "topic_watch_id": (
-                        str(topic_watch_id) if topic_watch_id is not None else None
-                    ),
+                    "quota_estimate": quota_estimate,
+                    "topic_watch_id": (str(topic_watch_id) if topic_watch_id is not None else None),
                 },
             )
         )
@@ -124,6 +123,7 @@ def execute_discovery_page_activity(run_id: str) -> dict[str, object]:
         "candidate_count": len(candidate_ids),
         "done": batch.done,
         "reused": False,
+        "quota_estimate": quota_estimate,
     }
 
 

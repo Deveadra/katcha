@@ -19,6 +19,12 @@ Discovery answers what source material exists. Acquisition and rights qualificat
 
 Trend signals are metadata/evidence observations. Evidence packets may carry acquisition and rights references, but the trend score does not override those decisions.
 
+`rights_reference_coverage` is a deterministic diagnostic component: the fraction of distinct
+provider/external IDs whose observations contain an explicit acquisition or rights review
+reference. It does not affect the popularity score, assert that a review approved reuse, or
+permit a production gate to be bypassed. The evidence summary includes the numerator and
+denominator for inspection.
+
 ### Trend intelligence
 
 Trend intelligence owns:
@@ -116,6 +122,11 @@ Trend refreshes run on the dedicated Temporal trend task queue. A refresh:
 9. builds evidence packets for qualified opportunities.
 
 Run keys make opportunity creation idempotent for a channel/topic/run tuple.
+Scoring filters platform, language, region, and observation time in the database before
+the per-topic signal cap. Existing snapshots are not re-scored on a repeated run key.
+When a new snapshot for the same channel, topic, and watch version changes confidence by
+at least 0.10, a `trend.confidence.changed` event records both opportunity IDs, scores,
+delta and run key. Replays of the same run key do not emit another change.
 
 ## P6.3 discovery-to-trend bridge
 
@@ -143,6 +154,8 @@ The mounted control surface includes:
 - `POST /v1/channels/{channel_profile_id}/trends/watch-profile`
 - `GET /v1/channels/{channel_profile_id}/trends/watch-profile`
 - `POST /v1/trends/signals`
+- `GET /v1/trends/signals` (optional topic ID, provider, kind and observation time
+  bounds; newest first; maximum 500 rows, with ID tie-breaker)
 - `POST /v1/channels/{channel_profile_id}/trends/refresh`
 - `GET /v1/channels/{channel_profile_id}/trends/opportunities`
 - `GET /v1/trends/opportunities/{opportunity_id}/evidence`
@@ -155,6 +168,24 @@ Provider credentials and provider-specific polling behavior remain outside these
 ## Events
 
 Core events include watch-profile versioning, signal observation, qualified opportunity lifecycle events, evidence-packet readiness, and discovery-bridge completion. Event payloads use IDs, counts, scores, timestamps, and non-secret metadata. Provider credentials must never be emitted.
+
+## Polling budget guard
+
+YouTube discovery reserves capacity *before each page* using the existing DiscoveryRun
+metadata and a PostgreSQL transaction advisory lock shared by workers. The configured
+daily search and video-details limits default to 80 and 8,000, respectively. The budget
+day follows `America/Los_Angeles`, including daylight-saving transitions. Each page
+conservatively reserves one search request and one possible videos.list hydration request,
+including attempts that fail after the external call. The response and domain event
+expose the estimate, limits and budget day without credentials. Exhaustion stops the poll
+before reaching YouTube, and discovery coverage gates protect downstream rankings from
+interpreting an outage as zero engagement.
+
+These are **Katcha discovery budgets**, not Google account quota reports. They exclude
+other applications or Katcha features sharing the API key. Replayed attempts can consume
+extra reservations, and a page with no video IDs can reserve unused hydration capacity.
+The follow-up durable poll ledger in #43 will record actual operations, outcome and cursor
+lineage across failures, and enforce provider-wide quota accounting more precisely.
 
 ## Live discovery integration contract
 

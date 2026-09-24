@@ -96,6 +96,8 @@ def source_state_snapshot(
 
 def _classify_failure(message: str) -> tuple[str, bool, int | None]:
     lowered = message.casefold()
+    if "discovery daily budget exhausted" in lowered:
+        return "quota_deferred", True, None
     retry_match = _RETRY_AFTER_RE.search(message)
     retry_after = int(retry_match.group(1)) if retry_match else None
     status_match = _STATUS_RE.search(message)
@@ -290,9 +292,7 @@ def topic_watch_source_health(topic_watch_id: uuid.UUID) -> dict[str, Any]:
                 "last_failure_at": state.last_failure_at.isoformat()
                 if state.last_failure_at
                 else None,
-                "backoff_until": state.backoff_until.isoformat()
-                if state.backoff_until
-                else None,
+                "backoff_until": state.backoff_until.isoformat() if state.backoff_until else None,
                 "last_error_kind": state.last_error_kind,
                 "last_discovery_run_id": str(state.last_discovery_run_id)
                 if state.last_discovery_run_id

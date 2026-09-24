@@ -7,7 +7,7 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 
 from katcha.db import session_scope
 from katcha.intelligence_models import ChannelProfile
@@ -66,6 +66,56 @@ def _signal_allowed(
     if languages and (signal.language is None or signal.language.casefold() not in languages):
         return False
     return not regions or (signal.region is not None and signal.region.casefold() in regions)
+
+
+def evidence_readiness(signals: list[TrendSignal]) -> tuple[float, dict[str, Any]]:
+    """Report explicit references for editorial review; never infer reuse permission."""
+    identities: dict[tuple[str, str], bool] = {}
+    for signal in signals:
+        key = (signal.provider_key, signal.external_id)
+        refs = signal.signal_metadata or {}
+        identities[key] = identities.get(key, False) or bool(
+            refs.get("rights_ref") or refs.get("acquisition_ref")
+        )
+    count = sum(identities.values())
+    total = len(identities)
+    return (round(count / total, 6) if total else 0.0), {
+        "entities_with_review_reference": count,
+        "observed_entities": total,
+        "meaning": "reference coverage only; reuse permission requires separate review",
+    }
+
+
+def query_signals(
+    *,
+    topic_id: uuid.UUID | None = None,
+    provider_key: str | None = None,
+    source_kind: str | None = None,
+    observed_after: datetime | None = None,
+    observed_before: datetime | None = None,
+    limit: int = 100,
+) -> list[TrendSignal]:
+    query = select(TrendSignal)
+    if topic_id is not None:
+        query = query.join(
+            TrendTopicSignal, TrendTopicSignal.trend_signal_id == TrendSignal.id
+        ).where(TrendTopicSignal.trend_topic_id == topic_id)
+    if provider_key:
+        query = query.where(TrendSignal.provider_key == provider_key.strip().casefold())
+    if source_kind:
+        query = query.where(TrendSignal.source_kind == source_kind.strip().casefold())
+    if observed_after is not None:
+        query = query.where(TrendSignal.observed_at >= _utc(observed_after))
+    if observed_before is not None:
+        query = query.where(TrendSignal.observed_at <= _utc(observed_before))
+    with session_scope() as session:
+        return list(
+            session.scalars(
+                query.order_by(TrendSignal.observed_at.desc(), TrendSignal.id.desc()).limit(
+                    max(1, min(limit, 500))
+                )
+            )
+        )
 
 
 def _topic_matches_entities(
@@ -302,22 +352,38 @@ def _signals_for_topic(
     topic_id: uuid.UUID,
     *,
     cutoff: datetime,
+    as_of: datetime,
     source_weights: dict[str, float],
     platforms: list[str],
     languages: list[str],
     regions: list[str],
 ) -> tuple[list[TrendSignal], list[SignalSample]]:
     with session_scope() as session:
+        query = (
+            select(TrendSignal)
+            .join(TrendTopicSignal, TrendTopicSignal.trend_signal_id == TrendSignal.id)
+            .where(
+                TrendTopicSignal.trend_topic_id == topic_id,
+                TrendSignal.observed_at >= cutoff,
+                TrendSignal.observed_at <= as_of,
+            )
+        )
+        if platforms:
+            query = query.where(
+                or_(
+                    func.lower(TrendSignal.provider_key).in_(platforms),
+                    func.lower(TrendSignal.source_kind).in_(platforms),
+                )
+            )
+        if languages:
+            query = query.where(func.lower(TrendSignal.language).in_(languages))
+        if regions:
+            query = query.where(func.lower(TrendSignal.region).in_(regions))
         candidates = list(
             session.scalars(
-                select(TrendSignal)
-                .join(TrendTopicSignal, TrendTopicSignal.trend_signal_id == TrendSignal.id)
-                .where(
-                    TrendTopicSignal.trend_topic_id == topic_id,
-                    TrendSignal.observed_at >= cutoff,
+                query.order_by(TrendSignal.observed_at.desc(), TrendSignal.id.desc()).limit(
+                    MAX_SIGNALS_PER_TOPIC
                 )
-                .order_by(TrendSignal.observed_at.desc())
-                .limit(MAX_SIGNALS_PER_TOPIC)
             )
         )
     platform_filter = set(platforms)
@@ -520,6 +586,7 @@ def refresh_channel_trends(
         signals, samples = _signals_for_topic(
             topic.id,
             cutoff=cutoff,
+            as_of=now,
             source_weights=config["source_weights"],
             platforms=config["platforms"],
             languages=config["languages"],
@@ -552,6 +619,18 @@ def refresh_channel_trends(
                 )
             )
             if opportunity is None:
+                previous = session.scalar(
+                    select(TrendOpportunity)
+                    .where(
+                        TrendOpportunity.channel_profile_id == channel_profile_id,
+                        TrendOpportunity.trend_topic_id == topic.id,
+                        TrendOpportunity.watch_version == config["version"],
+                        TrendOpportunity.created_at <= now,
+                    )
+                    .order_by(TrendOpportunity.created_at.desc(), TrendOpportunity.id.desc())
+                    .limit(1)
+                )
+                readiness, readiness_summary = evidence_readiness(signals)
                 opportunity = TrendOpportunity(
                     channel_profile_id=channel_profile_id,
                     trend_topic_id=topic.id,
@@ -561,34 +640,57 @@ def refresh_channel_trends(
                     opportunity_score=Decimal(str(result.opportunity_score)),
                     confidence=Decimal(str(result.confidence)),
                     calibrated_score=(
-                        Decimal(str(calibrated_value))
-                        if calibrated_value is not None
-                        else None
+                        Decimal(str(calibrated_value)) if calibrated_value is not None else None
                     ),
                     calibration_version=calibration_version,
                     calibration_metadata=calibration_metadata,
                     prediction_horizon_hours=DEFAULT_PREDICTION_HORIZON_HOURS,
                     expires_at=now + timedelta(hours=config["freshness"]),
-                    components=result.components,
+                    components={**result.components, "rights_reference_coverage": readiness},
                     reasons=list(result.reasons),
                     evidence_summary={
+                        "readiness": readiness_summary,
                         "signal_count": len(signals),
                         "source_kinds": sorted({item.source_kind for item in signals}),
                         "providers": sorted({item.provider_key for item in signals}),
                         "languages": sorted({item.language for item in signals if item.language}),
                         "regions": sorted({item.region for item in signals if item.region}),
-                        "independent_sources": len(
-                            {item.independence_key for item in signals}
-                        ),
+                        "independent_sources": len({item.independence_key for item in signals}),
                     },
+                    created_at=now,
                 )
                 session.add(opportunity)
                 session.flush()
+                if previous is not None:
+                    change = opportunity.confidence - previous.confidence
+                    if abs(change) >= Decimal("0.10"):
+                        session.add(
+                            DomainEvent(
+                                aggregate_type="trend_opportunity",
+                                aggregate_id=str(opportunity.id),
+                                event_type="trend.confidence.changed",
+                                payload={
+                                    "channel_profile_id": str(channel_profile_id),
+                                    "trend_topic_id": str(topic.id),
+                                    "trend_opportunity_id": str(opportunity.id),
+                                    "previous_opportunity_id": str(previous.id),
+                                    "watch_version": config["version"],
+                                    "previous_confidence": float(previous.confidence),
+                                    "confidence": float(opportunity.confidence),
+                                    "delta": float(change),
+                                    "run_key": run_key,
+                                },
+                            )
+                        )
             rows.append((opportunity, signals))
 
     rows.sort(
         key=lambda row: (
-            float(row[0].calibrated_score or row[0].opportunity_score),
+            float(
+                row[0].calibrated_score
+                if row[0].calibrated_score is not None
+                else row[0].opportunity_score
+            ),
             float(row[0].confidence),
         ),
         reverse=True,
@@ -605,11 +707,23 @@ def refresh_channel_trends(
                 and float(stored.confidence) >= config["min_confidence"]
             ):
                 qualified.append((stored.id, signals))
+                event_type = f"trend.opportunity.{stored.lifecycle}"
+                event_exists = session.scalar(
+                    select(DomainEvent.id)
+                    .where(
+                        DomainEvent.aggregate_type == "trend_opportunity",
+                        DomainEvent.aggregate_id == str(stored.id),
+                        DomainEvent.event_type == event_type,
+                    )
+                    .limit(1)
+                )
+                if event_exists is not None:
+                    continue
                 session.add(
                     DomainEvent(
                         aggregate_type="trend_opportunity",
                         aggregate_id=str(stored.id),
-                        event_type=f"trend.opportunity.{stored.lifecycle}",
+                        event_type=event_type,
                         payload={
                             "trend_opportunity_id": str(stored.id),
                             "channel_profile_id": str(channel_profile_id),
@@ -628,15 +742,18 @@ def refresh_channel_trends(
                     )
                 )
 
+    built = 0
     for opportunity_id, signals in qualified:
-        build_evidence_packet(opportunity_id, signals=signals)
+        if latest_evidence_packet(opportunity_id) is None:
+            build_evidence_packet(opportunity_id, signals=signals)
+            built += 1
     return {
         "channel_profile_id": str(channel_profile_id),
         "run_key": run_key,
         "watch_version": config["version"],
         "topics_scored": len(rows),
         "qualified_opportunities": len(qualified),
-        "evidence_packets_built": len(qualified),
+        "evidence_packets_built": built,
     }
 
 

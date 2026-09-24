@@ -79,6 +79,8 @@ class Settings(BaseSettings):
     youtube_analytics_offsets_hours: str = "1,6,24,72,168,720"
 
     youtube_data_api_key: str | None = None
+    youtube_discovery_daily_search_limit: int = Field(default=80, ge=0, le=100000)
+    youtube_discovery_daily_hydration_limit: int = Field(default=8000, ge=0, le=1000000)
     reddit_client_id: str | None = None
     reddit_client_secret: str | None = None
     reddit_user_agent: str = "Katcha/0.1 trend-discovery"

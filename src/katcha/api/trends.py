@@ -18,6 +18,7 @@ from katcha.services.trends import (
     create_watch_profile,
     latest_evidence_packet,
     list_opportunities,
+    query_signals,
     register_signal,
 )
 from katcha.trend_models import (
@@ -106,10 +107,38 @@ class TrendSignalResponse(BaseModel):
     source_kind: str
     independence_key: str
     canonical_url: str | None
+    source_name: str | None
+    title: str | None
+    body_excerpt: str | None
+    author: str | None
+    community: str | None
+    language: str | None
+    region: str | None
     observed_at: datetime
     published_at: datetime | None
     metrics: dict[str, float]
     media_refs: list[dict[str, object]]
+
+
+@router.get("/trends/signals", response_model=list[TrendSignalResponse])
+def get_trend_signals(
+    topic_id: uuid.UUID | None = None,
+    provider_key: str | None = Query(default=None, max_length=64),
+    source_kind: str | None = Query(default=None, max_length=64),
+    observed_after: datetime | None = None,
+    observed_before: datetime | None = None,
+    limit: int = Query(default=100, ge=1, le=500),
+) -> list[TrendSignal]:
+    if observed_after and observed_before and observed_after > observed_before:
+        raise HTTPException(status_code=422, detail="observed_after exceeds observed_before")
+    return query_signals(
+        topic_id=topic_id,
+        provider_key=provider_key,
+        source_kind=source_kind,
+        observed_after=observed_after,
+        observed_before=observed_before,
+        limit=limit,
+    )
 
 
 class TrendRefreshRequest(BaseModel):
