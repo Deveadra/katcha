@@ -48,6 +48,13 @@ async def _run_refresh(channel_profile_id: str, run_key: str) -> dict[str, objec
         retry_policy=retry,
         result_type=dict[str, object],
     )
+    packaging_intelligence = await workflow.execute_activity(
+        "refresh_packaging_intelligence_activity",
+        args=[channel_profile_id, run_key],
+        start_to_close_timeout=timedelta(minutes=10),
+        retry_policy=retry,
+        result_type=dict[str, object],
+    )
     activation_performance = await workflow.execute_activity(
         "refresh_trend_activation_performance_activity",
         args=[channel_profile_id, run_key],
@@ -70,6 +77,7 @@ async def _run_refresh(channel_profile_id: str, run_key: str) -> dict[str, objec
         "economics": economics,
         "schedule": schedule,
         "edit_performance": edit_performance,
+        "packaging_intelligence": packaging_intelligence,
         "activation_performance": activation_performance,
         "automation": automation,
     }
