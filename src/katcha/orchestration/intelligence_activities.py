@@ -127,9 +127,11 @@ def refresh_edit_blueprint_performance_activity(
         "channel_profile_id": channel_profile_id,
         "snapshot_id": str(snapshot.id),
         "version": snapshot.version,
+        "age_bucket_hours": snapshot.age_bucket_hours,
         "publication_count": snapshot.publication_count,
         "blueprint_group_count": snapshot.blueprint_group_count,
         "monetary_coverage": float(snapshot.monetary_coverage),
+        "retention_coverage": float(snapshot.retention_coverage),
         "comparison_status": snapshot.comparison_status,
     }
 
