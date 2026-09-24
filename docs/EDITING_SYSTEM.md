@@ -86,3 +86,18 @@ The prototype deliberately avoids pretending the whole editor is complete. The p
 - metrics keyed by blueprint/treatment so Katcha learns which editing grammar improves retention, engagement, return viewers and contribution margin.
 
 The objective is not maximum content volume. It is reliable, channel-consistent throughput where creative changes are measurable and reversible.
+
+
+## Persisted channel editing identity
+
+Channel editing contracts are persisted independently from visual/persona branding. A channel may keep multiple blueprint families, but database constraints enforce one active version per family and one default blueprint per channel.
+
+Every newly planned channel production or short episode freezes:
+
+- `edit_blueprint_key`;
+- the channel-local monotonic `edit_blueprint_version`;
+- the complete `edit_blueprint_snapshot`.
+
+Changing the active channel blueprint only affects future work. Regeneration copies the parent's frozen blueprint snapshot, so historical content cannot silently drift into a new editing treatment. An explicit future re-edit operation can intentionally select a newer version without weakening that lineage rule.
+
+The control API exposes list, create, and activate operations under `/v1/channels/{channel_profile_id}/edit-blueprints`. Mutations serialize on the channel profile row and the database also owns partial unique indexes for active-family and default selection, preventing concurrent workers from producing two active identities.
