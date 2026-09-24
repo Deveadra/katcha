@@ -175,12 +175,12 @@ def test_reach_import_attributes_variant_mixed_and_legacy_by_pacific_day(
         job_id = job.id
 
     payload = (
-        "date,channel_id,video_id,video_thumbnail_impressions,"
-        "video_thumbnail_impressions_ctr\n"
-        "2026-09-23,channel-reach,video-variant,1000,0.075\n"
-        "2026-09-23,channel-reach,video-mixed,500,0.081\n"
-        "2026-09-23,channel-reach,video-legacy,250,0.052\n"
-    ).encode()
+        b"date,channel_id,video_id,video_thumbnail_impressions,"
+        b"video_thumbnail_impressions_ctr\n"
+        b"2026-09-23,channel-reach,video-variant,1000,0.075\n"
+        b"2026-09-23,channel-reach,video-mixed,500,0.081\n"
+        b"2026-09-23,channel-reach,video-legacy,250,0.052\n"
+    )
     result = reach_reporting.import_reach_report(
         connection.id,
         job_id,
@@ -224,10 +224,10 @@ def test_reimport_and_overlapping_reports_do_not_double_count(reach_scope) -> No
         job_id = job.id
 
     payload = (
-        "date,channel_id,video_id,video_thumbnail_impressions,"
-        "video_thumbnail_impressions_ctr\n"
-        "2026-09-23,channel-reach,video-stable,100,0.05\n"
-    ).encode()
+        b"date,channel_id,video_id,video_thumbnail_impressions,"
+        b"video_thumbnail_impressions_ctr\n"
+        b"2026-09-23,channel-reach,video-stable,100,0.05\n"
+    )
     first = reach_reporting.import_reach_report(
         connection.id,
         job_id,
@@ -297,12 +297,12 @@ def test_reach_summary_uses_first_full_variant_days_and_weighted_ctr(
         datetime(2026, 9, 22, 6, 0, tzinfo=UTC),
     )
     payload = (
-        "date,channel_id,video_id,video_thumbnail_impressions,"
-        "video_thumbnail_impressions_ctr\n"
-        "2026-09-23,channel-reach,video-summary,100,0.04\n"
-        "2026-09-24,channel-reach,video-summary,300,0.08\n"
-        "2026-09-25,channel-reach,video-summary,900,0.20\n"
-    ).encode()
+        b"date,channel_id,video_id,video_thumbnail_impressions,"
+        b"video_thumbnail_impressions_ctr\n"
+        b"2026-09-23,channel-reach,video-summary,100,0.04\n"
+        b"2026-09-24,channel-reach,video-summary,300,0.08\n"
+        b"2026-09-25,channel-reach,video-summary,900,0.20\n"
+    )
     reach_reporting.import_reach_report(
         connection.id,
         job_id,
