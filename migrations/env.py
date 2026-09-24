@@ -5,6 +5,7 @@ from sqlalchemy import engine_from_config, pool
 
 from katcha import acquisition_models  # noqa: F401
 from katcha import brand_models  # noqa: F401
+from katcha import brand_preview_models  # noqa: F401
 from katcha import discovery_poll_models  # noqa: F401
 from katcha import discovery_trend_models  # noqa: F401
 from katcha import edit_blueprint_models  # noqa: F401
