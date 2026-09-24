@@ -9,13 +9,13 @@ from pydantic import BaseModel, ConfigDict, Field
 from katcha.brand_models import ChannelBrandVersion
 from katcha.brand_preview_models import BrandPreviewRender
 from katcha.orchestration.client import start_brand_preview_workflow
+from katcha.services.brand_previews import get_brand_preview, register_brand_preview
 from katcha.services.channel_brands import (
     activate_brand_version,
     builtin_brand_candidates,
     list_channel_brand_versions,
     stage_brand_version,
 )
-from katcha.services.brand_previews import get_brand_preview, register_brand_preview
 
 router = APIRouter(prefix="/v1/channels", tags=["channel-branding"])
 
