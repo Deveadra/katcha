@@ -320,4 +320,4 @@ def test_reach_summary_uses_first_full_variant_days_and_weighted_ctr(
     variant_summary = summary["variants"][0]
     assert variant_summary["observed_full_days"] == 2
     assert variant_summary["impressions"] == 400
-    assert variant_summary["weighted_ctr"] == "0.07"
+    assert variant_summary["weighted_ctr"] == "0.07000000"
