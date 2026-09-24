@@ -184,7 +184,8 @@ def _source_lineage(
         return episode.channel_profile_id, context, facts
 
     raise ValueError(
-        "automated packaging generation currently supports production and short-episode publications"
+        "automated packaging generation currently supports "
+        "production and short-episode publications"
     )
 
 
@@ -366,7 +367,10 @@ def _validate_candidates(
 ) -> list[PackagingCandidate]:
     candidates = list(candidate_set.candidates)
     if len(candidates) != candidate_count:
-        raise ValueError(f"provider returned {len(candidates)} candidates; expected {candidate_count}")
+        raise ValueError(
+            f"provider returned {len(candidates)} candidates; "
+            f"expected {candidate_count}"
+        )
 
     allowed_facts = {str(value).strip() for value in context.get("grounding_facts") or []}
     if not allowed_facts:
@@ -467,11 +471,18 @@ def generate_packaging_candidates(
             )
             session.add(row)
             session.flush()
-        elif int((row.generation_metadata or {}).get("candidate_count") or candidate_count) != candidate_count:
+        elif (
+            int(
+                (row.generation_metadata or {}).get("candidate_count")
+                or candidate_count
+            )
+            != candidate_count
+        ):
             raise ValueError("generation_key is already bound to another candidate_count")
         elif row.status in {"failed", "ambiguous"} and not row.candidate_payload:
             raise AmbiguousPackagingGeneration(
-                "generation_key is terminal after a paid/ambiguous attempt; use a new generation_key"
+                "generation_key is terminal after a paid/ambiguous attempt; "
+                "use a new generation_key"
             )
         elif (
             not row.candidate_payload
