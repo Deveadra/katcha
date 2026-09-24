@@ -314,7 +314,8 @@ def register_signal(
 
 
 def _material_confidence_change(previous: float, current: float) -> bool:
-    return abs(float(current) - float(previous)) >= _CONFIDENCE_CHANGE_THRESHOLD
+    delta = abs(Decimal(str(current)) - Decimal(str(previous)))
+    return delta >= Decimal(str(_CONFIDENCE_CHANGE_THRESHOLD))
 
 
 def _rights_readiness(signals: list[TrendSignal]) -> float:
