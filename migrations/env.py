@@ -15,6 +15,7 @@ from katcha import models  # noqa: F401
 from katcha import packaging_models  # noqa: F401
 from katcha import production_models  # noqa: F401
 from katcha import publishing_models  # noqa: F401
+from katcha import reach_models  # noqa: F401
 from katcha import render_models  # noqa: F401
 from katcha import short_episode_models  # noqa: F401
 from katcha import trend_activation_models  # noqa: F401
