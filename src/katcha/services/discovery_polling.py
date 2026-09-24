@@ -938,6 +938,7 @@ def record_poll_failure(
     retry_after_seconds: int | None = None,
     message: str | None = None,
     consume_reserved: bool = True,
+    provider_usage: dict[str, int] | None = None,
     now: datetime | None = None,
 ) -> str:
     current = _utc(now)
@@ -968,8 +969,8 @@ def record_poll_failure(
             session,
             attempt,
             page_key,
-            provider_usage={},
-            consume_reserved_on_missing=consume_reserved,
+            provider_usage=dict(provider_usage or {}),
+            consume_reserved_on_missing=consume_reserved and provider_usage is None,
             now=current,
         )
         if not consume_reserved and attempt.source_quota_consumed:
