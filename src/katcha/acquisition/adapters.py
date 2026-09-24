@@ -44,6 +44,7 @@ class DiscoveryBatch:
     items: tuple[DiscoveredCandidate, ...]
     next_cursor: dict[str, Any] = field(default_factory=dict)
     done: bool = True
+    provider_usage: dict[str, int] = field(default_factory=dict)
 
 
 class DiscoveryAdapter(Protocol):
