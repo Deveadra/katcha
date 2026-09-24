@@ -86,6 +86,25 @@ def build_script_prompt(
     event_summary = ai.get("event_summary") or "Use the transcript/context conservatively."
     setup = ai.get("setup") or ""
     payoff = ai.get("payoff") or ""
+    edit_blueprint = snapshot.get("edit_blueprint")
+    narration_mode = ""
+    source_layout_mode = ""
+    if isinstance(edit_blueprint, dict):
+        narration = edit_blueprint.get("narration")
+        source_layout = edit_blueprint.get("source_layout")
+        if isinstance(narration, dict):
+            narration_mode = str(narration.get("mode") or "")
+        if isinstance(source_layout, dict):
+            source_layout_mode = str(source_layout.get("mode") or "")
+    editing_instruction = ""
+    if narration_mode == "text_only" and source_layout_mode == "header_panel":
+        editing_instruction = (
+            "Editing format: persistent explanatory header with source audio and no generated "
+            "voice. The title_angle is production copy: write it as one concise, accurate, "
+            "self-contained explanation of why the clip matters or what the viewer should "
+            "notice. Do not write vague clickbait. Commentary segments are planning-only in "
+            "this format and will not be voiced.\n"
+        )
 
     return (
         f"Prompt version: {prompt_version}\n"
@@ -105,7 +124,8 @@ def build_script_prompt(
         f"Event: {event_summary}\n"
         f"Setup: {setup}\n"
         f"Payoff: {payoff}\n"
-        f"Transcript: {transcript}\n\n"
+        f"Transcript: {transcript}\n"
+        f"{editing_instruction}\n"
         "Create exactly three distinct host treatments: observational, sarcastic, and "
         "interactive. They must sound like the same host, not three different personalities. "
         "The host must add a new joke, perspective, framing, or decision for the audience; "
