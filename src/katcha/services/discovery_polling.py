@@ -12,7 +12,6 @@ from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
-from katcha.acquisition.adapters import DiscoveryProviderError
 from katcha.acquisition_models import DiscoveryRun
 from katcha.config import get_settings
 from katcha.db import session_scope
