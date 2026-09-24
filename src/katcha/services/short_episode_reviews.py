@@ -9,6 +9,7 @@ from katcha.db import session_scope
 from katcha.domain import ReviewDecision
 from katcha.models import DomainEvent
 from katcha.services.acquisition import ClipAcquisitionState, assert_clip_production_eligible
+from katcha.services.render_qc import assert_render_qc_passed
 from katcha.short_episode_models import (
     ShortEpisode,
     ShortEpisodeAsset,
@@ -276,6 +277,16 @@ def review_short_episode(
             episode.stage = "editorial_approved"
             event_type = "short_episode.editorial_approved"
         elif decision == ReviewDecision.APPROVE:
+            render_asset = session.scalar(
+                select(ShortEpisodeAsset).where(
+                    ShortEpisodeAsset.short_episode_id == episode.id,
+                    ShortEpisodeAsset.kind == "render",
+                    ShortEpisodeAsset.generation == 1,
+                )
+            )
+            if render_asset is None:
+                raise ValueError("short episode cannot be approved without a render asset")
+            assert_render_qc_passed(render_asset.asset_metadata)
             episode.status = "approved"
             episode.stage = "render_approved"
             event_type = "short_episode.approved"
