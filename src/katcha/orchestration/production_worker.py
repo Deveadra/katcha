@@ -8,6 +8,11 @@ from temporalio.client import Client
 from temporalio.worker import Worker
 
 from katcha.config import get_settings
+from katcha.orchestration.brand_preview_activities import (
+    mark_brand_preview_failed_activity,
+    render_brand_preview_activity,
+)
+from katcha.orchestration.brand_preview_workflows import StagedBrandPreviewWorkflow
 from katcha.orchestration.production_activities import (
     build_render_manifest_activity,
     generate_narration_assets,
@@ -56,8 +61,14 @@ async def main() -> None:
         worker = Worker(
             client,
             task_queue=settings.temporal_production_task_queue,
-            workflows=[ShortProductionWorkflow, RankedShortEpisodeEditorialWorkflow],
+            workflows=[
+                ShortProductionWorkflow,
+                RankedShortEpisodeEditorialWorkflow,
+                StagedBrandPreviewWorkflow,
+            ],
             activities=[
+                render_brand_preview_activity,
+                mark_brand_preview_failed_activity,
                 generate_script_candidates,
                 select_script_candidate,
                 generate_narration_assets,
