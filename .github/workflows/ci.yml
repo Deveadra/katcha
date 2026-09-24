@@ -100,12 +100,24 @@ jobs:
       - name: Encode and verify both reaction overlays
         run: node test/reaction-smoke.mjs
 
+      - name: Encode and verify channel editing blueprints
+        run: node test/blueprint-smoke.mjs
+
       - name: Upload synthetic reaction previews
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: synthetic-reaction-previews
           path: renderer/reaction-smoke-previews/
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Upload synthetic blueprint previews
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: synthetic-blueprint-previews
+          path: renderer/blueprint-smoke-previews/
           if-no-files-found: ignore
           retention-days: 7
 

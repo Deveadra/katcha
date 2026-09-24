@@ -65,6 +65,7 @@ class EndCardBrandSpec(BaseModel):
     treatment_key: str = "verdict_v1"
     accent_role: Literal["signal_blue", "hot_peach", "volt"] = "signal_blue"
     max_question_lines: int = Field(default=3, ge=1, le=4)
+    label: str | None = Field(default=None, max_length=80)
 
 
 class ShortBrandSpec(BaseModel):
@@ -75,6 +76,14 @@ class ShortBrandSpec(BaseModel):
     captions: CaptionBrandSpec = Field(default_factory=CaptionBrandSpec)
     motion: MotionBrandSpec = Field(default_factory=MotionBrandSpec)
     end_card: EndCardBrandSpec = Field(default_factory=EndCardBrandSpec)
+
+    @model_validator(mode="after")
+    def resolve_legacy_end_card_label(self) -> ShortBrandSpec:
+        if not (self.end_card.label or "").strip():
+            self.end_card.label = (
+                "RankSnaxx ruling" if self.brand_key == "ranksnaxx" else "Your ruling"
+            )
+        return self
 
 
 def channel_01_brand_v1() -> ShortBrandSpec:

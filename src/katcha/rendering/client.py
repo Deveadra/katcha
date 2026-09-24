@@ -6,6 +6,7 @@ from typing import Any
 import httpx
 
 from katcha.config import Settings, get_settings
+from katcha.rendering.blueprint_manifest import BlueprintRenderManifest
 from katcha.rendering.longform_manifest import LongformRenderManifest
 from katcha.rendering.manifest import ShortRenderManifest
 from katcha.rendering.ranked_episode_manifest import RankedEpisodeRenderManifest
@@ -19,7 +20,12 @@ class RenderResult:
 
 
 def _render(
-    manifest: ShortRenderManifest | LongformRenderManifest | RankedEpisodeRenderManifest,
+    manifest: (
+        ShortRenderManifest
+        | LongformRenderManifest
+        | RankedEpisodeRenderManifest
+        | BlueprintRenderManifest
+    ),
     *,
     settings: Settings,
 ) -> RenderResult:
@@ -48,6 +54,14 @@ def render_short(
 
 def render_ranked_episode(
     manifest: RankedEpisodeRenderManifest,
+    *,
+    settings: Settings | None = None,
+) -> RenderResult:
+    return _render(manifest, settings=settings or get_settings())
+
+
+def render_blueprint(
+    manifest: BlueprintRenderManifest,
     *,
     settings: Settings | None = None,
 ) -> RenderResult:
