@@ -171,3 +171,16 @@ Required channel-specific measures include breakout precision, false-positive ra
 ## Success criterion
 
 The trend subsystem is successful when acting on its qualified opportunities produces measurable positive channel growth with useful lead time. The number of topics discovered is not a success metric by itself.
+
+
+## P6.2d observability and cost controls
+
+Raw evidence is inspectable through `GET /v1/trends/signals`. The endpoint is deliberately bounded to 250 rows and supports provider, source-kind, language, region, topic, and `before` timestamp filters. Results are ordered by observation time so controllers can page backward without requesting the entire signal ledger.
+
+Each channel opportunity also exposes a numeric `rights_readiness` component. This value is a conservative diagnostic derived only from explicit media-reference rights metadata: clearly cleared/owned/licensed references score ready, review-required references score partial, and blocked, unknown, or unassessed references score zero. **It is not an input to the deterministic popularity/opportunity score and it never grants reuse permission or bypasses acquisition/production rights gates.**
+
+When a newly created channel/topic opportunity snapshot changes raw confidence by at least 0.10 from the previous snapshot, Katcha emits `trend.opportunity.confidence_changed` with the previous/current opportunity IDs, confidence values, delta, direction, channel/topic IDs, and run key. Same-run replay does not emit another change because opportunity creation is run-key idempotent.
+
+Discovery quota enforcement is owned by the durable poll ledger added in P6.4c. YouTube `search.list` uses its separate daily call bucket, while video hydration uses the general/core quota bucket; each page reserves before provider execution and settles against actual adapter-reported usage. Poll history and quota state are inspectable through the discovery reliability APIs. Provider failures never become zero-engagement observations, and source-health coverage remains a hard prerequisite for channel trend refresh.
+
+P6.2 calibration remains downstream of these deterministic controls. Learned calibration can adjust ranking only within its validated blend cap; it cannot override source-health, rights, or quota gates.
