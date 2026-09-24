@@ -74,11 +74,15 @@ class YouTubeReachReportImport(Base):
     provider_report_id: Mapped[str] = mapped_column(String(200), index=True)
     report_start: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     report_end: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    provider_created_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    provider_created_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     payload_sha256: Mapped[str] = mapped_column(String(64))
     row_count: Mapped[int] = mapped_column(BigInteger, default=0)
     import_metadata: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
-    imported_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    imported_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
 
 
 class PublicationReachObservation(Base):
@@ -107,7 +111,10 @@ class PublicationReachObservation(Base):
     ctr: Mapped[Decimal | None] = mapped_column(Numeric(12, 8), nullable=True)
     attribution_status: Mapped[str] = mapped_column(String(32), index=True)
     packaging_variant_id: Mapped[uuid.UUID | None] = mapped_column(
-        Uuid(as_uuid=True), ForeignKey("publication_packaging_variants.id"), nullable=True, index=True
+        Uuid(as_uuid=True),
+        ForeignKey("publication_packaging_variants.id"),
+        nullable=True,
+        index=True,
     )
     attribution_metadata: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     raw_row: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
