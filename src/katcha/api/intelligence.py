@@ -208,6 +208,8 @@ class ChannelProductionResponse(BaseModel):
     id: uuid.UUID
     clip_id: uuid.UUID
     channel_profile_id: uuid.UUID | None
+    edit_blueprint_key: str | None
+    edit_blueprint_version: int | None
     workflow_id: str
     status: str
     stage: str
