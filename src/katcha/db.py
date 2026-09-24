@@ -40,6 +40,7 @@ def init_db() -> None:
         intelligence_models,
         longform_models,
         models,
+        opportunity_activation_models,
         production_models,
         publishing_models,
         short_episode_models,
