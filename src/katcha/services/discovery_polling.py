@@ -1284,6 +1284,10 @@ def reset_source_polling(
                     )
                 )
             )
+            if any(int(window.reserved_units) > 0 for window in windows):
+                raise ValueError(
+                    "cannot reset provider quota while reservations are active"
+                )
             for window in windows:
                 window.used_units = 0
                 window.reserved_units = 0
