@@ -72,6 +72,17 @@ const hydrateShortManifest = async (manifest) => {
   };
 };
 
+const hydrateBlueprintManifest = async (manifest) => {
+  const source = {
+    ...manifest.source,
+    url: await signedGet(manifest.source.storage_key),
+  };
+  const narration = manifest.narration?.asset_key
+    ? {...manifest.narration, url: await signedGet(manifest.narration.asset_key)}
+    : null;
+  return {...manifest, source, narration};
+};
+
 const hydrateRankedEpisodeManifest = async (manifest) => {
   const items = await Promise.all(
     (manifest.items || []).map(async (item) => ({
@@ -133,16 +144,22 @@ app.post('/render', async (request, response) => {
   const manifest = request.body;
   const isLongform = manifest?.version === 'longform-render-v1';
   const isRankedEpisode = manifest?.version === 'ranked-episode-render-v1';
+  const isBlueprint = manifest?.version === 'blueprint-render-v1';
   const identity = isLongform
     ? manifest?.compilation_id
     : isRankedEpisode
       ? manifest?.short_episode_id
-      : manifest?.production_id;
+      : isBlueprint
+        ? manifest?.render_id
+        : manifest?.production_id;
   if (!identity || !manifest?.output_key) {
     return response.status(400).json({error: 'invalid render manifest'});
   }
   if (!isLongform && !isRankedEpisode && !manifest?.source?.storage_key) {
-    return response.status(400).json({error: 'short render manifest is missing source'});
+    return response.status(400).json({error: 'render manifest is missing source'});
+  }
+  if (isBlueprint && !manifest?.blueprint_key) {
+    return response.status(400).json({error: 'blueprint render manifest is missing lineage'});
   }
   if (isRankedEpisode && (!Array.isArray(manifest?.items) || manifest.items.length < 3)) {
     return response.status(400).json({error: 'ranked episode manifest is missing items'});
@@ -152,7 +169,13 @@ app.post('/render', async (request, response) => {
   }
 
   try {
-    const compositionId = isLongform ? 'Longform' : isRankedEpisode ? 'RankedEpisode' : 'Short';
+    const compositionId = isLongform
+      ? 'Longform'
+      : isRankedEpisode
+        ? 'RankedEpisode'
+        : isBlueprint
+          ? 'BlueprintVideo'
+          : 'Short';
     if (await exists(manifest.output_key)) {
       return response.json({
         output_key: manifest.output_key,
@@ -169,7 +192,9 @@ app.post('/render', async (request, response) => {
       ? await hydrateLongformManifest(manifest)
       : isRankedEpisode
         ? await hydrateRankedEpisodeManifest(manifest)
-        : await hydrateShortManifest(manifest);
+        : isBlueprint
+          ? await hydrateBlueprintManifest(manifest)
+          : await hydrateShortManifest(manifest);
     const serveUrl = await serveUrlPromise;
     const composition = await selectComposition({
       serveUrl,
@@ -179,7 +204,13 @@ app.post('/render', async (request, response) => {
     const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'katcha-render-'));
     const outputPath = path.join(
       tempDir,
-      isLongform ? 'longform.mp4' : isRankedEpisode ? 'ranked-episode.mp4' : 'short.mp4',
+      isLongform
+        ? 'longform.mp4'
+        : isRankedEpisode
+          ? 'ranked-episode.mp4'
+          : isBlueprint
+            ? 'blueprint.mp4'
+            : 'short.mp4',
     );
 
     try {

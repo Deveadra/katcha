@@ -28,6 +28,7 @@ const fallbackBrand = {
   },
   end_card: {
     accent_role: 'signal_blue',
+    label: 'Your ruling',
   },
 };
 
@@ -193,7 +194,7 @@ const EndCard = ({endCard, brand}) => {
               textTransform: 'uppercase',
             }}
           >
-            RankSnaxx ruling
+            {brand.end_card.label || 'Your ruling'}
           </div>
           <div
             style={{
