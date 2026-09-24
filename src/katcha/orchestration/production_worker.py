@@ -34,6 +34,7 @@ from katcha.orchestration.short_episode_render_activities import (
     render_ranked_episode_activity,
 )
 from katcha.orchestration.short_episode_workflows import RankedShortEpisodeEditorialWorkflow
+from katcha.services.brand_assets import seed_builtin_brand_assets
 
 
 async def main() -> None:
@@ -41,6 +42,10 @@ async def main() -> None:
     logging.basicConfig(
         level=getattr(logging, settings.log_level.upper(), logging.INFO),
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
+    )
+    seeded_assets = seed_builtin_brand_assets()
+    logging.getLogger(__name__).info(
+        "verified %s built-in brand assets", len(seeded_assets)
     )
     client = await Client.connect(
         settings.temporal_host,
