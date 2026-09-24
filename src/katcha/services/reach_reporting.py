@@ -22,8 +22,8 @@ from katcha.packaging_models import PublicationPackagingActivation
 from katcha.publishing_models import Publication, YouTubeConnection
 from katcha.reach_models import (
     PublicationReachObservation,
-    YouTubeReachReportingJob,
     YouTubeReachReportImport,
+    YouTubeReachReportingJob,
 )
 
 PACIFIC = ZoneInfo("America/Los_Angeles")
@@ -69,7 +69,7 @@ def parse_reach_csv(payload: bytes) -> list[dict[str, str]]:
         raise ValueError("YouTube reach report is not UTF-8 CSV") from exc
     reader = csv.DictReader(io.StringIO(text_payload))
     fields = set(reader.fieldnames or [])
-    if not REQUIRED_COLUMNS <= fields:
+    if not fields >= REQUIRED_COLUMNS:
         missing = sorted(REQUIRED_COLUMNS - fields)
         raise ValueError(f"YouTube reach report is missing required columns: {missing}")
     rows: list[dict[str, str]] = []
