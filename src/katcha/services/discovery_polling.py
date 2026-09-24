@@ -272,9 +272,18 @@ def _source_day_start(now: datetime) -> datetime:
 
 def _attempt_source_usage(
     session: Session,
-    source_state_id: uuid.UUID,
+    state: TrendWatchSourceState,
     now: datetime,
 ) -> int:
+    window_start = _source_day_start(now)
+    raw_reset = dict(state.state_metadata or {}).get("source_quota_reset_at")
+    if isinstance(raw_reset, str):
+        try:
+            reset_at = _utc(datetime.fromisoformat(raw_reset.replace("Z", "+00:00")))
+        except ValueError:
+            reset_at = None
+        if reset_at is not None and reset_at > window_start:
+            window_start = reset_at
     return int(
         session.scalar(
             select(
@@ -286,8 +295,8 @@ def _attempt_source_usage(
                     0,
                 )
             ).where(
-                TrendWatchPollAttempt.source_state_id == source_state_id,
-                TrendWatchPollAttempt.started_at >= _source_day_start(now),
+                TrendWatchPollAttempt.source_state_id == state.id,
+                TrendWatchPollAttempt.started_at >= window_start,
             )
         )
         or 0
@@ -408,7 +417,7 @@ def begin_poll_attempt(
             return _attempt_decision(attempt)
 
         if quota_limit is not None:
-            usage = _attempt_source_usage(session, state.id, current)
+            usage = _attempt_source_usage(session, state, current)
             if usage >= quota_limit:
                 attempt = TrendWatchPollAttempt(
                     source_state_id=state.id,
@@ -439,9 +448,10 @@ def begin_poll_attempt(
             )
             .with_for_update()
         )
+        claim_created = False
         if claim is None:
             claim_id = uuid.uuid4()
-            session.execute(
+            inserted = session.execute(
                 pg_insert(DiscoveryCollectionClaim)
                 .values(
                     id=claim_id,
@@ -456,7 +466,9 @@ def begin_poll_attempt(
                 .on_conflict_do_nothing(
                     index_elements=["source_identity", "collection_window_key"]
                 )
-            )
+                .returning(DiscoveryCollectionClaim.id)
+            ).scalar_one_or_none()
+            claim_created = inserted is not None
             claim = session.scalar(
                 select(DiscoveryCollectionClaim)
                 .where(
@@ -515,7 +527,7 @@ def begin_poll_attempt(
             session.expunge(attempt)
             return _attempt_decision(attempt)
 
-        if claim.status == "running" and lease_expires > current:
+        if not claim_created and claim.status == "running" and lease_expires > current:
             attempt = TrendWatchPollAttempt(
                 source_state_id=state.id,
                 collection_claim_id=claim.id,
@@ -533,7 +545,7 @@ def begin_poll_attempt(
             session.expunge(attempt)
             return _attempt_decision(attempt)
 
-        stale_attempt = session.scalar(
+        stale_attempt = None if claim_created else session.scalar(
             select(TrendWatchPollAttempt)
             .where(
                 TrendWatchPollAttempt.collection_claim_id == claim.id,
@@ -1147,23 +1159,23 @@ def reset_source_polling(
         state.last_error_summary = None
 
         if reset_source_quota:
-            attempts = list(
-                session.scalars(
-                    select(TrendWatchPollAttempt).where(
-                        TrendWatchPollAttempt.source_state_id == state.id,
-                        TrendWatchPollAttempt.started_at >= _source_day_start(current),
-                    )
-                )
-            )
-            for attempt in attempts:
-                attempt.source_quota_reserved = 0
-                attempt.source_quota_consumed = 0
+            state.state_metadata = {
+                **dict(state.state_metadata or {}),
+                "source_quota_reset_at": current.isoformat(),
+                "source_quota_reset_actor": actor,
+            }
 
         if reset_provider_quota:
+            provider_key = {
+                "youtube": "youtube",
+                "reddit": "reddit",
+                "rss_atom": "rss_atom",
+            }.get(state.adapter_key, state.adapter_key)
             windows = list(
                 session.scalars(
                     select(DiscoveryProviderQuotaWindow).where(
-                        DiscoveryProviderQuotaWindow.window_end > current
+                        DiscoveryProviderQuotaWindow.provider_key == provider_key,
+                        DiscoveryProviderQuotaWindow.window_end > current,
                     )
                 )
             )
