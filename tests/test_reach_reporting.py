@@ -13,6 +13,7 @@ from katcha import (  # noqa: F401
     production_models,
     short_episode_models,
 )
+from katcha.api.main import app
 from katcha.db import Base
 from katcha.packaging_models import (
     PublicationPackagingActivation,
@@ -261,3 +262,10 @@ def test_reimport_and_overlapping_reports_do_not_double_count(reach_scope) -> No
     with reach_scope() as session:
         count = len(list(session.scalars(select(PublicationReachObservation))))
         assert count == 1
+
+
+def test_reach_routes_are_mounted() -> None:
+    paths = set(app.openapi()["paths"])
+    assert "/v1/integrations/youtube/{connection_id}/reach/sync" in paths
+    assert "/v1/integrations/youtube/{connection_id}/reach/job" in paths
+    assert "/v1/publications/{publication_id}/reach" in paths
