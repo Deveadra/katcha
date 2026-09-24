@@ -105,6 +105,16 @@ Manual synchronization starts with:
 POST /v1/integrations/youtube/{connection_id}/reach/sync
 ```
 
+The existing per-channel intelligence cadence also schedules reach sync automatically
+for active channels whose YouTube connection has Analytics reporting scope. Each
+connection has one deterministic automatic workflow ID per Pacific report day, so
+repeated six-hour intelligence refreshes reuse the same scheduled workflow. The
+publishing worker performs all Reporting API work. The intelligence loop waits only
+for scheduling, never for provider downloads; missing scope is reported as a skip,
+and scheduling or reach-provider failure cannot stop ranking, economics, editing
+performance, packaging intelligence, or publishing. A later cadence may consume
+newly imported reach; manual sync remains available for recovery.
+
 The publishing worker first lists provider reporting jobs and reuses an existing
 `channel_reach_basic_a1` job when present. Only when no matching provider job exists
 does it create one. Provider job creation has one automatic attempt because a timeout

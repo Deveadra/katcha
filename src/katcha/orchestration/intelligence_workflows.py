@@ -13,6 +13,18 @@ async def _run_refresh(channel_profile_id: str, run_key: str) -> dict[str, objec
         maximum_interval=timedelta(minutes=2),
         maximum_attempts=3,
     )
+    # Start the publishing-queue sync independently. Its provider work is not awaited;
+    # an unavailable reach provider or scheduler must not halt channel intelligence.
+    try:
+        reach_sync = await workflow.execute_activity(
+            "schedule_channel_reach_sync_activity",
+            args=[channel_profile_id, workflow.now().isoformat()],
+            start_to_close_timeout=timedelta(seconds=30),
+            retry_policy=RetryPolicy(maximum_attempts=1),
+            result_type=dict[str, object],
+        )
+    except Exception:
+        reach_sync = {"status": "unavailable", "reason": "reach_sync_scheduling_failed"}
     observations = await workflow.execute_activity(
         "derive_channel_observations_activity",
         channel_profile_id,
@@ -72,6 +84,7 @@ async def _run_refresh(channel_profile_id: str, run_key: str) -> dict[str, objec
     return {
         "channel_profile_id": channel_profile_id,
         "run_key": run_key,
+        "reach_sync": reach_sync,
         "observations": observations,
         "ranking": ranking,
         "economics": economics,
@@ -114,9 +127,7 @@ class ChannelIntelligenceScheduleWorkflow:
             await _run_refresh(channel_profile_id, run_key)
             await workflow.sleep(timedelta(hours=interval_hours))
 
-        workflow.continue_as_new(
-            args=[channel_profile_id, interval_hours, cycles_before_continue]
-        )
+        workflow.continue_as_new(args=[channel_profile_id, interval_hours, cycles_before_continue])
 
 
 async def _run_trend_activation(
@@ -169,9 +180,7 @@ class ChannelTrendActivationScheduleWorkflow:
             await _run_trend_activation(channel_profile_id, run_key)
             await workflow.sleep(timedelta(hours=interval_hours))
 
-        workflow.continue_as_new(
-            args=[channel_profile_id, interval_hours, cycles_before_continue]
-        )
+        workflow.continue_as_new(args=[channel_profile_id, interval_hours, cycles_before_continue])
 
 
 @workflow.defn

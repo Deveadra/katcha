@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import uuid
+from datetime import datetime
 
 from temporalio import activity
 
+from katcha.orchestration.client import start_reach_sync_workflow
 from katcha.services.channel_automation import maybe_auto_demote
 from katcha.services.channel_economics import compute_channel_economics
 from katcha.services.channel_learning import (
@@ -15,8 +17,25 @@ from katcha.services.edit_blueprint_performance import (
     refresh_edit_blueprint_performance,
 )
 from katcha.services.packaging_intelligence import refresh_packaging_intelligence
+from katcha.services.reach_cadence import eligible_reach_connection, reach_sync_identity
 from katcha.services.trend_activation_performance import refresh_activation_performance
 from katcha.services.trend_auto_activation import run_autonomous_trend_activation
+
+
+@activity.defn
+async def schedule_channel_reach_sync_activity(
+    channel_profile_id: str, at: str
+) -> dict[str, object]:
+    connection_id, reason = eligible_reach_connection(uuid.UUID(channel_profile_id))
+    if connection_id is None:
+        return {"status": "skipped", "reason": reason}
+    workflow_id = reach_sync_identity(connection_id, datetime.fromisoformat(at))
+    await start_reach_sync_workflow(str(connection_id), workflow_id)
+    return {
+        "status": "scheduled",
+        "connection_id": str(connection_id),
+        "workflow_id": workflow_id,
+    }
 
 
 @activity.defn
