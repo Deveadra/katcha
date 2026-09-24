@@ -176,6 +176,7 @@ def register_short_episode(
     format_version: str | None = None,
     idempotency_key: str | None = None,
     trend_opportunity_id: uuid.UUID | None = None,
+    planning_metadata: dict[str, object] | None = None,
 ) -> ShortEpisode:
     """Plan and persist a short multi-clip episode before any paid editorial call."""
     normalized_premise = premise.strip()
@@ -254,6 +255,8 @@ def register_short_episode(
         plan_snapshot = plan.model_dump(mode="json")
         if trend_context is not None:
             plan_snapshot["trend_context"] = trend_context
+        if planning_metadata:
+            plan_snapshot["planning_metadata"] = dict(planning_metadata)
         episode = ShortEpisode(
             channel_profile_id=profile.id,
             trend_opportunity_id=trend_opportunity_id,
