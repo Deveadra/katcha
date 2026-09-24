@@ -11,7 +11,6 @@ from sqlalchemy import select, text
 
 from katcha import __version__
 from katcha.api.acquisition import router as acquisition_router
-from katcha.api.brands import router as brands_router
 from katcha.api.control_auth import require_control_token
 from katcha.api.edit_blueprints import router as edit_blueprints_router
 from katcha.api.explorer import router as explorer_router
@@ -129,7 +128,6 @@ app = FastAPI(
     description="Standalone control plane for Katcha media workflows.",
 )
 app.include_router(acquisition_router)
-app.include_router(brands_router)
 app.include_router(edit_blueprints_router)
 app.include_router(intelligence_router)
 app.include_router(packaging_router)
@@ -139,11 +137,18 @@ app.include_router(trends_router)
 app.include_router(explorer_router)
 app.mount("/explorer/assets", StaticFiles(directory=Path(__file__).parents[1] / "web"),
           name="explorer-assets")
+app.mount("/editing/assets", StaticFiles(directory=Path(__file__).parents[1] / "web"),
+          name="editing-assets")
 
 
 @app.get("/explorer", include_in_schema=False)
 def explorer_shell():
     return RedirectResponse("/explorer/assets/index.html")
+
+
+@app.get("/editing", include_in_schema=False)
+def editing_shell():
+    return RedirectResponse("/editing/assets/editing.html")
 
 
 def _require_ai_execution() -> None:
