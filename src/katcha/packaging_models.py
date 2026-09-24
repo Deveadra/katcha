@@ -172,3 +172,73 @@ class PackagingCandidateGeneration(Base):
         DateTime(timezone=True),
         nullable=True,
     )
+
+
+class PackagingExperiment(Base):
+    __tablename__ = "packaging_experiments"
+    __table_args__ = (
+        UniqueConstraint(
+            "publication_id",
+            "experiment_key",
+            name="uq_packaging_experiment_publication_key",
+        ),
+        CheckConstraint(
+            "status IN ("
+            "'planned', 'activating', 'observing', 'rollback_queued', "
+            "'rolled_back', 'completed', 'failed'"
+            ")",
+            name="ck_packaging_experiment_status",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        primary_key=True,
+        default=uuid.uuid4,
+    )
+    publication_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("publications.id"),
+        index=True,
+    )
+    experiment_key: Mapped[str] = mapped_column(String(160))
+    baseline_variant_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("publication_packaging_variants.id"),
+        index=True,
+    )
+    candidate_variant_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("publication_packaging_variants.id"),
+        index=True,
+    )
+    intelligence_snapshot_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("packaging_intelligence_snapshots.id"),
+        index=True,
+    )
+    automation_version: Mapped[int] = mapped_column(Integer)
+    start_activation_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("publication_packaging_activations.id"),
+        nullable=True,
+        index=True,
+    )
+    rollback_activation_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("publication_packaging_activations.id"),
+        nullable=True,
+        index=True,
+    )
+    status: Mapped[str] = mapped_column(String(32), default="planned", index=True)
+    stage: Mapped[str] = mapped_column(String(64), default="planned")
+    observe_after: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    evidence_snapshot: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        index=True,
+    )
