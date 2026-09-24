@@ -9,11 +9,13 @@ from sqlalchemy import (
     Boolean,
     DateTime,
     ForeignKey,
+    Index,
     Integer,
     String,
     UniqueConstraint,
     Uuid,
     func,
+    text,
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -22,7 +24,16 @@ from katcha.db import Base
 
 class ChannelBrandVersion(Base):
     __tablename__ = "channel_brand_versions"
-    __table_args__ = (UniqueConstraint("channel_profile_id", "version"),)
+    __table_args__ = (
+        UniqueConstraint("channel_profile_id", "version"),
+        Index(
+            "uq_channel_brand_active",
+            "channel_profile_id",
+            unique=True,
+            postgresql_where=text("is_active"),
+            sqlite_where=text("is_active = 1"),
+        ),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(
         Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4
