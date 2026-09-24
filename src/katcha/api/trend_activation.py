@@ -57,7 +57,6 @@ class ActivateTrendOpportunityRequest(BaseModel):
 class ActivateTrendOpportunityResponse(BaseModel):
     short_episode_id: uuid.UUID
     status: str
-    reused: bool
     preview: TrendActivationPreviewResponse
 
 
@@ -144,12 +143,8 @@ def activate_trend_episode(
         code = 404 if "not found" in message else 409
         raise HTTPException(status_code=code, detail=message) from exc
 
-    activation = (episode.plan_snapshot or {}).get("planning_metadata", {}).get(
-        "trend_activation", {}
-    )
     return ActivateTrendOpportunityResponse(
         short_episode_id=episode.id,
         status=episode.status,
-        reused=activation.get("activation_key") == preview.activation_key,
         preview=_preview_response(preview),
     )
