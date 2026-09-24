@@ -216,6 +216,14 @@ def register_short_episode(
             profile.id,
             blueprint_key=edit_blueprint_key,
         )
+        if (
+            edit_blueprint.source_layout.mode != "full_frame"
+            or edit_blueprint.narration.mode != "persona_voice"
+        ):
+            raise ValueError(
+                "ranked multi-clip episodes currently require a full-frame "
+                "persona_commentary-compatible edit blueprint"
+            )
         brand, brand_version = brand_for_channel(session, profile.id)
         brand_format = brand.editorial_format
         contract = _resolve_format(
