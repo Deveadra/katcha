@@ -125,6 +125,7 @@ def execute_discovery_page_activity(run_id: str) -> dict[str, object]:
                 retry_after_seconds=exc.retry_after_seconds,
                 message=str(exc),
                 consume_reserved=True,
+                provider_usage=dict(exc.provider_usage or {}),
             )
             raise ApplicationError(str(exc), non_retryable=True) from exc
         raise
