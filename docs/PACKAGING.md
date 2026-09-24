@@ -257,6 +257,27 @@ flow through the existing P9.1 activation ledger.
 
 ## P10.3 guarded packaging experiments
 
+### Automatic starting candidates
+
+The channel intelligence cadence records the initial title and description of published
+videos as a versioned baseline variant and applied-state ledger entry. This records what
+the publication already used; it does not call YouTube or assert that the video's
+auto-selected thumbnail was captured. Existing activations are left in place. Backfilled
+published videos use the same idempotent record, so reach reports can establish a baseline
+for later title-only experiments. A thumbnail-changing experiment still needs a frozen,
+restorable prior thumbnail.
+
+When AI is enabled and a metadata provider is configured, the cadence considers at most
+200 recent published videos and processes up to four per cycle. It invokes the existing
+channel-budgeted candidate generator with the stable key `auto-initial-v1`, then asks the
+existing deterministic renderer to turn each source-grounded creative brief into an
+immutable thumbnail variant where possible. The renderer's source keyframe must exist;
+missing source or renderer failures are reported for inspection without making up an
+image. Provider-ambiguous or failed generations are not automatically given a new key.
+Generated variants do not update YouTube; subsequent P9 reach evidence and P10.3 policy
+decide whether an experiment may start. A failed seeding step does not halt the channel
+intelligence cycle.
+
 The channel intelligence cadence now evaluates `test` recommendations from the latest P9
 packaging snapshot after refreshing that snapshot and applying channel safety demotion.
 Only an active channel with the active

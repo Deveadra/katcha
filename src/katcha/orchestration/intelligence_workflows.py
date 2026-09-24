@@ -82,6 +82,16 @@ async def _run_refresh(channel_profile_id: str, run_key: str) -> dict[str, objec
         result_type=dict[str, object],
     )
     try:
+        packaging_seed = await workflow.execute_activity(
+            "seed_channel_packaging_activity",
+            channel_profile_id,
+            start_to_close_timeout=timedelta(minutes=8),
+            retry_policy=RetryPolicy(maximum_attempts=1),
+            result_type=dict[str, object],
+        )
+    except Exception:
+        packaging_seed = {"status": "unavailable"}
+    try:
         packaging_experiments = await workflow.execute_activity(
             "run_channel_packaging_experiments_activity",
             args=[channel_profile_id, workflow.now().isoformat()],
@@ -104,6 +114,7 @@ async def _run_refresh(channel_profile_id: str, run_key: str) -> dict[str, objec
         "packaging_experiments": packaging_experiments,
         "activation_performance": activation_performance,
         "automation": automation,
+        "packaging_seed": packaging_seed,
     }
 
 
