@@ -12,6 +12,7 @@ from katcha import edit_performance_models  # noqa: F401
 from katcha import intelligence_models  # noqa: F401
 from katcha import longform_models  # noqa: F401
 from katcha import models  # noqa: F401
+from katcha import packaging_models  # noqa: F401
 from katcha import production_models  # noqa: F401
 from katcha import publishing_models  # noqa: F401
 from katcha import render_models  # noqa: F401
