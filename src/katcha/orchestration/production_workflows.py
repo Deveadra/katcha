@@ -33,21 +33,43 @@ class ShortProductionWorkflow:
                     retry_policy=local_retry,
                     result_type=dict[str, object],
                 )
-                await workflow.execute_activity(
-                    "generate_narration_assets",
+                requirements = await workflow.execute_activity(
+                    "production_edit_requirements_activity",
                     production_id,
-                    start_to_close_timeout=timedelta(minutes=5),
-                    retry_policy=paid_once,
+                    start_to_close_timeout=timedelta(seconds=30),
+                    retry_policy=local_retry,
                     result_type=dict[str, object],
                 )
+                if requirements.get("narration_mode") in {
+                    "persona_voice",
+                    "explanatory_voice",
+                }:
+                    await workflow.execute_activity(
+                        "generate_narration_assets",
+                        production_id,
+                        start_to_close_timeout=timedelta(minutes=5),
+                        retry_policy=paid_once,
+                        result_type=dict[str, object],
+                    )
             elif start_stage == "voice":
-                await workflow.execute_activity(
-                    "generate_narration_assets",
+                requirements = await workflow.execute_activity(
+                    "production_edit_requirements_activity",
                     production_id,
-                    start_to_close_timeout=timedelta(minutes=5),
-                    retry_policy=paid_once,
+                    start_to_close_timeout=timedelta(seconds=30),
+                    retry_policy=local_retry,
                     result_type=dict[str, object],
                 )
+                if requirements.get("narration_mode") in {
+                    "persona_voice",
+                    "explanatory_voice",
+                }:
+                    await workflow.execute_activity(
+                        "generate_narration_assets",
+                        production_id,
+                        start_to_close_timeout=timedelta(minutes=5),
+                        retry_policy=paid_once,
+                        result_type=dict[str, object],
+                    )
             elif start_stage != "render":
                 raise ValueError(f"unsupported production start stage: {start_stage}")
 
@@ -58,10 +80,24 @@ class ShortProductionWorkflow:
                 retry_policy=local_retry,
                 result_type=dict[str, object],
             )
+            await workflow.execute_activity(
+                "pre_render_qc_activity",
+                args=["production", production_id],
+                start_to_close_timeout=timedelta(minutes=2),
+                retry_policy=local_retry,
+                result_type=dict[str, object],
+            )
             rendered = await workflow.execute_activity(
                 "render_short_activity",
                 production_id,
                 start_to_close_timeout=timedelta(minutes=20),
+                retry_policy=local_retry,
+                result_type=dict[str, object],
+            )
+            await workflow.execute_activity(
+                "post_render_qc_activity",
+                args=["production", production_id],
+                start_to_close_timeout=timedelta(minutes=2),
                 retry_policy=local_retry,
                 result_type=dict[str, object],
             )
