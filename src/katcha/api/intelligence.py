@@ -165,10 +165,13 @@ class EditBlueprintPerformanceResponse(BaseModel):
     channel_profile_id: uuid.UUID
     version: int
     run_key: str
+    age_bucket_hours: int
     publication_count: int
     blueprint_group_count: int
     revenue_covered_publications: int
+    retention_covered_publications: int
     monetary_coverage: Decimal
+    retention_coverage: Decimal
     aggregate_metrics: list[dict[str, object]]
     comparison_status: str
     comparison_summary: dict[str, object]
@@ -467,13 +470,17 @@ def get_channel_economics(channel_profile_id: uuid.UUID) -> ChannelEconomicsSnap
 )
 def get_channel_editing_performance(
     channel_profile_id: uuid.UUID,
+    age_bucket_hours: int | None = Query(default=None),
 ) -> EditBlueprintPerformanceSnapshot | None:
     with session_scope() as session:
         try:
             ensure_active_profile(session, channel_profile_id)
         except ValueError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
-    return latest_edit_blueprint_performance(channel_profile_id)
+    return latest_edit_blueprint_performance(
+        channel_profile_id,
+        age_bucket_hours=age_bucket_hours,
+    )
 
 
 @router.get(
@@ -483,13 +490,18 @@ def get_channel_editing_performance(
 def get_channel_editing_performance_history(
     channel_profile_id: uuid.UUID,
     limit: int = Query(default=50, ge=1, le=250),
+    age_bucket_hours: int | None = Query(default=None),
 ) -> list[EditBlueprintPerformanceSnapshot]:
     with session_scope() as session:
         try:
             ensure_active_profile(session, channel_profile_id)
         except ValueError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
-    return list_edit_blueprint_performance(channel_profile_id, limit=limit)
+    return list_edit_blueprint_performance(
+        channel_profile_id,
+        limit=limit,
+        age_bucket_hours=age_bucket_hours,
+    )
 
 
 @router.get(
