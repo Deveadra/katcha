@@ -141,3 +141,38 @@ Local compilation/render work remains bounded by the production Temporal workflo
 A verified render carries verification metadata into the persisted render asset and emits a `production.render_verified` event. Publication still requires the existing approval, channel binding, credential, scheduling, and duplicate-upload gates.
 
 The next hardening slice is durable render revision/dead-letter state plus an AutomationLevel-aware approved-render handoff that can construct the publication request from a channel-owned packaging/schedule policy. That handoff must reuse the existing publication ledger rather than introduce a second uploader.
+
+
+## Durable render recovery and publish handoff
+
+Rendering now has its own durable operational ledger. Every single-clip production or ranked short episode gets a `RenderAttempt` row before Remotion is called. Temporal retries reuse that same deterministic output and increment failure evidence on the same attempt. When bounded retries are exhausted, the attempt is marked `dead_letter`; it is not silently restarted.
+
+Operator recovery creates a child content lineage from the render stage. Script selection, frozen brand, frozen Edit Blueprint and already-paid narration are reused when valid. Text/source-only blueprints explicitly do not require narration assets during recovery.
+
+The channel AutomationLevel is evaluated only after a verified render exists:
+
+```
+review_required
+  -> stop for human review
+
+auto_approve_low_risk
+  -> auto-approve only if every frozen acquisition snapshot is eligible + green lane
+  -> stop before publishing
+
+auto_publish_private
+  -> same approval gate
+  -> register one private Publication
+  -> start the existing YouTube publication workflow
+
+auto_publish_scheduled
+  -> same approval gate
+  -> choose the next collision-free learned/fallback channel window
+  -> register one scheduled public Publication
+  -> start the existing YouTube publication workflow
+```
+
+A manual approval on a higher automation level also resumes this handoff. This is intentional: content that required human review can continue automatically after that review rather than requiring a second manual publication action.
+
+The handoff does not own an uploader. It calls the existing publication registration service, which keeps source/channel uniqueness constraints, channel binding, approval checks and duplicate-upload protection as the single publication ledger.
+
+Automatic scheduling uses the latest channel `ScheduleRecommendation` set when available, otherwise the channel strategy fallback schedule. Blackout slots are excluded and already-occupied future publication times are skipped. If no safe slot, active YouTube credentials, verified render, or usable publication title exists, the handoff fails closed and leaves the approved media available for operator action.
