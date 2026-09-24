@@ -68,6 +68,7 @@ class ClipFeatureResponse(BaseModel):
 class CreateProductionRequest(BaseModel):
     persona_key: str = "youth_host"
     idempotency_key: str | None = Field(default=None, max_length=256)
+    edit_blueprint_key: str | None = Field(default=None, min_length=1, max_length=96)
 
 
 class ProductionResponse(BaseModel):
@@ -85,6 +86,9 @@ class ProductionResponse(BaseModel):
     persona_key: str
     persona_version: str
     prompt_version: str
+    edit_blueprint_key: str | None
+    edit_blueprint_version: int | None
+    edit_blueprint_snapshot: dict[str, object] | None
     selected_script_id: UUID | None
     selected_voice_profile: str | None
     render_manifest: dict[str, object]

@@ -199,6 +199,7 @@ class AutomationPolicyResponse(BaseModel):
 class CreateChannelProductionRequest(BaseModel):
     persona_key: str = Field(default="youth_host", min_length=1, max_length=64)
     idempotency_key: str | None = Field(default=None, max_length=256)
+    edit_blueprint_key: str | None = Field(default=None, min_length=1, max_length=96)
 
 
 class ChannelProductionResponse(BaseModel):
@@ -207,6 +208,8 @@ class ChannelProductionResponse(BaseModel):
     id: uuid.UUID
     clip_id: uuid.UUID
     channel_profile_id: uuid.UUID | None
+    edit_blueprint_key: str | None
+    edit_blueprint_version: int | None
     workflow_id: str
     status: str
     stage: str
@@ -497,6 +500,7 @@ async def create_channel_production(
             persona_key=request.persona_key,
             idempotency_key=request.idempotency_key,
             channel_profile_id=channel_profile_id,
+            edit_blueprint_key=request.edit_blueprint_key,
         )
         if production.status == ProductionStatus.QUEUED.value:
             await start_production_workflow(

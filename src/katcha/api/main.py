@@ -12,6 +12,7 @@ from sqlalchemy import select, text
 from katcha import __version__
 from katcha.api.acquisition import router as acquisition_router
 from katcha.api.control_auth import require_control_token
+from katcha.api.edit_blueprints import router as edit_blueprints_router
 from katcha.api.explorer import router as explorer_router
 from katcha.api.intelligence import router as intelligence_router
 from katcha.api.schemas import (
@@ -120,6 +121,7 @@ app = FastAPI(
     description="Standalone control plane for Katcha media workflows.",
 )
 app.include_router(acquisition_router)
+app.include_router(edit_blueprints_router)
 app.include_router(intelligence_router)
 app.include_router(short_episodes_router)
 app.include_router(trends_router)
@@ -262,6 +264,7 @@ async def create_production(
             clip_id,
             persona_key=request.persona_key,
             idempotency_key=request.idempotency_key,
+            edit_blueprint_key=request.edit_blueprint_key,
         )
     except ValueError as exc:
         code = 404 if "not found" in str(exc) else 409

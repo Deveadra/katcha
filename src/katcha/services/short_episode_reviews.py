@@ -176,6 +176,13 @@ def register_short_episode_regeneration(
             brand_key=parent.brand_key,
             brand_version=parent.brand_version,
             brand_snapshot=dict(parent.brand_snapshot or {}),
+            edit_blueprint_key=parent.edit_blueprint_key,
+            edit_blueprint_version=parent.edit_blueprint_version,
+            edit_blueprint_snapshot=(
+                dict(parent.edit_blueprint_snapshot)
+                if parent.edit_blueprint_snapshot is not None
+                else None
+            ),
             render_manifest={},
             estimated_cost_usd=Decimal("0"),
         )
@@ -220,6 +227,8 @@ def register_short_episode_regeneration(
                     "channel_profile_id": str(parent.channel_profile_id),
                     "brand_key": child.brand_key,
                     "brand_version": child.brand_version,
+                    "edit_blueprint_key": child.edit_blueprint_key,
+                    "edit_blueprint_version": child.edit_blueprint_version,
                     "trend_opportunity_id": (
                         str(child.trend_opportunity_id) if child.trend_opportunity_id else None
                     ),
