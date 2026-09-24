@@ -14,10 +14,15 @@ from katcha.db import session_scope
 from katcha.domain import ProductionStatus
 from katcha.editorial.generator import generate_short_scripts
 from katcha.editorial.personas import get_persona
+from katcha.editing.blueprints import EditBlueprintContract
 from katcha.integrations.storage import ObjectStore
 from katcha.models import Clip, DomainEvent, UsageEvent
 from katcha.production_models import Production, ProductionAsset, ProductionScript
-from katcha.rendering.client import render_short
+from katcha.rendering.blueprint_manifest import (
+    BlueprintRenderManifest,
+    build_blueprint_render_manifest,
+)
+from katcha.rendering.client import render_blueprint, render_short
 from katcha.rendering.manifest import (
     ShortBrandSpec,
     ShortRenderManifest,
@@ -89,6 +94,16 @@ def _brand_render_spec(snapshot: dict[str, Any]) -> ShortBrandSpec | None:
     if not isinstance(visual, dict):
         return None
     return ShortBrandSpec.model_validate(visual)
+
+
+def _frozen_blueprint(production: Production) -> EditBlueprintContract | None:
+    snapshot = production.edit_blueprint_snapshot
+    if not isinstance(snapshot, dict) or not snapshot:
+        return None
+    blueprint = EditBlueprintContract.model_validate(snapshot)
+    if production.edit_blueprint_key and blueprint.key != production.edit_blueprint_key:
+        raise RuntimeError("production edit blueprint key does not match frozen snapshot")
+    return blueprint
 
 
 @activity.defn
@@ -307,6 +322,31 @@ def generate_narration_assets(production_id: str) -> dict[str, object]:
         if production is None:
             raise ValueError(f"production not found: {production_id}")
         script = _selected_script(session, production)
+        blueprint = _frozen_blueprint(production)
+        if blueprint is not None and blueprint.narration.mode in {"text_only", "source_only"}:
+            production.status = ProductionStatus.VOICED.value
+            production.stage = "voice_skipped_by_blueprint"
+            production.error = None
+            session.add(
+                DomainEvent(
+                    aggregate_type="production",
+                    aggregate_id=production_id,
+                    event_type="production.voice_skipped",
+                    payload={
+                        "production_id": production_id,
+                        "edit_blueprint_key": blueprint.key,
+                        "edit_blueprint_version": blueprint.version,
+                        "narration_mode": blueprint.narration.mode,
+                    },
+                )
+            )
+            return {
+                "production_id": production_id,
+                "voice_profile": None,
+                "generated_segments": 0,
+                "reused_segments": 0,
+                "skipped": True,
+            }
         segments = list((script.script_metadata or {}).get("segments") or [])
         if not segments:
             raise RuntimeError("selected script has no commentary segments")
@@ -457,65 +497,133 @@ def build_render_manifest_activity(production_id: str) -> dict[str, object]:
         clip = session.get(Clip, production.clip_id)
         if clip is None:
             raise RuntimeError("production source clip does not exist")
+        if not store.exists(clip.storage_key):
+            raise RuntimeError("production source object is missing from storage")
         script = _selected_script(session, production)
-        segments = list((script.script_metadata or {}).get("segments") or [])
-        narration_assets = list(
-            session.scalars(
-                select(ProductionAsset)
-                .where(
-                    ProductionAsset.production_id == production_uuid,
-                    ProductionAsset.kind.like("narration_%"),
-                )
-                .order_by(ProductionAsset.kind)
-            )
-        )
-        if len(narration_assets) != len(segments):
-            raise RuntimeError("narration assets are incomplete")
-        asset_payload = [
-            {
-                "storage_key": asset.storage_key,
-                "segment_index": int((asset.asset_metadata or {}).get("segment_index", index)),
-                "duration_seconds": float(
-                    (asset.asset_metadata or {}).get("duration_seconds") or 0
-                ),
-            }
-            for index, asset in enumerate(narration_assets)
-        ]
-        output_key = store.production_key(production_id, "render/short-g1.mp4")
-        visual = dict((production.brand_snapshot or {}).get("visual") or {})
-        reaction_pack_payload = visual.get("reaction_pack")
-        reaction_pack = (
-            ReactionAssetPack.model_validate(reaction_pack_payload)
-            if reaction_pack_payload is not None
-            else None
-        )
+        blueprint = _frozen_blueprint(production)
         brand = _brand_render_spec(dict(production.brand_snapshot or {}))
-        manifest = build_short_manifest(
-            production_id=production_id,
-            source_key=clip.storage_key,
-            source_duration_seconds=float(clip.duration_seconds or 0),
-            source_width=clip.width,
-            source_height=clip.height,
-            source_audio_volume=settings.source_audio_volume,
-            width=settings.render_width,
-            height=settings.render_height,
-            fps=settings.render_fps,
-            script_segments=segments,
-            narration_assets=asset_payload,
-            output_key=output_key,
-            title_angle=str((script.script_metadata or {}).get("title_angle") or "") or None,
-            interaction_prompt=script.interaction_prompt,
-            brand=brand,
-            reaction_pack=reaction_pack,
-            reaction_cues=list((script.script_metadata or {}).get("reaction_cues") or []),
-        )
+        output_key = store.production_key(production_id, "render/short-g1.mp4")
+
+        if blueprint is not None and blueprint.composition == "blueprint_video":
+            if production.channel_profile_id is None:
+                raise RuntimeError("blueprint render requires channel-scoped production")
+            if brand is None:
+                raise RuntimeError("blueprint render requires frozen brand visual tokens")
+            narration_asset_key = None
+            narration_text = None
+            narration_duration_seconds = None
+            if blueprint.narration.mode not in {"text_only", "source_only"}:
+                narration_assets = list(
+                    session.scalars(
+                        select(ProductionAsset)
+                        .where(
+                            ProductionAsset.production_id == production_uuid,
+                            ProductionAsset.kind.like("narration_%"),
+                        )
+                        .order_by(ProductionAsset.kind)
+                    )
+                )
+                if len(narration_assets) != 1:
+                    raise RuntimeError(
+                        "blueprint voice render currently requires exactly one narration asset"
+                    )
+                narration_asset = narration_assets[0]
+                if not store.exists(narration_asset.storage_key):
+                    raise RuntimeError("blueprint narration object is missing from storage")
+                narration_asset_key = narration_asset.storage_key
+                narration_text = script.narration
+                narration_duration_seconds = float(
+                    (narration_asset.asset_metadata or {}).get("duration_seconds") or 0
+                )
+            headline = str((script.script_metadata or {}).get("title_angle") or "").strip()
+            manifest = build_blueprint_render_manifest(
+                render_id=production_id,
+                channel_profile_id=str(production.channel_profile_id),
+                brand=brand,
+                blueprint=blueprint,
+                source_storage_key=clip.storage_key,
+                source_duration_seconds=float(clip.duration_seconds or 0),
+                output_key=output_key,
+                headline=headline or None,
+                narration_asset_key=narration_asset_key,
+                narration_text=narration_text,
+                narration_duration_seconds=narration_duration_seconds,
+                width=settings.render_width,
+                height=settings.render_height,
+                fps=settings.render_fps,
+            )
+            caption_payload = (
+                [cue.model_dump(mode="json") for cue in manifest.narration.cues]
+                if manifest.narration is not None
+                else []
+            )
+        else:
+            segments = list((script.script_metadata or {}).get("segments") or [])
+            narration_assets = list(
+                session.scalars(
+                    select(ProductionAsset)
+                    .where(
+                        ProductionAsset.production_id == production_uuid,
+                        ProductionAsset.kind.like("narration_%"),
+                    )
+                    .order_by(ProductionAsset.kind)
+                )
+            )
+            if len(narration_assets) != len(segments):
+                raise RuntimeError("narration assets are incomplete")
+            asset_payload = [
+                {
+                    "storage_key": asset.storage_key,
+                    "segment_index": int(
+                        (asset.asset_metadata or {}).get("segment_index", index)
+                    ),
+                    "duration_seconds": float(
+                        (asset.asset_metadata or {}).get("duration_seconds") or 0
+                    ),
+                }
+                for index, asset in enumerate(narration_assets)
+            ]
+            for asset in narration_assets:
+                if not store.exists(asset.storage_key):
+                    raise RuntimeError("narration object is missing from storage")
+            visual = dict((production.brand_snapshot or {}).get("visual") or {})
+            reaction_pack_payload = visual.get("reaction_pack")
+            reaction_pack = (
+                ReactionAssetPack.model_validate(reaction_pack_payload)
+                if reaction_pack_payload is not None
+                else None
+            )
+            manifest = build_short_manifest(
+                production_id=production_id,
+                source_key=clip.storage_key,
+                source_duration_seconds=float(clip.duration_seconds or 0),
+                source_width=clip.width,
+                source_height=clip.height,
+                source_audio_volume=settings.source_audio_volume,
+                width=settings.render_width,
+                height=settings.render_height,
+                fps=settings.render_fps,
+                script_segments=segments,
+                narration_assets=asset_payload,
+                output_key=output_key,
+                title_angle=str((script.script_metadata or {}).get("title_angle") or "")
+                or None,
+                interaction_prompt=script.interaction_prompt,
+                brand=brand,
+                reaction_pack=reaction_pack,
+                reaction_cues=list(
+                    (script.script_metadata or {}).get("reaction_cues") or []
+                ),
+            )
+            caption_payload = [
+                cue.model_dump(mode="json")
+                for overlay in manifest.overlays
+                for cue in overlay.cues
+            ]
 
     manifest_bytes = manifest.model_dump_json(indent=2).encode("utf-8")
     manifest_key = store.production_key(production_id, "render/manifest.json")
     store.put_bytes(manifest_bytes, manifest_key, content_type="application/json")
-    caption_payload = [
-        cue.model_dump(mode="json") for overlay in manifest.overlays for cue in overlay.cues
-    ]
     captions_key = store.production_key(production_id, "render/captions.json")
     store.put_bytes(
         json.dumps(caption_payload, indent=2).encode("utf-8"),
@@ -530,6 +638,7 @@ def build_render_manifest_activity(production_id: str) -> dict[str, object]:
         production.render_manifest = manifest.model_dump(mode="json")
         production.status = ProductionStatus.RENDERING.value
         production.stage = "manifest_ready"
+        production.error = None
         for kind, key in (("manifest", manifest_key), ("captions", captions_key)):
             existing = session.scalar(
                 select(ProductionAsset).where(
@@ -550,6 +659,8 @@ def build_render_manifest_activity(production_id: str) -> dict[str, object]:
                             "manifest_version": manifest.version,
                             "brand_key": production.brand_key,
                             "brand_version": production.brand_version,
+                            "edit_blueprint_key": production.edit_blueprint_key,
+                            "edit_blueprint_version": production.edit_blueprint_version,
                         },
                     )
                 )
@@ -561,8 +672,11 @@ def build_render_manifest_activity(production_id: str) -> dict[str, object]:
                 payload={
                     "production_id": production_id,
                     "manifest_key": manifest_key,
+                    "manifest_version": manifest.version,
                     "brand_key": production.brand_key,
                     "brand_version": production.brand_version,
+                    "edit_blueprint_key": production.edit_blueprint_key,
+                    "edit_blueprint_version": production.edit_blueprint_version,
                     "output_duration_seconds": manifest.output_duration_seconds,
                 },
             )
@@ -571,6 +685,7 @@ def build_render_manifest_activity(production_id: str) -> dict[str, object]:
         "production_id": production_id,
         "manifest_key": manifest_key,
         "output_key": manifest.output_key,
+        "manifest_version": manifest.version,
     }
 
 
@@ -598,9 +713,19 @@ def render_short_activity(production_id: str) -> dict[str, object]:
         if not production.render_manifest:
             raise RuntimeError("render manifest is missing")
         production.stage = "rendering"
-        manifest = ShortRenderManifest.model_validate(production.render_manifest)
+        manifest_payload = dict(production.render_manifest)
+        if manifest_payload.get("version") == "blueprint-render-v1":
+            manifest = BlueprintRenderManifest.model_validate(manifest_payload)
+            if production.edit_blueprint_key != manifest.blueprint_key:
+                raise RuntimeError("render blueprint lineage does not match production")
+            render_fn = render_blueprint
+        else:
+            manifest = ShortRenderManifest.model_validate(manifest_payload)
+            render_fn = render_short
 
-    result = render_short(manifest, settings=settings)
+    result = render_fn(manifest, settings=settings)
+    if not bool((result.metadata or {}).get("verified")):
+        raise RuntimeError("renderer output failed post-render verification")
 
     with session_scope() as session:
         production = session.get(Production, production_uuid)
@@ -622,28 +747,31 @@ def render_short_activity(production_id: str) -> dict[str, object]:
                     storage_key=result.output_key,
                     content_type="video/mp4",
                     provider="remotion",
-                    model=None,
+                    model=str((result.metadata or {}).get("composition") or "") or None,
                     asset_metadata={
                         "duration_seconds": result.duration_seconds,
                         "brand_key": production.brand_key,
                         "brand_version": production.brand_version,
+                        "edit_blueprint_key": production.edit_blueprint_key,
+                        "edit_blueprint_version": production.edit_blueprint_version,
                         **result.metadata,
                     },
                 )
             )
         production.status = ProductionStatus.REVIEW.value
-        production.stage = "review"
+        production.stage = "render_verified"
         production.error = None
         production.estimated_cost_usd = _production_cost(session, production_uuid)
         session.add(
             DomainEvent(
                 aggregate_type="production",
                 aggregate_id=production_id,
-                event_type="production.review_ready",
+                event_type="production.render_verified",
                 payload={
                     "production_id": production_id,
                     "output_key": result.output_key,
                     "duration_seconds": result.duration_seconds,
+                    "verification": result.metadata,
                 },
             )
         )
@@ -651,6 +779,7 @@ def render_short_activity(production_id: str) -> dict[str, object]:
         "production_id": production_id,
         "output_key": result.output_key,
         "reused": False,
+        "verified": True,
     }
 
 
