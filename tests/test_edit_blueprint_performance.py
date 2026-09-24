@@ -3,13 +3,16 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from types import SimpleNamespace
 
 from katcha.publishing_models import Publication, PublicationAnalyticsSnapshot
 from katcha.services.edit_blueprint_performance import (
     _aggregate_group,
     _comparison_summary,
     _group_identity,
+    _production_lineage_cost,
     _select_maturity_snapshot,
+    _source_lineage,
 )
 
 
@@ -59,6 +62,8 @@ def _row(
         "shares": 10,
         "subscribers_gained": 3,
         "subscribers_lost": 0,
+        "subscribers_net": 3,
+        "interaction_rate": 0.13,
         "estimated_revenue": revenue,
         "outcome_score": outcome,
         "attributed_cost_usd": cost,
@@ -66,6 +71,7 @@ def _row(
         "retention_50": 0.73,
         "retention_75": 0.55,
         "retention_95": 0.37,
+        "has_retention": True,
     }
 
 
@@ -185,3 +191,129 @@ def test_repeated_analytics_samples_choose_one_maturity_matched_snapshot() -> No
 
     assert selected is not None
     assert selected.sample_key == "70h"
+
+
+def test_margin_delta_is_suppressed_when_monetary_coverage_is_low() -> None:
+    left_rows = [
+        _row(index, revenue=Decimal("2.00") if index <= 3 else None)
+        for index in range(1, 6)
+    ]
+    right_rows = [
+        _row(index, revenue=Decimal("2.00") if index <= 8 else None)
+        for index in range(6, 11)
+    ]
+    left = _aggregate_group(_identity(key="persona_commentary"), left_rows)
+    right = _aggregate_group(_identity(key="header_explainer"), right_rows)
+
+    _, summary = _comparison_summary([left, right])
+
+    comparison = summary["comparisons"][0]
+    assert left["monetary_coverage"] == 0.6
+    assert right["monetary_coverage"] == 0.6
+    assert "covered_margin_per_publication_usd" in (
+        comparison["observed_delta_left_minus_right"]
+    )
+
+    right_low = _aggregate_group(
+        _identity(key="header_explainer", revision=2),
+        [
+            _row(index, revenue=Decimal("2.00") if index < 13 else None)
+            for index in range(11, 16)
+        ],
+    )
+    assert right_low["monetary_coverage"] == 0.4
+    _, low_summary = _comparison_summary([left, right_low])
+    assert "covered_margin_per_publication_usd" not in (
+        low_summary["comparisons"][0]["observed_delta_left_minus_right"]
+    )
+
+
+def test_retention_delta_requires_coverage_on_both_groups() -> None:
+    left = _aggregate_group(
+        _identity(key="persona_commentary"),
+        [_row(index) for index in range(1, 6)],
+    )
+    sparse_rows = [_row(index) for index in range(6, 11)]
+    for row in sparse_rows[2:]:
+        row["has_retention"] = False
+        for target in (25, 50, 75, 95):
+            row[f"retention_{target}"] = None
+    right = _aggregate_group(
+        _identity(key="header_explainer"),
+        sparse_rows,
+    )
+
+    _, summary = _comparison_summary([left, right])
+
+    assert left["retention_coverage"] == 1.0
+    assert right["retention_coverage"] == 0.4
+    delta = summary["comparisons"][0]["observed_delta_left_minus_right"]
+    assert "audience_watch_ratio_50pct" not in delta
+    assert "audience_watch_ratio_95pct" not in delta
+
+
+def test_publication_frozen_blueprint_lineage_overrides_live_source_state() -> None:
+    source_id = uuid.uuid4()
+    source = SimpleNamespace(
+        id=source_id,
+        kind="short",
+        edit_blueprint_key="new_live_blueprint",
+        edit_blueprint_version=9,
+        edit_blueprint_snapshot={
+            "version": "9.0.0",
+            "composition": "new_composition",
+            "narration": {"mode": "new_voice"},
+            "source_layout": {"mode": "new_layout"},
+        },
+        estimated_cost_usd=Decimal("0.50"),
+        parent_production_id=None,
+        brand_key="brand",
+        brand_version=4,
+    )
+    session = SimpleNamespace(get=lambda model, item_id: source)
+    publication = Publication(
+        id=uuid.uuid4(),
+        production_id=source_id,
+        youtube_connection_id=uuid.uuid4(),
+        workflow_id="publish-frozen-lineage",
+        analytics_workflow_id="analytics-frozen-lineage",
+        title="Frozen lineage",
+        treatment_metadata={
+            "edit_blueprint_key": "persona_commentary",
+            "edit_blueprint_revision": 2,
+            "edit_blueprint_contract_version": "1.0.0",
+            "edit_composition": "blueprint_video",
+            "edit_narration_mode": "persona_voice",
+            "edit_source_layout_mode": "full_frame",
+            "source_scope": "short",
+            "selected_style": "observational",
+        },
+    )
+
+    result = _source_lineage(session, publication)
+
+    assert result is not None
+    _, _, lineage, _ = result
+    assert lineage["edit_blueprint_key"] == "persona_commentary"
+    assert lineage["edit_blueprint_revision"] == 2
+    assert lineage["edit_blueprint_contract_version"] == "1.0.0"
+    assert lineage["lineage_source"] == "publication_metadata"
+
+
+def test_regeneration_ancestry_cost_includes_failed_parent_spend() -> None:
+    parent_id = uuid.uuid4()
+    child_id = uuid.uuid4()
+    parent = SimpleNamespace(
+        id=parent_id,
+        estimated_cost_usd=Decimal("1.25"),
+        parent_production_id=None,
+    )
+    child = SimpleNamespace(
+        id=child_id,
+        estimated_cost_usd=Decimal("0.75"),
+        parent_production_id=parent_id,
+    )
+    sources = {parent_id: parent, child_id: child}
+    session = SimpleNamespace(get=lambda model, item_id: sources.get(item_id))
+
+    assert _production_lineage_cost(session, child) == Decimal("2.00")
