@@ -220,5 +220,9 @@ def reset_topic_watch_source(
         return source_polling_status(topic_watch_id, adapter_index)
     except ValueError as exc:
         detail = str(exc)
-        code = 409 if "acknowledge_provider_quota_reset" in detail else 404
+        conflict_markers = (
+            "acknowledge_provider_quota_reset",
+            "reservations are active",
+        )
+        code = 409 if any(marker in detail for marker in conflict_markers) else 404
         raise HTTPException(status_code=code, detail=detail) from exc
