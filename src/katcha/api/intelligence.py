@@ -23,13 +23,13 @@ from katcha.intelligence_models import (
     ScheduleRecommendation,
 )
 from katcha.longform_models import Compilation
-from katcha.packaging_intelligence_models import PackagingIntelligenceSnapshot
 from katcha.orchestration.client import (
     start_channel_intelligence_refresh,
     start_channel_intelligence_schedule,
     start_longform_workflow,
     start_production_workflow,
 )
+from katcha.packaging_intelligence_models import PackagingIntelligenceSnapshot
 from katcha.production_models import Production
 from katcha.services.channel_automation import (
     automation_summary,
