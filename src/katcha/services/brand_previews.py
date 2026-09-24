@@ -32,6 +32,59 @@ def _request_key(
     return hashlib.sha256(encoded).hexdigest()
 
 
+def compile_brand_preview_manifest(
+    base: ShortRenderManifest,
+    *,
+    preview_id: uuid.UUID,
+    channel_profile_id: uuid.UUID,
+    contract_visual: dict[str, Any],
+    brand_key: str,
+    brand_version: int,
+    production_id: uuid.UUID,
+    reaction_cue: dict[str, Any] | None = None,
+) -> tuple[ShortRenderManifest, dict[str, Any] | None]:
+    preview_brand = ShortBrandSpec.model_validate(contract_visual)
+    if preview_brand.brand_key != brand_key or preview_brand.version != brand_version:
+        raise ValueError("staged brand visual identity does not match brand contract")
+
+    reaction_events = []
+    normalized_cue: dict[str, Any] | None = None
+    if reaction_cue is not None:
+        cue = ReactionCue.model_validate(reaction_cue)
+        normalized_cue = cue.model_dump(mode="json")
+        pack_payload = contract_visual.get("reaction_pack")
+        if not isinstance(pack_payload, dict):
+            raise ValueError("staged brand does not define a reaction asset pack")
+        pack = ReactionAssetPack.model_validate(pack_payload)
+        reaction_events = resolve_reaction_events(
+            cues=[cue],
+            pack=pack,
+            brand_key=preview_brand.brand_key,
+            narration_windows={
+                index: (overlay.start_seconds, overlay.duration_seconds)
+                for index, overlay in enumerate(base.overlays)
+            },
+            output_duration_seconds=base.output_duration_seconds,
+        )
+
+    output_key = (
+        f"previews/brands/{channel_profile_id}/v{brand_version}/"
+        f"production-{production_id}/{preview_id}.mp4"
+    )
+    preview = ShortRenderManifest.model_validate(
+        {
+            **base.model_dump(mode="json"),
+            "production_id": f"brand-preview-{preview_id}",
+            "output_key": output_key,
+            "brand": preview_brand.model_dump(mode="json"),
+            "reaction_events": [
+                event.model_dump(mode="json") for event in reaction_events
+            ],
+        }
+    )
+    return preview, normalized_cue
+
+
 def register_brand_preview(
     channel_profile_id: uuid.UUID,
     *,
@@ -66,29 +119,16 @@ def register_brand_preview(
             raise ValueError("brand preview currently supports short-render-v1 productions")
         base = ShortRenderManifest.model_validate(base_payload)
         visual = dict(contract.visual or {})
-        preview_brand = ShortBrandSpec.model_validate(visual)
-
-        reaction_events = []
-        normalized_cue: dict[str, Any] | None = None
-        if reaction_cue is not None:
-            cue = ReactionCue.model_validate(reaction_cue)
-            normalized_cue = cue.model_dump(mode="json")
-            pack_payload = visual.get("reaction_pack")
-            if not isinstance(pack_payload, dict):
-                raise ValueError("staged brand does not define a reaction asset pack")
-            pack = ReactionAssetPack.model_validate(pack_payload)
-            reaction_events = resolve_reaction_events(
-                cues=[cue],
-                pack=pack,
-                brand_key=preview_brand.brand_key,
-                narration_windows={
-                    index: (overlay.start_seconds, overlay.duration_seconds)
-                    for index, overlay in enumerate(base.overlays)
-                },
-                output_duration_seconds=base.output_duration_seconds,
-            )
-
-        request_key = _request_key(production.id, brand_version, normalized_cue)
+        normalized_request_cue = (
+            ReactionCue.model_validate(reaction_cue).model_dump(mode="json")
+            if reaction_cue is not None
+            else None
+        )
+        request_key = _request_key(
+            production.id,
+            brand_version,
+            normalized_request_cue,
+        )
         existing = session.scalar(
             select(BrandPreviewRender).where(
                 BrandPreviewRender.channel_profile_id == profile.id,
@@ -100,21 +140,17 @@ def register_brand_preview(
             return existing
 
         preview_id = uuid.uuid4()
-        output_key = (
-            f"previews/brands/{profile.id}/v{brand_version}/"
-            f"production-{production.id}/{preview_id}.mp4"
+        preview_manifest, normalized_cue = compile_brand_preview_manifest(
+            base,
+            preview_id=preview_id,
+            channel_profile_id=profile.id,
+            contract_visual=visual,
+            brand_key=contract.brand_key,
+            brand_version=contract.version,
+            production_id=production.id,
+            reaction_cue=normalized_request_cue,
         )
-        preview_manifest = ShortRenderManifest.model_validate(
-            {
-                **base.model_dump(mode="json"),
-                "production_id": f"brand-preview-{preview_id}",
-                "output_key": output_key,
-                "brand": preview_brand.model_dump(mode="json"),
-                "reaction_events": [
-                    event.model_dump(mode="json") for event in reaction_events
-                ],
-            }
-        )
+        output_key = preview_manifest.output_key
         row = BrandPreviewRender(
             id=preview_id,
             channel_profile_id=profile.id,
