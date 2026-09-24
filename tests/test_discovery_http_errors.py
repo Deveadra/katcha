@@ -175,3 +175,59 @@ def test_rss_429_retains_retry_after_without_leaking_feed_url(
     assert raised.value.provider_usage == {"rss.http": 1}
     assert "hidden" not in str(raised.value)
     assert "private feed response" not in str(raised.value)
+
+
+def test_rss_parse_failure_preserves_consumed_http_usage(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from katcha.acquisition import feeds
+
+    monkeypatch.setattr(feeds, "_validate_public_url", lambda url: None)
+    client_type = httpx.Client
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, request=request, content=b"<not-valid")
+
+    monkeypatch.setattr(
+        feeds.httpx,
+        "Client",
+        lambda **kwargs: client_type(transport=httpx.MockTransport(handler)),
+    )
+    with pytest.raises(DiscoveryProviderError) as raised:
+        feeds.RssAtomDiscoveryAdapter().discover(
+            {"feed_url": "https://example.com/feed.xml"},
+            {},
+        )
+    assert raised.value.kind == "invalid_provider_response"
+    assert raised.value.provider_usage == {"rss.http": 1}
+
+
+def test_reddit_missing_oauth_token_preserves_oauth_usage(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from katcha.acquisition import reddit_discovery as reddit
+
+    monkeypatch.setattr(
+        reddit,
+        "get_settings",
+        lambda: SimpleNamespace(
+            reddit_client_id="id",
+            reddit_client_secret="secret",
+            reddit_user_agent="Katcha-test",
+        ),
+    )
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            request=request,
+            json={"expires_in": 3600},
+        )
+
+    with (
+        httpx.Client(transport=httpx.MockTransport(handler)) as client,
+        pytest.raises(DiscoveryProviderError) as raised,
+    ):
+        reddit.RedditDiscoveryAdapter()._access_token(client)
+    assert raised.value.kind == "invalid_provider_response"
+    assert raised.value.provider_usage == {"reddit.oauth": 1}
