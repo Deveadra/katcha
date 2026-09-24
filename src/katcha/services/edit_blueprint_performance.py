@@ -315,6 +315,9 @@ def _aggregate_group(
     )
     covered_margin = known_revenue - covered_cost if revenue_rows else None
     count = len(rows)
+    retention_rows = [row for row in rows if bool(row.get("has_retention"))]
+    retention_coverage = len(retention_rows) / count if count else 0.0
+    monetary_coverage = len(revenue_rows) / count if count else 0.0
     retention = {
         f"mean_audience_watch_ratio_{int(target * 100)}pct": _mean(
             numbers(f"retention_{int(target * 100)}")
@@ -339,12 +342,16 @@ def _aggregate_group(
         "mean_likes": _mean(numbers("likes")),
         "mean_comments": _mean(numbers("comments")),
         "mean_shares": _mean(numbers("shares")),
+        "mean_interaction_rate": _mean(numbers("interaction_rate")),
         "mean_subscribers_gained": _mean(numbers("subscribers_gained")),
         "mean_subscribers_lost": _mean(numbers("subscribers_lost")),
+        "mean_subscribers_net": _mean(numbers("subscribers_net")),
         **retention,
         "attributed_cost_usd": str(total_cost),
         "revenue_covered_publications": len(revenue_rows),
-        "monetary_coverage": round(len(revenue_rows) / count, 6) if count else 0.0,
+        "retention_covered_publications": len(retention_rows),
+        "monetary_coverage": round(monetary_coverage, 6),
+        "retention_coverage": round(retention_coverage, 6),
         "covered_revenue_usd": str(known_revenue) if revenue_rows else None,
         "covered_cost_usd": str(covered_cost) if revenue_rows else None,
         "covered_contribution_margin_usd": (
@@ -389,9 +396,35 @@ def _comparison_summary(groups: list[dict[str, object]]) -> tuple[str, dict[str,
         if left_outcome is not None and right_outcome is not None:
             delta["outcome_score"] = round(left_outcome - right_outcome, 6)
 
+        left_retention = _number(left.get("retention_coverage")) or 0.0
+        right_retention = _number(right.get("retention_coverage")) or 0.0
+        if (
+            left_retention >= _MIN_RETENTION_COVERAGE
+            and right_retention >= _MIN_RETENTION_COVERAGE
+        ):
+            left_mid = _number(left.get("mean_audience_watch_ratio_50pct"))
+            right_mid = _number(right.get("mean_audience_watch_ratio_50pct"))
+            left_tail = _number(left.get("mean_audience_watch_ratio_95pct"))
+            right_tail = _number(right.get("mean_audience_watch_ratio_95pct"))
+            if left_mid is not None and right_mid is not None:
+                delta["audience_watch_ratio_50pct"] = round(
+                    left_mid - right_mid, 6
+                )
+            if left_tail is not None and right_tail is not None:
+                delta["audience_watch_ratio_95pct"] = round(
+                    left_tail - right_tail, 6
+                )
+
         left_revenue_n = int(left.get("revenue_covered_publications") or 0)
         right_revenue_n = int(right.get("revenue_covered_publications") or 0)
-        if left_revenue_n >= _MIN_MARGIN_SAMPLE and right_revenue_n >= _MIN_MARGIN_SAMPLE:
+        left_monetary = _number(left.get("monetary_coverage")) or 0.0
+        right_monetary = _number(right.get("monetary_coverage")) or 0.0
+        if (
+            left_revenue_n >= _MIN_MARGIN_SAMPLE
+            and right_revenue_n >= _MIN_MARGIN_SAMPLE
+            and left_monetary >= _MIN_MONETARY_COVERAGE
+            and right_monetary >= _MIN_MONETARY_COVERAGE
+        ):
             left_margin = _number(left.get("covered_margin_per_publication_usd"))
             right_margin = _number(right.get("covered_margin_per_publication_usd"))
             if left_margin is not None and right_margin is not None:
@@ -420,6 +453,8 @@ def _comparison_summary(groups: list[dict[str, object]]) -> tuple[str, dict[str,
         "advisory_only": True,
         "minimum_group_sample": _MIN_GROUP_SAMPLE,
         "minimum_margin_sample": _MIN_MARGIN_SAMPLE,
+        "minimum_monetary_coverage": _MIN_MONETARY_COVERAGE,
+        "minimum_retention_coverage": _MIN_RETENTION_COVERAGE,
         "eligible_group_count": len(eligible),
         "comparisons": comparisons,
     }
