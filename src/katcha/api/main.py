@@ -97,6 +97,7 @@ from katcha.publishing_models import (
     YouTubeConnection,
 )
 from katcha.services.analysis import register_analysis
+from katcha.services.auto_publication import prepare_auto_publication
 from katcha.services.compilations import (
     register_compilation,
     register_compilation_regeneration,
@@ -363,9 +364,29 @@ async def review_short(
         )
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    publication = None
+    auto_action = None
+    auto_reason = None
+    if request.decision == ReviewDecision.APPROVE.value:
+        auto = prepare_auto_publication("production", production_id)
+        auto_action = auto.action
+        auto_reason = auto.reason
+        publication = auto.publication
+        if publication is not None and publication.status == "queued":
+            await start_publication_workflow(
+                str(publication.id),
+                publication.workflow_id,
+            )
     return ReviewActionResponse(
         production_id=production_id,
         decision=request.decision,
+        publication_id=publication.id if publication is not None else None,
+        publication_workflow_id=(
+            publication.workflow_id if publication is not None else None
+        ),
+        auto_publication_action=auto_action,
+        auto_publication_reason=auto_reason,
     )
 
 
