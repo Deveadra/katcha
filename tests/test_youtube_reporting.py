@@ -61,8 +61,15 @@ def test_list_reporting_jobs_paginates(monkeypatch: pytest.MonkeyPatch) -> None:
     jobs = reporting.list_reporting_jobs(connection_id)
 
     assert [job["id"] for job in jobs] == ["one", "reach"]
-    assert calls[0]["params"] == {"pageSize": 100}
-    assert calls[1]["params"] == {"pageSize": 100, "pageToken": "next"}
+    assert calls[0]["params"] == {
+        "pageSize": 100,
+        "includeSystemManaged": True,
+    }
+    assert calls[1]["params"] == {
+        "pageSize": 100,
+        "includeSystemManaged": True,
+        "pageToken": "next",
+    }
 
 
 def test_create_reporting_job_uses_official_reach_type(
