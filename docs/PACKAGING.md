@@ -199,3 +199,48 @@ GET /v1/channels/{channel_profile_id}/packaging-intelligence/history
 ```
 
 The channel summary also includes the latest packaging-intelligence snapshot.
+
+
+## P10.1 automated candidate generation
+
+Katcha can now generate immutable packaging candidates from publication lineage instead of
+requiring an operator to invent every title/description variant manually.
+
+```http
+POST /v1/publications/{publication_id}/packaging/generations
+```
+
+```json
+{
+  "generation_key": "initial-auto-packaging-v1",
+  "candidate_count": 3
+}
+```
+
+The creative context is compiled deterministically from the publication's channel-scoped
+source lineage. Supported sources in this slice are single-clip Productions and ranked
+ShortEpisodes. The context includes the frozen brand/edit blueprint, source analysis or
+episode premise, selected editorial treatment, existing packaging titles, and the latest
+channel packaging evidence when available.
+
+Generation uses the existing budget-aware `AITask.METADATA` route. Before the provider
+call, Katcha persists a durable `provider_call_started` boundary. If that call becomes
+ambiguous, the same generation key is terminal and cannot silently spend again.
+
+A successful structured provider response is frozen before variant persistence. This means
+a crash while writing variants can resume locally without another model call. Generated
+variant keys are deterministic from the generation record, so partial persistence is
+idempotent.
+
+Each candidate contains a title/description, variation family, editorial angle, exact
+supporting facts copied from compiled grounding evidence, and a renderer/provider-neutral
+thumbnail creative brief. The deterministic validator rejects duplicate families/titles
+and supporting evidence that is not present in the frozen grounding facts.
+
+Accepted candidates are persisted through the existing immutable
+`PublicationPackagingVariant` service with prompt/model/context/brand/edit lineage in
+`variant_metadata`.
+
+P10.1 **does not** generate thumbnail bytes and **does not** mutate YouTube. Thumbnail
+production is a separate paid/QC stage, and any later title/thumbnail activation must still
+flow through the existing P9.1 activation ledger.
