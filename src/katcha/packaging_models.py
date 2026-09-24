@@ -124,3 +124,51 @@ class PublicationPackagingActivation(Base):
         DateTime(timezone=True),
         nullable=True,
     )
+
+
+class PackagingCandidateGeneration(Base):
+    __tablename__ = "packaging_candidate_generations"
+    __table_args__ = (
+        UniqueConstraint(
+            "publication_id",
+            "generation_key",
+            name="uq_packaging_candidate_generation_publication_key",
+        ),
+        CheckConstraint(
+            "status IN ('queued', 'running', 'completed', 'failed', 'ambiguous')",
+            name="ck_packaging_candidate_generation_status",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        primary_key=True,
+        default=uuid.uuid4,
+    )
+    publication_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("publications.id"),
+        index=True,
+    )
+    generation_key: Mapped[str] = mapped_column(String(160))
+    status: Mapped[str] = mapped_column(String(32), default="queued", index=True)
+    stage: Mapped[str] = mapped_column(String(64), default="queued")
+    prompt_version: Mapped[str] = mapped_column(
+        String(64), default="packaging-candidates-v1"
+    )
+    context_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    provider: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    model: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    candidate_payload: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    accepted_variant_ids: Mapped[list[str]] = mapped_column(JSON, default=list)
+    generation_metadata: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        index=True,
+    )
+    completed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
