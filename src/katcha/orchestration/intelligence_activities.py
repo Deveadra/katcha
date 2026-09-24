@@ -11,6 +11,9 @@ from katcha.services.channel_learning import (
     train_channel_ranking,
 )
 from katcha.services.channel_scheduling import compute_schedule_recommendations
+from katcha.services.edit_blueprint_performance import (
+    refresh_edit_blueprint_performance,
+)
 from katcha.services.trend_activation_performance import refresh_activation_performance
 from katcha.services.trend_auto_activation import run_autonomous_trend_activation
 
@@ -109,6 +112,28 @@ def run_channel_trend_activation_activity(
         run_key=run_key,
     )
     return summary.as_dict()
+
+
+@activity.defn
+def refresh_edit_blueprint_performance_activity(
+    channel_profile_id: str,
+    run_key: str,
+) -> dict[str, object]:
+    snapshot = refresh_edit_blueprint_performance(
+        uuid.UUID(channel_profile_id),
+        run_key=run_key,
+    )
+    return {
+        "channel_profile_id": channel_profile_id,
+        "snapshot_id": str(snapshot.id),
+        "version": snapshot.version,
+        "age_bucket_hours": snapshot.age_bucket_hours,
+        "publication_count": snapshot.publication_count,
+        "blueprint_group_count": snapshot.blueprint_group_count,
+        "monetary_coverage": float(snapshot.monetary_coverage),
+        "retention_coverage": float(snapshot.retention_coverage),
+        "comparison_status": snapshot.comparison_status,
+    }
 
 
 @activity.defn

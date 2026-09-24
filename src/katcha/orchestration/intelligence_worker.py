@@ -14,6 +14,7 @@ from katcha.orchestration.intelligence_activities import (
     compute_channel_economics_activity,
     compute_channel_schedule_activity,
     derive_channel_observations_activity,
+    refresh_edit_blueprint_performance_activity,
     refresh_trend_activation_performance_activity,
     run_channel_trend_activation_activity,
     train_channel_ranking_activity,
@@ -50,6 +51,7 @@ async def main() -> None:
             ],
             activities=[
                 derive_channel_observations_activity,
+                refresh_edit_blueprint_performance_activity,
                 train_channel_ranking_activity,
                 compute_channel_economics_activity,
                 compute_channel_schedule_activity,

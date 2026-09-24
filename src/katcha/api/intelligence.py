@@ -12,6 +12,7 @@ from sqlalchemy import select
 
 from katcha.db import session_scope
 from katcha.domain import AutomationLevel, CompilationStatus, ProductionStatus
+from katcha.edit_performance_models import EditBlueprintPerformanceSnapshot
 from katcha.intelligence.runtime import DEFAULT_REFRESH_INTERVAL_HOURS
 from katcha.intelligence_models import (
     AutomationPolicyVersion,
@@ -47,6 +48,10 @@ from katcha.services.channel_profiles import (
 )
 from katcha.services.channel_scheduling import latest_schedule_recommendations
 from katcha.services.compilations import register_compilation
+from katcha.services.edit_blueprint_performance import (
+    latest_edit_blueprint_performance,
+    list_edit_blueprint_performance,
+)
 from katcha.services.event_stream import (
     acknowledge_consumer_event,
     list_consumer_events,
@@ -151,6 +156,28 @@ class EconomicsResponse(BaseModel):
     projected_month_end_spend_usd: Decimal
     monetary_scope_available: bool
     details: dict[str, object]
+
+
+class EditBlueprintPerformanceResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    channel_profile_id: uuid.UUID
+    version: int
+    run_key: str
+    age_bucket_hours: int
+    publication_count: int
+    blueprint_group_count: int
+    revenue_covered_publications: int
+    retention_covered_publications: int
+    monetary_coverage: Decimal
+    retention_coverage: Decimal
+    aggregate_metrics: list[dict[str, object]]
+    comparison_status: str
+    comparison_summary: dict[str, object]
+    sample_window_start: datetime | None
+    sample_window_end: datetime | None
+    created_at: datetime
 
 
 class ScheduleRecommendationResponse(BaseModel):
@@ -322,6 +349,7 @@ def get_channel_summary(channel_profile_id: uuid.UUID) -> dict[str, object]:
             strategy = active_strategy(session, profile)
             ranking = latest_ranking_snapshot(session, profile)
             economics = latest_economics_snapshot(session, profile)
+            edit_performance = latest_edit_blueprint_performance(channel_profile_id)
             profile_payload = ChannelProfileResponse.model_validate(profile).model_dump(mode="json")
             strategy_payload = StrategyResponse.model_validate(strategy).model_dump(mode="json")
             ranking_payload = (
@@ -339,6 +367,13 @@ def get_channel_summary(channel_profile_id: uuid.UUID) -> dict[str, object]:
             "strategy": strategy_payload,
             "ranking": ranking_payload,
             "economics": economics_payload,
+            "edit_performance": (
+                EditBlueprintPerformanceResponse.model_validate(
+                    edit_performance
+                ).model_dump(mode="json")
+                if edit_performance
+                else None
+            ),
             "schedule": [
                 ScheduleRecommendationResponse.model_validate(item).model_dump(mode="json")
                 for item in latest_schedule_recommendations(channel_profile_id)
@@ -427,6 +462,46 @@ def get_channel_economics(channel_profile_id: uuid.UUID) -> ChannelEconomicsSnap
         except ValueError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         return latest_economics_snapshot(session, profile)
+
+
+@router.get(
+    "/channels/{channel_profile_id}/editing-performance",
+    response_model=EditBlueprintPerformanceResponse | None,
+)
+def get_channel_editing_performance(
+    channel_profile_id: uuid.UUID,
+    age_bucket_hours: int | None = Query(default=None),
+) -> EditBlueprintPerformanceSnapshot | None:
+    with session_scope() as session:
+        try:
+            ensure_active_profile(session, channel_profile_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return latest_edit_blueprint_performance(
+        channel_profile_id,
+        age_bucket_hours=age_bucket_hours,
+    )
+
+
+@router.get(
+    "/channels/{channel_profile_id}/editing-performance/history",
+    response_model=list[EditBlueprintPerformanceResponse],
+)
+def get_channel_editing_performance_history(
+    channel_profile_id: uuid.UUID,
+    limit: int = Query(default=50, ge=1, le=250),
+    age_bucket_hours: int | None = Query(default=None),
+) -> list[EditBlueprintPerformanceSnapshot]:
+    with session_scope() as session:
+        try:
+            ensure_active_profile(session, channel_profile_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return list_edit_blueprint_performance(
+        channel_profile_id,
+        limit=limit,
+        age_bucket_hours=age_bucket_hours,
+    )
 
 
 @router.get(

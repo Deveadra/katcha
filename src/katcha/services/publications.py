@@ -18,9 +18,14 @@ from katcha.domain import (
 from katcha.intelligence_models import ChannelProfile
 from katcha.longform_models import Compilation, CompilationAsset
 from katcha.models import DomainEvent
-from katcha.production_models import Production, ProductionAsset
+from katcha.production_models import Production, ProductionAsset, ProductionScript
 from katcha.publishing_models import Publication, YouTubeConnection
-from katcha.short_episode_models import ShortEpisode, ShortEpisodeAsset, ShortEpisodeItem
+from katcha.short_episode_models import (
+    ShortEpisode,
+    ShortEpisodeAsset,
+    ShortEpisodeItem,
+    ShortEpisodeScript,
+)
 
 VALID_PRIVACY_STATUSES = {"private", "unlisted", "public"}
 SourceKind = Literal["production", "compilation", "short_episode"]
@@ -165,12 +170,66 @@ def _approved_render_key(
     return render.storage_key
 
 
+def _blueprint_lineage(
+    *,
+    blueprint_key: str | None,
+    blueprint_revision: int | None,
+    blueprint_snapshot: dict[str, object] | None,
+) -> dict[str, object]:
+    snapshot = dict(blueprint_snapshot or {})
+    contract_version = str(snapshot.get("version") or "").strip() or None
+    narration = dict(snapshot.get("narration") or {})
+    source_layout = dict(snapshot.get("source_layout") or {})
+    return {
+        "edit_blueprint_key": blueprint_key,
+        "edit_blueprint_revision": blueprint_revision,
+        "edit_blueprint_contract_version": contract_version,
+        "edit_composition": snapshot.get("composition"),
+        "edit_narration_mode": narration.get("mode"),
+        "edit_source_layout_mode": source_layout.get("mode"),
+    }
+
+
+def _production_treatment_metadata(
+    session: Session,
+    production: Production,
+) -> dict[str, object]:
+    script = (
+        session.get(ProductionScript, production.selected_script_id)
+        if production.selected_script_id is not None
+        else None
+    )
+    manifest = dict(production.render_manifest or {})
+    return {
+        **_blueprint_lineage(
+            blueprint_key=production.edit_blueprint_key,
+            blueprint_revision=production.edit_blueprint_version,
+            blueprint_snapshot=production.edit_blueprint_snapshot,
+        ),
+        "source_kind": "production",
+        "source_scope": production.kind,
+        "brand_key": production.brand_key,
+        "brand_version": production.brand_version,
+        "persona_key": production.persona_key,
+        "persona_version": production.persona_version,
+        "generation": production.generation,
+        "selected_style": script.style if script else None,
+        "selected_voice_profile": production.selected_voice_profile,
+        "render_manifest_version": manifest.get("version"),
+    }
+
+
 def _short_episode_treatment_metadata(
     session: Session,
     episode: ShortEpisode,
 ) -> dict[str, object]:
     manifest = dict(episode.render_manifest or {})
     treatment = dict(manifest.get("treatment") or {})
+    script = (
+        session.get(ShortEpisodeScript, episode.selected_script_id)
+        if episode.selected_script_id is not None
+        else None
+    )
     items = list(
         session.scalars(
             select(ShortEpisodeItem)
@@ -180,6 +239,13 @@ def _short_episode_treatment_metadata(
     )
     return {
         **treatment,
+        **_blueprint_lineage(
+            blueprint_key=episode.edit_blueprint_key,
+            blueprint_revision=episode.edit_blueprint_version,
+            blueprint_snapshot=episode.edit_blueprint_snapshot,
+        ),
+        "source_kind": "short_episode",
+        "source_scope": episode.format_key,
         "premise": episode.premise,
         "premise_family": episode.format_key,
         "item_count": episode.item_count,
@@ -198,6 +264,9 @@ def _short_episode_treatment_metadata(
         "brand_key": episode.brand_key,
         "brand_version": episode.brand_version,
         "generation": episode.generation,
+        "selected_style": script.style if script else None,
+        "selected_voice_profile": episode.selected_voice_profile,
+        "render_manifest_version": manifest.get("version"),
         "trend_opportunity_id": (
             str(episode.trend_opportunity_id) if episode.trend_opportunity_id else None
         ),
@@ -277,7 +346,12 @@ def _register_source_publication(
             youtube_connection_id=youtube_connection_id,
         )
         treatment_metadata: dict[str, object] = {}
-        if source_kind == "short_episode":
+        if source_kind == "production":
+            production = session.get(Production, source_id)
+            if production is None:
+                raise ValueError(f"production not found: {source_id}")
+            treatment_metadata = _production_treatment_metadata(session, production)
+        elif source_kind == "short_episode":
             episode = session.get(ShortEpisode, source_id)
             if episode is None:
                 raise ValueError(f"short episode not found: {source_id}")

@@ -1359,3 +1359,94 @@ pre {
     max-height: 780px;
     overflow-y: auto;
 }
+
+
+.edit-performance-panel {
+    margin: 14px 0;
+    border: 1px solid #334936;
+    background: linear-gradient(145deg, #14231f, #111c28);
+    border-radius: 10px;
+    padding: 16px;
+}
+.edit-performance-head,
+.edit-performance-summary {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+.edit-performance-head h3 {
+    margin: 5px 0 0;
+    font-size: 16px;
+}
+.edit-performance-summary {
+    padding: 2px 0 12px;
+    color: var(--sub);
+    font-size: 11px;
+}
+.edit-performance-summary strong {
+    color: var(--text);
+    font-size: 13px;
+}
+.edit-performance-status {
+    color: var(--lime);
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    font-size: 9px;
+}
+.edit-evidence-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+    gap: 8px;
+}
+.edit-evidence-card {
+    border: 1px solid #30453f;
+    background: #132029;
+    border-radius: 8px;
+    padding: 12px;
+}
+.edit-evidence-title {
+    display: flex;
+    justify-content: space-between;
+    gap: 8px;
+    align-items: start;
+}
+.edit-evidence-title strong {
+    font-size: 11px;
+    color: var(--text);
+}
+.edit-evidence-title span,
+.edit-evidence-card small {
+    color: var(--muted);
+    font-size: 9px;
+}
+.edit-evidence-card small {
+    display: block;
+    margin-top: 9px;
+    line-height: 1.5;
+}
+.edit-evidence-metrics {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 5px;
+    margin-top: 10px;
+}
+.edit-evidence-metrics > div {
+    padding: 7px;
+    background: #182832;
+    border-radius: 5px;
+}
+.edit-evidence-metrics span {
+    display: block;
+    color: var(--muted);
+    font-size: 8px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+.edit-evidence-metrics strong {
+    display: block;
+    margin-top: 3px;
+    font-size: 12px;
+}

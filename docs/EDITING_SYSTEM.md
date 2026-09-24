@@ -176,3 +176,32 @@ A manual approval on a higher automation level also resumes this handoff. This i
 The handoff does not own an uploader. It calls the existing publication registration service, which keeps source/channel uniqueness constraints, channel binding, approval checks and duplicate-upload protection as the single publication ledger.
 
 Automatic scheduling uses the latest channel `ScheduleRecommendation` set when available, otherwise the channel strategy fallback schedule. Blackout slots are excluded and already-occupied future publication times are skipped. If no safe slot, active YouTube credentials, verified render, or usable publication title exists, the handoff fails closed and leaves the approved media available for operator action.
+
+
+## Edit blueprint performance attribution
+
+The channel-intelligence cadence now closes the editing feedback loop. Publication registration freezes the shipped edit lineage into `Publication.treatment_metadata` for both single-clip productions and ranked short episodes. The record includes the channel blueprint revision, semantic blueprint contract version, composition, narration/layout modes, selected editorial style, voice, brand version and render-manifest version.
+
+Each intelligence refresh creates an immutable `EditBlueprintPerformanceSnapshot`. It maturity-matches each publication to exactly one analytics snapshot near a standard outcome age (72 hours by default; 6/24/72/168-hour buckets are supported), so repeated YouTube samples do not turn one video into multiple observations and a week-old video is not casually compared with a six-hour-old upload. Groups are isolated by channel, source/format scope, blueprint revision and treatment; a ranked countdown is never compared directly with a single-clip explainer.
+
+Tracked evidence includes:
+- views and engaged views
+- average view duration and percentage
+- likes, comments, shares and subscriber movement
+- audience-watch retention near 25%, 50%, 75% and 95% of runtime
+- the existing normalized performance outcome score
+- total attributed production cost across regeneration ancestry
+- revenue coverage
+- covered revenue, covered cost and covered contribution margin
+
+Missing monetary analytics remain missing. Katcha calculates contribution margin only for the subset of publications with actual revenue data and reports monetary coverage beside it; an unknown revenue value is never converted into zero revenue.
+
+Blueprint comparisons require at least five maturity-matched published samples in each group and only compare groups with the same channel + source/format scope. Retention deltas require at least 50% retention-data coverage. Margin deltas additionally require at least three revenue-covered publications in both groups and at least 60% monetary coverage. The resulting evidence is advisory only. P8.4 does not mutate the active blueprint automatically, which prevents a small or noisy sample from changing channel identity.
+
+Control-plane endpoints:
+- `GET /v1/channels/{channel_profile_id}/editing-performance`
+- `GET /v1/channels/{channel_profile_id}/editing-performance/history`
+- `POST /v1/channels/{channel_profile_id}/edit-blueprints/performance/refresh`
+- `GET /v1/channels/{channel_profile_id}/edit-blueprints/performance/latest`
+
+The latest editing evidence is also embedded in the normal channel summary, rendered in the Trend Explorer as an advisory blueprint-evidence panel, and refreshed by the existing channel-intelligence schedule. Explorer displays sample counts and coverage beside retention/margin evidence rather than presenting a small sample as a creative winner.
