@@ -139,3 +139,63 @@ GET /v1/publications/{publication_id}/reach
 
 P9.2 does not pick a winner or mutate packaging. P9.3 will combine this reach evidence
 with retention and contribution margin before making bounded recommendations.
+
+
+## P9.3 guarded packaging intelligence
+
+Katcha evaluates packaging as a **qualified-reach** problem, not a CTR-only problem.
+
+For each immutable title/thumbnail variant, it builds a cached performance window only
+from consecutive Pacific report days that were fully attributable to that one variant.
+Mixed switch days and legacy/unmanaged days never enter package-specific training.
+
+The default maturity window is seven full days. A window is not queried from YouTube
+Analytics until an additional processing lag has elapsed, because the targeted Analytics
+API can omit the newest dates until all requested metrics are fully processed.
+
+For a mature window Katcha requests the exact same Pacific `startDate/endDate` used by
+the reach evidence and stores:
+
+- thumbnail impressions and impression-weighted CTR
+- views and average view percentage
+- midpoint audience retention near 50% elapsed video time
+- interval revenue when the monetary scope is available
+- publication lineage cost and the latest known cumulative publication revenue/margin
+
+Exact evidence windows are immutable and keyed by their reach observations, so the
+six-hour intelligence loop reuses them instead of repeatedly consuming Analytics quota.
+
+### Recommendation gates
+
+Recommendations are advisory only. P9.3 never invokes the P9.1 YouTube mutation path.
+
+A measured candidate can be marked `prefer` only when all required evidence clears the
+frozen policy snapshot:
+
+- both baseline and candidate have at least 1,000 known impressions
+- both have CTR evidence and the candidate improves CTR by at least 5% relatively
+- average view percentage is known and does not fall by more than 3 percentage points
+- 50% retention is known and does not fall by more than 0.05
+- when monetary scope exists, cumulative publication contribution margin is known and
+  non-negative
+
+If monetary scope is unavailable, that fact is retained explicitly instead of treating
+revenue as zero. A created but unmeasured candidate can be suggested as `test` once the
+baseline has sufficient reach and watch-quality evidence. Failed gates produce
+`observe` plus concrete blockers.
+
+### Chronological validation
+
+Recommendation history is ordered by candidate evidence-window end date. Katcha exposes
+a chronological development/holdout audit once enough comparisons exist, but explicitly
+reports `optimizer_trained=false` and `optimizer_reliable=false` in P9.3. This is a
+guarded rules engine, not a statistically validated learned optimizer.
+
+Inspect the current state with:
+
+```http
+GET /v1/channels/{channel_profile_id}/packaging-intelligence
+GET /v1/channels/{channel_profile_id}/packaging-intelligence/history
+```
+
+The channel summary also includes the latest packaging-intelligence snapshot.

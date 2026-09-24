@@ -14,6 +14,7 @@ from katcha.services.channel_scheduling import compute_schedule_recommendations
 from katcha.services.edit_blueprint_performance import (
     refresh_edit_blueprint_performance,
 )
+from katcha.services.packaging_intelligence import refresh_packaging_intelligence
 from katcha.services.trend_activation_performance import refresh_activation_performance
 from katcha.services.trend_auto_activation import run_autonomous_trend_activation
 
@@ -133,6 +134,27 @@ def refresh_edit_blueprint_performance_activity(
         "monetary_coverage": float(snapshot.monetary_coverage),
         "retention_coverage": float(snapshot.retention_coverage),
         "comparison_status": snapshot.comparison_status,
+    }
+
+
+@activity.defn
+def refresh_packaging_intelligence_activity(
+    channel_profile_id: str,
+    run_key: str,
+) -> dict[str, object]:
+    snapshot = refresh_packaging_intelligence(
+        uuid.UUID(channel_profile_id),
+        run_key=run_key,
+    )
+    return {
+        "channel_profile_id": channel_profile_id,
+        "snapshot_id": str(snapshot.id),
+        "version": snapshot.version,
+        "maturity_days": snapshot.maturity_days,
+        "publication_count": snapshot.publication_count,
+        "variant_window_count": snapshot.variant_window_count,
+        "recommendation_count": snapshot.recommendation_count,
+        "recommendation_status": snapshot.recommendation_status,
     }
 
 
