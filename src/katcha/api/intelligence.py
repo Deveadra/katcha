@@ -23,6 +23,7 @@ from katcha.intelligence_models import (
     ScheduleRecommendation,
 )
 from katcha.longform_models import Compilation
+from katcha.packaging_intelligence_models import PackagingIntelligenceSnapshot
 from katcha.orchestration.client import (
     start_channel_intelligence_refresh,
     start_channel_intelligence_schedule,
@@ -55,6 +56,10 @@ from katcha.services.edit_blueprint_performance import (
 from katcha.services.event_stream import (
     acknowledge_consumer_event,
     list_consumer_events,
+)
+from katcha.services.packaging_intelligence import (
+    latest_packaging_intelligence,
+    list_packaging_intelligence,
 )
 from katcha.services.productions import register_short_production
 
@@ -175,6 +180,27 @@ class EditBlueprintPerformanceResponse(BaseModel):
     aggregate_metrics: list[dict[str, object]]
     comparison_status: str
     comparison_summary: dict[str, object]
+    sample_window_start: datetime | None
+    sample_window_end: datetime | None
+    created_at: datetime
+
+
+class PackagingIntelligenceResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    channel_profile_id: uuid.UUID
+    version: int
+    run_key: str
+    maturity_days: int
+    publication_count: int
+    variant_window_count: int
+    recommendation_count: int
+    recommendation_status: str
+    variant_metrics: list[dict[str, object]]
+    recommendations: list[dict[str, object]]
+    validation_metrics: dict[str, object]
+    policy_snapshot: dict[str, object]
     sample_window_start: datetime | None
     sample_window_end: datetime | None
     created_at: datetime
@@ -350,6 +376,7 @@ def get_channel_summary(channel_profile_id: uuid.UUID) -> dict[str, object]:
             ranking = latest_ranking_snapshot(session, profile)
             economics = latest_economics_snapshot(session, profile)
             edit_performance = latest_edit_blueprint_performance(channel_profile_id)
+            packaging_intelligence = latest_packaging_intelligence(channel_profile_id)
             profile_payload = ChannelProfileResponse.model_validate(profile).model_dump(mode="json")
             strategy_payload = StrategyResponse.model_validate(strategy).model_dump(mode="json")
             ranking_payload = (
@@ -372,6 +399,13 @@ def get_channel_summary(channel_profile_id: uuid.UUID) -> dict[str, object]:
                     edit_performance
                 ).model_dump(mode="json")
                 if edit_performance
+                else None
+            ),
+            "packaging_intelligence": (
+                PackagingIntelligenceResponse.model_validate(
+                    packaging_intelligence
+                ).model_dump(mode="json")
+                if packaging_intelligence
                 else None
             ),
             "schedule": [
@@ -501,6 +535,46 @@ def get_channel_editing_performance_history(
         channel_profile_id,
         limit=limit,
         age_bucket_hours=age_bucket_hours,
+    )
+
+
+@router.get(
+    "/channels/{channel_profile_id}/packaging-intelligence",
+    response_model=PackagingIntelligenceResponse | None,
+)
+def get_channel_packaging_intelligence(
+    channel_profile_id: uuid.UUID,
+    maturity_days: int | None = Query(default=None),
+) -> PackagingIntelligenceSnapshot | None:
+    with session_scope() as session:
+        try:
+            ensure_active_profile(session, channel_profile_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return latest_packaging_intelligence(
+        channel_profile_id,
+        maturity_days=maturity_days,
+    )
+
+
+@router.get(
+    "/channels/{channel_profile_id}/packaging-intelligence/history",
+    response_model=list[PackagingIntelligenceResponse],
+)
+def get_channel_packaging_intelligence_history(
+    channel_profile_id: uuid.UUID,
+    limit: int = Query(default=50, ge=1, le=250),
+    maturity_days: int | None = Query(default=None),
+) -> list[PackagingIntelligenceSnapshot]:
+    with session_scope() as session:
+        try:
+            ensure_active_profile(session, channel_profile_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return list_packaging_intelligence(
+        channel_profile_id,
+        maturity_days=maturity_days,
+        limit=limit,
     )
 
 
