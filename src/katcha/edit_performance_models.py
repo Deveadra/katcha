@@ -28,6 +28,10 @@ class EditBlueprintPerformanceSnapshot(Base):
         UniqueConstraint("channel_profile_id", "version"),
         UniqueConstraint("channel_profile_id", "run_key"),
         CheckConstraint(
+            "age_bucket_hours > 0",
+            name="ck_edit_perf_age_bucket_positive",
+        ),
+        CheckConstraint(
             "publication_count >= 0",
             name="ck_edit_perf_publication_count_nonnegative",
         ),
@@ -40,8 +44,16 @@ class EditBlueprintPerformanceSnapshot(Base):
             name="ck_edit_perf_revenue_covered_nonnegative",
         ),
         CheckConstraint(
+            "retention_covered_publications >= 0",
+            name="ck_edit_perf_retention_covered_nonnegative",
+        ),
+        CheckConstraint(
             "monetary_coverage >= 0 AND monetary_coverage <= 1",
             name="ck_edit_perf_monetary_coverage",
+        ),
+        CheckConstraint(
+            "retention_coverage >= 0 AND retention_coverage <= 1",
+            name="ck_edit_perf_retention_coverage",
         ),
     )
 
@@ -53,10 +65,15 @@ class EditBlueprintPerformanceSnapshot(Base):
     )
     version: Mapped[int] = mapped_column(Integer)
     run_key: Mapped[str] = mapped_column(String(160), index=True)
+    age_bucket_hours: Mapped[int] = mapped_column(Integer, default=72, index=True)
     publication_count: Mapped[int] = mapped_column(Integer, default=0)
     blueprint_group_count: Mapped[int] = mapped_column(Integer, default=0)
     revenue_covered_publications: Mapped[int] = mapped_column(Integer, default=0)
+    retention_covered_publications: Mapped[int] = mapped_column(Integer, default=0)
     monetary_coverage: Mapped[Decimal] = mapped_column(
+        Numeric(8, 6), default=Decimal("0")
+    )
+    retention_coverage: Mapped[Decimal] = mapped_column(
         Numeric(8, 6), default=Decimal("0")
     )
     aggregate_metrics: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
