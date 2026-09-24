@@ -29,6 +29,13 @@ from katcha.rendering.manifest import (
     build_short_manifest,
 )
 from katcha.rendering.reactions import ReactionAssetPack
+from katcha.services.render_recovery import (
+    dead_letter_latest_render_attempt,
+    ensure_render_attempt,
+    mark_render_attempt_retryable_failure,
+    mark_render_attempt_started,
+    mark_render_attempt_verified,
+)
 
 
 class AmbiguousPaidCall(RuntimeError):
@@ -701,22 +708,8 @@ def render_short_activity(production_id: str) -> dict[str, object]:
         production = session.get(Production, production_uuid)
         if production is None:
             raise ValueError(f"production not found: {production_id}")
-        existing = session.scalar(
-            select(ProductionAsset).where(
-                ProductionAsset.production_id == production_uuid,
-                ProductionAsset.kind == "render",
-                ProductionAsset.generation == 1,
-            )
-        )
-        if existing is not None:
-            return {
-                "production_id": production_id,
-                "output_key": existing.storage_key,
-                "reused": True,
-            }
         if not production.render_manifest:
             raise RuntimeError("render manifest is missing")
-        production.stage = "rendering"
         manifest_payload = dict(production.render_manifest)
         if manifest_payload.get("version") == "blueprint-render-v1":
             manifest = BlueprintRenderManifest.model_validate(manifest_payload)
@@ -726,10 +719,60 @@ def render_short_activity(production_id: str) -> dict[str, object]:
         else:
             manifest = ShortRenderManifest.model_validate(manifest_payload)
             render_fn = render_short
+        existing = session.scalar(
+            select(ProductionAsset).where(
+                ProductionAsset.production_id == production_uuid,
+                ProductionAsset.kind == "render",
+                ProductionAsset.generation == 1,
+            )
+        )
+        existing_metadata = dict(existing.asset_metadata or {}) if existing else {}
+        existing_key = existing.storage_key if existing is not None else None
+        production.stage = "rendering"
 
-    result = render_fn(manifest, settings=settings)
-    if not bool((result.metadata or {}).get("verified")):
-        raise RuntimeError("renderer output failed post-render verification")
+    attempt = ensure_render_attempt(
+        "production",
+        production_uuid,
+        output_key=manifest.output_key,
+        manifest_version=manifest.version,
+    )
+    if existing_key is not None:
+        if not bool(existing_metadata.get("verified")):
+            raise RuntimeError("existing render asset is not post-render verified")
+        mark_render_attempt_verified(attempt.id, verification=existing_metadata)
+        with session_scope() as session:
+            production = session.get(Production, production_uuid)
+            if production is not None:
+                production.status = ProductionStatus.REVIEW.value
+                production.stage = "render_verified"
+                production.error = None
+        return {
+            "production_id": production_id,
+            "output_key": existing_key,
+            "reused": True,
+            "verified": True,
+            "render_attempt_id": str(attempt.id),
+        }
+
+    mark_render_attempt_started(attempt.id)
+    try:
+        result = render_fn(manifest, settings=settings)
+        if not bool((result.metadata or {}).get("verified")):
+            raise RuntimeError("renderer output failed post-render verification")
+    except Exception as exc:
+        mark_render_attempt_retryable_failure(
+            attempt.id,
+            failure_class=type(exc).__name__,
+            error=str(exc),
+        )
+        raise
+
+    verification = {
+        **dict(result.metadata or {}),
+        "duration_seconds": result.duration_seconds,
+        "output_key": result.output_key,
+    }
+    mark_render_attempt_verified(attempt.id, verification=verification)
 
     with session_scope() as session:
         production = session.get(Production, production_uuid)
@@ -758,6 +801,7 @@ def render_short_activity(production_id: str) -> dict[str, object]:
                         "brand_version": production.brand_version,
                         "edit_blueprint_key": production.edit_blueprint_key,
                         "edit_blueprint_version": production.edit_blueprint_version,
+                        "render_attempt_id": str(attempt.id),
                         **result.metadata,
                     },
                 )
@@ -773,6 +817,7 @@ def render_short_activity(production_id: str) -> dict[str, object]:
                 event_type="production.render_verified",
                 payload={
                     "production_id": production_id,
+                    "render_attempt_id": str(attempt.id),
                     "output_key": result.output_key,
                     "duration_seconds": result.duration_seconds,
                     "verification": result.metadata,
@@ -784,6 +829,7 @@ def render_short_activity(production_id: str) -> dict[str, object]:
         "output_key": result.output_key,
         "reused": False,
         "verified": True,
+        "render_attempt_id": str(attempt.id),
     }
 
 
@@ -806,3 +852,8 @@ def mark_production_failed(production_id: str, message: str) -> None:
                 payload={"production_id": production_id, "error": production.error},
             )
         )
+    dead_letter_latest_render_attempt(
+        "production",
+        production_uuid,
+        error=message,
+    )

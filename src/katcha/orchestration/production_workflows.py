@@ -65,11 +65,6 @@ class ShortProductionWorkflow:
                 retry_policy=local_retry,
                 result_type=dict[str, object],
             )
-            return {
-                "production_id": production_id,
-                "status": "review",
-                "output_key": rendered.get("output_key"),
-            }
         except Exception as exc:
             await workflow.execute_activity(
                 "mark_production_failed",
@@ -78,3 +73,36 @@ class ShortProductionWorkflow:
                 retry_policy=RetryPolicy(maximum_attempts=3),
             )
             raise
+
+        automation = await workflow.execute_activity(
+            "advance_production_render_automation_activity",
+            production_id,
+            start_to_close_timeout=timedelta(seconds=30),
+            retry_policy=local_retry,
+            result_type=dict[str, object],
+        )
+        publication_id = automation.get("publication_id")
+        publication_workflow_id = automation.get("publication_workflow_id")
+        handoff_started = False
+        if publication_id and publication_workflow_id:
+            try:
+                await workflow.execute_activity(
+                    "start_registered_publication_activity",
+                    args=[str(publication_id), str(publication_workflow_id)],
+                    start_to_close_timeout=timedelta(seconds=30),
+                    retry_policy=local_retry,
+                    result_type=dict[str, object],
+                )
+                handoff_started = True
+            except Exception:
+                handoff_started = False
+
+        return {
+            "production_id": production_id,
+            "status": automation.get("action") or "review_required",
+            "output_key": rendered.get("output_key"),
+            "render_attempt_id": rendered.get("render_attempt_id"),
+            "publication_id": publication_id,
+            "publication_workflow_id": publication_workflow_id,
+            "publication_handoff_started": handoff_started,
+        }

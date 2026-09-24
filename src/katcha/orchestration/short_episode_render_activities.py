@@ -6,6 +6,7 @@ from sqlalchemy import select
 from temporalio import activity
 
 from katcha.db import session_scope
+from katcha.integrations.storage import ObjectStore
 from katcha.models import Clip, DomainEvent
 from katcha.rendering.client import render_ranked_episode
 from katcha.rendering.manifest import ShortBrandSpec
@@ -15,6 +16,12 @@ from katcha.rendering.ranked_episode_manifest import (
 )
 from katcha.rendering.reactions import ReactionAssetPack
 from katcha.services.acquisition import assert_clip_production_eligible
+from katcha.services.render_recovery import (
+    ensure_render_attempt,
+    mark_render_attempt_retryable_failure,
+    mark_render_attempt_started,
+    mark_render_attempt_verified,
+)
 from katcha.short_episode_models import (
     ShortEpisode,
     ShortEpisodeAsset,
@@ -51,6 +58,10 @@ def _ordered_render_items(session: object, episode: ShortEpisode) -> list[dict[s
         clip = session.get(Clip, item.clip_id)
         if clip is None:
             raise RuntimeError(f"short episode clip disappeared: {item.clip_id}")
+        store = ObjectStore()
+        store.ensure_bucket()
+        if not store.exists(clip.storage_key):
+            raise RuntimeError(f"short episode source object is missing: {item.clip_id}")
         duration = float(clip.duration_seconds or 0)
         if duration <= 0:
             raise RuntimeError(f"short episode clip has no usable duration: {item.clip_id}")
@@ -88,6 +99,10 @@ def _narration_assets(session: object, episode: ShortEpisode) -> list[dict[str, 
         metadata = dict(asset.asset_metadata or {})
         if metadata.get("sequence") is None:
             raise RuntimeError(f"narration asset is missing sequence metadata: {asset.kind}")
+        store = ObjectStore()
+        store.ensure_bucket()
+        if not store.exists(asset.storage_key):
+            raise RuntimeError(f"narration object is missing: {asset.kind}")
         result.append({**metadata, "storage_key": asset.storage_key})
     if not result:
         raise RuntimeError("short episode has no narration assets")
@@ -177,6 +192,13 @@ def render_ranked_episode_activity(episode_id: str) -> dict[str, object]:
         episode = session.get(ShortEpisode, episode_uuid)
         if episode is None:
             raise ValueError(f"short episode not found: {episode_id}")
+        if not episode.render_manifest:
+            raise RuntimeError("short episode has no frozen render manifest")
+        manifest = RankedEpisodeRenderManifest.model_validate(episode.render_manifest)
+        if episode.edit_blueprint_key and episode.edit_blueprint_snapshot:
+            frozen_key = str(episode.edit_blueprint_snapshot.get("key") or "")
+            if frozen_key != episode.edit_blueprint_key:
+                raise RuntimeError("short episode edit blueprint lineage is stale")
         existing = session.scalar(
             select(ShortEpisodeAsset).where(
                 ShortEpisodeAsset.short_episode_id == episode_uuid,
@@ -184,19 +206,54 @@ def render_ranked_episode_activity(episode_id: str) -> dict[str, object]:
                 ShortEpisodeAsset.generation == 1,
             )
         )
-        if existing is not None:
-            episode.status = "rendered"
-            episode.stage = "render_review"
-            return {
-                "episode_id": episode_id,
-                "output_key": existing.storage_key,
-                "reused": True,
-            }
-        if not episode.render_manifest:
-            raise RuntimeError("short episode has no frozen render manifest")
-        manifest = RankedEpisodeRenderManifest.model_validate(episode.render_manifest)
+        existing_metadata = dict(existing.asset_metadata or {}) if existing else {}
+        existing_key = existing.storage_key if existing is not None else None
+        episode.status = "rendering"
+        episode.stage = "rendering"
 
-    result = render_ranked_episode(manifest)
+    attempt = ensure_render_attempt(
+        "short_episode",
+        episode_uuid,
+        output_key=manifest.output_key,
+        manifest_version=manifest.version,
+    )
+    if existing_key is not None:
+        if not bool(existing_metadata.get("verified")):
+            raise RuntimeError("existing short episode render is not post-render verified")
+        mark_render_attempt_verified(attempt.id, verification=existing_metadata)
+        with session_scope() as session:
+            episode = session.get(ShortEpisode, episode_uuid)
+            if episode is not None:
+                episode.status = "rendered"
+                episode.stage = "render_verified"
+                episode.error = None
+        return {
+            "episode_id": episode_id,
+            "output_key": existing_key,
+            "reused": True,
+            "verified": True,
+            "render_attempt_id": str(attempt.id),
+        }
+
+    mark_render_attempt_started(attempt.id)
+    try:
+        result = render_ranked_episode(manifest)
+        if not bool((result.metadata or {}).get("verified")):
+            raise RuntimeError("renderer output failed post-render verification")
+    except Exception as exc:
+        mark_render_attempt_retryable_failure(
+            attempt.id,
+            failure_class=type(exc).__name__,
+            error=str(exc),
+        )
+        raise
+
+    verification = {
+        **dict(result.metadata or {}),
+        "duration_seconds": result.duration_seconds,
+        "output_key": result.output_key,
+    }
+    mark_render_attempt_verified(attempt.id, verification=verification)
 
     with session_scope() as session:
         episode = session.get(ShortEpisode, episode_uuid)
@@ -222,22 +279,27 @@ def render_ranked_episode_activity(episode_id: str) -> dict[str, object]:
                     asset_metadata={
                         **dict(result.metadata or {}),
                         "duration_seconds": result.duration_seconds,
+                        "render_attempt_id": str(attempt.id),
+                        "edit_blueprint_key": episode.edit_blueprint_key,
+                        "edit_blueprint_version": episode.edit_blueprint_version,
                         "treatment": manifest.treatment.model_dump(mode="json"),
                     },
                 )
             )
         episode.status = "rendered"
-        episode.stage = "render_review"
+        episode.stage = "render_verified"
         episode.error = None
         session.add(
             DomainEvent(
                 aggregate_type="short_episode",
                 aggregate_id=episode_id,
-                event_type="short_episode.rendered",
+                event_type="short_episode.render_verified",
                 payload={
                     "short_episode_id": episode_id,
+                    "render_attempt_id": str(attempt.id),
                     "output_key": result.output_key,
                     "duration_seconds": result.duration_seconds,
+                    "verification": result.metadata,
                     "treatment": manifest.treatment.model_dump(mode="json"),
                 },
             )
@@ -247,4 +309,7 @@ def render_ranked_episode_activity(episode_id: str) -> dict[str, object]:
         "output_key": result.output_key,
         "duration_seconds": result.duration_seconds,
         "reused": False,
+        "verified": True,
+        "render_attempt_id": str(attempt.id),
     }
+

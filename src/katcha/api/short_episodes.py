@@ -5,7 +5,13 @@ import uuid
 from fastapi import APIRouter, HTTPException, Query, status
 from sqlalchemy import select
 
-from katcha.api.schemas import CreatePublicationRequest, PublicationResponse
+from katcha.api.schemas import (
+    CreatePublicationRequest,
+    PublicationResponse,
+    RecoverRenderRequest,
+    RecoverRenderResponse,
+    RenderAttemptResponse,
+)
 from katcha.api.short_episode_schemas import (
     CreateShortEpisodeRequest,
     ReviewShortEpisodeRequest,
@@ -28,6 +34,8 @@ from katcha.orchestration.client import (
 )
 from katcha.publishing_models import Publication
 from katcha.services.publications import register_short_episode_publication
+from katcha.services.render_automation import advance_render_automation
+from katcha.services.render_recovery import render_attempts_for_source
 from katcha.services.short_episode_reviews import (
     register_short_episode_regeneration,
     review_short_episode,
@@ -154,6 +162,55 @@ def list_short_episodes(
         return list(session.scalars(stmt))
 
 
+@router.get(
+    "/{short_episode_id}/render-attempts",
+    response_model=list[RenderAttemptResponse],
+)
+def get_short_episode_render_attempts(
+    short_episode_id: uuid.UUID,
+):
+    try:
+        return render_attempts_for_source("short_episode", short_episode_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.post(
+    "/{short_episode_id}/render/recover",
+    response_model=RecoverRenderResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def recover_short_episode_render(
+    short_episode_id: uuid.UUID,
+    request: RecoverRenderRequest,
+) -> RecoverRenderResponse:
+    try:
+        attempts = render_attempts_for_source("short_episode", short_episode_id)
+        if not attempts or attempts[-1].status != "dead_letter":
+            raise ValueError("short episode does not have a dead-letter render attempt")
+        child = register_short_episode_regeneration(
+            short_episode_id,
+            stage="render",
+            note=request.note or "Recover dead-letter renderer failure",
+            actor=request.actor,
+        )
+    except ValueError as exc:
+        code = 404 if "not found" in str(exc) else 409
+        raise HTTPException(status_code=code, detail=str(exc)) from exc
+
+    child_workflow_id = _editorial_workflow_id(child.workflow_id, "render")
+    await start_short_episode_editorial_workflow(
+        str(child.id),
+        child_workflow_id,
+        start_stage="render",
+    )
+    return RecoverRenderResponse(
+        source_id=short_episode_id,
+        child_source_id=child.id,
+        child_workflow_id=child_workflow_id,
+    )
+
+
 @router.post(
     "/{short_episode_id}/editorial",
     response_model=StartShortEpisodeEditorialResponse,
@@ -245,6 +302,41 @@ async def review_ranked_short_episode(
             note=request.note,
             actor=request.actor,
         )
+        with session_scope() as session:
+            episode = session.get(ShortEpisode, short_episode_id)
+            if episode is None:
+                raise ValueError(f"short episode not found: {short_episode_id}")
+            current_status = episode.status
+            current_stage = episode.stage
+            episode_workflow_id = episode.workflow_id
+
+        if (
+            request.decision == ReviewDecision.APPROVE.value
+            and current_status == "editorial_approved"
+        ):
+            render_workflow_id = _editorial_workflow_id(
+                episode_workflow_id,
+                "render",
+            )
+            await start_short_episode_editorial_workflow(
+                str(short_episode_id),
+                render_workflow_id,
+                start_stage="render",
+            )
+        elif (
+            request.decision == ReviewDecision.APPROVE.value
+            and current_status == "approved"
+            and current_stage == "render_approved"
+        ):
+            automation = advance_render_automation(
+                "short_episode",
+                short_episode_id,
+            )
+            if automation.publication_id and automation.publication_workflow_id:
+                await start_publication_workflow(
+                    automation.publication_id,
+                    automation.publication_workflow_id,
+                )
     except ValueError as exc:
         message = str(exc)
         code = 404 if "not found" in message else 409

@@ -15,6 +15,7 @@ from katcha.editorial.episode_generator import generate_ranked_episode_scripts
 from katcha.editorial.personas import get_persona
 from katcha.integrations.storage import ObjectStore
 from katcha.models import DomainEvent, UsageEvent
+from katcha.services.render_recovery import dead_letter_latest_render_attempt
 from katcha.short_episode_models import (
     ShortEpisode,
     ShortEpisodeAsset,
@@ -493,3 +494,8 @@ def mark_short_episode_failed(episode_id: str, error: str) -> None:
                 payload={"short_episode_id": episode_id, "error": error[:1000]},
             )
         )
+    dead_letter_latest_render_attempt(
+        "short_episode",
+        episode_uuid,
+        error=error,
+    )

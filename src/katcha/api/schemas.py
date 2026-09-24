@@ -131,6 +131,43 @@ class ProductionAssetResponse(BaseModel):
     created_at: datetime
 
 
+class RenderAttemptResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    attempt_key: str
+    production_id: UUID | None
+    short_episode_id: UUID | None
+    channel_profile_id: UUID | None
+    parent_attempt_id: UUID | None
+    source_generation: int
+    attempt_number: int
+    status: str
+    stage: str
+    output_key: str
+    manifest_version: str
+    verification: dict[str, object]
+    failure_count: int
+    last_failure_class: str | None
+    error: str | None
+    started_at: datetime | None
+    completed_at: datetime | None
+    created_at: datetime
+    updated_at: datetime
+
+
+class RecoverRenderRequest(BaseModel):
+    actor: str = Field(default="operator", min_length=1, max_length=128)
+    note: str | None = Field(default=None, max_length=2000)
+
+
+class RecoverRenderResponse(BaseModel):
+    source_id: UUID
+    child_source_id: UUID
+    child_workflow_id: str
+    start_stage: Literal["render"] = "render"
+
+
 class ProductionReviewResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

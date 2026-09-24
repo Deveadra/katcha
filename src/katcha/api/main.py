@@ -41,6 +41,9 @@ from katcha.api.schemas import (
     ProductionScriptResponse,
     PublicationAnalyticsSnapshotResponse,
     PublicationResponse,
+    RecoverRenderRequest,
+    RecoverRenderResponse,
+    RenderAttemptResponse,
     RetentionPointResponse,
     RetryPublicationRequest,
     ReviewActionResponse,
@@ -112,6 +115,8 @@ from katcha.services.publications import (
     register_publication,
     retry_publication,
 )
+from katcha.services.render_automation import advance_render_automation
+from katcha.services.render_recovery import render_attempts_for_source
 from katcha.services.sources import register_source
 
 app = FastAPI(
@@ -321,6 +326,54 @@ def get_production(production_id: uuid.UUID) -> ProductionDetailResponse:
         )
 
 
+@app.get(
+    "/v1/productions/{production_id}/render-attempts",
+    response_model=list[RenderAttemptResponse],
+)
+def get_production_render_attempts(
+    production_id: uuid.UUID,
+):
+    try:
+        return render_attempts_for_source("production", production_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.post(
+    "/v1/productions/{production_id}/render/recover",
+    response_model=RecoverRenderResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def recover_production_render(
+    production_id: uuid.UUID,
+    request: RecoverRenderRequest,
+) -> RecoverRenderResponse:
+    try:
+        attempts = render_attempts_for_source("production", production_id)
+        if not attempts or attempts[-1].status != "dead_letter":
+            raise ValueError("production does not have a dead-letter render attempt")
+        child = register_regeneration(
+            production_id,
+            stage="render",
+            note=request.note or "Recover dead-letter renderer failure",
+            actor=request.actor,
+        )
+    except ValueError as exc:
+        code = 404 if "not found" in str(exc) else 409
+        raise HTTPException(status_code=code, detail=str(exc)) from exc
+
+    await start_production_workflow(
+        str(child.id),
+        child.workflow_id,
+        start_stage="render",
+    )
+    return RecoverRenderResponse(
+        source_id=production_id,
+        child_source_id=child.id,
+        child_workflow_id=child.workflow_id,
+    )
+
+
 @app.post(
     "/v1/productions/{production_id}/review",
     response_model=ReviewActionResponse,
@@ -359,6 +412,13 @@ async def review_short(
             note=request.note,
             actor=request.actor,
         )
+        if request.decision == ReviewDecision.APPROVE.value:
+            automation = advance_render_automation("production", production_id)
+            if automation.publication_id and automation.publication_workflow_id:
+                await start_publication_workflow(
+                    automation.publication_id,
+                    automation.publication_workflow_id,
+                )
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     return ReviewActionResponse(
