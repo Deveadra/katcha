@@ -90,3 +90,52 @@ P9.2 will ingest YouTube reach reporting (thumbnail impressions and CTR) and att
 maturity-matched reach to the active packaging interval. P9.3 may recommend variants only
 after channel-scoped chronological validation. CTR alone will never be treated as a winner:
 watch quality, retention and contribution margin remain part of the decision.
+
+
+## P9.2 reach ingestion
+
+Katcha uses YouTube's channel bulk Reporting API reach report
+`channel_reach_basic_a1`. The report has daily `date`, `channel_id` and
+`video_id` dimensions with `video_thumbnail_impressions` and
+`video_thumbnail_impressions_ctr` metrics.
+
+Manual synchronization starts with:
+
+```http
+POST /v1/integrations/youtube/{connection_id}/reach/sync
+```
+
+The publishing worker first lists provider reporting jobs and reuses an existing
+`channel_reach_basic_a1` job when present. Only when no matching provider job exists
+does it create one. Provider job creation has one automatic attempt because a timeout
+after acceptance is ambiguous; the next explicit sync reconciles provider jobs before
+considering another creation.
+
+Each downloaded report is frozen by provider report ID and SHA-256. CSV parsing is
+bounded by byte and row limits, requires the official reach columns, and maps rows only
+to a publication on the same YouTube connection with the exact YouTube video ID.
+
+### Packaging attribution
+
+YouTube bulk report days are interpreted in `America/Los_Angeles`, including DST.
+
+- If one package was already active before the report day and no package changed during
+  that day, the row is attributed to that immutable variant.
+- If a Katcha packaging activation occurred at any time during the Pacific report day,
+  the row is marked `mixed` and excluded from package-specific training.
+- If no Katcha packaging activation existed before the day, the row is marked
+  `legacy` rather than being assigned to a variant.
+
+The canonical observation key is publication + report date. Reimporting the same report
+or an overlapping report cannot increase impressions twice. If two provider reports
+disagree for the same publication/day, Katcha fails closed instead of silently replacing
+one measurement.
+
+Inspect imported daily reach with:
+
+```http
+GET /v1/publications/{publication_id}/reach
+```
+
+P9.2 does not pick a winner or mutate packaging. P9.3 will combine this reach evidence
+with retention and contribution margin before making bounded recommendations.

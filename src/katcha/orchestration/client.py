@@ -28,6 +28,7 @@ from katcha.orchestration.publishing_workflows import (
     YouTubeAnalyticsRefreshWorkflow,
     YouTubePublicationWorkflow,
 )
+from katcha.orchestration.reach_workflows import YouTubeReachSyncWorkflow
 from katcha.orchestration.short_episode_workflows import RankedShortEpisodeEditorialWorkflow
 from katcha.orchestration.trend_workflows import (
     ChannelTrendCalibrationWorkflow,
@@ -169,6 +170,22 @@ async def start_packaging_activation_workflow(
         handle = await client.start_workflow(
             YouTubePackagingActivationWorkflow.run,
             activation_id,
+            id=workflow_id,
+            id_reuse_policy=WorkflowIDReusePolicy.REJECT_DUPLICATE,
+            task_queue=settings.temporal_publishing_task_queue,
+        )
+    except WorkflowAlreadyStartedError:
+        handle = client.get_workflow_handle(workflow_id)
+    return handle.id
+
+
+async def start_reach_sync_workflow(connection_id: str, workflow_id: str) -> str:
+    settings = get_settings()
+    client = await get_temporal_client()
+    try:
+        handle = await client.start_workflow(
+            YouTubeReachSyncWorkflow.run,
+            connection_id,
             id=workflow_id,
             id_reuse_policy=WorkflowIDReusePolicy.REJECT_DUPLICATE,
             task_queue=settings.temporal_publishing_task_queue,
