@@ -228,9 +228,16 @@ def provider_page_demands(
             ),
         ]
     elif key == "reddit":
-        override = _quota_override(config, "reddit.api")
-        if override is not None:
-            specs = [("reddit", "reddit.api", 1, override[0], override[1])]
+        api_override = _quota_override(config, "reddit.api")
+        oauth_override = _quota_override(config, "reddit.oauth")
+        if api_override is not None:
+            specs.append(
+                ("reddit", "reddit.api", 1, api_override[0], api_override[1])
+            )
+        if oauth_override is not None:
+            specs.append(
+                ("reddit", "reddit.oauth", 1, oauth_override[0], oauth_override[1])
+            )
     elif key == "rss_atom":
         override = _quota_override(config, "rss.http")
         if override is not None:
