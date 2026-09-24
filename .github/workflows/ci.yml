@@ -103,6 +103,9 @@ jobs:
       - name: Encode and verify channel editing blueprints
         run: node test/blueprint-smoke.mjs
 
+      - name: Render and verify grounded thumbnail still
+        run: node test/thumbnail-smoke.mjs
+
       - name: Upload synthetic reaction previews
         if: always()
         uses: actions/upload-artifact@v4
@@ -118,6 +121,15 @@ jobs:
         with:
           name: synthetic-blueprint-previews
           path: renderer/blueprint-smoke-previews/
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Upload synthetic thumbnail preview
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: synthetic-thumbnail-preview
+          path: renderer/thumbnail-smoke-previews/
           if-no-files-found: ignore
           retention-days: 7
 

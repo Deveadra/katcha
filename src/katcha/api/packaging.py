@@ -25,6 +25,7 @@ from katcha.services.packaging_generation import (
     generate_packaging_candidates,
     list_packaging_generations,
 )
+from katcha.services.packaging_thumbnails import build_packaging_thumbnail
 
 router = APIRouter(prefix="/v1/publications", tags=["packaging"])
 
@@ -110,6 +111,16 @@ class PackagingGenerationDetailResponse(BaseModel):
     variants: list[PackagingVariantResponse]
 
 
+
+class BuildThumbnailRequest(BaseModel):
+    parent_variant_id: uuid.UUID
+
+
+class BuildThumbnailResponse(BaseModel):
+    parent_variant: PackagingVariantResponse
+    thumbnail_variant: PackagingVariantResponse
+
+
 @router.post(
     "/{publication_id}/packaging/variants",
     response_model=PackagingVariantResponse,
@@ -188,6 +199,35 @@ def get_generations(
         return list_packaging_generations(publication_id)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.post(
+    "/{publication_id}/packaging/thumbnails",
+    response_model=BuildThumbnailResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def build_thumbnail(
+    publication_id: uuid.UUID,
+    request: BuildThumbnailRequest,
+) -> BuildThumbnailResponse:
+    try:
+        result = build_packaging_thumbnail(
+            publication_id,
+            parent_variant_id=request.parent_variant_id,
+        )
+        return BuildThumbnailResponse(
+            parent_variant=PackagingVariantResponse.model_validate(
+                result.parent_variant
+            ),
+            thumbnail_variant=PackagingVariantResponse.model_validate(
+                result.thumbnail_variant
+            ),
+        )
+    except ValueError as exc:
+        code = 404 if "publication not found" in str(exc) else 409
+        raise HTTPException(status_code=code, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
 @router.post(

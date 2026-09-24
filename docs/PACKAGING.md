@@ -254,3 +254,34 @@ Accepted candidates are persisted through the existing immutable
 P10.1 **does not** generate thumbnail bytes and **does not** mutate YouTube. Thumbnail
 production is a separate paid/QC stage, and any later title/thumbnail activation must still
 flow through the existing P9.1 activation ledger.
+
+
+## P10.2 source-grounded thumbnail rendering
+
+P10.1 candidates carry a thumbnail creative brief but no image bytes. P10.2 converts that
+brief into a real 1280x720 thumbnail using analyzed source keyframes and the publication's
+frozen channel brand. The default path uses no image-generation provider and therefore adds
+no paid AI call or synthetic factual content.
+
+For single-clip Productions, Katcha deterministically selects the middle analyzed keyframe.
+For ranked ShortEpisodes, it selects the middle keyframe from the #1 payoff clip. The
+renderer applies brand palette/type treatment and optional brief text, then verifies PNG
+signature, dimensions and object-store persistence.
+
+An existing immutable packaging variant is never modified. Thumbnail production creates the
+next version of the same variant key and freezes the parent variant ID, selected source key,
+render manifest and renderer verification into variant metadata. Replaying the same parent
+variant reuses that derived thumbnail version.
+
+```http
+POST /v1/publications/{publication_id}/packaging/thumbnails
+```
+
+```json
+{
+  "parent_variant_id": "<P10.1 variant UUID>"
+}
+```
+
+This stage still performs no YouTube mutation; P9.1 remains the only packaging activation
+path.

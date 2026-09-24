@@ -6,7 +6,7 @@ import {fileURLToPath} from 'node:url';
 import {promisify} from 'node:util';
 import express from 'express';
 import {bundle} from '@remotion/bundler';
-import {renderMedia, selectComposition} from '@remotion/renderer';
+import {renderMedia, renderStill, selectComposition} from '@remotion/renderer';
 import {
   GetObjectCommand,
   HeadObjectCommand,
@@ -67,6 +67,24 @@ const inspectMedia = async (filePath) => {
     throw new Error('ffprobe could not verify rendered media');
   }
   return {duration_seconds: duration, width, height, frame_rate: stream.r_frame_rate || null};
+};
+
+const inspectImage = async (filePath) => {
+  const {stdout} = await exec('ffprobe', [
+    '-v', 'error',
+    '-select_streams', 'v:0',
+    '-show_entries', 'stream=width,height',
+    '-of', 'json',
+    filePath,
+  ]);
+  const payload = JSON.parse(stdout);
+  const stream = payload?.streams?.[0] || {};
+  const width = Number(stream.width || 0);
+  const height = Number(stream.height || 0);
+  if (!(width > 0) || !(height > 0)) {
+    throw new Error('ffprobe could not verify rendered image');
+  }
+  return {width, height};
 };
 
 const verifyRender = (probe, manifest) => {
@@ -140,6 +158,19 @@ const hydrateRankedEpisodeManifest = async (manifest) => {
   return {...manifest, items, overlays, reaction_events: await hydrateReactions(manifest.reaction_events)};
 };
 
+const hydrateThumbnailManifest = async (manifest) => {
+  if (!(await exists(manifest.source.storage_key))) {
+    throw new Error(`missing thumbnail source asset: ${manifest.source.storage_key}`);
+  }
+  return {
+    ...manifest,
+    source: {
+      ...manifest.source,
+      url: await signedGet(manifest.source.storage_key),
+    },
+  };
+};
+
 const hydrateLongformManifest = async (manifest) => {
   const timeline = await Promise.all(
     (manifest.timeline || []).map(async (item) => {
@@ -176,6 +207,115 @@ app.use(express.json({limit: '8mb'}));
 
 app.get('/health', (_request, response) => {
   response.json({status: 'ok', service: 'katcha-renderer'});
+});
+
+app.post('/thumbnail', async (request, response) => {
+  const manifest = request.body;
+  if (
+    manifest?.version !== 'thumbnail-render-v1'
+    || !manifest?.publication_id
+    || !manifest?.parent_variant_id
+    || !manifest?.source?.storage_key
+    || !manifest?.output_key
+  ) {
+    return response.status(400).json({error: 'invalid thumbnail render manifest'});
+  }
+
+  try {
+    if (await exists(manifest.output_key)) {
+      const stored = await headObject(manifest.output_key);
+      if (!(Number(stored.ContentLength || 0) > 0)) {
+        throw new Error('existing thumbnail object is empty');
+      }
+      return response.json({
+        output_key: manifest.output_key,
+        width: Number(manifest.width || 1280),
+        height: Number(manifest.height || 720),
+        metadata: {
+          reused: true,
+          verified: true,
+          verification_mode: 'object-head',
+          object_size_bytes: Number(stored.ContentLength || 0),
+          renderer: 'remotion',
+          composition: 'Thumbnail',
+        },
+      });
+    }
+
+    const inputProps = await hydrateThumbnailManifest(manifest);
+    const serveUrl = await serveUrlPromise;
+    const composition = await selectComposition({
+      serveUrl,
+      id: 'Thumbnail',
+      inputProps,
+    });
+    const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'katcha-thumbnail-'));
+    const outputPath = path.join(tempDir, 'thumbnail.png');
+
+    try {
+      await renderStill({
+        composition,
+        serveUrl,
+        output: outputPath,
+        inputProps,
+        imageFormat: 'png',
+      });
+      const bytes = await fs.promises.readFile(outputPath);
+      if (
+        bytes.length < 8
+        || bytes[0] !== 0x89
+        || bytes[1] !== 0x50
+        || bytes[2] !== 0x4e
+        || bytes[3] !== 0x47
+      ) {
+        throw new Error('thumbnail renderer did not produce a PNG');
+      }
+      const probe = await inspectImage(outputPath);
+      if (
+        probe.width !== Number(manifest.width || 1280)
+        || probe.height !== Number(manifest.height || 720)
+      ) {
+        throw new Error(
+          `thumbnail dimensions mismatch: expected ${manifest.width}x${manifest.height}, `
+          + `got ${probe.width}x${probe.height}`,
+        );
+      }
+      await s3.send(
+        new PutObjectCommand({
+          Bucket: bucket,
+          Key: manifest.output_key,
+          Body: bytes,
+          ContentType: 'image/png',
+          Metadata: {
+            'katcha-render-version': 'thumbnail-render-v1',
+            'katcha-verified': 'true',
+          },
+        }),
+      );
+      const stored = await headObject(manifest.output_key);
+      if (!(Number(stored.ContentLength || 0) > 0)) {
+        throw new Error('thumbnail upload verification returned an empty object');
+      }
+      return response.json({
+        output_key: manifest.output_key,
+        width: probe.width,
+        height: probe.height,
+        metadata: {
+          reused: false,
+          verified: true,
+          verification_mode: 'png+ffprobe+object-head',
+          object_size_bytes: Number(stored.ContentLength || 0),
+          renderer: 'remotion',
+          composition: 'Thumbnail',
+        },
+      });
+    } finally {
+      await fs.promises.rm(tempDir, {recursive: true, force: true});
+    }
+  } catch (error) {
+    console.error('thumbnail render failed', error);
+    return response.status(500).json({error: String(error?.message || error)});
+  }
 });
 
 app.post('/render', async (request, response) => {
