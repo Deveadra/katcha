@@ -124,6 +124,7 @@ def register_short_production(
         acquisition_state = assert_clip_production_eligible(clip_id)
         snapshot = _analysis_snapshot(clip, features)
         snapshot["acquisition"] = _acquisition_snapshot(acquisition_state)
+        snapshot["edit_blueprint"] = edit_blueprint.model_dump(mode="json")
 
         production = Production(
             clip_id=clip_id,
@@ -208,6 +209,15 @@ def _clone_scripts(session: object, parent: Production, child: Production) -> No
     if selected_child is None:
         raise ValueError("parent production has no selected script")
     child.selected_script_id = selected_child.id
+
+
+def _blueprint_requires_voice(production: Production) -> bool:
+    snapshot = dict(production.edit_blueprint_snapshot or {})
+    narration = dict(snapshot.get("narration") or {})
+    return str(narration.get("mode") or "persona_voice") in {
+        "persona_voice",
+        "explanatory_voice",
+    }
 
 
 def _clone_voice_assets(session: object, parent: Production, child: Production) -> None:
@@ -300,10 +310,13 @@ def register_regeneration(
             _clone_scripts(session, parent, child)
             child.status = ProductionStatus.SCRIPTED.value
             child.stage = "script_selected"
-        if stage == "render":
+        if stage == "render" and _blueprint_requires_voice(parent):
             _clone_voice_assets(session, parent, child)
             child.status = ProductionStatus.VOICED.value
             child.stage = "voice_ready"
+        elif stage == "render":
+            child.status = ProductionStatus.SCRIPTED.value
+            child.stage = "script_selected"
 
         parent.status = ProductionStatus.REJECTED.value
         parent.stage = f"regenerated_from_{stage}"
