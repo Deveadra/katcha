@@ -316,6 +316,8 @@ def generate_narration_assets(production_id: str) -> dict[str, object]:
     settings = get_settings()
     store = ObjectStore()
     store.ensure_bucket()
+    if render_generation < 1:
+        raise ValueError("render_generation must be positive")
 
     with session_scope() as session:
         production = session.get(Production, production_uuid)
@@ -380,7 +382,7 @@ def generate_narration_assets(production_id: str) -> dict[str, object]:
                 select(ProductionAsset).where(
                     ProductionAsset.production_id == production_uuid,
                     ProductionAsset.kind == kind,
-                    ProductionAsset.generation == 1,
+                    ProductionAsset.generation == render_generation,
                 )
             )
             if existing is not None:
@@ -484,7 +486,10 @@ def generate_narration_assets(production_id: str) -> dict[str, object]:
 
 
 @activity.defn
-def build_render_manifest_activity(production_id: str) -> dict[str, object]:
+def build_render_manifest_activity(
+    production_id: str,
+    render_generation: int = 1,
+) -> dict[str, object]:
     production_uuid = uuid.UUID(production_id)
     settings = get_settings()
     store = ObjectStore()
@@ -502,7 +507,9 @@ def build_render_manifest_activity(production_id: str) -> dict[str, object]:
         script = _selected_script(session, production)
         blueprint = _frozen_blueprint(production)
         brand = _brand_render_spec(dict(production.brand_snapshot or {}))
-        output_key = store.production_key(production_id, "render/short-g1.mp4")
+        output_key = store.production_key(
+            production_id, f"render/short-a{render_generation}.mp4"
+        )
 
         if (
             blueprint is not None
@@ -626,9 +633,13 @@ def build_render_manifest_activity(production_id: str) -> dict[str, object]:
             ]
 
     manifest_bytes = manifest.model_dump_json(indent=2).encode("utf-8")
-    manifest_key = store.production_key(production_id, "render/manifest.json")
+    manifest_key = store.production_key(
+        production_id, f"render/a{render_generation}/manifest.json"
+    )
     store.put_bytes(manifest_bytes, manifest_key, content_type="application/json")
-    captions_key = store.production_key(production_id, "render/captions.json")
+    captions_key = store.production_key(
+        production_id, f"render/a{render_generation}/captions.json"
+    )
     store.put_bytes(
         json.dumps(caption_payload, indent=2).encode("utf-8"),
         captions_key,
@@ -656,11 +667,12 @@ def build_render_manifest_activity(production_id: str) -> dict[str, object]:
                     ProductionAsset(
                         production_id=production_uuid,
                         kind=kind,
-                        generation=1,
+                        generation=render_generation,
                         storage_key=key,
                         content_type="application/json",
                         asset_metadata={
                             "manifest_version": manifest.version,
+        "render_generation": render_generation,
                             "brand_key": production.brand_key,
                             "brand_version": production.brand_version,
                             "edit_blueprint_key": production.edit_blueprint_key,
@@ -682,6 +694,7 @@ def build_render_manifest_activity(production_id: str) -> dict[str, object]:
                     "edit_blueprint_key": production.edit_blueprint_key,
                     "edit_blueprint_version": production.edit_blueprint_version,
                     "output_duration_seconds": manifest.output_duration_seconds,
+                    "render_generation": render_generation,
                 },
             )
         )
@@ -694,7 +707,10 @@ def build_render_manifest_activity(production_id: str) -> dict[str, object]:
 
 
 @activity.defn
-def render_short_activity(production_id: str) -> dict[str, object]:
+def render_short_activity(
+    production_id: str,
+    render_generation: int = 1,
+) -> dict[str, object]:
     production_uuid = uuid.UUID(production_id)
     settings = get_settings()
     with session_scope() as session:
@@ -705,7 +721,7 @@ def render_short_activity(production_id: str) -> dict[str, object]:
             select(ProductionAsset).where(
                 ProductionAsset.production_id == production_uuid,
                 ProductionAsset.kind == "render",
-                ProductionAsset.generation == 1,
+                ProductionAsset.generation == render_generation,
             )
         )
         if existing is not None:
@@ -739,7 +755,7 @@ def render_short_activity(production_id: str) -> dict[str, object]:
             select(ProductionAsset).where(
                 ProductionAsset.production_id == production_uuid,
                 ProductionAsset.kind == "render",
-                ProductionAsset.generation == 1,
+                ProductionAsset.generation == render_generation,
             )
         )
         if existing is None:
@@ -747,7 +763,7 @@ def render_short_activity(production_id: str) -> dict[str, object]:
                 ProductionAsset(
                     production_id=production_uuid,
                     kind="render",
-                    generation=1,
+                    generation=render_generation,
                     storage_key=result.output_key,
                     content_type="video/mp4",
                     provider="remotion",
@@ -762,8 +778,8 @@ def render_short_activity(production_id: str) -> dict[str, object]:
                     },
                 )
             )
-        production.status = ProductionStatus.REVIEW.value
-        production.stage = "render_verified"
+        production.status = ProductionStatus.RENDERING.value
+        production.stage = "render_output_ready"
         production.error = None
         production.estimated_cost_usd = _production_cost(session, production_uuid)
         session.add(
@@ -776,6 +792,7 @@ def render_short_activity(production_id: str) -> dict[str, object]:
                     "output_key": result.output_key,
                     "duration_seconds": result.duration_seconds,
                     "verification": result.metadata,
+                    "render_generation": render_generation,
                 },
             )
         )
@@ -784,6 +801,7 @@ def render_short_activity(production_id: str) -> dict[str, object]:
         "output_key": result.output_key,
         "reused": False,
         "verified": True,
+        "render_generation": render_generation,
     }
 
 
