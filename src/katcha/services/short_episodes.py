@@ -20,8 +20,8 @@ from katcha.models import Clip, ClipFeature, DomainEvent, SourceItem
 from katcha.services.acquisition import ClipAcquisitionState, assert_clip_production_eligible
 from katcha.services.channel_brands import brand_for_channel
 from katcha.services.channel_profiles import ensure_active_profile
+from katcha.services.trend_editorial_context import freeze_trend_context
 from katcha.short_episode_models import ShortEpisode, ShortEpisodeItem
-from katcha.trend_models import TrendOpportunity
 
 
 @dataclass(frozen=True, slots=True)
@@ -191,16 +191,15 @@ def register_short_episode(
             select(ShortEpisode).where(ShortEpisode.workflow_id == workflow_id)
         )
         if existing is not None:
+            if existing.trend_opportunity_id != trend_opportunity_id:
+                raise ValueError("idempotency key is already bound to another trend opportunity")
             session.expunge(existing)
             return existing
 
         profile = ensure_active_profile(session, channel_profile_id)
+        trend_context = None
         if trend_opportunity_id is not None:
-            opportunity = session.get(TrendOpportunity, trend_opportunity_id)
-            if opportunity is None:
-                raise ValueError(f"trend opportunity not found: {trend_opportunity_id}")
-            if opportunity.channel_profile_id != profile.id:
-                raise ValueError("trend opportunity belongs to a different channel profile")
+            trend_context = freeze_trend_context(session, profile.id, trend_opportunity_id)
 
         brand, brand_version = brand_for_channel(session, profile.id)
         brand_format = brand.editorial_format
@@ -252,6 +251,9 @@ def register_short_episode(
             item_count=item_count,
             contract=contract,
         )
+        plan_snapshot = plan.model_dump(mode="json")
+        if trend_context is not None:
+            plan_snapshot["trend_context"] = trend_context
         episode = ShortEpisode(
             channel_profile_id=profile.id,
             trend_opportunity_id=trend_opportunity_id,
@@ -266,7 +268,7 @@ def register_short_episode(
             format_version=contract.version,
             item_count=plan.item_count,
             format_snapshot=contract.model_dump(mode="json"),
-            plan_snapshot=plan.model_dump(mode="json"),
+            plan_snapshot=plan_snapshot,
             persona_key=persona.key,
             persona_version=persona.version,
             brand_key=brand.brand_key,
@@ -302,6 +304,12 @@ def register_short_episode(
                     "item_count": plan.item_count,
                     "trend_opportunity_id": (
                         str(trend_opportunity_id) if trend_opportunity_id else None
+                    ),
+                    "trend_evidence_packet_id": (
+                        trend_context["packet_id"] if trend_context else None
+                    ),
+                    "trend_evidence_packet_sha256": (
+                        trend_context["packet_sha256"] if trend_context else None
                     ),
                     "ordered_clip_ids": [item.candidate_id for item in plan.ordered_items],
                 },

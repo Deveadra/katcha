@@ -18,3 +18,7 @@ build/
 .local/
 media/
 renderer/reaction-smoke-previews/
+
+# Explorer browser tests
+web-tests/node_modules/
+web-tests/test-results/

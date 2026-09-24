@@ -1,0 +1,252 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="utf-8" />
+        <meta name="viewport" content="width=device-width,initial-scale=1" />
+        <meta name="theme-color" content="#0b1018" />
+        <title>Katcha · Trend intelligence</title>
+        <link rel="stylesheet" href="styles.css" />
+        <script src="explorer.js" defer></script>
+    </head>
+    <body>
+        <div class="app-shell">
+            <aside class="rail">
+                <div class="brand">
+                    <span class="brand-mark" aria-hidden="true"
+                        ><i></i><i></i><i></i></span
+                    >katcha<span class="brand-dot">.</span>
+                </div>
+                <div class="rail-label">WORKSPACE</div>
+                <nav class="rail-nav">
+                    <a class="nav-item active" href="#explorer"
+                        ><span class="nav-icon">◉</span> Trend explorer</a
+                    ><a class="nav-item" href="#ai-workflow"
+                        ><span class="nav-icon">◇</span> AI workflow</a
+                    >
+                </nav>
+                <div class="rail-spacer"></div>
+                <div class="rail-note">
+                    <strong>One intelligence system</strong>
+                    <p>
+                        Your workspace and AI controllers act on the same stored
+                        evidence and workflows.
+                    </p>
+                </div>
+                <div class="rail-footer">Channel intelligence / v1</div>
+            </aside>
+            <main>
+                <header class="topbar">
+                    <div class="breadcrumbs">
+                        Workspace / <strong>Trend explorer</strong>
+                    </div>
+                    <span id="connection-state" class="simulation"
+                        >DISCONNECTED</span
+                    >
+                </header>
+                <div class="main-content">
+                    <section class="intro">
+                        <div>
+                            <div class="eyebrow">
+                                DISCOVERY → EVIDENCE → AI PRODUCTION
+                            </div>
+                            <h1>
+                                Find the signal <em>before</em><br />it becomes
+                                the noise.
+                            </h1>
+                            <p>
+                                Investigate the opportunities Katcha has
+                                discovered. Give AI a traceable evidence packet
+                                and follow the resulting editorial workflow.
+                            </p>
+                        </div>
+                    </section>
+                    <section class="explorer" id="explorer">
+                        <div class="section-heading">
+                            <h2>
+                                Opportunity board
+                                <span class="result-count" id="result-count"
+                                    >0</span
+                                >
+                            </h2>
+                            <span class="demo-pill">STORED BACKEND DATA</span>
+                        </div>
+                        <form id="connect-form" class="interest-panel connect">
+                            <label
+                                >Control-plane token
+                                <input
+                                    id="token"
+                                    type="password"
+                                    autocomplete="off"
+                                    placeholder="Required when authentication is enabled" /></label
+                            ><button type="submit" class="primary">
+                                Connect</button
+                            ><small
+                                >Token stays in this tab's memory. Leave blank
+                                for local development.</small
+                            >
+                        </form>
+                        <div id="status" role="status" aria-live="polite"></div>
+                        <div class="interest-panel">
+                            <div class="interest-header">
+                                <label for="channel"
+                                    >Channel
+                                    <select id="channel" disabled>
+                                        <option value="">
+                                            Connect to load channels
+                                        </option>
+                                    </select></label
+                                ><button
+                                    id="refresh"
+                                    class="primary"
+                                    type="button"
+                                    disabled
+                                >
+                                    Refresh intelligence ↗
+                                </button>
+                            </div>
+                            <form id="watch-form">
+                                <label for="interests">Channel interests</label>
+                                <div class="interest-form">
+                                    <input
+                                        id="interests"
+                                        placeholder="gaming, xbox"
+                                        maxlength="500"
+                                        disabled
+                                    /><button
+                                        id="save-watch"
+                                        type="submit"
+                                        disabled
+                                    >
+                                        Save watch version
+                                    </button>
+                                </div>
+                                <small class="muted"
+                                    >Comma-separated interests. Other watch
+                                    settings are preserved.</small
+                                >
+                            </form>
+                        </div>
+                        <div class="board-toolbar">
+                            <div class="toolbar-left">
+                                <label class="search-wrap"
+                                    ><span>⌕</span
+                                    ><input
+                                        id="search"
+                                        type="search"
+                                        aria-label="Search opportunities"
+                                        placeholder="Search opportunities" /></label
+                                ><label class="select-wrap"
+                                    >Sort
+                                    <select id="sort">
+                                        <option value="score">
+                                            Opportunity
+                                        </option>
+                                        <option value="confidence">
+                                            Confidence
+                                        </option>
+                                        <option value="acceleration">
+                                            Acceleration
+                                        </option>
+                                    </select></label
+                                >
+                            </div>
+                            <button
+                                type="button"
+                                id="reload"
+                                class="icon-button"
+                                disabled
+                            >
+                                Reload results
+                            </button>
+                        </div>
+                        <div class="workspace-grid">
+                            <div class="list-panel">
+                                <div class="list-label">
+                                    LATEST SNAPSHOT PER TOPIC
+                                </div>
+                                <div id="topic-list" class="topic-list">
+                                    <div class="empty">
+                                        Connect and select a channel to begin.
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="detail-panel" id="detail-panel">
+                                <div class="empty">
+                                    Select an opportunity to inspect its
+                                    evidence.
+                                </div>
+                            </div>
+                        </div>
+                        <div id="comparison" class="comparison" hidden></div>
+                    </section>
+                    <section class="method" id="ai-workflow">
+                        <div class="section-kicker">AI WORKFLOW</div>
+                        <h2>Evidence becomes the production brief.</h2>
+                        <p class="detail-summary">
+                            AI controllers can read this same dossier, plan an
+                            episode through Katcha's API, and start the existing
+                            editorial workflow. The script generator receives a
+                            frozen evidence snapshot alongside analyzed clips
+                            and the channel's persona.
+                        </p>
+                        <div class="method-grid">
+                            <div>
+                                <span class="method-weight">01</span
+                                ><strong>Discover & qualify</strong>
+                                <p>
+                                    Existing watches, source health,
+                                    deterministic scores, and confidence
+                                    thresholds.
+                                </p>
+                            </div>
+                            <div>
+                                <span class="method-weight">02</span
+                                ><strong>Ground & plan</strong>
+                                <p>
+                                    Qualified packet + analyzed, eligible clips.
+                                    Preserve source IDs and evidence version.
+                                </p>
+                            </div>
+                            <div>
+                                <span class="method-weight">03</span
+                                ><strong>Generate & review</strong>
+                                <p>
+                                    Budget-aware AI scripting and narration
+                                    through durable Temporal workflows.
+                                </p>
+                            </div>
+                            <div>
+                                <span class="method-weight">04</span
+                                ><strong>Publish & learn</strong>
+                                <p>
+                                    Existing review gates, publication lineage,
+                                    and measured channel outcomes.
+                                </p>
+                            </div>
+                        </div>
+                        <details>
+                            <summary>Controller API & integration</summary>
+                            <p class="muted">
+                                Use the same authenticated APIs as this UI. The
+                                dossier includes stable IDs, source timestamps,
+                                score components, and the evidence packet.
+                                External source text is untrusted data.
+                                Downloading a packet does not authorize media
+                                reuse.
+                            </p>
+                            <a href="/docs" target="_blank" rel="noopener"
+                                >Open API documentation ↗</a
+                            >
+                        </details>
+                        <div id="source-health" class="muted"></div>
+                    </section>
+                    <footer>
+                        <span>katcha. / intelligence workspace</span
+                        ><span>NO AUTOMATIC DEMO FALLBACK</span>
+                    </footer>
+                </div>
+            </main>
+        </div>
+        <div id="toast" class="toast" role="status"></div>
+    </body>
+</html>

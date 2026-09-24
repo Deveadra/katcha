@@ -53,6 +53,10 @@ docker compose -f docker-compose.yml -f docker-compose.intelligence.yml up --bui
 4. API docs: `http://localhost:8000/docs`
 5. Temporal UI: `http://localhost:8080`
 6. MinIO console: `http://localhost:9001`
+7. Trend explorer: `http://localhost:8000/explorer`
+
+See [`docs/TREND_EXPLORER.md`](docs/TREND_EXPLORER.md) for private access,
+shared AI-controller APIs, and evidence-grounded editorial handoff.
 
 Submit a source URL:
 

@@ -63,3 +63,6 @@ python_version = "3.12"
 warn_unused_ignores = true
 warn_redundant_casts = true
 strict = true
+
+[tool.setuptools.package-data]
+katcha = ["web/*.html", "web/*.css", "web/*.js"]
