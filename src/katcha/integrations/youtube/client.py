@@ -13,6 +13,7 @@ from katcha.integrations.youtube.tokens import get_valid_access_token
 
 DATA_API_BASE = "https://www.googleapis.com/youtube/v3"
 UPLOAD_URL = "https://www.googleapis.com/upload/youtube/v3/videos"
+THUMBNAIL_UPLOAD_URL = "https://www.googleapis.com/upload/youtube/v3/thumbnails/set"
 
 
 class YouTubeAPIError(RuntimeError):
@@ -154,6 +155,60 @@ class YouTubeClient:
         if response.status_code in {404, 410}:
             raise UploadSessionExpired("YouTube resumable upload session expired")
         _raise_api_error("YouTube chunk upload failed", response)
+
+    def update_snippet(
+        self,
+        video_id: str,
+        *,
+        title: str,
+        description: str,
+        tags: list[str],
+        category_id: str,
+    ) -> dict[str, Any]:
+        response = httpx.put(
+            f"{DATA_API_BASE}/videos",
+            params={"part": "snippet"},
+            headers={**self._headers(), "Content-Type": "application/json"},
+            json={
+                "id": video_id,
+                "snippet": {
+                    "title": title,
+                    "description": description,
+                    "tags": tags,
+                    "categoryId": category_id,
+                },
+            },
+            timeout=30,
+        )
+        if response.is_error:
+            _raise_api_error("YouTube snippet update failed", response)
+        return dict(response.json())
+
+    def set_thumbnail(
+        self,
+        video_id: str,
+        *,
+        data: bytes,
+        mime_type: str,
+    ) -> dict[str, Any]:
+        if not data:
+            raise ValueError("thumbnail data cannot be empty")
+        if mime_type not in {"image/png", "image/jpeg"}:
+            raise ValueError(f"unsupported YouTube thumbnail MIME type: {mime_type}")
+        response = httpx.post(
+            THUMBNAIL_UPLOAD_URL,
+            params={"videoId": video_id, "uploadType": "media"},
+            headers={
+                **self._headers(),
+                "Content-Type": mime_type,
+                "Content-Length": str(len(data)),
+            },
+            content=data,
+            timeout=60,
+        )
+        if response.is_error:
+            _raise_api_error("YouTube thumbnail update failed", response)
+        return dict(response.json())
 
     def video_resource(self, video_id: str) -> dict[str, Any]:
         response = httpx.get(
