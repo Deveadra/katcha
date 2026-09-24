@@ -209,8 +209,12 @@ class YouTubeDiscoveryAdapter:
 
         candidates = parse_youtube_candidates(search_payload, videos_payload)
         next_page = str(search_payload.get("nextPageToken") or "").strip()
+        usage = {"youtube.search.list": 1}
+        if ids:
+            usage["youtube.core"] = 1
         return DiscoveryBatch(
             items=candidates,
             next_cursor={"page_token": next_page} if next_page else {},
             done=not bool(next_page),
+            provider_usage=usage,
         )
