@@ -11,8 +11,8 @@ from sqlalchemy import select, text
 
 from katcha import __version__
 from katcha.api.acquisition import router as acquisition_router
-from katcha.api.control_auth import require_control_token
 from katcha.api.brands import router as brands_router
+from katcha.api.control_auth import require_control_token
 from katcha.api.edit_blueprints import router as edit_blueprints_router
 from katcha.api.explorer import router as explorer_router
 from katcha.api.intelligence import router as intelligence_router
