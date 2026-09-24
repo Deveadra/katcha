@@ -59,7 +59,7 @@ The renderer checks the exact object exists, presigns its URL using the existing
 
 ## Built-in RankSnaxx starter asset
 
-The source PNG is committed at `renderer/assets/ranksnaxx/reactions/host_emotes/v1/meme_cry.png` and packaged for Python at `src/katcha/assets/ranksnaxx/reactions/host_emotes/v1/meme_cry.png`. Both represent the immutable object `brands/ranksnaxx/reactions/host_emotes/v1/meme_cry.png`, SHA-256 `fc0cddb1e95245c757e01cc7363a5cdac221366598660606de5148cb966f8e2f`.
+The source PNG is committed at `renderer/assets/ranksnaxx/reactions/host_emotes/v1/meme_cry.png` and packaged for Python at `src/katcha/assets/ranksnaxx/reactions/host_emotes/v1/meme_cry.png`. Both represent the immutable object `brands/ranksnaxx/reactions/host_emotes/v1/meme_cry.png`, SHA-256 `bffb5df4269e0a02281268dfacab395070e9bc96596f31ba247b384f9eb06b36`.
 
 This is a starter visual asset for the host-emote system, not a permanent logo or a decision that every RankSnaxx video should use reactions.
 
