@@ -1,7 +1,7 @@
 """add durable discovery poll attempts and provider quota reservations
 
 Revision ID: 0022_discovery_poll_quota
-Revises: 0020_merge_ranked_trend_heads
+Revises: 0021_trend_calibration
 """
 
 from collections.abc import Sequence
@@ -10,7 +10,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "0022_discovery_poll_quota"
-down_revision: str | None = "0020_merge_ranked_trend_heads"
+down_revision: str | None = "0021_trend_calibration"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
