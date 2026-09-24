@@ -1,1 +1,49 @@
-import assert from 'node:assert/strict';\nimport {execFile} from 'node:child_process';\nimport fs from 'node:fs/promises';\nimport os from 'node:os';\nimport path from 'node:path';\nimport {promisify} from 'node:util';\nimport {bundle} from '@remotion/bundler';\nimport {renderStill, selectComposition} from '@remotion/renderer';\n\nconst exec = promisify(execFile);\nconst outputDir = path.resolve('thumbnail-smoke-previews');\nconst tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'katcha-thumbnail-smoke-'));\nconst publicDir = path.join(tempDir, 'public');\n\ntry {\n  await fs.mkdir(publicDir, {recursive: true});\n  await fs.mkdir(outputDir, {recursive: true});\n  await exec('ffmpeg', [\n    '-hide_banner', '-loglevel', 'error', '-y',\n    '-f', 'lavfi', '-i', 'testsrc2=s=1280x720:d=1',\n    '-frames:v', '1', path.join(publicDir, 'thumbnail-source.png'),\n  ]);\n  const serveUrl = await bundle({\n    entryPoint: path.resolve('test/thumbnail-smoke-entry.jsx'),\n    publicDir,\n    outDir: path.join(tempDir, 'bundle'),\n  });\n  const composition = await selectComposition({\n    serveUrl, id: 'SyntheticThumbnail', inputProps: {},\n  });\n  const output = path.join(outputDir, 'SyntheticThumbnail.png');\n  await renderStill({\n    composition, serveUrl, frame: 0, imageFormat: 'png', output, inputProps: {},\n  });\n  const bytes = await fs.readFile(output);\n  assert.ok(bytes.length > 1000);\n  assert.equal(bytes[0], 0x89);\n  assert.equal(bytes[1], 0x50);\n  const {stdout} = await exec('ffprobe', [\n    '-v', 'error', '-select_streams', 'v:0',\n    '-show_entries', 'stream=width,height', '-of', 'json', output,\n  ]);\n  const probe = JSON.parse(stdout);\n  assert.equal(probe.streams[0].width, 1280);\n  assert.equal(probe.streams[0].height, 720);\n  console.log('PASS: grounded branded thumbnail renders at YouTube dimensions.');\n} finally {\n  await fs.rm(tempDir, {recursive: true, force: true});\n}
+import assert from 'node:assert/strict';
+import {execFile} from 'node:child_process';
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import {promisify} from 'node:util';
+import {bundle} from '@remotion/bundler';
+import {renderStill, selectComposition} from '@remotion/renderer';
+
+const exec = promisify(execFile);
+const outputDir = path.resolve('thumbnail-smoke-previews');
+const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'katcha-thumbnail-smoke-'));
+const publicDir = path.join(tempDir, 'public');
+
+try {
+  await fs.mkdir(publicDir, {recursive: true});
+  await fs.mkdir(outputDir, {recursive: true});
+  await exec('ffmpeg', [
+    '-hide_banner', '-loglevel', 'error', '-y',
+    '-f', 'lavfi', '-i', 'testsrc2=s=1280x720:d=1',
+    '-frames:v', '1', path.join(publicDir, 'thumbnail-source.png'),
+  ]);
+  const serveUrl = await bundle({
+    entryPoint: path.resolve('test/thumbnail-smoke-entry.jsx'),
+    publicDir,
+    outDir: path.join(tempDir, 'bundle'),
+  });
+  const composition = await selectComposition({
+    serveUrl, id: 'SyntheticThumbnail', inputProps: {},
+  });
+  const output = path.join(outputDir, 'SyntheticThumbnail.png');
+  await renderStill({
+    composition, serveUrl, frame: 0, imageFormat: 'png', output, inputProps: {},
+  });
+  const bytes = await fs.readFile(output);
+  assert.ok(bytes.length > 1000);
+  assert.equal(bytes[0], 0x89);
+  assert.equal(bytes[1], 0x50);
+  const {stdout} = await exec('ffprobe', [
+    '-v', 'error', '-select_streams', 'v:0',
+    '-show_entries', 'stream=width,height', '-of', 'json', output,
+  ]);
+  const probe = JSON.parse(stdout);
+  assert.equal(probe.streams[0].width, 1280);
+  assert.equal(probe.streams[0].height, 720);
+  console.log('PASS: grounded branded thumbnail renders at YouTube dimensions.');
+} finally {
+  await fs.rm(tempDir, {recursive: true, force: true});
+}
