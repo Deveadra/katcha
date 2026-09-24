@@ -504,7 +504,11 @@ def build_render_manifest_activity(production_id: str) -> dict[str, object]:
         brand = _brand_render_spec(dict(production.brand_snapshot or {}))
         output_key = store.production_key(production_id, "render/short-g1.mp4")
 
-        if blueprint is not None and blueprint.composition == "blueprint_video":
+        if (
+            blueprint is not None
+            and blueprint.composition == "blueprint_video"
+            and blueprint.narration.mode in {"text_only", "source_only"}
+        ):
             if production.channel_profile_id is None:
                 raise RuntimeError("blueprint render requires channel-scoped production")
             if brand is None:
