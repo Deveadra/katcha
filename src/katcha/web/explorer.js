@@ -3,6 +3,7 @@ const state = {
     token: "",
     channel: "",
     watch: null,
+    editPerformance: null,
     rows: [],
     selected: null,
     dossier: null,
@@ -65,8 +66,9 @@ async function api(path, options = {}) {
     }
     return response.json();
 }
-const channelURL = () =>
-    `/v1/channels/${encodeURIComponent(state.channel)}/trends`;
+const channelProfileURL = () =>
+    `/v1/channels/${encodeURIComponent(state.channel)}`;
+const channelURL = () => `${channelProfileURL()}/trends`;
 const explorerURL = () => `${channelURL()}/explorer`;
 async function connect(event) {
     event?.preventDefault();
@@ -106,8 +108,10 @@ async function loadChannel() {
     state.rows = [];
     state.compare = [];
     state.watch = null;
+    state.editPerformance = null;
     $("interests").value = "";
     $("source-health").textContent = "";
+    renderEditPerformance();
     renderBoard();
     renderComparison();
     $("detail-panel").innerHTML =
@@ -118,13 +122,15 @@ async function loadChannel() {
     const base = channelURL();
     status("Loading stored opportunities…");
     try {
-        const [watch, rows, health] = await Promise.all([
+        const [watch, rows, health, editPerformance] = await Promise.all([
             api(`${base}/watch-profile`),
             api(`${base}/explorer`),
             api(`${base}/source-health`),
+            api(`${channelProfileURL()}/editing-performance?age_bucket_hours=72`),
         ]);
         if (epoch !== state.epoch) return;
         state.watch = watch;
+        state.editPerformance = editPerformance;
         state.rows = rows;
         $("interests").value = (watch?.interests || []).join(", ");
         $("source-health").innerHTML =
@@ -135,6 +141,7 @@ async function loadChannel() {
             2,
         );
         renderBoard();
+        renderEditPerformance();
         status(
             rows.length
                 ? `${rows.length} current topics loaded. Ranked from stored opportunity snapshots.`
@@ -145,6 +152,44 @@ async function loadChannel() {
         if (epoch === state.epoch) status(error.message);
     }
 }
+function renderEditPerformance() {
+    const host = $("edit-performance-body");
+    if (!host) return;
+    const snapshot = state.editPerformance;
+    if (!snapshot) {
+        host.className = "empty";
+        host.innerHTML =
+            "No maturity-matched edit evidence yet. Published videos need analytics near the selected outcome age.";
+        return;
+    }
+    const groups = Array.isArray(snapshot.aggregate_metrics)
+        ? snapshot.aggregate_metrics
+        : [];
+    host.className = "";
+    const coverage = `Revenue ${pct(snapshot.monetary_coverage)} · retention ${pct(snapshot.retention_coverage)}`;
+    const cards = groups
+        .slice(0, 6)
+        .map((group) => {
+            const blueprint = `${group.edit_blueprint_key || "unknown"}@r${group.edit_blueprint_revision ?? "?"}`;
+            const scope = `${group.source_kind || "source"} · ${group.source_scope || "unknown scope"}`;
+            const avp =
+                group.mean_average_view_percentage == null
+                    ? "—"
+                    : `${Number(group.mean_average_view_percentage).toFixed(1)}%`;
+            const retention =
+                group.mean_audience_watch_ratio_50pct == null
+                    ? "—"
+                    : pct(group.mean_audience_watch_ratio_50pct);
+            const margin =
+                group.covered_margin_per_publication_usd == null
+                    ? "—"
+                    : `${Number(group.covered_margin_per_publication_usd).toFixed(2)}`;
+            return `<article class="edit-evidence-card"><div class="edit-evidence-title"><strong>${esc(blueprint)}</strong><span>${esc(scope)}</span></div><div class="edit-evidence-metrics"><div><span>Samples</span><strong>${Number(group.publication_count || 0)}</strong></div><div><span>Avg viewed</span><strong>${esc(avp)}</strong></div><div><span>50% retention</span><strong>${esc(retention)}</strong></div><div><span>Covered margin/video</span><strong>${esc(margin)}</strong></div></div><small>Style ${esc(group.selected_style || "default")} · money ${pct(group.monetary_coverage)} · retention data ${pct(group.retention_coverage)}</small></article>`;
+        })
+        .join("");
+    host.innerHTML = `<div class="edit-performance-summary"><strong>${Number(snapshot.publication_count || 0)} maturity-matched publications</strong><span>${esc(coverage)} · snapshot v${Number(snapshot.version || 0)} · ${Number(snapshot.age_bucket_hours || 72)}h</span><span class="edit-performance-status">${esc(snapshot.comparison_status || "insufficient_data").replaceAll("_", " ")}</span></div><div class="edit-evidence-grid">${cards || '<p class="muted">No blueprint groups have enough lineage-backed analytics yet.</p>'}</div><p class="muted">Evidence is channel-scoped and advisory. Katcha does not automatically switch editing identity from this panel.</p>`;
+}
+
 function visibleRows() {
     const query = $("search").value.toLowerCase();
     return state.rows
