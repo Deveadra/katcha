@@ -24,10 +24,7 @@ from katcha.packaging_intelligence_models import (
     PackagingIntelligenceSnapshot,
     PackagingVariantPerformanceWindow,
 )
-from katcha.packaging_models import (
-    PublicationPackagingActivation,
-    PublicationPackagingVariant,
-)
+from katcha.packaging_models import PublicationPackagingVariant
 from katcha.production_models import Production
 from katcha.publishing_models import (
     Publication,
