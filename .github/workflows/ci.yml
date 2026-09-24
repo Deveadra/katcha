@@ -106,11 +106,11 @@ jobs:
       - name: Render and verify grounded thumbnail still
         run: node test/thumbnail-smoke.mjs
 
-      - name: Upload synthetic reaction previews
+      - name: Upload branded reaction previews
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: synthetic-reaction-previews
+          name: ranksnaxx-reaction-previews
           path: renderer/reaction-smoke-previews/
           if-no-files-found: ignore
           retention-days: 7
