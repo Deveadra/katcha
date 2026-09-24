@@ -13,6 +13,7 @@ from katcha.models import DomainEvent
 from katcha.production_models import Production, ProductionReview
 from katcha.publishing_models import Publication
 from katcha.services.channel_profiles import active_automation, ensure_active_profile
+from katcha.short_episode_models import ShortEpisode, ShortEpisodeReview
 
 _LEVELS = (
     AutomationLevel.REVIEW_REQUIRED,
@@ -65,7 +66,17 @@ def _review_rows(channel_profile_id: uuid.UUID) -> list[tuple[str, object]]:
                 .where(Compilation.channel_profile_id == channel_profile_id)
             )
         )
-    all_rows = [*production_rows, *compilation_rows]
+        short_episode_rows = list(
+            session.execute(
+                select(ShortEpisodeReview.decision, ShortEpisodeReview.created_at)
+                .join(
+                    ShortEpisode,
+                    ShortEpisodeReview.short_episode_id == ShortEpisode.id,
+                )
+                .where(ShortEpisode.channel_profile_id == channel_profile_id)
+            )
+        )
+    all_rows = [*production_rows, *compilation_rows, *short_episode_rows]
     rows = [(str(decision), created_at) for decision, created_at in all_rows]
     return sorted(rows, key=lambda item: item[1])
 
