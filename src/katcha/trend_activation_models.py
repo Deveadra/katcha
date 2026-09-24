@@ -190,3 +190,101 @@ class TrendActivationDecision(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), index=True
     )
+
+
+
+class TrendActivationPerformanceSnapshot(Base):
+    __tablename__ = "trend_activation_performance_snapshots"
+    __table_args__ = (
+        UniqueConstraint("channel_profile_id", "version"),
+        UniqueConstraint("channel_profile_id", "run_key"),
+        CheckConstraint(
+            "decision_count >= 0",
+            name="ck_trend_activation_performance_decisions",
+        ),
+        CheckConstraint(
+            "planned_count >= 0",
+            name="ck_trend_activation_performance_planned",
+        ),
+        CheckConstraint(
+            "published_count >= 0",
+            name="ck_trend_activation_performance_published",
+        ),
+        CheckConstraint(
+            "outcome_count >= 0",
+            name="ck_trend_activation_performance_outcomes",
+        ),
+        CheckConstraint(
+            "opportunity_to_plan_rate >= 0 AND opportunity_to_plan_rate <= 1",
+            name="ck_trend_activation_performance_plan_rate",
+        ),
+        CheckConstraint(
+            "plan_to_publish_rate >= 0 AND plan_to_publish_rate <= 1",
+            name="ck_trend_activation_performance_publish_rate",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    channel_profile_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("channel_profiles.id"), index=True
+    )
+    version: Mapped[int] = mapped_column(Integer)
+    run_key: Mapped[str] = mapped_column(String(160), index=True)
+    policy_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    calibration_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    economics_snapshot_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("channel_economics_snapshots.id"),
+        nullable=True,
+        index=True,
+    )
+    decision_count: Mapped[int] = mapped_column(Integer, default=0)
+    planned_count: Mapped[int] = mapped_column(Integer, default=0)
+    published_count: Mapped[int] = mapped_column(Integer, default=0)
+    outcome_count: Mapped[int] = mapped_column(Integer, default=0)
+    opportunity_to_plan_rate: Mapped[Decimal] = mapped_column(
+        Numeric(8, 6), default=Decimal("0")
+    )
+    plan_to_publish_rate: Mapped[Decimal] = mapped_column(
+        Numeric(8, 6), default=Decimal("0")
+    )
+    median_opportunity_to_plan_minutes: Mapped[Decimal | None] = mapped_column(
+        Numeric(14, 4), nullable=True
+    )
+    median_plan_to_publish_minutes: Mapped[Decimal | None] = mapped_column(
+        Numeric(14, 4), nullable=True
+    )
+    median_opportunity_to_publish_minutes: Mapped[Decimal | None] = mapped_column(
+        Numeric(14, 4), nullable=True
+    )
+    revenue_usd: Mapped[Decimal] = mapped_column(
+        Numeric(18, 8), default=Decimal("0")
+    )
+    attributed_cost_usd: Mapped[Decimal] = mapped_column(
+        Numeric(18, 8), default=Decimal("0")
+    )
+    contribution_margin_usd: Mapped[Decimal] = mapped_column(
+        Numeric(18, 8), default=Decimal("0")
+    )
+    latest_views: Mapped[int] = mapped_column(Integer, default=0)
+    mean_lift_ratio: Mapped[Decimal | None] = mapped_column(
+        Numeric(14, 6), nullable=True
+    )
+    realized_breakout_rate: Mapped[Decimal | None] = mapped_column(
+        Numeric(8, 6), nullable=True
+    )
+    missed_reason_counts: Mapped[dict[str, int]] = mapped_column(JSON, default=dict)
+    funnel_metrics: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    recommendation_status: Mapped[str] = mapped_column(String(48), index=True)
+    recommendation: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    sample_window_start: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    sample_window_end: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), index=True
+    )
