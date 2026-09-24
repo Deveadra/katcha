@@ -4,6 +4,7 @@ import {BlueprintVideo} from './blueprint-video.jsx';
 import {LongformVideo} from './longform-video.jsx';
 import {RankedEpisodeVideo} from './ranked-episode-video.jsx';
 import {ShortVideo} from './short-video.jsx';
+import {Thumbnail} from './thumbnail.jsx';
 
 const blueprintDefaults = {
   width: 1080,
@@ -46,6 +47,15 @@ const rankedEpisodeDefaults = {
   items: [],
   overlays: [],
   end_card: {start_seconds: 0, duration_seconds: 1, prompt: null},
+};
+
+
+const thumbnailDefaults = {
+  width: 1280,
+  height: 720,
+  source: {url: '', fit: 'cover'},
+  text: {text: null, position: 'bottom', max_lines: 2},
+  brand: null,
 };
 
 const longformDefaults = {
@@ -100,6 +110,21 @@ export const RemotionRoot = () => (
       calculateMetadata={({props}) => ({
         durationInFrames: Math.max(1, Math.ceil(props.output_duration_seconds * props.fps)),
         fps: props.fps,
+        width: props.width,
+        height: props.height,
+      })}
+    />
+    <Composition
+      id="Thumbnail"
+      component={Thumbnail}
+      durationInFrames={1}
+      fps={30}
+      width={1280}
+      height={720}
+      defaultProps={thumbnailDefaults}
+      calculateMetadata={({props}) => ({
+        durationInFrames: 1,
+        fps: 30,
         width: props.width,
         height: props.height,
       })}
