@@ -139,11 +139,18 @@ app.include_router(trends_router)
 app.include_router(explorer_router)
 app.mount("/explorer/assets", StaticFiles(directory=Path(__file__).parents[1] / "web"),
           name="explorer-assets")
+app.mount("/editing/assets", StaticFiles(directory=Path(__file__).parents[1] / "web"),
+          name="editing-assets")
 
 
 @app.get("/explorer", include_in_schema=False)
 def explorer_shell():
     return RedirectResponse("/explorer/assets/index.html")
+
+
+@app.get("/editing", include_in_schema=False)
+def editing_shell():
+    return RedirectResponse("/editing/assets/editing.html")
 
 
 def _require_ai_execution() -> None:

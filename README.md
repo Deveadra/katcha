@@ -54,6 +54,13 @@ docker compose -f docker-compose.yml -f docker-compose.intelligence.yml up --bui
 5. Temporal UI: `http://localhost:8080`
 6. MinIO console: `http://localhost:9001`
 7. Trend explorer: `http://localhost:8000/explorer`
+8. Editing control center: `http://localhost:8000/editing`
+
+The editing control center uses the same control-plane token and channel-scoped APIs as
+the Trend Explorer. It shows versioned editing blueprints, measured performance,
+recent ranked episodes, render attempts, and dead-letter recovery. Blueprint
+activation changes the selected channel's default for future episodes; existing
+episodes keep their stored blueprint snapshots.
 
 See [`docs/TREND_EXPLORER.md`](docs/TREND_EXPLORER.md) for private access,
 shared AI-controller APIs, and evidence-grounded editorial handoff.
