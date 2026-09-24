@@ -69,6 +69,24 @@ const inspectMedia = async (filePath) => {
   return {duration_seconds: duration, width, height, frame_rate: stream.r_frame_rate || null};
 };
 
+const inspectImage = async (filePath) => {
+  const {stdout} = await exec('ffprobe', [
+    '-v', 'error',
+    '-select_streams', 'v:0',
+    '-show_entries', 'stream=width,height',
+    '-of', 'json',
+    filePath,
+  ]);
+  const payload = JSON.parse(stdout);
+  const stream = payload?.streams?.[0] || {};
+  const width = Number(stream.width || 0);
+  const height = Number(stream.height || 0);
+  if (!(width > 0) || !(height > 0)) {
+    throw new Error('ffprobe could not verify rendered image');
+  }
+  return {width, height};
+};
+
 const verifyRender = (probe, manifest) => {
   const tolerance = Math.max(0.35, 2 / Number(manifest.fps || 30));
   if (Math.abs(probe.duration_seconds - Number(manifest.output_duration_seconds)) > tolerance) {
@@ -252,7 +270,7 @@ app.post('/thumbnail', async (request, response) => {
       ) {
         throw new Error('thumbnail renderer did not produce a PNG');
       }
-      const probe = await inspectMedia(outputPath);
+      const probe = await inspectImage(outputPath);
       if (
         probe.width !== Number(manifest.width || 1280)
         || probe.height !== Number(manifest.height || 720)
