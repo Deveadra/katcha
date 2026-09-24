@@ -33,6 +33,40 @@ const rows = ["alpha", "beta"].map((id, i) => ({
         evidence_summary: {},
     },
 }));
+const editPerformance = {
+    id: "edit-performance-1",
+    channel_profile_id: "channel-1",
+    version: 3,
+    run_key: "fixture-72h",
+    age_bucket_hours: 72,
+    publication_count: 8,
+    blueprint_group_count: 1,
+    revenue_covered_publications: 6,
+    retention_covered_publications: 7,
+    monetary_coverage: 0.75,
+    retention_coverage: 0.875,
+    aggregate_metrics: [
+        {
+            group_key: "production|short|persona_commentary@r2",
+            source_kind: "production",
+            source_scope: "short",
+            edit_blueprint_key: "persona_commentary",
+            edit_blueprint_revision: 2,
+            selected_style: "observational",
+            publication_count: 8,
+            mean_average_view_percentage: 71.4,
+            mean_audience_watch_ratio_50pct: 0.73,
+            monetary_coverage: 0.75,
+            retention_coverage: 0.875,
+            covered_margin_per_publication_usd: "1.42",
+        },
+    ],
+    comparison_status: "insufficient_data",
+    comparison_summary: { advisory_only: true },
+    sample_window_start: now,
+    sample_window_end: now,
+    created_at: now,
+};
 const requests = [];
 let browser;
 (async () => {
@@ -81,6 +115,8 @@ let browser;
             };
         else if (url.pathname.endsWith("/source-health"))
             data = { status: "healthy", fixture: true };
+        else if (url.pathname.endsWith("/editing-performance"))
+            data = editPerformance;
         else if (url.pathname.endsWith("/explorer")) data = rows;
         else if (url.pathname.endsWith("/episodes"))
             data = [
@@ -142,6 +178,22 @@ let browser;
     await page.locator("#connect-form button").click();
     await page.locator("#detail-panel h3").waitFor();
     assert.equal(await page.locator(".topic-row").count(), 2);
+    await page.getByRole("heading", { name: "Blueprint evidence" }).waitFor();
+    assert.match(
+        await page.locator("#edit-performance").innerText(),
+        /8 maturity-matched publications/,
+    );
+    assert.match(
+        await page.locator("#edit-performance").innerText(),
+        /persona_commentary@r2/,
+    );
+    assert(
+        requests.some(
+            (r) =>
+                r.path.endsWith("/channels/channel-1/editing-performance") &&
+                r.method === "GET",
+        ),
+    );
     assert.equal(await page.locator("#token").inputValue(), "");
     assert.equal(await page.evaluate(() => localStorage.length), 0);
     await page.locator("#search").fill("beta");
@@ -203,7 +255,7 @@ let browser;
     });
     assert.deepEqual(errors, []);
     console.log(
-        "PASS: live API UI flows, auth handling, search/sort, comparison, time windows, watch preservation, editorial handoff, mobile width",
+        "PASS: live API UI flows, edit evidence, auth handling, search/sort, comparison, time windows, watch preservation, editorial handoff, mobile width",
     );
 })()
     .catch((error) => {
