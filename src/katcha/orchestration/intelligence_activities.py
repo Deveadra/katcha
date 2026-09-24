@@ -28,6 +28,7 @@ from katcha.services.packaging_experiments import (
     start_packaging_experiment,
 )
 from katcha.services.packaging_intelligence import refresh_packaging_intelligence
+from katcha.services.packaging_seed import seed_channel_packaging
 from katcha.services.reach_cadence import eligible_reach_connection, reach_sync_identity
 from katcha.services.trend_activation_performance import refresh_activation_performance
 from katcha.services.trend_auto_activation import run_autonomous_trend_activation
@@ -47,6 +48,11 @@ async def schedule_channel_reach_sync_activity(
         "connection_id": str(connection_id),
         "workflow_id": workflow_id,
     }
+
+
+@activity.defn
+def seed_channel_packaging_activity(channel_profile_id: str) -> dict[str, object]:
+    return seed_channel_packaging(uuid.UUID(channel_profile_id))
 
 
 @activity.defn
