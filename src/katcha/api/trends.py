@@ -9,8 +9,8 @@ from fastapi import APIRouter, HTTPException, Query, status
 from pydantic import BaseModel, ConfigDict, Field
 
 from katcha.api.discovery_trends import router as discovery_trends_router
-from katcha.api.trend_bridge import router as trend_bridge_router
 from katcha.api.trend_activation import router as trend_activation_router
+from katcha.api.trend_bridge import router as trend_bridge_router
 from katcha.api.trend_calibration import router as trend_calibration_router
 from katcha.api.trend_reliability import router as trend_reliability_router
 from katcha.orchestration.client import start_trend_refresh_workflow
