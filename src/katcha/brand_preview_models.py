@@ -4,7 +4,17 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import JSON, DateTime, ForeignKey, String, Text, UniqueConstraint, Uuid, func
+from sqlalchemy import (
+    JSON,
+    DateTime,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+    Uuid,
+    func,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from katcha.db import Base
@@ -36,6 +46,7 @@ class BrandPreviewRender(Base):
     brand_version: Mapped[int] = mapped_column(index=True)
     request_key: Mapped[str] = mapped_column(String(64))
     workflow_id: Mapped[str] = mapped_column(String(255), unique=True, index=True)
+    workflow_attempt: Mapped[int] = mapped_column(Integer, default=1)
     status: Mapped[str] = mapped_column(String(32), default="queued", index=True)
     source_lineage: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     brand_snapshot: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
