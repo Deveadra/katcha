@@ -119,6 +119,18 @@ _RANKSNAXX_BRAND_V1: dict[str, Any] = {
     "visual": {
         **deepcopy(_CHANNEL_01_BRAND_V1["visual"]),
         "brand_key": "ranksnaxx",
+        "reaction_pack": {
+            "brand_key": "ranksnaxx",
+            "pack_key": "host_emotes",
+            "version": 1,
+            "assets": {
+                "meme_cry": {
+                    "storage_key": (
+                        "brands/ranksnaxx/reactions/host_emotes/v1/meme_cry.png"
+                    )
+                }
+            },
+        },
     },
     "packaging": {
         "title_family": "ranked_promise_v1",
