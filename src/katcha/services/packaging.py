@@ -12,6 +12,7 @@ from katcha.domain import YouTubeConnectionStatus
 from katcha.integrations.storage import ObjectStore
 from katcha.models import DomainEvent
 from katcha.packaging_models import (
+    PackagingExperiment,
     PublicationPackagingActivation,
     PublicationPackagingVariant,
 )
@@ -254,6 +255,27 @@ def register_packaging_activation(
         variant = session.get(PublicationPackagingVariant, variant_id)
         if variant is None or variant.publication_id != publication_id:
             raise ValueError("packaging variant does not belong to this publication")
+
+        active_experiment = session.scalar(
+            select(PackagingExperiment)
+            .where(
+                PackagingExperiment.publication_id == publication_id,
+                PackagingExperiment.status.in_(
+                    ("preparing", "pending", "observing", "rollback_pending")
+                ),
+            )
+            .limit(1)
+        )
+        if active_experiment is not None:
+            allowed_key = (
+                f"experiment-rollback-{active_experiment.id}"
+                if variant_id == active_experiment.previous_variant_id
+                else f"experiment-{active_experiment.id}"
+                if variant_id == active_experiment.candidate_variant_id
+                else None
+            )
+            if key != allowed_key:
+                raise ValueError("publication has an active packaging experiment")
 
         existing = session.scalar(
             select(PublicationPackagingActivation).where(

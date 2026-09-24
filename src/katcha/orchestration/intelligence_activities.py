@@ -3,9 +3,16 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
+from sqlalchemy import select
 from temporalio import activity
 
-from katcha.orchestration.client import start_reach_sync_workflow
+from katcha.db import session_scope
+from katcha.orchestration.client import (
+    start_packaging_activation_workflow,
+    start_reach_sync_workflow,
+)
+from katcha.packaging_intelligence_models import PackagingIntelligenceSnapshot
+from katcha.packaging_models import PackagingExperiment, PublicationPackagingActivation
 from katcha.services.channel_automation import maybe_auto_demote
 from katcha.services.channel_economics import compute_channel_economics
 from katcha.services.channel_learning import (
@@ -15,6 +22,10 @@ from katcha.services.channel_learning import (
 from katcha.services.channel_scheduling import compute_schedule_recommendations
 from katcha.services.edit_blueprint_performance import (
     refresh_edit_blueprint_performance,
+)
+from katcha.services.packaging_experiments import (
+    reconcile_packaging_experiment,
+    start_packaging_experiment,
 )
 from katcha.services.packaging_intelligence import refresh_packaging_intelligence
 from katcha.services.reach_cadence import eligible_reach_connection, reach_sync_identity
@@ -36,6 +47,85 @@ async def schedule_channel_reach_sync_activity(
         "connection_id": str(connection_id),
         "workflow_id": workflow_id,
     }
+
+
+@activity.defn
+async def run_channel_packaging_experiments_activity(
+    channel_profile_id: str, at: str
+) -> dict[str, object]:
+    channel_id = uuid.UUID(channel_profile_id)
+    reference = datetime.fromisoformat(at)
+    with session_scope() as session:
+        active_ids = list(
+            session.scalars(
+                select(PackagingExperiment.id)
+                .where(
+                    PackagingExperiment.channel_profile_id == channel_id,
+                    PackagingExperiment.status.in_(
+                        ("preparing", "pending", "observing", "rollback_pending")
+                    ),
+                )
+                .limit(100)
+            )
+        )
+        snapshot = session.scalar(
+            select(PackagingIntelligenceSnapshot)
+            .where(
+                PackagingIntelligenceSnapshot.channel_profile_id == channel_id,
+            )
+            .order_by(
+                PackagingIntelligenceSnapshot.created_at.desc(),
+                PackagingIntelligenceSnapshot.version.desc(),
+            )
+            .limit(1)
+        )
+        proposals = list(snapshot.recommendations or []) if snapshot else []
+
+    started: list[str] = []
+    advanced: list[str] = []
+    blocked: list[dict[str, str]] = []
+
+    async def launch(row: PackagingExperiment) -> None:
+        activation_id = (
+            row.rollback_activation_id
+            if row.status == "rollback_pending"
+            else row.activation_id
+            if row.status == "pending"
+            else None
+        )
+        if activation_id is None:
+            return
+        with session_scope() as session:
+            activation = session.get(PublicationPackagingActivation, activation_id)
+            if activation is None or activation.status not in {"queued", "running"}:
+                return
+            workflow_id = activation.workflow_id
+        await start_packaging_activation_workflow(str(activation_id), workflow_id)
+
+    for experiment_id in active_ids:
+        try:
+            row = reconcile_packaging_experiment(experiment_id, now=reference)
+            await launch(row)
+            advanced.append(str(row.id))
+        except (ValueError, RuntimeError) as exc:
+            blocked.append({"experiment_id": str(experiment_id), "reason": str(exc)[:160]})
+
+    for proposal in proposals[:100]:
+        if proposal.get("recommendation_type") != "test":
+            continue
+        try:
+            publication_id = uuid.UUID(str(proposal["publication_id"]))
+            candidate_id = uuid.UUID(str(proposal["candidate_variant_id"]))
+            row = start_packaging_experiment(
+                publication_id, candidate_id, now=reference, expected_channel_id=channel_id
+            )
+            await launch(row)
+            started.append(str(row.id))
+        except (ValueError, RuntimeError, KeyError) as exc:
+            blocked.append(
+                {"publication_id": str(proposal.get("publication_id")), "reason": str(exc)[:160]}
+            )
+    return {"started": started, "advanced": advanced, "blocked": blocked[:100]}
 
 
 @activity.defn
