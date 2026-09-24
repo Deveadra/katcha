@@ -41,6 +41,13 @@ async def _run_refresh(channel_profile_id: str, run_key: str) -> dict[str, objec
         retry_policy=retry,
         result_type=dict[str, object],
     )
+    activation_performance = await workflow.execute_activity(
+        "refresh_trend_activation_performance_activity",
+        args=[channel_profile_id, run_key],
+        start_to_close_timeout=timedelta(minutes=5),
+        retry_policy=retry,
+        result_type=dict[str, object],
+    )
     automation = await workflow.execute_activity(
         "apply_channel_safety_demotion_activity",
         channel_profile_id,
@@ -55,6 +62,7 @@ async def _run_refresh(channel_profile_id: str, run_key: str) -> dict[str, objec
         "ranking": ranking,
         "economics": economics,
         "schedule": schedule,
+        "activation_performance": activation_performance,
         "automation": automation,
     }
 
@@ -147,4 +155,27 @@ class ChannelTrendActivationScheduleWorkflow:
 
         workflow.continue_as_new(
             args=[channel_profile_id, interval_hours, cycles_before_continue]
+        )
+
+
+@workflow.defn
+class ChannelTrendActivationPerformanceWorkflow:
+    @workflow.run
+    async def run(
+        self,
+        channel_profile_id: str,
+        run_key: str,
+    ) -> dict[str, object]:
+        retry = RetryPolicy(
+            initial_interval=timedelta(seconds=5),
+            backoff_coefficient=2.0,
+            maximum_interval=timedelta(minutes=2),
+            maximum_attempts=3,
+        )
+        return await workflow.execute_activity(
+            "refresh_trend_activation_performance_activity",
+            args=[channel_profile_id, run_key],
+            start_to_close_timeout=timedelta(minutes=5),
+            retry_policy=retry,
+            result_type=dict[str, object],
         )

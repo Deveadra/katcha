@@ -11,7 +11,12 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from katcha.orchestration.client import (
     start_channel_trend_activation,
+    start_channel_trend_activation_performance,
     start_channel_trend_activation_schedule,
+)
+from katcha.services.trend_activation_performance import (
+    latest_activation_performance,
+    list_activation_performance,
 )
 from katcha.services.trend_auto_activation import (
     active_activation_policy,
@@ -21,6 +26,7 @@ from katcha.services.trend_auto_activation import (
 )
 from katcha.trend_activation_models import (
     TrendActivationDecision,
+    TrendActivationPerformanceSnapshot,
     TrendActivationPolicyVersion,
     TrendActivationRun,
 )
@@ -257,3 +263,107 @@ def get_trend_activation_decisions(
         return list_activation_decisions(run_id)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+
+class TrendActivationPerformanceRefreshRequest(BaseModel):
+    idempotency_key: str | None = Field(default=None, max_length=160)
+
+
+class TrendActivationPerformanceRefreshResponse(BaseModel):
+    channel_profile_id: uuid.UUID
+    workflow_id: str
+    run_key: str
+
+
+class TrendActivationPerformanceResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    channel_profile_id: uuid.UUID
+    version: int
+    run_key: str
+    policy_version: int | None
+    calibration_version: int | None
+    economics_snapshot_id: uuid.UUID | None
+    decision_count: int
+    planned_count: int
+    published_count: int
+    outcome_count: int
+    opportunity_to_plan_rate: Decimal
+    plan_to_publish_rate: Decimal
+    median_opportunity_to_plan_minutes: Decimal | None
+    median_plan_to_publish_minutes: Decimal | None
+    median_opportunity_to_publish_minutes: Decimal | None
+    revenue_usd: Decimal
+    attributed_cost_usd: Decimal
+    contribution_margin_usd: Decimal
+    latest_views: int
+    mean_lift_ratio: Decimal | None
+    realized_breakout_rate: Decimal | None
+    missed_reason_counts: dict[str, int]
+    funnel_metrics: dict[str, Any]
+    recommendation_status: str
+    recommendation: dict[str, Any]
+    sample_window_start: datetime | None
+    sample_window_end: datetime | None
+    created_at: datetime
+
+
+def _performance_identity(
+    channel_profile_id: uuid.UUID,
+    idempotency_key: str | None,
+) -> tuple[str, str]:
+    run_key = (
+        idempotency_key.strip()
+        if idempotency_key and idempotency_key.strip()
+        else f"manual-{uuid.uuid4().hex}"
+    )
+    digest = hashlib.sha256(run_key.encode()).hexdigest()[:20]
+    return run_key, f"trend-activation-performance-{channel_profile_id}-{digest}"
+
+
+@router.post(
+    "/channels/{channel_profile_id}/trends/activation-performance/refresh",
+    response_model=TrendActivationPerformanceRefreshResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def refresh_trend_activation_performance(
+    channel_profile_id: uuid.UUID,
+    request: TrendActivationPerformanceRefreshRequest,
+) -> TrendActivationPerformanceRefreshResponse:
+    run_key, workflow_id = _performance_identity(
+        channel_profile_id,
+        request.idempotency_key,
+    )
+    await start_channel_trend_activation_performance(
+        str(channel_profile_id),
+        workflow_id,
+        run_key,
+    )
+    return TrendActivationPerformanceRefreshResponse(
+        channel_profile_id=channel_profile_id,
+        workflow_id=workflow_id,
+        run_key=run_key,
+    )
+
+
+@router.get(
+    "/channels/{channel_profile_id}/trends/activation-performance",
+    response_model=TrendActivationPerformanceResponse | None,
+)
+def get_latest_trend_activation_performance(
+    channel_profile_id: uuid.UUID,
+) -> TrendActivationPerformanceSnapshot | None:
+    return latest_activation_performance(channel_profile_id)
+
+
+@router.get(
+    "/channels/{channel_profile_id}/trends/activation-performance/history",
+    response_model=list[TrendActivationPerformanceResponse],
+)
+def get_trend_activation_performance_history(
+    channel_profile_id: uuid.UUID,
+    limit: int = Query(default=50, ge=1, le=250),
+) -> list[TrendActivationPerformanceSnapshot]:
+    return list_activation_performance(channel_profile_id, limit=limit)
