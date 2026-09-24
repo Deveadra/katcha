@@ -83,6 +83,7 @@ class BrandPreviewResponse(BaseModel):
     brand_key: str
     brand_version: int
     workflow_id: str
+    workflow_attempt: int
     status: str
     source_lineage: dict[str, object]
     brand_snapshot: dict[str, object]
