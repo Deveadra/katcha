@@ -10,6 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from katcha.orchestration.client import start_packaging_activation_workflow
 from katcha.packaging_models import (
     PackagingCandidateGeneration,
+    PackagingExperiment,
     PublicationPackagingActivation,
     PublicationPackagingVariant,
 )
@@ -18,6 +19,12 @@ from katcha.services.packaging import (
     list_packaging_activations,
     list_packaging_variants,
     register_packaging_activation,
+)
+from katcha.services.packaging_experiments import (
+    experiment_eligibility,
+    list_packaging_experiments,
+    reconcile_packaging_experiment,
+    start_packaging_experiment,
 )
 from katcha.services.packaging_generation import (
     AmbiguousPackagingGeneration,
@@ -119,6 +126,48 @@ class BuildThumbnailRequest(BaseModel):
 class BuildThumbnailResponse(BaseModel):
     parent_variant: PackagingVariantResponse
     thumbnail_variant: PackagingVariantResponse
+
+
+
+class PackagingExperimentEligibilityResponse(BaseModel):
+    eligible: bool
+    reasons: list[str]
+    publication_id: uuid.UUID
+    baseline_variant_id: uuid.UUID | None
+    candidate_variant_id: uuid.UUID | None
+    intelligence_snapshot_id: uuid.UUID | None
+    automation_version: int | None
+    maturity_days: int | None
+    recommendation: dict[str, Any] | None
+
+
+class PackagingExperimentResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    publication_id: uuid.UUID
+    experiment_key: str
+    baseline_variant_id: uuid.UUID
+    candidate_variant_id: uuid.UUID
+    intelligence_snapshot_id: uuid.UUID
+    automation_version: int
+    start_activation_id: uuid.UUID | None
+    rollback_activation_id: uuid.UUID | None
+    status: str
+    stage: str
+    observe_after: datetime
+    evidence_snapshot: dict[str, Any]
+    error: str | None
+    started_at: datetime | None
+    completed_at: datetime | None
+    created_at: datetime
+
+
+class PackagingExperimentActionResponse(BaseModel):
+    action: str
+    reason: str
+    experiment: PackagingExperimentResponse | None
+    activation: PackagingActivationResponse | None
 
 
 @router.post(
@@ -228,6 +277,113 @@ def build_thumbnail(
         raise HTTPException(status_code=code, detail=str(exc)) from exc
     except RuntimeError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@router.get(
+    "/{publication_id}/packaging/experiment-eligibility",
+    response_model=PackagingExperimentEligibilityResponse,
+)
+def get_experiment_eligibility(
+    publication_id: uuid.UUID,
+) -> PackagingExperimentEligibilityResponse:
+    try:
+        result = experiment_eligibility(publication_id)
+        return PackagingExperimentEligibilityResponse(
+            eligible=result.eligible,
+            reasons=list(result.reasons),
+            publication_id=result.publication_id,
+            baseline_variant_id=result.baseline_variant_id,
+            candidate_variant_id=result.candidate_variant_id,
+            intelligence_snapshot_id=result.intelligence_snapshot_id,
+            automation_version=result.automation_version,
+            maturity_days=result.maturity_days,
+            recommendation=result.recommendation,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.post(
+    "/{publication_id}/packaging/experiments",
+    response_model=PackagingExperimentActionResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def start_experiment(
+    publication_id: uuid.UUID,
+) -> PackagingExperimentActionResponse:
+    try:
+        result = start_packaging_experiment(publication_id)
+    except ValueError as exc:
+        code = 404 if "publication not found" in str(exc) else 409
+        raise HTTPException(status_code=code, detail=str(exc)) from exc
+    if result.activation is not None and result.activation.status in {"queued", "running"}:
+        await start_packaging_activation_workflow(
+            str(result.activation.id),
+            result.activation.workflow_id,
+        )
+    return PackagingExperimentActionResponse(
+        action=result.action,
+        reason=result.reason,
+        experiment=(
+            PackagingExperimentResponse.model_validate(result.experiment)
+            if result.experiment is not None
+            else None
+        ),
+        activation=(
+            PackagingActivationResponse.model_validate(result.activation)
+            if result.activation is not None
+            else None
+        ),
+    )
+
+
+@router.get(
+    "/{publication_id}/packaging/experiments",
+    response_model=list[PackagingExperimentResponse],
+)
+def get_experiments(
+    publication_id: uuid.UUID,
+) -> list[PackagingExperiment]:
+    try:
+        return list_packaging_experiments(publication_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.post(
+    "/{publication_id}/packaging/experiments/{experiment_id}/reconcile",
+    response_model=PackagingExperimentActionResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def reconcile_experiment(
+    publication_id: uuid.UUID,
+    experiment_id: uuid.UUID,
+) -> PackagingExperimentActionResponse:
+    try:
+        result = reconcile_packaging_experiment(experiment_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    if result.experiment is not None and result.experiment.publication_id != publication_id:
+        raise HTTPException(status_code=404, detail="packaging experiment not found")
+    if result.activation is not None and result.activation.status in {"queued", "running"}:
+        await start_packaging_activation_workflow(
+            str(result.activation.id),
+            result.activation.workflow_id,
+        )
+    return PackagingExperimentActionResponse(
+        action=result.action,
+        reason=result.reason,
+        experiment=(
+            PackagingExperimentResponse.model_validate(result.experiment)
+            if result.experiment is not None
+            else None
+        ),
+        activation=(
+            PackagingActivationResponse.model_validate(result.activation)
+            if result.activation is not None
+            else None
+        ),
+    )
 
 
 @router.post(
