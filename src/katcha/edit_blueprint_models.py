@@ -37,12 +37,14 @@ class ChannelEditBlueprintVersion(Base):
             "blueprint_key",
             unique=True,
             postgresql_where=text("is_active"),
+            sqlite_where=text("is_active = 1"),
         ),
         Index(
             "uq_channel_edit_blueprint_default",
             "channel_profile_id",
             unique=True,
             postgresql_where=text("is_default"),
+            sqlite_where=text("is_default = 1"),
         ),
     )
 
