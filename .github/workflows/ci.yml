@@ -52,6 +52,60 @@ jobs:
       - name: Test
         run: pytest -q
 
+      - name: Verify built-in brand assets against real MinIO
+        env:
+          KATCHA_S3_ENDPOINT_URL: http://localhost:19000
+          KATCHA_S3_ACCESS_KEY: katcha
+          KATCHA_S3_SECRET_KEY: katcha-local-secret
+          KATCHA_S3_BUCKET: katcha-media
+          KATCHA_S3_REGION: auto
+          KATCHA_S3_FORCE_PATH_STYLE: "true"
+        run: |
+          docker run -d --rm --name katcha-brand-asset-minio \
+            -p 19000:9000 \
+            -e MINIO_ROOT_USER=katcha \
+            -e MINIO_ROOT_PASSWORD=katcha-local-secret \
+            minio/minio:latest server /data
+          trap 'docker rm -f katcha-brand-asset-minio >/dev/null 2>&1 || true' EXIT
+          for attempt in $(seq 1 30); do
+            if curl -fsS http://localhost:19000/minio/health/live >/dev/null; then
+              break
+            fi
+            if [ "$attempt" -eq 30 ]; then
+              docker logs katcha-brand-asset-minio
+              exit 1
+            fi
+            sleep 1
+          done
+          python - <<'PY'
+          import hashlib
+
+          from katcha.integrations.storage import ObjectStore
+          from katcha.services.brand_assets import BUILTIN_BRAND_ASSETS, seed_builtin_brand_assets
+
+          first = seed_builtin_brand_assets()
+          second = seed_builtin_brand_assets()
+          if first[0]["action"] != "seeded":
+              raise SystemExit(f"expected first seed to upload asset: {first}")
+          if second[0]["action"] != "verified":
+              raise SystemExit(f"expected second seed to verify existing asset: {second}")
+
+          asset = BUILTIN_BRAND_ASSETS[0]
+          store = ObjectStore()
+          stored = store.get_bytes(asset.storage_key)
+          digest = hashlib.sha256(stored).hexdigest()
+          if digest != asset.sha256:
+              raise SystemExit(
+                  f"stored brand asset checksum mismatch: expected {asset.sha256}, got {digest}"
+              )
+          stat = store.stat(asset.storage_key)
+          if stat["size_bytes"] != len(stored):
+              raise SystemExit("stored brand asset size mismatch")
+          print(
+              f"verified {asset.storage_key} sha256={digest} size={stat['size_bytes']}"
+          )
+          PY
+
       - name: Validate Compose
         env:
           KATCHA_ENV_FILE: .env.example
