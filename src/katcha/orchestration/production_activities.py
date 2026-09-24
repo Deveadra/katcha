@@ -12,16 +12,22 @@ from katcha.audio.tts import VoiceProfile, get_voice_profile, synthesize_speech
 from katcha.config import Settings, get_settings
 from katcha.db import session_scope
 from katcha.domain import ProductionStatus
+from katcha.editing.blueprints import EditBlueprintContract, persona_commentary_v1
 from katcha.editorial.generator import generate_short_scripts
 from katcha.editorial.personas import get_persona
 from katcha.integrations.storage import ObjectStore
 from katcha.models import Clip, DomainEvent, UsageEvent
 from katcha.production_models import Production, ProductionAsset, ProductionScript
-from katcha.rendering.client import render_short
+from katcha.rendering.blueprint_manifest import (
+    BlueprintRenderManifest,
+    build_blueprint_render_manifest,
+)
+from katcha.rendering.client import render_blueprint, render_short
 from katcha.rendering.manifest import (
     ShortBrandSpec,
     ShortRenderManifest,
     build_short_manifest,
+    channel_01_brand_v1,
 )
 from katcha.rendering.reactions import ReactionAssetPack
 
@@ -89,6 +95,30 @@ def _brand_render_spec(snapshot: dict[str, Any]) -> ShortBrandSpec | None:
     if not isinstance(visual, dict):
         return None
     return ShortBrandSpec.model_validate(visual)
+
+
+def _edit_blueprint(production: Production) -> EditBlueprintContract:
+    if production.edit_blueprint_snapshot:
+        return EditBlueprintContract.model_validate(production.edit_blueprint_snapshot)
+    return persona_commentary_v1()
+
+
+@activity.defn
+def production_edit_requirements_activity(production_id: str) -> dict[str, object]:
+    production_uuid = uuid.UUID(production_id)
+    with session_scope() as session:
+        production = session.get(Production, production_uuid)
+        if production is None:
+            raise ValueError(f"production not found: {production_id}")
+        blueprint = _edit_blueprint(production)
+        return {
+            "production_id": production_id,
+            "blueprint_key": blueprint.key,
+            "blueprint_contract_version": blueprint.version,
+            "narration_mode": blueprint.narration.mode,
+            "narration_required": blueprint.narration.required,
+            "source_layout_mode": blueprint.source_layout.mode,
+        }
 
 
 @activity.defn
@@ -458,64 +488,106 @@ def build_render_manifest_activity(production_id: str) -> dict[str, object]:
         if clip is None:
             raise RuntimeError("production source clip does not exist")
         script = _selected_script(session, production)
-        segments = list((script.script_metadata or {}).get("segments") or [])
-        narration_assets = list(
-            session.scalars(
-                select(ProductionAsset)
-                .where(
-                    ProductionAsset.production_id == production_uuid,
-                    ProductionAsset.kind.like("narration_%"),
-                )
-                .order_by(ProductionAsset.kind)
-            )
-        )
-        if len(narration_assets) != len(segments):
-            raise RuntimeError("narration assets are incomplete")
-        asset_payload = [
-            {
-                "storage_key": asset.storage_key,
-                "segment_index": int((asset.asset_metadata or {}).get("segment_index", index)),
-                "duration_seconds": float(
-                    (asset.asset_metadata or {}).get("duration_seconds") or 0
-                ),
-            }
-            for index, asset in enumerate(narration_assets)
-        ]
+        blueprint = _edit_blueprint(production)
         output_key = store.production_key(production_id, "render/short-g1.mp4")
-        visual = dict((production.brand_snapshot or {}).get("visual") or {})
-        reaction_pack_payload = visual.get("reaction_pack")
-        reaction_pack = (
-            ReactionAssetPack.model_validate(reaction_pack_payload)
-            if reaction_pack_payload is not None
-            else None
-        )
         brand = _brand_render_spec(dict(production.brand_snapshot or {}))
-        manifest = build_short_manifest(
-            production_id=production_id,
-            source_key=clip.storage_key,
-            source_duration_seconds=float(clip.duration_seconds or 0),
-            source_width=clip.width,
-            source_height=clip.height,
-            source_audio_volume=settings.source_audio_volume,
-            width=settings.render_width,
-            height=settings.render_height,
-            fps=settings.render_fps,
-            script_segments=segments,
-            narration_assets=asset_payload,
-            output_key=output_key,
-            title_angle=str((script.script_metadata or {}).get("title_angle") or "") or None,
-            interaction_prompt=script.interaction_prompt,
-            brand=brand,
-            reaction_pack=reaction_pack,
-            reaction_cues=list((script.script_metadata or {}).get("reaction_cues") or []),
-        )
+        brand = brand or channel_01_brand_v1()
+
+        if blueprint.narration.mode in {"text_only", "source_only"}:
+            if blueprint.source_layout.mode != "header_panel":
+                raise RuntimeError(
+                    "text/source-only production currently requires a header-panel blueprint"
+                )
+            title_angle = str((script.script_metadata or {}).get("title_angle") or "").strip()
+            if not title_angle:
+                raise RuntimeError(
+                    "header explainer production requires selected script title_angle copy"
+                )
+            if production.channel_profile_id is None:
+                channel_profile_id = "shared"
+            else:
+                channel_profile_id = str(production.channel_profile_id)
+            manifest: ShortRenderManifest | BlueprintRenderManifest = (
+                build_blueprint_render_manifest(
+                    render_id=production_id,
+                    channel_profile_id=channel_profile_id,
+                    brand=brand,
+                    blueprint=blueprint,
+                    source_storage_key=clip.storage_key,
+                    source_duration_seconds=float(clip.duration_seconds or 0),
+                    output_key=output_key,
+                    headline=title_angle,
+                    width=settings.render_width,
+                    height=settings.render_height,
+                    fps=settings.render_fps,
+                )
+            )
+            caption_payload: list[dict[str, object]] = []
+        else:
+            segments = list((script.script_metadata or {}).get("segments") or [])
+            narration_assets = list(
+                session.scalars(
+                    select(ProductionAsset)
+                    .where(
+                        ProductionAsset.production_id == production_uuid,
+                        ProductionAsset.kind.like("narration_%"),
+                    )
+                    .order_by(ProductionAsset.kind)
+                )
+            )
+            if len(narration_assets) != len(segments):
+                raise RuntimeError("narration assets are incomplete")
+            asset_payload = [
+                {
+                    "storage_key": asset.storage_key,
+                    "segment_index": int(
+                        (asset.asset_metadata or {}).get("segment_index", index)
+                    ),
+                    "duration_seconds": float(
+                        (asset.asset_metadata or {}).get("duration_seconds") or 0
+                    ),
+                }
+                for index, asset in enumerate(narration_assets)
+            ]
+            visual = dict((production.brand_snapshot or {}).get("visual") or {})
+            reaction_pack_payload = visual.get("reaction_pack")
+            reaction_pack = (
+                ReactionAssetPack.model_validate(reaction_pack_payload)
+                if reaction_pack_payload is not None
+                else None
+            )
+            manifest = build_short_manifest(
+                production_id=production_id,
+                source_key=clip.storage_key,
+                source_duration_seconds=float(clip.duration_seconds or 0),
+                source_width=clip.width,
+                source_height=clip.height,
+                source_audio_volume=settings.source_audio_volume,
+                width=settings.render_width,
+                height=settings.render_height,
+                fps=settings.render_fps,
+                script_segments=segments,
+                narration_assets=asset_payload,
+                output_key=output_key,
+                title_angle=(
+                    str((script.script_metadata or {}).get("title_angle") or "") or None
+                ),
+                interaction_prompt=script.interaction_prompt,
+                brand=brand,
+                reaction_pack=reaction_pack,
+                reaction_cues=list(
+                    (script.script_metadata or {}).get("reaction_cues") or []
+                ),
+            )
+            caption_payload = [
+                cue.model_dump(mode="json")
+                for overlay in manifest.overlays
+                for cue in overlay.cues
+            ]
 
     manifest_bytes = manifest.model_dump_json(indent=2).encode("utf-8")
     manifest_key = store.production_key(production_id, "render/manifest.json")
     store.put_bytes(manifest_bytes, manifest_key, content_type="application/json")
-    caption_payload = [
-        cue.model_dump(mode="json") for overlay in manifest.overlays for cue in overlay.cues
-    ]
     captions_key = store.production_key(production_id, "render/captions.json")
     store.put_bytes(
         json.dumps(caption_payload, indent=2).encode("utf-8"),
@@ -550,6 +622,8 @@ def build_render_manifest_activity(production_id: str) -> dict[str, object]:
                             "manifest_version": manifest.version,
                             "brand_key": production.brand_key,
                             "brand_version": production.brand_version,
+                            "edit_blueprint_key": production.edit_blueprint_key,
+                            "edit_blueprint_version": production.edit_blueprint_version,
                         },
                     )
                 )
@@ -561,8 +635,11 @@ def build_render_manifest_activity(production_id: str) -> dict[str, object]:
                 payload={
                     "production_id": production_id,
                     "manifest_key": manifest_key,
+                    "manifest_version": manifest.version,
                     "brand_key": production.brand_key,
                     "brand_version": production.brand_version,
+                    "edit_blueprint_key": production.edit_blueprint_key,
+                    "edit_blueprint_version": production.edit_blueprint_version,
                     "output_duration_seconds": manifest.output_duration_seconds,
                 },
             )
@@ -570,6 +647,7 @@ def build_render_manifest_activity(production_id: str) -> dict[str, object]:
     return {
         "production_id": production_id,
         "manifest_key": manifest_key,
+        "manifest_version": manifest.version,
         "output_key": manifest.output_key,
     }
 
@@ -578,6 +656,7 @@ def build_render_manifest_activity(production_id: str) -> dict[str, object]:
 def render_short_activity(production_id: str) -> dict[str, object]:
     production_uuid = uuid.UUID(production_id)
     settings = get_settings()
+    attempt = int(activity.info().attempt)
     with session_scope() as session:
         production = session.get(Production, production_uuid)
         if production is None:
@@ -594,13 +673,51 @@ def render_short_activity(production_id: str) -> dict[str, object]:
                 "production_id": production_id,
                 "output_key": existing.storage_key,
                 "reused": True,
+                "render_attempt": attempt,
             }
         if not production.render_manifest:
             raise RuntimeError("render manifest is missing")
         production.stage = "rendering"
-        manifest = ShortRenderManifest.model_validate(production.render_manifest)
+        manifest_payload = dict(production.render_manifest or {})
+        manifest_version = str(manifest_payload.get("version") or "")
+        session.add(
+            DomainEvent(
+                aggregate_type="production",
+                aggregate_id=production_id,
+                event_type="production.render_attempt_started",
+                payload={
+                    "production_id": production_id,
+                    "attempt": attempt,
+                    "manifest_version": manifest_version,
+                },
+            )
+        )
 
-    result = render_short(manifest, settings=settings)
+    try:
+        if manifest_version == "blueprint-render-v1":
+            manifest = BlueprintRenderManifest.model_validate(manifest_payload)
+            result = render_blueprint(manifest, settings=settings)
+        elif manifest_version == "short-render-v1":
+            manifest = ShortRenderManifest.model_validate(manifest_payload)
+            result = render_short(manifest, settings=settings)
+        else:
+            raise RuntimeError(f"unsupported production render manifest: {manifest_version}")
+    except Exception as exc:
+        with session_scope() as session:
+            session.add(
+                DomainEvent(
+                    aggregate_type="production",
+                    aggregate_id=production_id,
+                    event_type="production.render_attempt_failed",
+                    payload={
+                        "production_id": production_id,
+                        "attempt": attempt,
+                        "manifest_version": manifest_version,
+                        "error": str(exc)[:1000],
+                    },
+                )
+            )
+        raise
 
     with session_scope() as session:
         production = session.get(Production, production_uuid)
@@ -627,6 +744,9 @@ def render_short_activity(production_id: str) -> dict[str, object]:
                         "duration_seconds": result.duration_seconds,
                         "brand_key": production.brand_key,
                         "brand_version": production.brand_version,
+                        "edit_blueprint_key": production.edit_blueprint_key,
+                        "edit_blueprint_version": production.edit_blueprint_version,
+                        "render_attempt": attempt,
                         **result.metadata,
                     },
                 )
@@ -644,6 +764,8 @@ def render_short_activity(production_id: str) -> dict[str, object]:
                     "production_id": production_id,
                     "output_key": result.output_key,
                     "duration_seconds": result.duration_seconds,
+                    "render_attempt": attempt,
+                    "manifest_version": manifest_version,
                 },
             )
         )
@@ -651,6 +773,7 @@ def render_short_activity(production_id: str) -> dict[str, object]:
         "production_id": production_id,
         "output_key": result.output_key,
         "reused": False,
+        "render_attempt": attempt,
     }
 
 
