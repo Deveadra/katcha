@@ -450,18 +450,32 @@ def generate_packaging_candidates(
             )
             session.add(row)
             session.flush()
-        elif row.context_sha256 and row.context_sha256 != context_sha:
-            raise ValueError("generation_key is already bound to a different creative context")
         elif int((row.generation_metadata or {}).get("candidate_count") or candidate_count) != candidate_count:
             raise ValueError("generation_key is already bound to another candidate_count")
-        if row.status == "completed":
-            generation_id = row.id
-        elif row.stage == "provider_call_started" and not row.candidate_payload:
-            row.status = "ambiguous"
-            row.error = "provider call may have been accepted; use a new generation_key"
-            raise AmbiguousPackagingGeneration(row.error)
-        else:
-            generation_id = row.id
+        elif (
+            not row.candidate_payload
+            and row.status != "completed"
+            and row.context_sha256
+            and row.context_sha256 != context_sha
+        ):
+            raise ValueError("generation_key is already bound to a different creative context")
+        generation_id = row.id
+        ambiguous_started = (
+            row.stage == "provider_call_started"
+            and not row.candidate_payload
+            and row.status != "completed"
+        )
+
+    if ambiguous_started:
+        with session_scope() as session:
+            stuck = session.get(PackagingCandidateGeneration, generation_id)
+            if stuck is not None:
+                stuck.status = "ambiguous"
+                stuck.stage = "provider_call_ambiguous"
+                stuck.error = "provider call may have been accepted; use a new generation_key"
+        raise AmbiguousPackagingGeneration(
+            "provider call may have been accepted; use a new generation_key"
+        )
 
     row = _load_generation(publication_id, key)
     if row is None:
