@@ -19,6 +19,10 @@ KATCHA_YOUTUBE_DATA_API_KEY=
 KATCHA_REDDIT_CLIENT_ID=
 KATCHA_REDDIT_CLIENT_SECRET=
 KATCHA_REDDIT_USER_AGENT="Katcha/0.1 trend-discovery"
+KATCHA_TREND_COLLECTION_DEDUPE_WINDOW_SECONDS=300
+KATCHA_TREND_POLL_LEASE_SECONDS=900
+KATCHA_TREND_YOUTUBE_SEARCH_DAILY_LIMIT=100
+KATCHA_TREND_YOUTUBE_CORE_DAILY_LIMIT=10000
 ```
 
 RSS/Atom discovery needs no provider credential.
@@ -43,7 +47,12 @@ Example request:
     {
       "adapter_key": "youtube",
       "adapter_version": "v1",
-      "query": {"order": "date", "limit": 50}
+      "query": {"order": "date", "limit": 50},
+      "source_quota_limit_per_day": 24,
+      "provider_quota_limits": {
+        "youtube.search.list": 100,
+        "youtube.core": 10000
+      }
     },
     {
       "adapter_key": "reddit",
@@ -101,6 +110,26 @@ Example:
 - RSS: `Studio explains Project Nova gameplay after Xbox reveal`
 
 These may form one story cluster with three source keys and three distinct candidate IDs. Cluster evidence is carried on the review queue: cluster key, representative label, member candidate IDs, source keys, shared tokens, related-item count, and corroborating-source count.
+
+## Poll attempts, deduplication, and quotas
+
+Each topic-watch adapter has durable operational state plus an immutable poll-attempt ledger. An execution can resolve to:
+
+- `execute`: this watch owns the provider call for the current collection window;
+- `reuse`: an identical source query already completed in the same collection window, so the existing discovery run is reused and rescored for this watch;
+- `defer`: another worker owns the collection lease, the source is backed off, or quota is unavailable.
+
+Provider calls are not automatically retried inside a discovery-page activity. A network response may already have consumed provider quota even when the worker cannot prove whether the response was persisted, so ambiguous attempts are accounted conservatively and recovered by a later scheduled poll.
+
+Per-source daily caps use `source_quota_limit_per_day`. Optional `provider_quota_limits` can define a bucket as an integer daily cap or as `{"limit": 50, "window_seconds": 600}`. YouTube has built-in separate defaults for the search bucket and general/core bucket; video-detail hydration is therefore not hidden inside the search request.
+
+Poll and quota controls:
+
+- `GET /v1/trends/watches/{topic_watch_id}/poll-attempts`
+- `GET /v1/trends/watches/{topic_watch_id}/sources/{adapter_index}/quota`
+- `POST /v1/trends/watches/{topic_watch_id}/sources/{adapter_index}/reset`
+
+Resetting provider quota requires the explicit `acknowledge_provider_quota_reset=true` flag. Source quota reset records an audit timestamp and never rewrites historical poll-attempt rows.
 
 ## Durable execution
 

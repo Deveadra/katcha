@@ -13,6 +13,7 @@ class DiscoveryProviderError(RuntimeError):
         transient: bool = True,
         status_code: int | None = None,
         retry_after_seconds: int | None = None,
+        provider_usage: dict[str, int] | None = None,
     ) -> None:
         details: list[str] = []
         if status_code is not None:
@@ -25,6 +26,10 @@ class DiscoveryProviderError(RuntimeError):
         self.transient = transient
         self.status_code = status_code
         self.retry_after_seconds = retry_after_seconds
+        self.provider_usage = {
+            str(key): max(int(value), 0)
+            for key, value in (provider_usage or {}).items()
+        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -44,6 +49,7 @@ class DiscoveryBatch:
     items: tuple[DiscoveredCandidate, ...]
     next_cursor: dict[str, Any] = field(default_factory=dict)
     done: bool = True
+    provider_usage: dict[str, int] = field(default_factory=dict)
 
 
 class DiscoveryAdapter(Protocol):

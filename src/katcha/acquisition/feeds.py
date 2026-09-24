@@ -11,6 +11,7 @@ import httpx
 
 from katcha.acquisition.adapters import DiscoveredCandidate, DiscoveryBatch
 from katcha.acquisition.http_errors import (
+    provider_payload_error,
     provider_response_error,
     provider_transport_error,
 )
@@ -203,28 +204,47 @@ def _validate_public_url(url: str) -> None:
             raise ValueError("feed_url resolved to a non-public IP address")
 
 
-def _fetch_feed(url: str) -> tuple[bytes, str]:
+def _fetch_feed(url: str) -> tuple[bytes, str, int]:
     current = url
+    request_count = 0
     with httpx.Client(timeout=15.0, follow_redirects=False) as client:
         for _ in range(_MAX_REDIRECTS + 1):
             _validate_public_url(current)
+            request_count += 1
             try:
                 response = client.get(
                     current,
                     headers={"User-Agent": _USER_AGENT, "Accept": _ACCEPT_HEADER},
                 )
             except httpx.HTTPError as exc:
-                raise provider_transport_error("RSS/Atom", "fetch") from exc
+                raise provider_transport_error(
+                    "RSS/Atom",
+                    "fetch",
+                    provider_usage={"rss.http": request_count},
+                ) from exc
             if response.status_code in {301, 302, 303, 307, 308}:
                 location = response.headers.get("location")
                 if not location:
-                    raise ValueError("feed redirect did not include a location")
+                    raise provider_payload_error(
+                        "RSS/Atom",
+                        "redirect",
+                        provider_usage={"rss.http": request_count},
+                    )
                 current = urljoin(current, location)
                 continue
             if response.status_code >= 400:
-                raise provider_response_error("RSS/Atom", "fetch", response)
-            return response.content, str(response.url)
-    raise ValueError("feed exceeded maximum redirect count")
+                raise provider_response_error(
+                    "RSS/Atom",
+                    "fetch",
+                    response,
+                    provider_usage={"rss.http": request_count},
+                )
+            return response.content, str(response.url), request_count
+    raise provider_payload_error(
+        "RSS/Atom",
+        "redirect",
+        provider_usage={"rss.http": request_count},
+    )
 
 
 class RssAtomDiscoveryAdapter:
@@ -243,12 +263,23 @@ class RssAtomDiscoveryAdapter:
         include_terms = [str(value) for value in query.get("include_terms", [])]
         exclude_terms = [str(value) for value in query.get("exclude_terms", [])]
         limit = min(max(int(query.get("limit", 100)), 1), 500)
-        content, resolved_url = _fetch_feed(feed_url)
-        items = parse_feed(
-            content,
-            feed_url=resolved_url,
-            include_terms=include_terms,
-            exclude_terms=exclude_terms,
-            limit=limit,
+        content, resolved_url, request_count = _fetch_feed(feed_url)
+        try:
+            items = parse_feed(
+                content,
+                feed_url=resolved_url,
+                include_terms=include_terms,
+                exclude_terms=exclude_terms,
+                limit=limit,
+            )
+        except ValueError as exc:
+            raise provider_payload_error(
+                "RSS/Atom",
+                "parse",
+                provider_usage={"rss.http": request_count},
+            ) from exc
+        return DiscoveryBatch(
+            items=items,
+            done=True,
+            provider_usage={"rss.http": request_count},
         )
-        return DiscoveryBatch(items=items, done=True)

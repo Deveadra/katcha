@@ -162,18 +162,39 @@ class RedditDiscoveryAdapter:
                 headers={"User-Agent": settings.reddit_user_agent},
             )
         except httpx.HTTPError as exc:
-            raise provider_transport_error("Reddit", "OAuth token") from exc
+            raise provider_transport_error(
+                "Reddit",
+                "OAuth token",
+                provider_usage={"reddit.oauth": 1},
+            ) from exc
         if response.status_code >= 400:
-            raise provider_response_error("Reddit", "OAuth token", response)
+            raise provider_response_error(
+                "Reddit",
+                "OAuth token",
+                response,
+                provider_usage={"reddit.oauth": 1},
+            )
         try:
             payload = response.json()
         except ValueError as exc:
-            raise provider_payload_error("Reddit", "OAuth token") from exc
+            raise provider_payload_error(
+                "Reddit",
+                "OAuth token",
+                provider_usage={"reddit.oauth": 1},
+            ) from exc
         if not isinstance(payload, dict):
-            raise provider_payload_error("Reddit", "OAuth token")
+            raise provider_payload_error(
+                "Reddit",
+                "OAuth token",
+                provider_usage={"reddit.oauth": 1},
+            )
         token = str(payload.get("access_token") or "").strip()
         if not token:
-            raise provider_payload_error("Reddit", "OAuth token")
+            raise provider_payload_error(
+                "Reddit",
+                "OAuth token",
+                provider_usage={"reddit.oauth": 1},
+            )
         try:
             expires_in = max(int(payload.get("expires_in") or 3600), 60)
         except (TypeError, ValueError):
@@ -215,6 +236,9 @@ class RedditDiscoveryAdapter:
             params["after"] = after
 
         with httpx.Client(timeout=15.0) as client:
+            had_cached_token = bool(
+                self._token and time.monotonic() < self._token_expires_at
+            )
             token = self._access_token(client)
             try:
                 response = client.get(
@@ -226,15 +250,38 @@ class RedditDiscoveryAdapter:
                     },
                 )
             except httpx.HTTPError as exc:
-                raise provider_transport_error("Reddit", "search") from exc
+                usage = {"reddit.api": 1}
+                if not had_cached_token:
+                    usage["reddit.oauth"] = 1
+                raise provider_transport_error(
+                    "Reddit", "search", provider_usage=usage
+                ) from exc
             if response.status_code >= 400:
-                raise provider_response_error("Reddit", "search", response)
+                usage = {"reddit.api": 1}
+                if not had_cached_token:
+                    usage["reddit.oauth"] = 1
+                raise provider_response_error(
+                    "Reddit",
+                    "search",
+                    response,
+                    provider_usage=usage,
+                )
             try:
                 payload = response.json()
             except ValueError as exc:
-                raise provider_payload_error("Reddit", "search") from exc
+                usage = {"reddit.api": 1}
+                if not had_cached_token:
+                    usage["reddit.oauth"] = 1
+                raise provider_payload_error(
+                    "Reddit", "search", provider_usage=usage
+                ) from exc
             if not isinstance(payload, dict):
-                raise provider_payload_error("Reddit", "search")
+                usage = {"reddit.api": 1}
+                if not had_cached_token:
+                    usage["reddit.oauth"] = 1
+                raise provider_payload_error(
+                    "Reddit", "search", provider_usage=usage
+                )
 
         candidates = parse_reddit_candidates(
             payload,
@@ -244,8 +291,12 @@ class RedditDiscoveryAdapter:
         next_after = ""
         if isinstance(data, dict):
             next_after = str(data.get("after") or "").strip()
+        usage = {"reddit.api": 1}
+        if not had_cached_token:
+            usage["reddit.oauth"] = 1
         return DiscoveryBatch(
             items=candidates,
             next_cursor={"after": next_after} if next_after else {},
             done=not bool(next_after),
+            provider_usage=usage,
         )

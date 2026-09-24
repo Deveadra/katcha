@@ -31,19 +31,31 @@ def _provider_get_json(
     *,
     params: dict[str, object],
     operation: str,
+    provider_usage: dict[str, int] | None = None,
 ) -> dict[str, Any]:
     try:
         response = client.get(url, params=params)
     except httpx.HTTPError as exc:
-        raise provider_transport_error("YouTube", operation) from exc
+        raise provider_transport_error(
+            "YouTube", operation, provider_usage=provider_usage
+        ) from exc
     if response.status_code >= 400:
-        raise provider_response_error("YouTube", operation, response)
+        raise provider_response_error(
+            "YouTube",
+            operation,
+            response,
+            provider_usage=provider_usage,
+        )
     try:
         payload = response.json()
     except ValueError as exc:
-        raise provider_payload_error("YouTube", operation) from exc
+        raise provider_payload_error(
+            "YouTube", operation, provider_usage=provider_usage
+        ) from exc
     if not isinstance(payload, dict):
-        raise provider_payload_error("YouTube", operation)
+        raise provider_payload_error(
+            "YouTube", operation, provider_usage=provider_usage
+        )
     return payload
 
 
@@ -186,6 +198,7 @@ class YouTubeDiscoveryAdapter:
                 _SEARCH_URL,
                 params=params,
                 operation="search",
+                provider_usage={"youtube.search.list": 1},
             )
             ids = [
                 str(item.get("id", {}).get("videoId") or "")
@@ -205,12 +218,20 @@ class YouTubeDiscoveryAdapter:
                         "id": ",".join(ids),
                     },
                     operation="video details",
+                    provider_usage={
+                        "youtube.search.list": 1,
+                        "youtube.core": 1,
+                    },
                 )
 
         candidates = parse_youtube_candidates(search_payload, videos_payload)
         next_page = str(search_payload.get("nextPageToken") or "").strip()
+        usage = {"youtube.search.list": 1}
+        if ids:
+            usage["youtube.core"] = 1
         return DiscoveryBatch(
             items=candidates,
             next_cursor={"page_token": next_page} if next_page else {},
             done=not bool(next_page),
+            provider_usage=usage,
         )

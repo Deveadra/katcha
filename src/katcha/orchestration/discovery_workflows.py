@@ -18,6 +18,7 @@ _ACTIVITY_RETRY = RetryPolicy(
     maximum_interval=timedelta(minutes=2),
     maximum_attempts=4,
 )
+_PROVIDER_ACTIVITY_RETRY = RetryPolicy(maximum_attempts=1)
 
 
 @workflow.defn
@@ -31,7 +32,7 @@ class DiscoveryRunWorkflow:
                     "execute_discovery_page_activity",
                     run_id,
                     start_to_close_timeout=timedelta(minutes=5),
-                    retry_policy=_ACTIVITY_RETRY,
+                    retry_policy=_PROVIDER_ACTIVITY_RETRY,
                     result_type=dict[str, object],
                 )
                 total_candidates += int(result.get("candidate_count") or 0)
@@ -76,9 +77,37 @@ class TopicWatchWorkflow:
 
         async def execute_run(raw: object) -> dict[str, object]:
             item = raw if isinstance(raw, dict) else {}
-            run_id = str(item.get("run_id") or "")
-            child_id = str(item.get("workflow_id") or f"discovery-run-{run_id}")
             adapter_key = str(item.get("adapter_key") or "")
+            action = str(item.get("action") or "execute")
+            run_id = str(item.get("run_id") or "")
+            if action == "reuse":
+                return {
+                    "run_id": run_id,
+                    "adapter_key": adapter_key,
+                    "success": bool(run_id),
+                    "skipped": False,
+                    "reused": True,
+                    "reason": str(item.get("reason") or "shared_reuse"),
+                }
+            if action != "execute":
+                return {
+                    "run_id": None,
+                    "adapter_key": adapter_key,
+                    "success": False,
+                    "skipped": True,
+                    "reused": False,
+                    "reason": str(item.get("reason") or "deferred"),
+                }
+            if not run_id:
+                return {
+                    "run_id": None,
+                    "adapter_key": adapter_key,
+                    "success": False,
+                    "skipped": False,
+                    "reused": False,
+                    "error": "prepared discovery run is missing run_id",
+                }
+            child_id = str(item.get("workflow_id") or f"discovery-run-{run_id}")
             try:
                 result = await workflow.execute_child_workflow(
                     DiscoveryRunWorkflow.run,
@@ -90,6 +119,8 @@ class TopicWatchWorkflow:
                     "run_id": run_id,
                     "adapter_key": adapter_key,
                     "success": True,
+                    "skipped": False,
+                    "reused": False,
                     "result": result,
                 }
             except Exception as exc:
@@ -97,6 +128,8 @@ class TopicWatchWorkflow:
                     "run_id": run_id,
                     "adapter_key": adapter_key,
                     "success": False,
+                    "skipped": False,
+                    "reused": False,
                     "error": str(exc)[:1000],
                 }
 
@@ -106,6 +139,12 @@ class TopicWatchWorkflow:
             for item in results
             if bool(item.get("success")) and item.get("run_id")
         ]
+        skipped_count = sum(1 for item in results if bool(item.get("skipped")))
+        failed_count = sum(
+            1
+            for item in results
+            if not bool(item.get("success")) and not bool(item.get("skipped"))
+        )
         final = await workflow.execute_activity(
             "finalize_topic_watch_execution_activity",
             args=[topic_watch_id, execution_key, successful_run_ids, top_n],
@@ -136,7 +175,9 @@ class TopicWatchWorkflow:
             "execution_key": execution_key,
             "runs": results,
             "successful_run_count": len(successful_run_ids),
-            "failed_run_count": len(results) - len(successful_run_ids),
+            "failed_run_count": failed_count,
+            "skipped_run_count": skipped_count,
+            "reused_run_count": sum(1 for item in results if bool(item.get("reused"))),
             "queue": final,
             "opportunity_refresh": opportunity_refresh,
             "opportunity_refresh_error": refresh_error,
