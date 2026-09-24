@@ -22,6 +22,7 @@ from katcha.orchestration.intelligence_workflows import (
     ChannelTrendActivationWorkflow,
 )
 from katcha.orchestration.longform_workflows import LongformCompilationWorkflow
+from katcha.orchestration.packaging_workflows import YouTubePackagingActivationWorkflow
 from katcha.orchestration.production_workflows import ShortProductionWorkflow
 from katcha.orchestration.publishing_workflows import (
     YouTubeAnalyticsRefreshWorkflow,
@@ -152,6 +153,25 @@ async def start_longform_workflow(
             args=[compilation_id, start_stage],
             id=workflow_id,
             task_queue=settings.temporal_longform_task_queue,
+        )
+    except WorkflowAlreadyStartedError:
+        handle = client.get_workflow_handle(workflow_id)
+    return handle.id
+
+
+async def start_packaging_activation_workflow(
+    activation_id: str,
+    workflow_id: str,
+) -> str:
+    settings = get_settings()
+    client = await get_temporal_client()
+    try:
+        handle = await client.start_workflow(
+            YouTubePackagingActivationWorkflow.run,
+            activation_id,
+            id=workflow_id,
+            id_reuse_policy=WorkflowIDReusePolicy.REJECT_DUPLICATE,
+            task_queue=settings.temporal_publishing_task_queue,
         )
     except WorkflowAlreadyStartedError:
         handle = client.get_workflow_handle(workflow_id)
