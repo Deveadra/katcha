@@ -136,6 +136,28 @@ def register_brand_preview(
             )
         )
         if existing is not None:
+            if existing.status == "failed":
+                existing.workflow_attempt += 1
+                existing.workflow_id = (
+                    f"brand-preview-{existing.id}-a{existing.workflow_attempt}"
+                )
+                existing.status = "queued"
+                existing.error = None
+                existing.verification = {}
+                session.add(
+                    DomainEvent(
+                        aggregate_type="brand_preview",
+                        aggregate_id=str(existing.id),
+                        event_type="brand_preview.retry_queued",
+                        payload={
+                            "brand_preview_id": str(existing.id),
+                            "workflow_attempt": existing.workflow_attempt,
+                            "workflow_id": existing.workflow_id,
+                        },
+                    )
+                )
+                session.flush()
+                session.refresh(existing)
             session.expunge(existing)
             return existing
 
@@ -159,7 +181,8 @@ def register_brand_preview(
             brand_key=contract.brand_key,
             brand_version=target.version,
             request_key=request_key,
-            workflow_id=f"brand-preview-{preview_id}",
+            workflow_id=f"brand-preview-{preview_id}-a1",
+            workflow_attempt=1,
             status="queued",
             source_lineage={
                 "production_id": str(production.id),
