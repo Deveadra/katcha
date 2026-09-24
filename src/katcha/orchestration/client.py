@@ -17,6 +17,7 @@ from katcha.orchestration.discovery_workflows import DiscoveryRunWorkflow
 from katcha.orchestration.intelligence_workflows import (
     ChannelIntelligenceRefreshWorkflow,
     ChannelIntelligenceScheduleWorkflow,
+    ChannelTrendActivationPerformanceWorkflow,
     ChannelTrendActivationScheduleWorkflow,
     ChannelTrendActivationWorkflow,
 )
@@ -300,6 +301,24 @@ async def start_channel_trend_activation_schedule(
         handle = await client.start_workflow(
             ChannelTrendActivationScheduleWorkflow.run,
             args=[channel_profile_id, interval_hours, 120],
+            id=workflow_id,
+            task_queue=INTELLIGENCE_TASK_QUEUE,
+        )
+    except WorkflowAlreadyStartedError:
+        handle = client.get_workflow_handle(workflow_id)
+    return handle.id
+
+
+async def start_channel_trend_activation_performance(
+    channel_profile_id: str,
+    workflow_id: str,
+    run_key: str,
+) -> str:
+    client = await get_temporal_client()
+    try:
+        handle = await client.start_workflow(
+            ChannelTrendActivationPerformanceWorkflow.run,
+            args=[channel_profile_id, run_key],
             id=workflow_id,
             task_queue=INTELLIGENCE_TASK_QUEUE,
         )
