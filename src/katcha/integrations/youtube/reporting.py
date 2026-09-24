@@ -58,14 +58,26 @@ def list_reporting_jobs(
     connection_id: uuid.UUID,
     *,
     settings: Settings | None = None,
+    max_pages: int = 10,
 ) -> list[dict[str, Any]]:
-    payload = _json_request(
-        "GET",
-        f"{REPORTING_ROOT}/jobs",
-        connection_id=connection_id,
-        settings=settings,
-    )
-    return [dict(item) for item in payload.get("jobs") or []]
+    jobs: list[dict[str, Any]] = []
+    page_token: str | None = None
+    for _ in range(max_pages):
+        params: dict[str, str | int] = {"pageSize": 100}
+        if page_token:
+            params["pageToken"] = page_token
+        payload = _json_request(
+            "GET",
+            f"{REPORTING_ROOT}/jobs",
+            connection_id=connection_id,
+            settings=settings,
+            params=params,
+        )
+        jobs.extend(dict(item) for item in payload.get("jobs") or [])
+        page_token = str(payload.get("nextPageToken") or "") or None
+        if page_token is None:
+            break
+    return jobs
 
 
 def create_reporting_job(
