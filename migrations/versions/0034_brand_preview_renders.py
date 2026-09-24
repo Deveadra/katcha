@@ -41,6 +41,7 @@ def upgrade() -> None:
         sa.Column("brand_version", sa.Integer(), nullable=False),
         sa.Column("request_key", sa.String(64), nullable=False),
         sa.Column("workflow_id", sa.String(255), nullable=False),
+        sa.Column("workflow_attempt", sa.Integer(), nullable=False),
         sa.Column("status", sa.String(32), nullable=False),
         sa.Column("source_lineage", sa.JSON(), nullable=False),
         sa.Column("brand_snapshot", sa.JSON(), nullable=False),
