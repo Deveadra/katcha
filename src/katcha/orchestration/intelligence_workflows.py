@@ -13,6 +13,13 @@ async def _run_refresh(channel_profile_id: str, run_key: str) -> dict[str, objec
         maximum_interval=timedelta(minutes=2),
         maximum_attempts=3,
     )
+    reach_sync = await workflow.execute_activity(
+        "trigger_daily_reach_sync_activity",
+        channel_profile_id,
+        start_to_close_timeout=timedelta(minutes=2),
+        retry_policy=retry,
+        result_type=dict[str, object],
+    )
     observations = await workflow.execute_activity(
         "derive_channel_observations_activity",
         channel_profile_id,
@@ -72,6 +79,7 @@ async def _run_refresh(channel_profile_id: str, run_key: str) -> dict[str, objec
     return {
         "channel_profile_id": channel_profile_id,
         "run_key": run_key,
+        "reach_sync": reach_sync,
         "observations": observations,
         "ranking": ranking,
         "economics": economics,
