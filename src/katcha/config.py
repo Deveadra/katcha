@@ -1,7 +1,7 @@
 from functools import lru_cache
 from pathlib import Path
 
-from pydantic import Field
+from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -16,6 +16,13 @@ class Settings(BaseSettings):
     env: str = "development"
     api_host: str = "0.0.0.0"
     api_port: int = 8000
+    control_api_token: SecretStr | None = None
+
+    @field_validator("control_api_token", mode="before")
+    @classmethod
+    def normalize_control_token(cls, value):
+        return None if isinstance(value, str) and not value.strip() else value
+
     database_url: str = "postgresql+psycopg://katcha:katcha@localhost:5432/katcha"
 
     temporal_host: str = "localhost:7233"
