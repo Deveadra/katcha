@@ -11,7 +11,7 @@ from sqlalchemy import func, select
 
 from katcha.db import session_scope
 from katcha.edit_performance_models import EditBlueprintPerformanceSnapshot
-from katcha.intelligence_models import ChannelProfile
+from katcha.intelligence_models import ChannelProfile, PerformanceObservation
 from katcha.models import DomainEvent
 from katcha.production_models import Production
 from katcha.publishing_models import (
@@ -19,14 +19,15 @@ from katcha.publishing_models import (
     PublicationAnalyticsSnapshot,
     RetentionPoint,
 )
-from katcha.services.channel_learning import (
-    derive_performance_observations,
-    latest_observations,
-)
+from katcha.services.channel_learning import derive_performance_observations
 from katcha.short_episode_models import ShortEpisode
 
 _MIN_GROUP_SAMPLE = 5
 _MIN_MARGIN_SAMPLE = 3
+_MIN_MONETARY_COVERAGE = 0.60
+_MIN_RETENTION_COVERAGE = 0.50
+_AGE_BUCKETS = (6, 24, 72, 168)
+_DEFAULT_AGE_BUCKET = 72
 _RETENTION_TARGETS = (0.25, 0.50, 0.75, 0.95)
 _RETENTION_MAX_DISTANCE = 0.08
 
@@ -152,10 +153,37 @@ def _episode_lineage_cost(session: object, source: ShortEpisode) -> Decimal:
     return total
 
 
-def _latest_analytics(
+def _utc(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=UTC)
+    return value.astimezone(UTC)
+
+
+def _publication_anchor(publication: Publication) -> datetime:
+    return _utc(
+        publication.published_at
+        or publication.publish_at
+        or publication.created_at
+    )
+
+
+def _publication_age_hours(
+    publication: Publication,
+    snapshot: PublicationAnalyticsSnapshot,
+) -> float:
+    return max(
+        0.0,
+        (_utc(snapshot.sampled_at) - _publication_anchor(publication)).total_seconds()
+        / 3600.0,
+    )
+
+
+def _analytics_at_age_bucket(
     session: object,
-    publication_ids: list[uuid.UUID],
+    publications: list[Publication],
+    age_bucket_hours: int,
 ) -> dict[uuid.UUID, PublicationAnalyticsSnapshot]:
+    publication_ids = [row.id for row in publications]
     if not publication_ids:
         return {}
     rows = list(
@@ -168,12 +196,30 @@ def _latest_analytics(
             )
         )
     )
-    latest: dict[uuid.UUID, PublicationAnalyticsSnapshot] = {}
+    by_publication: dict[uuid.UUID, list[PublicationAnalyticsSnapshot]] = defaultdict(list)
     for row in rows:
-        current = latest.get(row.publication_id)
-        if current is None or row.sampled_at > current.sampled_at:
-            latest[row.publication_id] = row
-    return latest
+        by_publication[row.publication_id].append(row)
+
+    publication_by_id = {row.id: row for row in publications}
+    tolerance = max(2.0, age_bucket_hours * 0.35)
+    selected: dict[uuid.UUID, PublicationAnalyticsSnapshot] = {}
+    for publication_id, snapshots in by_publication.items():
+        publication = publication_by_id[publication_id]
+        eligible = [
+            row
+            for row in snapshots
+            if abs(_publication_age_hours(publication, row) - age_bucket_hours)
+            <= tolerance
+        ]
+        if not eligible:
+            continue
+        selected[publication_id] = min(
+            eligible,
+            key=lambda row: abs(
+                _publication_age_hours(publication, row) - age_bucket_hours
+            ),
+        )
+    return selected
 
 
 def _retention_by_snapshot(
@@ -383,12 +429,18 @@ def refresh_edit_blueprint_performance(
     channel_profile_id: uuid.UUID,
     *,
     run_key: str,
+    age_bucket_hours: int = _DEFAULT_AGE_BUCKET,
 ) -> EditBlueprintPerformanceSnapshot:
     key = run_key.strip()
     if not key:
         raise ValueError("edit performance run_key is required")
     if len(key) > 160:
         raise ValueError("edit performance run_key must be 160 characters or fewer")
+    if age_bucket_hours not in _AGE_BUCKETS:
+        raise ValueError(
+            "edit performance age bucket must be one of "
+            + ", ".join(str(value) for value in _AGE_BUCKETS)
+        )
 
     derive_performance_observations(channel_profile_id)
 
@@ -403,6 +455,8 @@ def refresh_edit_blueprint_performance(
             )
         )
         if existing is not None:
+            if existing.age_bucket_hours != age_bucket_hours:
+                raise ValueError("run_key is already bound to another age bucket")
             return existing
 
         publications = list(
@@ -412,35 +466,49 @@ def refresh_edit_blueprint_performance(
                 )
             )
         )
-        publication_ids = [row.id for row in publications]
-        latest_analytics = _latest_analytics(session, publication_ids)
-        latest_observation = {
-            row.publication_id: row
-            for row in latest_observations(session, channel_profile_id)
-        }
+        selected_analytics = _analytics_at_age_bucket(
+            session,
+            publications,
+            age_bucket_hours,
+        )
+        selected_snapshot_ids = [row.id for row in selected_analytics.values()]
+        observation_by_snapshot = {
+            row.analytics_snapshot_id: row
+            for row in session.scalars(
+                select(PerformanceObservation).where(
+                    PerformanceObservation.channel_profile_id == channel_profile_id,
+                    PerformanceObservation.analytics_snapshot_id.in_(
+                        selected_snapshot_ids
+                    ),
+                )
+            )
+        } if selected_snapshot_ids else {}
         retention_by_snapshot = _retention_by_snapshot(
             session,
-            [row.id for row in latest_analytics.values()],
+            selected_snapshot_ids,
         )
 
         grouped: dict[str, list[dict[str, object]]] = defaultdict(list)
         identity_by_key: dict[str, dict[str, object]] = {}
         sample_times: list[datetime] = []
         revenue_covered = 0
+        retention_covered = 0
+        missing_lineage = 0
 
         for publication in publications:
-            analytics = latest_analytics.get(publication.id)
+            analytics = selected_analytics.get(publication.id)
             if analytics is None:
                 continue
             lineage_result = _source_lineage(session, publication)
             if lineage_result is None:
+                missing_lineage += 1
                 continue
             _, _, lineage, cost = lineage_result
             identity = _group_identity(lineage)
             group_key = str(identity["group_key"])
             identity_by_key[group_key] = identity
             points = retention_by_snapshot.get(analytics.id, [])
-            observation = latest_observation.get(publication.id)
+            observation = observation_by_snapshot.get(analytics.id)
             record: dict[str, object] = {
                 "publication_id": str(publication.id),
                 "sampled_at": analytics.sampled_at.isoformat(),
@@ -458,16 +526,32 @@ def refresh_edit_blueprint_performance(
                     observation.outcome_score if observation is not None else None
                 ),
                 "attributed_cost_usd": cost,
+                "interaction_rate": (
+                    (
+                        int(analytics.likes or 0)
+                        + int(analytics.comments or 0)
+                        + int(analytics.shares or 0)
+                    )
+                    / max(int(analytics.views or analytics.engaged_views or 0), 1)
+                ),
+                "subscribers_net": (
+                    int(analytics.subscribers_gained or 0)
+                    - int(analytics.subscribers_lost or 0)
+                ),
             }
+            retention_values: list[float] = []
             for target in _RETENTION_TARGETS:
-                record[f"retention_{int(target * 100)}"] = _retention_value(
-                    points,
-                    target,
-                )
+                retention_value = _retention_value(points, target)
+                record[f"retention_{int(target * 100)}"] = retention_value
+                if retention_value is not None:
+                    retention_values.append(retention_value)
+            record["has_retention"] = bool(retention_values)
             grouped[group_key].append(record)
             sample_times.append(analytics.sampled_at)
             if analytics.estimated_revenue is not None:
                 revenue_covered += 1
+            if retention_values:
+                retention_covered += 1
 
         aggregates = [
             _aggregate_group(identity_by_key[key_name], rows)
@@ -477,6 +561,20 @@ def refresh_edit_blueprint_performance(
         publication_count = sum(len(rows) for rows in grouped.values())
         monetary_coverage = (
             revenue_covered / publication_count if publication_count else 0.0
+        )
+        retention_coverage = (
+            retention_covered / publication_count if publication_count else 0.0
+        )
+        comparison_summary.update(
+            {
+                "age_bucket_hours": age_bucket_hours,
+                "channel_publication_count": len(publications),
+                "maturity_matched_publications": len(selected_analytics),
+                "lineage_covered_publications": publication_count,
+                "excluded_missing_lineage": missing_lineage,
+                "monetary_coverage": round(monetary_coverage, 6),
+                "retention_coverage": round(retention_coverage, 6),
+            }
         )
         version = int(
             session.scalar(
@@ -496,10 +594,13 @@ def refresh_edit_blueprint_performance(
             channel_profile_id=channel_profile_id,
             version=version,
             run_key=key,
+            age_bucket_hours=age_bucket_hours,
             publication_count=publication_count,
             blueprint_group_count=len(aggregates),
             revenue_covered_publications=revenue_covered,
+            retention_covered_publications=retention_covered,
             monetary_coverage=_decimal(monetary_coverage),
+            retention_coverage=_decimal(retention_coverage),
             aggregate_metrics=aggregates,
             comparison_status=comparison_status,
             comparison_summary=comparison_summary,
@@ -518,9 +619,14 @@ def refresh_edit_blueprint_performance(
                     "snapshot_id": str(snapshot.id),
                     "version": version,
                     "run_key": key,
+                    "age_bucket_hours": age_bucket_hours,
                     "publication_count": publication_count,
                     "blueprint_group_count": len(aggregates),
                     "monetary_coverage": round(monetary_coverage, 6),
+                    "retention_coverage": round(retention_coverage, 6),
+                    "group_keys": [
+                        str(group.get("group_key") or "") for group in aggregates
+                    ],
                     "comparison_status": comparison_status,
                 },
             )
@@ -532,16 +638,21 @@ def refresh_edit_blueprint_performance(
 
 def latest_edit_blueprint_performance(
     channel_profile_id: uuid.UUID,
+    *,
+    age_bucket_hours: int | None = None,
 ) -> EditBlueprintPerformanceSnapshot | None:
     with session_scope() as session:
-        return session.scalar(
-            select(EditBlueprintPerformanceSnapshot)
-            .where(
-                EditBlueprintPerformanceSnapshot.channel_profile_id
-                == channel_profile_id
+        query = select(EditBlueprintPerformanceSnapshot).where(
+            EditBlueprintPerformanceSnapshot.channel_profile_id
+            == channel_profile_id
+        )
+        if age_bucket_hours is not None:
+            query = query.where(
+                EditBlueprintPerformanceSnapshot.age_bucket_hours
+                == age_bucket_hours
             )
-            .order_by(EditBlueprintPerformanceSnapshot.version.desc())
-            .limit(1)
+        return session.scalar(
+            query.order_by(EditBlueprintPerformanceSnapshot.version.desc()).limit(1)
         )
 
 
@@ -549,16 +660,21 @@ def list_edit_blueprint_performance(
     channel_profile_id: uuid.UUID,
     *,
     limit: int = 50,
+    age_bucket_hours: int | None = None,
 ) -> list[EditBlueprintPerformanceSnapshot]:
     with session_scope() as session:
+        query = select(EditBlueprintPerformanceSnapshot).where(
+            EditBlueprintPerformanceSnapshot.channel_profile_id
+            == channel_profile_id
+        )
+        if age_bucket_hours is not None:
+            query = query.where(
+                EditBlueprintPerformanceSnapshot.age_bucket_hours
+                == age_bucket_hours
+            )
         return list(
             session.scalars(
-                select(EditBlueprintPerformanceSnapshot)
-                .where(
-                    EditBlueprintPerformanceSnapshot.channel_profile_id
-                    == channel_profile_id
-                )
-                .order_by(EditBlueprintPerformanceSnapshot.version.desc())
+                query.order_by(EditBlueprintPerformanceSnapshot.version.desc())
                 .limit(max(1, min(limit, 250)))
             )
         )
