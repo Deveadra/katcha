@@ -1144,6 +1144,71 @@ def list_poll_attempts(
         return rows
 
 
+def source_polling_status(
+    topic_watch_id: uuid.UUID,
+    adapter_index: int,
+    *,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    current = _utc(now)
+    with session_scope() as session:
+        state = session.scalar(
+            select(TrendWatchSourceState).where(
+                TrendWatchSourceState.topic_watch_id == topic_watch_id,
+                TrendWatchSourceState.adapter_index == adapter_index,
+            )
+        )
+        if state is None:
+            raise ValueError("topic watch source state not found")
+        source_used = _attempt_source_usage(session, state, current)
+        provider_key = {
+            "youtube": "youtube",
+            "reddit": "reddit",
+            "rss_atom": "rss_atom",
+        }.get(state.adapter_key, state.adapter_key)
+        windows = list(
+            session.scalars(
+                select(DiscoveryProviderQuotaWindow)
+                .where(
+                    DiscoveryProviderQuotaWindow.provider_key == provider_key,
+                    DiscoveryProviderQuotaWindow.window_start <= current,
+                    DiscoveryProviderQuotaWindow.window_end > current,
+                )
+                .order_by(DiscoveryProviderQuotaWindow.bucket_key)
+            )
+        )
+        return {
+            "topic_watch_id": str(topic_watch_id),
+            "adapter_index": adapter_index,
+            "source_state_id": str(state.id),
+            "source_identity": state.source_identity,
+            "source_quota_limit_per_day": state.source_quota_limit_per_day,
+            "source_quota_used": source_used,
+            "provider_quota_windows": [
+                {
+                    "provider_key": row.provider_key,
+                    "bucket_key": row.bucket_key,
+                    "window_key": row.window_key,
+                    "window_start": row.window_start.isoformat(),
+                    "window_end": row.window_end.isoformat(),
+                    "limit_units": row.limit_units,
+                    "used_units": row.used_units,
+                    "reserved_units": row.reserved_units,
+                    "remaining_units": max(
+                        0,
+                        int(row.limit_units)
+                        - int(row.used_units)
+                        - int(row.reserved_units),
+                    ),
+                    "blocked_until": (
+                        row.blocked_until.isoformat() if row.blocked_until else None
+                    ),
+                }
+                for row in windows
+            ],
+        }
+
+
 def reset_source_polling(
     topic_watch_id: uuid.UUID,
     adapter_index: int,
