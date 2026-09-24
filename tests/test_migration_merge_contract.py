@@ -4,7 +4,10 @@ from alembic.script import ScriptDirectory
 
 def test_ranked_and_trend_reliability_revisions_share_one_history() -> None:
     script = ScriptDirectory.from_config(Config("alembic.ini"))
-    assert script.get_heads() == ["0021_trend_calibration"]
+    assert script.get_heads() == ["0022_discovery_poll_quota"]
+
+    quota = script.get_revision("0022_discovery_poll_quota")
+    assert quota.down_revision == "0021_trend_calibration"
 
     calibration = script.get_revision("0021_trend_calibration")
     assert calibration.down_revision == "0020_merge_ranked_trend_heads"
