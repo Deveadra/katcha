@@ -8,10 +8,11 @@ from katcha.acquisition.adapters import get_adapter
 from katcha.acquisition_models import DiscoveryRun, TopicWatchVersion
 from katcha.db import session_scope
 from katcha.services.acquisition import register_discovery_run
-from katcha.services.trend_source_reliability import (
-    ensure_topic_watch_source_states,
-    source_state_snapshot,
+from katcha.services.discovery_polling import (
+    begin_poll_attempt,
+    bind_poll_attempt_run,
 )
+from katcha.services.trend_source_reliability import ensure_topic_watch_source_states
 
 _SECRET_FRAGMENTS = (
     "authorization",
@@ -25,10 +26,14 @@ _SECRET_FRAGMENTS = (
 
 @dataclass(frozen=True, slots=True)
 class PreparedDiscoveryRun:
-    run_id: uuid.UUID
+    run_id: uuid.UUID | None
     adapter_key: str
     adapter_version: str
-    workflow_id: str
+    workflow_id: str | None
+    poll_attempt_id: uuid.UUID
+    source_state_id: uuid.UUID
+    action: str
+    reason: str
 
 
 def contains_secret_key(value: object) -> bool:
@@ -73,7 +78,8 @@ def prepare_topic_watch_execution(
     if len(key) > 80:
         raise ValueError("execution_key must be 80 characters or fewer")
 
-    ensure_topic_watch_source_states(topic_watch_id)
+    source_states = ensure_topic_watch_source_states(topic_watch_id)
+    state_ids = {state.adapter_index: state.id for state in source_states}
     with session_scope() as session:
         watch = session.get(TopicWatchVersion, topic_watch_id)
         if watch is None:
@@ -96,10 +102,6 @@ def prepare_topic_watch_execution(
 
     runs: list[PreparedDiscoveryRun] = []
     for index, config in enumerate(configs):
-        state = source_state_snapshot(topic_watch_id, index)
-        if bool(state.get("backoff_active")):
-            continue
-        initial_cursor = dict(state.get("cursor") or {})
         adapter_key, adapter_version, query = normalize_adapter_config(config)
         query["include_terms"] = include_terms
         query["exclude_terms"] = exclude_terms
@@ -113,7 +115,33 @@ def prepare_topic_watch_execution(
             if len(region) == 2:
                 query.setdefault("region_code", region)
 
+        source_state_id = state_ids.get(index)
+        if source_state_id is None:
+            raise RuntimeError(f"source state missing for adapter index {index}")
         run_key = f"watch:{topic_watch_id}:{key}:{index}"
+        decision = begin_poll_attempt(
+            source_state_id,
+            execution_key=run_key,
+            adapter_key=adapter_key,
+            adapter_version=adapter_version,
+            effective_query=query,
+            adapter_config=config,
+        )
+        if decision.action != "execute":
+            runs.append(
+                PreparedDiscoveryRun(
+                    run_id=decision.discovery_run_id,
+                    adapter_key=adapter_key,
+                    adapter_version=adapter_version,
+                    workflow_id=None,
+                    poll_attempt_id=decision.attempt_id,
+                    source_state_id=source_state_id,
+                    action=decision.action,
+                    reason=decision.reason,
+                )
+            )
+            continue
+
         run = register_discovery_run(
             adapter_key=adapter_key,
             adapter_version=adapter_version,
@@ -128,19 +156,31 @@ def prepare_topic_watch_execution(
                 "watch_version": watch_version,
                 "execution_key": key,
                 "adapter_index": index,
+                "poll_attempt_id": str(decision.attempt_id),
+                "poll_adapter_config": {
+                    config_key: config_value
+                    for config_key, config_value in config.items()
+                    if config_key != "query"
+                },
             },
         )
-        if initial_cursor:
-            with session_scope() as session:
-                stored = session.get(DiscoveryRun, run.id)
-                if stored is not None and not stored.cursor:
-                    stored.cursor = initial_cursor
+        with session_scope() as session:
+            stored = session.get(DiscoveryRun, run.id)
+            if stored is None:
+                raise RuntimeError("discovery run disappeared during preparation")
+            if not stored.cursor:
+                stored.cursor = dict(decision.cursor or {})
+        bind_poll_attempt_run(decision.attempt_id, run.id)
         runs.append(
             PreparedDiscoveryRun(
                 run_id=run.id,
                 adapter_key=adapter_key,
                 adapter_version=adapter_version,
                 workflow_id=f"discovery-run-{run.id}",
+                poll_attempt_id=decision.attempt_id,
+                source_state_id=source_state_id,
+                action="execute",
+                reason=decision.reason,
             )
         )
     return runs

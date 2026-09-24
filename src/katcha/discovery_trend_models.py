@@ -79,9 +79,18 @@ class TrendWatchSourceState(Base):
     adapter_index: Mapped[int] = mapped_column(Integer)
     adapter_key: Mapped[str] = mapped_column(String(64), index=True)
     adapter_version: Mapped[str] = mapped_column(String(64))
+    source_identity: Mapped[str | None] = mapped_column(
+        String(64), nullable=True, index=True
+    )
+    source_quota_limit_per_day: Mapped[int | None] = mapped_column(
+        Integer, nullable=True
+    )
     health_status: Mapped[str] = mapped_column(String(32), default="unknown", index=True)
     consecutive_failures: Mapped[int] = mapped_column(Integer, default=0)
     cursor: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    last_poll_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     last_discovery_run_id: Mapped[uuid.UUID | None] = mapped_column(
         Uuid(as_uuid=True),
         ForeignKey("discovery_runs.id"),
@@ -95,6 +104,9 @@ class TrendWatchSourceState(Base):
         DateTime(timezone=True), nullable=True
     )
     backoff_until: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, index=True
+    )
+    rate_limit_reset_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True, index=True
     )
     last_error_kind: Mapped[str | None] = mapped_column(String(64), nullable=True)

@@ -215,6 +215,9 @@ class RedditDiscoveryAdapter:
             params["after"] = after
 
         with httpx.Client(timeout=15.0) as client:
+            had_cached_token = bool(
+                self._token and time.monotonic() < self._token_expires_at
+            )
             token = self._access_token(client)
             try:
                 response = client.get(
@@ -244,8 +247,12 @@ class RedditDiscoveryAdapter:
         next_after = ""
         if isinstance(data, dict):
             next_after = str(data.get("after") or "").strip()
+        usage = {"reddit.api": 1}
+        if not had_cached_token:
+            usage["reddit.oauth"] = 1
         return DiscoveryBatch(
             items=candidates,
             next_cursor={"after": next_after} if next_after else {},
             done=not bool(next_after),
+            provider_usage=usage,
         )
