@@ -15,6 +15,7 @@ from sqlalchemy import select
 from katcha.ai.pricing import estimate_token_cost
 from katcha.ai.router import (
     ModelTarget,
+    assert_ai_budget,
     record_usage,
     release_budget_reservation,
     route_for_channel,
@@ -452,6 +453,10 @@ def generate_packaging_candidates(
             session.flush()
         elif int((row.generation_metadata or {}).get("candidate_count") or candidate_count) != candidate_count:
             raise ValueError("generation_key is already bound to another candidate_count")
+        elif row.status in {"failed", "ambiguous"} and not row.candidate_payload:
+            raise AmbiguousPackagingGeneration(
+                "generation_key is terminal after a paid/ambiguous attempt; use a new generation_key"
+            )
         elif (
             not row.candidate_payload
             and row.status != "completed"
@@ -499,6 +504,7 @@ def generate_packaging_candidates(
         ]
     else:
         settings = settings or get_settings()
+        assert_ai_budget(_ESTIMATED_INCREMENT_USD)
         decision = route_for_channel(
             AITask.METADATA,
             profile_id,
@@ -586,6 +592,10 @@ def generate_packaging_candidates(
                 "context_sha256": context_sha,
                 "prompt_version": _PROMPT_VERSION,
             }
+
+    row = _load_generation(publication_id, key)
+    if row is None:
+        raise RuntimeError("packaging generation disappeared before variant persistence")
 
     variant_ids: list[str] = []
     for index, candidate in enumerate(candidates):
