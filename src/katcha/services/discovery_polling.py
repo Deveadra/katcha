@@ -840,9 +840,18 @@ def record_poll_page_success(
         attempt.candidate_count += max(int(candidate_count), 0)
         attempt.pages += 1
         attempt.cursor_after = dict(next_cursor or {})
+        prior_health = state.health_status
         state.cursor = dict(next_cursor or {})
         state.last_poll_at = current
         run.cursor = dict(next_cursor or {})
+        if attempt.collection_claim_id is not None:
+            active_claim = session.get(
+                DiscoveryCollectionClaim, attempt.collection_claim_id
+            )
+            if active_claim is not None and not done:
+                active_claim.lease_expires_at = current + timedelta(
+                    seconds=get_settings().trend_poll_lease_seconds
+                )
         run.status = (
             DiscoveryRunStatus.COMPLETED.value if done else DiscoveryRunStatus.RUNNING.value
         )
@@ -900,6 +909,20 @@ def record_poll_page_success(
                     },
                 )
             )
+            if prior_health in {"degraded", "rate_limited", "down"}:
+                session.add(
+                    DomainEvent(
+                        aggregate_type="topic_watch_source",
+                        aggregate_id=str(state.id),
+                        event_type="topic_watch.source_recovered",
+                        payload={
+                            "source_state_id": str(state.id),
+                            "poll_attempt_id": str(attempt.id),
+                            "previous_health": prior_health,
+                            "outcome": outcome,
+                        },
+                    )
+                )
             return outcome
         return "running"
 
