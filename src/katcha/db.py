@@ -44,6 +44,7 @@ def init_db() -> None:
         production_models,
         publishing_models,
         short_episode_models,
+        trend_activation_models,
         trend_calibration_models,
         trend_models,
     )
