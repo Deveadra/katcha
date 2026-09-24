@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 from typing import Literal
 
@@ -180,8 +180,8 @@ class EditBlueprintPerformanceResponse(BaseModel):
     aggregate_metrics: list[dict[str, object]]
     comparison_status: str
     comparison_summary: dict[str, object]
-    sample_window_start: datetime | None
-    sample_window_end: datetime | None
+    sample_window_start: date | None
+    sample_window_end: date | None
     created_at: datetime
 
 
