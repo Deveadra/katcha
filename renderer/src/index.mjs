@@ -1,7 +1,9 @@
 import fs from 'node:fs';
+import {execFile} from 'node:child_process';
 import os from 'node:os';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
+import {promisify} from 'node:util';
 import express from 'express';
 import {bundle} from '@remotion/bundler';
 import {renderMedia, selectComposition} from '@remotion/renderer';
@@ -18,6 +20,7 @@ const bucket = process.env.KATCHA_S3_BUCKET || 'katcha-media';
 const endpoint = process.env.KATCHA_S3_ENDPOINT_URL || 'http://minio:9000';
 const region = process.env.KATCHA_S3_REGION || 'auto';
 const port = Number(process.env.PORT || 8787);
+const exec = promisify(execFile);
 
 const s3 = new S3Client({
   endpoint,
@@ -42,6 +45,41 @@ const exists = async (key) => {
       return false;
     }
     throw error;
+  }
+};
+
+const headObject = (key) => s3.send(new HeadObjectCommand({Bucket: bucket, Key: key}));
+
+const inspectMedia = async (filePath) => {
+  const {stdout} = await exec('ffprobe', [
+    '-v', 'error',
+    '-select_streams', 'v:0',
+    '-show_entries', 'stream=width,height,r_frame_rate:format=duration',
+    '-of', 'json',
+    filePath,
+  ]);
+  const payload = JSON.parse(stdout);
+  const stream = payload?.streams?.[0] || {};
+  const duration = Number(payload?.format?.duration || 0);
+  const width = Number(stream.width || 0);
+  const height = Number(stream.height || 0);
+  if (!(duration > 0) || !(width > 0) || !(height > 0)) {
+    throw new Error('ffprobe could not verify rendered media');
+  }
+  return {duration_seconds: duration, width, height, frame_rate: stream.r_frame_rate || null};
+};
+
+const verifyRender = (probe, manifest) => {
+  const tolerance = Math.max(0.35, 2 / Number(manifest.fps || 30));
+  if (Math.abs(probe.duration_seconds - Number(manifest.output_duration_seconds)) > tolerance) {
+    throw new Error(
+      `render duration mismatch: expected ${manifest.output_duration_seconds}s, got ${probe.duration_seconds}s`,
+    );
+  }
+  if (probe.width !== Number(manifest.width) || probe.height !== Number(manifest.height)) {
+    throw new Error(
+      `render dimensions mismatch: expected ${manifest.width}x${manifest.height}, got ${probe.width}x${probe.height}`,
+    );
   }
 };
 
@@ -177,11 +215,18 @@ app.post('/render', async (request, response) => {
           ? 'BlueprintVideo'
           : 'Short';
     if (await exists(manifest.output_key)) {
+      const stored = await headObject(manifest.output_key);
+      if (!(Number(stored.ContentLength || 0) > 0)) {
+        throw new Error('existing render object is empty');
+      }
       return response.json({
         output_key: manifest.output_key,
         duration_seconds: manifest.output_duration_seconds,
         metadata: {
           reused: true,
+          verified: true,
+          verification_mode: 'object-head',
+          object_size_bytes: Number(stored.ContentLength || 0),
           renderer: 'remotion',
           composition: compositionId,
         },
@@ -222,14 +267,28 @@ app.post('/render', async (request, response) => {
         inputProps,
         concurrency: 2,
       });
+      const probe = await inspectMedia(outputPath);
+      verifyRender(probe, manifest);
       await s3.send(
         new PutObjectCommand({
           Bucket: bucket,
           Key: manifest.output_key,
           Body: fs.createReadStream(outputPath),
           ContentType: 'video/mp4',
+          Metadata: {
+            'katcha-render-version': String(manifest.version || 'unknown'),
+            'katcha-verified': 'true',
+          },
         }),
       );
+      const stored = await headObject(manifest.output_key);
+      if (!(Number(stored.ContentLength || 0) > 0)) {
+        throw new Error('render upload verification returned an empty object');
+      }
+      inputProps.__renderVerification = {
+        ...probe,
+        object_size_bytes: Number(stored.ContentLength || 0),
+      };
     } finally {
       await fs.promises.rm(tempDir, {recursive: true, force: true});
     }
@@ -239,11 +298,14 @@ app.post('/render', async (request, response) => {
       duration_seconds: manifest.output_duration_seconds,
       metadata: {
         reused: false,
+        verified: true,
+        verification_mode: 'ffprobe+object-head',
         renderer: 'remotion',
         composition: compositionId,
         fps: manifest.fps,
         width: manifest.width,
         height: manifest.height,
+        ...(inputProps.__renderVerification || {}),
       },
     });
   } catch (error) {
