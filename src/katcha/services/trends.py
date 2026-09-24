@@ -363,9 +363,13 @@ def list_signals(
                 TrendTopicSignal.trend_signal_id == TrendSignal.id,
             ).where(TrendTopicSignal.trend_topic_id == topic_id)
         if provider_key:
-            stmt = stmt.where(TrendSignal.provider_key == provider_key.strip().casefold())
+            stmt = stmt.where(
+                TrendSignal.provider_key == provider_key.strip().casefold()
+            )
         if source_kind:
-            stmt = stmt.where(TrendSignal.source_kind == source_kind.strip().casefold())
+            stmt = stmt.where(
+                TrendSignal.source_kind == source_kind.strip().casefold()
+            )
         if language:
             stmt = stmt.where(TrendSignal.language == language.strip().casefold())
         if region:
