@@ -23,6 +23,7 @@ from katcha.services.acquisition import (
 )
 from katcha.services.channel_brands import brand_for_channel
 from katcha.services.channel_edit_blueprints import blueprint_for_channel
+from katcha.services.render_recovery import assert_render_verified
 
 PROMPT_VERSION = "short-script-v2"
 REGENERATE_STAGES = {"script", "voice", "render"}
@@ -371,6 +372,7 @@ def review_production(
         )
         session.add(review)
         if decision == ReviewDecision.APPROVE:
+            assert_render_verified("production", production.id)
             production.status = ProductionStatus.APPROVED.value
             production.stage = "approved"
             event_type = "production.approved"
