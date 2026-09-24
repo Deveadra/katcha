@@ -548,7 +548,7 @@ def build_render_manifest_activity(production_id: str) -> dict[str, object]:
                 source_storage_key=clip.storage_key,
                 source_duration_seconds=float(clip.duration_seconds or 0),
                 output_key=output_key,
-                headline=headline or None,
+                headline=(headline or None) if blueprint.header.required else None,
                 narration_asset_key=narration_asset_key,
                 narration_text=narration_text,
                 narration_duration_seconds=narration_duration_seconds,
