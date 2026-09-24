@@ -22,7 +22,9 @@ Store transparent PNGs in S3/MinIO under immutable, versioned keys. Example for 
 }
 ```
 
-The pack is stored at `brand_snapshot.visual.reaction_pack` by the brand-version contract, not in the shared React code. It must match `brand_snapshot.visual.brand_key`. The implementation validates the versioned path; **the object store does not enforce write-once by itself**. Never overwrite a published key: create `v2/` for replacement PNGs and activate a new brand version. Uploading the PNGs is a separate operator step; this PR does not supply art, a pack-management UI or an upload API.
+The pack is stored at `brand_snapshot.visual.reaction_pack` by the brand-version contract, not in the shared React code. It must match `brand_snapshot.visual.brand_key`. RankSnaxx's first concrete pack is checksum-pinned in `katcha.services.brand_assets`. The production worker seeds missing built-in objects and verifies existing objects byte-for-byte before accepting production work. If the same published storage key contains different bytes, startup fails rather than silently changing historical renders.
+
+RankSnaxx Brand v1 remains unchanged for reproducibility. The starter reaction pack is defined in the explicit Brand v2 candidate and must be activated as a new channel brand version; it is never injected into already-frozen v1 productions. Replacement artwork requires a new immutable object path and a later brand version.
 
 ## Author a reaction against actual voiceover timing
 
@@ -55,6 +57,14 @@ An already-frozen render manifest is reused. To change an existing video's cues,
 
 The renderer checks the exact object exists, presigns its URL using the existing S3/MinIO client, and fails the render if it is missing. Neither composition refers to a specific brand or asset name. The existing caption track remains above reactions, preserving caption legibility.
 
+## Built-in RankSnaxx starter asset
+
+The source PNG is committed at `renderer/assets/ranksnaxx/reactions/host_emotes/v1/meme_cry.png` and packaged for Python at `src/katcha/assets/ranksnaxx/reactions/host_emotes/v1/meme_cry.png`. Both represent the immutable object `brands/ranksnaxx/reactions/host_emotes/v1/meme_cry.png`, SHA-256 `bffb5df4269e0a02281268dfacab395070e9bc96596f31ba247b384f9eb06b36`.
+
+This is a starter visual asset for the host-emote system, not a permanent logo or a decision that every RankSnaxx video should use reactions.
+
 ## Verification
 
-`pytest -q tests/test_reaction_rendering.py tests/test_manifest.py tests/test_ranked_episode_rendering.py` exercises timing, channel isolation, stable line references, legacy manifests and invalid paths. The GitHub renderer CI bundles the production compositions and runs `node test/reaction-smoke.mjs`. The smoke uses a **generated, test-only transparent PNG**, a synthetic source video, and silent WAV to exercise the actual `ShortVideo` and `RankedEpisodeVideo` components. For each composition it compares screenshots at three timestamps with reactions on/off: frames must match before and after the cue and differ during it. It also encodes and probes both H.264 MP4s. On successful CI runs, the `synthetic-reaction-previews` GitHub Actions artifact contains both videos and key screenshots, retained for 7 days. These fixtures are not proposed brand artwork or a test of real voice synchronization. A preview with final character PNGs and real source/voice media is still required to approve actual visual placement, caption collision, animation rhythm and mobile platform UI zones.
+`pytest -q tests/test_reaction_rendering.py tests/test_manifest.py tests/test_ranked_episode_rendering.py` exercises timing, channel isolation, stable line references, legacy manifests and invalid paths. The GitHub renderer CI bundles the production compositions and runs `node test/reaction-smoke.mjs`. The smoke verifies the committed RankSnaxx PNG checksum, then uses that real brand asset with a synthetic source video and silent WAV to exercise the actual `ShortVideo` and `RankedEpisodeVideo` components. For each composition it compares screenshots at three timestamps with reactions on/off: frames must match before and after the cue and differ during it. It also encodes and probes both H.264 MP4s. On successful CI runs, the `ranksnaxx-reaction-previews` GitHub Actions artifact contains both videos and key screenshots, retained for 7 days.
+
+This closes the original-art gap and proves repeatable branded rendering. Real voice/source synchronization and final mobile visual acceptance remain a launch-quality review rather than a renderer-contract blocker.

@@ -141,6 +141,29 @@ _RANKSNAXX_BRAND_V1: dict[str, Any] = {
 }
 
 
+_RANKSNAXX_BRAND_V2: dict[str, Any] = deepcopy(_RANKSNAXX_BRAND_V1)
+_RANKSNAXX_BRAND_V2["version"] = 2
+_RANKSNAXX_BRAND_V2["visual"] = {
+    **deepcopy(_RANKSNAXX_BRAND_V1["visual"]),
+    "version": 2,
+    "reaction_pack": {
+        "brand_key": "ranksnaxx",
+        "pack_key": "host_emotes",
+        "version": 1,
+        "assets": {
+            "meme_cry": {
+                "storage_key": "brands/ranksnaxx/reactions/host_emotes/v1/meme_cry.png"
+            }
+        },
+    },
+}
+_RANKSNAXX_BRAND_V2["experiment_metadata"] = {
+    **deepcopy(_RANKSNAXX_BRAND_V1["experiment_metadata"]),
+    "supersedes_brand_version": 1,
+    "change": "activate_host_emotes_v1",
+}
+
+
 def channel_01_brand_v1() -> ChannelBrandContract:
     """Historical pre-name contract kept for production reproducibility."""
     return ChannelBrandContract.model_validate(deepcopy(_CHANNEL_01_BRAND_V1))
@@ -148,6 +171,11 @@ def channel_01_brand_v1() -> ChannelBrandContract:
 
 def rank_snaxx_brand_v1() -> ChannelBrandContract:
     return ChannelBrandContract.model_validate(deepcopy(_RANKSNAXX_BRAND_V1))
+
+
+def rank_snaxx_brand_v2() -> ChannelBrandContract:
+    """Candidate v2; activate explicitly through channel brand versioning."""
+    return ChannelBrandContract.model_validate(deepcopy(_RANKSNAXX_BRAND_V2))
 
 
 def _identity_token(value: object) -> str:

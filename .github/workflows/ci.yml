@@ -52,6 +52,58 @@ jobs:
       - name: Test
         run: pytest -q
 
+      - name: Verify built-in brand assets through S3-compatible HTTP endpoint
+        env:
+          KATCHA_S3_ENDPOINT_URL: http://127.0.0.1:19000
+          KATCHA_S3_ACCESS_KEY: katcha
+          KATCHA_S3_SECRET_KEY: katcha-local-secret
+          KATCHA_S3_BUCKET: katcha-media
+          KATCHA_S3_REGION: us-east-1
+          KATCHA_S3_FORCE_PATH_STYLE: "true"
+        run: |
+          python -m pip install 'moto[server]>=5,<6'
+          moto_server -H 127.0.0.1 -p 19000 >/tmp/katcha-moto.log 2>&1 &
+          moto_pid=$!
+          trap 'kill "$moto_pid" >/dev/null 2>&1 || true' EXIT
+          for attempt in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:19000/ >/dev/null; then
+              break
+            fi
+            if [ "$attempt" -eq 30 ]; then
+              cat /tmp/katcha-moto.log
+              exit 1
+            fi
+            sleep 1
+          done
+          python - <<'PY'
+          import hashlib
+
+          from katcha.integrations.storage import ObjectStore
+          from katcha.services.brand_assets import BUILTIN_BRAND_ASSETS, seed_builtin_brand_assets
+
+          first = seed_builtin_brand_assets()
+          second = seed_builtin_brand_assets()
+          if first[0]["action"] != "seeded":
+              raise SystemExit(f"expected first seed to upload asset: {first}")
+          if second[0]["action"] != "verified":
+              raise SystemExit(f"expected second seed to verify existing asset: {second}")
+
+          asset = BUILTIN_BRAND_ASSETS[0]
+          store = ObjectStore()
+          stored = store.get_bytes(asset.storage_key)
+          digest = hashlib.sha256(stored).hexdigest()
+          if digest != asset.sha256:
+              raise SystemExit(
+                  f"stored brand asset checksum mismatch: expected {asset.sha256}, got {digest}"
+              )
+          stat = store.stat(asset.storage_key)
+          if stat["size_bytes"] != len(stored):
+              raise SystemExit("stored brand asset size mismatch")
+          print(
+              f"verified {asset.storage_key} sha256={digest} size={stat['size_bytes']}"
+          )
+          PY
+
       - name: Validate Compose
         env:
           KATCHA_ENV_FILE: .env.example
@@ -106,11 +158,11 @@ jobs:
       - name: Render and verify grounded thumbnail still
         run: node test/thumbnail-smoke.mjs
 
-      - name: Upload synthetic reaction previews
+      - name: Upload branded reaction previews
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: synthetic-reaction-previews
+          name: ranksnaxx-reaction-previews
           path: renderer/reaction-smoke-previews/
           if-no-files-found: ignore
           retention-days: 7

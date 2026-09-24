@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict';
+import {createHash} from 'node:crypto';
 import {execFile} from 'node:child_process';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import {promisify} from 'node:util';
-import zlib from 'node:zlib';
 import {bundle} from '@remotion/bundler';
 import {renderMedia, renderStill, selectComposition} from '@remotion/renderer';
 
@@ -14,60 +14,8 @@ const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'katcha-reaction-smoke-'
 const publicDir = path.join(tempDir, 'public');
 const fps = 30;
 const frames = {before: 6, during: 30, after: 66};
-
-function crc32(buffer) {
-  let crc = 0xffffffff;
-  for (const byte of buffer) {
-    crc ^= byte;
-    for (let bit = 0; bit < 8; bit++) {
-      crc = (crc >>> 1) ^ (crc & 1 ? 0xedb88320 : 0);
-    }
-  }
-  return (crc ^ 0xffffffff) >>> 0;
-}
-
-function chunk(type, bytes) {
-  const label = Buffer.from(type, 'ascii');
-  const header = Buffer.alloc(4);
-  header.writeUInt32BE(bytes.length);
-  const checksum = Buffer.alloc(4);
-  checksum.writeUInt32BE(crc32(Buffer.concat([label, bytes])));
-  return Buffer.concat([header, label, bytes, checksum]);
-}
-
-// A generated 128x128 RGBA cartoon face, NOT a branded character asset.
-function syntheticTransparentPng() {
-  const size = 128;
-  const pixels = Buffer.alloc(size * (size * 4 + 1));
-  for (let y = 0; y < size; y++) {
-    const row = y * (size * 4 + 1);
-    for (let x = 0; x < size; x++) {
-      const offset = row + 1 + x * 4;
-      const face = ((x - 64) / 51) ** 2 + ((y - 61) / 49) ** 2 < 1;
-      const eye = (((x - 45) / 6) ** 2 + ((y - 53) / 8) ** 2 < 1)
-        || (((x - 83) / 6) ** 2 + ((y - 53) / 8) ** 2 < 1);
-      const tear = (x > 38 && x < 51 || x > 77 && x < 90) && y > 63 && y < 102;
-      const mouth = ((x - 64) / 15) ** 2 + ((y - 82) / 9) ** 2 < 1;
-      const rgba = tear ? [80, 177, 255, 255]
-        : (eye || mouth) ? [29, 29, 48, 255]
-        : face ? [255, 201, 58, 255] : [0, 0, 0, 0];
-      for (let channel = 0; channel < 4; channel++) {
-        pixels[offset + channel] = rgba[channel];
-      }
-    }
-  }
-  const ihdr = Buffer.alloc(13);
-  ihdr.writeUInt32BE(size, 0);
-  ihdr.writeUInt32BE(size, 4);
-  ihdr[8] = 8;
-  ihdr[9] = 6; // RGBA
-  return Buffer.concat([
-    Buffer.from('89504e470d0a1a0a', 'hex'),
-    chunk('IHDR', ihdr),
-    chunk('IDAT', zlib.deflateSync(pixels)),
-    chunk('IEND', Buffer.alloc(0)),
-  ]);
-}
+const expectedReactionSha256 =
+  'bffb5df4269e0a02281268dfacab395070e9bc96596f31ba247b384f9eb06b36';
 
 function silenceWav() {
   const sampleRate = 16000;
@@ -90,8 +38,6 @@ function silenceWav() {
 }
 
 async function still({serveUrl, id, frame, showReaction}) {
-  // selectComposition freezes inputProps in composition.props. Re-select for
-  // each variant; passing a different flag to renderStill alone is not enough.
   const props = {showReaction};
   const composition = await selectComposition({serveUrl, id, inputProps: props});
   assert.equal(composition.props.showReaction, showReaction);
@@ -110,21 +56,30 @@ async function still({serveUrl, id, frame, showReaction}) {
 try {
   await fs.mkdir(publicDir, {recursive: true});
   await fs.mkdir(outputDir, {recursive: true});
-  await fs.writeFile(path.join(publicDir, 'test-only-reaction.png'), syntheticTransparentPng());
+
+  const reactionSource = path.resolve(
+    'assets/ranksnaxx/reactions/host_emotes/v1/meme_cry.png',
+  );
+  const reactionBytes = await fs.readFile(reactionSource);
+  const reactionSha256 = createHash('sha256').update(reactionBytes).digest('hex');
+  assert.equal(reactionSha256, expectedReactionSha256);
+  await fs.writeFile(path.join(publicDir, 'ranksnaxx-meme-cry.png'), reactionBytes);
   await fs.writeFile(path.join(publicDir, 'silence.wav'), silenceWav());
+
   await exec('ffmpeg', [
     '-hide_banner', '-loglevel', 'error', '-y',
     '-f', 'lavfi', '-i', 'color=c=0x294e64:s=540x960:r=30:d=2.7',
     '-c:v', 'libx264', '-preset', 'ultrafast', '-pix_fmt', 'yuv420p',
     '-an', path.join(publicDir, 'synthetic-source.mp4'),
   ]);
+
   const serveUrl = await bundle({
     entryPoint: path.resolve('test/reaction-smoke-entry.jsx'),
     publicDir,
     outDir: path.join(tempDir, 'bundle'),
   });
 
-  for (const id of ['SyntheticShort', 'SyntheticRanked']) {
+  for (const id of ['BrandedShort', 'BrandedRanked']) {
     const composition = await selectComposition({serveUrl, id, inputProps: {showReaction: true}});
     for (const [phase, frame] of Object.entries(frames)) {
       const [enabled, disabled] = await Promise.all([
@@ -165,7 +120,9 @@ try {
     assert.ok(Number(probe.format.duration) <= 2.9);
     console.log(`${id}: encoded H.264 MP4, ${probe.format.duration}s`);
   }
-  console.log('PASS: both real compositions encode and obey reaction timing.');
+  console.log(
+    'PASS: both production compositions encode with the checksum-pinned RankSnaxx reaction asset.',
+  );
 } finally {
   await fs.rm(tempDir, {recursive: true, force: true});
 }

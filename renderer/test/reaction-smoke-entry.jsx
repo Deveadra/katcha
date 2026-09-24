@@ -3,17 +3,16 @@ import {Composition, registerRoot, staticFile} from 'remotion';
 import {RankedEpisodeVideo} from '../src/ranked-episode-video.jsx';
 import {ShortVideo} from '../src/short-video.jsx';
 
-// Test-only synthetic assets. No channel artwork or source clips are committed.
 const fps = 30;
 const width = 540;
 const height = 960;
 const duration = 2.7;
 const sourceUrl = staticFile('synthetic-source.mp4');
 const audioUrl = staticFile('silence.wav');
-const reactionUrl = staticFile('test-only-reaction.png');
+const reactionUrl = staticFile('ranksnaxx-meme-cry.png');
 
 const brand = {
-  brand_key: 'synthetic_test_channel',
+  brand_key: 'ranksnaxx',
   version: 1,
   palette: {
     ink: '#101216',
@@ -33,12 +32,12 @@ const brand = {
 };
 
 const reaction = {
-  id: 'synthetic-meme-cry',
+  id: 'ranksnaxx-meme-cry',
   asset_key: 'meme_cry',
   brand_key: brand.brand_key,
-  pack_key: 'test_only',
+  pack_key: 'host_emotes',
   pack_version: 1,
-  storage_key: 'brands/synthetic_test_channel/reactions/test_only/v1/meme_cry.png',
+  storage_key: 'brands/ranksnaxx/reactions/host_emotes/v1/meme_cry.png',
   url: reactionUrl,
   start_seconds: 0.65,
   duration_seconds: 1.0,
@@ -107,7 +106,7 @@ const FixtureRanked = ({showReaction = true}) => (
 const Root = () => (
   <>
     <Composition
-      id="SyntheticShort"
+      id="BrandedShort"
       component={FixtureShort}
       defaultProps={{showReaction: true}}
       durationInFrames={Math.ceil(duration * fps)}
@@ -116,7 +115,7 @@ const Root = () => (
       height={height}
     />
     <Composition
-      id="SyntheticRanked"
+      id="BrandedRanked"
       component={FixtureRanked}
       defaultProps={{showReaction: true}}
       durationInFrames={Math.ceil(duration * fps)}
