@@ -18,6 +18,7 @@ from katcha.services.trends import (
     create_watch_profile,
     latest_evidence_packet,
     list_opportunities,
+    list_signals,
     register_signal,
 )
 from katcha.trend_models import (
@@ -104,12 +105,21 @@ class TrendSignalResponse(BaseModel):
     external_id: str
     observation_key: str
     source_kind: str
+    source_name: str | None
     independence_key: str
     canonical_url: str | None
+    title: str | None
+    body_excerpt: str | None
+    author: str | None
+    community: str | None
+    language: str | None
+    region: str | None
     observed_at: datetime
     published_at: datetime | None
     metrics: dict[str, float]
     media_refs: list[dict[str, object]]
+    content_fingerprint: str | None
+    signal_metadata: dict[str, object]
 
 
 class TrendRefreshRequest(BaseModel):
@@ -239,6 +249,30 @@ def ingest_trend_signal(request: TrendSignalRequest) -> TrendSignal:
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.get(
+    "/trends/signals",
+    response_model=list[TrendSignalResponse],
+)
+def get_trend_signals(
+    provider_key: str | None = Query(default=None, min_length=1, max_length=64),
+    source_kind: str | None = Query(default=None, min_length=1, max_length=64),
+    language: str | None = Query(default=None, min_length=1, max_length=32),
+    region: str | None = Query(default=None, min_length=1, max_length=64),
+    topic_id: uuid.UUID | None = Query(default=None),
+    before: datetime | None = Query(default=None),
+    limit: int = Query(default=100, ge=1, le=250),
+) -> list[TrendSignal]:
+    return list_signals(
+        provider_key=provider_key,
+        source_kind=source_kind,
+        language=language,
+        region=region,
+        topic_id=topic_id,
+        before=before,
+        limit=limit,
+    )
 
 
 @router.post(

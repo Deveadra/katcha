@@ -35,6 +35,21 @@ from katcha.trends.scoring import (
     score_topic,
 )
 
+_CONFIDENCE_CHANGE_THRESHOLD = 0.10
+_RIGHTS_READY = {
+    "cc0",
+    "cc_by",
+    "cleared",
+    "direct_permission",
+    "green",
+    "licensed",
+    "owned",
+    "public_domain",
+    "qualified",
+}
+_RIGHTS_REVIEW = {"fair_use_candidate", "review_required", "yellow"}
+_RIGHTS_BLOCKED = {"blocked", "red", "replace_required"}
+
 
 def _utc(value: datetime | None = None) -> datetime:
     value = value or datetime.now(UTC)
@@ -298,6 +313,78 @@ def register_signal(
         return signal
 
 
+def _material_confidence_change(previous: float, current: float) -> bool:
+    delta = abs(Decimal(str(current)) - Decimal(str(previous)))
+    return delta >= Decimal(str(_CONFIDENCE_CHANGE_THRESHOLD))
+
+
+def _rights_readiness(signals: list[TrendSignal]) -> float:
+    """Diagnostic only; never grants permission or changes the popularity score."""
+    values: list[float] = []
+    for signal in signals:
+        for media in signal.media_refs or []:
+            if not isinstance(media, dict):
+                continue
+            raw = (
+                media.get("rights_status")
+                or media.get("rights_lane")
+                or media.get("gate_status")
+                or media.get("reuse_permission")
+            )
+            status = str(raw or "").strip().casefold()
+            if status in _RIGHTS_READY:
+                values.append(1.0)
+            elif status in _RIGHTS_REVIEW:
+                values.append(0.5)
+            elif status in _RIGHTS_BLOCKED or status in {"", "unknown", "unassessed"}:
+                values.append(0.0)
+            else:
+                values.append(0.0)
+    if not values:
+        return 0.0
+    return round(sum(values) / len(values), 6)
+
+
+def list_signals(
+    *,
+    provider_key: str | None = None,
+    source_kind: str | None = None,
+    language: str | None = None,
+    region: str | None = None,
+    topic_id: uuid.UUID | None = None,
+    before: datetime | None = None,
+    limit: int = 100,
+) -> list[TrendSignal]:
+    bounded = max(1, min(int(limit), 250))
+    with session_scope() as session:
+        stmt = select(TrendSignal)
+        if topic_id is not None:
+            stmt = stmt.join(
+                TrendTopicSignal,
+                TrendTopicSignal.trend_signal_id == TrendSignal.id,
+            ).where(TrendTopicSignal.trend_topic_id == topic_id)
+        if provider_key:
+            stmt = stmt.where(
+                TrendSignal.provider_key == provider_key.strip().casefold()
+            )
+        if source_kind:
+            stmt = stmt.where(
+                TrendSignal.source_kind == source_kind.strip().casefold()
+            )
+        if language:
+            stmt = stmt.where(TrendSignal.language == language.strip().casefold())
+        if region:
+            stmt = stmt.where(TrendSignal.region == region.strip().casefold())
+        if before is not None:
+            stmt = stmt.where(TrendSignal.observed_at < _utc(before))
+        return list(
+            session.scalars(
+                stmt.order_by(TrendSignal.observed_at.desc(), TrendSignal.id.desc())
+                .limit(bounded)
+            )
+        )
+
+
 def _signals_for_topic(
     topic_id: uuid.UUID,
     *,
@@ -537,11 +624,15 @@ def refresh_channel_trends(
             ),
             now=now,
         )
+        components = {
+            **result.components,
+            "rights_readiness": _rights_readiness(signals),
+        }
         calibrated_value, calibration_version, calibration_metadata = calibrated_score(
             channel_profile_id,
             score=result.opportunity_score,
             confidence=result.confidence,
-            components=result.components,
+            components=components,
         )
         with session_scope() as session:
             opportunity = session.scalar(
@@ -552,6 +643,15 @@ def refresh_channel_trends(
                 )
             )
             if opportunity is None:
+                prior = session.scalar(
+                    select(TrendOpportunity)
+                    .where(
+                        TrendOpportunity.channel_profile_id == channel_profile_id,
+                        TrendOpportunity.trend_topic_id == topic.id,
+                    )
+                    .order_by(TrendOpportunity.created_at.desc())
+                    .limit(1)
+                )
                 opportunity = TrendOpportunity(
                     channel_profile_id=channel_profile_id,
                     trend_topic_id=topic.id,
@@ -569,7 +669,7 @@ def refresh_channel_trends(
                     calibration_metadata=calibration_metadata,
                     prediction_horizon_hours=DEFAULT_PREDICTION_HORIZON_HOURS,
                     expires_at=now + timedelta(hours=config["freshness"]),
-                    components=result.components,
+                    components=components,
                     reasons=list(result.reasons),
                     evidence_summary={
                         "signal_count": len(signals),
@@ -584,6 +684,30 @@ def refresh_channel_trends(
                 )
                 session.add(opportunity)
                 session.flush()
+                if prior is not None:
+                    old_confidence = float(prior.confidence)
+                    new_confidence = float(opportunity.confidence)
+                    delta = new_confidence - old_confidence
+                    if _material_confidence_change(old_confidence, new_confidence):
+                        session.add(
+                            DomainEvent(
+                                aggregate_type="trend_opportunity",
+                                aggregate_id=str(opportunity.id),
+                                event_type="trend.opportunity.confidence_changed",
+                                payload={
+                                    "trend_opportunity_id": str(opportunity.id),
+                                    "previous_trend_opportunity_id": str(prior.id),
+                                    "channel_profile_id": str(channel_profile_id),
+                                    "trend_topic_id": str(topic.id),
+                                    "previous_confidence": old_confidence,
+                                    "confidence": new_confidence,
+                                    "delta": round(delta, 6),
+                                    "direction": "up" if delta > 0 else "down",
+                                    "threshold": _CONFIDENCE_CHANGE_THRESHOLD,
+                                    "run_key": run_key,
+                                },
+                            )
+                        )
             rows.append((opportunity, signals))
 
     rows.sort(
