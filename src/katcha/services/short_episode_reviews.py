@@ -9,6 +9,7 @@ from katcha.db import session_scope
 from katcha.domain import ReviewDecision
 from katcha.models import DomainEvent
 from katcha.services.acquisition import ClipAcquisitionState, assert_clip_production_eligible
+from katcha.services.render_recovery import assert_render_verified
 from katcha.short_episode_models import (
     ShortEpisode,
     ShortEpisodeAsset,
@@ -276,6 +277,7 @@ def review_short_episode(
             episode.stage = "editorial_approved"
             event_type = "short_episode.editorial_approved"
         elif decision == ReviewDecision.APPROVE:
+            assert_render_verified("short_episode", episode.id)
             episode.status = "approved"
             episode.stage = "render_approved"
             event_type = "short_episode.approved"
