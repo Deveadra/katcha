@@ -63,7 +63,10 @@ def list_reporting_jobs(
     jobs: list[dict[str, Any]] = []
     page_token: str | None = None
     for _ in range(max_pages):
-        params: dict[str, str | int] = {"pageSize": 100}
+        params: dict[str, str | int | bool] = {
+            "pageSize": 100,
+            "includeSystemManaged": True,
+        }
         if page_token:
             params["pageToken"] = page_token
         payload = _json_request(
