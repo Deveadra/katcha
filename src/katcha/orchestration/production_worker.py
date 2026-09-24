@@ -13,10 +13,15 @@ from katcha.orchestration.production_activities import (
     generate_narration_assets,
     generate_script_candidates,
     mark_production_failed,
+    production_edit_requirements_activity,
     render_short_activity,
     select_script_candidate,
 )
 from katcha.orchestration.production_workflows import ShortProductionWorkflow
+from katcha.orchestration.render_qc_activities import (
+    post_render_qc_activity,
+    pre_render_qc_activity,
+)
 from katcha.orchestration.short_episode_activities import (
     generate_episode_narration_assets,
     generate_episode_script_candidates,
@@ -50,6 +55,7 @@ async def main() -> None:
                 generate_script_candidates,
                 select_script_candidate,
                 generate_narration_assets,
+                production_edit_requirements_activity,
                 build_render_manifest_activity,
                 render_short_activity,
                 mark_production_failed,
@@ -58,6 +64,8 @@ async def main() -> None:
                 generate_episode_narration_assets,
                 build_ranked_episode_render_manifest_activity,
                 render_ranked_episode_activity,
+                pre_render_qc_activity,
+                post_render_qc_activity,
                 mark_short_episode_failed,
             ],
             activity_executor=activity_executor,
