@@ -128,6 +128,7 @@ def create_short_episode(request: CreateShortEpisodeRequest) -> ShortEpisodeDeta
             item_count=request.item_count,
             format_key=request.format_key,
             format_version=request.format_version,
+            edit_blueprint_key=request.edit_blueprint_key,
             idempotency_key=request.idempotency_key,
             trend_opportunity_id=request.trend_opportunity_id,
         )

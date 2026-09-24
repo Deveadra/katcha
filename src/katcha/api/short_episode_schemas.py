@@ -30,6 +30,7 @@ class CreateShortEpisodeRequest(BaseModel):
     item_count: Literal[3, 5, 7] | None = None
     format_key: str | None = Field(default=None, min_length=1, max_length=64)
     format_version: str | None = Field(default=None, min_length=1, max_length=32)
+    edit_blueprint_key: str | None = Field(default=None, min_length=1, max_length=96)
     idempotency_key: str | None = Field(default=None, max_length=256)
     trend_opportunity_id: UUID | None = None
 
@@ -87,6 +88,9 @@ class ShortEpisodeResponse(BaseModel):
     brand_key: str
     brand_version: int
     brand_snapshot: dict[str, object]
+    edit_blueprint_key: str | None
+    edit_blueprint_version: int | None
+    edit_blueprint_snapshot: dict[str, object] | None
     selected_script_id: UUID | None
     selected_voice_profile: str | None
     render_manifest: dict[str, object]

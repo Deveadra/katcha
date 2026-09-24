@@ -19,6 +19,7 @@ from katcha.editorial.rankings import (
 from katcha.models import Clip, ClipFeature, DomainEvent, SourceItem
 from katcha.services.acquisition import ClipAcquisitionState, assert_clip_production_eligible
 from katcha.services.channel_brands import brand_for_channel
+from katcha.services.channel_edit_blueprints import blueprint_for_channel
 from katcha.services.channel_profiles import ensure_active_profile
 from katcha.services.trend_editorial_context import freeze_trend_context
 from katcha.short_episode_models import ShortEpisode, ShortEpisodeItem
@@ -174,6 +175,7 @@ def register_short_episode(
     item_count: int | None = None,
     format_key: str | None = None,
     format_version: str | None = None,
+    edit_blueprint_key: str | None = None,
     idempotency_key: str | None = None,
     trend_opportunity_id: uuid.UUID | None = None,
     planning_metadata: dict[str, object] | None = None,
@@ -194,6 +196,13 @@ def register_short_episode(
         if existing is not None:
             if existing.trend_opportunity_id != trend_opportunity_id:
                 raise ValueError("idempotency key is already bound to another trend opportunity")
+            if (
+                edit_blueprint_key is not None
+                and existing.edit_blueprint_key != edit_blueprint_key
+            ):
+                raise ValueError(
+                    "idempotency key is already bound to another edit blueprint"
+                )
             session.expunge(existing)
             return existing
 
@@ -202,6 +211,11 @@ def register_short_episode(
         if trend_opportunity_id is not None:
             trend_context = freeze_trend_context(session, profile.id, trend_opportunity_id)
 
+        edit_blueprint, edit_blueprint_version = blueprint_for_channel(
+            session,
+            profile.id,
+            blueprint_key=edit_blueprint_key,
+        )
         brand, brand_version = brand_for_channel(session, profile.id)
         brand_format = brand.editorial_format
         contract = _resolve_format(
@@ -277,6 +291,9 @@ def register_short_episode(
             brand_key=brand.brand_key,
             brand_version=brand_version,
             brand_snapshot=brand.model_dump(mode="json"),
+            edit_blueprint_key=edit_blueprint.key,
+            edit_blueprint_version=edit_blueprint_version,
+            edit_blueprint_snapshot=edit_blueprint.model_dump(mode="json"),
             render_manifest={},
             estimated_cost_usd=Decimal("0"),
         )
@@ -302,6 +319,8 @@ def register_short_episode(
                     "workflow_id": workflow_id,
                     "brand_key": brand.brand_key,
                     "brand_version": brand_version,
+                    "edit_blueprint_key": edit_blueprint.key,
+                    "edit_blueprint_version": edit_blueprint_version,
                     "format_key": contract.key,
                     "format_version": contract.version,
                     "item_count": plan.item_count,

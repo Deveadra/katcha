@@ -59,6 +59,13 @@ class ShortEpisode(Base):
     brand_key: Mapped[str] = mapped_column(String(64), index=True)
     brand_version: Mapped[int] = mapped_column(Integer)
     brand_snapshot: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    edit_blueprint_key: Mapped[str | None] = mapped_column(
+        String(96), nullable=True, index=True
+    )
+    edit_blueprint_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    edit_blueprint_snapshot: Mapped[dict[str, Any] | None] = mapped_column(
+        JSON, nullable=True
+    )
     selected_script_id: Mapped[uuid.UUID | None] = mapped_column(
         Uuid(as_uuid=True),
         ForeignKey(

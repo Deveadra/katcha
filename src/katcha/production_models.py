@@ -50,6 +50,13 @@ class Production(Base):
     brand_key: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     brand_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
     brand_snapshot: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    edit_blueprint_key: Mapped[str | None] = mapped_column(
+        String(96), nullable=True, index=True
+    )
+    edit_blueprint_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    edit_blueprint_snapshot: Mapped[dict[str, Any] | None] = mapped_column(
+        JSON, nullable=True
+    )
     analysis_snapshot: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     selected_script_id: Mapped[uuid.UUID | None] = mapped_column(Uuid(as_uuid=True), nullable=True)
     selected_voice_profile: Mapped[str | None] = mapped_column(String(128), nullable=True)
