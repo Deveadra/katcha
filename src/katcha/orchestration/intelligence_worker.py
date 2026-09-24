@@ -15,10 +15,13 @@ from katcha.orchestration.intelligence_activities import (
     compute_channel_schedule_activity,
     derive_channel_observations_activity,
     train_channel_ranking_activity,
+    run_channel_trend_activation_activity,
 )
 from katcha.orchestration.intelligence_workflows import (
     ChannelIntelligenceRefreshWorkflow,
     ChannelIntelligenceScheduleWorkflow,
+    ChannelTrendActivationScheduleWorkflow,
+    ChannelTrendActivationWorkflow,
 )
 
 
@@ -39,6 +42,8 @@ async def main() -> None:
             workflows=[
                 ChannelIntelligenceRefreshWorkflow,
                 ChannelIntelligenceScheduleWorkflow,
+                ChannelTrendActivationWorkflow,
+                ChannelTrendActivationScheduleWorkflow,
             ],
             activities=[
                 derive_channel_observations_activity,
@@ -46,6 +51,7 @@ async def main() -> None:
                 compute_channel_economics_activity,
                 compute_channel_schedule_activity,
                 apply_channel_safety_demotion_activity,
+                run_channel_trend_activation_activity,
             ],
             activity_executor=activity_executor,
         )
