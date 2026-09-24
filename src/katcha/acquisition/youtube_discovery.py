@@ -31,7 +31,7 @@ def _provider_get_json(
     *,
     params: dict[str, object],
     operation: str,
-    provider_usage: dict[str, int],
+    provider_usage: dict[str, int] | None = None,
 ) -> dict[str, Any]:
     try:
         response = client.get(url, params=params)
