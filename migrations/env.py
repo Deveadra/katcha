@@ -7,12 +7,14 @@ from katcha import acquisition_models  # noqa: F401
 from katcha import brand_models  # noqa: F401
 from katcha import discovery_poll_models  # noqa: F401
 from katcha import discovery_trend_models  # noqa: F401
+from katcha import edit_blueprint_models  # noqa: F401
 from katcha import intelligence_models  # noqa: F401
 from katcha import longform_models  # noqa: F401
 from katcha import models  # noqa: F401
 from katcha import production_models  # noqa: F401
 from katcha import publishing_models  # noqa: F401
 from katcha import short_episode_models  # noqa: F401
+from katcha import trend_activation_models  # noqa: F401
 from katcha import trend_calibration_models  # noqa: F401
 from katcha import trend_models  # noqa: F401
 from katcha.config import get_settings
