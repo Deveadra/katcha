@@ -24,11 +24,11 @@ from katcha.orchestration.intelligence_workflows import (
 from katcha.orchestration.longform_workflows import LongformCompilationWorkflow
 from katcha.orchestration.packaging_workflows import YouTubePackagingActivationWorkflow
 from katcha.orchestration.production_workflows import ShortProductionWorkflow
-from katcha.orchestration.reach_workflows import YouTubeReachSyncWorkflow
 from katcha.orchestration.publishing_workflows import (
     YouTubeAnalyticsRefreshWorkflow,
     YouTubePublicationWorkflow,
 )
+from katcha.orchestration.reach_workflows import YouTubeReachSyncWorkflow
 from katcha.orchestration.short_episode_workflows import RankedShortEpisodeEditorialWorkflow
 from katcha.orchestration.trend_workflows import (
     ChannelTrendCalibrationWorkflow,
