@@ -17,6 +17,12 @@ from katcha.orchestration.production_activities import (
     select_script_candidate,
 )
 from katcha.orchestration.production_workflows import ShortProductionWorkflow
+from katcha.orchestration.render_automation_activities import (
+    advance_production_render_automation_activity,
+    advance_short_episode_editorial_automation_activity,
+    advance_short_episode_render_automation_activity,
+    start_registered_publication_activity,
+)
 from katcha.orchestration.short_episode_activities import (
     generate_episode_narration_assets,
     generate_episode_script_candidates,
@@ -53,6 +59,10 @@ async def main() -> None:
                 build_render_manifest_activity,
                 render_short_activity,
                 mark_production_failed,
+                advance_production_render_automation_activity,
+                advance_short_episode_editorial_automation_activity,
+                advance_short_episode_render_automation_activity,
+                start_registered_publication_activity,
                 generate_episode_script_candidates,
                 select_episode_script_candidate,
                 generate_episode_narration_assets,
