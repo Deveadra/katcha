@@ -10,6 +10,7 @@ from katcha import discovery_trend_models  # noqa: F401
 from katcha import intelligence_models  # noqa: F401
 from katcha import longform_models  # noqa: F401
 from katcha import models  # noqa: F401
+from katcha import opportunity_activation_models  # noqa: F401
 from katcha import production_models  # noqa: F401
 from katcha import publishing_models  # noqa: F401
 from katcha import short_episode_models  # noqa: F401
