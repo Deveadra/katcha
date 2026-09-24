@@ -11,6 +11,7 @@ import httpx
 
 from katcha.acquisition.adapters import DiscoveredCandidate, DiscoveryBatch
 from katcha.acquisition.http_errors import (
+    provider_payload_error,
     provider_response_error,
     provider_transport_error,
 )
@@ -224,7 +225,11 @@ def _fetch_feed(url: str) -> tuple[bytes, str, int]:
             if response.status_code in {301, 302, 303, 307, 308}:
                 location = response.headers.get("location")
                 if not location:
-                    raise ValueError("feed redirect did not include a location")
+                    raise provider_payload_error(
+                        "RSS/Atom",
+                        "redirect",
+                        provider_usage={"rss.http": request_count},
+                    )
                 current = urljoin(current, location)
                 continue
             if response.status_code >= 400:
@@ -235,7 +240,11 @@ def _fetch_feed(url: str) -> tuple[bytes, str, int]:
                     provider_usage={"rss.http": request_count},
                 )
             return response.content, str(response.url), request_count
-    raise ValueError("feed exceeded maximum redirect count")
+    raise provider_payload_error(
+        "RSS/Atom",
+        "redirect",
+        provider_usage={"rss.http": request_count},
+    )
 
 
 class RssAtomDiscoveryAdapter:
@@ -255,13 +264,20 @@ class RssAtomDiscoveryAdapter:
         exclude_terms = [str(value) for value in query.get("exclude_terms", [])]
         limit = min(max(int(query.get("limit", 100)), 1), 500)
         content, resolved_url, request_count = _fetch_feed(feed_url)
-        items = parse_feed(
-            content,
-            feed_url=resolved_url,
-            include_terms=include_terms,
-            exclude_terms=exclude_terms,
-            limit=limit,
-        )
+        try:
+            items = parse_feed(
+                content,
+                feed_url=resolved_url,
+                include_terms=include_terms,
+                exclude_terms=exclude_terms,
+                limit=limit,
+            )
+        except ValueError as exc:
+            raise provider_payload_error(
+                "RSS/Atom",
+                "parse",
+                provider_usage={"rss.http": request_count},
+            ) from exc
         return DiscoveryBatch(
             items=items,
             done=True,
