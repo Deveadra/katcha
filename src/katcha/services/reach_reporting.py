@@ -4,7 +4,7 @@ import csv
 import hashlib
 import io
 import uuid
-from datetime import UTC, date, datetime, time
+from datetime import UTC, date, datetime, time, timedelta
 from decimal import Decimal, InvalidOperation
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -165,7 +165,7 @@ def _attribution(
 ) -> tuple[str, uuid.UUID | None, dict[str, object]]:
     day_start = datetime.combine(report_date, time.min, PACIFIC).astimezone(UTC)
     day_end = datetime.combine(
-        report_date.fromordinal(report_date.toordinal() + 1),
+        report_date + timedelta(days=1),
         time.min,
         PACIFIC,
     ).astimezone(UTC)
@@ -181,9 +181,18 @@ def _attribution(
             .order_by(PublicationPackagingActivation.applied_at)
         )
     )
+    def applied_at_utc(row: PublicationPackagingActivation) -> datetime | None:
+        value = row.applied_at
+        if value is None:
+            return None
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=UTC)
+        return value.astimezone(UTC)
+
     within_day = [
         row for row in activations
-        if row.applied_at is not None and day_start <= row.applied_at < day_end
+        if applied_at_utc(row) is not None
+        and day_start <= applied_at_utc(row) < day_end
     ]
     if within_day:
         return (
@@ -199,7 +208,7 @@ def _attribution(
         )
     active_before = [
         row for row in activations
-        if row.applied_at is not None and row.applied_at < day_start
+        if applied_at_utc(row) is not None and applied_at_utc(row) < day_start
     ]
     if not active_before:
         return (
@@ -221,7 +230,11 @@ def _attribution(
             "day_start_utc": day_start.isoformat(),
             "day_end_utc": day_end.isoformat(),
             "activation_id": str(active.id),
-            "applied_at": active.applied_at.isoformat() if active.applied_at else None,
+            "applied_at": (
+                applied_at_utc(active).isoformat()
+                if applied_at_utc(active) is not None
+                else None
+            ),
         },
     )
 
