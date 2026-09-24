@@ -5,7 +5,10 @@ from datetime import datetime
 
 from temporalio import activity
 
-from katcha.orchestration.client import start_reach_sync_workflow
+from katcha.orchestration.client import (
+    start_packaging_activation_workflow,
+    start_reach_sync_workflow,
+)
 from katcha.services.channel_automation import maybe_auto_demote
 from katcha.services.channel_economics import compute_channel_economics
 from katcha.services.channel_learning import (
@@ -15,6 +18,12 @@ from katcha.services.channel_learning import (
 from katcha.services.channel_scheduling import compute_schedule_recommendations
 from katcha.services.edit_blueprint_performance import (
     refresh_edit_blueprint_performance,
+)
+from katcha.services.packaging_experiments import (
+    active_channel_experiments,
+    channel_experiment_candidates,
+    reconcile_packaging_experiment,
+    start_packaging_experiment,
 )
 from katcha.services.packaging_intelligence import refresh_packaging_intelligence
 from katcha.services.reach_cadence import eligible_reach_connection, reach_sync_identity
@@ -174,6 +183,65 @@ def refresh_packaging_intelligence_activity(
         "variant_window_count": snapshot.variant_window_count,
         "recommendation_count": snapshot.recommendation_count,
         "recommendation_status": snapshot.recommendation_status,
+    }
+
+
+@activity.defn
+async def run_packaging_experiments_activity(
+    channel_profile_id: str,
+) -> dict[str, object]:
+    profile_id = uuid.UUID(channel_profile_id)
+    reconciled: list[dict[str, object]] = []
+    for experiment in active_channel_experiments(profile_id):
+        action = reconcile_packaging_experiment(experiment.id)
+        if action.activation is not None and action.activation.status in {"queued", "running"}:
+            await start_packaging_activation_workflow(
+                str(action.activation.id),
+                action.activation.workflow_id,
+            )
+        reconciled.append(
+            {
+                "experiment_id": str(experiment.id),
+                "action": action.action,
+                "reason": action.reason,
+                "activation_id": (
+                    str(action.activation.id) if action.activation is not None else None
+                ),
+            }
+        )
+
+    if active_channel_experiments(profile_id):
+        return {
+            "channel_profile_id": channel_profile_id,
+            "started": False,
+            "reason": "active_experiment_exists",
+            "reconciled": reconciled,
+        }
+
+    for publication_id in channel_experiment_candidates(profile_id):
+        action = start_packaging_experiment(publication_id)
+        if action.action != "started" or action.experiment is None:
+            continue
+        if action.activation is None:
+            raise RuntimeError("started packaging experiment has no activation")
+        await start_packaging_activation_workflow(
+            str(action.activation.id),
+            action.activation.workflow_id,
+        )
+        return {
+            "channel_profile_id": channel_profile_id,
+            "started": True,
+            "experiment_id": str(action.experiment.id),
+            "activation_id": str(action.activation.id),
+            "reason": action.reason,
+            "reconciled": reconciled,
+        }
+
+    return {
+        "channel_profile_id": channel_profile_id,
+        "started": False,
+        "reason": "no_eligible_test_recommendation",
+        "reconciled": reconciled,
     }
 
 
