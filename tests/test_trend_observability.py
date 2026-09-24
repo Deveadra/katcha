@@ -29,7 +29,15 @@ def test_raw_signal_path_supports_bounded_read_and_ingest_methods() -> None:
         item["name"]: item
         for item in contract["get"]["parameters"]
     }
-    assert {"provider_key", "source_kind", "language", "region", "topic_id", "before", "limit"} <= set(params)
+    assert {
+        "provider_key",
+        "source_kind",
+        "language",
+        "region",
+        "topic_id",
+        "before",
+        "limit",
+    } <= set(params)
     limit_schema = params["limit"]["schema"]
     assert limit_schema["maximum"] == 250
     assert limit_schema["minimum"] == 1
