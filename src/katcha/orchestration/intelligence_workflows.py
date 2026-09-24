@@ -93,3 +93,58 @@ class ChannelIntelligenceScheduleWorkflow:
         workflow.continue_as_new(
             args=[channel_profile_id, interval_hours, cycles_before_continue]
         )
+
+
+async def _run_trend_activation(
+    channel_profile_id: str,
+    run_key: str,
+) -> dict[str, object]:
+    retry = RetryPolicy(
+        initial_interval=timedelta(seconds=5),
+        backoff_coefficient=2.0,
+        maximum_interval=timedelta(minutes=2),
+        maximum_attempts=3,
+    )
+    return await workflow.execute_activity(
+        "run_channel_trend_activation_activity",
+        args=[channel_profile_id, run_key],
+        start_to_close_timeout=timedelta(minutes=5),
+        retry_policy=retry,
+        result_type=dict[str, object],
+    )
+
+
+@workflow.defn
+class ChannelTrendActivationWorkflow:
+    @workflow.run
+    async def run(
+        self,
+        channel_profile_id: str,
+        run_key: str,
+    ) -> dict[str, object]:
+        return await _run_trend_activation(channel_profile_id, run_key)
+
+
+@workflow.defn
+class ChannelTrendActivationScheduleWorkflow:
+    @workflow.run
+    async def run(
+        self,
+        channel_profile_id: str,
+        interval_hours: int = 1,
+        cycles_before_continue: int = 120,
+    ) -> None:
+        if interval_hours < 1:
+            raise ValueError("trend activation interval must be at least one hour")
+        if cycles_before_continue < 1:
+            raise ValueError("cycles_before_continue must be positive")
+
+        for _ in range(cycles_before_continue):
+            now = workflow.now()
+            run_key = f"scheduled-{now.strftime('%Y%m%dT%H%M%SZ')}"
+            await _run_trend_activation(channel_profile_id, run_key)
+            await workflow.sleep(timedelta(hours=interval_hours))
+
+        workflow.continue_as_new(
+            args=[channel_profile_id, interval_hours, cycles_before_continue]
+        )

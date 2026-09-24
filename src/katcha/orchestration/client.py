@@ -17,6 +17,8 @@ from katcha.orchestration.discovery_workflows import DiscoveryRunWorkflow
 from katcha.orchestration.intelligence_workflows import (
     ChannelIntelligenceRefreshWorkflow,
     ChannelIntelligenceScheduleWorkflow,
+    ChannelTrendActivationScheduleWorkflow,
+    ChannelTrendActivationWorkflow,
 )
 from katcha.orchestration.longform_workflows import LongformCompilationWorkflow
 from katcha.orchestration.production_workflows import ShortProductionWorkflow
@@ -263,6 +265,43 @@ async def start_trend_calibration_workflow(
             args=[channel_profile_id, run_key, target_age_hours],
             id=workflow_id,
             task_queue=TREND_TASK_QUEUE,
+        )
+    except WorkflowAlreadyStartedError:
+        handle = client.get_workflow_handle(workflow_id)
+    return handle.id
+
+
+async def start_channel_trend_activation(
+    channel_profile_id: str,
+    workflow_id: str,
+    run_key: str,
+) -> str:
+    client = await get_temporal_client()
+    try:
+        handle = await client.start_workflow(
+            ChannelTrendActivationWorkflow.run,
+            args=[channel_profile_id, run_key],
+            id=workflow_id,
+            task_queue=INTELLIGENCE_TASK_QUEUE,
+        )
+    except WorkflowAlreadyStartedError:
+        handle = client.get_workflow_handle(workflow_id)
+    return handle.id
+
+
+async def start_channel_trend_activation_schedule(
+    channel_profile_id: str,
+    workflow_id: str,
+    *,
+    interval_hours: int = 1,
+) -> str:
+    client = await get_temporal_client()
+    try:
+        handle = await client.start_workflow(
+            ChannelTrendActivationScheduleWorkflow.run,
+            args=[channel_profile_id, interval_hours, 120],
+            id=workflow_id,
+            task_queue=INTELLIGENCE_TASK_QUEUE,
         )
     except WorkflowAlreadyStartedError:
         handle = client.get_workflow_handle(workflow_id)
