@@ -218,6 +218,11 @@ def _clone_voice_assets(session: object, parent: Production, child: Production) 
     )
     reusable = [asset for asset in assets if asset.kind.startswith("narration_")]
     if not reusable:
+        blueprint = dict(parent.edit_blueprint_snapshot or {})
+        narration = dict(blueprint.get("narration") or {})
+        if narration.get("mode") in {"text_only", "source_only"}:
+            child.selected_voice_profile = parent.selected_voice_profile
+            return
         raise ValueError("parent production has no narration assets to reuse")
     for source in reusable:
         session.add(
