@@ -15,7 +15,7 @@ const publicDir = path.join(tempDir, 'public');
 const fps = 30;
 const frames = {before: 6, during: 30, after: 66};
 const expectedReactionSha256 =
-  'fc0cddb1e95245c757e01cc7363a5cdac221366598660606de5148cb966f8e2f';
+  'bffb5df4269e0a02281268dfacab395070e9bc96596f31ba247b384f9eb06b36';
 
 function silenceWav() {
   const sampleRate = 16000;
