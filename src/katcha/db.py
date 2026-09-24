@@ -37,6 +37,7 @@ def init_db() -> None:
         brand_models,
         discovery_poll_models,
         discovery_trend_models,
+        edit_blueprint_models,
         intelligence_models,
         longform_models,
         models,
