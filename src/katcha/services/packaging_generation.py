@@ -312,7 +312,6 @@ def _openai_generate(
     usage = response.usage
     input_tokens = int(getattr(usage, "input_tokens", 0) or 0)
     output_tokens = int(getattr(usage, "output_tokens", 0) or 0)
-    result = PackagingCandidateSet.model_validate_json(response.output_text)
     _record_metadata_usage(
         target=target,
         input_tokens=input_tokens,
@@ -320,7 +319,7 @@ def _openai_generate(
         generation_id=generation_id,
         reservation_id=reservation_id,
     )
-    return result
+    return PackagingCandidateSet.model_validate_json(response.output_text)
 
 
 def _gemini_generate(
@@ -349,7 +348,6 @@ def _gemini_generate(
     output_tokens = int(getattr(usage, "candidates_token_count", 0) or 0) + int(
         getattr(usage, "thoughts_token_count", 0) or 0
     )
-    result = PackagingCandidateSet.model_validate_json(response.text)
     _record_metadata_usage(
         target=target,
         input_tokens=input_tokens,
@@ -357,7 +355,7 @@ def _gemini_generate(
         generation_id=generation_id,
         reservation_id=reservation_id,
     )
-    return result
+    return PackagingCandidateSet.model_validate_json(response.text)
 
 
 def _validate_candidates(
@@ -428,6 +426,24 @@ def generate_packaging_candidates(
         raise ValueError("generation_key must be between 1 and 160 characters")
     if candidate_count < 2 or candidate_count > 5:
         raise ValueError("candidate_count must be between 2 and 5")
+
+    existing = _load_generation(publication_id, key)
+    if existing is not None and existing.status == "completed":
+        bound_count = int(
+            (existing.generation_metadata or {}).get("candidate_count")
+            or len(existing.candidate_payload)
+        )
+        if bound_count != candidate_count:
+            raise ValueError("generation_key is already bound to another candidate_count")
+        with session_scope() as session:
+            variants = tuple(
+                session.get(PublicationPackagingVariant, uuid.UUID(value))
+                for value in existing.accepted_variant_ids
+            )
+            resolved = tuple(value for value in variants if value is not None)
+            for value in resolved:
+                session.expunge(value)
+        return PackagingGenerationResult(existing, resolved)
 
     profile_id, context, context_sha = compile_packaging_context(publication_id)
     with session_scope() as session:
