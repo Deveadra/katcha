@@ -9,11 +9,7 @@ from sqlalchemy import select
 
 from katcha.acquisition_models import DiscoveryCandidate
 from katcha.db import session_scope
-from katcha.editorial.rankings import (
-    RankingCandidateSignals,
-    build_ranking_episode_plan,
-    get_ranking_format,
-)
+from katcha.editorial.rankings import build_ranking_episode_plan, get_ranking_format
 from katcha.models import ClipFeature, DomainEvent, SourceItem
 from katcha.services.acquisition import latest_rights_assessment
 from katcha.services.channel_brands import brand_for_channel
@@ -189,7 +185,9 @@ def derive_episode_signals(
     }
 
 
-def _candidate_references(packet: TrendEvidencePacket) -> tuple[list[str], list[ActivationExclusion]]:
+def _candidate_references(
+    packet: TrendEvidencePacket,
+) -> tuple[list[str], list[ActivationExclusion]]:
     raw_refs: list[str] = []
     exclusions: list[ActivationExclusion] = []
     seen: set[str] = set()
