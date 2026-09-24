@@ -22,6 +22,7 @@ from katcha.services.acquisition import (
     assert_clip_production_eligible,
 )
 from katcha.services.channel_brands import brand_for_channel
+from katcha.services.channel_edit_blueprints import blueprint_for_channel
 
 PROMPT_VERSION = "short-script-v2"
 REGENERATE_STAGES = {"script", "voice", "render"}
@@ -83,6 +84,7 @@ def register_short_production(
     persona_key: str = "youth_host",
     idempotency_key: str | None = None,
     channel_profile_id: uuid.UUID | None = None,
+    edit_blueprint_key: str | None = None,
 ) -> Production:
     workflow_id = _workflow_id(clip_id, idempotency_key, channel_profile_id)
 
@@ -91,10 +93,22 @@ def register_short_production(
             select(Production).where(Production.workflow_id == workflow_id)
         )
         if existing is not None:
+            if (
+                edit_blueprint_key is not None
+                and existing.edit_blueprint_key != edit_blueprint_key
+            ):
+                raise ValueError(
+                    "idempotency key is already bound to another edit blueprint"
+                )
             session.expunge(existing)
             return existing
 
         _validate_channel_scope(session, channel_profile_id)
+        edit_blueprint, edit_blueprint_version = blueprint_for_channel(
+            session,
+            channel_profile_id,
+            blueprint_key=edit_blueprint_key,
+        )
         brand, brand_version = brand_for_channel(session, channel_profile_id)
         if channel_profile_id is None and persona_key != brand.persona.key:
             persona = get_persona(persona_key)
@@ -127,6 +141,9 @@ def register_short_production(
             brand_key=brand.brand_key,
             brand_version=brand_version,
             brand_snapshot=brand.model_dump(mode="json"),
+            edit_blueprint_key=edit_blueprint.key,
+            edit_blueprint_version=edit_blueprint_version,
+            edit_blueprint_snapshot=edit_blueprint.model_dump(mode="json"),
             analysis_snapshot=snapshot,
             estimated_cost_usd=Decimal("0"),
         )
@@ -145,6 +162,8 @@ def register_short_production(
                     ),
                     "brand_key": production.brand_key,
                     "brand_version": production.brand_version,
+                    "edit_blueprint_key": production.edit_blueprint_key,
+                    "edit_blueprint_version": production.edit_blueprint_version,
                     "generation": 1,
                     "acquisition_managed": acquisition_state.managed,
                     "rights_lane": acquisition_state.rights_lane,
@@ -264,6 +283,13 @@ def register_regeneration(
             brand_snapshot=(
                 dict(parent.brand_snapshot) if parent.brand_snapshot is not None else None
             ),
+            edit_blueprint_key=parent.edit_blueprint_key,
+            edit_blueprint_version=parent.edit_blueprint_version,
+            edit_blueprint_snapshot=(
+                dict(parent.edit_blueprint_snapshot)
+                if parent.edit_blueprint_snapshot is not None
+                else None
+            ),
             analysis_snapshot=child_snapshot,
             estimated_cost_usd=Decimal("0"),
         )
@@ -306,6 +332,8 @@ def register_regeneration(
                     ),
                     "brand_key": child.brand_key,
                     "brand_version": child.brand_version,
+                    "edit_blueprint_key": child.edit_blueprint_key,
+                    "edit_blueprint_version": child.edit_blueprint_version,
                     "regenerate_from": stage,
                     "acquisition_managed": acquisition_state.managed,
                     "rights_lane": acquisition_state.rights_lane,
