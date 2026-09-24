@@ -1,1 +1,26 @@
-import React from 'react';\nimport {Composition, registerRoot, staticFile} from 'remotion';\nimport {Thumbnail} from '../src/thumbnail.jsx';\n\nconst props = {\n  source: {url: staticFile('thumbnail-source.png'), fit: 'cover'},\n  text: {text: 'NO WAY THAT WORKED', position: 'bottom', max_lines: 2},\n  brand: {\n    palette: {ink: '#101216', paper: '#F6F3EC', signal_blue: '#5B6CFF'},\n    captions: {font_family: 'Arial, Helvetica, sans-serif'},\n  },\n};\n\nconst Root = () => (\n  <Composition\n    id="SyntheticThumbnail"\n    component={Thumbnail}\n    durationInFrames={1}\n    fps={30}\n    width={1280}\n    height={720}\n    defaultProps={props}\n  />\n);\n\nregisterRoot(Root);
+import React from 'react';
+import {Composition, registerRoot, staticFile} from 'remotion';
+import {Thumbnail} from '../src/thumbnail.jsx';
+
+const props = {
+  source: {url: staticFile('thumbnail-source.png'), fit: 'cover'},
+  text: {text: 'NO WAY THAT WORKED', position: 'bottom', max_lines: 2},
+  brand: {
+    palette: {ink: '#101216', paper: '#F6F3EC', signal_blue: '#5B6CFF'},
+    captions: {font_family: 'Arial, Helvetica, sans-serif'},
+  },
+};
+
+const Root = () => (
+  <Composition
+    id="SyntheticThumbnail"
+    component={Thumbnail}
+    durationInFrames={1}
+    fps={30}
+    width={1280}
+    height={720}
+    defaultProps={props}
+  />
+);
+
+registerRoot(Root);
