@@ -10,7 +10,7 @@ from typing import Any
 from sqlalchemy import func, select
 
 from katcha.db import session_scope
-from katcha.intelligence_models import ChannelEconomicsSnapshot, ChannelProfile
+from katcha.intelligence_models import ChannelProfile
 from katcha.models import DomainEvent
 from katcha.publishing_models import Publication, PublicationAnalyticsSnapshot
 from katcha.services.channel_economics import latest_economics_snapshot
@@ -363,7 +363,6 @@ def refresh_activation_performance(
         expiry_headroom_at_plan: list[float] = []
         expiry_headroom_at_publish: list[float] = []
         planned_episode_ids: set[uuid.UUID] = set()
-        published_publication_ids: set[uuid.UUID] = set()
         revenue = Decimal("0")
         latest_views = 0
         revenue_covered_publications = 0
@@ -414,7 +413,6 @@ def refresh_activation_performance(
             if published_at is None:
                 continue
             published_opportunities.add(opportunity_id)
-            published_publication_ids.add(publication.id)
             plan_publish_latency = _minutes(published_at, root_episode.created_at)
             opportunity_publish_latency = _minutes(
                 published_at,
