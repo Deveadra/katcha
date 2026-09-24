@@ -847,6 +847,24 @@ def record_poll_page_success(
         run.status = (
             DiscoveryRunStatus.COMPLETED.value if done else DiscoveryRunStatus.RUNNING.value
         )
+        session.add(
+            DomainEvent(
+                aggregate_type="discovery_run",
+                aggregate_id=str(run.id),
+                event_type=(
+                    "discovery_run.completed"
+                    if done
+                    else "discovery_run.page_completed"
+                ),
+                payload={
+                    "discovery_run_id": str(run.id),
+                    "candidate_count": max(int(candidate_count), 0),
+                    "done": done,
+                    "poll_attempt_id": str(attempt.id),
+                    "provider_usage": dict(provider_usage or {}),
+                },
+            )
+        )
         if done:
             run.completed_at = current
             outcome = "success" if attempt.candidate_count > 0 else "empty_success"
