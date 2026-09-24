@@ -101,3 +101,43 @@ Every newly planned channel production or short episode freezes:
 Changing the active channel blueprint only affects future work. Regeneration copies the parent's frozen blueprint snapshot, so historical content cannot silently drift into a new editing treatment. An explicit future re-edit operation can intentionally select a newer version without weakening that lineage rule.
 
 The control API exposes list, create, and activate operations under `/v1/channels/{channel_profile_id}/edit-blueprints`. Mutations serialize on the channel profile row and the database also owns partial unique indexes for active-family and default selection, preventing concurrent workers from producing two active identities.
+
+
+## Executable channel routing
+
+The production worker now treats the frozen Edit Blueprint as the editing dispatch boundary rather than assuming that every channel is a RankSnaxx-style host channel.
+
+- `persona_commentary` keeps the mature multi-beat narration renderer used by host-led content. It may synthesize several commentary segments, duck source audio, show captions, and apply persona visuals.
+- `header_explainer` uses the generic `BlueprintVideo` composition. It deliberately skips TTS, keeps the source audio, and turns the selected editorial angle into the persistent explanatory header required by the blueprint.
+- Future text/source-only blueprint families can reuse `BlueprintVideo` without inheriting RankSnaxx copy, voice, ranking behavior, or visual identity.
+- A production cannot silently switch blueprint or brand after creation: the frozen snapshots remain the source of truth for compilation and rendering.
+
+This separation is important economically as well as creatively. A text-led clip channel does not pay for narration it does not use, while a personality-led channel can preserve the richer commentary treatment that gives it a recognizable host identity.
+
+## Automated edit path
+
+For a single-clip production the current automated path is:
+
+```
+qualified opportunity / clip
+  -> frozen channel brand + edit blueprint
+  -> AI semantic editorial intent
+  -> conditional TTS (skipped for text/source-only blueprints)
+  -> deterministic render-plan compilation
+  -> pre-render asset + lineage validation
+  -> Remotion render
+  -> ffprobe duration/dimension verification
+  -> object-store existence/non-empty verification
+  -> review/automation gate
+  -> existing idempotent YouTube publication workflow
+```
+
+The renderer is not allowed to decide identity. It receives an already compiled plan and either executes it exactly or fails.
+
+## Failure behavior
+
+Local compilation/render work remains bounded by the production Temporal workflow retry policy. A missing source object, missing narration asset, blueprint mismatch, invalid header, duration violation, failed media probe, dimension mismatch, or empty uploaded object fails closed rather than producing a publishable render.
+
+A verified render carries verification metadata into the persisted render asset and emits a `production.render_verified` event. Publication still requires the existing approval, channel binding, credential, scheduling, and duplicate-upload gates.
+
+The next hardening slice is durable render revision/dead-letter state plus an AutomationLevel-aware approved-render handoff that can construct the publication request from a channel-owned packaging/schedule policy. That handoff must reuse the existing publication ledger rather than introduce a second uploader.
