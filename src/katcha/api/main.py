@@ -2,12 +2,17 @@ from __future__ import annotations
 
 import asyncio
 import uuid
+from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, Query, status
+from fastapi import Depends, FastAPI, HTTPException, Query, status
+from fastapi.responses import RedirectResponse
+from fastapi.staticfiles import StaticFiles
 from sqlalchemy import select, text
 
 from katcha import __version__
 from katcha.api.acquisition import router as acquisition_router
+from katcha.api.control_auth import require_control_token
+from katcha.api.explorer import router as explorer_router
 from katcha.api.intelligence import router as intelligence_router
 from katcha.api.schemas import (
     AnalysisRunResponse,
@@ -110,6 +115,7 @@ from katcha.services.sources import register_source
 
 app = FastAPI(
     title="Katcha API",
+    dependencies=[Depends(require_control_token)],
     version=__version__,
     description="Standalone control plane for Katcha media workflows.",
 )
@@ -117,6 +123,14 @@ app.include_router(acquisition_router)
 app.include_router(intelligence_router)
 app.include_router(short_episodes_router)
 app.include_router(trends_router)
+app.include_router(explorer_router)
+app.mount("/explorer/assets", StaticFiles(directory=Path(__file__).parents[1] / "web"),
+          name="explorer-assets")
+
+
+@app.get("/explorer", include_in_schema=False)
+def explorer_shell():
+    return RedirectResponse("/explorer/assets/index.html")
 
 
 def _require_ai_execution() -> None:

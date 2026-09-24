@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 
 from temporalio.client import Client
+from temporalio.common import WorkflowIDReusePolicy
 from temporalio.exceptions import WorkflowAlreadyStartedError
 
 from katcha.acquisition.runtime import DISCOVERY_TASK_QUEUE
@@ -126,6 +127,7 @@ async def start_short_episode_editorial_workflow(
             RankedShortEpisodeEditorialWorkflow.run,
             args=[episode_id, start_stage],
             id=workflow_id,
+            id_reuse_policy=WorkflowIDReusePolicy.REJECT_DUPLICATE,
             task_queue=settings.temporal_production_task_queue,
         )
     except WorkflowAlreadyStartedError:
