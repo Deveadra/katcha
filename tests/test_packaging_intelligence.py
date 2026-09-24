@@ -3,6 +3,7 @@ from __future__ import annotations
 import uuid
 from contextlib import contextmanager
 from datetime import UTC, date, datetime, timedelta
+from decimal import Decimal
 from types import SimpleNamespace
 
 import pytest
@@ -46,7 +47,7 @@ def _reach(
     variant_id: uuid.UUID | None,
     status: str = "variant",
     impressions: int | None = 1_000,
-    ctr: str | None = "0.06",
+    ctr: Decimal | None = Decimal("0.06"),
 ) -> PublicationReachObservation:
     return PublicationReachObservation(
         publication_id=uuid.uuid4(),
@@ -239,7 +240,7 @@ def test_exact_variant_window_is_measured_once_and_reused(
                     report_import_id=uuid.uuid4(),
                     report_date=date(2026, 9, 1) + timedelta(days=offset),
                     impressions=1_000,
-                    ctr="0.06",
+                    ctr=Decimal("0.06"),
                     attribution_status="variant",
                     packaging_variant_id=variant.id,
                 )
