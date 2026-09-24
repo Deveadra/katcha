@@ -15,6 +15,7 @@ from katcha.services.edit_blueprint_performance import (
     refresh_edit_blueprint_performance,
 )
 from katcha.services.packaging_intelligence import refresh_packaging_intelligence
+from katcha.services.reach_automation import automatic_reach_sync_request
 from katcha.services.trend_activation_performance import refresh_activation_performance
 from katcha.services.trend_auto_activation import run_autonomous_trend_activation
 
@@ -134,6 +135,39 @@ def refresh_edit_blueprint_performance_activity(
         "monetary_coverage": float(snapshot.monetary_coverage),
         "retention_coverage": float(snapshot.retention_coverage),
         "comparison_status": snapshot.comparison_status,
+    }
+
+
+@activity.defn
+async def trigger_daily_reach_sync_activity(
+    channel_profile_id: str,
+) -> dict[str, object]:
+    request = automatic_reach_sync_request(uuid.UUID(channel_profile_id))
+    if not request.should_start:
+        return {
+            "channel_profile_id": channel_profile_id,
+            "started": False,
+            "reason": request.reason,
+            "report_day": request.report_day,
+            "workflow_id": None,
+        }
+
+    if request.connection_id is None or request.workflow_id is None:
+        raise RuntimeError("automatic reach sync request is missing workflow identity")
+
+    from katcha.orchestration.client import start_reach_sync_workflow
+
+    workflow_id = await start_reach_sync_workflow(
+        str(request.connection_id),
+        request.workflow_id,
+    )
+    return {
+        "channel_profile_id": channel_profile_id,
+        "connection_id": str(request.connection_id),
+        "started": True,
+        "reason": request.reason,
+        "report_day": request.report_day,
+        "workflow_id": workflow_id,
     }
 
 
