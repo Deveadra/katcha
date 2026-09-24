@@ -252,7 +252,7 @@ def prepare_auto_publication(
             session.expunge(profile)
         try:
             publish_at = _schedule_slot(profile, now=now)
-        except ValueError as exc:
+        except Exception as exc:
             _record_blocked(
                 profile_id,
                 source_kind=source_kind,
@@ -268,19 +268,28 @@ def prepare_auto_publication(
         if source_kind == "production"
         else register_short_episode_publication
     )
-    publication = register(
-        source_id,
-        youtube_connection_id=youtube_connection_id,
-        title=title,
-        description=description,
-        tags=tags,
-        category_id=category_id,
-        privacy_status=privacy_status,
-        publish_at=publish_at,
-        notify_subscribers=notify_subscribers,
-        made_for_kids=made_for_kids,
-        contains_synthetic_media=contains_synthetic_media,
-    )
+    try:
+        publication = register(
+            source_id,
+            youtube_connection_id=youtube_connection_id,
+            title=title,
+            description=description,
+            tags=tags,
+            category_id=category_id,
+            privacy_status=privacy_status,
+            publish_at=publish_at,
+            notify_subscribers=notify_subscribers,
+            made_for_kids=made_for_kids,
+            contains_synthetic_media=contains_synthetic_media,
+        )
+    except ValueError as exc:
+        _record_blocked(
+            profile_id,
+            source_kind=source_kind,
+            source_id=source_id,
+            reason=str(exc),
+        )
+        return AutoPublicationDecision("blocked", str(exc))
 
     with session_scope() as session:
         session.add(
