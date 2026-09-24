@@ -9,6 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from katcha.orchestration.client import start_packaging_activation_workflow
 from katcha.packaging_models import (
+    PackagingCandidateGeneration,
     PublicationPackagingActivation,
     PublicationPackagingVariant,
 )
@@ -17,6 +18,12 @@ from katcha.services.packaging import (
     list_packaging_activations,
     list_packaging_variants,
     register_packaging_activation,
+)
+from katcha.services.packaging_generation import (
+    AmbiguousPackagingGeneration,
+    PackagingGenerationUnavailable,
+    generate_packaging_candidates,
+    list_packaging_generations,
 )
 
 router = APIRouter(prefix="/v1/publications", tags=["packaging"])
@@ -72,6 +79,37 @@ class PackagingActivationResponse(BaseModel):
     applied_at: datetime | None
 
 
+
+class GeneratePackagingCandidatesRequest(BaseModel):
+    generation_key: str = Field(min_length=1, max_length=160)
+    candidate_count: int = Field(default=3, ge=2, le=5)
+
+
+class PackagingGenerationResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    publication_id: uuid.UUID
+    generation_key: str
+    status: str
+    stage: str
+    prompt_version: str
+    context_sha256: str | None
+    provider: str | None
+    model: str | None
+    candidate_payload: list[dict[str, Any]]
+    accepted_variant_ids: list[str]
+    generation_metadata: dict[str, Any]
+    error: str | None
+    created_at: datetime
+    completed_at: datetime | None
+
+
+class PackagingGenerationDetailResponse(BaseModel):
+    generation: PackagingGenerationResponse
+    variants: list[PackagingVariantResponse]
+
+
 @router.post(
     "/{publication_id}/packaging/variants",
     response_model=PackagingVariantResponse,
@@ -104,6 +142,50 @@ def create_variant(
 def get_variants(publication_id: uuid.UUID) -> list[PublicationPackagingVariant]:
     try:
         return list_packaging_variants(publication_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.post(
+    "/{publication_id}/packaging/generations",
+    response_model=PackagingGenerationDetailResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def generate_candidates(
+    publication_id: uuid.UUID,
+    request: GeneratePackagingCandidatesRequest,
+) -> PackagingGenerationDetailResponse:
+    try:
+        result = generate_packaging_candidates(
+            publication_id,
+            generation_key=request.generation_key,
+            candidate_count=request.candidate_count,
+        )
+        return PackagingGenerationDetailResponse(
+            generation=PackagingGenerationResponse.model_validate(result.generation),
+            variants=[
+                PackagingVariantResponse.model_validate(variant)
+                for variant in result.variants
+            ],
+        )
+    except AmbiguousPackagingGeneration as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except PackagingGenerationUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except ValueError as exc:
+        code = 404 if "publication not found" in str(exc) else 409
+        raise HTTPException(status_code=code, detail=str(exc)) from exc
+
+
+@router.get(
+    "/{publication_id}/packaging/generations",
+    response_model=list[PackagingGenerationResponse],
+)
+def get_generations(
+    publication_id: uuid.UUID,
+) -> list[PackagingCandidateGeneration]:
+    try:
+        return list_packaging_generations(publication_id)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
