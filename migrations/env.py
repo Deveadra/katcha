@@ -13,6 +13,7 @@ from katcha import models  # noqa: F401
 from katcha import production_models  # noqa: F401
 from katcha import publishing_models  # noqa: F401
 from katcha import short_episode_models  # noqa: F401
+from katcha import trend_activation_models  # noqa: F401
 from katcha import trend_calibration_models  # noqa: F401
 from katcha import trend_models  # noqa: F401
 from katcha.config import get_settings
