@@ -11,6 +11,7 @@ from katcha.services.channel_learning import (
     train_channel_ranking,
 )
 from katcha.services.channel_scheduling import compute_schedule_recommendations
+from katcha.services.trend_activation_performance import refresh_activation_performance
 from katcha.services.trend_auto_activation import run_autonomous_trend_activation
 
 
@@ -108,3 +109,24 @@ def run_channel_trend_activation_activity(
         run_key=run_key,
     )
     return summary.as_dict()
+
+
+@activity.defn
+def refresh_trend_activation_performance_activity(
+    channel_profile_id: str,
+    run_key: str,
+) -> dict[str, object]:
+    snapshot = refresh_activation_performance(
+        uuid.UUID(channel_profile_id),
+        run_key=run_key,
+    )
+    return {
+        "channel_profile_id": channel_profile_id,
+        "performance_snapshot_id": str(snapshot.id),
+        "version": snapshot.version,
+        "decision_count": snapshot.decision_count,
+        "planned_count": snapshot.planned_count,
+        "published_count": snapshot.published_count,
+        "contribution_margin_usd": str(snapshot.contribution_margin_usd),
+        "recommendation_status": snapshot.recommendation_status,
+    }
