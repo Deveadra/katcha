@@ -75,19 +75,43 @@ function renderEpisodes() {
         return `<article class="item"><div><h3>${escapeHTML(row.premise)}</h3><p>Stage: ${escapeHTML(row.stage)} · ${escapeHTML(row.status)} · Updated ${escapeHTML(date(row.updated_at))}</p><p class="meta">${escapeHTML(row.edit_blueprint_key || "Channel default blueprint")}${row.edit_blueprint_version ? ` · v${escapeHTML(row.edit_blueprint_version)}` : ""} · Generation ${escapeHTML(row.generation)}</p>${row.error || attempt?.error ? `<p class="error-text">${escapeHTML(attempt?.error || row.error)}</p>` : ""}</div><div class="item-actions"><span class="pill ${type === "attention" ? "warning" : type === "done" ? "active" : ""}">${escapeHTML(recoverable ? "RENDER FAILED" : row.status.replaceAll("_", " ").toUpperCase())}</span>${recoverable ? `<button class="mini" data-recover="${escapeHTML(row.id)}">Recover render</button>` : ""}<button class="mini" data-attempts="${escapeHTML(row.id)}">Render details</button></div></article>`;
     }).join("") : `<div class="empty">${filter === "all" ? "No episodes in this channel yet." : "No episodes match this filter."}</div>`;
 }
-function previewableProductions() {
-    return state.productions.filter((row) =>
-        row.render_manifest?.version === "short-render-v1"
-        && Array.isArray(row.render_manifest?.overlays)
-        && row.render_manifest.overlays.length > 0
-    );
+function previewableSources() {
+    const ranked = state.episodes
+        .filter((row) =>
+            row.render_manifest?.version === "ranked-episode-render-v1"
+            && Array.isArray(row.render_manifest?.overlays)
+            && row.render_manifest.overlays.length > 0
+        )
+        .map((row) => ({
+            kind: "short_episode",
+            id: row.id,
+            label: row.premise || `Ranked episode ${String(row.id).slice(0, 8)}`,
+            status: row.status,
+            updated_at: row.updated_at,
+            manifest: row.render_manifest,
+        }));
+    const standalone = state.productions
+        .filter((row) =>
+            row.render_manifest?.version === "short-render-v1"
+            && Array.isArray(row.render_manifest?.overlays)
+            && row.render_manifest.overlays.length > 0
+        )
+        .map((row) => ({
+            kind: "production",
+            id: row.id,
+            label: row.render_manifest?.title_angle || `Standalone ${String(row.id).slice(0, 8)}`,
+            status: row.status,
+            updated_at: row.updated_at,
+            manifest: row.render_manifest,
+        }));
+    return [...ranked, ...standalone];
 }
 function renderBrandLab() {
     const active = state.brands.find((row) => row.is_active);
     const staged = state.brands.filter((row) => !row.is_active);
     const stagedVersions = new Set(state.brands.map((row) => row.version));
     const availableCandidates = state.candidates.filter((row) => !stagedVersions.has(row.version));
-    const productions = previewableProductions();
+    const sources = previewableSources();
     const preview = state.preview;
 
     const activeCard = active
@@ -97,18 +121,18 @@ function renderBrandLab() {
     const candidateCards = availableCandidates.map((row) => `<article class="brand-candidate"><div><strong>${escapeHTML(row.brand_key)} v${escapeHTML(row.version)}</strong><small>Built-in staged candidate · does not change the live channel</small></div><button class="mini" data-stage-brand="${escapeHTML(row.version)}">Stage candidate</button></article>`).join("");
 
     const stagedOptions = staged.map((row) => `<option value="${escapeHTML(row.version)}">${escapeHTML(row.brand_key)} v${escapeHTML(row.version)}</option>`).join("");
-    const productionOptions = productions.map((row) => {
-        const label = row.render_manifest?.title_angle || `Production ${String(row.id).slice(0, 8)}`;
-        return `<option value="${escapeHTML(row.id)}">${escapeHTML(label)} · ${escapeHTML(row.status)} · ${escapeHTML(date(row.updated_at))}</option>`;
+    const sourceOptions = sources.map((row) => {
+        const type = row.kind === "short_episode" ? "Ranked episode" : "Standalone Short";
+        return `<option value="${escapeHTML(`${row.kind}:${row.id}`)}">${escapeHTML(type)} · ${escapeHTML(row.label)} · ${escapeHTML(row.status)} · ${escapeHTML(date(row.updated_at))}</option>`;
     }).join("");
 
     let workflow = "";
-    if (staged.length && productions.length) {
-        workflow = `<div class="preview-controls"><label>STAGED BRAND<select id="preview-brand-version">${stagedOptions}</select></label><label>FROZEN PRODUCTION<select id="preview-production">${productionOptions}</select></label><button class="button primary" data-render-preview>Render preview ↗</button></div>`;
+    if (staged.length && sources.length) {
+        workflow = `<div class="preview-controls"><label>STAGED BRAND<select id="preview-brand-version">${stagedOptions}</select></label><label>FROZEN MEDIA SOURCE<select id="preview-source">${sourceOptions}</select></label><button class="button primary" data-render-preview>Render preview ↗</button></div>`;
     } else if (!staged.length) {
         workflow = '<div class="empty">Stage a brand candidate before rendering a preview.</div>';
     } else {
-        workflow = '<div class="empty">No channel production with a frozen short-render-v1 narration timeline is available yet.</div>';
+        workflow = '<div class="empty">No ranked episode or standalone Short with a frozen narration timeline is available yet.</div>';
     }
 
     let previewCard = "";
@@ -116,21 +140,28 @@ function renderBrandLab() {
         const verified = preview.status === "verified";
         const failed = preview.status === "failed";
         const verify = preview.verification || {};
-        previewCard = `<div class="preview-result"><div class="preview-meta"><div><span class="pill ${verified ? "active" : failed ? "warning" : ""}">${escapeHTML(preview.status.toUpperCase())}</span><strong>${escapeHTML(preview.brand_key)} v${escapeHTML(preview.brand_version)}</strong><small>Source production ${escapeHTML(preview.production_id)} · workflow attempt ${escapeHTML(preview.workflow_attempt)}</small></div><div class="preview-facts">${verify.duration_seconds ? `<span>${escapeHTML(Number(verify.duration_seconds).toFixed(2))}s</span>` : ""}${verify.width && verify.height ? `<span>${escapeHTML(verify.width)}×${escapeHTML(verify.height)}</span>` : ""}</div></div>${failed ? `<p class="error-text">${escapeHTML(preview.error || "Preview render failed")}</p>` : ""}${verified && state.previewUrl ? `<video id="brand-preview-video" controls playsinline preload="metadata" src="${escapeHTML(state.previewUrl)}"></video><div class="accept-row"><p>Inspect placement, caption clearance, animation rhythm and mobile-safe composition before activation.</p><button class="button secondary" data-activate-brand="${escapeHTML(preview.brand_version)}">Activate accepted brand v${escapeHTML(preview.brand_version)}</button></div>` : verified ? '<div class="empty">Verified. Loading private preview media…</div>' : failed ? "" : '<div class="empty">Renderer is working. This panel will update automatically.</div>'}</div>`;
+        previewCard = `<div class="preview-result"><div class="preview-meta"><div><span class="pill ${verified ? "active" : failed ? "warning" : ""}">${escapeHTML(preview.status.toUpperCase())}</span><strong>${escapeHTML(preview.brand_key)} v${escapeHTML(preview.brand_version)}</strong><small>Source ${escapeHTML(preview.short_episode_id ? `ranked episode ${preview.short_episode_id}` : `production ${preview.production_id}`)} · workflow attempt ${escapeHTML(preview.workflow_attempt)}</small></div><div class="preview-facts">${verify.duration_seconds ? `<span>${escapeHTML(Number(verify.duration_seconds).toFixed(2))}s</span>` : ""}${verify.width && verify.height ? `<span>${escapeHTML(verify.width)}×${escapeHTML(verify.height)}</span>` : ""}</div></div>${failed ? `<p class="error-text">${escapeHTML(preview.error || "Preview render failed")}</p>` : ""}${verified && state.previewUrl ? `<video id="brand-preview-video" controls playsinline preload="metadata" src="${escapeHTML(state.previewUrl)}"></video><div class="accept-row"><p>Inspect placement, caption clearance, animation rhythm and mobile-safe composition before activation.</p><button class="button secondary" data-activate-brand="${escapeHTML(preview.brand_version)}">Activate accepted brand v${escapeHTML(preview.brand_version)}</button></div>` : verified ? '<div class="empty">Verified. Loading private preview media…</div>' : failed ? "" : '<div class="empty">Renderer is working. This panel will update automatically.</div>'}</div>`;
     }
 
     $("brand-lab").innerHTML = `${activeCard}${candidateCards ? `<div class="candidate-list">${candidateCards}</div>` : ""}${workflow}${previewCard}`;
 }
-function previewCueForVersion(version) {
+function previewCueForVersion(version, source) {
     const brand = state.brands.find((row) => Number(row.version) === Number(version));
     const assets = brand?.contract?.visual?.reaction_pack?.assets;
     if (!assets || typeof assets !== "object") return null;
     const assetKey = Object.keys(assets)[0];
     if (!assetKey) return null;
+    const firstOverlay = source?.manifest?.overlays?.[0];
+    const lineRef = source?.kind === "short_episode"
+        ? Number(firstOverlay?.sequence)
+        : 0;
+    if (!Number.isInteger(lineRef) || lineRef < 0) {
+        throw new Error("Selected preview source has no valid narration cue reference.");
+    }
     return {
         id: `editing-preview-${assetKey}`,
         asset_key: assetKey,
-        line_ref: 0,
+        line_ref: lineRef,
         offset_seconds: 0.2,
         duration_seconds: 1.0,
         anchor: "bottom_right",
@@ -244,11 +275,18 @@ async function action(event) {
             await loadChannel(); message(`Brand v${candidate.version} staged. The live channel is unchanged.`);
         } else if (renderPreview) {
             const version = Number($("preview-brand-version").value);
-            const productionId = $("preview-production").value;
-            const reactionCue = previewCueForVersion(version);
+            const [sourceKind, sourceId] = $("preview-source").value.split(":", 2);
+            const source = previewableSources().find(
+                (row) => row.kind === sourceKind && String(row.id) === sourceId
+            );
+            if (!source) throw new Error("Selected preview source is no longer available.");
+            const reactionCue = previewCueForVersion(version, source);
+            const sourcePayload = sourceKind === "short_episode"
+                ? { short_episode_id: sourceId }
+                : { production_id: sourceId };
             state.preview = await api(channelPath(`/brands/${encodeURIComponent(version)}/previews`), {
                 method: "POST",
-                body: JSON.stringify({ production_id: productionId, reaction_cue: reactionCue }),
+                body: JSON.stringify({ ...sourcePayload, reaction_cue: reactionCue }),
             });
             renderBrandLab();
             const epoch = state.epoch;

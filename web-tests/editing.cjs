@@ -45,7 +45,8 @@ const v2 = {
 const verifiedPreview = {
     id: "preview-one",
     channel_profile_id: "one",
-    production_id: "production-one",
+    production_id: null,
+    short_episode_id: "episode-one",
     brand_version_id: "brand-v2",
     brand_key: "ranksnaxx",
     brand_version: 2,
@@ -74,7 +75,9 @@ const verifiedPreview = {
         const errors = []; page.on("pageerror", (error) => errors.push(error.message));
         await page.route("**/v1/**", (route) => {
             const request = route.request(), url = new URL(request.url());
-            requests.push({ path: url.pathname, method: request.method(), auth: request.headers().authorization, query: url.search });
+            let body = null;
+            try { body = request.postDataJSON(); } catch {}
+            requests.push({ path: url.pathname, method: request.method(), auth: request.headers().authorization, query: url.search, body });
             const channel = url.searchParams.get("channel_profile_id");
             const pathChannel = url.pathname.match(/^\/v1\/channels\/([^/]+)/)?.[1] || null;
             const fulfillJson = (data) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(data) });
@@ -82,7 +85,20 @@ const verifiedPreview = {
             if (url.pathname === "/v1/channels") return fulfillJson([{ id: "one", status: "active", profile_metadata: { name: "RankSnaxx" } }, { id: "two", status: "active", profile_metadata: { name: "Movie clips" } }]);
             if (url.pathname.endsWith("/edit-blueprints")) return fulfillJson([{ blueprint_key: "persona_commentary", version: 2, contract_version: "1.0.0", is_active: false, is_default: false, created_at: "2026-09-24T00:00:00Z" }]);
             if (url.pathname.endsWith("/performance/latest")) return fulfillJson(null);
-            if (url.pathname === "/v1/short-episodes") return fulfillJson(channel === "one" ? [{ id: "episode-one", premise: "Ranking clips", status: "render_failed", stage: "render", generation: 1, edit_blueprint_key: "persona_commentary", edit_blueprint_version: 2, updated_at: "2026-09-24T00:00:00Z" }] : []);
+            if (url.pathname === "/v1/short-episodes") return fulfillJson(channel === "one" ? [{
+                id: "episode-one",
+                premise: "Ranking clips",
+                status: "render_failed",
+                stage: "render",
+                generation: 1,
+                edit_blueprint_key: "persona_commentary",
+                edit_blueprint_version: 2,
+                render_manifest: {
+                    version: "ranked-episode-render-v1",
+                    overlays: [{ sequence: 4, text: "Opening narration", start_seconds: 0.4, duration_seconds: 1.5 }],
+                },
+                updated_at: "2026-09-24T00:00:00Z",
+            }] : []);
             if (url.pathname === "/v1/productions") return fulfillJson(channel === "one" ? [{
                 id: "production-one",
                 clip_id: "clip-one",
@@ -135,6 +151,10 @@ const verifiedPreview = {
         await page.getByText("No episodes in this channel yet.").waitFor();
         assert.equal(await page.locator("#count-attention").innerText(), "0");
 
+        const previewRequest = requests.find((request) => request.path.endsWith("/brands/2/previews"));
+        assert.equal(previewRequest.body.short_episode_id, "episode-one");
+        assert.equal(previewRequest.body.production_id, undefined);
+        assert.equal(previewRequest.body.reaction_cue.line_ref, 4);
         assert(requests.some((request) => request.path === "/v1/productions" && request.query.includes("channel_profile_id=one")));
         assert(requests.some((request) => request.path.endsWith("/brand-previews/preview-one/media") && request.auth === "Bearer fixture-token"));
         assert(requests.some((request) => request.path.endsWith("/brands/2/activate") && request.auth === "Bearer fixture-token"));
