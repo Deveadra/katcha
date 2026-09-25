@@ -203,7 +203,7 @@ def get_staged_brand_preview(
 def stream_staged_brand_preview(
     channel_profile_id: uuid.UUID,
     preview_id: uuid.UUID,
-):
+) -> StreamingResponse:
     try:
         row = get_brand_preview(channel_profile_id, preview_id)
     except ValueError as exc:
@@ -220,7 +220,9 @@ def stream_staged_brand_preview(
     headers = {
         "Content-Length": str(metadata["size_bytes"]),
         "Cache-Control": "private, max-age=60",
-        "Content-Disposition": f'inline; filename="brand-preview-{preview_id}.mp4"',
+        "Content-Disposition": (
+            f'inline; filename="brand-preview-{preview_id}.mp4"'
+        ),
     }
     return StreamingResponse(
         store.iter_bytes(row.output_key),
