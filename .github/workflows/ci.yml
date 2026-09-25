@@ -135,6 +135,8 @@ jobs:
   temporal-smoke:
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    env:
+      KATCHA_ENV_FILE: .env.example
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -153,18 +155,18 @@ jobs:
             fi
             if ! docker ps -a --format '{{.Names}} {{.Status}}' | grep -q '^katcha-temporal-1 '; then
               echo "Temporal container was not created"
-              docker compose --env-file .env.example logs temporal
+              docker logs katcha-temporal-1
               exit 1
             fi
             if docker ps -a --format '{{.Names}} {{.Status}}' | grep '^katcha-temporal-1 ' | grep -q 'Exited'; then
               echo "Temporal exited before becoming healthy"
-              docker compose --env-file .env.example logs temporal
+              docker logs katcha-temporal-1
               exit 1
             fi
             sleep 2
           done
           docker compose --env-file .env.example ps postgres temporal
-          docker compose --env-file .env.example logs temporal
+          docker logs katcha-temporal-1
           exit 1
 
       - name: Tear down Temporal smoke stack
