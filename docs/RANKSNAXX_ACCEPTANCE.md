@@ -59,28 +59,33 @@ python scripts/ranksnaxx_private_acceptance.py \
 
 ## Real render acceptance
 
-Use a new run key and explicitly approve the synthetic editorial fixture for rendering.
-This exercises the real RankSnaxx renderer and then stops at the render-review boundary;
+Resume the `episode_id` printed by the editorial acceptance and explicitly approve
+that same synthetic fixture for rendering. This avoids a second paid AI/TTS pass,
+exercises the real RankSnaxx renderer, and stops at the render-review boundary;
 nothing is uploaded to YouTube:
 
 ```bash
 python scripts/ranksnaxx_private_acceptance.py \
   --channel-profile-id YOUR_CHANNEL_PROFILE_ID \
-  --run-key live-render-001 \
+  --episode-id EPISODE_ID_FROM_THE_PREVIOUS_RUN \
   --approve-render
 ```
 
 ## Controlled private upload
 
-When you intentionally want the full live acceptance, use a new run key and the
-explicit private-upload approval:
+When you intentionally want the full live acceptance, resume the same rendered
+episode and pass the explicit private-upload approval:
 
 ```bash
 python scripts/ranksnaxx_private_acceptance.py \
   --channel-profile-id YOUR_CHANNEL_PROFILE_ID \
-  --run-key live-private-001 \
+  --episode-id EPISODE_ID_FROM_THE_PREVIOUS_RUN \
   --approve-private-upload
 ```
+
+You can also run the entire path in one command by omitting `--episode-id` and adding
+`--approve-private-upload`; the staged workflow above is preferred because it makes
+both review boundaries visible and avoids repeating paid AI/TTS work.
 
 The runner approves only the synthetic acceptance episode, then creates a publication
 with `privacy_status=private`, `notify_subscribers=false`, and
