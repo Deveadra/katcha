@@ -55,9 +55,11 @@ docker compose \
   up --build
 ```
 
-Katcha pins its local MinIO server and client images to known pullable Quay releases.
-Override them only when needed with `KATCHA_MINIO_IMAGE` and
-`KATCHA_MINIO_MC_IMAGE`.
+Katcha builds its local MinIO server from the pinned upstream source release in
+`Dockerfile.minio` instead of depending on retired public MinIO container images.
+Override the pinned source version only when needed with `KATCHA_MINIO_VERSION`.
+Bucket initialization is performed by Katcha itself through the S3 API, so no
+separate MinIO client image is required.
 
 4. API docs: `http://localhost:8000/docs`
 5. Temporal UI: `http://localhost:8080`
