@@ -7,8 +7,9 @@ from temporalio import activity
 from katcha.brand_preview_models import BrandPreviewRender
 from katcha.db import session_scope
 from katcha.models import DomainEvent
-from katcha.rendering.client import render_short
+from katcha.rendering.client import render_ranked_episode, render_short
 from katcha.rendering.manifest import ShortRenderManifest
+from katcha.rendering.ranked_episode_manifest import RankedEpisodeRenderManifest
 
 
 @activity.defn
@@ -25,13 +26,22 @@ def render_brand_preview_activity(preview_id: str) -> dict[str, object]:
                 "reused": True,
                 "verified": True,
             }
-        manifest = ShortRenderManifest.model_validate(row.render_manifest)
+        manifest_payload = dict(row.render_manifest)
+        manifest_version = manifest_payload.get("version")
+        if manifest_version == "short-render-v1":
+            manifest = ShortRenderManifest.model_validate(manifest_payload)
+            render_fn = render_short
+        elif manifest_version == "ranked-episode-render-v1":
+            manifest = RankedEpisodeRenderManifest.model_validate(manifest_payload)
+            render_fn = render_ranked_episode
+        else:
+            raise RuntimeError("brand preview has unsupported render manifest version")
         if not manifest.output_key.startswith("previews/brands/"):
             raise RuntimeError("brand preview output is outside preview namespace")
         row.status = "rendering"
         row.error = None
 
-    result = render_short(manifest)
+    result = render_fn(manifest)
     if not bool((result.metadata or {}).get("verified")):
         raise RuntimeError("brand preview renderer output failed verification")
 
@@ -56,7 +66,10 @@ def render_brand_preview_activity(preview_id: str) -> dict[str, object]:
                 payload={
                     "brand_preview_id": str(row.id),
                     "channel_profile_id": str(row.channel_profile_id),
-                    "production_id": str(row.production_id),
+                    "source_kind": (
+                        "production" if row.production_id is not None else "short_episode"
+                    ),
+                    "source_id": str(row.production_id or row.short_episode_id),
                     "brand_key": row.brand_key,
                     "brand_version": row.brand_version,
                     "output_key": result.output_key,
