@@ -267,43 +267,58 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         raise RuntimeError(f"Katcha backend is not ready: {readiness}")
 
     connection_id = _ensure_rank_snaxx(client, args.channel_profile_id)
-    clip_ids = [
-        _ensure_fixture_clip(client, index, args.timeout_seconds)
-        for index in range(5)
-    ]
-
-    candidates = [
-        {"clip_id": clip_id, **_fixture_signals(index)}
-        for index, clip_id in enumerate(clip_ids)
-    ]
-    run_key = args.run_key or datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     premise = args.premise
-    created = client.post(
-        "/v1/short-episodes",
-        {
-            "channel_profile_id": args.channel_profile_id,
-            "premise": premise,
-            "candidates": candidates,
-            "item_count": 5,
-            "idempotency_key": f"private-acceptance-{run_key}",
-        },
-    )
-    assert isinstance(created, dict)
-    episode = dict(created["episode"])
-    episode_id = str(episode["id"])
-    print(f"episode_id={episode_id}")
 
-    client.post(
-        f"/v1/short-episodes/{episode_id}/editorial",
-        {"start_stage": "script"},
-    )
+    if args.episode_id:
+        detail = client.get(f"/v1/short-episodes/{args.episode_id}")
+        if not isinstance(detail, dict):
+            raise RuntimeError("short episode detail response is invalid")
+        episode = dict(detail["episode"])
+        if str(episode.get("channel_profile_id")) != args.channel_profile_id:
+            raise RuntimeError("resume episode belongs to a different channel profile")
+        episode_id = str(episode["id"])
+        premise = str(episode.get("premise") or premise)
+        print(f"resuming episode_id={episode_id}")
+    else:
+        clip_ids = [
+            _ensure_fixture_clip(client, index, args.timeout_seconds)
+            for index in range(5)
+        ]
+        candidates = [
+            {"clip_id": clip_id, **_fixture_signals(index)}
+            for index, clip_id in enumerate(clip_ids)
+        ]
+        run_key = args.run_key or datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+        created = client.post(
+            "/v1/short-episodes",
+            {
+                "channel_profile_id": args.channel_profile_id,
+                "premise": premise,
+                "candidates": candidates,
+                "item_count": 5,
+                "idempotency_key": f"private-acceptance-{run_key}",
+            },
+        )
+        assert isinstance(created, dict)
+        episode = dict(created["episode"])
+        episode_id = str(episode["id"])
+        print(f"episode_id={episode_id}")
 
-    voiced = _wait(
-        "episode editorial",
-        lambda: dict(client.get(f"/v1/short-episodes/{episode_id}"))["episode"],
-        accepted={"voiced", "review", "editorial_approved", "rendered", "render_review"},
-        timeout_seconds=args.timeout_seconds,
-    )
+        client.post(
+            f"/v1/short-episodes/{episode_id}/editorial",
+            {"start_stage": "script"},
+        )
+
+    current_status = str(episode.get("status") or "")
+    if current_status in {"voiced", "review", "editorial_approved", "rendered", "render_review", "approved"}:
+        voiced = episode
+    else:
+        voiced = _wait(
+            "episode editorial",
+            lambda: dict(client.get(f"/v1/short-episodes/{episode_id}"))["episode"],
+            accepted={"voiced", "review", "editorial_approved", "rendered", "render_review", "approved"},
+            timeout_seconds=args.timeout_seconds,
+        )
 
     if not args.approve_render and not args.approve_private_upload:
         return {
@@ -312,7 +327,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             "status": voiced.get("status"),
             "stage": voiced.get("stage"),
             "next_action": (
-                "Run a new acceptance with --approve-render to exercise the renderer, "
+                f"Resume this episode with --episode-id {episode_id} --approve-render, "
                 "or --approve-private-upload for the full private publishing acceptance."
             ),
         }
@@ -327,12 +342,16 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             },
         )
 
-    rendered = _wait(
-        "episode render",
-        lambda: dict(client.get(f"/v1/short-episodes/{episode_id}"))["episode"],
-        accepted={"rendered", "render_review", "approved"},
-        timeout_seconds=args.timeout_seconds,
-    )
+    post_editorial = client.get(f"/v1/short-episodes/{episode_id}")
+    assert isinstance(post_editorial, dict)
+    rendered = dict(post_editorial["episode"])
+    if rendered.get("status") not in {"rendered", "render_review", "approved"}:
+        rendered = _wait(
+            "episode render",
+            lambda: dict(client.get(f"/v1/short-episodes/{episode_id}"))["episode"],
+            accepted={"rendered", "render_review", "approved"},
+            timeout_seconds=args.timeout_seconds,
+        )
     if not args.approve_private_upload:
         return {
             "channel_profile_id": args.channel_profile_id,
@@ -393,6 +412,13 @@ def parser() -> argparse.ArgumentParser:
     result.add_argument("--api-base", default="http://localhost:8000")
     result.add_argument("--token")
     result.add_argument("--run-key")
+    result.add_argument(
+        "--episode-id",
+        help=(
+            "Resume an existing RankSnaxx acceptance episode instead of generating "
+            "fixtures and creating a new episode."
+        ),
+    )
     result.add_argument(
         "--premise",
         default="Five synthetic test clips that keep escalating",
