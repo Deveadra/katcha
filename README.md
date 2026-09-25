@@ -58,9 +58,11 @@ docker compose -f docker-compose.yml -f docker-compose.intelligence.yml up --bui
 
 The editing control center uses the same control-plane token and channel-scoped APIs as
 the Trend Explorer. It shows versioned editing blueprints, measured performance,
-recent ranked episodes, render attempts, and dead-letter recovery. Blueprint
-activation changes the selected channel's default for future episodes; existing
-episodes keep their stored blueprint snapshots.
+recent ranked episodes, render attempts, and dead-letter recovery. Its staged-brand
+preview lab can render an inactive brand version against an existing frozen standalone
+Production, stream the verified preview privately for visual inspection, and activate
+the candidate only as a separate explicit operator action. Blueprint or brand activation
+changes future work only; existing productions keep their stored snapshots.
 
 See [`docs/TREND_EXPLORER.md`](docs/TREND_EXPLORER.md) for private access,
 shared AI-controller APIs, and evidence-grounded editorial handoff.
