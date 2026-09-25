@@ -310,7 +310,6 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                 raise RuntimeError(
                     f"requested trend opportunity is not activation-ready: {preview}"
                 )
-            opportunity = {"id": opportunity_id}
         else:
             opportunity, preview = _select_ready_opportunity(
                 client,
