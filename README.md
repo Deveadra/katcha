@@ -90,6 +90,8 @@ After connecting a YouTube channel, create a channel profile through `POST /v1/c
 
 For the first live channel acceptance, [`docs/RANKSNAXX_ACCEPTANCE.md`](docs/RANKSNAXX_ACCEPTANCE.md) provides a repeatable five-clip synthetic flow through discovery, rights gating, AI editorial, rendering, and an explicitly approved **private-only** YouTube upload.
 
+After that synthetic path is proven, [`docs/RANKSNAXX_LIVE_PRODUCTION.md`](docs/RANKSNAXX_LIVE_PRODUCTION.md) drives an activation-ready, rights-qualified real trend opportunity through the same RankSnaxx AI/editorial/render pipeline and keeps the first real YouTube upload **private-only** for review.
+
 ## Budget safety
 
 `KATCHA_AI_BUDGET_USD_MONTHLY` is the **deployment-wide emergency ceiling**.
