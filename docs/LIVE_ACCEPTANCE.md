@@ -46,11 +46,11 @@ katcha-acceptance-media-1 ... (healthy)
 The five internal URLs are:
 
 ```text
-http://acceptance-media:9911/clip-1.mp4
-http://acceptance-media:9911/clip-2.mp4
-http://acceptance-media:9911/clip-3.mp4
-http://acceptance-media:9911/clip-4.mp4
-http://acceptance-media:9911/clip-5.mp4
+http://acceptance-media:8090/clip-1.mp4
+http://acceptance-media:8090/clip-2.mp4
+http://acceptance-media:8090/clip-3.mp4
+http://acceptance-media:8090/clip-4.mp4
+http://acceptance-media:8090/clip-5.mp4
 ```
 
 They are reachable from Katcha's Docker network and do not need to be published to the
