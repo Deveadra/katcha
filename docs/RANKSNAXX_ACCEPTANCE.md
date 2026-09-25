@@ -47,14 +47,27 @@ Verify it:
 curl -fsS -o /dev/null http://localhost:8090/clip-1.mp4 && echo "acceptance media ready"
 ```
 
-## Render acceptance first
+## Editorial acceptance first
 
-Run without upload approval first. This performs discovery, rights qualification,
-ingest, analysis, AI scripting/TTS and stops at the review boundary:
+With no approval flag, the runner performs discovery, rights qualification, ingest,
+analysis, AI scripting/TTS and stops at the editorial review boundary:
 
 ```bash
 python scripts/ranksnaxx_private_acceptance.py \
   --channel-profile-id YOUR_CHANNEL_PROFILE_ID
+```
+
+## Real render acceptance
+
+Use a new run key and explicitly approve the synthetic editorial fixture for rendering.
+This exercises the real RankSnaxx renderer and then stops at the render-review boundary;
+nothing is uploaded to YouTube:
+
+```bash
+python scripts/ranksnaxx_private_acceptance.py \
+  --channel-profile-id YOUR_CHANNEL_PROFILE_ID \
+  --run-key live-render-001 \
+  --approve-render
 ```
 
 ## Controlled private upload
