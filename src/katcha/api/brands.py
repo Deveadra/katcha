@@ -5,7 +5,7 @@ from datetime import datetime
 
 from fastapi import APIRouter, HTTPException, status
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from katcha.brand_models import ChannelBrandVersion
 from katcha.brand_preview_models import BrandPreviewRender
@@ -71,8 +71,15 @@ class PreviewReactionCueRequest(BaseModel):
 class CreateBrandPreviewRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    production_id: uuid.UUID
+    production_id: uuid.UUID | None = None
+    short_episode_id: uuid.UUID | None = None
     reaction_cue: PreviewReactionCueRequest | None = None
+
+    @model_validator(mode="after")
+    def validate_source(self) -> CreateBrandPreviewRequest:
+        if (self.production_id is None) == (self.short_episode_id is None):
+            raise ValueError("exactly one preview source is required")
+        return self
 
 
 class BrandPreviewResponse(BaseModel):
@@ -80,7 +87,8 @@ class BrandPreviewResponse(BaseModel):
 
     id: uuid.UUID
     channel_profile_id: uuid.UUID
-    production_id: uuid.UUID
+    production_id: uuid.UUID | None
+    short_episode_id: uuid.UUID | None
     brand_version_id: uuid.UUID
     brand_key: str
     brand_version: int
@@ -167,6 +175,7 @@ async def create_brand_preview(
         row = register_brand_preview(
             channel_profile_id,
             production_id=request.production_id,
+            short_episode_id=request.short_episode_id,
             brand_version=version,
             reaction_cue=(
                 request.reaction_cue.model_dump(mode="json")
