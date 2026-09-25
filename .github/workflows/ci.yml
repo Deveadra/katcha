@@ -12,6 +12,20 @@ jobs:
   python:
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: katcha
+          POSTGRES_PASSWORD: katcha
+          POSTGRES_DB: katcha
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U katcha -d katcha"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -48,6 +62,11 @@ jobs:
       - name: Import smoke
         run: |
           python -c "import katcha.api.main; import katcha.api.trends; import katcha.orchestration.publishing_worker; import katcha.orchestration.longform_worker; import katcha.orchestration.intelligence_worker; import katcha.orchestration.discovery_worker; import katcha.orchestration.trend_worker"
+
+      - name: Apply migrations to fresh PostgreSQL
+        env:
+          KATCHA_DATABASE_URL: postgresql+psycopg://katcha:katcha@127.0.0.1:5432/katcha
+        run: alembic upgrade head
 
       - name: Test
         run: pytest -q
