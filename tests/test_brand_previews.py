@@ -1,6 +1,7 @@
+import inspect
 import uuid
 
-from katcha.api.main import app
+from katcha.api.main import app, list_productions
 from katcha.brand_preview_models import BrandPreviewRender
 from katcha.branding import rank_snaxx_brand_v1, rank_snaxx_brand_v2
 from katcha.rendering.manifest import ShortRenderManifest
@@ -110,3 +111,18 @@ def test_brand_preview_control_routes_are_mounted() -> None:
         "/v1/channels/{channel_profile_id}/brand-previews/{preview_id}"
         in paths
     )
+
+
+def test_brand_preview_media_route_is_mounted() -> None:
+    paths = set(app.openapi()["paths"])
+
+    assert (
+        "/v1/channels/{channel_profile_id}/brand-previews/{preview_id}/media"
+        in paths
+    )
+
+
+def test_production_listing_accepts_channel_scope() -> None:
+    parameters = inspect.signature(list_productions).parameters
+
+    assert "channel_profile_id" in parameters
