@@ -44,11 +44,20 @@ See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the full contracts and sa
 docker compose up --build
 ```
 
-3. To include the dedicated self-sustaining intelligence worker:
+3. To start the complete local backend, including discovery, trend, and intelligence workers:
 
 ```bash
-docker compose -f docker-compose.yml -f docker-compose.intelligence.yml up --build
+docker compose \
+  -f docker-compose.yml \
+  -f docker-compose.discovery.yml \
+  -f docker-compose.trends.yml \
+  -f docker-compose.intelligence.yml \
+  up --build
 ```
+
+Katcha pins its local MinIO server and client images to known pullable Quay releases.
+Override them only when needed with `KATCHA_MINIO_IMAGE` and
+`KATCHA_MINIO_MC_IMAGE`.
 
 4. API docs: `http://localhost:8000/docs`
 5. Temporal UI: `http://localhost:8080`
