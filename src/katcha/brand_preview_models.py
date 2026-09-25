@@ -6,6 +6,7 @@ from typing import Any
 
 from sqlalchemy import (
     JSON,
+    CheckConstraint,
     DateTime,
     ForeignKey,
     Integer,
@@ -28,6 +29,11 @@ class BrandPreviewRender(Base):
             "request_key",
             name="uq_brand_preview_channel_request",
         ),
+        CheckConstraint(
+            "(production_id IS NOT NULL AND short_episode_id IS NULL) OR "
+            "(production_id IS NULL AND short_episode_id IS NOT NULL)",
+            name="ck_brand_preview_exactly_one_source",
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -36,8 +42,11 @@ class BrandPreviewRender(Base):
     channel_profile_id: Mapped[uuid.UUID] = mapped_column(
         Uuid(as_uuid=True), ForeignKey("channel_profiles.id"), index=True
     )
-    production_id: Mapped[uuid.UUID] = mapped_column(
-        Uuid(as_uuid=True), ForeignKey("productions.id"), index=True
+    production_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("productions.id"), nullable=True, index=True
+    )
+    short_episode_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("short_episodes.id"), nullable=True, index=True
     )
     brand_version_id: Mapped[uuid.UUID] = mapped_column(
         Uuid(as_uuid=True), ForeignKey("channel_brand_versions.id"), index=True
