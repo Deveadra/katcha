@@ -81,6 +81,15 @@ class ObjectStore:
         response = self.client.get_object(Bucket=self.settings.s3_bucket, Key=key)
         return response["Body"].read()
 
+    def iter_bytes(self, key: str, chunk_size: int = 1024 * 1024):
+        response = self.client.get_object(Bucket=self.settings.s3_bucket, Key=key)
+        body = response["Body"]
+        try:
+            while chunk := body.read(chunk_size):
+                yield chunk
+        finally:
+            body.close()
+
     @staticmethod
     def raw_key(sha256: str, extension: str | None) -> str:
         suffix = f".{extension.lstrip('.')}" if extension else ""
