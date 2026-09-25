@@ -76,6 +76,7 @@ const verifiedPreview = {
             const request = route.request(), url = new URL(request.url());
             requests.push({ path: url.pathname, method: request.method(), auth: request.headers().authorization, query: url.search });
             const channel = url.searchParams.get("channel_profile_id");
+            const pathChannel = url.pathname.match(/^\/v1\/channels\/([^/]+)/)?.[1] || null;
             const fulfillJson = (data) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(data) });
 
             if (url.pathname === "/v1/channels") return fulfillJson([{ id: "one", status: "active", profile_metadata: { name: "RankSnaxx" } }, { id: "two", status: "active", profile_metadata: { name: "Movie clips" } }]);
@@ -95,7 +96,7 @@ const verifiedPreview = {
                 },
                 updated_at: "2026-09-25T00:00:00Z",
             }] : []);
-            if (url.pathname.endsWith("/brand-candidates")) return fulfillJson(channel === "one" && !brandStaged ? [{ brand_key: "ranksnaxx", version: 2, contract: v2Contract }] : []);
+            if (url.pathname.endsWith("/brand-candidates")) return fulfillJson(pathChannel === "one" && !brandStaged ? [{ brand_key: "ranksnaxx", version: 2, contract: v2Contract }] : []);
             if (url.pathname.endsWith("/brands") && request.method() === "GET") {
                 if (channel === "two" || url.pathname.includes("/two/")) return fulfillJson([]);
                 const rows = [{ ...v1, is_active: !brandActivated }];
