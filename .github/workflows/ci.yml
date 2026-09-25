@@ -113,28 +113,35 @@ jobs:
           docker compose --env-file .env.example -f docker-compose.yml -f docker-compose.discovery.yml config >/dev/null
           docker compose --env-file .env.example -f docker-compose.yml -f docker-compose.trends.yml config >/dev/null
 
-  compose-images:
+  storage-image:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Verify pinned MinIO images are pullable
+      - name: Build pinned local MinIO image
+        run: docker build -f Dockerfile.minio -t katcha-minio-ci .
+
+      - name: Verify MinIO starts and becomes healthy
         run: |
-          mapfile -t images < <(
-            docker compose --env-file .env.example -f docker-compose.yml config --images |
-              grep '^quay.io/minio/' |
-              sort -u
-          )
-          if [ "${#images[@]}" -ne 2 ]; then
-            printf 'expected 2 pinned MinIO images, found %s\n' "${#images[@]}"
-            printf '%s\n' "${images[@]}"
-            exit 1
-          fi
-          for image in "${images[@]}"; do
-            echo "Pulling $image"
-            docker pull "$image"
+          docker run -d \
+            --name katcha-minio-ci \
+            -p 19000:9000 \
+            -e MINIO_ROOT_USER=katcha \
+            -e MINIO_ROOT_PASSWORD=katcha-local-secret \
+            katcha-minio-ci
+          trap 'docker rm -f katcha-minio-ci >/dev/null 2>&1 || true' EXIT
+          for attempt in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:19000/minio/health/live >/dev/null; then
+              docker run --rm katcha-minio-ci --version
+              exit 0
+            fi
+            if [ "$attempt" -eq 30 ]; then
+              docker logs katcha-minio-ci
+              exit 1
+            fi
+            sleep 2
           done
 
   renderer:
