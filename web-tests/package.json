@@ -2,7 +2,7 @@
     "name": "katcha-explorer-tests",
     "private": true,
     "scripts": {
-        "test": "node explorer.cjs"
+        "test": "node explorer.cjs && node editing.cjs"
     },
     "devDependencies": {
         "playwright": "1.62.1"
