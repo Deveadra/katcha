@@ -256,6 +256,21 @@ def _episode_detail(client: ApiClient, episode_id: str) -> dict[str, Any]:
     return detail
 
 
+def _existing_episode_publication(
+    client: ApiClient,
+    episode_id: str,
+) -> dict[str, Any] | None:
+    publications = client.get("/v1/publications?limit=250")
+    if not isinstance(publications, list):
+        raise RuntimeError("publication list response is invalid")
+    for publication in publications:
+        if not isinstance(publication, dict):
+            continue
+        if str(publication.get("short_episode_id") or "") == episode_id:
+            return publication
+    return None
+
+
 def _resume_episode(
     client: ApiClient,
     channel_profile_id: str,
@@ -417,23 +432,41 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             },
         )
 
-    publication = client.post(
-        f"/v1/short-episodes/{episode_id}/publications",
-        _publication_payload(connection_id, premise),
-    )
-    if not isinstance(publication, dict):
-        raise RuntimeError("publication response is invalid")
-    publication_id = str(publication.get("id") or "")
-    if not publication_id:
-        raise RuntimeError("publication did not return an ID")
+    publication = _existing_episode_publication(client, episode_id)
+    if publication is not None:
+        if publication.get("privacy_status") != "private":
+            raise RuntimeError(
+                "existing episode publication is not private; refusing another upload"
+            )
+        if publication.get("status") in TERMINAL_FAILURES:
+            raise RuntimeError(
+                "existing private publication failed; use the explicit publication "
+                "retry/recovery path instead of creating a duplicate upload"
+            )
+        publication_id = str(publication.get("id") or "")
+        if not publication_id:
+            raise RuntimeError("existing publication is missing its ID")
+    else:
+        publication = client.post(
+            f"/v1/short-episodes/{episode_id}/publications",
+            _publication_payload(connection_id, premise),
+        )
+        if not isinstance(publication, dict):
+            raise RuntimeError("publication response is invalid")
+        publication_id = str(publication.get("id") or "")
+        if not publication_id:
+            raise RuntimeError("publication did not return an ID")
 
-    final = _wait(
-        "YouTube publication",
-        lambda: client.get(f"/v1/publications/{publication_id}"),
-        accepted={"private"},
-        timeout_seconds=args.timeout_seconds,
-        interval_seconds=5,
-    )
+    if publication.get("status") == "private":
+        final = publication
+    else:
+        final = _wait(
+            "YouTube publication",
+            lambda: client.get(f"/v1/publications/{publication_id}"),
+            accepted={"private"},
+            timeout_seconds=args.timeout_seconds,
+            interval_seconds=5,
+        )
     if final.get("privacy_status") != "private" or final.get("status") != "private":
         raise RuntimeError(f"live publication did not finish private: {final}")
 
