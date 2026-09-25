@@ -44,11 +44,22 @@ See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the full contracts and sa
 docker compose up --build
 ```
 
-3. To include the dedicated self-sustaining intelligence worker:
+3. To start the complete local backend, including discovery, trend, and intelligence workers:
 
 ```bash
-docker compose -f docker-compose.yml -f docker-compose.intelligence.yml up --build
+docker compose \
+  -f docker-compose.yml \
+  -f docker-compose.discovery.yml \
+  -f docker-compose.trends.yml \
+  -f docker-compose.intelligence.yml \
+  up --build
 ```
+
+Katcha builds its local MinIO server from the pinned upstream source release in
+`Dockerfile.minio` instead of depending on retired public MinIO container images.
+Override the pinned source version only when needed with `KATCHA_MINIO_VERSION`.
+Bucket initialization is performed by Katcha itself through the S3 API, so no
+separate MinIO client image is required.
 
 4. API docs: `http://localhost:8000/docs`
 5. Temporal UI: `http://localhost:8080`
