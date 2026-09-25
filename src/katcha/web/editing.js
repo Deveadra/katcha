@@ -251,10 +251,14 @@ async function action(event) {
                 body: JSON.stringify({ production_id: productionId, reaction_cue: reactionCue }),
             });
             renderBrandLab();
-            message("Brand preview queued. Production and publication lineage remain untouched.");
             const epoch = state.epoch;
-            if (state.preview.status === "verified") await loadPreviewMedia(state.preview, epoch);
-            else void watchPreview(state.preview.id, epoch);
+            if (state.preview.status === "verified") {
+                await loadPreviewMedia(state.preview, epoch);
+                if (epoch === state.epoch) message("Brand preview verified. Inspect the video before activation.");
+            } else {
+                message("Brand preview queued. Production and publication lineage remain untouched.");
+                void watchPreview(state.preview.id, epoch);
+            }
         } else if (activateBrand) {
             const version = Number(activateBrand.dataset.activateBrand);
             if (state.preview?.status !== "verified" || Number(state.preview.brand_version) !== version) {
