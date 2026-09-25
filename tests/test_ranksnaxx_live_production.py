@@ -109,3 +109,26 @@ def test_real_episode_refuses_acceptance_fixture_media() -> None:
 
     with pytest.raises(RuntimeError, match="synthetic acceptance fixture"):
         runner._assert_real_episode(detail)
+
+
+def test_existing_publication_is_reused_for_same_episode() -> None:
+    class PublicationClient:
+        def get(self, path: str):
+            assert path == "/v1/publications?limit=250"
+            return [
+                {"id": "other", "short_episode_id": "different"},
+                {
+                    "id": "publication-id",
+                    "short_episode_id": "episode-id",
+                    "privacy_status": "private",
+                    "status": "private",
+                },
+            ]
+
+    publication = runner._existing_episode_publication(
+        PublicationClient(),
+        "episode-id",
+    )
+
+    assert publication is not None
+    assert publication["id"] == "publication-id"
