@@ -1,4 +1,6 @@
+import hashlib
 import inspect
+import json
 import uuid
 
 import pytest
@@ -6,11 +8,13 @@ from pydantic import ValidationError
 
 from katcha.api.brands import CreateBrandPreviewRequest
 from katcha.api.main import app, list_productions
+from katcha.orchestration import brand_preview_activities
 from katcha.brand_preview_models import BrandPreviewRender
 from katcha.branding import rank_snaxx_brand_v1, rank_snaxx_brand_v2
 from katcha.rendering.manifest import ShortBrandSpec, ShortRenderManifest
 from katcha.rendering.ranked_episode_manifest import build_ranked_episode_manifest
 from katcha.services.brand_previews import (
+    _request_key,
     compile_brand_preview_manifest,
     compile_ranked_brand_preview_manifest,
 )
@@ -241,3 +245,33 @@ def test_preview_request_requires_exactly_one_source() -> None:
             production_id=production_id,
             short_episode_id=episode_id,
         )
+
+
+
+def test_production_preview_request_key_remains_backward_compatible() -> None:
+    source_id = uuid.uuid4()
+    cue = {"asset_key": "meme_cry", "line_ref": 0}
+    legacy_payload = {
+        "production_id": str(source_id),
+        "brand_version": 2,
+        "reaction_cue": cue,
+    }
+    expected = hashlib.sha256(
+        json.dumps(
+            legacy_payload,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+
+    assert _request_key("production", source_id, 2, cue) == expected
+    assert _request_key("short_episode", source_id, 2, cue) != expected
+
+
+def test_preview_activity_dispatches_both_render_manifest_families() -> None:
+    source = inspect.getsource(brand_preview_activities.render_brand_preview_activity)
+
+    assert '"short-render-v1"' in source
+    assert '"ranked-episode-render-v1"' in source
+    assert "render_fn = render_short" in source
+    assert "render_fn = render_ranked_episode" in source
