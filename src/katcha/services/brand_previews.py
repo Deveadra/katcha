@@ -28,12 +28,19 @@ def _request_key(
     brand_version: int,
     reaction_cue: dict[str, Any] | None,
 ) -> str:
-    payload = {
-        "source_kind": source_kind,
-        "source_id": str(source_id),
-        "brand_version": brand_version,
-        "reaction_cue": reaction_cue,
-    }
+    if source_kind == "production":
+        # Preserve P8.5/P8.6 request identity so deployed preview reuse stays idempotent.
+        payload = {
+            "production_id": str(source_id),
+            "brand_version": brand_version,
+            "reaction_cue": reaction_cue,
+        }
+    else:
+        payload = {
+            "short_episode_id": str(source_id),
+            "brand_version": brand_version,
+            "reaction_cue": reaction_cue,
+        }
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
 
