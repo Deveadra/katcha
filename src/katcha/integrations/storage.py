@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
@@ -81,7 +82,11 @@ class ObjectStore:
         response = self.client.get_object(Bucket=self.settings.s3_bucket, Key=key)
         return response["Body"].read()
 
-    def iter_bytes(self, key: str, chunk_size: int = 1024 * 1024):
+    def iter_bytes(
+        self,
+        key: str,
+        chunk_size: int = 1024 * 1024,
+    ) -> Iterator[bytes]:
         response = self.client.get_object(Bucket=self.settings.s3_bucket, Key=key)
         body = response["Body"]
         try:
