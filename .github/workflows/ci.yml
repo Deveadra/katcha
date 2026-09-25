@@ -131,6 +131,7 @@ jobs:
           docker compose --env-file .env.example -f docker-compose.yml -f docker-compose.intelligence.yml config >/dev/null
           docker compose --env-file .env.example -f docker-compose.yml -f docker-compose.discovery.yml config >/dev/null
           docker compose --env-file .env.example -f docker-compose.yml -f docker-compose.trends.yml config >/dev/null
+          docker compose --env-file .env.example -f docker-compose.yml -f docker-compose.acceptance.yml config >/dev/null
 
   temporal-smoke:
     runs-on: ubuntu-latest

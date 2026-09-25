@@ -1,0 +1,22 @@
+services:
+  acceptance-media:
+    build: .
+    command:
+      - /bin/sh
+      - -ec
+      - |
+        mkdir -p /tmp/katcha-acceptance
+        ffmpeg -hide_banner -loglevel error -y -f lavfi -i "testsrc2=size=720x1280:rate=30:duration=5" -f lavfi -i "sine=frequency=440:sample_rate=48000:duration=5" -shortest -vf "hue=h=0" -c:v libx264 -preset veryfast -pix_fmt yuv420p -c:a aac -movflags +faststart /tmp/katcha-acceptance/clip-1.mp4
+        ffmpeg -hide_banner -loglevel error -y -f lavfi -i "testsrc2=size=720x1280:rate=30:duration=5" -f lavfi -i "sine=frequency=550:sample_rate=48000:duration=5" -shortest -vf "hue=h=45" -c:v libx264 -preset veryfast -pix_fmt yuv420p -c:a aac -movflags +faststart /tmp/katcha-acceptance/clip-2.mp4
+        ffmpeg -hide_banner -loglevel error -y -f lavfi -i "testsrc2=size=720x1280:rate=30:duration=5" -f lavfi -i "sine=frequency=660:sample_rate=48000:duration=5" -shortest -vf "hue=h=90" -c:v libx264 -preset veryfast -pix_fmt yuv420p -c:a aac -movflags +faststart /tmp/katcha-acceptance/clip-3.mp4
+        ffmpeg -hide_banner -loglevel error -y -f lavfi -i "testsrc2=size=720x1280:rate=30:duration=5" -f lavfi -i "sine=frequency=770:sample_rate=48000:duration=5" -shortest -vf "hue=h=135" -c:v libx264 -preset veryfast -pix_fmt yuv420p -c:a aac -movflags +faststart /tmp/katcha-acceptance/clip-4.mp4
+        ffmpeg -hide_banner -loglevel error -y -f lavfi -i "testsrc2=size=720x1280:rate=30:duration=5" -f lavfi -i "sine=frequency=880:sample_rate=48000:duration=5" -shortest -vf "hue=h=180" -c:v libx264 -preset veryfast -pix_fmt yuv420p -c:a aac -movflags +faststart /tmp/katcha-acceptance/clip-5.mp4
+        python -m http.server 9911 --bind 0.0.0.0 --directory /tmp/katcha-acceptance
+    expose:
+      - "9911"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:9911/clip-1.mp4", "-o", "/dev/null"]
+      interval: 5s
+      timeout: 3s
+      start_period: 20s
+      retries: 30
