@@ -4,10 +4,12 @@ import uuid
 from datetime import datetime
 
 from fastapi import APIRouter, HTTPException, status
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from katcha.brand_models import ChannelBrandVersion
 from katcha.brand_preview_models import BrandPreviewRender
+from katcha.integrations.storage import ObjectStore
 from katcha.orchestration.client import start_brand_preview_workflow
 from katcha.services.brand_previews import get_brand_preview, register_brand_preview
 from katcha.services.channel_brands import (
@@ -193,6 +195,40 @@ def get_staged_brand_preview(
         return get_brand_preview(channel_profile_id, preview_id)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.get(
+    "/{channel_profile_id}/brand-previews/{preview_id}/media",
+)
+def stream_staged_brand_preview(
+    channel_profile_id: uuid.UUID,
+    preview_id: uuid.UUID,
+) -> StreamingResponse:
+    try:
+        row = get_brand_preview(channel_profile_id, preview_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    if row.status != "verified" or not row.output_key:
+        raise HTTPException(status_code=409, detail="brand preview is not verified")
+    if not row.output_key.startswith("previews/brands/"):
+        raise HTTPException(status_code=409, detail="brand preview media key is invalid")
+
+    store = ObjectStore()
+    if not store.exists(row.output_key):
+        raise HTTPException(status_code=404, detail="verified brand preview media is missing")
+    metadata = store.stat(row.output_key)
+    headers = {
+        "Content-Length": str(metadata["size_bytes"]),
+        "Cache-Control": "private, max-age=60",
+        "Content-Disposition": (
+            f'inline; filename="brand-preview-{preview_id}.mp4"'
+        ),
+    }
+    return StreamingResponse(
+        store.iter_bytes(row.output_key),
+        media_type=str(metadata.get("content_type") or "video/mp4"),
+        headers=headers,
+    )
 
 
 @router.post(
