@@ -305,15 +305,15 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         timeout_seconds=args.timeout_seconds,
     )
 
-    if not args.approve_private_upload:
+    if not args.approve_render and not args.approve_private_upload:
         return {
             "channel_profile_id": args.channel_profile_id,
             "episode_id": episode_id,
             "status": voiced.get("status"),
             "stage": voiced.get("stage"),
             "next_action": (
-                "Re-run with --approve-private-upload and a new --run-key to perform "
-                "the controlled review/render/private-upload acceptance."
+                "Run a new acceptance with --approve-render to exercise the renderer, "
+                "or --approve-private-upload for the full private publishing acceptance."
             ),
         }
 
@@ -333,6 +333,15 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         accepted={"rendered", "render_review", "approved"},
         timeout_seconds=args.timeout_seconds,
     )
+    if not args.approve_private_upload:
+        return {
+            "channel_profile_id": args.channel_profile_id,
+            "episode_id": episode_id,
+            "status": rendered.get("status"),
+            "stage": rendered.get("stage"),
+            "private_upload_started": False,
+        }
+
     if rendered.get("status") in {"rendered", "render_review"}:
         client.post(
             f"/v1/short-episodes/{episode_id}/review",
@@ -390,11 +399,20 @@ def parser() -> argparse.ArgumentParser:
     )
     result.add_argument("--timeout-seconds", type=int, default=1800)
     result.add_argument(
+        "--approve-render",
+        action="store_true",
+        help=(
+            "Explicitly approve the synthetic editorial review gate, render the episode, "
+            "and stop at the render-review boundary without uploading to YouTube."
+        ),
+    )
+    result.add_argument(
         "--approve-private-upload",
         action="store_true",
         help=(
             "Explicitly approve both synthetic acceptance review gates and upload the "
-            "verified render to the connected RankSnaxx channel as PRIVATE only."
+            "verified render to the connected RankSnaxx channel as PRIVATE only. This "
+            "also implies --approve-render."
         ),
     )
     return result
