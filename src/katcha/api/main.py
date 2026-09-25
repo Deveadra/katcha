@@ -296,11 +296,14 @@ async def create_production(
 def list_productions(
     limit: int = Query(default=50, ge=1, le=250),
     production_status: str | None = Query(default=None, alias="status"),
+    channel_profile_id: uuid.UUID | None = Query(default=None),
 ) -> list[Production]:
     with session_scope() as session:
         stmt = select(Production).order_by(Production.created_at.desc()).limit(limit)
         if production_status:
             stmt = stmt.where(Production.status == production_status)
+        if channel_profile_id:
+            stmt = stmt.where(Production.channel_profile_id == channel_profile_id)
         return list(session.scalars(stmt))
 
 
