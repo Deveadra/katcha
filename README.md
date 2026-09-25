@@ -88,6 +88,8 @@ curl -X POST http://localhost:8000/v1/clips/ingest \
 
 After connecting a YouTube channel, create a channel profile through `POST /v1/channels`. Channel-scoped production endpoints then preserve budget, learning, review, and publication isolation from the first editorial action onward. See [`docs/YOUTUBE.md`](docs/YOUTUBE.md) for the authenticated local OAuth/bootstrap sequence.
 
+For the first live channel acceptance, [`docs/RANKSNAXX_ACCEPTANCE.md`](docs/RANKSNAXX_ACCEPTANCE.md) provides a repeatable five-clip synthetic flow through discovery, rights gating, AI editorial, rendering, and an explicitly approved **private-only** YouTube upload.
+
 ## Budget safety
 
 `KATCHA_AI_BUDGET_USD_MONTHLY` is the **deployment-wide emergency ceiling**.
