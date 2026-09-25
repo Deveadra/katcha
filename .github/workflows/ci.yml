@@ -133,6 +133,50 @@ jobs:
           docker compose --env-file .env.example -f docker-compose.yml -f docker-compose.trends.yml config >/dev/null
           docker compose --env-file .env.example -f docker-compose.yml -f docker-compose.acceptance.yml config >/dev/null
 
+  acceptance-media:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      KATCHA_ENV_FILE: .env.example
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Start synthetic acceptance media
+        run: |
+          docker compose --env-file .env.example \
+            -f docker-compose.yml \
+            -f docker-compose.acceptance.yml \
+            up -d --build acceptance-media
+
+      - name: Verify all five fixture clips
+        run: |
+          for attempt in $(seq 1 60); do
+            if curl -fsS -o /tmp/clip-1.mp4 http://127.0.0.1:8090/clip-1.mp4; then
+              break
+            fi
+            if [ "$attempt" -eq 60 ]; then
+              docker compose --env-file .env.example \
+                -f docker-compose.yml \
+                -f docker-compose.acceptance.yml \
+                logs acceptance-media
+              exit 1
+            fi
+            sleep 2
+          done
+          for index in 1 2 3 4 5; do
+            curl -fsS -o "/tmp/clip-${index}.mp4" "http://127.0.0.1:8090/clip-${index}.mp4"
+            test -s "/tmp/clip-${index}.mp4"
+          done
+
+      - name: Tear down acceptance media
+        if: always()
+        run: |
+          docker compose --env-file .env.example \
+            -f docker-compose.yml \
+            -f docker-compose.acceptance.yml \
+            down
+
   temporal-smoke:
     runs-on: ubuntu-latest
     timeout-minutes: 10
