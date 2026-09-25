@@ -29,6 +29,83 @@ KATCHA_YOUTUBE_INCLUDE_MONETARY_SCOPE=true
 
 That keeps the default OAuth request smaller while still allowing YPP/revenue collection when a channel and Google project are ready for the additional scope.
 
+## Local authenticated setup
+
+When `KATCHA_CONTROL_API_TOKEN` is configured, the OAuth start and channel-control
+endpoints require the bearer token. The Google callback remains public so the provider
+can redirect back to Katcha.
+
+Load the token without printing it:
+
+```bash
+CONTROL_TOKEN="$(grep '^KATCHA_CONTROL_API_TOKEN=' .env | cut -d= -f2-)"
+```
+
+Verify the live backend and configured providers:
+
+```bash
+curl -sS http://localhost:8000/v1/health/ready ; echo
+
+docker compose exec -T api python - <<'PY'
+from katcha.config import get_settings
+
+s = get_settings()
+checks = {
+    "credential encryption key": bool(s.credential_encryption_key),
+    "YouTube client ID": bool(s.youtube_client_id),
+    "YouTube client secret": bool(s.youtube_client_secret),
+    "YouTube Data API key": bool(s.youtube_data_api_key),
+    "control API token": bool(s.control_api_token),
+    "OpenAI API key": bool(s.openai_api_key),
+    "Gemini API key": bool(s.gemini_api_key),
+    "AI enabled": s.ai_enabled,
+}
+for name, value in checks.items():
+    print(f"{name}: {'SET' if value else 'MISSING'}")
+PY
+```
+
+Start OAuth with authentication:
+
+```bash
+curl -sS \
+  -H "Authorization: Bearer $CONTROL_TOKEN" \
+  http://localhost:8000/v1/integrations/youtube/oauth/start \
+  | python3 -m json.tool
+```
+
+Open the returned `authorization_url`. For a Google OAuth application in Testing
+status, the Google account that manages the target YouTube or Brand Account must be
+listed as an allowed test user in Google Auth Platform.
+
+After authorization, verify the stored connection:
+
+```bash
+curl -sS \
+  -H "Authorization: Bearer $CONTROL_TOKEN" \
+  http://localhost:8000/v1/integrations/youtube \
+  | python3 -m json.tool
+```
+
+Then create the Katcha channel profile from the returned YouTube connection ID:
+
+```bash
+curl -sS \
+  -X POST \
+  -H "Authorization: Bearer $CONTROL_TOKEN" \
+  -H "Content-Type: application/json" \
+  http://localhost:8000/v1/channels \
+  -d '{
+    "youtube_connection_id": "REPLACE_WITH_CONNECTION_UUID",
+    "timezone": "America/Chicago"
+  }' \
+  | python3 -m json.tool
+```
+
+The channel title/metadata drive Katcha's channel-brand resolution. For RankSnaxx,
+the first brand lookup should resolve the `ranksnaxx` operating contract rather than
+the generic compatibility contract.
+
 ## Connect a channel
 
 Start the flow with:
