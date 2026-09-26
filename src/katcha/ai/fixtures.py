@@ -1,6 +1,10 @@
 from __future__ import annotations
 
-from katcha.ai.schemas import ClipVisionResult, DeepVideoResult, PackagingCandidateSet
+from katcha.ai.schemas import (
+    ClipVisionResult,
+    DeepVideoResult,
+    PackagingCandidateSet,
+)
 from katcha.editorial.episode_schemas import RankedEpisodeScriptSet
 from katcha.editorial.schemas import ShortScriptSet
 from katcha.longform.schemas import (
