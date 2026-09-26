@@ -6,6 +6,7 @@ from decimal import Decimal
 
 from fastapi import APIRouter, HTTPException, Query, status
 from pydantic import BaseModel, ConfigDict, Field
+
 from katcha.acquisition.adapters import get_adapter
 from katcha.acquisition_models import DiscoveryRun, IngestionSource
 from katcha.db import session_scope
