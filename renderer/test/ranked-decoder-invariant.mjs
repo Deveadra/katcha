@@ -6,7 +6,7 @@ const source = await fs.readFile(
   'utf8',
 );
 
-const decoderCount = (source.match(/<OffthreadVideo\\b/g) || []).length;
+const decoderCount = (source.match(/<OffthreadVideo\b/g) || []).length;
 assert.equal(
   decoderCount,
   1,
