@@ -134,6 +134,19 @@ def _wait(
 
     raise TimeoutError(f"timed out waiting for {label}; last={last}")
 
+def _render_failure_detail(client: "ApiClient", episode_id: str) -> str | None:
+    attempts = client.get(f"/v1/short-episodes/{episode_id}/render-attempts")
+    if not isinstance(attempts, list) or not attempts:
+        return None
+    latest = dict(attempts[-1])
+    return (
+        f"render_attempt status={latest.get('status')} "
+        f"stage={latest.get('stage')} "
+        f"failure_class={latest.get('last_failure_class')} "
+        f"error={latest.get('error')}"
+    )
+
+
 
 def _fixture_signals(index: int) -> dict[str, float]:
     profiles = [
@@ -405,12 +418,18 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     assert isinstance(post_editorial, dict)
     rendered = dict(post_editorial["episode"])
     if rendered.get("status") not in {"rendered", "render_review", "approved"}:
-        rendered = _wait(
-            "episode render",
-            lambda: dict(client.get(f"/v1/short-episodes/{episode_id}"))["episode"],
-            accepted={"rendered", "render_review", "approved"},
-            timeout_seconds=args.timeout_seconds,
-        )
+        try:
+            rendered = _wait(
+                "episode render",
+                lambda: dict(client.get(f"/v1/short-episodes/{episode_id}"))["episode"],
+                accepted={"rendered", "render_review", "approved"},
+                timeout_seconds=args.timeout_seconds,
+            )
+        except RuntimeError as exc:
+            detail = _render_failure_detail(client, episode_id)
+            if detail:
+                raise RuntimeError(f"{exc}; {detail}") from exc
+            raise
     if not args.approve_private_upload:
         return {
             "channel_profile_id": args.channel_profile_id,
