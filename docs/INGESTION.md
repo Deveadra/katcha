@@ -13,11 +13,14 @@ Register each source through `POST /v1/discovery/sources`.
 {
   "source_key": "ranksnaxx-tiktok-fails",
   "name": "RankSnaxx TikTok Fails Watch",
-  "adapter_key": "manifest",
+  "adapter_key": "operator_feed",
   "adapter_version": "v1",
   "platform": "tiktok",
   "usage_mode": "operator_authorized",
   "query_template": {
+    "feed_key": "ranksnaxx-tiktok-fails",
+    "default_platform": "tiktok",
+    "default_content_kind": "rank_clip",
     "items": []
   },
   "default_candidate_metadata": {
@@ -34,6 +37,8 @@ Register each source through `POST /v1/discovery/sources`.
 `adapter_key` controls how Katcha discovers candidates. Existing adapters include:
 
 - `manifest@v1` for operator-supplied URLs from any site.
+- `operator_feed@v1` for operator or server supplied shortform drops with
+  platform hints, metrics, tags, clip selectors, and provenance metadata.
 - `rss_atom@v1` for websites with feeds.
 - `reddit@v1` for Reddit discovery.
 - `youtube@v1` for YouTube search discovery.
@@ -66,11 +71,22 @@ the source's saved query template.
 {
   "idempotency_key": "ranksnaxx-tiktok-fails-2026-09-26T10",
   "query_overrides": {
+    "feed_key": "ranksnaxx-tiktok-fails",
+    "default_platform": "tiktok",
     "items": [
       {
         "source_url": "https://www.tiktok.com/@creator/video/123",
         "external_id": "tiktok-123",
-        "title": "Unexpected comeback"
+        "title": "Unexpected comeback",
+        "tags": ["comeback", "sports"],
+        "metrics": {
+          "views": 1200000,
+          "likes": 88000
+        },
+        "clip": {
+          "start_seconds": 2,
+          "end_seconds": 17
+        }
       }
     ]
   }
@@ -87,3 +103,49 @@ The run records:
 
 Those fields are copied into each discovered candidate unless an item overrides a
 specific metadata value.
+
+## Operator feed shape
+
+`operator_feed@v1` is the quickest way to add a new site, Discord/server drop,
+or manual TikTok/Instagram/Twitch/X watch list while a native adapter is being
+built.
+
+```json
+{
+  "feed_key": "ranksnaxx-short-drops",
+  "default_platform": "tiktok",
+  "default_content_kind": "shortform_clip",
+  "default_metadata": {
+    "content_lane": "viral_rank_clip"
+  },
+  "items": [
+    {
+      "source_url": "https://www.tiktok.com/@creator/video/123",
+      "external_id": "tt-123",
+      "title": "Unexpected comeback",
+      "creator": "@creator",
+      "platform": "tiktok",
+      "tags": ["comeback", "sports"],
+      "metrics": {
+        "views": 1200000,
+        "likes": 88000,
+        "comments": 9400
+      },
+      "clip": {
+        "start_seconds": 2,
+        "end_seconds": 17
+      },
+      "metadata": {
+        "angle": "ranking payoff clip"
+      }
+    }
+  ],
+  "urls": [
+    "https://clips.example.test/drop/secondary"
+  ]
+}
+```
+
+The adapter does not scrape or download media. It turns trusted URLs and operator
+or server-supplied context into discovery candidates so the rest of Katcha can
+score, review, acquire, edit, render, and publish through the same pipeline.
