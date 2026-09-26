@@ -7,6 +7,7 @@ from decimal import Decimal
 from typing import Any
 
 from katcha.ai.failover import safe_to_fail_over
+from katcha.ai.gemini_capacity import run_with_gemini_capacity_fallback
 from katcha.ai.pricing import estimate_token_cost
 from katcha.ai.router import (
     ModelTarget,
@@ -208,28 +209,37 @@ def _gemini_generate(
     from google.genai import types
 
     client = genai.Client(api_key=settings.gemini_api_key)
-    response = client.models.generate_content(
-        model=target.model,
-        contents=prompt,
-        config=types.GenerateContentConfig(
-            response_mime_type="application/json",
-            response_schema=RankedEpisodeScriptSet,
-        ),
-    )
-    usage = response.usage_metadata
-    input_tokens = int(getattr(usage, "prompt_token_count", 0) or 0)
-    output_tokens = int(getattr(usage, "candidates_token_count", 0) or 0) + int(
-        getattr(usage, "thoughts_token_count", 0) or 0
-    )
-    scripts = RankedEpisodeScriptSet.model_validate_json(response.text)
-    _record_usage(
-        target=target,
-        input_tokens=input_tokens,
-        output_tokens=output_tokens,
-        episode_id=episode_id,
-        reservation_id=reservation_id,
-    )
-    return EpisodeScriptGenerationResult(scripts, target, input_tokens, output_tokens)
+
+    def invoke(candidate: ModelTarget) -> EpisodeScriptGenerationResult:
+        response = client.models.generate_content(
+            model=candidate.model,
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                response_mime_type="application/json",
+                response_schema=RankedEpisodeScriptSet,
+            ),
+        )
+        usage = response.usage_metadata
+        input_tokens = int(getattr(usage, "prompt_token_count", 0) or 0)
+        output_tokens = int(getattr(usage, "candidates_token_count", 0) or 0) + int(
+            getattr(usage, "thoughts_token_count", 0) or 0
+        )
+        scripts = RankedEpisodeScriptSet.model_validate_json(response.text)
+        _record_usage(
+            target=candidate,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            episode_id=episode_id,
+            reservation_id=reservation_id,
+        )
+        return EpisodeScriptGenerationResult(
+            scripts,
+            candidate,
+            input_tokens,
+            output_tokens,
+        )
+
+    return run_with_gemini_capacity_fallback(target, invoke)
 
 
 def generate_ranked_episode_scripts(

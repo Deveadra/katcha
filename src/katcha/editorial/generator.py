@@ -6,6 +6,7 @@ from decimal import Decimal
 from typing import Any
 
 from katcha.ai.failover import safe_to_fail_over
+from katcha.ai.gemini_capacity import run_with_gemini_capacity_fallback
 from katcha.ai.pricing import estimate_token_cost
 from katcha.ai.router import (
     ModelTarget,
@@ -199,28 +200,37 @@ def _gemini_generate(
     from google.genai import types
 
     client = genai.Client(api_key=settings.gemini_api_key)
-    response = client.models.generate_content(
-        model=target.model,
-        contents=prompt,
-        config=types.GenerateContentConfig(
-            response_mime_type="application/json",
-            response_schema=ShortScriptSet,
-        ),
-    )
-    usage = response.usage_metadata
-    input_tokens = int(getattr(usage, "prompt_token_count", 0) or 0)
-    output_tokens = int(getattr(usage, "candidates_token_count", 0) or 0) + int(
-        getattr(usage, "thoughts_token_count", 0) or 0
-    )
-    _record_usage(
-        target,
-        input_tokens,
-        output_tokens,
-        production_id,
-        reservation_id,
-    )
-    scripts = ShortScriptSet.model_validate_json(response.text)
-    return ScriptGenerationResult(scripts, target, input_tokens, output_tokens)
+
+    def invoke(candidate: ModelTarget) -> ScriptGenerationResult:
+        response = client.models.generate_content(
+            model=candidate.model,
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                response_mime_type="application/json",
+                response_schema=ShortScriptSet,
+            ),
+        )
+        usage = response.usage_metadata
+        input_tokens = int(getattr(usage, "prompt_token_count", 0) or 0)
+        output_tokens = int(getattr(usage, "candidates_token_count", 0) or 0) + int(
+            getattr(usage, "thoughts_token_count", 0) or 0
+        )
+        _record_usage(
+            candidate,
+            input_tokens,
+            output_tokens,
+            production_id,
+            reservation_id,
+        )
+        scripts = ShortScriptSet.model_validate_json(response.text)
+        return ScriptGenerationResult(
+            scripts,
+            candidate,
+            input_tokens,
+            output_tokens,
+        )
+
+    return run_with_gemini_capacity_fallback(target, invoke)
 
 
 def generate_short_scripts(

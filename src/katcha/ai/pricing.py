@@ -21,6 +21,8 @@ PRICES: dict[tuple[str, str], TokenPrice] = {
         Decimal("0.60"), Decimal("12.00")
     ),
     ("gemini", "gemini-3.5-flash-lite"): TokenPrice(Decimal("0.30"), Decimal("2.50")),
+    ("gemini", "gemini-3.6-flash"): TokenPrice(Decimal("0.75"), Decimal("3.75")),
+    ("gemini", "gemini-3.7-flash"): TokenPrice(Decimal("0.75"), Decimal("3.75")),
     ("gemini", "gemini-3.8-flash"): TokenPrice(Decimal("0.75"), Decimal("3.75")),
     ("gemini", "gemini-3.1-flash-tts-preview"): TokenPrice(
         Decimal("1.00"), Decimal("20.00")
