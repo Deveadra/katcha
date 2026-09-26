@@ -219,7 +219,7 @@ def _fixture_tts(text: str) -> TTSResult:
     try:
         with tempfile.TemporaryDirectory(prefix="katcha-fixture-tts-") as work_dir:
             output_path = Path(work_dir) / "narration.wav"
-            completed = subprocess.run(
+            subprocess.run(
                 [
                     "espeak-ng",
                     "-v",
