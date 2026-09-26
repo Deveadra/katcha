@@ -14,12 +14,14 @@ import {
   S3Client,
 } from '@aws-sdk/client-s3';
 import {getSignedUrl} from '@aws-sdk/s3-request-presigner';
+import {resolveRenderSettings} from './render-config.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const bucket = process.env.KATCHA_S3_BUCKET || 'katcha-media';
 const endpoint = process.env.KATCHA_S3_ENDPOINT_URL || 'http://minio:9000';
 const region = process.env.KATCHA_S3_REGION || 'auto';
 const port = Number(process.env.PORT || 8787);
+const renderSettings = resolveRenderSettings();
 const exec = promisify(execFile);
 
 const s3 = new S3Client({
@@ -405,7 +407,8 @@ app.post('/render', async (request, response) => {
         codec: 'h264',
         outputLocation: outputPath,
         inputProps,
-        concurrency: 2,
+        concurrency: renderSettings.concurrency,
+        timeoutInMilliseconds: renderSettings.timeoutInMilliseconds,
       });
       const probe = await inspectMedia(outputPath);
       verifyRender(probe, manifest);
@@ -455,5 +458,9 @@ app.post('/render', async (request, response) => {
 });
 
 app.listen(port, '0.0.0.0', () => {
-  console.log(`katcha renderer listening on ${port}`);
+  console.log(
+    `katcha renderer listening on ${port} `
+    + `(concurrency=${renderSettings.concurrency}, `
+    + `frame_timeout_ms=${renderSettings.timeoutInMilliseconds})`,
+  );
 });
