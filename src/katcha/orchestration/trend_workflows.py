@@ -20,7 +20,7 @@ class ChannelTrendRefreshWorkflow:
                 maximum_interval=timedelta(seconds=30),
                 maximum_attempts=4,
             ),
-            result_type=dict[str, object],
+
         )
 
 
@@ -43,5 +43,5 @@ class ChannelTrendCalibrationWorkflow:
                 maximum_interval=timedelta(seconds=30),
                 maximum_attempts=4,
             ),
-            result_type=dict[str, object],
+
         )
