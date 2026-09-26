@@ -35,7 +35,7 @@ class YouTubeAnalyticsWorkflow:
                     args=[publication_id, f"offset-{offset}h"],
                     start_to_close_timeout=timedelta(minutes=3),
                     retry_policy=retry,
-                    result_type=dict[str, object],
+
                 )
                 sampled += 1
             except Exception as exc:
@@ -67,7 +67,7 @@ class YouTubeAnalyticsRefreshWorkflow:
                 maximum_interval=timedelta(minutes=2),
                 maximum_attempts=5,
             ),
-            result_type=dict[str, object],
+
         )
 
 
@@ -94,7 +94,7 @@ class YouTubePublicationWorkflow:
                 publication_id,
                 start_to_close_timeout=timedelta(seconds=30),
                 retry_policy=local_retry,
-                result_type=dict[str, object],
+
             )
             if not prepared.get("youtube_video_id"):
                 await workflow.execute_activity(
@@ -102,7 +102,7 @@ class YouTubePublicationWorkflow:
                     publication_id,
                     start_to_close_timeout=timedelta(minutes=2),
                     retry_policy=provider_mutation_once,
-                    result_type=dict[str, object],
+
                 )
                 await workflow.execute_activity(
                     "upload_video_activity",
@@ -110,7 +110,7 @@ class YouTubePublicationWorkflow:
                     start_to_close_timeout=timedelta(minutes=45),
                     heartbeat_timeout=timedelta(minutes=5),
                     retry_policy=local_retry,
-                    result_type=dict[str, object],
+
                 )
 
             processing_complete = False
@@ -120,7 +120,7 @@ class YouTubePublicationWorkflow:
                     publication_id,
                     start_to_close_timeout=timedelta(minutes=2),
                     retry_policy=local_retry,
-                    result_type=dict[str, object],
+
                 )
                 if current.get("complete"):
                     processing_complete = True
@@ -144,7 +144,7 @@ class YouTubePublicationWorkflow:
                 publication_id,
                 start_to_close_timeout=timedelta(minutes=2),
                 retry_policy=local_retry,
-                result_type=dict[str, object],
+
             )
         except Exception as exc:
             await workflow.execute_activity(

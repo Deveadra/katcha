@@ -22,14 +22,14 @@ class ClipAnalysisWorkflow:
                 run_id,
                 start_to_close_timeout=timedelta(minutes=30),
                 retry_policy=media_retry,
-                result_type=dict[str, object],
+
             )
             await workflow.execute_activity(
                 "detect_near_duplicates",
                 run_id,
                 start_to_close_timeout=timedelta(minutes=2),
                 retry_policy=RetryPolicy(maximum_attempts=3),
-                result_type=dict[str, object],
+
             )
             if ai_enabled:
                 bulk = await workflow.execute_activity(
@@ -37,7 +37,7 @@ class ClipAnalysisWorkflow:
                     run_id,
                     start_to_close_timeout=timedelta(minutes=5),
                     retry_policy=RetryPolicy(maximum_attempts=3),
-                    result_type=dict[str, object],
+
                 )
                 if bool(bulk.get("requires_deep_video")) and bool(bulk.get("deep_available")):
                     await workflow.execute_activity(
@@ -45,14 +45,14 @@ class ClipAnalysisWorkflow:
                         run_id,
                         start_to_close_timeout=timedelta(minutes=12),
                         retry_policy=RetryPolicy(maximum_attempts=2),
-                        result_type=dict[str, object],
+
                     )
             return await workflow.execute_activity(
                 "score_local_candidate",
                 run_id,
                 start_to_close_timeout=timedelta(minutes=2),
                 retry_policy=RetryPolicy(maximum_attempts=3),
-                result_type=dict[str, object],
+
             )
         except Exception as exc:
             await workflow.execute_activity(

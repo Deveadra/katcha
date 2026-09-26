@@ -21,7 +21,7 @@ class YouTubeReachSyncWorkflow:
             connection_id,
             start_to_close_timeout=timedelta(minutes=2),
             retry_policy=local_retry,
-            result_type=dict[str, object],
+
         )
         provider_job_id = prepared.get("provider_job_id")
         if bool(prepared.get("needs_create")):
@@ -30,7 +30,7 @@ class YouTubeReachSyncWorkflow:
                 args=[connection_id, str(prepared["reach_job_id"])],
                 start_to_close_timeout=timedelta(minutes=2),
                 retry_policy=RetryPolicy(maximum_attempts=1),
-                result_type=dict[str, object],
+
             )
             provider_job_id = created.get("provider_job_id")
         if not provider_job_id:
@@ -44,5 +44,5 @@ class YouTubeReachSyncWorkflow:
             ],
             start_to_close_timeout=timedelta(minutes=10),
             retry_policy=local_retry,
-            result_type=dict[str, object],
+
         )

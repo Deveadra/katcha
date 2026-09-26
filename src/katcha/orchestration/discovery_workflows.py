@@ -33,7 +33,7 @@ class DiscoveryRunWorkflow:
                     run_id,
                     start_to_close_timeout=timedelta(minutes=5),
                     retry_policy=_PROVIDER_ACTIVITY_RETRY,
-                    result_type=dict[str, object],
+
                 )
                 total_candidates += int(result.get("candidate_count") or 0)
                 if bool(result.get("done")):
@@ -70,7 +70,7 @@ class TopicWatchWorkflow:
             args=[topic_watch_id, execution_key],
             start_to_close_timeout=timedelta(minutes=1),
             retry_policy=_ACTIVITY_RETRY,
-            result_type=dict[str, object],
+
         )
         raw_runs = prepared.get("runs")
         runs = raw_runs if isinstance(raw_runs, list) else []
@@ -150,7 +150,7 @@ class TopicWatchWorkflow:
             args=[topic_watch_id, execution_key, successful_run_ids, top_n],
             start_to_close_timeout=timedelta(minutes=5),
             retry_policy=_ACTIVITY_RETRY,
-            result_type=dict[str, object],
+
         )
 
         opportunity_refresh: dict[str, object] | None = None
