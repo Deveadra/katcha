@@ -176,6 +176,17 @@ def live() -> HealthResponse:
     return HealthResponse(status="ok", version=__version__)
 
 
+@app.get("/v1/runtime/ai")
+def ai_runtime() -> dict[str, object]:
+    settings = get_settings()
+    mode = settings.resolved_ai_execution_mode()
+    return {
+        "execution_mode": mode,
+        "live_routing_mode": settings.ai_live_routing_mode,
+        "external_provider_calls_enabled": mode == "live",
+    }
+
+
 @app.get("/v1/health/ready", response_model=HealthResponse)
 async def ready() -> HealthResponse:
     try:
