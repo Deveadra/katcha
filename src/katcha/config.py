@@ -1,5 +1,6 @@
 from functools import lru_cache
 from pathlib import Path
+from typing import Literal
 
 from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -49,6 +50,10 @@ class Settings(BaseSettings):
     openai_api_key: str | None = None
     gemini_api_key: str | None = None
     ai_enabled: bool = False
+    ai_execution_mode: Literal["auto", "fixture", "live"] = "auto"
+    ai_live_routing_mode: Literal["free_first", "balanced", "quality", "economy"] = (
+        "free_first"
+    )
     ai_budget_usd_monthly: float = Field(default=25.0, ge=0)
 
     tts_profile: str = "openai_youth_v2"
@@ -91,6 +96,13 @@ class Settings(BaseSettings):
     trend_youtube_core_daily_limit: int = Field(default=10000, ge=1)
 
     log_level: str = "INFO"
+
+    def resolved_ai_execution_mode(self) -> Literal["fixture", "live"]:
+        if self.ai_execution_mode == "fixture":
+            return "fixture"
+        if self.ai_execution_mode == "live":
+            return "live"
+        return "live" if self.env.casefold() == "production" else "fixture"
 
     def analytics_offsets_hours(self) -> list[int]:
         values: list[int] = []
