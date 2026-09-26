@@ -8,6 +8,7 @@ from decimal import Decimal
 from pathlib import Path
 
 from katcha.ai.failover import safe_to_fail_over
+from katcha.ai.fixtures import fixture_clip_vision, fixture_deep_video
 from katcha.ai.pricing import estimate_token_cost
 from katcha.ai.router import ModelTarget, assert_ai_budget, record_usage, route_for
 from katcha.ai.schemas import ClipVisionResult, DeepVideoResult
@@ -191,6 +192,13 @@ def analyze_contact_sheet(
     settings: Settings | None = None,
 ) -> AIResult:
     settings = settings or get_settings()
+    if settings.resolved_ai_execution_mode() == "fixture":
+        return AIResult(
+            fixture_clip_vision(reference_id),
+            ModelTarget("fixture", "deterministic-vision-v1"),
+            0,
+            0,
+        )
     assert_ai_budget(Decimal("0.01"))
     route = route_for(AITask.BULK_VISION)
 
@@ -215,6 +223,13 @@ def analyze_full_video(
     settings: Settings | None = None,
 ) -> AIResult:
     settings = settings or get_settings()
+    if settings.resolved_ai_execution_mode() == "fixture":
+        return AIResult(
+            fixture_deep_video(reference_id),
+            ModelTarget("fixture", "deterministic-video-v1"),
+            0,
+            0,
+        )
     assert_ai_budget(Decimal("0.10"))
     route = route_for(AITask.DEEP_VIDEO)
     target = route.primary
