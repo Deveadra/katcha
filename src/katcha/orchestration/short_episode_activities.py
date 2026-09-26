@@ -121,6 +121,15 @@ def _brand_voice_profiles(
     return primary, fallback
 
 
+def _brand_voice_profile(
+    snapshot: dict[str, Any],
+    settings: Settings,
+) -> VoiceProfile | None:
+    """Compatibility helper returning the highest-priority available brand voice."""
+    primary, _ = _brand_voice_profiles(snapshot, settings)
+    return primary
+
+
 def _selected_script(session: Any, episode: ShortEpisode) -> ShortEpisodeScript:
     if episode.selected_script_id is None:
         raise RuntimeError("short episode has no selected script")
