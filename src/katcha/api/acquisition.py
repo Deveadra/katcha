@@ -6,19 +6,38 @@ from decimal import Decimal
 
 from fastapi import APIRouter, HTTPException, Query, status
 from pydantic import BaseModel, ConfigDict, Field
+from sqlalchemy import and_, func, select
 
 from katcha.acquisition.adapters import get_adapter
-from katcha.acquisition_models import DiscoveryRun, IngestionSource
+from katcha.acquisition_models import (
+    DiscoveryCandidate,
+    DiscoveryObservation,
+    DiscoveryRun,
+    IngestionSource,
+    RightsAssessment,
+    RightsEvidence,
+)
 from katcha.db import session_scope
 from katcha.domain import (
     AudioRightsStatus,
     DiscoveryRunStatus,
     GateStatus,
     RightsBasis,
+    RightsLane,
+    SourceStatus,
     SourceUsageMode,
 )
-from katcha.orchestration.client import start_discovery_workflow
-from katcha.services.acquisition import register_discovery_run
+from katcha.orchestration.client import (
+    start_discovery_workflow,
+    start_ingest_workflow,
+)
+from katcha.services.acquisition import (
+    add_rights_evidence,
+    assess_discovery_candidate,
+    promote_discovery_candidate,
+    register_discovery_run,
+)
+from katcha.services.discovery import observe_discovery_candidate
 from katcha.services.ingestion_sources import (
     create_discovery_run_from_source,
     create_source_import_run,
@@ -381,4 +400,202 @@ async def execute_discovery_run(run_id: uuid.UUID) -> ExecuteDiscoveryRunRespons
         discovery_run_id=run_id,
         workflow_id=workflow_id,
         status=run_status,
+    )
+
+
+@router.post(
+    "/discovery/candidates",
+    response_model=DiscoveryCandidateResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_discovery_candidate(
+    request: CreateDiscoveryCandidateRequest,
+) -> DiscoveryCandidate:
+    try:
+        return observe_discovery_candidate(
+            source_url=request.source_url,
+            adapter_key=request.adapter_key,
+            discovery_run_id=request.discovery_run_id,
+            external_id=request.external_id,
+            title=request.title,
+            creator=request.creator,
+            creator_url=request.creator_url,
+            provenance_confidence=request.provenance_confidence,
+            provenance_claims=request.provenance_claims,
+            metadata=request.metadata,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.get(
+    "/discovery/candidates",
+    response_model=list[CandidateSummaryResponse],
+)
+def list_discovery_candidates(
+    candidate_status: str | None = Query(default=None, alias="status"),
+    rights_lane: RightsLane | None = Query(default=None),
+    limit: int = Query(default=100, ge=1, le=500),
+) -> list[CandidateSummaryResponse]:
+    with session_scope() as session:
+        latest_versions = (
+            select(
+                RightsAssessment.discovery_candidate_id.label("candidate_id"),
+                func.max(RightsAssessment.version).label("version"),
+            )
+            .group_by(RightsAssessment.discovery_candidate_id)
+            .subquery()
+        )
+        stmt = (
+            select(DiscoveryCandidate, RightsAssessment)
+            .outerjoin(
+                latest_versions,
+                latest_versions.c.candidate_id == DiscoveryCandidate.id,
+            )
+            .outerjoin(
+                RightsAssessment,
+                and_(
+                    RightsAssessment.discovery_candidate_id == DiscoveryCandidate.id,
+                    RightsAssessment.version == latest_versions.c.version,
+                ),
+            )
+            .order_by(DiscoveryCandidate.discovered_at.desc())
+            .limit(limit)
+        )
+        if candidate_status:
+            stmt = stmt.where(DiscoveryCandidate.status == candidate_status)
+        if rights_lane:
+            stmt = stmt.where(RightsAssessment.rights_lane == rights_lane.value)
+        rows = list(session.execute(stmt))
+        return [
+            CandidateSummaryResponse(
+                candidate=DiscoveryCandidateResponse.model_validate(candidate),
+                latest_assessment=(
+                    RightsAssessmentResponse.model_validate(assessment)
+                    if assessment is not None
+                    else None
+                ),
+            )
+            for candidate, assessment in rows
+        ]
+
+
+@router.get(
+    "/discovery/candidates/{candidate_id}",
+    response_model=CandidateDetailResponse,
+)
+def get_discovery_candidate(candidate_id: uuid.UUID) -> CandidateDetailResponse:
+    with session_scope() as session:
+        candidate = session.get(DiscoveryCandidate, candidate_id)
+        if candidate is None:
+            raise HTTPException(status_code=404, detail="discovery candidate not found")
+        observations = list(
+            session.scalars(
+                select(DiscoveryObservation)
+                .where(DiscoveryObservation.discovery_candidate_id == candidate_id)
+                .order_by(DiscoveryObservation.observed_at.desc())
+            )
+        )
+        assessments = list(
+            session.scalars(
+                select(RightsAssessment)
+                .where(RightsAssessment.discovery_candidate_id == candidate_id)
+                .order_by(RightsAssessment.version.desc())
+            )
+        )
+        assessment_ids = [item.id for item in assessments]
+        evidence = (
+            list(
+                session.scalars(
+                    select(RightsEvidence)
+                    .where(RightsEvidence.rights_assessment_id.in_(assessment_ids))
+                    .order_by(RightsEvidence.captured_at.desc())
+                )
+            )
+            if assessment_ids
+            else []
+        )
+        return CandidateDetailResponse(
+            candidate=DiscoveryCandidateResponse.model_validate(candidate),
+            observations=[
+                DiscoveryObservationResponse.model_validate(item)
+                for item in observations
+            ],
+            assessments=[
+                RightsAssessmentResponse.model_validate(item) for item in assessments
+            ],
+            evidence=[RightsEvidenceResponse.model_validate(item) for item in evidence],
+        )
+
+
+@router.post(
+    "/discovery/candidates/{candidate_id}/assessments",
+    response_model=RightsAssessmentResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_rights_assessment(
+    candidate_id: uuid.UUID,
+    request: CreateRightsAssessmentRequest,
+) -> RightsAssessment:
+    try:
+        return assess_discovery_candidate(
+            candidate_id,
+            rights_basis=request.rights_basis,
+            audio_status=request.audio_status,
+            originality_gate=request.originality_gate,
+            risk_flags=request.risk_flags,
+            operator_authorized=request.operator_authorized,
+            fair_use_factors=request.fair_use_factors,
+            metadata=request.metadata,
+            actor=request.actor,
+            reason=request.reason,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.post(
+    "/rights/assessments/{assessment_id}/evidence",
+    response_model=RightsEvidenceResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_rights_evidence(
+    assessment_id: uuid.UUID,
+    request: CreateRightsEvidenceRequest,
+) -> RightsEvidence:
+    try:
+        return add_rights_evidence(
+            assessment_id,
+            evidence_type=request.evidence_type,
+            source_url=request.source_url,
+            snapshot_key=request.snapshot_key,
+            content_sha256=request.content_sha256,
+            terms_version=request.terms_version,
+            metadata=request.metadata,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.post(
+    "/discovery/candidates/{candidate_id}/promote",
+    response_model=DiscoveryPromotionResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def promote_candidate(
+    candidate_id: uuid.UUID,
+    request: PromoteCandidateRequest,
+) -> DiscoveryPromotionResponse:
+    try:
+        source = promote_discovery_candidate(candidate_id, actor=request.actor)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if source.status == SourceStatus.REGISTERED.value and source.workflow_id:
+        await start_ingest_workflow(str(source.id), source.workflow_id)
+    return DiscoveryPromotionResponse(
+        discovery_candidate_id=candidate_id,
+        source_id=source.id,
+        workflow_id=source.workflow_id,
+        status=source.status,
+        clip_id=source.clip_id,
     )
