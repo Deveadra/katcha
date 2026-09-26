@@ -45,3 +45,24 @@ def test_wait_fails_fast_when_editorial_state_never_progresses() -> None:
             no_progress_seconds=0,
             no_progress_hint="check production worker",
         )
+
+
+def test_render_failure_detail_surfaces_latest_attempt_error() -> None:
+    class Client:
+        def get(self, path: str):
+            assert path.endswith("/render-attempts")
+            return [
+                {
+                    "status": "dead_letter",
+                    "stage": "retry_exhausted",
+                    "last_failure_class": "HTTPStatusError",
+                    "error": "renderer returned 500",
+                }
+            ]
+
+    detail = runner._render_failure_detail(Client(), "episode-id")
+
+    assert detail is not None
+    assert "dead_letter" in detail
+    assert "HTTPStatusError" in detail
+    assert "renderer returned 500" in detail
