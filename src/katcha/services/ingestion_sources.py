@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import uuid
+from dataclasses import dataclass
 from typing import Any
 
 from sqlalchemy import select
@@ -11,6 +12,13 @@ from katcha.db import session_scope
 from katcha.domain import SourceUsageMode
 from katcha.models import DomainEvent
 from katcha.services.acquisition import register_discovery_run
+
+
+@dataclass(frozen=True, slots=True)
+class SourceImportRun:
+    discovery_run: DiscoveryRun
+    batch_key: str | None
+    item_count: int
 
 
 def _clean_key(value: str, *, field: str) -> str:
@@ -178,4 +186,111 @@ def create_discovery_run_from_source(
         query=query,
         idempotency_key=idempotency_key,
         metadata=run_metadata,
+    )
+
+
+def _clean_optional(value: str | None, *, field: str) -> str | None:
+    if value is None:
+        return None
+    cleaned = value.strip()
+    if not cleaned:
+        raise ValueError(f"{field} must not be blank")
+    return cleaned
+
+
+def _clean_urls(urls: list[str] | None) -> list[str]:
+    cleaned: list[str] = []
+    for index, value in enumerate(urls or []):
+        url = _clean_optional(str(value), field=f"urls[{index}]")
+        if url is not None:
+            cleaned.append(url)
+    return cleaned
+
+
+def _clean_items(items: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
+    return [dict(item) for item in (items or [])]
+
+
+def create_source_import_run(
+    source_id: uuid.UUID,
+    *,
+    urls: list[str] | None = None,
+    items: list[dict[str, Any]] | None = None,
+    batch_key: str | None = None,
+    idempotency_key: str | None = None,
+    feed_key: str | None = None,
+    default_platform: str | None = None,
+    default_content_kind: str | None = None,
+    default_metadata: dict[str, Any] | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> SourceImportRun:
+    cleaned_urls = _clean_urls(urls)
+    cleaned_items = _clean_items(items)
+    item_count = len(cleaned_urls) + len(cleaned_items)
+    if item_count < 1:
+        raise ValueError("source import must include at least one url or item")
+    cleaned_batch_key = _clean_optional(batch_key, field="batch_key")
+    cleaned_feed_key = _clean_optional(feed_key, field="feed_key")
+    cleaned_default_platform = _clean_optional(
+        default_platform,
+        field="default_platform",
+    )
+    cleaned_default_content_kind = _clean_optional(
+        default_content_kind,
+        field="default_content_kind",
+    )
+
+    with session_scope() as session:
+        source = session.get(IngestionSource, source_id)
+        if source is None:
+            raise ValueError(f"ingestion source not found: {source_id}")
+        if source.adapter_key != "operator_feed":
+            raise ValueError("source imports require operator_feed@v1")
+        if source.adapter_version != "v1":
+            raise ValueError("source imports require operator_feed@v1")
+        template = dict(source.query_template or {})
+        source_key = source.source_key
+
+    template_default_metadata = dict(template.get("default_metadata") or {})
+    import_default_metadata = {
+        **template_default_metadata,
+        **dict(default_metadata or {}),
+        "source_import_item_count": item_count,
+    }
+    if cleaned_batch_key is not None:
+        import_default_metadata["source_import_batch_key"] = cleaned_batch_key
+
+    query_overrides: dict[str, Any] = {
+        "default_metadata": import_default_metadata,
+    }
+    if cleaned_urls:
+        query_overrides["urls"] = cleaned_urls
+    if cleaned_items:
+        query_overrides["items"] = cleaned_items
+    if cleaned_feed_key is not None:
+        query_overrides["feed_key"] = cleaned_feed_key
+    if cleaned_default_platform is not None:
+        query_overrides["default_platform"] = cleaned_default_platform
+    if cleaned_default_content_kind is not None:
+        query_overrides["default_content_kind"] = cleaned_default_content_kind
+
+    run_metadata = {
+        **dict(metadata or {}),
+        "source_import_item_count": item_count,
+    }
+    if cleaned_batch_key is not None:
+        run_metadata["source_import_batch_key"] = cleaned_batch_key
+    resolved_idempotency_key = idempotency_key
+    if not resolved_idempotency_key and cleaned_batch_key is not None:
+        resolved_idempotency_key = f"source-import:{source_key}:{cleaned_batch_key}"
+
+    return SourceImportRun(
+        discovery_run=create_discovery_run_from_source(
+            source_id,
+            query_overrides=query_overrides,
+            idempotency_key=resolved_idempotency_key,
+            metadata=run_metadata,
+        ),
+        batch_key=cleaned_batch_key,
+        item_count=item_count,
     )
