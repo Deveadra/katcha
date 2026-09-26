@@ -150,15 +150,23 @@ def test_generation_key_replay_does_not_call_provider_twice(
 
     monkeypatch.setattr(packaging_generation, "_openai_generate", fake_generate)
 
+    live_settings = SimpleNamespace(
+        resolved_ai_execution_mode=lambda: "live",
+        openai_api_key="test-key",
+        gemini_api_key=None,
+    )
+
     first = packaging_generation.generate_packaging_candidates(
         publication.id,
         generation_key="auto-v1",
         candidate_count=3,
+        settings=live_settings,
     )
     second = packaging_generation.generate_packaging_candidates(
         publication.id,
         generation_key="auto-v1",
         candidate_count=3,
+        settings=live_settings,
     )
 
     assert calls["count"] == 1
