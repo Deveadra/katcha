@@ -1,6 +1,3 @@
-from __future__ import annotations
-
-
 _SAFE_STATUS_CODES = {401, 403, 404, 429}
 _SAFE_CLASS_NAMES = {
     "providerunavailable",
