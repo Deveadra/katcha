@@ -5,6 +5,11 @@ import uuid
 from dataclasses import dataclass
 from decimal import Decimal
 
+from katcha.ai.fixtures import (
+    fixture_final_longform_plan,
+    fixture_longform_critique,
+    fixture_longform_editor_plan,
+)
 from katcha.ai.pricing import estimate_token_cost
 from katcha.ai.router import (
     ModelTarget,
@@ -376,6 +381,15 @@ def generate_editor_plan(
     settings: Settings | None = None,
 ) -> LongformAIResult:
     settings = settings or get_settings()
+    if settings.resolved_ai_execution_mode() == "fixture":
+        value = fixture_longform_editor_plan(candidates, min_segments=min_segments)
+        _validate_plan(value, candidates, min_segments=min_segments)
+        return LongformAIResult(
+            value,
+            ModelTarget("fixture", "deterministic-longform-editor-v1"),
+            0,
+            0,
+        )
     estimated_increment = Decimal("0.25")
     assert_ai_budget(estimated_increment)
     result = _run_structured(
@@ -409,6 +423,13 @@ def critique_editor_plan(
     settings: Settings | None = None,
 ) -> LongformAIResult:
     settings = settings or get_settings()
+    if settings.resolved_ai_execution_mode() == "fixture":
+        return LongformAIResult(
+            fixture_longform_critique(),
+            ModelTarget("fixture", "deterministic-longform-critic-v1"),
+            0,
+            0,
+        )
     estimated_increment = Decimal("0.15")
     assert_ai_budget(estimated_increment)
     return _run_structured(
@@ -443,6 +464,10 @@ def finalize_editor_plan(
         return final
 
     settings = settings or get_settings()
+    if settings.resolved_ai_execution_mode() == "fixture":
+        final = fixture_final_longform_plan(plan)
+        _validate_plan(final, candidates, min_segments=min_segments)
+        return final
     estimated_increment = Decimal("0.25")
     assert_ai_budget(estimated_increment)
     result = _run_structured(
