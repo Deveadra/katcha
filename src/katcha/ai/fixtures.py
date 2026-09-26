@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from katcha.ai.schemas import ClipVisionResult, DeepVideoResult
+from katcha.ai.schemas import ClipVisionResult, DeepVideoResult, PackagingCandidateSet
 from katcha.editorial.episode_schemas import RankedEpisodeScriptSet
 from katcha.editorial.schemas import ShortScriptSet
 from katcha.longform.schemas import (
@@ -9,8 +9,6 @@ from katcha.longform.schemas import (
     LongformCritique,
     LongformEditorPlan,
 )
-from katcha.ai.schemas import PackagingCandidateSet
-
 
 def fixture_clip_vision(reference_id: str) -> ClipVisionResult:
     seed = sum(reference_id.encode("utf-8"))
@@ -156,7 +154,11 @@ def fixture_packaging_candidates(
     context: dict[str, object],
     candidate_count: int,
 ) -> PackagingCandidateSet:
-    facts = [str(value).strip() for value in context.get("grounding_facts") or [] if str(value).strip()]
+    facts = [
+        str(value).strip()
+        for value in context.get("grounding_facts") or []
+        if str(value).strip()
+    ]
     if not facts:
         raise ValueError("fixture packaging requires at least one grounding fact")
     current_title = str(context.get("current_title") or "Fixture video").strip()
