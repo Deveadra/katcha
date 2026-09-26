@@ -98,6 +98,9 @@ def _brand_voice_profiles(
         ):
             available.append(profile)
 
+    if settings.ai_live_routing_mode == "free_first":
+        available.sort(key=lambda item: 0 if item.provider == "gemini" else 1)
+
     primary = available[0] if available else None
     fallback = available[1] if len(available) > 1 else None
     return primary, fallback
