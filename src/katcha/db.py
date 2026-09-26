@@ -17,21 +17,14 @@ settings = get_settings()
 engine = create_engine(settings.database_url, pool_pre_ping=True, future=True)
 SessionLocal = sessionmaker(bind=engine, expire_on_commit=False, autoflush=False)
 
-
-@contextmanager
-def session_scope() -> Iterator[Session]:
-    session = SessionLocal()
-    try:
-        yield session
-        session.commit()
-    except Exception:
-        session.rollback()
-        raise
-    finally:
-        session.close()
+_model_metadata_loaded = False
 
 
-def init_db() -> None:
+def load_model_metadata() -> None:
+    global _model_metadata_loaded
+    if _model_metadata_loaded:
+        return
+
     from katcha import (  # noqa: F401
         acquisition_models,
         brand_models,
@@ -52,4 +45,23 @@ def init_db() -> None:
         trend_models,
     )
 
+    _model_metadata_loaded = True
+
+
+@contextmanager
+def session_scope() -> Iterator[Session]:
+    load_model_metadata()
+    session = SessionLocal()
+    try:
+        yield session
+        session.commit()
+    except Exception:
+        session.rollback()
+        raise
+    finally:
+        session.close()
+
+
+def init_db() -> None:
+    load_model_metadata()
     Base.metadata.create_all(bind=engine)
