@@ -95,17 +95,11 @@ const ClipScene = ({item, brand}) => {
       {item.transition_before === 'flash' && frame < fadeFrames ? (
         <AbsoluteFill style={{backgroundColor: brand.palette.paper, opacity: 0.42}} />
       ) : null}
-      <OffthreadVideo
-        src={item.source.url}
-        startFrom={sourceStartFrames}
-        muted
+      <AbsoluteFill
         style={{
-          width: '100%',
-          height: '100%',
-          objectFit: 'cover',
-          filter: 'blur(40px)',
-          opacity: 0.4,
-          transform: `scale(${1.13 * scale})`,
+          background:
+            `radial-gradient(circle at 50% 35%, ${brand.palette.signal_blue}33, transparent 52%), `
+            + `linear-gradient(180deg, ${brand.palette.ink}, #000)`,
         }}
       />
       <OffthreadVideo

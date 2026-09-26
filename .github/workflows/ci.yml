@@ -270,6 +270,9 @@ jobs:
       - name: Validate renderer runtime settings
         run: node test/render-config.mjs
 
+      - name: Enforce single ranked video decoder
+        run: node test/ranked-decoder-invariant.mjs
+
       - name: Bundle Remotion composition
         run: |
           node --input-type=module -e "
