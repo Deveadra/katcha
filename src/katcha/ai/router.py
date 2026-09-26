@@ -123,7 +123,17 @@ class BudgetReservationSettled(BudgetExceeded):
 
 
 def route_for(task: AITask) -> ModelRoute:
-    return ROUTES[task]
+    route = ROUTES[task]
+    if get_settings().ai_live_routing_mode != "free_first":
+        return route
+    targets = [route.primary]
+    if route.fallback is not None:
+        targets.append(route.fallback)
+    gemini = next((item for item in targets if item.provider == "gemini"), None)
+    if gemini is None:
+        return route
+    fallback = next((item for item in targets if item != gemini), None)
+    return ModelRoute(primary=gemini, fallback=fallback)
 
 
 def _available_providers() -> set[str]:
@@ -282,7 +292,9 @@ def route_for_channel(
                 f"{preferred_target.provider}/{preferred_target.model}"
             )
 
-        mode = str(policy.get("mode") or "balanced").casefold()
+        mode = str(
+            policy.get("mode") or get_settings().ai_live_routing_mode
+        ).casefold()
         effective_ceiling = Decimal(str(state["effective_budget_usd"]))
         headroom_ratio = (
             float(headroom / effective_ceiling)
@@ -299,6 +311,20 @@ def route_for_channel(
         if preferred_target is not None:
             chosen = preferred_target
             reason = "pinned_target"
+        elif mode in {"free_first", "balanced"}:
+            free_candidate = next(
+                (item for item in candidates if item.provider == "gemini"),
+                None,
+            )
+            if free_candidate is not None:
+                chosen = free_candidate
+                reason = "free_provider_preferred"
+            elif primary_available:
+                chosen = static_primary
+                reason = "task_primary"
+            else:
+                chosen = candidates[0]
+                reason = "primary_provider_unavailable"
         elif mode == "quality" and primary_available:
             chosen = static_primary
             reason = "quality_preferred"
@@ -428,6 +454,8 @@ def assert_ai_budget(estimated_increment_usd: Decimal = Decimal("0")) -> None:
         raise BudgetExceeded(
             "AI execution is disabled; set KATCHA_AI_ENABLED=true to enable it"
         )
+    if settings.resolved_ai_execution_mode() == "fixture":
+        return
     projected = month_to_date_cost() + estimated_increment_usd
     limit = Decimal(str(settings.ai_budget_usd_monthly))
     if projected > limit:

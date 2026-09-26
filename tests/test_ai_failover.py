@@ -17,3 +17,19 @@ def test_ambiguous_server_failure_does_not_auto_fail_over() -> None:
 
 def test_message_only_credit_exhaustion_allows_provider_failover() -> None:
     assert safe_to_fail_over(RuntimeError("You have no credits remaining")) is True
+
+
+def test_explicit_high_demand_503_allows_provider_failover() -> None:
+    assert (
+        safe_to_fail_over(
+            _Rejected(
+                503,
+                "503 UNAVAILABLE: This model is currently experiencing high demand.",
+            )
+        )
+        is True
+    )
+
+
+def test_ambiguous_503_does_not_auto_fail_over() -> None:
+    assert safe_to_fail_over(_Rejected(503, "upstream request failed")) is False

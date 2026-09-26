@@ -25,9 +25,22 @@ explicit.
 
 ## Prerequisites
 
-The normal local stack must already be healthy, RankSnaxx must have a live YouTube
-connection and channel profile, and `KATCHA_AI_ENABLED=true` with at least one AI
-provider key.
+The normal local stack must already be healthy and RankSnaxx must have a live YouTube
+connection and channel profile.
+
+For normal development acceptance, use `KATCHA_AI_ENABLED=true` with fixture mode.
+No OpenAI or Gemini key is required by the editorial/voice path:
+
+```env
+KATCHA_AI_ENABLED=true
+KATCHA_AI_EXECUTION_MODE=fixture
+```
+
+Development `auto` mode also resolves to fixture mode. The runner prints the backend
+AI runtime state before starting, including whether external provider calls are enabled.
+
+Use `KATCHA_AI_EXECUTION_MODE=live` only for an intentional provider smoke test or
+production acceptance.
 
 Start the fixture-media service alongside the existing stack:
 
@@ -50,7 +63,9 @@ curl -fsS -o /dev/null http://localhost:8090/clip-1.mp4 && echo "acceptance medi
 ## Editorial acceptance first
 
 With no approval flag, the runner performs discovery, rights qualification, ingest,
-analysis, AI scripting/TTS and stops at the editorial review boundary:
+analysis, scripting/TTS and stops at the editorial review boundary. In fixture mode
+the analysis/script responses are deterministic and narration is generated locally,
+so this stage has zero external AI/TTS cost:
 
 ```bash
 python scripts/ranksnaxx_private_acceptance.py \
@@ -60,7 +75,7 @@ python scripts/ranksnaxx_private_acceptance.py \
 ## Real render acceptance
 
 Resume the `episode_id` printed by the editorial acceptance and explicitly approve
-that same synthetic fixture for rendering. This avoids a second paid AI/TTS pass,
+that same synthetic fixture for rendering. This avoids a second AI/TTS pass,
 exercises the real RankSnaxx renderer, and stops at the render-review boundary;
 nothing is uploaded to YouTube:
 

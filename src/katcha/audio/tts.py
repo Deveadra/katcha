@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import io
 import math
+import subprocess
 import uuid
 import wave
 from dataclasses import dataclass
@@ -50,6 +51,17 @@ class TTSResult:
 
 
 VOICE_PROFILES: dict[str, VoiceProfile] = {
+    "fixture_youth_v1": VoiceProfile(
+        key="fixture_youth_v1",
+        version="1",
+        provider="fixture",
+        model="espeak-ng",
+        voice="en-us+m3",
+        instructions=(
+            "Local development voice used only to validate narration timing, editing, "
+            "rendering, and review without external API cost."
+        ),
+    ),
     "openai_youth_v1": VoiceProfile(
         key="openai_youth_v1",
         version="1",
@@ -200,6 +212,50 @@ def _estimated_text_tokens(text: str) -> int:
     return max(1, math.ceil(len(text) / 4))
 
 
+def _fixture_tts(text: str) -> TTSResult:
+    profile = VOICE_PROFILES["fixture_youth_v1"]
+    try:
+        completed = subprocess.run(
+            [
+                "espeak-ng",
+                "--stdout",
+                "-v",
+                profile.voice,
+                "-s",
+                "185",
+                text,
+            ],
+            check=True,
+            capture_output=True,
+        )
+    except FileNotFoundError as exc:
+        raise TTSUnavailable(
+            "fixture TTS requires espeak-ng in the production-worker image"
+        ) from exc
+    except subprocess.CalledProcessError as exc:
+        detail = exc.stderr.decode("utf-8", errors="replace").strip()
+        raise TTSUnavailable(f"fixture TTS failed: {detail or exc.returncode}") from exc
+
+    audio = completed.stdout
+    duration = _wav_duration(audio)
+    return TTSResult(
+        audio=audio,
+        content_type="audio/wav",
+        extension="wav",
+        duration_seconds=duration,
+        target=ModelTarget("fixture", "espeak-ng"),
+        profile=profile,
+        input_units=0,
+        output_units=0,
+        estimated_cost_usd=Decimal("0"),
+        cost_metadata={
+            "estimated_cost": False,
+            "usage_basis": "local_espeak_ng",
+            "external_api_cost_usd": "0",
+        },
+    )
+
+
 def _openai_tts(text: str, profile: VoiceProfile, settings: Settings) -> TTSResult:
     if not settings.openai_api_key:
         raise TTSUnavailable("OpenAI API key is not configured")
@@ -295,6 +351,8 @@ def synthesize_speech(
     text = text.strip()
     if not text:
         raise ValueError("TTS text cannot be empty")
+    if settings.resolved_ai_execution_mode() == "fixture":
+        return _fixture_tts(text)
 
     estimated_increment = Decimal("0.05")
     assert_ai_budget(estimated_increment)

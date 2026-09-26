@@ -7,7 +7,8 @@ def test_deep_video_prefers_gemini() -> None:
     assert route.primary.provider == "gemini"
 
 
-def test_short_script_prefers_terra_tier() -> None:
+def test_short_script_prefers_free_provider_by_default() -> None:
     route = route_for(AITask.SHORT_SCRIPT)
-    assert route.primary.provider == "openai"
-    assert "terra" in route.primary.model
+    assert route.primary.provider == "gemini"
+    assert route.fallback is not None
+    assert route.fallback.provider == "openai"
