@@ -15,7 +15,7 @@ from katcha.rendering.manifest import channel_01_brand_v1
 from katcha.rendering.ranked_episode_manifest import build_ranked_episode_manifest
 
 
-def _wav_bytes(duration_seconds: float = 0.35, sample_rate: int = 16000) -> bytes:
+def _wav_bytes(duration_seconds: float = 1.4, sample_rate: int = 22050) -> bytes:
     frames = int(duration_seconds * sample_rate)
     buffer = io.BytesIO()
     with wave.open(buffer, "wb") as handle:
@@ -42,14 +42,26 @@ def main() -> int:
                 "-f",
                 "lavfi",
                 "-i",
-                "testsrc2=s=540x960:r=30:d=1.2",
+                "testsrc2=s=720x1280:r=30:d=5",
+                "-f",
+                "lavfi",
+                "-i",
+                "sine=frequency=440:sample_rate=48000:duration=5",
+                "-shortest",
                 "-c:v",
                 "libx264",
                 "-preset",
                 "ultrafast",
+                "-crf",
+                "28",
                 "-pix_fmt",
                 "yuv420p",
-                "-an",
+                "-c:a",
+                "aac",
+                "-b:a",
+                "96k",
+                "-movflags",
+                "+faststart",
                 str(source),
             ],
             check=True,
@@ -73,20 +85,25 @@ def main() -> int:
                 "role": roles[position],
                 "clip_id": f"ci-clip-{position}",
                 "storage_key": key,
-                "source_duration_seconds": 1.2,
-                "width": 540,
-                "height": 960,
-                "native_audio_policy": "mute",
-                "audio_volume": 0.0,
-                "narration_duck_volume": 0.0,
+                "source_duration_seconds": 5.0,
+                "width": 720,
+                "height": 1280,
+                "native_audio_policy": "duck",
+                "audio_volume": 0.35,
+                "narration_duck_volume": 0.16,
             }
         )
 
     narration_assets: list[dict[str, object]] = []
     beats = [
-        (0, "opening", None, None, "RankSnaxx renderer smoke."),
-        (1, "reveal", 5, "ci-clip-5", "Number five."),
-        (2, "reveal", 1, "ci-clip-1", "Number one."),
+        (0, "opening", None, None, "RankSnaxx renderer smoke starts now."),
+        (1, "reveal", 5, "ci-clip-5", "Number five. Starting the countdown."),
+        (2, "reveal", 4, "ci-clip-4", "Number four. The test keeps moving."),
+        (3, "reveal", 3, "ci-clip-3", "Number three. Halfway through."),
+        (4, "reveal", 2, "ci-clip-2", "Number two. This is the false peak."),
+        (5, "reveal", 1, "ci-clip-1", "Number one. This is the final payoff."),
+        (6, "closing", None, None, "The fixture countdown is complete."),
+        (7, "interaction", None, None, "Which position would you change?"),
     ]
     for sequence, placement, position, clip_id, text in beats:
         key = f"ci/ranked-render/narration-{sequence}.wav"
@@ -99,7 +116,7 @@ def main() -> int:
                 "position": position,
                 "clip_id": clip_id,
                 "text": text,
-                "duration_seconds": 0.35,
+                "duration_seconds": 1.4,
             }
         )
 
@@ -111,12 +128,12 @@ def main() -> int:
         format_version="1.0.0",
         ordered_items=ordered_items,
         narration_assets=narration_assets,
-        selected_style="observational",
-        interaction_prompt=None,
+        selected_style="interactive",
+        interaction_prompt="Which position would you change?",
         output_key=output_key,
         brand=channel_01_brand_v1(),
-        width=540,
-        height=960,
+        width=1080,
+        height=1920,
         fps=30,
     )
     result = render_ranked_episode(manifest)
