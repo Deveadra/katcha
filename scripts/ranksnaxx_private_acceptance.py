@@ -83,17 +83,39 @@ def _wait(
     accepted: set[str],
     timeout_seconds: int,
     interval_seconds: int = 3,
+    no_progress_seconds: int | None = None,
+    no_progress_hint: str | None = None,
 ) -> dict[str, Any]:
     deadline = time.monotonic() + timeout_seconds
     last: dict[str, Any] = {}
+    last_state: tuple[str, str] | None = None
+    state_since = time.monotonic()
+    last_report = 0.0
+
     while time.monotonic() < deadline:
         current = getter()
         if not isinstance(current, dict):
             raise RuntimeError(f"{label} returned a non-object response")
+
         last = current
         status = str(current.get("status") or "")
         stage = str(current.get("stage") or "")
-        print(f"{label}: status={status or '?'} stage={stage or '-'}")
+        state = (status, stage)
+        now = time.monotonic()
+
+        if state != last_state:
+            state_since = now
+            last_state = state
+            print(f"{label}: status={status or '?'} stage={stage or '-'}")
+            last_report = now
+        elif now - last_report >= 30:
+            unchanged = int(now - state_since)
+            print(
+                f"{label}: status={status or '?'} stage={stage or '-'} "
+                f"(unchanged for {unchanged}s)"
+            )
+            last_report = now
+
         if status in accepted:
             return current
         if status in TERMINAL_FAILURES:
@@ -101,7 +123,15 @@ def _wait(
                 f"{label} failed: status={status} stage={stage} "
                 f"error={current.get('error')}"
             )
+        if no_progress_seconds is not None and now - state_since >= no_progress_seconds:
+            hint = f" {no_progress_hint}" if no_progress_hint else ""
+            raise RuntimeError(
+                f"{label} made no progress for {no_progress_seconds}s: "
+                f"status={status or '?'} stage={stage or '-'}.{hint}"
+            )
+
         time.sleep(interval_seconds)
+
     raise TimeoutError(f"timed out waiting for {label}; last={last}")
 
 
@@ -311,9 +341,15 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         episode_id = str(episode["id"])
         print(f"episode_id={episode_id}")
 
-        client.post(
+        editorial_start = client.post(
             f"/v1/short-episodes/{episode_id}/editorial",
             {"start_stage": "script"},
+        )
+        assert isinstance(editorial_start, dict)
+        editorial_workflow_id = str(editorial_start.get("workflow_id") or "")
+        print(
+            "editorial workflow_id="
+            f"{editorial_workflow_id or '(missing from API response)'}"
         )
 
     current_status = str(episode.get("status") or "")
@@ -325,6 +361,12 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             lambda: dict(client.get(f"/v1/short-episodes/{episode_id}"))["episode"],
             accepted={"voiced", "review", "editorial_approved", "rendered", "render_review", "approved"},
             timeout_seconds=args.timeout_seconds,
+            no_progress_seconds=90,
+            no_progress_hint=(
+                "If this is still planned/planned, the editorial Temporal workflow "
+                "was accepted but no production worker activity has started. Check "
+                "the production-worker container and its logs."
+            ),
         )
 
     if not args.approve_render and not args.approve_private_upload:
