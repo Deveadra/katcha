@@ -24,21 +24,21 @@ class ShortProductionWorkflow:
                     production_id,
                     start_to_close_timeout=timedelta(minutes=3),
                     retry_policy=paid_once,
-                    result_type=dict[str, object],
+
                 )
                 await workflow.execute_activity(
                     "select_script_candidate",
                     production_id,
                     start_to_close_timeout=timedelta(seconds=30),
                     retry_policy=local_retry,
-                    result_type=dict[str, object],
+
                 )
                 await workflow.execute_activity(
                     "generate_narration_assets",
                     production_id,
                     start_to_close_timeout=timedelta(minutes=5),
                     retry_policy=paid_once,
-                    result_type=dict[str, object],
+
                 )
             elif start_stage == "voice":
                 await workflow.execute_activity(
@@ -46,7 +46,7 @@ class ShortProductionWorkflow:
                     production_id,
                     start_to_close_timeout=timedelta(minutes=5),
                     retry_policy=paid_once,
-                    result_type=dict[str, object],
+
                 )
             elif start_stage != "render":
                 raise ValueError(f"unsupported production start stage: {start_stage}")
@@ -56,14 +56,14 @@ class ShortProductionWorkflow:
                 production_id,
                 start_to_close_timeout=timedelta(minutes=1),
                 retry_policy=local_retry,
-                result_type=dict[str, object],
+
             )
             rendered = await workflow.execute_activity(
                 "render_short_activity",
                 production_id,
                 start_to_close_timeout=timedelta(minutes=20),
                 retry_policy=local_retry,
-                result_type=dict[str, object],
+
             )
         except Exception as exc:
             await workflow.execute_activity(
@@ -79,7 +79,7 @@ class ShortProductionWorkflow:
             production_id,
             start_to_close_timeout=timedelta(seconds=30),
             retry_policy=local_retry,
-            result_type=dict[str, object],
+
         )
         publication_id = automation.get("publication_id")
         publication_workflow_id = automation.get("publication_workflow_id")
@@ -91,7 +91,7 @@ class ShortProductionWorkflow:
                     args=[str(publication_id), str(publication_workflow_id)],
                     start_to_close_timeout=timedelta(seconds=30),
                     retry_policy=local_retry,
-                    result_type=dict[str, object],
+
                 )
                 handoff_started = True
             except Exception:
