@@ -74,26 +74,31 @@ def _selected_script(session: Any, production: Production) -> ProductionScript:
     return script
 
 
-def _brand_voice_profile(
+def _brand_voice_profiles(
     snapshot: dict[str, Any],
     settings: Settings,
-) -> VoiceProfile | None:
+) -> tuple[VoiceProfile | None, VoiceProfile | None]:
     voice_policy = snapshot.get("voice_policy")
     if not isinstance(voice_policy, dict):
-        return None
+        return None, None
     preferred = voice_policy.get("preferred_profiles")
     if not isinstance(preferred, list):
-        return None
+        return None, None
+
+    available: list[VoiceProfile] = []
     for key in preferred:
         try:
             profile = get_voice_profile(str(key))
         except ValueError:
             continue
         if profile.provider == "openai" and settings.openai_api_key:
-            return profile
-        if profile.provider == "gemini" and settings.gemini_api_key:
-            return profile
-    return None
+            available.append(profile)
+        elif profile.provider == "gemini" and settings.gemini_api_key:
+            available.append(profile)
+
+    primary = available[0] if available else None
+    fallback = available[1] if len(available) > 1 else None
+    return primary, fallback
 
 
 def _brand_render_spec(snapshot: dict[str, Any]) -> ShortBrandSpec | None:
@@ -358,11 +363,13 @@ def generate_narration_assets(production_id: str) -> dict[str, object]:
         if not segments:
             raise RuntimeError("selected script has no commentary segments")
         brand_snapshot = dict(production.brand_snapshot or {})
-        profile = (
-            get_voice_profile(production.selected_voice_profile)
-            if production.selected_voice_profile
-            else _brand_voice_profile(brand_snapshot, settings)
-        )
+        if production.selected_voice_profile:
+            profile = get_voice_profile(production.selected_voice_profile)
+            fallback_profile = None
+        else:
+            profile, fallback_profile = _brand_voice_profiles(
+                brand_snapshot, settings
+            )
         channel_profile_id = production.channel_profile_id
         try:
             expected_value = max(
@@ -424,6 +431,7 @@ def generate_narration_assets(production_id: str) -> dict[str, object]:
         result = synthesize_speech(
             text,
             profile=profile,
+            fallback_profile=fallback_profile,
             settings=settings,
             channel_profile_id=channel_profile_id,
             reference_type="production",
@@ -433,6 +441,7 @@ def generate_narration_assets(production_id: str) -> dict[str, object]:
             usage_metadata={"segment_index": index},
         )
         profile = result.profile
+        fallback_profile = None
         metadata: dict[str, object] = {
             "segment_index": index,
             "placement": segment.get("placement"),
