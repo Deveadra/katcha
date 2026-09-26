@@ -21,6 +21,27 @@ class RenderResult:
 
 
 
+class RendererRequestError(RuntimeError):
+    pass
+
+
+def _raise_for_renderer_error(response: httpx.Response) -> None:
+    if response.is_success:
+        return
+    detail = response.text.strip()
+    try:
+        payload = response.json()
+    except ValueError:
+        payload = None
+    if isinstance(payload, dict) and payload.get("error"):
+        detail = str(payload["error"]).strip()
+    if not detail:
+        detail = response.reason_phrase or "renderer request failed"
+    raise RendererRequestError(
+        f"renderer HTTP {response.status_code}: {detail}"
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class ThumbnailRenderResult:
     output_key: str
@@ -42,7 +63,7 @@ def _render(
     url = f"{settings.renderer_url.rstrip('/')}/render"
     with httpx.Client(timeout=httpx.Timeout(1800.0, connect=10.0)) as client:
         response = client.post(url, json=manifest.model_dump(mode="json"))
-        response.raise_for_status()
+        _raise_for_renderer_error(response)
         payload = response.json()
     output_key = payload.get("output_key")
     if not isinstance(output_key, str) or not output_key:
@@ -95,7 +116,7 @@ def render_thumbnail(
     url = f"{resolved.renderer_url.rstrip('/')}/thumbnail"
     with httpx.Client(timeout=httpx.Timeout(300.0, connect=10.0)) as client:
         response = client.post(url, json=manifest.model_dump(mode="json"))
-        response.raise_for_status()
+        _raise_for_renderer_error(response)
         payload = response.json()
     output_key = payload.get("output_key")
     if not isinstance(output_key, str) or not output_key:
