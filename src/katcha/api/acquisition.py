@@ -6,38 +6,18 @@ from decimal import Decimal
 
 from fastapi import APIRouter, HTTPException, Query, status
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import and_, func, select
-
 from katcha.acquisition.adapters import get_adapter
-from katcha.acquisition_models import (
-    DiscoveryCandidate,
-    DiscoveryObservation,
-    DiscoveryRun,
-    IngestionSource,
-    RightsAssessment,
-    RightsEvidence,
-)
+from katcha.acquisition_models import DiscoveryRun, IngestionSource
 from katcha.db import session_scope
 from katcha.domain import (
     AudioRightsStatus,
     DiscoveryRunStatus,
     GateStatus,
     RightsBasis,
-    RightsLane,
-    SourceStatus,
     SourceUsageMode,
 )
-from katcha.orchestration.client import (
-    start_discovery_workflow,
-    start_ingest_workflow,
-)
-from katcha.services.acquisition import (
-    add_rights_evidence,
-    assess_discovery_candidate,
-    promote_discovery_candidate,
-    register_discovery_run,
-)
-from katcha.services.discovery import observe_discovery_candidate
+from katcha.orchestration.client import start_discovery_workflow
+from katcha.services.acquisition import register_discovery_run
 from katcha.services.ingestion_sources import (
     create_discovery_run_from_source,
     create_source_import_run,
