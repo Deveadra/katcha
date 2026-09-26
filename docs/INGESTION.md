@@ -149,3 +149,35 @@ built.
 The adapter does not scrape or download media. It turns trusted URLs and operator
 or server-supplied context into discovery candidates so the rest of Katcha can
 score, review, acquire, edit, render, and publish through the same pipeline.
+
+## Importing source drops
+
+Use `POST /v1/discovery/sources/{source_id}/imports` when an operator, private
+server, queue, or future connector has a batch of URLs ready for a configured
+`operator_feed@v1` source.
+
+```json
+{
+  "batch_key": "ranksnaxx-drops-2026-09-26-01",
+  "urls": [
+    "https://www.tiktok.com/@creator/video/123"
+  ],
+  "items": [
+    {
+      "source_url": "https://www.instagram.com/reel/example/",
+      "platform": "instagram",
+      "metrics": {
+        "views": 120000
+      }
+    }
+  ],
+  "default_metadata": {
+    "operator": "sundance"
+  }
+}
+```
+
+When `batch_key` is present, Katcha derives a stable run key:
+`source-import:{source_key}:{batch_key}`. Reposting the same batch returns the
+same discovery run instead of duplicating work. The import batch key and item
+count are also added to candidate metadata through the operator feed adapter.

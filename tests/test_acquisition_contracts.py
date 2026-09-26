@@ -54,6 +54,7 @@ def test_discovery_and_rights_routes_are_mounted() -> None:
     assert "/v1/discovery/runs" in paths
     assert "/v1/discovery/sources" in paths
     assert "/v1/discovery/sources/{source_id}/runs" in paths
+    assert "/v1/discovery/sources/{source_id}/imports" in paths
     assert "/v1/discovery/runs/{run_id}/execute" in paths
     assert "/v1/discovery/candidates" in paths
     assert "/v1/discovery/candidates/{candidate_id}" in paths
