@@ -27,21 +27,21 @@ class RankedShortEpisodeEditorialWorkflow:
                         episode_id,
                         start_to_close_timeout=timedelta(minutes=4),
                         retry_policy=paid_once,
-                        result_type=dict[str, object],
+
                     )
                     await workflow.execute_activity(
                         "select_episode_script_candidate",
                         episode_id,
                         start_to_close_timeout=timedelta(seconds=30),
                         retry_policy=local_retry,
-                        result_type=dict[str, object],
+
                     )
                 voiced = await workflow.execute_activity(
                     "generate_episode_narration_assets",
                     episode_id,
                     start_to_close_timeout=timedelta(minutes=12),
                     retry_policy=paid_once,
-                    result_type=dict[str, object],
+
                 )
                 voice_profile = voiced.get("voice_profile")
             except Exception as exc:
@@ -58,7 +58,7 @@ class RankedShortEpisodeEditorialWorkflow:
                 episode_id,
                 start_to_close_timeout=timedelta(seconds=30),
                 retry_policy=local_retry,
-                result_type=dict[str, object],
+
             )
             if editorial.get("action") != "editorial_approved":
                 return {
@@ -76,14 +76,14 @@ class RankedShortEpisodeEditorialWorkflow:
                 episode_id,
                 start_to_close_timeout=timedelta(minutes=2),
                 retry_policy=local_retry,
-                result_type=dict[str, object],
+
             )
             rendered = await workflow.execute_activity(
                 "render_ranked_episode_activity",
                 episode_id,
                 start_to_close_timeout=timedelta(minutes=30),
                 retry_policy=local_retry,
-                result_type=dict[str, object],
+
             )
         except Exception as exc:
             await workflow.execute_activity(
@@ -99,7 +99,7 @@ class RankedShortEpisodeEditorialWorkflow:
             episode_id,
             start_to_close_timeout=timedelta(seconds=30),
             retry_policy=local_retry,
-            result_type=dict[str, object],
+
         )
         publication_id = automation.get("publication_id")
         publication_workflow_id = automation.get("publication_workflow_id")
@@ -111,7 +111,7 @@ class RankedShortEpisodeEditorialWorkflow:
                     args=[str(publication_id), str(publication_workflow_id)],
                     start_to_close_timeout=timedelta(seconds=30),
                     retry_policy=local_retry,
-                    result_type=dict[str, object],
+
                 )
                 handoff_started = True
             except Exception:
