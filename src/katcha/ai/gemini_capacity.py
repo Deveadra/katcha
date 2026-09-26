@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+
 from katcha.ai.router import ModelTarget
 
 _GEMINI_CAPACITY_FALLBACKS: dict[str, tuple[str, ...]] = {
