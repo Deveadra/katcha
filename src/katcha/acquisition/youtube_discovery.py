@@ -5,7 +5,11 @@ from typing import Any
 
 import httpx
 
-from katcha.acquisition.adapters import DiscoveredCandidate, DiscoveryBatch
+from katcha.acquisition.adapters import (
+    DiscoveredCandidate,
+    DiscoveryAdapterCapability,
+    DiscoveryBatch,
+)
 from katcha.acquisition.http_errors import (
     provider_payload_error,
     provider_response_error,
@@ -153,6 +157,34 @@ def _search_query(query: dict[str, Any]) -> str:
 class YouTubeDiscoveryAdapter:
     key = "youtube"
     version = "v1"
+    capability = DiscoveryAdapterCapability(
+        key=key,
+        version=version,
+        label="YouTube Search",
+        description=(
+            "Searches YouTube Data API for fresh videos and enriches results "
+            "with channel identity and engagement metrics."
+        ),
+        source_types=("public_api", "video_search"),
+        supported_platforms=("youtube",),
+        query_fields=(
+            "q",
+            "include_terms",
+            "order",
+            "freshness_horizon_hours",
+            "relevance_language",
+            "region_code",
+            "limit",
+        ),
+        required_credentials=("YOUTUBE_DATA_API_KEY",),
+        sample_query={
+            "q": "new game trailer",
+            "order": "date",
+            "freshness_horizon_hours": 72,
+            "region_code": "US",
+            "limit": 25,
+        },
+    )
 
     def discover(
         self,

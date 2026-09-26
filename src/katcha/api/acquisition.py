@@ -8,7 +8,7 @@ from fastapi import APIRouter, HTTPException, Query, status
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import and_, func, select
 
-from katcha.acquisition.adapters import get_adapter
+from katcha.acquisition.adapters import available_adapters, get_adapter
 from katcha.acquisition_models import (
     DiscoveryCandidate,
     DiscoveryObservation,
@@ -54,6 +54,19 @@ class CreateDiscoveryRunRequest(BaseModel):
     idempotency_key: str | None = Field(default=None, max_length=160)
     query: dict[str, object] = Field(default_factory=dict)
     metadata: dict[str, object] = Field(default_factory=dict)
+
+
+class DiscoveryAdapterResponse(BaseModel):
+    key: str
+    version: str
+    label: str
+    description: str
+    source_types: list[str]
+    supported_platforms: list[str]
+    query_fields: list[str]
+    required_credentials: list[str]
+    supports_imports: bool
+    sample_query: dict[str, object]
 
 
 class DiscoveryRunResponse(BaseModel):
@@ -267,6 +280,14 @@ class DiscoveryPromotionResponse(BaseModel):
     workflow_id: str | None
     status: str
     clip_id: uuid.UUID | None
+
+
+@router.get(
+    "/discovery/adapters",
+    response_model=list[DiscoveryAdapterResponse],
+)
+def list_discovery_adapters() -> list[dict[str, object]]:
+    return available_adapters()
 
 
 @router.post(

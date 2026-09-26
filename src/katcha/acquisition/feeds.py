@@ -9,7 +9,11 @@ from xml.etree import ElementTree
 
 import httpx
 
-from katcha.acquisition.adapters import DiscoveredCandidate, DiscoveryBatch
+from katcha.acquisition.adapters import (
+    DiscoveredCandidate,
+    DiscoveryAdapterCapability,
+    DiscoveryBatch,
+)
 from katcha.acquisition.http_errors import (
     provider_payload_error,
     provider_response_error,
@@ -250,6 +254,24 @@ def _fetch_feed(url: str) -> tuple[bytes, str, int]:
 class RssAtomDiscoveryAdapter:
     key = "rss_atom"
     version = "v1"
+    capability = DiscoveryAdapterCapability(
+        key=key,
+        version=version,
+        label="RSS/Atom Feed",
+        description=(
+            "Reads public RSS or Atom feeds from sites that expose posts, "
+            "articles, changelogs, releases, or media updates."
+        ),
+        source_types=("public_feed", "website_feed"),
+        supported_platforms=("web", "rss", "atom"),
+        query_fields=("feed_url", "include_terms", "exclude_terms", "limit"),
+        sample_query={
+            "feed_url": "https://example.com/feed.xml",
+            "include_terms": ["gaming", "trailer"],
+            "exclude_terms": ["rumor"],
+            "limit": 50,
+        },
+    )
 
     def discover(
         self,

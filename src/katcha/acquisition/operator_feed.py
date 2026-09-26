@@ -2,7 +2,11 @@ from __future__ import annotations
 
 from typing import Any
 
-from katcha.acquisition.adapters import DiscoveredCandidate, DiscoveryBatch
+from katcha.acquisition.adapters import (
+    DiscoveredCandidate,
+    DiscoveryAdapterCapability,
+    DiscoveryBatch,
+)
 
 
 def _clean_string(value: object) -> str | None:
@@ -66,6 +70,51 @@ def _feed_items(query: dict[str, Any]) -> list[dict[str, Any]]:
 class OperatorFeedDiscoveryAdapter:
     key = "operator_feed"
     version = "v1"
+    capability = DiscoveryAdapterCapability(
+        key=key,
+        version=version,
+        label="Operator Feed",
+        description=(
+            "Normalizes operator, private server, Discord, queue, TikTok, "
+            "Instagram, or other URL drops with platform hints, metrics, tags, "
+            "clip selectors, and provenance metadata."
+        ),
+        source_types=("operator_drop", "server_drop", "url_batch", "private_feed"),
+        supported_platforms=(
+            "tiktok",
+            "instagram",
+            "youtube",
+            "twitch",
+            "x",
+            "reddit",
+            "mixed",
+            "any",
+        ),
+        query_fields=(
+            "feed_key",
+            "default_platform",
+            "default_content_kind",
+            "default_metadata",
+            "items",
+            "urls",
+            "limit",
+        ),
+        supports_imports=True,
+        sample_query={
+            "feed_key": "ranksnaxx-short-drops",
+            "default_platform": "tiktok",
+            "default_content_kind": "rank_clip",
+            "items": [
+                {
+                    "source_url": "https://www.tiktok.com/@creator/video/123",
+                    "platform": "tiktok",
+                    "metrics": {"views": 1200000, "likes": 88000},
+                    "clip": {"start_seconds": 2, "end_seconds": 17},
+                }
+            ],
+            "urls": ["https://www.instagram.com/reel/example/"],
+        },
+    )
 
     def discover(
         self,
