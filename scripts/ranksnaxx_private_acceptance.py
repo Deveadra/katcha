@@ -405,12 +405,30 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     assert isinstance(post_editorial, dict)
     rendered = dict(post_editorial["episode"])
     if rendered.get("status") not in {"rendered", "render_review", "approved"}:
-        rendered = _wait(
-            "episode render",
-            lambda: dict(client.get(f"/v1/short-episodes/{episode_id}"))["episode"],
-            accepted={"rendered", "render_review", "approved"},
-            timeout_seconds=args.timeout_seconds,
-        )
+        try:
+            rendered = _wait(
+                "episode render",
+                lambda: dict(client.get(f"/v1/short-episodes/{episode_id}"))["episode"],
+                accepted={"rendered", "render_review", "approved"},
+                timeout_seconds=args.timeout_seconds,
+            )
+        except RuntimeError as exc:
+            attempts = client.get(
+                f"/v1/short-episodes/{episode_id}/render-attempts"
+            )
+            latest = (
+                dict(attempts[-1])
+                if isinstance(attempts, list) and attempts
+                else {}
+            )
+            if latest:
+                raise RuntimeError(
+                    f"{exc}; render_attempt status={latest.get('status')} "
+                    f"stage={latest.get('stage')} "
+                    f"failure_class={latest.get('last_failure_class')} "
+                    f"error={latest.get('error')}"
+                ) from exc
+            raise
     if not args.approve_private_upload:
         return {
             "channel_profile_id": args.channel_profile_id,
