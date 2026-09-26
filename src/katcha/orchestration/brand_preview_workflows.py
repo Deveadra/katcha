@@ -22,7 +22,7 @@ class StagedBrandPreviewWorkflow:
                 preview_id,
                 start_to_close_timeout=timedelta(minutes=30),
                 retry_policy=retry,
-                result_type=dict[str, object],
+
             )
         except Exception as exc:
             await workflow.execute_activity(
