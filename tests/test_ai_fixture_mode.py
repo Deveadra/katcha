@@ -95,11 +95,14 @@ def test_fixture_script_helpers_return_three_treatments() -> None:
 
 
 def test_fixture_tts_uses_local_engine_and_zero_cost(monkeypatch) -> None:
-    def fake_run(*args, **kwargs):
+    def fake_run(command, **kwargs):
+        output_path = command[command.index("-w") + 1]
+        with open(output_path, "wb") as handle:
+            handle.write(_wav_bytes())
         return subprocess.CompletedProcess(
-            args=args,
+            args=command,
             returncode=0,
-            stdout=_wav_bytes(),
+            stdout=b"",
             stderr=b"",
         )
 
