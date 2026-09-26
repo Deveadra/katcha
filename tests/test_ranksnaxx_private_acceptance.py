@@ -1,6 +1,8 @@
 import importlib.util
 from pathlib import Path
 
+import pytest
+
 
 def _load_runner():
     path = Path(__file__).resolve().parents[1] / "scripts" / "ranksnaxx_private_acceptance.py"
@@ -30,3 +32,16 @@ def test_private_acceptance_publication_cannot_notify_or_publish() -> None:
     assert payload["publish_at"] is None
     assert payload["notify_subscribers"] is False
     assert payload["contains_synthetic_media"] is True
+
+
+def test_wait_fails_fast_when_editorial_state_never_progresses() -> None:
+    with pytest.raises(RuntimeError, match="made no progress"):
+        runner._wait(
+            "episode editorial",
+            lambda: {"status": "planned", "stage": "planned"},
+            accepted={"voiced"},
+            timeout_seconds=10,
+            interval_seconds=0,
+            no_progress_seconds=0,
+            no_progress_hint="check production worker",
+        )
