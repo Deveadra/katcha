@@ -65,3 +65,17 @@ def test_frozen_brand_snapshot_prefers_available_branded_voice() -> None:
 
     assert profile is not None
     assert profile.key == "gemini_youth_v2"
+
+
+def test_free_first_brand_voice_prefers_gemini_when_both_are_available() -> None:
+    contract = channel_01_brand_v1()
+    settings = Settings(
+        openai_api_key="test-openai",
+        gemini_api_key="test-gemini",
+        ai_live_routing_mode="free_first",
+    )
+
+    profile = _brand_voice_profile(contract.model_dump(mode="json"), settings)
+
+    assert profile is not None
+    assert profile.key == "gemini_youth_v2"
