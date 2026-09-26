@@ -92,3 +92,59 @@ docker compose \
   -f docker-compose.acceptance.yml \
   stop acceptance-media
 ```
+
+
+## Final RankSnaxx Brand v2 real-media visual acceptance
+
+Issue #36 stays open until Brand v2 is reviewed against an actual stored
+`ranked-episode-render-v1` episode. Synthetic renderer smoke evidence is not enough.
+
+First create/render a real RankSnaxx episode with
+`scripts/ranksnaxx_live_production.py` and stop at render review. Keep its
+`episode_id`. Then run:
+
+```bash
+python scripts/ranksnaxx_brand_v2_acceptance.py \
+  --channel-profile-id <RANKSNAXX_CHANNEL_PROFILE_ID> \
+  --episode-id <REAL_RANKED_EPISODE_ID>
+```
+
+The command:
+
+1. confirms the target channel is RankSnaxx;
+2. reuses an existing staged Brand v2 or stages the built-in v2 candidate;
+3. rejects synthetic `acceptance-media` source lineage;
+4. requires the episode's frozen `ranked-episode-render-v1` manifest;
+5. chooses a real narration sequence (or accepts `--line-ref`);
+6. renders `meme_cry` through the existing staged-brand preview workflow;
+7. waits for normal post-render verification;
+8. prints the private preview media URL and leaves Brand v2 inactive.
+
+Watch the verified MP4 in the Editing Control Center or through the authenticated
+media endpoint. Check:
+
+- reaction placement is mobile-safe;
+- captions remain readable and unobstructed;
+- the reaction enters/exits on the intended spoken beat;
+- animation rhythm feels natural with the real voice/source timing;
+- the overlay stays clear of common platform UI zones.
+
+Do **not** activate v2 unless that real-media preview is accepted.
+
+After visual acceptance, activation is a separate explicit command and requires the
+specific verified preview ID:
+
+```bash
+python scripts/ranksnaxx_brand_v2_acceptance.py \
+  --channel-profile-id <RANKSNAXX_CHANNEL_PROFILE_ID> \
+  --activate-reviewed-preview <VERIFIED_PREVIEW_ID> \
+  --confirm-visual-acceptance
+```
+
+The activation mode re-reads the preview from Katcha and refuses to continue unless
+it is verified, belongs to RankSnaxx Brand v2, is backed by a ranked ShortEpisode,
+and contains render-verification evidence. It does not accept an episode ID in the
+same invocation, preventing preview creation and activation from collapsing into one
+unreviewed action.
+
+Only after this operator-reviewed step is successful should #36 be closed.
