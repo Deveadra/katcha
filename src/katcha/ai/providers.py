@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
 
+from katcha.ai.failover import safe_to_fail_over
 from katcha.ai.pricing import estimate_token_cost
 from katcha.ai.router import ModelTarget, assert_ai_budget, record_usage, route_for
 from katcha.ai.schemas import ClipVisionResult, DeepVideoResult
@@ -162,6 +163,26 @@ def _gemini_contact_sheet(
     return AIResult(value, target, input_tokens, output_tokens)
 
 
+def _contact_sheet_for_target(
+    image_bytes: bytes,
+    transcript: str | None,
+    target: ModelTarget,
+    settings: Settings,
+    reference_id: str,
+) -> AIResult:
+    if target.provider == "openai" and settings.openai_api_key:
+        return _openai_contact_sheet(
+            image_bytes, transcript, target, settings, reference_id
+        )
+    if target.provider == "gemini" and settings.gemini_api_key:
+        return _gemini_contact_sheet(
+            image_bytes, transcript, target, settings, reference_id
+        )
+    raise ProviderUnavailable(
+        f"{target.provider} is not configured for bulk vision"
+    )
+
+
 def analyze_contact_sheet(
     image_bytes: bytes,
     transcript: str | None,
@@ -172,23 +193,18 @@ def analyze_contact_sheet(
     settings = settings or get_settings()
     assert_ai_budget(Decimal("0.01"))
     route = route_for(AITask.BULK_VISION)
-    if route.primary.provider == "openai" and settings.openai_api_key:
-        return _openai_contact_sheet(
-            image_bytes,
-            transcript,
-            route.primary,
-            settings,
-            reference_id,
+
+    try:
+        return _contact_sheet_for_target(
+            image_bytes, transcript, route.primary, settings, reference_id
         )
-    if route.fallback and route.fallback.provider == "gemini" and settings.gemini_api_key:
-        return _gemini_contact_sheet(
-            image_bytes,
-            transcript,
-            route.fallback,
-            settings,
-            reference_id,
-        )
-    raise ProviderUnavailable("no configured provider is available for bulk vision")
+    except Exception as exc:
+        if not safe_to_fail_over(exc) or route.fallback is None:
+            raise
+
+    return _contact_sheet_for_target(
+        image_bytes, transcript, route.fallback, settings, reference_id
+    )
 
 
 def analyze_full_video(
