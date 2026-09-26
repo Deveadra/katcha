@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any
 
+from katcha.ai.failover import safe_to_fail_over
 from katcha.ai.pricing import estimate_token_cost
 from katcha.ai.router import (
     ModelTarget,
@@ -265,27 +266,26 @@ def generate_ranked_episode_scripts(
         prompt_version=prompt_version,
     )
 
+    def generate_for(target: ModelTarget) -> EpisodeScriptGenerationResult:
+        if target.provider == "openai" and settings.openai_api_key:
+            return _openai_generate(
+                prompt, target, settings, episode_id, reservation_id
+            )
+        if target.provider == "gemini" and settings.gemini_api_key:
+            return _gemini_generate(
+                prompt, target, settings, episode_id, reservation_id
+            )
+        raise EpisodeScriptProviderUnavailable(
+            f"{target.provider} is not configured for ranked episode scripting"
+        )
+
     try:
-        if route.primary.provider == "openai" and settings.openai_api_key:
-            result = _openai_generate(
-                prompt, route.primary, settings, episode_id, reservation_id
-            )
-        elif route.primary.provider == "gemini" and settings.gemini_api_key:
-            result = _gemini_generate(
-                prompt, route.primary, settings, episode_id, reservation_id
-            )
-        elif route.fallback and route.fallback.provider == "openai" and settings.openai_api_key:
-            result = _openai_generate(
-                prompt, route.fallback, settings, episode_id, reservation_id
-            )
-        elif route.fallback and route.fallback.provider == "gemini" and settings.gemini_api_key:
-            result = _gemini_generate(
-                prompt, route.fallback, settings, episode_id, reservation_id
-            )
-        else:
-            raise EpisodeScriptProviderUnavailable(
-                "no configured provider is available for ranked episode scripting"
-            )
+        try:
+            result = generate_for(route.primary)
+        except Exception as exc:
+            if not safe_to_fail_over(exc) or route.fallback is None:
+                raise
+            result = generate_for(route.fallback)
         validate_episode_scripts_against_plan(result.scripts, plan_snapshot)
         return result
     except Exception as exc:

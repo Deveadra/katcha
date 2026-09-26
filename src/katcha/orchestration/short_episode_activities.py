@@ -92,26 +92,42 @@ def _preferred_style(items: list[ShortEpisodeItem]) -> tuple[str, str]:
     return "observational", "default grounded countdown treatment"
 
 
-def _brand_voice_profile(
+def _brand_voice_profiles(
     snapshot: dict[str, Any],
     settings: Settings,
-) -> VoiceProfile | None:
+) -> tuple[VoiceProfile | None, VoiceProfile | None]:
     voice_policy = snapshot.get("voice_policy")
     if not isinstance(voice_policy, dict):
-        return None
+        return None, None
     preferred = voice_policy.get("preferred_profiles")
     if not isinstance(preferred, list):
-        return None
+        return None, None
+
+    available: list[VoiceProfile] = []
     for key in preferred:
         try:
             profile = get_voice_profile(str(key))
         except ValueError:
             continue
-        if profile.provider == "openai" and settings.openai_api_key:
-            return profile
-        if profile.provider == "gemini" and settings.gemini_api_key:
-            return profile
-    return None
+        if (
+            profile.provider == "openai" and settings.openai_api_key
+        ) or (
+            profile.provider == "gemini" and settings.gemini_api_key
+        ):
+            available.append(profile)
+
+    primary = available[0] if available else None
+    fallback = available[1] if len(available) > 1 else None
+    return primary, fallback
+
+
+def _brand_voice_profile(
+    snapshot: dict[str, Any],
+    settings: Settings,
+) -> VoiceProfile | None:
+    """Compatibility helper returning the highest-priority available brand voice."""
+    primary, _ = _brand_voice_profiles(snapshot, settings)
+    return primary
 
 
 def _selected_script(session: Any, episode: ShortEpisode) -> ShortEpisodeScript:
@@ -344,11 +360,13 @@ def generate_episode_narration_assets(episode_id: str) -> dict[str, object]:
         beats = list(script.narration_beats or [])
         if not beats:
             raise RuntimeError("selected episode script has no narration beats")
-        profile = (
-            get_voice_profile(episode.selected_voice_profile)
-            if episode.selected_voice_profile
-            else _brand_voice_profile(dict(episode.brand_snapshot or {}), settings)
-        )
+        if episode.selected_voice_profile:
+            profile = get_voice_profile(episode.selected_voice_profile)
+            fallback_profile = None
+        else:
+            profile, fallback_profile = _brand_voice_profiles(
+                dict(episode.brand_snapshot or {}), settings
+            )
         channel_profile_id = episode.channel_profile_id
         items = list(
             session.scalars(
@@ -408,6 +426,7 @@ def generate_episode_narration_assets(episode_id: str) -> dict[str, object]:
         result = synthesize_speech(
             text,
             profile=profile,
+            fallback_profile=fallback_profile,
             settings=settings,
             channel_profile_id=channel_profile_id,
             reference_type="short_episode",
@@ -422,6 +441,7 @@ def generate_episode_narration_assets(episode_id: str) -> dict[str, object]:
             },
         )
         profile = result.profile
+        fallback_profile = None
         metadata: dict[str, object] = {
             **dict(beat),
             "text": text,

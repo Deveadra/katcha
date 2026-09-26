@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any
 
+from katcha.ai.failover import safe_to_fail_over
 from katcha.ai.pricing import estimate_token_cost
 from katcha.ai.router import (
     ModelTarget,
@@ -258,42 +259,26 @@ def generate_short_scripts(
         route = route_for(AITask.SHORT_SCRIPT)
     prompt = build_script_prompt(persona, snapshot, prompt_version=prompt_version)
 
-    try:
-        if route.primary.provider == "openai" and settings.openai_api_key:
+    def generate_for(target: ModelTarget) -> ScriptGenerationResult:
+        if target.provider == "openai" and settings.openai_api_key:
             return _openai_generate(
-                prompt,
-                route.primary,
-                settings,
-                production_id,
-                reservation_id,
+                prompt, target, settings, production_id, reservation_id
             )
-        if route.primary.provider == "gemini" and settings.gemini_api_key:
+        if target.provider == "gemini" and settings.gemini_api_key:
             return _gemini_generate(
-                prompt,
-                route.primary,
-                settings,
-                production_id,
-                reservation_id,
-            )
-        if route.fallback and route.fallback.provider == "openai" and settings.openai_api_key:
-            return _openai_generate(
-                prompt,
-                route.fallback,
-                settings,
-                production_id,
-                reservation_id,
-            )
-        if route.fallback and route.fallback.provider == "gemini" and settings.gemini_api_key:
-            return _gemini_generate(
-                prompt,
-                route.fallback,
-                settings,
-                production_id,
-                reservation_id,
+                prompt, target, settings, production_id, reservation_id
             )
         raise ScriptProviderUnavailable(
-            "no configured provider is available for short scripting"
+            f"{target.provider} is not configured for short scripting"
         )
+
+    try:
+        try:
+            return generate_for(route.primary)
+        except Exception as exc:
+            if not safe_to_fail_over(exc) or route.fallback is None:
+                raise
+            return generate_for(route.fallback)
     except Exception as exc:
         release_budget_reservation(
             reservation_id,

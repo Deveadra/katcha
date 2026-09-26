@@ -238,6 +238,13 @@ def _ensure_fixture_clip(
     if not isinstance(features, dict) or features.get("candidate_score") is None:
         analysis = client.post(f"/v1/clips/{clip_id}/analyze", {"force_retry": False})
         assert isinstance(analysis, dict)
+        if str(analysis.get("status") or "") == "failed":
+            print(f"analysis {index + 1}: retrying failed prior run")
+            analysis = client.post(
+                f"/v1/clips/{clip_id}/analyze",
+                {"force_retry": True},
+            )
+            assert isinstance(analysis, dict)
         analysis_id = str(analysis["analysis_run_id"])
         _wait(
             f"analysis {index + 1}",

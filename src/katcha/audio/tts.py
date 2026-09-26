@@ -8,6 +8,7 @@ import wave
 from dataclasses import dataclass
 from decimal import Decimal
 
+from katcha.ai.failover import safe_to_fail_over
 from katcha.ai.pricing import estimate_token_cost
 from katcha.ai.router import (
     ModelTarget,
@@ -281,6 +282,7 @@ def synthesize_speech(
     text: str,
     *,
     profile: VoiceProfile | None = None,
+    fallback_profile: VoiceProfile | None = None,
     settings: Settings | None = None,
     channel_profile_id: uuid.UUID | None = None,
     reference_type: str | None = None,
@@ -317,13 +319,22 @@ def synthesize_speech(
     else:
         profile = profile or choose_voice_profile(settings)
 
+    requested_profile = profile
+
+    def synthesize_with(selected: VoiceProfile) -> TTSResult:
+        if selected.provider == "openai":
+            return _openai_tts(text, selected, settings)
+        if selected.provider == "gemini":
+            return _gemini_tts(text, selected, settings)
+        raise TTSUnavailable(f"unsupported TTS provider: {selected.provider}")
+
     try:
-        if profile.provider == "openai":
-            result = _openai_tts(text, profile, settings)
-        elif profile.provider == "gemini":
-            result = _gemini_tts(text, profile, settings)
-        else:
-            raise TTSUnavailable(f"unsupported TTS provider: {profile.provider}")
+        try:
+            result = synthesize_with(profile)
+        except Exception as exc:
+            if fallback_profile is None or not safe_to_fail_over(exc):
+                raise
+            result = synthesize_with(fallback_profile)
     except Exception as exc:
         release_budget_reservation(
             reservation_id,
@@ -334,6 +345,7 @@ def synthesize_speech(
     metadata = {
         "estimated_cost": True,
         "voice_profile": result.profile.key,
+        "provider_failover": result.profile.key != requested_profile.key,
         **dict(result.cost_metadata or {}),
         **dict(usage_metadata or {}),
     }
