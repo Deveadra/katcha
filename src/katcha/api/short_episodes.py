@@ -72,6 +72,8 @@ def _require_ai_execution() -> None:
     settings = get_settings()
     if not settings.ai_enabled:
         raise HTTPException(status_code=503, detail="AI execution is disabled")
+    if settings.resolved_ai_execution_mode() == "fixture":
+        return
     if not settings.openai_api_key and not settings.gemini_api_key:
         raise HTTPException(status_code=503, detail="no AI/TTS provider key is configured")
 

@@ -1,4 +1,5 @@
 import uuid
+from types import SimpleNamespace
 
 import katcha.api.main
 import katcha.api.short_episode_schemas
@@ -166,3 +167,19 @@ def test_episode_models_preserve_regeneration_render_and_trend_lineage() -> None
         "render_manifest",
     } <= episode_columns
     assert {"short_episode_id", "decision", "actor", "review_metadata"} <= review_columns
+
+
+def test_fixture_editorial_does_not_require_provider_keys(monkeypatch) -> None:
+    settings = SimpleNamespace(
+        ai_enabled=True,
+        openai_api_key=None,
+        gemini_api_key=None,
+        resolved_ai_execution_mode=lambda: "fixture",
+    )
+    monkeypatch.setattr(
+        katcha.api.short_episodes,
+        "get_settings",
+        lambda: settings,
+    )
+
+    katcha.api.short_episodes._require_ai_execution()
