@@ -162,6 +162,9 @@ def execute_discovery_page_activity(run_id: str) -> dict[str, object]:
         raise
 
     candidate_ids: list[str] = []
+    default_candidate_metadata = dict(
+        run_metadata.get("default_candidate_metadata") or {}
+    )
     for item in batch.items:
         candidate = observe_discovery_candidate(
             source_url=item.source_url,
@@ -173,7 +176,7 @@ def execute_discovery_page_activity(run_id: str) -> dict[str, object]:
             creator_url=item.creator_url,
             provenance_confidence=item.provenance_confidence,
             provenance_claims=item.provenance_claims,
-            metadata=item.metadata,
+            metadata={**default_candidate_metadata, **dict(item.metadata or {})},
         )
         candidate_ids.append(str(candidate.id))
         if topic_watch_id is not None:
