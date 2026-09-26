@@ -14,6 +14,7 @@ from katcha.longform.schemas import (
     LongformEditorPlan,
 )
 
+
 def fixture_clip_vision(reference_id: str) -> ClipVisionResult:
     seed = sum(reference_id.encode("utf-8"))
     hook = 58 + (seed % 19)
