@@ -8,6 +8,13 @@ _SAFE_CLASS_NAMES = {
     "resourceexhausted",
     "toomanyrequests",
 }
+_SAFE_CAPACITY_MARKERS = (
+    "high demand",
+    "temporarily unavailable",
+    "status': 'unavailable'",
+    '"status": "unavailable"',
+)
+
 _SAFE_MESSAGE_MARKERS = (
     "insufficient_quota",
     "credit_balance_exhausted",
@@ -27,13 +34,19 @@ def safe_to_fail_over(exc: BaseException) -> bool:
     if status is None:
         status = getattr(exc, "code", None)
     try:
-        if status is not None and int(status) in _SAFE_STATUS_CODES:
+        normalized_status = int(status) if status is not None else None
+        if normalized_status in _SAFE_STATUS_CODES:
             return True
     except (TypeError, ValueError):
-        pass
+        normalized_status = None
+
+    message = str(exc).casefold()
+    if normalized_status == 503 and any(
+        marker in message for marker in _SAFE_CAPACITY_MARKERS
+    ):
+        return True
 
     if type(exc).__name__.casefold() in _SAFE_CLASS_NAMES:
         return True
 
-    message = str(exc).casefold()
     return any(marker in message for marker in _SAFE_MESSAGE_MARKERS)

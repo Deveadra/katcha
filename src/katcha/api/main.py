@@ -157,6 +157,8 @@ def _require_ai_execution() -> None:
     settings = get_settings()
     if not settings.ai_enabled:
         raise HTTPException(status_code=503, detail="AI execution is disabled")
+    if settings.resolved_ai_execution_mode() == "fixture":
+        return
     if not settings.openai_api_key and not settings.gemini_api_key:
         raise HTTPException(status_code=503, detail="no AI/TTS provider key is configured")
 
@@ -172,6 +174,17 @@ def _require_youtube_execution() -> None:
 @app.get("/v1/health/live", response_model=HealthResponse)
 def live() -> HealthResponse:
     return HealthResponse(status="ok", version=__version__)
+
+
+@app.get("/v1/runtime/ai")
+def ai_runtime() -> dict[str, object]:
+    settings = get_settings()
+    mode = settings.resolved_ai_execution_mode()
+    return {
+        "execution_mode": mode,
+        "live_routing_mode": settings.ai_live_routing_mode,
+        "external_provider_calls_enabled": mode == "live",
+    }
 
 
 @app.get("/v1/health/ready", response_model=HealthResponse)

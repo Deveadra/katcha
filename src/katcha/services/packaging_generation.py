@@ -12,6 +12,7 @@ from typing import Any
 from pydantic import ValidationError
 from sqlalchemy import select
 
+from katcha.ai.fixtures import fixture_packaging_candidates
 from katcha.ai.pricing import estimate_token_cost
 from katcha.ai.router import (
     ModelTarget,
@@ -531,82 +532,105 @@ def generate_packaging_candidates(
         ]
     else:
         settings = settings or get_settings()
-        assert_ai_budget(_ESTIMATED_INCREMENT_USD)
-        decision = route_for_channel(
-            AITask.METADATA,
-            profile_id,
-            estimated_increment_usd=_ESTIMATED_INCREMENT_USD,
-            expected_value=0.65,
-            reference_type="packaging_generation",
-            reference_id=str(row.id),
-            reservation_key=f"packaging-generation:{publication_id}:{key}",
-        )
-        with session_scope() as session:
-            locked = session.get(PackagingCandidateGeneration, row.id)
-            if locked is None:
-                raise RuntimeError("packaging generation disappeared before provider call")
-            locked.status = "running"
-            locked.stage = "provider_call_started"
-            locked.context_sha256 = context_sha
-            locked.provider = decision.route.primary.provider
-            locked.model = decision.route.primary.model
-            locked.error = None
-
-        prompt = _prompt(context, candidate_count=candidate_count)
-        target = decision.route.primary
-        try:
-            if target.provider == "openai":
-                candidate_set = _openai_generate(
-                    prompt,
-                    target=target,
-                    settings=settings,
-                    generation_id=row.id,
-                    reservation_id=decision.reservation_id,
-                )
-            elif target.provider == "gemini":
-                candidate_set = _gemini_generate(
-                    prompt,
-                    target=target,
-                    settings=settings,
-                    generation_id=row.id,
-                    reservation_id=decision.reservation_id,
-                )
-            else:
-                raise PackagingGenerationUnavailable(
-                    f"unsupported metadata provider: {target.provider}"
-                )
+        if settings.resolved_ai_execution_mode() == "fixture":
+            target = ModelTarget("fixture", "deterministic-packaging-v1")
+            candidate_set = fixture_packaging_candidates(context, candidate_count)
             candidates = _validate_candidates(
                 candidate_set,
                 candidate_count=candidate_count,
                 context=context,
             )
-        except (ValidationError, ValueError) as exc:
             with session_scope() as session:
-                failed = session.get(PackagingCandidateGeneration, row.id)
-                if failed is not None:
-                    failed.status = "failed"
-                    failed.stage = "candidate_validation_failed"
-                    failed.error = str(exc)[:8000]
-            raise
-        except Exception as exc:
-            release_budget_reservation(
-                decision.reservation_id,
-                reason=f"packaging_generation_ambiguous:{type(exc).__name__}",
+                ready = session.get(PackagingCandidateGeneration, row.id)
+                if ready is None:
+                    raise RuntimeError(
+                        "packaging generation disappeared during fixture generation"
+                    )
+                ready.status = "running"
+                ready.stage = "candidates_ready"
+                ready.context_sha256 = context_sha
+                ready.provider = target.provider
+                ready.model = target.model
+                ready.error = None
+        else:
+            assert_ai_budget(_ESTIMATED_INCREMENT_USD)
+            decision = route_for_channel(
+                AITask.METADATA,
+                profile_id,
+                estimated_increment_usd=_ESTIMATED_INCREMENT_USD,
+                expected_value=0.65,
+                reference_type="packaging_generation",
+                reference_id=str(row.id),
+                reservation_key=f"packaging-generation:{publication_id}:{key}",
             )
             with session_scope() as session:
-                failed = session.get(PackagingCandidateGeneration, row.id)
-                if failed is not None:
-                    failed.status = "ambiguous"
-                    failed.stage = "provider_call_ambiguous"
-                    failed.error = str(exc)[:8000]
-            raise AmbiguousPackagingGeneration(
-                "packaging provider call failed ambiguously; use a new generation_key"
-            ) from exc
+                locked = session.get(PackagingCandidateGeneration, row.id)
+                if locked is None:
+                    raise RuntimeError(
+                        "packaging generation disappeared before provider call"
+                    )
+                locked.status = "running"
+                locked.stage = "provider_call_started"
+                locked.context_sha256 = context_sha
+                locked.provider = decision.route.primary.provider
+                locked.model = decision.route.primary.model
+                locked.error = None
+
+            prompt = _prompt(context, candidate_count=candidate_count)
+            target = decision.route.primary
+            try:
+                if target.provider == "openai":
+                    candidate_set = _openai_generate(
+                        prompt,
+                        target=target,
+                        settings=settings,
+                        generation_id=row.id,
+                        reservation_id=decision.reservation_id,
+                    )
+                elif target.provider == "gemini":
+                    candidate_set = _gemini_generate(
+                        prompt,
+                        target=target,
+                        settings=settings,
+                        generation_id=row.id,
+                        reservation_id=decision.reservation_id,
+                    )
+                else:
+                    raise PackagingGenerationUnavailable(
+                        f"unsupported metadata provider: {target.provider}"
+                    )
+                candidates = _validate_candidates(
+                    candidate_set,
+                    candidate_count=candidate_count,
+                    context=context,
+                )
+            except (ValidationError, ValueError) as exc:
+                with session_scope() as session:
+                    failed = session.get(PackagingCandidateGeneration, row.id)
+                    if failed is not None:
+                        failed.status = "failed"
+                        failed.stage = "candidate_validation_failed"
+                        failed.error = str(exc)[:8000]
+                raise
+            except Exception as exc:
+                release_budget_reservation(
+                    decision.reservation_id,
+                    reason=f"packaging_generation_ambiguous:{type(exc).__name__}",
+                )
+                with session_scope() as session:
+                    failed = session.get(PackagingCandidateGeneration, row.id)
+                    if failed is not None:
+                        failed.status = "ambiguous"
+                        failed.stage = "provider_call_ambiguous"
+                        failed.error = str(exc)[:8000]
+                raise AmbiguousPackagingGeneration(
+                    "packaging provider call failed ambiguously; use a new generation_key"
+                ) from exc
 
         with session_scope() as session:
             ready = session.get(PackagingCandidateGeneration, row.id)
             if ready is None:
-                raise RuntimeError("packaging generation disappeared after provider response")
+                raise RuntimeError("packaging generation disappeared after generation")
             ready.candidate_payload = [
                 candidate.model_dump(mode="json") for candidate in candidates
             ]

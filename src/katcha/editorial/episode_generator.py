@@ -7,6 +7,7 @@ from decimal import Decimal
 from typing import Any
 
 from katcha.ai.failover import safe_to_fail_over
+from katcha.ai.fixtures import fixture_ranked_episode_scripts
 from katcha.ai.gemini_capacity import run_with_gemini_capacity_fallback
 from katcha.ai.pricing import estimate_token_cost
 from katcha.ai.router import (
@@ -255,6 +256,15 @@ def generate_ranked_episode_scripts(
     settings: Settings | None = None,
 ) -> EpisodeScriptGenerationResult:
     settings = settings or get_settings()
+    if settings.resolved_ai_execution_mode() == "fixture":
+        scripts = fixture_ranked_episode_scripts(plan_snapshot)
+        validate_episode_scripts_against_plan(scripts, plan_snapshot)
+        return EpisodeScriptGenerationResult(
+            scripts,
+            ModelTarget("fixture", "deterministic-ranked-script-v1"),
+            0,
+            0,
+        )
     estimated_increment = Decimal("0.08")
     assert_ai_budget(estimated_increment)
     decision = route_for_channel(

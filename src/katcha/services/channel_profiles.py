@@ -157,7 +157,7 @@ def ensure_channel_profile(
                 fallback_schedule=fallback,
                 blackout_windows=[],
                 routing_policy={
-                    "mode": "balanced",
+                    "mode": "free_first",
                     "quality_floor": "task_default",
                 },
                 strategy_metadata={"created_by": "profile_bootstrap"},
