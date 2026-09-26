@@ -240,7 +240,16 @@ def dead_letter_latest_render_attempt(
             return None
         attempt.status = "dead_letter"
         attempt.stage = "retry_exhausted"
-        attempt.error = error[:8000]
+        workflow_error = error.strip()
+        prior_error = (attempt.error or "").strip()
+        if prior_error and workflow_error in {"Activity task failed", "Workflow execution failed"}:
+            attempt.error = prior_error[:8000]
+        elif prior_error and workflow_error and prior_error != workflow_error:
+            attempt.error = (
+                f"{prior_error}\nWorkflow failure: {workflow_error}"
+            )[:8000]
+        else:
+            attempt.error = (workflow_error or prior_error)[:8000]
         attempt.completed_at = datetime.now(UTC)
         session.add(
             _event(
