@@ -103,6 +103,15 @@ def _brand_voice_profiles(
     return primary, fallback
 
 
+def _brand_voice_profile(
+    snapshot: dict[str, Any],
+    settings: Settings,
+) -> VoiceProfile | None:
+    """Compatibility helper returning the highest-priority available brand voice."""
+    primary, _ = _brand_voice_profiles(snapshot, settings)
+    return primary
+
+
 def _brand_render_spec(snapshot: dict[str, Any]) -> ShortBrandSpec | None:
     visual = snapshot.get("visual")
     if not isinstance(visual, dict):
