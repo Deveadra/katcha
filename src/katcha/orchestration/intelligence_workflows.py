@@ -21,7 +21,7 @@ async def _run_refresh(channel_profile_id: str, run_key: str) -> dict[str, objec
             args=[channel_profile_id, workflow.now().isoformat()],
             start_to_close_timeout=timedelta(seconds=30),
             retry_policy=RetryPolicy(maximum_attempts=1),
-            result_type=dict[str, object],
+
         )
     except Exception:
         reach_sync = {"status": "unavailable", "reason": "reach_sync_scheduling_failed"}
@@ -30,56 +30,56 @@ async def _run_refresh(channel_profile_id: str, run_key: str) -> dict[str, objec
         channel_profile_id,
         start_to_close_timeout=timedelta(minutes=3),
         retry_policy=retry,
-        result_type=dict[str, object],
+
     )
     ranking = await workflow.execute_activity(
         "train_channel_ranking_activity",
         args=[channel_profile_id, run_key],
         start_to_close_timeout=timedelta(minutes=3),
         retry_policy=retry,
-        result_type=dict[str, object],
+
     )
     economics = await workflow.execute_activity(
         "compute_channel_economics_activity",
         args=[channel_profile_id, run_key],
         start_to_close_timeout=timedelta(minutes=3),
         retry_policy=retry,
-        result_type=dict[str, object],
+
     )
     schedule = await workflow.execute_activity(
         "compute_channel_schedule_activity",
         args=[channel_profile_id, run_key],
         start_to_close_timeout=timedelta(minutes=3),
         retry_policy=retry,
-        result_type=dict[str, object],
+
     )
     edit_performance = await workflow.execute_activity(
         "refresh_edit_blueprint_performance_activity",
         args=[channel_profile_id, run_key],
         start_to_close_timeout=timedelta(minutes=5),
         retry_policy=retry,
-        result_type=dict[str, object],
+
     )
     packaging_intelligence = await workflow.execute_activity(
         "refresh_packaging_intelligence_activity",
         args=[channel_profile_id, run_key],
         start_to_close_timeout=timedelta(minutes=10),
         retry_policy=retry,
-        result_type=dict[str, object],
+
     )
     activation_performance = await workflow.execute_activity(
         "refresh_trend_activation_performance_activity",
         args=[channel_profile_id, run_key],
         start_to_close_timeout=timedelta(minutes=5),
         retry_policy=retry,
-        result_type=dict[str, object],
+
     )
     automation = await workflow.execute_activity(
         "apply_channel_safety_demotion_activity",
         channel_profile_id,
         start_to_close_timeout=timedelta(minutes=2),
         retry_policy=retry,
-        result_type=dict[str, object],
+
     )
     try:
         packaging_seed = await workflow.execute_activity(
@@ -87,7 +87,7 @@ async def _run_refresh(channel_profile_id: str, run_key: str) -> dict[str, objec
             channel_profile_id,
             start_to_close_timeout=timedelta(minutes=8),
             retry_policy=RetryPolicy(maximum_attempts=1),
-            result_type=dict[str, object],
+
         )
     except Exception:
         packaging_seed = {"status": "unavailable"}
@@ -97,7 +97,7 @@ async def _run_refresh(channel_profile_id: str, run_key: str) -> dict[str, objec
             args=[channel_profile_id, workflow.now().isoformat()],
             start_to_close_timeout=timedelta(minutes=2),
             retry_policy=RetryPolicy(maximum_attempts=1),
-            result_type=dict[str, object],
+
         )
     except Exception:
         packaging_experiments = {"status": "unavailable"}
@@ -167,7 +167,7 @@ async def _run_trend_activation(
         args=[channel_profile_id, run_key],
         start_to_close_timeout=timedelta(minutes=5),
         retry_policy=retry,
-        result_type=dict[str, object],
+
     )
 
 
@@ -224,5 +224,5 @@ class ChannelTrendActivationPerformanceWorkflow:
             args=[channel_profile_id, run_key],
             start_to_close_timeout=timedelta(minutes=5),
             retry_policy=retry,
-            result_type=dict[str, object],
+
         )
