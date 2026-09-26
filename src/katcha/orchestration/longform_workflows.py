@@ -24,7 +24,7 @@ class LongformCompilationWorkflow:
                     compilation_id,
                     start_to_close_timeout=timedelta(minutes=2),
                     retry_policy=local_retry,
-                    result_type=dict[str, object],
+
                 )
                 start_stage = "plan"
 
@@ -34,21 +34,21 @@ class LongformCompilationWorkflow:
                     compilation_id,
                     start_to_close_timeout=timedelta(minutes=8),
                     retry_policy=paid_once,
-                    result_type=dict[str, object],
+
                 )
                 await workflow.execute_activity(
                     "critique_longform_plan_activity",
                     compilation_id,
                     start_to_close_timeout=timedelta(minutes=8),
                     retry_policy=paid_once,
-                    result_type=dict[str, object],
+
                 )
                 await workflow.execute_activity(
                     "finalize_longform_plan_activity",
                     compilation_id,
                     start_to_close_timeout=timedelta(minutes=8),
                     retry_policy=paid_once,
-                    result_type=dict[str, object],
+
                 )
                 start_stage = "voice"
 
@@ -58,7 +58,7 @@ class LongformCompilationWorkflow:
                     compilation_id,
                     start_to_close_timeout=timedelta(minutes=20),
                     retry_policy=paid_once,
-                    result_type=dict[str, object],
+
                 )
                 start_stage = "render"
 
@@ -70,14 +70,14 @@ class LongformCompilationWorkflow:
                 compilation_id,
                 start_to_close_timeout=timedelta(minutes=3),
                 retry_policy=local_retry,
-                result_type=dict[str, object],
+
             )
             rendered = await workflow.execute_activity(
                 "render_longform_activity",
                 compilation_id,
                 start_to_close_timeout=timedelta(minutes=60),
                 retry_policy=local_retry,
-                result_type=dict[str, object],
+
             )
             return {
                 "compilation_id": compilation_id,
