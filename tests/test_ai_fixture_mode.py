@@ -6,6 +6,8 @@ from types import SimpleNamespace
 
 from katcha.ai.fixtures import (
     fixture_clip_vision,
+    fixture_longform_critique,
+    fixture_packaging_candidates,
     fixture_ranked_episode_scripts,
     fixture_short_scripts,
 )
@@ -117,3 +119,24 @@ def test_fixture_tts_uses_local_engine_and_zero_cost(monkeypatch) -> None:
     assert result.profile.key == "fixture_youth_v1"
     assert result.estimated_cost_usd == 0
     assert result.cost_metadata["external_api_cost_usd"] == "0"
+
+
+def test_fixture_packaging_is_grounded_and_zero_provider() -> None:
+    candidates = fixture_packaging_candidates(
+        {
+            "current_title": "Existing title",
+            "grounding_facts": ["Synthetic fixture fact."],
+        },
+        3,
+    )
+    assert len(candidates.candidates) == 3
+    assert all(
+        candidate.supporting_facts == ["Synthetic fixture fact."]
+        for candidate in candidates.candidates
+    )
+
+
+def test_fixture_longform_critic_passes_without_provider() -> None:
+    critique = fixture_longform_critique()
+    assert critique.verdict == "pass"
+    assert critique.issues == []
