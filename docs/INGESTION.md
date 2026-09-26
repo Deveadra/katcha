@@ -48,6 +48,42 @@ Future adapters should implement `DiscoveryAdapter` and register themselves in
 whether the source is TikTok, Instagram, Twitch, X, a private server, or a new
 site that appears later.
 
+## Adapter catalog
+
+Use `GET /v1/discovery/adapters` to see every installed discovery adapter and
+the source types, platforms, query fields, credentials, and sample query shape it
+supports. This is the contract the Editing Control Center or any ingestion UI can
+use to guide source setup without hardcoding adapter knowledge.
+
+Example response item:
+
+```json
+{
+  "key": "operator_feed",
+  "version": "v1",
+  "label": "Operator Feed",
+  "source_types": ["operator_drop", "server_drop", "url_batch", "private_feed"],
+  "supported_platforms": ["tiktok", "instagram", "youtube", "twitch", "x"],
+  "query_fields": ["feed_key", "default_platform", "items", "urls"],
+  "required_credentials": [],
+  "supports_imports": true,
+  "sample_query": {
+    "feed_key": "ranksnaxx-short-drops",
+    "default_platform": "tiktok",
+    "items": [
+      {
+        "source_url": "https://www.tiktok.com/@creator/video/123",
+        "platform": "tiktok"
+      }
+    ]
+  }
+}
+```
+
+For a newly opened website or private server, start with `operator_feed@v1` if it
+can provide URLs or JSON drops. Add a native adapter only when Katcha needs to
+actively search or page through that source itself.
+
 ## Usage modes
 
 `usage_mode` is operational metadata, not a hardcoded rights decision:

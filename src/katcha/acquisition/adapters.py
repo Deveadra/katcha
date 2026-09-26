@@ -52,6 +52,34 @@ class DiscoveryBatch:
     provider_usage: dict[str, int] = field(default_factory=dict)
 
 
+@dataclass(frozen=True, slots=True)
+class DiscoveryAdapterCapability:
+    key: str
+    version: str
+    label: str
+    description: str
+    source_types: tuple[str, ...] = ()
+    supported_platforms: tuple[str, ...] = ()
+    query_fields: tuple[str, ...] = ()
+    required_credentials: tuple[str, ...] = ()
+    supports_imports: bool = False
+    sample_query: dict[str, Any] = field(default_factory=dict)
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "key": self.key,
+            "version": self.version,
+            "label": self.label,
+            "description": self.description,
+            "source_types": list(self.source_types),
+            "supported_platforms": list(self.supported_platforms),
+            "query_fields": list(self.query_fields),
+            "required_credentials": list(self.required_credentials),
+            "supports_imports": self.supports_imports,
+            "sample_query": dict(self.sample_query),
+        }
+
+
 class DiscoveryAdapter(Protocol):
     key: str
     version: str
@@ -66,6 +94,27 @@ class DiscoveryAdapter(Protocol):
 class ManifestDiscoveryAdapter:
     key = "manifest"
     version = "v1"
+    capability = DiscoveryAdapterCapability(
+        key=key,
+        version=version,
+        label="Manifest",
+        description=(
+            "Accepts already-known candidate URLs and metadata from operators, "
+            "scripts, backfills, or trusted internal systems."
+        ),
+        source_types=("operator_drop", "server_drop", "backfill"),
+        supported_platforms=("any",),
+        query_fields=("items",),
+        sample_query={
+            "items": [
+                {
+                    "source_url": "https://example.com/video/1",
+                    "external_id": "example-1",
+                    "metadata": {"content_lane": "candidate_review"},
+                }
+            ]
+        },
+    )
 
     def discover(
         self,
@@ -135,9 +184,21 @@ def get_adapter(key: str, version: str) -> DiscoveryAdapter:
         raise ValueError(f"discovery adapter is not installed: {key}@{version}") from exc
 
 
-def available_adapters() -> list[dict[str, str]]:
+def describe_adapter(adapter: DiscoveryAdapter) -> DiscoveryAdapterCapability:
+    capability = getattr(adapter, "capability", None)
+    if isinstance(capability, DiscoveryAdapterCapability):
+        return capability
+    return DiscoveryAdapterCapability(
+        key=adapter.key,
+        version=adapter.version,
+        label=adapter.key.replace("_", " ").title(),
+        description="Installed discovery adapter.",
+    )
+
+
+def available_adapters() -> list[dict[str, Any]]:
     return [
-        {"key": key, "version": version}
+        describe_adapter(_ADAPTERS[(key, version)]).as_dict()
         for key, version in sorted(_ADAPTERS)
     ]
 

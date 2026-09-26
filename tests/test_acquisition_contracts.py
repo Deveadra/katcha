@@ -51,6 +51,7 @@ def test_rights_assessments_are_immutable_versioned_rows() -> None:
 def test_discovery_and_rights_routes_are_mounted() -> None:
     paths = set(app.openapi()["paths"])
 
+    assert "/v1/discovery/adapters" in paths
     assert "/v1/discovery/runs" in paths
     assert "/v1/discovery/sources" in paths
     assert "/v1/discovery/sources/{source_id}/runs" in paths

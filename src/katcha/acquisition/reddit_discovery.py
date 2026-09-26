@@ -6,7 +6,11 @@ from typing import Any
 
 import httpx
 
-from katcha.acquisition.adapters import DiscoveredCandidate, DiscoveryBatch
+from katcha.acquisition.adapters import (
+    DiscoveredCandidate,
+    DiscoveryAdapterCapability,
+    DiscoveryBatch,
+)
 from katcha.acquisition.http_errors import (
     provider_payload_error,
     provider_response_error,
@@ -141,6 +145,35 @@ def parse_reddit_candidates(
 class RedditDiscoveryAdapter:
     key = "reddit"
     version = "v1"
+    capability = DiscoveryAdapterCapability(
+        key=key,
+        version=version,
+        label="Reddit Search",
+        description=(
+            "Searches Reddit through OAuth, preserving post metrics, subreddit "
+            "context, outbound URLs, and freshness metadata for trend discovery."
+        ),
+        source_types=("public_api", "community_search"),
+        supported_platforms=("reddit",),
+        query_fields=(
+            "q",
+            "include_terms",
+            "subreddit",
+            "sort",
+            "time_filter",
+            "freshness_horizon_hours",
+            "limit",
+        ),
+        required_credentials=("REDDIT_CLIENT_ID", "REDDIT_CLIENT_SECRET"),
+        sample_query={
+            "q": "xbox showcase trailer",
+            "subreddit": "gaming",
+            "sort": "new",
+            "time_filter": "week",
+            "freshness_horizon_hours": 72,
+            "limit": 25,
+        },
+    )
 
     def __init__(self) -> None:
         self._token: str | None = None
