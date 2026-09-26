@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import subprocess
 import wave
 
 from katcha.ai.fixtures import (
@@ -103,7 +104,12 @@ def test_fixture_script_helpers_return_three_treatments() -> None:
 
 def test_fixture_tts_uses_local_engine_and_zero_cost(monkeypatch) -> None:
     def fake_run(*args, **kwargs):
-        return SimpleNamespace(stdout=_wav_bytes(), stderr=b"", returncode=0)
+        return subprocess.CompletedProcess(
+            args=args,
+            returncode=0,
+            stdout=_wav_bytes(),
+            stderr=b"",
+        )
 
     monkeypatch.setattr(tts.subprocess, "run", fake_run)
     settings = Settings(
