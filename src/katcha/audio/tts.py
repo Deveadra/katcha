@@ -4,10 +4,12 @@ import base64
 import io
 import math
 import subprocess
+import tempfile
 import uuid
 import wave
 from dataclasses import dataclass
 from decimal import Decimal
+from pathlib import Path
 
 from katcha.ai.failover import safe_to_fail_over
 from katcha.ai.pricing import estimate_token_cost
@@ -215,19 +217,23 @@ def _estimated_text_tokens(text: str) -> int:
 def _fixture_tts(text: str) -> TTSResult:
     profile = VOICE_PROFILES["fixture_youth_v1"]
     try:
-        completed = subprocess.run(
-            [
-                "espeak-ng",
-                "--stdout",
-                "-v",
-                profile.voice,
-                "-s",
-                "185",
-                text,
-            ],
-            check=True,
-            capture_output=True,
-        )
+        with tempfile.TemporaryDirectory(prefix="katcha-fixture-tts-") as work_dir:
+            output_path = Path(work_dir) / "narration.wav"
+            completed = subprocess.run(
+                [
+                    "espeak-ng",
+                    "-v",
+                    profile.voice,
+                    "-s",
+                    "185",
+                    "-w",
+                    str(output_path),
+                    text,
+                ],
+                check=True,
+                capture_output=True,
+            )
+            audio = output_path.read_bytes()
     except FileNotFoundError as exc:
         raise TTSUnavailable(
             "fixture TTS requires espeak-ng in the production-worker image"
@@ -236,7 +242,6 @@ def _fixture_tts(text: str) -> TTSResult:
         detail = exc.stderr.decode("utf-8", errors="replace").strip()
         raise TTSUnavailable(f"fixture TTS failed: {detail or exc.returncode}") from exc
 
-    audio = completed.stdout
     duration = _wav_duration(audio)
     return TTSResult(
         audio=audio,
