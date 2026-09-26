@@ -77,6 +77,9 @@ changes future work only; existing productions keep their stored snapshots.
 
 See [`docs/TREND_EXPLORER.md`](docs/TREND_EXPLORER.md) for private access,
 shared AI-controller APIs, and evidence-grounded editorial handoff.
+See [`docs/INGESTION.md`](docs/INGESTION.md) for configurable discovery sources
+across TikTok, Instagram, YouTube, Reddit, Twitch, RSS feeds, private drops, and
+future adapters.
 
 Submit a source URL:
 

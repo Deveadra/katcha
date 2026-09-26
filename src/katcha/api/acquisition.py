@@ -13,6 +13,7 @@ from katcha.acquisition_models import (
     DiscoveryCandidate,
     DiscoveryObservation,
     DiscoveryRun,
+    IngestionSource,
     RightsAssessment,
     RightsEvidence,
 )
@@ -24,6 +25,7 @@ from katcha.domain import (
     RightsBasis,
     RightsLane,
     SourceStatus,
+    SourceUsageMode,
 )
 from katcha.orchestration.client import (
     start_discovery_workflow,
@@ -36,6 +38,11 @@ from katcha.services.acquisition import (
     register_discovery_run,
 )
 from katcha.services.discovery import observe_discovery_candidate
+from katcha.services.ingestion_sources import (
+    create_discovery_run_from_source,
+    list_ingestion_sources,
+    upsert_ingestion_source,
+)
 
 router = APIRouter(prefix="/v1", tags=["discovery-rights"])
 
@@ -64,6 +71,47 @@ class DiscoveryRunResponse(BaseModel):
     completed_at: datetime | None
     created_at: datetime
     updated_at: datetime
+
+
+class UpsertIngestionSourceRequest(BaseModel):
+    source_key: str = Field(min_length=1, max_length=128)
+    name: str = Field(min_length=1, max_length=255)
+    adapter_key: str = Field(min_length=1, max_length=64)
+    adapter_version: str = Field(min_length=1, max_length=64)
+    platform: str = Field(min_length=1, max_length=32)
+    usage_mode: SourceUsageMode = SourceUsageMode.CANDIDATE_REVIEW
+    channel_profile_id: uuid.UUID | None = None
+    enabled: bool = True
+    query_template: dict[str, object] = Field(default_factory=dict)
+    default_candidate_metadata: dict[str, object] = Field(default_factory=dict)
+    source_metadata: dict[str, object] = Field(default_factory=dict)
+    poll_interval_minutes: int = Field(default=60, ge=1)
+
+
+class IngestionSourceResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    channel_profile_id: uuid.UUID | None
+    source_key: str
+    name: str
+    enabled: bool
+    adapter_key: str
+    adapter_version: str
+    platform: str
+    usage_mode: str
+    query_template: dict[str, object]
+    default_candidate_metadata: dict[str, object]
+    poll_interval_minutes: int
+    source_metadata: dict[str, object]
+    created_at: datetime
+    updated_at: datetime
+
+
+class CreateSourceDiscoveryRunRequest(BaseModel):
+    idempotency_key: str | None = Field(default=None, max_length=160)
+    query_overrides: dict[str, object] = Field(default_factory=dict)
+    metadata: dict[str, object] = Field(default_factory=dict)
 
 
 class ExecuteDiscoveryRunResponse(BaseModel):
@@ -196,6 +244,65 @@ class DiscoveryPromotionResponse(BaseModel):
     workflow_id: str | None
     status: str
     clip_id: uuid.UUID | None
+
+
+@router.post(
+    "/discovery/sources",
+    response_model=IngestionSourceResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def upsert_source(request: UpsertIngestionSourceRequest) -> IngestionSource:
+    try:
+        return upsert_ingestion_source(
+            source_key=request.source_key,
+            name=request.name,
+            adapter_key=request.adapter_key,
+            adapter_version=request.adapter_version,
+            platform=request.platform,
+            usage_mode=request.usage_mode,
+            query_template=request.query_template,
+            default_candidate_metadata=request.default_candidate_metadata,
+            source_metadata=request.source_metadata,
+            channel_profile_id=request.channel_profile_id,
+            enabled=request.enabled,
+            poll_interval_minutes=request.poll_interval_minutes,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.get(
+    "/discovery/sources",
+    response_model=list[IngestionSourceResponse],
+)
+def get_sources(
+    channel_profile_id: uuid.UUID | None = Query(default=None),
+    enabled: bool | None = Query(default=None),
+) -> list[IngestionSource]:
+    return list_ingestion_sources(
+        channel_profile_id=channel_profile_id,
+        enabled=enabled,
+    )
+
+
+@router.post(
+    "/discovery/sources/{source_id}/runs",
+    response_model=DiscoveryRunResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_source_run(
+    source_id: uuid.UUID,
+    request: CreateSourceDiscoveryRunRequest,
+) -> DiscoveryRun:
+    try:
+        return create_discovery_run_from_source(
+            source_id,
+            query_overrides=request.query_overrides,
+            idempotency_key=request.idempotency_key,
+            metadata=request.metadata,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 @router.post(

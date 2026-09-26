@@ -29,6 +29,7 @@ from katcha.domain import (
     GateStatus,
     RightsBasis,
     RightsLane,
+    SourceUsageMode,
 )
 
 
@@ -57,6 +58,55 @@ class DiscoveryRun(Base):
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class IngestionSource(Base):
+    __tablename__ = "ingestion_sources"
+    __table_args__ = (
+        UniqueConstraint("source_key", name="uq_ingestion_source_key"),
+        CheckConstraint(
+            "poll_interval_minutes > 0",
+            name="ck_ingestion_source_poll_interval_positive",
+        ),
+        CheckConstraint(
+            "usage_mode IN ('discovery_only', 'candidate_review', "
+            "'operator_authorized', 'render_allowed', 'blocked')",
+            name="ck_ingestion_source_usage_mode",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    channel_profile_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("channel_profiles.id"),
+        nullable=True,
+        index=True,
+    )
+    source_key: Mapped[str] = mapped_column(String(128), index=True)
+    name: Mapped[str] = mapped_column(String(255))
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    adapter_key: Mapped[str] = mapped_column(String(64), index=True)
+    adapter_version: Mapped[str] = mapped_column(String(64))
+    platform: Mapped[str] = mapped_column(String(32), index=True)
+    usage_mode: Mapped[str] = mapped_column(
+        String(32),
+        default=SourceUsageMode.CANDIDATE_REVIEW.value,
+        index=True,
+    )
+    query_template: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    default_candidate_metadata: Mapped[dict[str, Any]] = mapped_column(
+        JSON, default=dict
+    )
+    poll_interval_minutes: Mapped[int] = mapped_column(Integer, default=60)
+    source_metadata: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), index=True
     )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
