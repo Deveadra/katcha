@@ -1,15 +1,16 @@
 from __future__ import annotations
 
+import importlib
 import io
 import subprocess
 import wave
 
-import katcha.ai.fixtures
-import katcha.ai.providers
-import katcha.audio.tts
-import katcha.config
-import katcha.editorial.episode_generator
-import katcha.editorial.personas
+fixtures = importlib.import_module("katcha.ai.fixtures")
+providers = importlib.import_module("katcha.ai.providers")
+tts = importlib.import_module("katcha.audio.tts")
+config = importlib.import_module("katcha.config")
+episode_generator = importlib.import_module("katcha.editorial.episode_generator")
+personas = importlib.import_module("katcha.editorial.personas")
 
 
 PLAN = {
@@ -34,24 +35,24 @@ def _wav_bytes() -> bytes:
 
 
 def test_development_auto_mode_resolves_to_fixture() -> None:
-    settings = katcha.config.Settings(env="development", ai_execution_mode="auto")
+    settings = config.Settings(env="development", ai_execution_mode="auto")
     assert settings.resolved_ai_execution_mode() == "fixture"
 
 
 def test_production_auto_mode_resolves_to_live() -> None:
-    settings = katcha.config.Settings(env="production", ai_execution_mode="auto")
+    settings = config.Settings(env="production", ai_execution_mode="auto")
     assert settings.resolved_ai_execution_mode() == "live"
 
 
 def test_fixture_vision_never_requires_provider_keys() -> None:
-    settings = katcha.config.Settings(
+    settings = config.Settings(
         env="development",
         ai_enabled=True,
         ai_execution_mode="fixture",
         openai_api_key=None,
         gemini_api_key=None,
     )
-    result = katcha.ai.providers.analyze_contact_sheet(
+    result = providers.analyze_contact_sheet(
         b"not-used-in-fixture-mode",
         None,
         reference_id="fixture-1",
@@ -60,19 +61,19 @@ def test_fixture_vision_never_requires_provider_keys() -> None:
     assert result.target.provider == "fixture"
     assert result.input_tokens == 0
     assert result.output_tokens == 0
-    assert result.value == katcha.ai.fixtures.fixture_clip_vision("fixture-1")
+    assert result.value == fixtures.fixture_clip_vision("fixture-1")
 
 
 def test_fixture_ranked_script_preserves_plan_without_paid_provider() -> None:
-    settings = katcha.config.Settings(
+    settings = config.Settings(
         env="development",
         ai_enabled=True,
         ai_execution_mode="fixture",
         openai_api_key=None,
         gemini_api_key=None,
     )
-    result = katcha.editorial.episode_generator.generate_ranked_episode_scripts(
-        persona=katcha.editorial.personas.get_persona("youth_host"),
+    result = episode_generator.generate_ranked_episode_scripts(
+        persona=personas.get_persona("youth_host"),
         premise="fixture",
         plan_snapshot=PLAN,
         items=[],
@@ -85,12 +86,12 @@ def test_fixture_ranked_script_preserves_plan_without_paid_provider() -> None:
     assert result.target.provider == "fixture"
     assert result.input_tokens == 0
     assert result.output_tokens == 0
-    katcha.editorial.episode_generator.validate_episode_scripts_against_plan(result.scripts, PLAN)
+    episode_generator.validate_episode_scripts_against_plan(result.scripts, PLAN)
 
 
 def test_fixture_script_helpers_return_three_treatments() -> None:
-    assert len(katcha.ai.fixtures.fixture_short_scripts().candidates) == 3
-    assert len(katcha.ai.fixtures.fixture_ranked_episode_scripts(PLAN).candidates) == 3
+    assert len(fixtures.fixture_short_scripts().candidates) == 3
+    assert len(fixtures.fixture_ranked_episode_scripts(PLAN).candidates) == 3
 
 
 def test_fixture_tts_uses_local_engine_and_zero_cost(monkeypatch) -> None:
@@ -102,15 +103,15 @@ def test_fixture_tts_uses_local_engine_and_zero_cost(monkeypatch) -> None:
             stderr=b"",
         )
 
-    monkeypatch.setattr(katcha.audio.tts.subprocess, "run", fake_run)
-    settings = katcha.config.Settings(
+    monkeypatch.setattr(tts.subprocess, "run", fake_run)
+    settings = config.Settings(
         env="development",
         ai_enabled=True,
         ai_execution_mode="fixture",
         openai_api_key=None,
         gemini_api_key=None,
     )
-    result = katcha.audio.tts.synthesize_speech("fixture voiceover", settings=settings)
+    result = tts.synthesize_speech("fixture voiceover", settings=settings)
 
     assert result.target.provider == "fixture"
     assert result.profile.key == "fixture_youth_v1"
@@ -119,7 +120,7 @@ def test_fixture_tts_uses_local_engine_and_zero_cost(monkeypatch) -> None:
 
 
 def test_fixture_packaging_is_grounded_and_zero_provider() -> None:
-    candidates = katcha.ai.fixtures.fixture_packaging_candidates(
+    candidates = fixtures.fixture_packaging_candidates(
         {
             "current_title": "Existing title",
             "grounding_facts": ["Synthetic fixture fact."],
@@ -134,6 +135,6 @@ def test_fixture_packaging_is_grounded_and_zero_provider() -> None:
 
 
 def test_fixture_longform_critic_passes_without_provider() -> None:
-    critique = katcha.ai.fixtures.fixture_longform_critique()
+    critique = fixtures.fixture_longform_critique()
     assert critique.verdict == "pass"
     assert critique.issues == []
