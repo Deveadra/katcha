@@ -112,6 +112,47 @@ def test_ingestion_source_metadata_flows_to_candidates(source_scope) -> None:
         assert candidate.candidate_metadata["source_metrics"] == {"views": 50000}
 
 
+def test_operator_feed_source_flows_platform_hints_to_candidates(source_scope) -> None:
+    source = upsert_ingestion_source(
+        source_key="rank-snaxx-short-drops",
+        name="RankSnaxx Short Drops",
+        adapter_key="operator_feed",
+        adapter_version="v1",
+        platform="mixed",
+        usage_mode=SourceUsageMode.OPERATOR_AUTHORIZED,
+        query_template={
+            "feed_key": "manual-ranksnaxx-drops",
+            "default_platform": "tiktok",
+            "default_content_kind": "rank_clip",
+            "items": [
+                {
+                    "source_url": "https://www.tiktok.com/@creator/video/123",
+                    "external_id": "tt-123",
+                    "tags": ["fails", "sports"],
+                    "metrics": {"views": 900000},
+                }
+            ],
+        },
+        default_candidate_metadata={"content_lane": "operator_drop"},
+    )
+    run = create_discovery_run_from_source(source.id, idempotency_key="drop-cycle-1")
+
+    result = execute_discovery_page_activity(str(run.id))
+
+    assert result["candidate_count"] == 1
+    with source_scope() as session:
+        candidate = session.scalar(select(DiscoveryCandidate))
+        assert candidate is not None
+        assert candidate.platform == "tiktok"
+        assert candidate.candidate_metadata["source_platform"] == "mixed"
+        assert candidate.candidate_metadata["source_usage_mode"] == "operator_authorized"
+        assert candidate.candidate_metadata["platform_hint"] == "tiktok"
+        assert candidate.candidate_metadata["content_kind"] == "rank_clip"
+        assert candidate.candidate_metadata["content_lane"] == "operator_drop"
+        assert candidate.candidate_metadata["tags"] == ["fails", "sports"]
+        assert candidate.candidate_metadata["source_metrics"] == {"views": 900000}
+
+
 def test_ingestion_source_rejects_uninstalled_adapter(source_scope) -> None:
     with pytest.raises(ValueError, match="not installed"):
         upsert_ingestion_source(
