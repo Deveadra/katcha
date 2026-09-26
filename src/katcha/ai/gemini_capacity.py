@@ -1,12 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import TypeVar
-
 from katcha.ai.router import ModelTarget
-
-
-T = TypeVar("T")
 
 _GEMINI_CAPACITY_FALLBACKS: dict[str, tuple[str, ...]] = {
     "gemini-3.8-flash": (
@@ -52,7 +47,7 @@ def capacity_targets(target: ModelTarget) -> tuple[ModelTarget, ...]:
     return (target, *(ModelTarget("gemini", model) for model in alternates))
 
 
-def run_with_gemini_capacity_fallback(
+def run_with_gemini_capacity_fallback[T](
     target: ModelTarget,
     invoke: Callable[[ModelTarget], T],
 ) -> T:
