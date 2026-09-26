@@ -16,6 +16,16 @@ from katcha.short_episode_models import ShortEpisode
 RenderSourceKind = Literal["production", "short_episode"]
 
 
+def _dead_letter_error(prior_error: str | None, workflow_error: str) -> str:
+    prior = (prior_error or "").strip()
+    wrapper = workflow_error.strip()
+    if prior and wrapper in {"Activity task failed", "Workflow execution failed"}:
+        return prior
+    if prior and wrapper and prior != wrapper:
+        return f"{prior}\nWorkflow failure: {wrapper}"
+    return wrapper or prior
+
+
 def _source_clause(source_kind: RenderSourceKind, source_id: uuid.UUID):
     if source_kind == "production":
         return RenderAttempt.production_id == source_id
@@ -240,7 +250,7 @@ def dead_letter_latest_render_attempt(
             return None
         attempt.status = "dead_letter"
         attempt.stage = "retry_exhausted"
-        attempt.error = error[:8000]
+        attempt.error = _dead_letter_error(attempt.error, error)[:8000]
         attempt.completed_at = datetime.now(UTC)
         session.add(
             _event(
