@@ -3,6 +3,13 @@ from __future__ import annotations
 from katcha.ai.schemas import ClipVisionResult, DeepVideoResult
 from katcha.editorial.episode_schemas import RankedEpisodeScriptSet
 from katcha.editorial.schemas import ShortScriptSet
+from katcha.longform.schemas import (
+    CandidateEvidence,
+    FinalLongformPlan,
+    LongformCritique,
+    LongformEditorPlan,
+)
+from katcha.ai.schemas import PackagingCandidateSet
 
 
 def fixture_clip_vision(reference_id: str) -> ClipVisionResult:
@@ -143,3 +150,89 @@ def fixture_ranked_episode_scripts(
         )
 
     return RankedEpisodeScriptSet.model_validate({"candidates": treatments})
+
+
+def fixture_packaging_candidates(
+    context: dict[str, object],
+    candidate_count: int,
+) -> PackagingCandidateSet:
+    facts = [str(value).strip() for value in context.get("grounding_facts") or [] if str(value).strip()]
+    if not facts:
+        raise ValueError("fixture packaging requires at least one grounding fact")
+    current_title = str(context.get("current_title") or "Fixture video").strip()
+    families = ("curiosity", "payoff", "ranking", "contrast", "reaction")
+    candidates = []
+    for index in range(candidate_count):
+        family = families[index]
+        title = f"[DEV {index + 1}] {current_title}"[:100]
+        candidates.append(
+            {
+                "variation_family": family,
+                "angle": f"Deterministic {family} packaging fixture",
+                "title": title,
+                "description": (
+                    "Development fixture packaging generated without an external AI provider."
+                ),
+                "supporting_facts": [facts[index % len(facts)]],
+                "thumbnail": {
+                    "concept": f"Development fixture thumbnail concept {index + 1}",
+                    "focal_subject": "synthetic acceptance media",
+                    "composition": "single centered fixture subject with clear ranking emphasis",
+                    "on_image_text": f"DEV {index + 1}",
+                    "emotion": "clear test signal",
+                    "avoid": ["production publishing"],
+                },
+            }
+        )
+    return PackagingCandidateSet.model_validate({"candidates": candidates})
+
+
+def fixture_longform_editor_plan(
+    candidates: list[CandidateEvidence],
+    *,
+    min_segments: int,
+) -> LongformEditorPlan:
+    required = max(3, min_segments)
+    if len(candidates) < required:
+        raise ValueError(
+            f"fixture long-form plan requires at least {required} candidates"
+        )
+    selected = candidates[:required]
+    return LongformEditorPlan.model_validate(
+        {
+            "title_angle": "Development fixture compilation",
+            "opening_hook": "Development fixture: validating the long-form edit path.",
+            "intro": None,
+            "segments": [
+                {
+                    "clip_id": str(item.clip_id),
+                    "host_before": f"Fixture segment {index + 1}.",
+                    "host_after": None,
+                    "transition_before": None,
+                    "source_start_seconds": 0,
+                    "source_end_seconds": float(item.duration_seconds),
+                    "reason": "Deterministic zero-cost development segment.",
+                }
+                for index, item in enumerate(selected)
+            ],
+            "outro": "Development fixture compilation complete.",
+            "pacing_notes": ["Fixture mode preserves deterministic segment order."],
+        }
+    )
+
+
+def fixture_longform_critique() -> LongformCritique:
+    return LongformCritique(
+        verdict="pass",
+        strengths=["Deterministic fixture plan is structurally valid."],
+        issues=[],
+        pacing_summary="Fixture critique skips external inference.",
+        audience_fit_summary="Development-only acceptance artifact.",
+    )
+
+
+def fixture_final_longform_plan(plan: LongformEditorPlan) -> FinalLongformPlan:
+    return FinalLongformPlan(
+        **plan.model_dump(),
+        revision_summary="Deterministic fixture finalization; no external AI provider called.",
+    )
