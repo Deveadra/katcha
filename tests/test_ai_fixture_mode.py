@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import io
-from types import SimpleNamespace
 import wave
+from types import SimpleNamespace
 
 from katcha.ai.fixtures import (
     fixture_clip_vision,
