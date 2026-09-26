@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import io
 import wave
-from types import SimpleNamespace
 
 from katcha.ai.fixtures import (
     fixture_clip_vision,
@@ -18,6 +17,7 @@ from katcha.editorial.episode_generator import (
     generate_ranked_episode_scripts,
     validate_episode_scripts_against_plan,
 )
+from katcha.editorial.personas import get_persona
 
 
 PLAN = {
@@ -80,7 +80,7 @@ def test_fixture_ranked_script_preserves_plan_without_paid_provider() -> None:
         gemini_api_key=None,
     )
     result = generate_ranked_episode_scripts(
-        persona=SimpleNamespace(),
+        persona=get_persona("youth_host"),
         premise="fixture",
         plan_snapshot=PLAN,
         items=[],
