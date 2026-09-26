@@ -26,6 +26,14 @@ class DiscoveryCandidateStatus(StrEnum):
     PROMOTED = "promoted"
 
 
+class SourceUsageMode(StrEnum):
+    DISCOVERY_ONLY = "discovery_only"
+    CANDIDATE_REVIEW = "candidate_review"
+    OPERATOR_AUTHORIZED = "operator_authorized"
+    RENDER_ALLOWED = "render_allowed"
+    BLOCKED = "blocked"
+
+
 class RightsBasis(StrEnum):
     OWNED = "owned"
     DIRECT_PERMISSION = "direct_permission"

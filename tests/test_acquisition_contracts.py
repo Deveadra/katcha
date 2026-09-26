@@ -4,6 +4,7 @@ from katcha.acquisition_models import (
     DiscoveryCandidate,
     DiscoveryObservation,
     DiscoveryRun,
+    IngestionSource,
     RightsAssessment,
 )
 from katcha.api.acquisition import CandidateDetailResponse
@@ -28,6 +29,7 @@ def test_discovery_run_candidate_and_observation_idempotency_contracts() -> None
         "discovery_run_id",
         "discovery_candidate_id",
     ) in _unique_columns(DiscoveryObservation.__table__)
+    assert ("source_key",) in _unique_columns(IngestionSource.__table__)
 
 
 def test_candidate_detail_exposes_complete_observation_lineage() -> None:
@@ -50,6 +52,8 @@ def test_discovery_and_rights_routes_are_mounted() -> None:
     paths = set(app.openapi()["paths"])
 
     assert "/v1/discovery/runs" in paths
+    assert "/v1/discovery/sources" in paths
+    assert "/v1/discovery/sources/{source_id}/runs" in paths
     assert "/v1/discovery/runs/{run_id}/execute" in paths
     assert "/v1/discovery/candidates" in paths
     assert "/v1/discovery/candidates/{candidate_id}" in paths
