@@ -109,9 +109,11 @@ def _brand_voice_profiles(
             profile = get_voice_profile(str(key))
         except ValueError:
             continue
-        if profile.provider == "openai" and settings.openai_api_key:
-            available.append(profile)
-        elif profile.provider == "gemini" and settings.gemini_api_key:
+        if (
+            profile.provider == "openai" and settings.openai_api_key
+        ) or (
+            profile.provider == "gemini" and settings.gemini_api_key
+        ):
             available.append(profile)
 
     primary = available[0] if available else None
