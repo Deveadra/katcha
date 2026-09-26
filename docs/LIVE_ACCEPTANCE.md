@@ -12,7 +12,9 @@ using rights-qualified editorial media.
 
 - the complete local stack is healthy;
 - `KATCHA_AI_ENABLED=true`;
-- at least one AI provider key is configured;
+- for zero-cost development acceptance, `KATCHA_AI_EXECUTION_MODE=fixture`;
+- for an intentional live-provider acceptance, `KATCHA_AI_EXECUTION_MODE=live` and
+  at least one AI provider key is configured;
 - a YouTube connection exists and is active;
 - a Katcha channel profile exists for that connection;
 - the automation level remains `review_required`.
@@ -78,7 +80,8 @@ A successful acceptance proves:
 1. source media can be ingested and normalized;
 2. analysis/scoring completes;
 3. channel-scoped RankSnaxx editorial state is frozen into the production lineage;
-4. AI script/TTS execution completes within budget;
+4. script/TTS execution completes in the selected execution mode and, in live mode,
+   remains within budget;
 5. Remotion output passes post-render verification;
 6. human review remains in control;
 7. the encrypted OAuth connection can perform a private YouTube upload;
