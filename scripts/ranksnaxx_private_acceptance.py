@@ -303,6 +303,16 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     if not isinstance(readiness, dict) or readiness.get("status") != "ok":
         raise RuntimeError(f"Katcha backend is not ready: {readiness}")
 
+    runtime = client.get("/v1/runtime/ai")
+    if not isinstance(runtime, dict):
+        raise RuntimeError("Katcha AI runtime response is invalid")
+    print(
+        "ai runtime: execution_mode="
+        f"{runtime.get('execution_mode')} "
+        f"routing={runtime.get('live_routing_mode')} "
+        f"external_provider_calls={runtime.get('external_provider_calls_enabled')}"
+    )
+
     connection_id = _ensure_rank_snaxx(client, args.channel_profile_id)
     premise = args.premise
 
