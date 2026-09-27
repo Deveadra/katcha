@@ -76,13 +76,14 @@ operation="${2:-}"
 
 arg_value() {
     local wanted="$1"
-    local i j
-    for ((i = 1; i <= $#; i++)); do
-        if [[ "${!i}" == "${wanted}" ]]; then
-            j=$((i + 1))
-            printf '%s\n' "${!j}"
+    shift
+    while (( $# > 0 )); do
+        if [[ "$1" == "${wanted}" ]]; then
+            [[ $# -ge 2 ]] || return 1
+            printf '%s\n' "$2"
             return 0
         fi
+        shift
     done
     return 1
 }
