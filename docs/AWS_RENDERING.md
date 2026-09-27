@@ -159,14 +159,22 @@ as described in `infra/aws-render-staging/README.md`:
 
 ```bash
 cd ~/src/katcha/infra/aws-render-staging
+export AWS_PROFILE=katcha
+
 terraform plan \
   -var='expected_account_id=123456789012' \
   -var='aws_region=us-east-1' \
+  -var='renderer_role_name=KatchaChronosAutomation' \
   -out=/tmp/katcha-render-staging.tfplan
 terraform show /tmp/katcha-render-staging.tfplan
 ```
 
-Apply only after the plan is reviewed. Then set:
+Apply only after the plan is reviewed. The plan should include the private staging
+bucket resources plus one `KatchaRenderStagingAccess` inline policy attached to the
+existing `KatchaChronosAutomation` role. This S3 policy is separate from the
+already-reviewed `KatchaRemotionControlPlane` policy.
+
+After apply, set:
 
 ```env
 KATCHA_REMOTION_STAGING_BUCKET=katcha-render-staging-123456789012-us-east-1

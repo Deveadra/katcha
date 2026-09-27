@@ -14,6 +14,17 @@ variable "expected_account_id" {
   }
 }
 
+variable "renderer_role_name" {
+  description = "Existing durable IAM role that receives prefix-scoped access to the staging bucket."
+  type        = string
+  default     = "KatchaChronosAutomation"
+
+  validation {
+    condition     = can(regex("^[A-Za-z0-9+=,.@_-]{1,64}$", var.renderer_role_name))
+    error_message = "renderer_role_name must be a valid IAM role name."
+  }
+}
+
 variable "bucket_name" {
   description = "Optional globally unique private S3 bucket name. Defaults to an account+region-scoped Katcha name."
   type        = string
