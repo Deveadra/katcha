@@ -173,3 +173,78 @@ def test_start_builds_before_starting_services_and_reports_stage(tmp_path):
     assert app.stage == "ready"
     assert app.snapshot()["operation_elapsed_seconds"] is None
     assert not app.lock.locked()
+
+
+
+def test_reconcile_existing_runtime_without_relaunch(tmp_path):
+    app = instance(tmp_path)
+    from unittest.mock import MagicMock
+
+    required = [
+        "postgres",
+        "temporal",
+        "minio",
+        "api",
+        "worker",
+        "analysis-worker",
+        "renderer",
+        "production-worker",
+        "longform-worker",
+        "publishing-worker",
+        "discovery-worker",
+        "trends-worker",
+        "intelligence-worker",
+    ]
+    payload = json.dumps(
+        [
+            {"Service": service, "State": "running", "Health": "healthy", "ExitCode": 0}
+            for service in required
+        ]
+    )
+    connection = MagicMock()
+    connection.getresponse.return_value.status = 200
+    with (
+        patch.object(app, "run", return_value=payload) as run,
+        patch.object(app, "start_logs"),
+        patch.object(runtime.http.client, "HTTPConnection", return_value=connection),
+    ):
+        assert app.reconcile_existing() is True
+
+    commands = [call.args[0] for call in run.call_args_list]
+    assert app.phase == "ready"
+    assert app.stage == "ready"
+    assert all("build" not in command and "up" not in command for command in commands)
+    assert any(event["message"] == "Reattached to the existing Katcha runtime." for event in app.events)
+
+
+def test_reconcile_empty_runtime_stays_idle(tmp_path):
+    app = instance(tmp_path)
+    with patch.object(app, "run", return_value="[]"), patch.object(app, "start_logs") as logs:
+        assert app.reconcile_existing() is True
+    assert app.phase == "idle"
+    assert app.stage == "idle"
+    logs.assert_not_called()
+
+
+def test_reconcile_stopped_runtime_stays_stopped(tmp_path):
+    app = instance(tmp_path)
+    payload = json.dumps(
+        [
+            {"Service": "api", "State": "exited", "Health": "", "ExitCode": 0},
+            {"Service": "worker", "State": "exited", "Health": "", "ExitCode": 0},
+        ]
+    )
+    with patch.object(app, "run", return_value=payload), patch.object(app, "start_logs") as logs:
+        assert app.reconcile_existing() is True
+    assert app.phase == "stopped"
+    assert app.stage == "stopped"
+    logs.assert_not_called()
+
+
+def test_reconcile_runtime_failure_is_recoverable(tmp_path):
+    app = instance(tmp_path)
+    with patch.object(app, "run", side_effect=OSError("Docker unavailable")):
+        assert app.reconcile_existing() is False
+    assert app.phase == "degraded"
+    assert app.stage == "waiting for runtime"
+    assert any(event.get("recovery") for event in app.events)
