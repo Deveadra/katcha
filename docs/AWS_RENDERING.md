@@ -20,6 +20,9 @@ accepts the same manifest and returns the same verified Katcha output key.
    artifact, verifies duration and dimensions with ffprobe, uploads it to the configured Katcha
    object store, HEAD-verifies the stored object, and only then returns `verified=true`.
 7. Do not switch `KATCHA_RENDER_BACKEND=lambda` until the preflight steps below all pass.
+8. Lambda mode requires `KATCHA_AWS_EXPECTED_ACCOUNT_ID`. At renderer startup Katcha calls AWS STS
+   `GetCallerIdentity` and refuses to start if the active credential chain resolves to any other
+   account. This is enforced at runtime in addition to the operator preflight.
 
 ## Version contract
 
@@ -179,6 +182,7 @@ Only after the function, site, Katcha S3 storage, and IAM path are verified:
 
 ```env
 KATCHA_RENDER_BACKEND=lambda
+KATCHA_AWS_EXPECTED_ACCOUNT_ID=<exact 12-digit AWS account ID>
 KATCHA_REMOTION_LAMBDA_REGION=us-east-1
 KATCHA_REMOTION_LAMBDA_FUNCTION_NAME=<exact deployed function name>
 KATCHA_REMOTION_LAMBDA_SERVE_URL=<exact HTTPS serve URL>
@@ -190,7 +194,9 @@ KATCHA_REMOTION_LAMBDA_FRAMES_PER_LAMBDA=20
 KATCHA_REMOTION_LAMBDA_CONCURRENCY_PER_LAMBDA=1
 ```
 
-The renderer validates required Lambda configuration at startup. Without a staging bucket it
+The renderer validates required Lambda configuration at startup, verifies the AWS caller account
+with STS, and exposes only the verified account ID (never credentials) in its health response.
+Without a staging bucket it
 rejects local/private media URLs before invoking AWS. With staging enabled, local MinIO objects
 are copied into private AWS S3 objects first and only the temporary HTTPS presigned URLs are
 sent to Remotion Lambda.

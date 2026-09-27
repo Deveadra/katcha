@@ -19,6 +19,34 @@ const backend = (raw) => {
   return value;
 };
 
+const supportedLambdaRegions = new Set([
+  'af-south-1',
+  'ap-east-1',
+  'ap-northeast-1',
+  'ap-northeast-2',
+  'ap-northeast-3',
+  'ap-south-1',
+  'ap-southeast-1',
+  'ap-southeast-2',
+  'ap-southeast-4',
+  'ap-southeast-5',
+  'ca-central-1',
+  'cn-north-1',
+  'cn-northwest-1',
+  'eu-central-1',
+  'eu-central-2',
+  'eu-north-1',
+  'eu-south-1',
+  'eu-west-1',
+  'eu-west-2',
+  'eu-west-3',
+  'sa-east-1',
+  'us-east-1',
+  'us-east-2',
+  'us-west-1',
+  'us-west-2',
+]);
+
 export const resolveRenderSettings = (env = process.env) => ({
   backend: backend(env.KATCHA_RENDER_BACKEND),
   concurrency: positiveInteger(env.KATCHA_RENDER_CONCURRENCY, 1),
@@ -28,6 +56,7 @@ export const resolveRenderSettings = (env = process.env) => ({
     30000,
   ),
   lambda: {
+    expectedAccountId: optionalString(env.KATCHA_AWS_EXPECTED_ACCOUNT_ID),
     region: optionalString(env.KATCHA_REMOTION_LAMBDA_REGION) || 'us-east-1',
     functionName: optionalString(env.KATCHA_REMOTION_LAMBDA_FUNCTION_NAME),
     serveUrl: optionalString(env.KATCHA_REMOTION_LAMBDA_SERVE_URL),
@@ -71,6 +100,16 @@ export const resolveRenderSettings = (env = process.env) => ({
 export const validateLambdaSettings = (settings) => {
   if (settings.backend !== 'lambda') {
     return;
+  }
+  if (!/^\d{12}$/.test(String(settings.lambda.expectedAccountId || ''))) {
+    throw new Error(
+      'KATCHA_AWS_EXPECTED_ACCOUNT_ID is required and must be exactly 12 digits for lambda rendering',
+    );
+  }
+  if (!supportedLambdaRegions.has(settings.lambda.region)) {
+    throw new Error(
+      `KATCHA_REMOTION_LAMBDA_REGION is not supported by Remotion Lambda: ${settings.lambda.region}`,
+    );
   }
   if (!settings.lambda.functionName) {
     throw new Error('KATCHA_REMOTION_LAMBDA_FUNCTION_NAME is required for lambda rendering');
