@@ -72,7 +72,7 @@ services:
       retries: 20
 
   minio-init:
-    build: .
+    image: katcha-python-core:local
     env_file: ${KATCHA_ENV_FILE:-.env}
     depends_on:
       minio:
@@ -85,7 +85,7 @@ services:
       ]
 
   migrate:
-    build: .
+    image: katcha-python-core:local
     env_file: ${KATCHA_ENV_FILE:-.env}
     depends_on:
       postgres:
@@ -94,6 +94,7 @@ services:
 
   api:
     build: .
+    image: katcha-python-core:local
     env_file: ${KATCHA_ENV_FILE:-.env}
     depends_on:
       migrate:
@@ -107,7 +108,7 @@ services:
     command: ["uvicorn", "katcha.api.main:app", "--host", "0.0.0.0", "--port", "8000"]
 
   worker:
-    build: .
+    image: katcha-python-core:local
     env_file: ${KATCHA_ENV_FILE:-.env}
     depends_on:
       migrate:
@@ -187,9 +188,7 @@ services:
     command: ["python", "-m", "katcha.orchestration.longform_worker"]
 
   publishing-worker:
-    build:
-      context: .
-      dockerfile: Dockerfile.publishing
+    image: katcha-python-core:local
     env_file: ${KATCHA_ENV_FILE:-.env}
     depends_on:
       migrate:
