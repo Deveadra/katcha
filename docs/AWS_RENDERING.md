@@ -287,27 +287,49 @@ downloaded, ffprobe-verified, uploaded back to Katcha's object store, and HEAD
 verified by the normal renderer path.
 
 The wrapper restores the renderer to its prior local state afterward and does not
-persist `KATCHA_RENDER_BACKEND=lambda`.
+persist `KATCHA_RENDER_BACKEND=lambda`. On success it writes a receipt outside the
+repository at `~/.aws/katcha-roles-anywhere/acceptance/latest.json`. The receipt
+records the exact account, region, function, site, staging bucket/prefix, repository
+commit, Lambda render ID, worker count, output key, and completion time.
 
 ## Phase 3: enable cloud rendering
 
-Only after the function, site, Katcha S3 storage, and IAM path are verified. Phase 1
-already persisted the verified function name and Serve URL; do not replace them with
-manually copied values.
+Do not edit `KATCHA_RENDER_BACKEND` by hand. Enable the Lambda backend through the
+receipt gate so the switch can only happen for the exact code and AWS deployment that
+just passed acceptance.
+
+Inspect first:
+
+```bash
+bash scripts/aws_lambda_backend_enable.sh
+```
+
+The default path verifies the durable AWS caller again, verifies the configured
+function and staging-bucket region, and checks that the latest receipt:
+
+- used `renderer=remotion-lambda`;
+- was fresh and not reused;
+- has a Lambda render ID and positive Lambda invocation count;
+- produced a non-empty output object;
+- matches the current account, region, profile, function, Serve URL, staging bucket,
+  staging prefix, and exact Git commit;
+- is no older than 24 hours by default.
+
+After review:
+
+```bash
+bash scripts/aws_lambda_backend_enable.sh --apply
+```
+
+The apply path backs up the local Katcha env outside the repository and changes only:
 
 ```env
 KATCHA_RENDER_BACKEND=lambda
-KATCHA_AWS_EXPECTED_ACCOUNT_ID=<exact 12-digit AWS account ID>
-KATCHA_REMOTION_LAMBDA_REGION=us-east-1
-KATCHA_REMOTION_LAMBDA_FUNCTION_NAME=<persisted by aws_remotion_deploy.sh>
-KATCHA_REMOTION_LAMBDA_SERVE_URL=<persisted by aws_remotion_deploy.sh>
-KATCHA_REMOTION_LAMBDA_POLL_INTERVAL_MS=2000
-KATCHA_REMOTION_LAMBDA_MAX_WAIT_MS=1500000
-# 25-minute orchestration ceiling; stays below Katcha's 30-minute renderer HTTP timeout.
-KATCHA_REMOTION_LAMBDA_MAX_RETRIES=2
-KATCHA_REMOTION_LAMBDA_FRAMES_PER_LAMBDA=20
-KATCHA_REMOTION_LAMBDA_CONCURRENCY_PER_LAMBDA=1
 ```
+
+All other verified Lambda settings remain the values previously persisted by the
+bootstrap/deployment/staging workflows. A code change or AWS metadata change invalidates
+the receipt and requires the controlled acceptance to be rerun.
 
 The renderer validates required Lambda configuration at startup, verifies the AWS caller account
 with STS, and exposes only the verified account ID (never credentials) in its health response.
