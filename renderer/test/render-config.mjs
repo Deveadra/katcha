@@ -80,4 +80,24 @@ assert.throws(
   /must exceed the Lambda wait limit/,
 );
 
+const belowMinimumFrames = resolveRenderSettings({
+  KATCHA_REMOTION_LAMBDA_FRAMES_PER_LAMBDA: '3',
+});
+assert.equal(
+  belowMinimumFrames.lambda.framesPerLambda,
+  20,
+  'framesPerLambda below Remotion minimum must fall back safely',
+);
+
+assert.throws(
+  () => validateLambdaSettings(resolveRenderSettings({
+    KATCHA_RENDER_BACKEND: 'lambda',
+    KATCHA_REMOTION_LAMBDA_FUNCTION_NAME: 'remotion-render-test',
+    KATCHA_REMOTION_LAMBDA_SERVE_URL: 'https://example.com/site',
+    KATCHA_REMOTION_STAGING_BUCKET: 'katcha-staging-example',
+    KATCHA_REMOTION_STAGING_PREFIX: '/unsafe-prefix/',
+  })),
+  /normalized S3 prefix/,
+);
+
 console.log('PASS: renderer runtime settings are conservative, explicit, and cloud-safe.');
