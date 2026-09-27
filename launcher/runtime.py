@@ -54,10 +54,13 @@ BACKGROUND_SERVICES = (
     "temporal-ui",
 )
 BACKGROUND_REQUIRED = set(BACKGROUND_SERVICES) - {"temporal-ui"}
+BACKGROUND_BUILD_SERVICES = tuple(
+    service for service in BACKGROUND_SERVICES if service != "temporal-ui"
+)
 ONE_SHOT_SERVICES = {"migrate", "minio-init"}
 CORE_BUILD_SERVICES = ("api", "migrate", "minio-init", "minio")
 MISSING_IMAGE = re.compile(
-    r"no such image|pull access denied|not found|unable to get image|does not exist",
+    r"no such image|pull access denied|image .+ not found|unable to get image|repository does not exist",
     re.I,
 )
 
@@ -376,7 +379,7 @@ class Runtime:
                     "launcher",
                     "Some production-engine images are missing; building them in the background.",
                 )
-                self.run(command + ["build", *services], timeout=1800)
+                self.run(command + ["build", *BACKGROUND_BUILD_SERVICES], timeout=1800)
                 if self.phase in ("stopping", "stopped"):
                     return
                 self.background_phase = "starting"
