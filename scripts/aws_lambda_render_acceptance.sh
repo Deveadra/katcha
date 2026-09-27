@@ -87,7 +87,7 @@ STAGING_PREFIX="${STAGING_PREFIX:-katcha-render-staging}"
     exit 2
 }
 
-for command in aws docker python3 curl date seq; do
+for command in aws docker python3 curl date seq git mktemp mkdir chmod; do
     command -v "${command}" >/dev/null 2>&1 || {
         echo "ERROR: required command is not installed: ${command}" >&2
         exit 2
@@ -156,8 +156,10 @@ minio_was_running=false
 [[ -n "$(docker compose ps --status running -q renderer 2>/dev/null)" ]] && renderer_was_running=true
 [[ -n "$(docker compose ps --status running -q minio 2>/dev/null)" ]] && minio_was_running=true
 
+RESULT_FILE="$(mktemp)"
 restore_local_state() {
     set +e
+    rm -f "${RESULT_FILE}"
     if [[ "${renderer_was_running}" == "true" ]]; then
         docker compose up -d --no-deps --force-recreate renderer >/dev/null 2>&1
     else
@@ -197,9 +199,93 @@ done
 
 RUN_ID="lambda-acceptance-$(date -u +%Y%m%dT%H%M%SZ)-$$"
 
-KATCHA_S3_ENDPOINT_URL=http://127.0.0.1:9000 KATCHA_S3_ACCESS_KEY=katcha KATCHA_S3_SECRET_KEY=katcha-local-secret KATCHA_S3_BUCKET=katcha-media KATCHA_S3_REGION=us-east-1 KATCHA_S3_FORCE_PATH_STYLE=true KATCHA_RENDERER_URL=http://127.0.0.1:8787 KATCHA_RENDER_SMOKE_RUN_ID="${RUN_ID}" KATCHA_RENDER_SMOKE_EXPECTED_RENDERER=remotion-lambda KATCHA_RENDER_SMOKE_REQUIRE_FRESH=true python3 scripts/ranked_renderer_smoke.py
+KATCHA_S3_ENDPOINT_URL=http://127.0.0.1:9000 \
+KATCHA_S3_ACCESS_KEY=katcha \
+KATCHA_S3_SECRET_KEY=katcha-local-secret \
+KATCHA_S3_BUCKET=katcha-media \
+KATCHA_S3_REGION=us-east-1 \
+KATCHA_S3_FORCE_PATH_STYLE=true \
+KATCHA_RENDERER_URL=http://127.0.0.1:8787 \
+KATCHA_RENDER_SMOKE_RUN_ID="${RUN_ID}" \
+KATCHA_RENDER_SMOKE_EXPECTED_RENDERER=remotion-lambda \
+KATCHA_RENDER_SMOKE_REQUIRE_FRESH=true \
+KATCHA_RENDER_SMOKE_RESULT_FILE="${RESULT_FILE}" \
+python3 scripts/ranked_renderer_smoke.py
+
+ACCEPTANCE_DIR="${KATCHA_AWS_ROLES_ANYWHERE_DIR:-$HOME/.aws/katcha-roles-anywhere}/acceptance"
+RECEIPT_FILE="${ACCEPTANCE_DIR}/latest.json"
+mkdir -p "${ACCEPTANCE_DIR}"
+chmod 700 "${ACCEPTANCE_DIR}"
+GIT_COMMIT="$(git rev-parse HEAD)"
+ACCEPTED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+python3 - "${RESULT_FILE}" "${RECEIPT_FILE}" \
+    "${ACCEPTED_AT}" "${EXPECTED_ACCOUNT}" "${REGION}" "${PROFILE}" \
+    "${FUNCTION_NAME}" "${SERVE_URL}" "${STAGING_BUCKET}" "${STAGING_PREFIX}" \
+    "${GIT_COMMIT}" <<'PY'
+import json
+from pathlib import Path
+import sys
+
+(
+    result_path,
+    receipt_path,
+    accepted_at,
+    account_id,
+    region,
+    profile,
+    function_name,
+    serve_url,
+    staging_bucket,
+    staging_prefix,
+    git_commit,
+) = sys.argv[1:]
+
+result = json.loads(Path(result_path).read_text(encoding="utf-8"))
+metadata = result.get("metadata") or {}
+if metadata.get("renderer") != "remotion-lambda":
+    raise SystemExit("ERROR: refusing receipt for non-Lambda renderer")
+if metadata.get("reused"):
+    raise SystemExit("ERROR: refusing receipt for reused render")
+if not metadata.get("verified"):
+    raise SystemExit("ERROR: refusing receipt for unverified render")
+render_id = str(metadata.get("renderId") or "").strip()
+if not render_id:
+    raise SystemExit("ERROR: refusing receipt without Lambda render ID")
+lambdas_invoked = int(metadata.get("lambdasInvoked") or 0)
+if lambdas_invoked <= 0:
+    raise SystemExit("ERROR: refusing receipt without Lambda worker invocations")
+
+receipt = {
+    "version": 1,
+    "accepted_at_utc": accepted_at,
+    "account_id": account_id,
+    "region": region,
+    "aws_profile": profile,
+    "function_name": function_name,
+    "serve_url": serve_url,
+    "staging_bucket": staging_bucket,
+    "staging_prefix": staging_prefix,
+    "git_commit": git_commit,
+    "run_id": result["run_id"],
+    "output_key": result["output_key"],
+    "renderer": metadata["renderer"],
+    "verified": True,
+    "reused": False,
+    "render_id": render_id,
+    "lambdas_invoked": lambdas_invoked,
+    "object_size_bytes": int(result.get("size_bytes") or 0),
+}
+if receipt["object_size_bytes"] <= 0:
+    raise SystemExit("ERROR: refusing receipt for empty output object")
+
+target = Path(receipt_path)
+target.write_text(json.dumps(receipt, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+target.chmod(0o600)
+PY
 
 echo
 echo "PASS: controlled Remotion Lambda acceptance completed."
-echo "  run_id: ${RUN_ID}"
+echo "  run_id:  ${RUN_ID}"
+echo "  receipt: ${RECEIPT_FILE}"
 echo "KATCHA_RENDER_BACKEND was not changed in ${ENV_FILE}."

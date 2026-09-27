@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import io
+import json
 import os
 import re
 import subprocess
@@ -175,6 +176,22 @@ def main() -> int:
     stat = store.stat(output_key)
     if stat["size_bytes"] <= 0:
         raise SystemExit("renderer output object is empty")
+
+    result_file = os.environ.get("KATCHA_RENDER_SMOKE_RESULT_FILE", "").strip()
+    if result_file:
+        payload = {
+            "run_id": run_id,
+            "output_key": output_key,
+            "duration_seconds": result.duration_seconds,
+            "size_bytes": stat["size_bytes"],
+            "metadata": result.metadata,
+        }
+        target = Path(result_file)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(
+            json.dumps(payload, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
 
     print(
         "PASS: ranked renderer HTTP/S3 integration "
