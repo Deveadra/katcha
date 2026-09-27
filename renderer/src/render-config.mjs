@@ -56,6 +56,15 @@ export const resolveRenderSettings = (env = process.env) => ({
       1,
       1,
     ),
+    stagingBucket: optionalString(env.KATCHA_REMOTION_STAGING_BUCKET),
+    stagingPrefix:
+      optionalString(env.KATCHA_REMOTION_STAGING_PREFIX)
+      || 'katcha-render-staging',
+    stagingUrlExpiresSeconds: positiveInteger(
+      env.KATCHA_REMOTION_STAGING_URL_EXPIRES_SECONDS,
+      3600,
+      900,
+    ),
   },
 });
 
@@ -77,5 +86,23 @@ export const validateLambdaSettings = (settings) => {
   }
   if (url.protocol !== 'https:') {
     throw new Error('KATCHA_REMOTION_LAMBDA_SERVE_URL must use HTTPS');
+  }
+  if (settings.lambda.stagingBucket) {
+    const bucket = settings.lambda.stagingBucket;
+    if (
+      bucket.length < 3
+      || bucket.length > 63
+      || !/^[a-z0-9][a-z0-9.-]*[a-z0-9]$/.test(bucket)
+      || bucket.includes('..')
+    ) {
+      throw new Error('KATCHA_REMOTION_STAGING_BUCKET is not a valid S3 bucket name');
+    }
+    const requiredExpiry = Math.ceil(settings.lambda.maxWaitMs / 1000) + 300;
+    if (settings.lambda.stagingUrlExpiresSeconds < requiredExpiry) {
+      throw new Error(
+        'KATCHA_REMOTION_STAGING_URL_EXPIRES_SECONDS must exceed the Lambda wait '
+        + 'limit by at least 300 seconds',
+      );
+    }
   }
 };
