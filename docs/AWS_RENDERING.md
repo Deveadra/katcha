@@ -151,18 +151,14 @@ The staging URL expiry must exceed Katcha's Lambda wait ceiling by at least five
 Staged objects are private, encrypted, and expire automatically. Katcha never makes the
 bucket public.
 
-For the durable Chronos IAM Roles Anywhere profile, export the values produced by
-`scripts/aws_roles_anywhere_bootstrap.sh --apply` and start only the renderer with
-both AWS overlays:
+For the durable Chronos IAM Roles Anywhere profile,
+`scripts/aws_roles_anywhere_bootstrap.sh --apply` persists the verified account
+guard, profile name, host UID/GID, and credential-file paths into Katcha's ignored
+local `.env`. No per-shell AWS exports are required during normal automation.
+
+Start only the renderer with both AWS overlays:
 
 ```bash
-export AWS_PROFILE=katcha-automation
-export KATCHA_HOST_UID="$(id -u)"
-export KATCHA_HOST_GID="$(id -g)"
-export KATCHA_AWS_SIGNING_HELPER_PATH="$HOME/.local/bin/aws_signing_helper"
-export KATCHA_AWS_CERT_PATH="$HOME/.aws/katcha-roles-anywhere/runtime/client.pem"
-export KATCHA_AWS_PRIVATE_KEY_PATH="$HOME/.aws/katcha-roles-anywhere/runtime/client-key.pem"
-
 docker compose \
   -f docker-compose.yml \
   -f docker-compose.aws-render.yml \
@@ -170,10 +166,12 @@ docker compose \
   up -d --no-deps --force-recreate renderer
 ```
 
-The base AWS overlay mounts `$HOME/.aws` read-only and runs the renderer with your
-host UID/GID. The Roles Anywhere overlay additionally mirrors the signing helper,
-workload certificate, and workload private key at the exact absolute paths referenced
-by the profile's `credential_process`. All three are read-only in the container.
+The base AWS overlay mounts `$HOME/.aws` read-only, selects
+`KATCHA_AWS_PROFILE`, and runs the renderer with the persisted host UID/GID. The
+Roles Anywhere overlay additionally mirrors the signing helper, workload
+certificate, and workload private key at the exact absolute paths referenced by the
+profile's `credential_process`. All three are read-only in the container. The
+`.env` contains only the private-key path, never the private-key contents.
 
 A temporary interactive profile can still use only `docker-compose.aws-render.yml`
 for bootstrap or break-glass work, but unattended Katcha automation must use the
