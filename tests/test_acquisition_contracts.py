@@ -62,3 +62,11 @@ def test_discovery_and_rights_routes_are_mounted() -> None:
     assert "/v1/discovery/candidates/{candidate_id}/assessments" in paths
     assert "/v1/rights/assessments/{assessment_id}/evidence" in paths
     assert "/v1/discovery/candidates/{candidate_id}/promote" in paths
+
+
+def test_source_history_api_contract():
+    operation = app.openapi()["paths"]["/v1/discovery/sources/{source_id}/runs"]["get"]
+    limit = next(p for p in operation["parameters"] if p["name"] == "limit")
+    assert limit["schema"]["minimum"] == 1
+    assert limit["schema"]["maximum"] == 100
+    assert operation["responses"]["200"]["content"]["application/json"]["schema"]["type"] == "array"

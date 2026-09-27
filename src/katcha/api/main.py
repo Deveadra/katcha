@@ -153,6 +153,11 @@ def editing_shell():
     return RedirectResponse("/editing/assets/editing.html")
 
 
+@app.get("/ingestion", include_in_schema=False)
+def ingestion_shell():
+    return RedirectResponse("/editing/assets/ingestion.html")
+
+
 def _require_ai_execution() -> None:
     settings = get_settings()
     if not settings.ai_enabled:

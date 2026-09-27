@@ -217,3 +217,29 @@ When `batch_key` is present, Katcha derives a stable run key:
 `source-import:{source_key}:{batch_key}`. Reposting the same batch returns the
 same discovery run instead of duplicating work. The import batch key and item
 count are also added to candidate metadata through the operator feed adapter.
+
+## Source control center
+
+Open `/ingestion` on the running Katcha API (also linked from `/editing`). Connect
+with the control-plane token when configured; it stays in memory for this tab.
+
+1. Choose a channel (or Shared source), a unique source key and an installed adapter.
+   Setup fields, platform suggestions and server credential requirements come from
+   `/v1/discovery/adapters`. Edit the supplied query defaults for your source;
+   example media lists are cleared to avoid ingesting catalog sample clips.
+2. Save the source. Existing keys are rejected by this UI to prevent accidental
+   overwrites; the existing source upsert API remains available for updates.
+3. Select a source, then create a run from its saved query or import one URL per
+   line with a batch key. Imports replace both template media lists. A reused
+   batch key returns the original run; changed content requires a new batch key.
+4. Choose **Execute** on a queued run to submit it to Temporal. Refresh runs to
+   see progress or failure details. Start a fresh run after a terminal failure.
+
+The UI reads real control-plane state; it includes no fixture data. Discovery
+execution requires the existing Temporal service and discovery worker. This
+screen does not install native platform scrapers or enable scheduled polling.
+`poll_interval_minutes` remains source configuration, not a scheduler guarantee.
+
+`GET /v1/discovery/sources/{source_id}/runs?limit=50` returns newest-first history
+for that source, including status and errors. The limit is bounded to 1–100;
+unknown sources return 404. History uses source identity frozen in run metadata.

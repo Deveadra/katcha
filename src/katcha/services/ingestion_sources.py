@@ -67,6 +67,7 @@ def upsert_ingestion_source(
     channel_profile_id: uuid.UUID | None = None,
     enabled: bool = True,
     poll_interval_minutes: int = 60,
+    create_only: bool = False,
 ) -> IngestionSource:
     source_key = _clean_key(source_key, field="source_key")
     name = name.strip()
@@ -85,6 +86,8 @@ def upsert_ingestion_source(
         existing = session.scalar(
             select(IngestionSource).where(IngestionSource.source_key == source_key)
         )
+        if existing is not None and create_only:
+            raise ValueError("source key already exists")
         if existing is None:
             row = IngestionSource(
                 source_key=source_key,
@@ -262,11 +265,9 @@ def create_source_import_run(
 
     query_overrides: dict[str, Any] = {
         "default_metadata": import_default_metadata,
+        "urls": cleaned_urls,
+        "items": cleaned_items,
     }
-    if cleaned_urls:
-        query_overrides["urls"] = cleaned_urls
-    if cleaned_items:
-        query_overrides["items"] = cleaned_items
     if cleaned_feed_key is not None:
         query_overrides["feed_key"] = cleaned_feed_key
     if cleaned_default_platform is not None:
@@ -294,3 +295,19 @@ def create_source_import_run(
         batch_key=cleaned_batch_key,
         item_count=item_count,
     )
+
+
+def list_source_runs(source_id: uuid.UUID, *, limit: int = 50) -> list[DiscoveryRun]:
+    """Return bounded history using the source identity frozen on each run."""
+    with session_scope() as session:
+        if session.get(IngestionSource, source_id) is None:
+            raise ValueError("ingestion source not found")
+        rows = list(session.scalars(
+            select(DiscoveryRun)
+            .where(DiscoveryRun.run_metadata["ingestion_source_id"].as_string() == str(source_id))
+            .order_by(DiscoveryRun.created_at.desc(), DiscoveryRun.id.desc())
+            .limit(limit)
+        ))
+        for row in rows:
+            session.expunge(row)
+        return rows
