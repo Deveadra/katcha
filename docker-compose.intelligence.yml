@@ -1,8 +1,6 @@
 services:
   intelligence-worker:
-    build:
-      context: .
-      dockerfile: Dockerfile.intelligence
+    image: katcha-python-core:local
     env_file: ${KATCHA_ENV_FILE:-.env}
     depends_on:
       migrate:
