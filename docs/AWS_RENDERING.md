@@ -124,6 +124,8 @@ For a local AWS SSO/profile session, start only the renderer with the explicit o
 
 ```bash
 export AWS_PROFILE=<dedicated-katcha-profile>
+export KATCHA_HOST_UID="$(id -u)"
+export KATCHA_HOST_GID="$(id -g)"
 
 docker compose \
   -f docker-compose.yml \
@@ -131,7 +133,7 @@ docker compose \
   up -d --no-deps --force-recreate renderer
 ```
 
-The overlay mounts `$HOME/.aws` read-only. Do not copy static AWS keys into `.env`.
+The overlay mounts `$HOME/.aws` read-only and runs the renderer with your host UID/GID so owner-only AWS profile and SSO cache files remain readable without running the container as root. It sets both `AWS_PROFILE` and `REMOTION_AWS_PROFILE`. Refresh SSO on the host before starting the renderer. Do not copy static AWS keys into `.env`.
 
 ## Phase 2B: hosted production S3
 
