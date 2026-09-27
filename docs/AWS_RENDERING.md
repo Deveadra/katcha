@@ -252,6 +252,43 @@ role to the workload rather than injecting long-lived user credentials.
 
 Do not reuse Remotion's `remotionlambda-*` bucket as Katcha's canonical media store.
 
+## Phase 2.5: controlled Lambda render acceptance
+
+After the durable role, Remotion function/site, and private staging bucket are all
+verified, run one synthetic ranked episode through the normal Katcha HTTP renderer
+before changing the production backend.
+
+Inspect the acceptance configuration first:
+
+```bash
+cd ~/src/katcha
+
+bash scripts/aws_lambda_render_acceptance.sh
+```
+
+The inspect path verifies the durable AWS caller, exact expected account, configured
+Remotion function, HTTPS Serve URL, and staging-bucket region. It launches no render.
+
+Then run the controlled acceptance:
+
+```bash
+bash scripts/aws_lambda_render_acceptance.sh --run
+```
+
+The acceptance overlay enables `KATCHA_RENDER_BACKEND=lambda` only for the
+temporary renderer process. The smoke fixture uses a unique run ID and unique source,
+narration, and output keys so an older local render cannot satisfy the test.
+
+Success requires the renderer health endpoint to report the expected AWS account,
+region, Lambda backend, and cloud staging. The render response must be fresh,
+`verified=true`, report `renderer=remotion-lambda`, include a Remotion Lambda
+render ID, and report at least one invoked Lambda worker. The final video is still
+downloaded, ffprobe-verified, uploaded back to Katcha's object store, and HEAD
+verified by the normal renderer path.
+
+The wrapper restores the renderer to its prior local state afterward and does not
+persist `KATCHA_RENDER_BACKEND=lambda`.
+
 ## Phase 3: enable cloud rendering
 
 Only after the function, site, Katcha S3 storage, and IAM path are verified. Phase 1
