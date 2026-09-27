@@ -8,20 +8,22 @@ To add a desktop shortcut, run `powershell.exe -NoProfile -File .\Katcha.ps1 -In
 from the checkout in PowerShell. Local PowerShell execution policy must permit this script;
 the launcher does not bypass organizational policy.
 
-The launch console opens at **http://localhost:8765**. It starts the full stack,
-checks readiness, and enables **Open workspace** when healthy. No virtualenv,
+The launch console opens at **http://localhost:8765**. It opens in an idle state so
+**Start Katcha** is immediately clickable. Starting builds the full stack, checks
+readiness, and enables **Open workspace** when healthy. No virtualenv,
 credential exports, development web server, or manual port forwarding is needed.
 Python 3.11+ and Docker Desktop with WSL integration (Compose 2.24.4+) must be installed.
 The launcher reports missing Docker in its diagnostics; it does not install system software.
 
 ## First launch
 
-1. Start Docker Desktop. Launch Katcha. The first image build may take several minutes.
+1. Start Docker Desktop. Launch Katcha. The console opens without starting services automatically.
 2. Open **Connections & setup**. Existing `.env` settings are retained. If `.env`
    is absent, the example is copied; missing control and encryption keys are generated once.
 3. Enter provider credentials and choose **Live** AI explicitly when ready to use paid services.
    Fixture mode remains clearly labeled and does not make live provider calls.
-4. Save settings, then click **Start Katcha** to apply them. Open the workspace.
+4. Save settings, then click **Start Katcha** to apply them. The console shows the current
+   startup stage and elapsed time; the first image build may take several minutes. Open the workspace.
    The gateway supplies control authentication without exposing its token to the browser.
 5. For YouTube, save OAuth client details and register the displayed callback URL in
    your Google OAuth application. Restart, then click **Connect YouTube** to authorize.

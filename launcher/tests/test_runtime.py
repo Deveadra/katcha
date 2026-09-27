@@ -145,3 +145,31 @@ def test_redaction_does_not_corrupt_diagnostic_schema(tmp_path):
     row = json.loads((app.directory / "events.jsonl").read_text())
     assert row["schema"] == "katcha.diagnostic.v1"
     assert row["message"] == "value [REDACTED]"
+
+
+def test_start_builds_before_starting_services_and_reports_stage(tmp_path):
+    app = instance(tmp_path)
+    app.lock.acquire()
+    calls = []
+
+    def fake_run(args, **_kwargs):
+        calls.append(args)
+        if "version" in args:
+            return "2.30.0"
+        return ""
+
+    with (
+        patch.object(app, "run", side_effect=fake_run),
+        patch.object(app, "start_logs"),
+        patch.object(app, "check", side_effect=lambda: setattr(app, "phase", "ready")),
+    ):
+        app._operate("start")
+
+    build = next(cmd for cmd in calls if cmd[-1:] == ["build"])
+    up = next(cmd for cmd in calls if "up" in cmd)
+    assert build
+    assert "--build" not in up
+    assert app.phase == "ready"
+    assert app.stage == "ready"
+    assert app.snapshot()["operation_elapsed_seconds"] is None
+    assert not app.lock.locked()

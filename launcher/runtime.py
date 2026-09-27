@@ -63,6 +63,8 @@ class Runtime:
         self.events_lock = threading.Lock()
         self.lock = threading.Lock()
         self.phase = "idle"
+        self.stage = "idle"
+        self.operation_started_at = None
         self.known_secrets = set()
         self.services = []
         self.follow = None
@@ -232,6 +234,8 @@ class Runtime:
     def _operate(self, action):
         try:
             self.phase = "starting" if action == "start" else "stopping"
+            self.stage = "preflight" if action == "start" else "stopping services"
+            self.operation_started_at = time.monotonic()
             self.event("info", "launcher", f"{action} requested")
             self.values = read_env(self.env_path)
             self.known_secrets.update(
@@ -245,26 +249,35 @@ class Runtime:
             if action == "stop":
                 self.run(self.command() + ["stop", "--timeout", "30"], timeout=120)
                 self.phase = "stopped"
+                self.stage = "stopped"
                 return
+            self.stage = "validating configuration"
             self.run(self.command() + ["config", "--quiet"])
+            self.stage = "building images"
             self.event(
                 "info",
                 "launcher",
-                "Building and starting services. First launch can take several minutes.",
+                "Building application images. First launch can take several minutes.",
             )
+            self.run(self.command() + ["build"], timeout=1800)
+            self.stage = "starting services"
+            self.event("info", "launcher", "Starting services and waiting for health checks.")
             self.run(
-                self.command() + ["up", "-d", "--build", "--wait", "--wait-timeout", "300"],
-                timeout=1800,
+                self.command() + ["up", "-d", "--wait", "--wait-timeout", "300"],
+                timeout=420,
             )
+            self.stage = "checking readiness"
             self.start_logs()
             self.check()
             if self.phase != "ready":
                 raise RuntimeError(
                     "Services started but readiness failed; inspect the service list."
                 )
+            self.stage = "ready"
             self.event("info", "launcher", "Katcha is ready")
         except Exception:
             self.phase = "failed"
+            self.stage = "failed"
             self.event(
                 "error",
                 "launcher",
@@ -276,6 +289,7 @@ class Runtime:
             except Exception as exc:
                 self.event("error", "diagnostics", str(exc))
         finally:
+            self.operation_started_at = None
             self.lock.release()
 
     def start_logs(self):
@@ -371,8 +385,15 @@ class Runtime:
     def snapshot(self):
         with self.events_lock:
             events = list(self.events)
+        elapsed = (
+            max(0, int(time.monotonic() - self.operation_started_at))
+            if self.operation_started_at is not None
+            else None
+        )
         return dict(
             phase=self.phase,
+            stage=self.stage,
+            operation_elapsed_seconds=elapsed,
             session=self.session,
             services=self.services,
             events=events,
@@ -531,7 +552,12 @@ class Handler(BaseHTTPRequestHandler):
 def main():
     parser = argparse.ArgumentParser(description="Launch the Katcha application")
     parser.add_argument("--no-browser", action="store_true")
-    parser.add_argument("--no-start", action="store_true")
+    parser.add_argument(
+        "--auto-start",
+        action="store_true",
+        help="Start services immediately instead of waiting for the Start Katcha button.",
+    )
+    parser.add_argument("--no-start", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args()
     os.umask(0o077)
     url = "http://localhost:8765"
@@ -544,7 +570,7 @@ def main():
     server.runtime = runtime
     runtime.event("info", "launcher", "Launch console listening on " + url)
     threading.Thread(target=runtime.monitor, daemon=True).start()
-    if not args.no_start:
+    if args.auto_start and not args.no_start:
         runtime.operate("start")
     try:
         if not args.no_browser:
