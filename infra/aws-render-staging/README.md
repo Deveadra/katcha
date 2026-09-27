@@ -24,30 +24,30 @@ keys, or modify the Katcha database.
 - keeps Remotion control-plane permissions in the separate `KatchaRemotionControlPlane` policy;
 - repeats the expected-account guard on the IAM attachment itself.
 
-## Bootstrap remote state first
+## Review-gated provisioning workflow
 
-Terraform state must not live only on the operator workstation.
+Run staging infrastructure from the repository root through
+`scripts/aws_render_staging.sh`. The helper keeps the Terraform state bucket,
+reviewable plan, plan approval, apply, output verification, and Katcha runtime metadata
+in one guarded workflow while still requiring explicit write gates.
 
-From the repository root, use the guarded bootstrap script. The default invocation is
-inspect-only and performs no writes:
-
-```bash
-export KATCHA_AWS_EXPECTED_ACCOUNT_ID=123456789012
-export KATCHA_REMOTION_LAMBDA_REGION=us-east-1
-
-bash scripts/aws_tf_state_bootstrap.sh
-```
-
-After reviewing the reported account, caller, region, bucket name, and intended controls,
-create/repair only the Terraform state bucket:
+If the remote Terraform state bucket does not exist yet, create/repair **only** that
+state bucket:
 
 ```bash
-bash scripts/aws_tf_state_bootstrap.sh --apply
+bash scripts/aws_render_staging.sh --bootstrap-state
 ```
 
-The state bucket has versioning, SSE-S3, Block Public Access, BucketOwnerEnforced ownership,
-and an HTTPS-only bucket policy. Terraform uses native S3 lockfiles rather than DynamoDB.
+That mode delegates to the existing account-guarded state bootstrap. It does not run
+a render-staging Terraform apply.
 
+Next, generate the staging plan:
+
+```bash
+bash scripts/aws_render_staging.sh
+```
+
+The default mode:
 The supported operator path is now the repository-level wrapper:
 
 ```bash
@@ -76,33 +76,47 @@ Direct Terraform commands remain useful for debugging, but they are no longer th
 preferred production path because the wrapper adds account checks, post-apply
 verification, safe env persistence, and consistent remote-state configuration.
 
-The default bucket name is:
+- verifies the bootstrap/admin caller against the explicit expected account;
+- requires the deterministic remote state bucket to already exist;
+- initializes Terraform with S3 state and native lockfiles;
+- runs `terraform fmt -check` and `terraform validate`;
+- writes the binary plan under
+  `~/.aws/katcha-roles-anywhere/terraform-plans/`, outside the repository;
+- prints the full human-readable plan and its SHA-256;
+- performs no Terraform apply.
 
-```text
-katcha-render-staging-<ACCOUNT_ID>-<REGION>
-```
+Review the plan. It should show the private S3 resources and exactly one
+`aws_iam_role_policy.renderer_staging_access` attachment to the existing
+`KatchaChronosAutomation` role. It must not create an IAM user or a second renderer
+role.
 
-## Apply
-
-Only after the plan shows exactly the expected private S3 resources:
+Apply only the exact reviewed plan by passing back the printed SHA-256:
 
 ```bash
-terraform apply /tmp/katcha-render-staging.tfplan
+bash scripts/aws_render_staging.sh --apply <reviewed-plan-sha256>
 ```
 
-Capture the outputs:
+The apply mode refuses a missing, changed, or differently hashed plan. After apply it
+verifies the bucket, prefix, renderer role ARN, and `KatchaRenderStagingAccess`
+policy name. It also verifies that the durable `katcha-automation` profile can read
+the bucket location.
 
-```bash
-terraform output bucket_name
-terraform output staging_prefix
-terraform output renderer_role_arn
-terraform output renderer_staging_policy_name
-terraform output -raw renderer_iam_policy_json
+Only after those checks pass does the helper persist the non-secret runtime metadata
+to the ignored local `.env`:
+
+```env
+KATCHA_REMOTION_STAGING_BUCKET=katcha-render-staging-<ACCOUNT_ID>-<REGION>
+KATCHA_REMOTION_STAGING_PREFIX=katcha-render-staging
+KATCHA_REMOTION_STAGING_URL_EXPIRES_SECONDS=<verified-safe-expiry>
 ```
 
-The S3 policy is already attached by Terraform to the resolved durable renderer
-role. The JSON output remains available for audit/review only; do not manually
-duplicate it onto another principal.
+The URL expiry is automatically kept at least five minutes beyond Katcha's configured
+Lambda wait ceiling. Existing env files are backed up outside the repository before
+mutation. `KATCHA_RENDER_BACKEND` is never changed by staging provisioning.
+
+The emitted Terraform policy JSON remains available for audit through
+`terraform output -raw renderer_iam_policy_json`; do not manually duplicate it onto
+another principal.
 
 Remotion's version-specific control-plane permissions remain separate and are
 managed by `scripts/aws_render_authorize.sh` as described in
