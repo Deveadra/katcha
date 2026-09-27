@@ -49,7 +49,7 @@ export const resolveRenderSettings = (env = process.env) => ({
     framesPerLambda: positiveInteger(
       env.KATCHA_REMOTION_LAMBDA_FRAMES_PER_LAMBDA,
       20,
-      1,
+      4,
     ),
     concurrencyPerLambda: positiveInteger(
       env.KATCHA_REMOTION_LAMBDA_CONCURRENCY_PER_LAMBDA,
@@ -89,6 +89,12 @@ export const validateLambdaSettings = (settings) => {
   }
   if (settings.lambda.stagingBucket) {
     const bucket = settings.lambda.stagingBucket;
+    const prefix = settings.lambda.stagingPrefix;
+    if (!prefix || prefix.startsWith('/') || prefix.endsWith('/') || prefix.includes('//')) {
+      throw new Error(
+        'KATCHA_REMOTION_STAGING_PREFIX must be a non-empty normalized S3 prefix',
+      );
+    }
     if (
       bucket.length < 3
       || bucket.length > 63
