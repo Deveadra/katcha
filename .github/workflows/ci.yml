@@ -411,7 +411,8 @@ jobs:
 
       - name: Start MinIO and renderer
         run: |
-          docker compose --env-file .env.example             up -d --build minio minio-init renderer
+          docker compose --env-file .env.example build api
+          docker compose --env-file .env.example up -d --build minio minio-init renderer
           for attempt in $(seq 1 60); do
             if curl -fsS http://127.0.0.1:8787/health >/dev/null; then
               exit 0
