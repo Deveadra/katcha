@@ -62,6 +62,21 @@ CLIENT_CSR="${RUNTIME_DIR}/client.csr"
 CLIENT_CERT="${RUNTIME_DIR}/client.pem"
 CLIENT_EXT="${RUNTIME_DIR}/client-ext.cnf"
 
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
+ENV_FILE_SETTING="${KATCHA_ENV_FILE:-.env}"
+if [[ "${ENV_FILE_SETTING}" = /* ]]; then
+    ENV_FILE="${ENV_FILE_SETTING}"
+else
+    ENV_FILE="${REPO_ROOT}/${ENV_FILE_SETTING}"
+fi
+
+if [[ "${ENV_FILE}" == "${REPO_ROOT}/.env.example" ]]; then
+    echo "ERROR: refusing to persist host-specific AWS metadata into tracked .env.example." >&2
+    echo "Use the default .env or set KATCHA_ENV_FILE to another ignored local env file." >&2
+    exit 2
+fi
+
 if [[ ! "${EXPECTED_ACCOUNT}" =~ ^[0-9]{12}$ ]]; then
     echo "ERROR: KATCHA_AWS_EXPECTED_ACCOUNT_ID must be the intended 12-digit account ID." >&2
     exit 2
@@ -72,7 +87,7 @@ if [[ -z "${REGION}" ]]; then
     exit 2
 fi
 
-for command in aws openssl curl sha256sum python3 install uname; do
+for command in aws openssl curl sha256sum python3 install uname id cp date mkdir chmod; do
     if ! command -v "${command}" >/dev/null 2>&1; then
         echo "ERROR: required command is not installed: ${command}" >&2
         exit 2
@@ -126,6 +141,7 @@ echo "  certificate subject:   CN=${CLIENT_CN}"
 echo "  certificate directory: ${ROLES_DIR}"
 echo "  signing helper:        ${HELPER_PATH}"
 echo "  helper release:        ${HELPER_VERSION}"
+echo "  Katcha env file:       ${ENV_FILE}"
 echo
 echo "The IAM role is created with NO resource permissions."
 echo "Remotion/S3 permissions remain a separate review-and-apply step."
@@ -323,6 +339,71 @@ if [[ "${DURABLE_ACCOUNT}" != "${EXPECTED_ACCOUNT}" ]]; then
     exit 6
 fi
 
+echo "Persisting non-secret Katcha AWS runtime metadata..."
+env_parent="$(dirname "${ENV_FILE}")"
+mkdir -p "${env_parent}"
+
+env_existed=false
+if [[ -f "${ENV_FILE}" ]]; then
+    env_existed=true
+elif [[ "${ENV_FILE}" == "${REPO_ROOT}/.env" && -f "${REPO_ROOT}/.env.example" ]]; then
+    cp "${REPO_ROOT}/.env.example" "${ENV_FILE}"
+else
+    : >"${ENV_FILE}"
+fi
+
+if [[ "${env_existed}" == "true" ]]; then
+    env_backup="${ENV_FILE}.bak.$(date +%Y%m%d%H%M%S)"
+    cp -a "${ENV_FILE}" "${env_backup}"
+    chmod 600 "${env_backup}"
+    echo "Backed up Katcha env file to ${env_backup}"
+fi
+
+HOST_UID="$(id -u)"
+HOST_GID="$(id -g)"
+
+python3 - "${ENV_FILE}" \
+    "KATCHA_AWS_EXPECTED_ACCOUNT_ID=${EXPECTED_ACCOUNT}" \
+    "KATCHA_REMOTION_LAMBDA_REGION=${REGION}" \
+    "KATCHA_AWS_PROFILE=${AUTOMATION_PROFILE}" \
+    "KATCHA_HOST_UID=${HOST_UID}" \
+    "KATCHA_HOST_GID=${HOST_GID}" \
+    "KATCHA_AWS_SIGNING_HELPER_PATH=${HELPER_PATH}" \
+    "KATCHA_AWS_CERT_PATH=${CLIENT_CERT}" \
+    "KATCHA_AWS_PRIVATE_KEY_PATH=${CLIENT_KEY}" <<'PY'
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+updates = dict(item.split("=", 1) for item in sys.argv[2:])
+lines = path.read_text(encoding="utf-8").splitlines()
+seen = set()
+result = []
+
+for line in lines:
+    stripped = line.lstrip()
+    replaced = False
+    if stripped and not stripped.startswith("#") and "=" in line:
+        key = line.split("=", 1)[0].strip()
+        if key in updates:
+            result.append(f"{key}={updates[key]}")
+            seen.add(key)
+            replaced = True
+    if not replaced:
+        result.append(line)
+
+missing = [key for key in updates if key not in seen]
+if missing:
+    if result and result[-1] != "":
+        result.append("")
+    result.append("# Durable AWS authentication metadata (managed by aws_roles_anywhere_bootstrap.sh)")
+    result.extend(f"{key}={updates[key]}" for key in missing)
+
+path.write_text("\n".join(result) + "\n", encoding="utf-8")
+PY
+
+chmod 600 "${ENV_FILE}"
+
 echo
 echo "PASS: durable AWS authentication is configured."
 echo "  profile:      ${AUTOMATION_PROFILE}"
@@ -331,12 +412,14 @@ echo "  caller:       ${DURABLE_ARN}"
 echo "  role:         ${ROLE_ARN}"
 echo "  trust anchor: ${TRUST_ANCHOR_ARN}"
 echo "  RA profile:   ${RA_PROFILE_ARN}"
+echo "  runtime env:  ${ENV_FILE}"
 echo
-echo "Runtime exports for Katcha:"
-echo "  export AWS_PROFILE=${AUTOMATION_PROFILE}"
-echo "  export KATCHA_AWS_SIGNING_HELPER_PATH=${HELPER_PATH}"
-echo "  export KATCHA_AWS_CERT_PATH=${CLIENT_CERT}"
-echo "  export KATCHA_AWS_PRIVATE_KEY_PATH=${CLIENT_KEY}"
+echo "Katcha's profile name, account guard, host UID/GID, and credential-file paths"
+echo "are persisted in the local env file. No per-shell AWS exports are required"
+echo "for Docker Compose runtime."
+echo
+echo "Host verification:"
+echo "  aws sts get-caller-identity --profile ${AUTOMATION_PROFILE}"
 echo
 echo "No Remotion/S3 permissions were attached to the role."
 echo "Review and apply those permissions separately before cloud rendering."
