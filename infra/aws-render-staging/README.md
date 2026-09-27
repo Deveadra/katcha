@@ -19,14 +19,43 @@ modify the Katcha database.
 - `force_destroy=false`, so Terraform cannot silently delete a bucket containing objects;
 - outputs a least-privilege renderer policy document but does not attach it automatically.
 
-## Plan first
+## Bootstrap remote state first
 
-Use the same account and region verified by `scripts/aws_render_preflight.sh`.
+Terraform state must not live only on the operator workstation.
+
+From the repository root, use the guarded bootstrap script. The default invocation is
+inspect-only and performs no writes:
+
+```bash
+export KATCHA_AWS_EXPECTED_ACCOUNT_ID=123456789012
+export KATCHA_REMOTION_LAMBDA_REGION=us-east-1
+
+bash scripts/aws_tf_state_bootstrap.sh
+```
+
+After reviewing the reported account, caller, region, bucket name, and intended controls,
+create/repair only the Terraform state bucket:
+
+```bash
+bash scripts/aws_tf_state_bootstrap.sh --apply
+```
+
+The state bucket has versioning, SSE-S3, Block Public Access, BucketOwnerEnforced ownership,
+and an HTTPS-only bucket policy. Terraform uses native S3 lockfiles rather than DynamoDB.
+
+Initialize this root with partial backend configuration:
 
 ```bash
 cd ~/src/katcha/infra/aws-render-staging
 
-terraform init
+STATE_BUCKET="katcha-tfstate-${KATCHA_AWS_EXPECTED_ACCOUNT_ID}-${KATCHA_REMOTION_LAMBDA_REGION}"
+
+terraform init -reconfigure \
+  -backend-config="bucket=${STATE_BUCKET}" \
+  -backend-config="key=katcha/aws-render-staging/terraform.tfstate" \
+  -backend-config="region=${KATCHA_REMOTION_LAMBDA_REGION}" \
+  -backend-config="encrypt=true" \
+  -backend-config="use_lockfile=true"
 
 terraform fmt -check
 terraform validate
