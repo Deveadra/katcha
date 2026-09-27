@@ -6,6 +6,7 @@ import argparse
 import base64
 import collections
 import datetime as dt
+import hashlib
 import http.client
 import json
 import logging
@@ -24,6 +25,22 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+REQUIRED_SERVICES = {
+    "postgres",
+    "temporal",
+    "minio",
+    "api",
+    "worker",
+    "analysis-worker",
+    "renderer",
+    "production-worker",
+    "longform-worker",
+    "publishing-worker",
+    "discovery-worker",
+    "trends-worker",
+    "intelligence-worker",
+}
+
 FIELDS = {
     "KATCHA_OPENAI_API_KEY",
     "KATCHA_GEMINI_API_KEY",
@@ -62,6 +79,11 @@ class Runtime:
         self.events = collections.deque(maxlen=300)
         self.events_lock = threading.Lock()
         self.lock = threading.Lock()
+        self.desired_running = (self.directory / "desired-state").exists()
+        self.workspace_ready = False
+        self.health_check_at = 0.0
+        self.retry_at = 0.0
+        self.retry_delay = 10
         self.phase = "idle"
         self.stage = "idle"
         self.operation_started_at = None
@@ -132,6 +154,8 @@ class Runtime:
             session=self.session,
             level=level,
             component=component,
+            workspace_ready=self.workspace_ready,
+            desired_running=self.desired_running,
             phase=self.phase,
             message=self.redact(message),
             **{
@@ -225,9 +249,55 @@ class Runtime:
                 process.wait()
             process.stdout.close()
 
+    def build_fingerprint(self):
+        """Hash actual image inputs, excluding caches and credentials."""
+        digest = hashlib.sha256()
+        paths = list(self.root.glob("Dockerfile*")) + list(self.root.glob("docker-compose*.yml"))
+        paths += [self.root / name for name in ("pyproject.toml", "README.md", "alembic.ini")]
+        for name in ("src", "migrations", "renderer"):
+            paths.extend((self.root / name).rglob("*"))
+        for path in sorted(set(paths)):
+            if not path.is_file() or any(
+                part in {"node_modules", "__pycache__", ".cache"} for part in path.parts
+            ) or path.suffix == ".pyc":
+                continue
+            digest.update(str(path.relative_to(self.root)).encode())
+            digest.update(path.read_bytes())
+        return digest.hexdigest()
+
+    def prepare_images(self):
+        fingerprint = self.build_fingerprint()
+        stamp = self.directory / "build-fingerprint"
+        images = self.run(self.command() + ["config", "--images"], capture=True).split()
+        cached = stamp.exists() and stamp.read_text() == fingerprint and bool(images)
+        if cached:
+            try:
+                self.run(["docker", "image", "inspect", *sorted(set(images))], capture=True)
+            except RuntimeError:
+                cached = False
+        if cached:
+            self.event("info", "launcher", "Reusing unchanged application images.")
+            return
+        self.stage = "building images"
+        self.event("info", "launcher", "Preparing new or changed application images.")
+        self.run(self.command() + ["build"], timeout=1800)
+        temporary = stamp.with_suffix(".pending")
+        temporary.write_text(fingerprint)
+        temporary.replace(stamp)
+
     def operate(self, action):
         if not self.lock.acquire(blocking=False):
             return False
+        try:
+            marker = self.directory / "desired-state"
+            if action == "start":
+                marker.write_text("running\n")
+            else:
+                marker.unlink(missing_ok=True)
+            self.desired_running = action == "start"
+        except OSError:
+            self.lock.release()
+            raise
         threading.Thread(target=self._operate, args=(action,), daemon=True).start()
         return True
 
@@ -253,17 +323,11 @@ class Runtime:
                 return
             self.stage = "validating configuration"
             self.run(self.command() + ["config", "--quiet"])
-            self.stage = "building images"
-            self.event(
-                "info",
-                "launcher",
-                "Building application images. First launch can take several minutes.",
-            )
-            self.run(self.command() + ["build"], timeout=1800)
+            self.prepare_images()
             self.stage = "starting services"
             self.event("info", "launcher", "Starting services and waiting for health checks.")
             self.run(
-                self.command() + ["up", "-d", "--wait", "--wait-timeout", "300"],
+                self.command() + ["up", "-d", "--no-build", "--wait", "--wait-timeout", "300"],
                 timeout=420,
             )
             self.stage = "checking readiness"
@@ -274,6 +338,7 @@ class Runtime:
                     "Services started but readiness failed; inspect the service list."
                 )
             self.stage = "ready"
+            self.retry_delay = 10
             self.event("info", "launcher", "Katcha is ready")
         except Exception:
             self.phase = "failed"
@@ -289,6 +354,8 @@ class Runtime:
             except Exception as exc:
                 self.event("error", "diagnostics", str(exc))
         finally:
+            self.retry_at = time.monotonic() + self.retry_delay
+            self.retry_delay = min(300, self.retry_delay * 2)
             self.operation_started_at = None
             self.lock.release()
 
@@ -405,47 +472,60 @@ class Runtime:
                 and (r["State"] != "running" or r["Health"] not in (None, "", "healthy"))
             )
         ]
-        connection = http.client.HTTPConnection("127.0.0.1", 8000, timeout=5)
-        try:
-            connection.request("GET", "/v1/health/ready")
-            ready = connection.getresponse().status == 200
-        finally:
-            connection.close()
-        required = {
-            "postgres",
-            "temporal",
-            "minio",
-            "api",
-            "worker",
-            "analysis-worker",
-            "renderer",
-            "production-worker",
-            "longform-worker",
-            "publishing-worker",
-            "discovery-worker",
-            "trends-worker",
-            "intelligence-worker",
-        }
+        ready = self.probe_workspace()
         present = {row["Service"] for row in self.services}
-        phase = "ready" if ready and required <= present and not bad else "degraded"
+        phase = "ready" if ready and present >= REQUIRED_SERVICES and not bad else "degraded"
         if phase != self.phase:
             self.event(
                 "info" if phase == "ready" else "error", "health", phase, services=self.services
             )
         self.phase = phase
 
+    def probe_workspace(self):
+        connection = http.client.HTTPConnection("127.0.0.1", 8000, timeout=2)
+        try:
+            connection.request("GET", "/v1/health/ready")
+            self.workspace_ready = connection.getresponse().status == 200
+        except (OSError, http.client.HTTPException):
+            self.workspace_ready = False
+        finally:
+            connection.close()
+        return self.workspace_ready
+
+    def monitor_once(self):
+        # Probe independently of the startup lock: workers must not gate GUI access.
+        self.probe_workspace()
+        if (self.phase in ("ready", "degraded")
+                and time.monotonic() >= self.health_check_at
+                and self.lock.acquire(blocking=False)):
+            self.health_check_at = time.monotonic() + 10
+            try:
+                self.check()
+                self.start_logs()
+            except Exception as exc:
+                self.phase = "degraded"
+                self.event("error", "health", str(exc))
+            finally:
+                self.lock.release()
+        # Reconcile missing/exited containers; never repeatedly restart unhealthy ones.
+        present = {row["Service"] for row in self.services}
+        missing = not present >= REQUIRED_SERVICES or any(
+            row["State"] != "running"
+            for row in self.services
+            if row["Service"] not in ("migrate", "minio-init")
+        )
+        if (self.desired_running and time.monotonic() >= self.retry_at
+                and (self.phase in ("failed", "idle", "stopped")
+                     or (self.phase == "degraded" and missing))):
+            self.operate("start")
+
     def monitor(self):
         while True:
-            time.sleep(10)
-            if self.phase in ("ready", "degraded") and self.lock.acquire(blocking=False):
-                try:
-                    self.check()
-                    self.start_logs()
-                except Exception as exc:
-                    self.phase = "degraded"
-                    self.event("error", "health", str(exc))
-                finally:
-                    self.lock.release()
+            time.sleep(2)
+            try:
+                self.monitor_once()
+            except Exception as exc:
+                self.event("error", "supervisor", str(exc))
 
     def snapshot(self):
         with self.events_lock:
@@ -456,6 +536,8 @@ class Runtime:
             else None
         )
         return dict(
+            workspace_ready=self.workspace_ready,
+            desired_running=self.desired_running,
             phase=self.phase,
             stage=self.stage,
             operation_elapsed_seconds=elapsed,
@@ -635,7 +717,7 @@ def main():
     server.runtime = runtime
     runtime.event("info", "launcher", "Launch console listening on " + url)
     threading.Thread(target=runtime.monitor, daemon=True).start()
-    if args.auto_start and not args.no_start:
+    if (args.auto_start or runtime.desired_running) and not args.no_start:
         runtime.operate("start")
     elif not args.no_start:
         threading.Thread(target=runtime.reconcile_existing, daemon=True).start()

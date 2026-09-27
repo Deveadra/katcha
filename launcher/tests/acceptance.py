@@ -52,7 +52,9 @@ if __name__ == "__main__":
                 if time.monotonic() >= deadline:
                     raise
                 time.sleep(0.5)
+        cold_started = time.monotonic()
         state = wait_for("ready", 1800)
+        print(f"Initial readiness wait: {time.monotonic() - cold_started:.2f}s", flush=True)
         assert len(state["services"]) >= 15
         assert b"Editing control center" in request("/editing/assets/editing.html")
         assert isinstance(json.loads(request("/v1/channels")), list)
@@ -70,7 +72,27 @@ if __name__ == "__main__":
         request("/runtime/stop", {})
         wait_for("stopped", 120)
         assert subprocess.check_output(volume_args, text=True) == before
-        print("Full application startup, authenticated GUI/API, and non-destructive stop passed.")
+        # Measure a real warm restart and ensure that it does not rebuild images.
+        warm_started = time.monotonic()
+        request("/runtime/start", {})
+        state = wait_for("ready", 420)
+        assert state["workspace_ready"]
+        assert state["desired_running"]
+        # Status retains only 300 events; busy worker logs can evict the build event.
+        journal = [json.loads(line) for line in request("/runtime/diagnostics").splitlines()]
+        last_start = max(
+            index for index, event in enumerate(journal)
+            if event["component"] == "launcher" and event["message"] == "start requested"
+        )
+        messages = [event["message"] for event in journal[last_start:]]
+        assert "Reusing unchanged application images." in messages
+        assert "Preparing new or changed application images." not in messages
+        print(f"Warm restart readiness: {time.monotonic() - warm_started:.2f}s", flush=True)
+        request("/runtime/stop", {})
+        state = wait_for("stopped", 120)
+        assert not state["desired_running"]
+        assert subprocess.check_output(volume_args, text=True) == before
+        print("Full startup, warm restart, authenticated GUI/API, and safe stop passed.")
     finally:
         process.terminate()
         process.wait(timeout=10)

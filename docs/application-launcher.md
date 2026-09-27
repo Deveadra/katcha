@@ -8,9 +8,9 @@ To add a desktop shortcut, run `powershell.exe -NoProfile -File .\Katcha.ps1 -In
 from the checkout in PowerShell. Local PowerShell execution policy must permit this script;
 the launcher does not bypass organizational policy.
 
-The launch console opens at **http://localhost:8765**. It opens in an idle state so
-**Start Katcha** is immediately clickable. Starting builds the full stack, checks
-readiness, and enables **Open workspace** when healthy. No virtualenv,
+The launch console opens at **http://localhost:8765**. On first use it opens in an idle state so
+**Start Katcha** is immediately clickable. Starting reuses verified unchanged images, checks readiness, and enables **Open workspace**
+as soon as the API is ready, independently of worker health. No virtualenv,
 credential exports, development web server, or manual port forwarding is needed.
 Python 3.11+ and Docker Desktop with WSL integration (Compose 2.24.4+) must be installed.
 The launcher reports missing Docker in its diagnostics; it does not install system software.
@@ -55,7 +55,8 @@ it does not automatically discover or move another project's database.
 
 ## Lifecycle and diagnostics
 
-- **Start** validates Compose, builds images, runs migrations/bucket initialization,
+- **Start** saves persistent run intent, validates Compose, prepares images only when inputs
+  change or images are missing, runs migrations/bucket initialization,
   starts all workers and waits for health. Repeated clicks are serialized.
 - **Stop services** uses Compose stop; it does not delete containers, volumes or media.
 - Closing or disconnecting the browser does not restart Katcha; the supervisor keeps the
@@ -80,8 +81,8 @@ it does not automatically discover or move another project's database.
   uncaught browser errors are recorded from launcher-connected workspaces. Handled
   business validation errors remain in their normal UI/workflow records.
 
-`./Katcha.sh` opens the console without starting stopped services; it may reattach to an
-already-running Katcha stack. `./Katcha.sh --auto-start` explicitly requests startup.
+`./Katcha.sh` resumes previously requested operation automatically. After an explicit Stop,
+it leaves services stopped; on first use it may reattach to an already-running stack. `./Katcha.sh --auto-start` explicitly requests startup.
 `./Katcha.sh --no-browser` opens the launcher without opening a browser.
 If port 8765 is occupied, no second supervisor starts; the terminal explains how to
 open the existing console. If port 8000 conflicts, Compose fails and records the error.
@@ -92,3 +93,41 @@ Run `python -m pytest launcher/tests -q` and `ruff check launcher`.
 The launcher CI job also validates the merged application Compose configuration and
 runs browser interactions. Full first-run acceptance on Windows/WSL with Docker,
 real provider authorization and an actual production video remains a separate gate.
+
+## Unattended operation and fast restart
+
+After Start, the supervisor remembers that Katcha should run. Failed startup retries
+with exponential delays (10 seconds up to five minutes); explicit Stop clears that
+intent. Missing/exited services are reconciled with Compose; healthy running containers
+are not force-recreated. Unhealthy running services remain visible for diagnosis rather
+than being repeatedly killed. Provider revocation and expired interactive AWS login
+still require authentication; this does not turn interactive credentials into service credentials.
+
+On the hosting Ubuntu/WSL machine, install the background supervisor once:
+
+```bash
+cd ~/src/katcha
+bash scripts/install_launcher_service.sh
+```
+
+Open http://localhost:8765 and click Start once. The systemd user service restarts the
+supervisor after failure. To keep the user service running after logout, an administrator
+must enable lingering for that user (`sudo loginctl enable-linger "$USER"`). WSL requires
+systemd enabled. Windows must keep WSL and Docker Desktop running; this installer does
+not configure Windows boot or prevent sleep. A continuously powered Linux host is the
+appropriate deployment when discovery must run independently of a personal computer.
+
+To undo service installation without deleting data:
+`systemctl --user disable --now katcha-launcher.service`. Use **Stop services** first
+if the containers should also stop.
+
+Image fingerprints cover Dockerfiles, Compose files, Python sources, migrations,
+package metadata, and renderer inputs. First launch after this upgrade builds once to
+establish the fingerprint; later unchanged launches skip builds after checking images
+still exist. Credentials are never hashed or stored in the fingerprint. A failed build
+never updates it. To explicitly rebuild, remove `.local/runtime/build-fingerprint`
+then click Start. First provisioning and changed dependencies may still take minutes;
+no hardware startup timing is asserted without Docker acceptance measurements.
+
+Discovery workers consume configured topic-watch schedules. Keeping workers running
+does not create interests or schedules automatically and does not prove ingestion progress.
