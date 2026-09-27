@@ -177,16 +177,17 @@ if [[ "${VERSIONING}" != "Enabled" ]]; then
     exit 4
 fi
 
-PUBLIC_BLOCK="$(aws s3api get-public-access-block --bucket "${BUCKET}" --query 'PublicAccessBlockConfiguration.[BlockPublicAcls,IgnorePublicAcls,BlockPublicPolicy,RestrictPublicBuckets]' --output text)"
-if [[ "${PUBLIC_BLOCK}" != 
-echo "Configure Terraform with:"
-echo "  bucket=${BUCKET}"
-echo "  key=katcha/aws-render-staging/terraform.tfstate"
-echo "  region=${REGION}"
-echo "  encrypt=true"
-echo "  use_lockfile=true"
-True\tTrue\tTrue\tTrue' ]]; then
-    echo "ERROR: state bucket public-access-block verification failed: ${PUBLIC_BLOCK}" >&2
+PUBLIC_BLOCK_JSON="$(aws s3api get-public-access-block --bucket "${BUCKET}" --output json)"
+PUBLIC_BLOCK_OK="$(PUBLIC_BLOCK_JSON="${PUBLIC_BLOCK_JSON}" python3 -c '
+import json
+import os
+
+cfg = json.loads(os.environ["PUBLIC_BLOCK_JSON"]).get("PublicAccessBlockConfiguration", {})
+keys = ("BlockPublicAcls", "IgnorePublicAcls", "BlockPublicPolicy", "RestrictPublicBuckets")
+print("true" if all(cfg.get(key) is True for key in keys) else "false")
+')"
+if [[ "${PUBLIC_BLOCK_OK}" != "true" ]]; then
+    echo "ERROR: state bucket public-access-block verification failed." >&2
     exit 4
 fi
 
