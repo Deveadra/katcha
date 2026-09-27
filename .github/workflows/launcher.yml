@@ -35,3 +35,20 @@ jobs:
           name: launcher-preview
           path: web-tests/test-results/launcher*.png
           if-no-files-found: ignore
+  full-startup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Boot full application and verify GUI, API and safe stop
+        run: python launcher/tests/acceptance.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: launcher-startup-diagnostics
+          path: .local/runtime/events.jsonl*
+          include-hidden-files: true
+          if-no-files-found: ignore
