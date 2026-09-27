@@ -126,6 +126,7 @@ jobs:
       - name: Validate AWS render scripts
         run: |
           bash -n scripts/aws_render_preflight.sh
+          bash -n scripts/aws_lambda_render_acceptance.sh
           bash -n scripts/aws_render_authorize.sh
           bash -n scripts/aws_remotion_deploy.sh
           bash -n scripts/aws_roles_anywhere_bootstrap.sh
@@ -135,6 +136,7 @@ jobs:
           bash -n scripts/test_aws_render_authorize.sh
           bash -n scripts/test_aws_remotion_deploy.sh
           bash -n scripts/test_aws_tf_state_bootstrap.sh
+          bash scripts/aws_lambda_render_acceptance.sh --help >/dev/null
           bash scripts/aws_render_authorize.sh --help >/dev/null
           bash scripts/aws_remotion_deploy.sh --help >/dev/null
           bash scripts/aws_roles_anywhere_bootstrap.sh --help >/dev/null
@@ -156,6 +158,7 @@ jobs:
           docker compose --env-file .env.example -f docker-compose.yml -f docker-compose.acceptance.yml config >/dev/null
           AWS_PROFILE=katcha-ci KATCHA_HOST_UID=1000 KATCHA_HOST_GID=1000 HOME=/tmp docker compose --env-file .env.example -f docker-compose.yml -f docker-compose.aws-render.yml config >/dev/null
           KATCHA_AWS_PROFILE=katcha-ci KATCHA_HOST_UID=1000 KATCHA_HOST_GID=1000 HOME=/tmp KATCHA_AWS_SIGNING_HELPER_PATH=/tmp/aws_signing_helper KATCHA_AWS_CERT_PATH=/tmp/client.pem KATCHA_AWS_PRIVATE_KEY_PATH=/tmp/client-key.pem docker compose --env-file .env.example -f docker-compose.yml -f docker-compose.aws-render.yml -f docker-compose.aws-roles-anywhere.yml config >/dev/null
+          KATCHA_AWS_PROFILE=katcha-ci KATCHA_HOST_UID=1000 KATCHA_HOST_GID=1000 HOME=/tmp KATCHA_AWS_SIGNING_HELPER_PATH=/tmp/aws_signing_helper KATCHA_AWS_CERT_PATH=/tmp/client.pem KATCHA_AWS_PRIVATE_KEY_PATH=/tmp/client-key.pem docker compose --env-file .env.example -f docker-compose.yml -f docker-compose.aws-render.yml -f docker-compose.aws-roles-anywhere.yml -f docker-compose.aws-lambda-acceptance.yml config >/dev/null
 
 
   terraform:
