@@ -42,6 +42,7 @@ from katcha.services.ingestion_sources import (
     create_discovery_run_from_source,
     create_source_import_run,
     list_ingestion_sources,
+    list_source_runs,
     upsert_ingestion_source,
 )
 
@@ -88,6 +89,7 @@ class DiscoveryRunResponse(BaseModel):
 
 
 class UpsertIngestionSourceRequest(BaseModel):
+    create_only: bool = False
     source_key: str = Field(min_length=1, max_length=128)
     name: str = Field(min_length=1, max_length=255)
     adapter_key: str = Field(min_length=1, max_length=64)
@@ -310,6 +312,7 @@ def upsert_source(request: UpsertIngestionSourceRequest) -> IngestionSource:
             channel_profile_id=request.channel_profile_id,
             enabled=request.enabled,
             poll_interval_minutes=request.poll_interval_minutes,
+            create_only=request.create_only,
         )
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
@@ -620,3 +623,11 @@ async def promote_candidate(
         status=source.status,
         clip_id=source.clip_id,
     )
+
+
+@router.get("/discovery/sources/{source_id}/runs", response_model=list[DiscoveryRunResponse])
+def source_run_history(source_id: uuid.UUID, limit: int = Query(default=50, ge=1, le=100)):
+    try:
+        return list_source_runs(source_id, limit=limit)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc

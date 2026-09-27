@@ -134,3 +134,5 @@ FFmpeg/ffprobe must be installed on the host for media inspection. The Docker im
 - Automation starts at human review and advances only through explicit evidence-gated promotion.
 - Phase 5 does not silently enable automatic public publishing.
 - Aerith integration happens only through stable APIs/events, never shared process state or secret-bearing payloads.
+
+The [ingestion source control center](docs/INGESTION.md#source-control-center) is available at `/ingestion` on the API server for source setup, URL imports, and discovery run execution/history.

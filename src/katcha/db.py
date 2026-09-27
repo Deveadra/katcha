@@ -36,6 +36,7 @@ def load_model_metadata() -> None:
         intelligence_models,
         longform_models,
         models,
+        packaging_intelligence_models,
         packaging_models,
         production_models,
         publishing_models,

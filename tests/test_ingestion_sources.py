@@ -261,3 +261,68 @@ def test_ingestion_source_rejects_uninstalled_adapter(source_scope) -> None:
             adapter_version="v1",
             platform="future",
         )
+
+
+def test_import_replaces_both_template_collections(source_scope):
+    source = upsert_ingestion_source(
+        source_key="isolation", name="Isolation", adapter_key="operator_feed",
+        adapter_version="v1", platform="custom",
+        query_template={"items": [{"source_url": "https://example.com/old-item"}],
+                        "urls": ["https://example.com/old-url"]},
+    )
+    urls_only = create_source_import_run(source.id, urls=["https://example.com/new"])
+    assert urls_only.discovery_run.query["items"] == []
+    assert urls_only.discovery_run.query["urls"] == ["https://example.com/new"]
+    items_only = create_source_import_run(
+        source.id, items=[{"source_url": "https://example.com/new-item"}],
+    )
+    assert items_only.discovery_run.query["urls"] == []
+    assert items_only.discovery_run.query["items"] == [
+        {"source_url": "https://example.com/new-item"}
+    ]
+
+
+def test_source_history_is_scoped_bounded_and_includes_failures(source_scope):
+    from katcha.acquisition_models import DiscoveryRun
+    from katcha.services.ingestion_sources import list_source_runs
+
+    first = upsert_ingestion_source(
+        source_key="first", name="First", adapter_key="manifest",
+        adapter_version="v1", platform="custom",
+    )
+    second = upsert_ingestion_source(
+        source_key="second", name="Second", adapter_key="manifest",
+        adapter_version="v1", platform="custom",
+    )
+    older = create_discovery_run_from_source(first.id)
+    run = create_discovery_run_from_source(first.id)
+    create_discovery_run_from_source(second.id)
+    with source_scope() as session:
+        from datetime import timedelta
+
+        row = session.get(DiscoveryRun, run.id)
+        session.get(DiscoveryRun, older.id).created_at = row.created_at - timedelta(minutes=1)
+        row.status = "failed"
+        row.error = "Provider unavailable"
+    rows = list_source_runs(first.id, limit=1)
+    assert [row.id for row in rows] == [run.id]
+    assert rows[0].error == "Provider unavailable"
+    assert rows[0].status == "failed"
+    import uuid
+    with pytest.raises(ValueError, match="not found"):
+        list_source_runs(uuid.uuid4())
+
+
+def test_create_only_does_not_overwrite_existing_source(source_scope):
+    original = upsert_ingestion_source(
+        source_key="unique", name="Original", adapter_key="manifest",
+        adapter_version="v1", platform="custom",
+    )
+    with pytest.raises(ValueError, match="already exists"):
+        upsert_ingestion_source(
+            source_key="unique", name="Replacement", adapter_key="manifest",
+            adapter_version="v1", platform="custom", create_only=True,
+        )
+    from katcha.acquisition_models import IngestionSource
+    with source_scope() as session:
+        assert session.get(IngestionSource, original.id).name == "Original"
