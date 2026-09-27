@@ -637,7 +637,7 @@ def main():
     threading.Thread(target=runtime.monitor, daemon=True).start()
     if args.auto_start and not args.no_start:
         runtime.operate("start")
-    else:
+    elif not args.no_start:
         threading.Thread(target=runtime.reconcile_existing, daemon=True).start()
     try:
         if not args.no_browser:
