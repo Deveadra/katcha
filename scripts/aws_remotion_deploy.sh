@@ -83,6 +83,11 @@ SITE_NAME="${KATCHA_REMOTION_SITE_NAME:-katcha-production}"
 ROLES_DIR="${KATCHA_AWS_ROLES_ANYWHERE_DIR:-$HOME/.aws/katcha-roles-anywhere}"
 ENV_BACKUP_DIR="${ROLES_DIR}/env-backups"
 
+if ! command -v python3 >/dev/null 2>&1; then
+    echo "ERROR: required command is not installed: python3" >&2
+    exit 2
+fi
+
 REGION="${REGION:-us-east-1}"
 PROFILE="${PROFILE:-katcha-automation}"
 
@@ -106,7 +111,7 @@ if [[ ! "${SITE_NAME}" =~ ^[A-Za-z0-9._-]{1,128}$ ]]; then
     exit 2
 fi
 
-for command in aws node npx npm python3 cp date mkdir chmod; do
+for command in aws node npx npm python3 cp date mkdir chmod dirname; do
     if ! command -v "${command}" >/dev/null 2>&1; then
         echo "ERROR: required command is not installed: ${command}" >&2
         exit 2
@@ -225,13 +230,14 @@ SITE_JSON="$(
 )"
 
 SERVE_URL="$(
-    python3 - "${SITE_NAME}" <<'PY' <<<"${SITE_JSON}"
+    SITE_JSON="${SITE_JSON}" python3 - "${SITE_NAME}" <<'PY'
 import json
+import os
 import sys
 from urllib.parse import urlparse
 
 site_name = sys.argv[1]
-site = json.load(sys.stdin)
+site = json.loads(os.environ["SITE_JSON"])
 
 if site.get("id") != site_name:
     raise SystemExit(f'expected site id {site_name!r}, got {site.get("id")!r}')
