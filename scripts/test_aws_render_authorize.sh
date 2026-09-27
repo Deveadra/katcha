@@ -14,7 +14,18 @@ POLICY_CAPTURE="${TMP}/applied-policy.json"
 cat >"${BIN}/npm" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
-cat <<'JSON'
+
+if [[ "$*" == "ls @remotion/cli --depth=0 --json" ]]; then
+    if [[ "${REMOTION_TEST_MISSING:-false}" == "true" ]]; then
+        printf '%s\n' '{"dependencies":{}}'
+        exit 1
+    fi
+    printf '{"dependencies":{"@remotion/cli":{"version":"%s"}}}\n' "${REMOTION_TEST_VERSION:-4.0.529}"
+    exit 0
+fi
+
+if [[ "$*" == "run --silent lambda:policy:user" ]]; then
+    cat <<'JSON'
 {
   "Version": "2012-10-17",
   "Statement": [
@@ -31,6 +42,11 @@ cat <<'JSON'
   ]
 }
 JSON
+    exit 0
+fi
+
+echo "unexpected npm invocation: $*" >&2
+exit 90
 EOF
 
 cat >"${BIN}/aws" <<'EOF'
@@ -118,6 +134,58 @@ export AWS_TEST_POLICY_CAPTURE="${POLICY_CAPTURE}"
 export KATCHA_AWS_EXPECTED_ACCOUNT_ID=123456789012
 export KATCHA_AWS_BOOTSTRAP_PROFILE=katcha
 export KATCHA_REMOTION_LAMBDA_REGION=us-east-1
+
+: >"${LOG}"
+export REMOTION_TEST_MISSING=true
+set +e
+missing_output="$(bash "${SCRIPT}" 2>&1)"
+missing_rc=$?
+set -e
+unset REMOTION_TEST_MISSING
+
+if [[ "${missing_rc}" -eq 0 ]]; then
+    echo "FAIL: missing Remotion dependencies unexpectedly succeeded" >&2
+    exit 1
+fi
+if [[ -s "${LOG}" ]]; then
+    echo "FAIL: missing Remotion dependencies reached AWS before failing" >&2
+    cat "${LOG}" >&2
+    exit 1
+fi
+if ! grep -q 'pinned Remotion CLI is not installed' <<<"${missing_output}"; then
+    echo "FAIL: missing dependency error was not actionable" >&2
+    exit 1
+fi
+if ! grep -q 'npm install --ignore-scripts' <<<"${missing_output}"; then
+    echo "FAIL: missing dependency error did not include the repair command" >&2
+    exit 1
+fi
+
+: >"${LOG}"
+export REMOTION_TEST_VERSION=4.0.528
+set +e
+mismatch_output="$(bash "${SCRIPT}" 2>&1)"
+mismatch_rc=$?
+set -e
+unset REMOTION_TEST_VERSION
+
+if [[ "${mismatch_rc}" -eq 0 ]]; then
+    echo "FAIL: mismatched Remotion version unexpectedly succeeded" >&2
+    exit 1
+fi
+if [[ -s "${LOG}" ]]; then
+    echo "FAIL: mismatched Remotion version reached AWS before failing" >&2
+    cat "${LOG}" >&2
+    exit 1
+fi
+if ! grep -q 'does not match the pinned renderer dependency' <<<"${mismatch_output}"; then
+    echo "FAIL: version mismatch was not reported clearly" >&2
+    exit 1
+fi
+if ! grep -q 'expected: 4.0.529' <<<"${mismatch_output}" || ! grep -q 'actual:   4.0.528' <<<"${mismatch_output}"; then
+    echo "FAIL: version mismatch did not report expected and actual versions" >&2
+    exit 1
+fi
 
 : >"${LOG}"
 inspect_output="$(bash "${SCRIPT}")"

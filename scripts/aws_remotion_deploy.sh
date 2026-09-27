@@ -28,6 +28,8 @@ Required configuration (environment or local .env):
 Optional configuration:
   KATCHA_AWS_PROFILE              Default: katcha-automation
   KATCHA_ENV_FILE                 Default: .env
+  KATCHA_REMOTION_LAMBDA_MEMORY_MB
+                                   Default: 3008; valid Lambda range: 128-10240
   KATCHA_REMOTION_SITE_NAME       Default: katcha-production
   KATCHA_AWS_ROLES_ANYWHERE_DIR   Default: ~/.aws/katcha-roles-anywhere
 EOF
@@ -80,6 +82,7 @@ EXPECTED_ACCOUNT="${KATCHA_AWS_EXPECTED_ACCOUNT_ID:-$(read_env_key KATCHA_AWS_EX
 REGION="${KATCHA_REMOTION_LAMBDA_REGION:-$(read_env_key KATCHA_REMOTION_LAMBDA_REGION)}"
 PROFILE="${KATCHA_AWS_PROFILE:-$(read_env_key KATCHA_AWS_PROFILE)}"
 SITE_NAME="${KATCHA_REMOTION_SITE_NAME:-katcha-production}"
+FUNCTION_MEMORY_MB="${KATCHA_REMOTION_LAMBDA_MEMORY_MB:-$(read_env_key KATCHA_REMOTION_LAMBDA_MEMORY_MB)}"
 ROLES_DIR="${KATCHA_AWS_ROLES_ANYWHERE_DIR:-$HOME/.aws/katcha-roles-anywhere}"
 ENV_BACKUP_DIR="${ROLES_DIR}/env-backups"
 
@@ -91,7 +94,7 @@ fi
 REGION="${REGION:-us-east-1}"
 PROFILE="${PROFILE:-katcha-automation}"
 
-FUNCTION_MEMORY_MB=4096
+FUNCTION_MEMORY_MB="${FUNCTION_MEMORY_MB:-3008}"
 FUNCTION_DISK_MB=4096
 FUNCTION_TIMEOUT_SECONDS=900
 FUNCTION_RETENTION_DAYS=14
@@ -103,6 +106,11 @@ fi
 
 if [[ -z "${REGION}" ]]; then
     echo "ERROR: KATCHA_REMOTION_LAMBDA_REGION must not be empty." >&2
+    exit 2
+fi
+
+if [[ ! "${FUNCTION_MEMORY_MB}" =~ ^[0-9]+$ ]] || (( FUNCTION_MEMORY_MB < 128 || FUNCTION_MEMORY_MB > 10240 )); then
+    echo "ERROR: KATCHA_REMOTION_LAMBDA_MEMORY_MB must be an integer from 128 through 10240." >&2
     exit 2
 fi
 
@@ -123,13 +131,83 @@ if [[ ! -f "${RENDERER_DIR}/package.json" ]]; then
     exit 2
 fi
 
+EXPECTED_REMOTION_VERSION="$(
+    python3 - "${RENDERER_DIR}/package.json" <<'PY'
+import json
+import re
+from pathlib import Path
+import sys
+
+package = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+version = package.get("dependencies", {}).get("@remotion/cli")
+if not isinstance(version, str) or not re.fullmatch(r"\d+\.\d+\.\d+", version):
+    raise SystemExit(
+        "renderer/package.json must pin @remotion/cli to an exact x.y.z version"
+    )
+print(version)
+PY
+)"
+
+set +e
+REMOTION_TREE="$(
+    cd "${RENDERER_DIR}"
+    npm ls @remotion/cli --depth=0 --json 2>/dev/null
+)"
+REMOTION_TREE_RC=$?
+set -e
+
+if [[ "${REMOTION_TREE_RC}" -ne 0 || -z "${REMOTION_TREE}" ]]; then
+    echo "ERROR: the pinned Remotion CLI is not installed in renderer/node_modules." >&2
+    echo "Install renderer dependencies before inspecting or deploying Remotion:" >&2
+    echo "  cd ${RENDERER_DIR}" >&2
+    echo "  npm install --ignore-scripts" >&2
+    echo "No Lambda or site deployment writes were attempted." >&2
+    exit 2
+fi
+
+set +e
+REMOTION_VERSION="$(
+    printf '%s' "${REMOTION_TREE}" | python3 -c '
+import json
+import sys
+tree = json.load(sys.stdin)
+print(tree["dependencies"]["@remotion/cli"]["version"])
+'
+)"
+REMOTION_VERSION_RC=$?
+set -e
+
+if [[ "${REMOTION_VERSION_RC}" -ne 0 || -z "${REMOTION_VERSION}" ]]; then
+    echo "ERROR: installed @remotion/cli metadata could not be verified." >&2
+    echo "Reinstall renderer dependencies before continuing:" >&2
+    echo "  cd ${RENDERER_DIR}" >&2
+    echo "  npm install --ignore-scripts" >&2
+    echo "No Lambda or site deployment writes were attempted." >&2
+    exit 2
+fi
+
+if [[ "${REMOTION_VERSION}" != "${EXPECTED_REMOTION_VERSION}" ]]; then
+    echo "ERROR: installed Remotion CLI version does not match the pinned renderer dependency." >&2
+    echo "  expected: ${EXPECTED_REMOTION_VERSION}" >&2
+    echo "  actual:   ${REMOTION_VERSION}" >&2
+    echo "Reinstall renderer dependencies before continuing:" >&2
+    echo "  cd ${RENDERER_DIR}" >&2
+    echo "  npm install --ignore-scripts" >&2
+    echo "No Lambda or site deployment writes were attempted." >&2
+    exit 2
+fi
+
+echo "Remotion CLI verified: ${REMOTION_VERSION}"
+
 FUNCTION_NAME="$(
     cd "${RENDERER_DIR}"
     node src/lambda-deployment-state.mjs function-name         "${FUNCTION_MEMORY_MB}"         "${FUNCTION_DISK_MB}"         "${FUNCTION_TIMEOUT_SECONDS}"
 )"
 
-if [[ ! "${FUNCTION_NAME}" =~ ^remotion-render-4-0-529-mem4096mb-disk4096mb-900sec$ ]]; then
+EXPECTED_FUNCTION_NAME="remotion-render-4-0-529-mem${FUNCTION_MEMORY_MB}mb-disk4096mb-900sec"
+if [[ "${FUNCTION_NAME}" != "${EXPECTED_FUNCTION_NAME}" ]]; then
     echo "ERROR: unexpected Remotion function name: ${FUNCTION_NAME}" >&2
+    echo "  expected: ${EXPECTED_FUNCTION_NAME}" >&2
     echo "The pinned deployment contract changed; do not deploy until reviewed." >&2
     exit 3
 fi
@@ -280,7 +358,7 @@ if [[ "${env_existed}" == "true" ]]; then
     echo "Backed up Katcha env file outside the repository: ${env_backup}"
 fi
 
-python3 - "${ENV_FILE}"     "KATCHA_REMOTION_LAMBDA_FUNCTION_NAME=${FUNCTION_NAME}"     "KATCHA_REMOTION_LAMBDA_SERVE_URL=${SERVE_URL}" <<'PY'
+python3 - "${ENV_FILE}"     "KATCHA_REMOTION_LAMBDA_MEMORY_MB=${FUNCTION_MEMORY_MB}"     "KATCHA_REMOTION_LAMBDA_FUNCTION_NAME=${FUNCTION_NAME}"     "KATCHA_REMOTION_LAMBDA_SERVE_URL=${SERVE_URL}" <<'PY'
 from pathlib import Path
 import sys
 

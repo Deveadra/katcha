@@ -47,7 +47,7 @@ reviewed infrastructure changes, and break-glass administration.
 From `~/src/katcha/renderer`:
 
 ```bash
-npm install
+npm install --ignore-scripts
 npm run test:config
 
 npm run lambda:policy:user > /tmp/remotion-user-policy.json
@@ -56,6 +56,12 @@ npm run lambda:policy:role > /tmp/remotion-role-policy.json
 
 Review both generated policy files. They are version-specific to the pinned Remotion
 `4.0.529` dependency set.
+
+The AWS authorization, preflight, and deployment helpers fail closed before AWS
+authorization/deployment work if the local Remotion CLI is missing or does not match
+the exact version pinned in `renderer/package.json`. They never auto-install Node
+dependencies. Repair the local renderer prerequisites with
+`cd ~/src/katcha/renderer && npm install --ignore-scripts`, then rerun the helper.
 
 The **user/control-plane policy** is the permission set the durable
 `KatchaChronosAutomation` role needs in order to deploy and operate Remotion Lambda.
@@ -109,6 +115,15 @@ gate:
 
 ```bash
 bash scripts/aws_render_staging.sh --bootstrap-state
+Before provisioning any Terraform-managed AWS render resources, bootstrap remote S3 state.
+The bootstrap script is inspect-only unless `--apply` is supplied. It reads the
+verified account, region, and durable `katcha-automation` profile from Katcha's
+ignored local `.env`, so normal operation does not require per-shell AWS exports:
+
+```bash
+bash scripts/aws_tf_state_bootstrap.sh
+# Review the output.
+bash scripts/aws_tf_state_bootstrap.sh --apply
 ```
 
 This creates/repairs only the guarded S3 state bucket. It does not apply the staging
@@ -138,8 +153,12 @@ bash scripts/aws_remotion_deploy.sh --apply
 ```
 
 The apply path first reruns the no-write permission/quota preflight, then deploys the
-pinned function with 4096 MB memory, 4096 MB disk, a 900-second timeout, and 14-day
-retention. It deploys the `katcha-production` site from `renderer/src/entry.jsx`,
+pinned function with **3008 MB memory by default**, 4096 MB disk, a 900-second timeout,
+and 14-day retention. AWS can impose a reduced per-function memory ceiling on some
+accounts even when billing is active; 3008 MB keeps initial deployment compatible with
+that restriction. The memory value is configurable through
+`KATCHA_REMOTION_LAMBDA_MEMORY_MB` (128-10240) and is persisted after a verified
+deployment, so it can be raised later without changing code when the account supports it. It deploys the `katcha-production` site from `renderer/src/entry.jsx`,
 verifies the function through AWS Lambda, resolves a compatible site through the
 Remotion API, validates its HTTPS Serve URL, and confirms the function/site can
 enumerate Katcha compositions.
@@ -147,6 +166,7 @@ enumerate Katcha compositions.
 Only after those checks pass does the helper persist:
 
 ```env
+KATCHA_REMOTION_LAMBDA_MEMORY_MB=<verified deployed memory>
 KATCHA_REMOTION_LAMBDA_FUNCTION_NAME=<verified function name>
 KATCHA_REMOTION_LAMBDA_SERVE_URL=<verified HTTPS serve URL>
 ```

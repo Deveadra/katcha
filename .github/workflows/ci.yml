@@ -135,6 +135,7 @@ jobs:
           bash -n scripts/aws_roles_anywhere_bootstrap.sh
           bash -n scripts/aws_tf_state_bootstrap.sh
           bash -n scripts/aws_render_staging_deploy.sh
+          bash -n scripts/test_aws_render_preflight.sh
           bash -n scripts/test_aws_render_staging_deploy.sh
           bash -n scripts/test_aws_render_authorize.sh
           bash -n scripts/test_aws_remotion_deploy.sh
@@ -149,6 +150,7 @@ jobs:
           bash scripts/aws_roles_anywhere_bootstrap.sh --help >/dev/null
           bash scripts/aws_tf_state_bootstrap.sh --help >/dev/null
           bash scripts/aws_render_staging_deploy.sh --help >/dev/null
+          bash scripts/test_aws_render_preflight.sh
           bash scripts/test_aws_render_staging_deploy.sh
           bash scripts/test_aws_render_authorize.sh
           bash scripts/test_aws_remotion_deploy.sh

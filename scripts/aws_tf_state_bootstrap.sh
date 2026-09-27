@@ -10,12 +10,15 @@ Usage: bash scripts/aws_tf_state_bootstrap.sh [--apply]
 
 Default mode is inspect-only and performs no writes.
 
-Required environment:
+Configuration may come from environment variables or Katcha's local .env.
+
+Required configuration:
   KATCHA_AWS_EXPECTED_ACCOUNT_ID   exact 12-digit AWS account ID
-  KATCHA_REMOTION_LAMBDA_REGION   AWS region
+  KATCHA_REMOTION_LAMBDA_REGION    AWS region
 Optional:
-  KATCHA_TERRAFORM_STATE_BUCKET   override deterministic state bucket name
-  AWS_PROFILE                     AWS profile / SSO profile
+  KATCHA_AWS_PROFILE               durable AWS profile; default: katcha-automation
+  KATCHA_TERRAFORM_STATE_BUCKET    override deterministic state bucket name
+  KATCHA_ENV_FILE                  local env file; default: .env
 EOF
     exit 0
 elif [[ $# -gt 0 ]]; then
@@ -23,8 +26,50 @@ elif [[ $# -gt 0 ]]; then
     exit 2
 fi
 
-EXPECTED_ACCOUNT="${KATCHA_AWS_EXPECTED_ACCOUNT_ID:-}"
-REGION="${KATCHA_REMOTION_LAMBDA_REGION:-}"
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
+ENV_FILE_SETTING="${KATCHA_ENV_FILE:-.env}"
+if [[ "${ENV_FILE_SETTING}" = /* ]]; then
+    ENV_FILE="${ENV_FILE_SETTING}"
+else
+    ENV_FILE="${REPO_ROOT}/${ENV_FILE_SETTING}"
+fi
+
+if ! command -v python3 >/dev/null 2>&1; then
+    echo "ERROR: required command is not installed: python3" >&2
+    exit 2
+fi
+
+read_env_key() {
+    local key="$1"
+    python3 - "${ENV_FILE}" "${key}" <<'PY'
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+key = sys.argv[2]
+if not path.exists():
+    raise SystemExit(0)
+
+for raw in path.read_text(encoding="utf-8").splitlines():
+    line = raw.strip()
+    if not line or line.startswith("#") or "=" not in line:
+        continue
+    candidate, value = line.split("=", 1)
+    if candidate.strip() != key:
+        continue
+    value = value.strip()
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
+        value = value[1:-1]
+    print(value)
+    break
+PY
+}
+
+EXPECTED_ACCOUNT="${KATCHA_AWS_EXPECTED_ACCOUNT_ID:-$(read_env_key KATCHA_AWS_EXPECTED_ACCOUNT_ID)}"
+REGION="${KATCHA_REMOTION_LAMBDA_REGION:-$(read_env_key KATCHA_REMOTION_LAMBDA_REGION)}"
+PROFILE="${KATCHA_AWS_PROFILE:-$(read_env_key KATCHA_AWS_PROFILE)}"
+PROFILE="${PROFILE:-${AWS_PROFILE:-katcha-automation}}"
 
 if [[ ! "${EXPECTED_ACCOUNT}" =~ ^[0-9]{12}$ ]]; then
     echo "ERROR: KATCHA_AWS_EXPECTED_ACCOUNT_ID must be exactly 12 digits." >&2
@@ -47,7 +92,7 @@ if [[ ! "${BUCKET}" =~ ^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$ ]] || [[ "${BUCKET}" =
     exit 2
 fi
 
-IDENTITY_JSON="$(aws sts get-caller-identity --output json)"
+IDENTITY_JSON="$(aws sts get-caller-identity --profile "${PROFILE}" --region "${REGION}" --output json)"
 ACTUAL_ACCOUNT="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["Account"])' <<<"${IDENTITY_JSON}")"
 CALLER_ARN="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["Arn"])' <<<"${IDENTITY_JSON}")"
 
@@ -62,6 +107,7 @@ fi
 echo "AWS identity verified:"
 echo "  account: ${ACTUAL_ACCOUNT}"
 echo "  caller:  ${CALLER_ARN}"
+echo "  profile: ${PROFILE}"
 echo "  region:  ${REGION}"
 echo "  state bucket: ${BUCKET}"
 
@@ -76,7 +122,7 @@ normalize_bucket_region() {
 
 verify_bucket_region() {
     local actual
-    actual="$(aws s3api get-bucket-location --bucket "${BUCKET}" --query LocationConstraint --output text)"
+    actual="$(aws s3api get-bucket-location --profile "${PROFILE}" --region "${REGION}" --bucket "${BUCKET}" --query LocationConstraint --output text)"
     actual="$(normalize_bucket_region "${actual}")"
     if [[ "${actual}" != "${REGION}" ]]; then
         echo "ERROR: state bucket region mismatch." >&2
@@ -88,14 +134,14 @@ verify_bucket_region() {
 }
 
 if [[ "${MODE}" == "inspect" ]]; then
-    if aws s3api head-bucket --bucket "${BUCKET}" >/dev/null 2>&1; then
+    if aws s3api head-bucket --profile "${PROFILE}" --region "${REGION}" --bucket "${BUCKET}" >/dev/null 2>&1; then
         echo "Existing bucket is reachable. Current controls:"
         INSPECT_BUCKET_REGION="$(verify_bucket_region)"
         echo "  bucket region: ${INSPECT_BUCKET_REGION}"
-        aws s3api get-bucket-versioning --bucket "${BUCKET}" --output json || true
-        aws s3api get-public-access-block --bucket "${BUCKET}" --output json || true
-        aws s3api get-bucket-encryption --bucket "${BUCKET}" --output json || true
-        aws s3api get-bucket-ownership-controls --bucket "${BUCKET}" --output json || true
+        aws s3api get-bucket-versioning --profile "${PROFILE}" --region "${REGION}" --bucket "${BUCKET}" --output json || true
+        aws s3api get-public-access-block --profile "${PROFILE}" --region "${REGION}" --bucket "${BUCKET}" --output json || true
+        aws s3api get-bucket-encryption --profile "${PROFILE}" --region "${REGION}" --bucket "${BUCKET}" --output json || true
+        aws s3api get-bucket-ownership-controls --profile "${PROFILE}" --region "${REGION}" --bucket "${BUCKET}" --output json || true
     else
         echo "State bucket does not exist or is not reachable."
     fi
@@ -121,12 +167,12 @@ EOF
     exit 0
 fi
 
-if ! aws s3api head-bucket --bucket "${BUCKET}" >/dev/null 2>&1; then
+if ! aws s3api head-bucket --profile "${PROFILE}" --region "${REGION}" --bucket "${BUCKET}" >/dev/null 2>&1; then
     echo "Creating state bucket ${BUCKET}..."
     if [[ "${REGION}" == "us-east-1" ]]; then
-        aws s3api create-bucket --bucket "${BUCKET}" --region "${REGION}" >/dev/null
+        aws s3api create-bucket --profile "${PROFILE}" --bucket "${BUCKET}" --region "${REGION}" >/dev/null
     else
-        aws s3api create-bucket           --bucket "${BUCKET}"           --region "${REGION}"           --create-bucket-configuration "LocationConstraint=${REGION}" >/dev/null
+        aws s3api create-bucket           --profile "${PROFILE}"           --bucket "${BUCKET}"           --region "${REGION}"           --create-bucket-configuration "LocationConstraint=${REGION}" >/dev/null
     fi
 else
     echo "State bucket already exists and is reachable."
@@ -134,15 +180,15 @@ else
     echo "Verified existing bucket region: ${EXISTING_BUCKET_REGION}"
 fi
 
-aws s3api put-public-access-block   --bucket "${BUCKET}"   --public-access-block-configuration '{"BlockPublicAcls":true,"IgnorePublicAcls":true,"BlockPublicPolicy":true,"RestrictPublicBuckets":true}'
+aws s3api put-public-access-block   --profile "${PROFILE}"   --region "${REGION}"   --bucket "${BUCKET}"   --public-access-block-configuration '{"BlockPublicAcls":true,"IgnorePublicAcls":true,"BlockPublicPolicy":true,"RestrictPublicBuckets":true}'
 
-aws s3api put-bucket-ownership-controls   --bucket "${BUCKET}"   --ownership-controls 'Rules=[{ObjectOwnership=BucketOwnerEnforced}]'
+aws s3api put-bucket-ownership-controls   --profile "${PROFILE}"   --region "${REGION}"   --bucket "${BUCKET}"   --ownership-controls 'Rules=[{ObjectOwnership=BucketOwnerEnforced}]'
 
-aws s3api put-bucket-encryption   --bucket "${BUCKET}"   --server-side-encryption-configuration '{"Rules":[{"ApplyServerSideEncryptionByDefault":{"SSEAlgorithm":"AES256"}}]}'
+aws s3api put-bucket-encryption   --profile "${PROFILE}"   --region "${REGION}"   --bucket "${BUCKET}"   --server-side-encryption-configuration '{"Rules":[{"ApplyServerSideEncryptionByDefault":{"SSEAlgorithm":"AES256"}}]}'
 
-aws s3api put-bucket-versioning   --bucket "${BUCKET}"   --versioning-configuration Status=Enabled
+aws s3api put-bucket-versioning   --profile "${PROFILE}"   --region "${REGION}"   --bucket "${BUCKET}"   --versioning-configuration Status=Enabled
 
-aws s3api put-bucket-tagging   --bucket "${BUCKET}"   --tagging 'TagSet=[{Key=Project,Value=katcha},{Key=Component,Value=terraform-state},{Key=ManagedBy,Value=bootstrap-script}]'
+aws s3api put-bucket-tagging   --profile "${PROFILE}"   --region "${REGION}"   --bucket "${BUCKET}"   --tagging 'TagSet=[{Key=Project,Value=katcha},{Key=Component,Value=terraform-state},{Key=ManagedBy,Value=bootstrap-script}]'
 
 POLICY_FILE="$(mktemp)"
 trap 'rm -f "${POLICY_FILE}"' EXIT
@@ -169,17 +215,17 @@ cat >"${POLICY_FILE}" <<EOF
 }
 EOF
 
-aws s3api put-bucket-policy   --bucket "${BUCKET}"   --policy "file://${POLICY_FILE}"
+aws s3api put-bucket-policy   --profile "${PROFILE}"   --region "${REGION}"   --bucket "${BUCKET}"   --policy "file://${POLICY_FILE}"
 
 BUCKET_REGION="$(verify_bucket_region)"
 
-VERSIONING="$(aws s3api get-bucket-versioning --bucket "${BUCKET}" --query Status --output text)"
+VERSIONING="$(aws s3api get-bucket-versioning --profile "${PROFILE}" --region "${REGION}" --bucket "${BUCKET}" --query Status --output text)"
 if [[ "${VERSIONING}" != "Enabled" ]]; then
     echo "ERROR: state bucket versioning verification failed." >&2
     exit 4
 fi
 
-PUBLIC_BLOCK_JSON="$(aws s3api get-public-access-block --bucket "${BUCKET}" --output json)"
+PUBLIC_BLOCK_JSON="$(aws s3api get-public-access-block --profile "${PROFILE}" --region "${REGION}" --bucket "${BUCKET}" --output json)"
 PUBLIC_BLOCK_OK="$(PUBLIC_BLOCK_JSON="${PUBLIC_BLOCK_JSON}" python3 -c '
 import json
 import os
@@ -193,19 +239,19 @@ if [[ "${PUBLIC_BLOCK_OK}" != "true" ]]; then
     exit 4
 fi
 
-OWNERSHIP="$(aws s3api get-bucket-ownership-controls --bucket "${BUCKET}" --query 'OwnershipControls.Rules[0].ObjectOwnership' --output text)"
+OWNERSHIP="$(aws s3api get-bucket-ownership-controls --profile "${PROFILE}" --region "${REGION}" --bucket "${BUCKET}" --query 'OwnershipControls.Rules[0].ObjectOwnership' --output text)"
 if [[ "${OWNERSHIP}" != "BucketOwnerEnforced" ]]; then
     echo "ERROR: state bucket ownership verification failed: ${OWNERSHIP}" >&2
     exit 4
 fi
 
-ENCRYPTION="$(aws s3api get-bucket-encryption --bucket "${BUCKET}" --query 'ServerSideEncryptionConfiguration.Rules[0].ApplyServerSideEncryptionByDefault.SSEAlgorithm' --output text)"
+ENCRYPTION="$(aws s3api get-bucket-encryption --profile "${PROFILE}" --region "${REGION}" --bucket "${BUCKET}" --query 'ServerSideEncryptionConfiguration.Rules[0].ApplyServerSideEncryptionByDefault.SSEAlgorithm' --output text)"
 if [[ "${ENCRYPTION}" != "AES256" ]]; then
     echo "ERROR: state bucket encryption verification failed: ${ENCRYPTION}" >&2
     exit 4
 fi
 
-POLICY_JSON="$(aws s3api get-bucket-policy --bucket "${BUCKET}" --query Policy --output text)"
+POLICY_JSON="$(aws s3api get-bucket-policy --profile "${PROFILE}" --region "${REGION}" --bucket "${BUCKET}" --query Policy --output text)"
 POLICY_OK="$(POLICY_JSON="${POLICY_JSON}" python3 -c '
 import json
 import os
