@@ -9,8 +9,10 @@ from the checkout in PowerShell. Local PowerShell execution policy must permit t
 the launcher does not bypass organizational policy.
 
 The launch console opens at **http://localhost:8765**. It opens in an idle state so
-**Start Katcha** is immediately clickable. Starting builds the full stack, checks
-readiness, and enables **Open workspace** when healthy. No virtualenv,
+**Start Katcha** is immediately clickable. Startup is workspace-first: Katcha brings
+up the database, orchestration dependencies, storage initialization and API, then enables
+**Open workspace** as soon as the control plane is usable. Production engines continue
+warming in the background. No virtualenv,
 credential exports, development web server, or manual port forwarding is needed.
 Python 3.11+ and Docker Desktop with WSL integration (Compose 2.24.4+) must be installed.
 The launcher reports missing Docker in its diagnostics; it does not install system software.
@@ -22,8 +24,10 @@ The launcher reports missing Docker in its diagnostics; it does not install syst
    is absent, the example is copied; missing control and encryption keys are generated once.
 3. Enter provider credentials and choose **Live** AI explicitly when ready to use paid services.
    Fixture mode remains clearly labeled and does not make live provider calls.
-4. Save settings, then click **Start Katcha** to apply them. The console shows the current
-   startup stage and elapsed time; the first image build may take several minutes. Open the workspace.
+4. Save settings, then click **Start Katcha** to apply them. Existing images are reused
+   without a rebuild. If core images are missing, only the workspace images are built first.
+   Open the workspace as soon as it becomes available; heavier production engines may still
+   be warming in the background.
    The gateway supplies control authentication without exposing its token to the browser.
 5. For YouTube, save OAuth client details and register the displayed callback URL in
    your Google OAuth application. Restart, then click **Connect YouTube** to authorize.
@@ -55,8 +59,13 @@ it does not automatically discover or move another project's database.
 
 ## Lifecycle and diagnostics
 
-- **Start** validates Compose, builds images, runs migrations/bucket initialization,
-  starts all workers and waits for health. Repeated clicks are serialized.
+- **Start** validates Compose and first attempts a **no-build fast path** using existing
+  images. The workspace becomes available when the API/control-plane dependencies are healthy.
+- If workspace images are missing, only core images are built before entry. Renderer, AI,
+  production, longform, publishing, discovery, trends and intelligence engines warm afterward.
+  Missing background images are built without blocking access to the workspace.
+- This separates **time to workspace** from **time to full production capacity** instead of
+  forcing the operator to wait for every heavyweight service before entering Katcha.
 - **Stop services** uses Compose stop; it does not delete containers, volumes or media.
 - Closing or disconnecting the browser does not restart Katcha; the supervisor keeps the
   current startup/runtime state and the browser picks it back up when it reconnects.
