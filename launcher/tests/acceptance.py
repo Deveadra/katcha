@@ -36,7 +36,9 @@ def wait_for(target, seconds, background=None):
             background is None or snapshot.get("background_phase") == background
         ):
             return snapshot
-        if snapshot["phase"] == "failed":
+        if snapshot["phase"] == "failed" or (
+            background is not None and snapshot.get("background_phase") == "degraded"
+        ):
             raise RuntimeError(json.dumps(snapshot["events"][-20:], indent=2))
         time.sleep(2)
     raise TimeoutError(f"Katcha did not reach {target}")
