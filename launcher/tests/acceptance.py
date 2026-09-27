@@ -24,6 +24,22 @@ def request(path, body=None):
         connection.close()
 
 
+def wait_for_workspace(seconds):
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        try:
+            snapshot = json.loads(request("/runtime/status"))
+        except OSError:
+            time.sleep(1)
+            continue
+        if snapshot.get("workspace_ready"):
+            return snapshot
+        if snapshot["phase"] == "failed":
+            raise RuntimeError(json.dumps(snapshot["events"][-20:], indent=2))
+        time.sleep(1)
+    raise TimeoutError("Katcha workspace did not become available")
+
+
 def wait_for(target, seconds):
     deadline = time.monotonic() + seconds
     while time.monotonic() < deadline:
@@ -53,11 +69,16 @@ if __name__ == "__main__":
                     raise
                 time.sleep(0.5)
         cold_started = time.monotonic()
-        state = wait_for("ready", 1800)
-        print(f"Initial readiness wait: {time.monotonic() - cold_started:.2f}s", flush=True)
-        assert len(state["services"]) >= 15
+        workspace = wait_for_workspace(900)
+        workspace_seconds = time.monotonic() - cold_started
+        print(f"Initial workspace availability: {workspace_seconds:.2f}s", flush=True)
         assert b"Editing control center" in request("/editing/assets/editing.html")
         assert isinstance(json.loads(request("/v1/channels")), list)
+        state = wait_for("ready", 1800)
+        full_seconds = time.monotonic() - cold_started
+        print(f"Initial full readiness: {full_seconds:.2f}s", flush=True)
+        assert workspace_seconds <= full_seconds
+        assert len(state["services"]) >= 15
         volume_args = [
             "docker",
             "volume",
