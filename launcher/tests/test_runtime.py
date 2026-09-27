@@ -104,12 +104,26 @@ def test_restart_redacts_existing_credentials(tmp_path):
     )
 
 
-def test_readiness_requires_all_workers(tmp_path):
+def test_readiness_requires_core_services_but_not_all_workers(tmp_path):
     app = instance(tmp_path)
     from unittest.mock import MagicMock
 
     connection = MagicMock()
     connection.getresponse.return_value.status = 200
+    core = json.dumps(
+        [
+            {"Service": service, "State": "running", "Health": "healthy", "ExitCode": 0}
+            for service in runtime.CORE_REQUIRED
+        ]
+    )
+    with (
+        patch.object(app, "run", return_value=core),
+        patch.object(runtime.http.client, "HTTPConnection", return_value=connection),
+    ):
+        app.check()
+    assert app.phase == "ready"
+    assert app.background_phase != "ready"
+
     with (
         patch.object(app, "run", return_value='[{"Service":"api","State":"running"}]'),
         patch.object(runtime.http.client, "HTTPConnection", return_value=connection),
@@ -147,7 +161,7 @@ def test_redaction_does_not_corrupt_diagnostic_schema(tmp_path):
     assert row["message"] == "value [REDACTED]"
 
 
-def test_start_builds_before_starting_services_and_reports_stage(tmp_path):
+def test_start_reuses_images_and_opens_workspace_before_background(tmp_path):
     app = instance(tmp_path)
     app.lock.acquire()
     calls = []
@@ -162,18 +176,51 @@ def test_start_builds_before_starting_services_and_reports_stage(tmp_path):
         patch.object(app, "run", side_effect=fake_run),
         patch.object(app, "start_logs"),
         patch.object(app, "check", side_effect=lambda: setattr(app, "phase", "ready")),
+        patch.object(app, "_warm_background") as warm,
     ):
         app._operate("start")
+        if app.background_thread:
+            app.background_thread.join(timeout=1)
 
-    build = next(cmd for cmd in calls if cmd[-1:] == ["build"])
     up = next(cmd for cmd in calls if "up" in cmd)
-    assert build
-    assert "--build" not in up
+    assert "--no-build" in up
+    assert up[-1] == "api"
+    assert not any("build" in cmd for cmd in calls)
     assert app.phase == "ready"
     assert app.stage == "ready"
     assert app.snapshot()["operation_elapsed_seconds"] is None
     assert not app.lock.locked()
+    warm.assert_called_once()
 
+
+def test_start_builds_only_core_when_workspace_images_are_missing(tmp_path):
+    app = instance(tmp_path)
+    app.lock.acquire()
+    calls = []
+    failed_once = False
+
+    def fake_run(args, **_kwargs):
+        nonlocal failed_once
+        calls.append(args)
+        if "version" in args:
+            return "2.30.0"
+        if "up" in args and "--no-build" in args and not failed_once:
+            failed_once = True
+            raise RuntimeError("pull access denied for katcha-api, repository does not exist")
+        return ""
+
+    with (
+        patch.object(app, "run", side_effect=fake_run),
+        patch.object(app, "start_logs"),
+        patch.object(app, "check", side_effect=lambda: setattr(app, "phase", "ready")),
+        patch.object(app, "_warm_background"),
+    ):
+        app._operate("start")
+
+    build = next(cmd for cmd in calls if "build" in cmd)
+    assert set(runtime.CORE_BUILD_SERVICES) <= set(build)
+    assert all(service not in build for service in runtime.BACKGROUND_SERVICES)
+    assert app.phase == "ready"
 
 
 def test_reconcile_existing_runtime_without_relaunch(tmp_path):
@@ -251,3 +298,28 @@ def test_reconcile_runtime_failure_is_recoverable(tmp_path):
     assert app.phase == "degraded"
     assert app.stage == "waiting for runtime"
     assert any(event.get("recovery") for event in app.events)
+
+
+def test_background_warmup_builds_only_when_images_are_missing(tmp_path):
+    app = instance(tmp_path)
+    app.phase = "ready"
+    calls = []
+    failed_once = False
+
+    def fake_run(args, **_kwargs):
+        nonlocal failed_once
+        calls.append(args)
+        if "up" in args and "--no-build" in args and not failed_once:
+            failed_once = True
+            raise RuntimeError("no such image: katcha-renderer")
+        return ""
+
+    with (
+        patch.object(app, "run", side_effect=fake_run),
+        patch.object(app, "check"),
+    ):
+        app._warm_background()
+
+    build = next(cmd for cmd in calls if "build" in cmd)
+    assert set(runtime.BACKGROUND_SERVICES) <= set(build)
+    assert app.background_phase == "ready"
