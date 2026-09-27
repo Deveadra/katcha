@@ -10,9 +10,9 @@ the launcher does not bypass organizational policy.
 
 The launch console opens at **http://localhost:8765**. It opens in an idle state so
 **Start Katcha** is immediately clickable. Startup is workspace-first: Katcha brings
-up the database, orchestration dependencies, storage initialization and API, then enables
-**Open workspace** as soon as the control plane is usable. Production engines continue
-warming in the background. No virtualenv,
+up PostgreSQL, applies migrations and starts the API, then enables **Open workspace**
+as soon as that control plane is usable. Temporal, MinIO and the production engines
+continue warming in the background. No virtualenv,
 credential exports, development web server, or manual port forwarding is needed.
 Python 3.11+ and Docker Desktop with WSL integration (Compose 2.24.4+) must be installed.
 The launcher reports missing Docker in its diagnostics; it does not install system software.
@@ -61,8 +61,9 @@ it does not automatically discover or move another project's database.
 
 - **Start** validates Compose and first attempts a **no-build fast path** using existing
   images. The workspace becomes available when the API/control-plane dependencies are healthy.
-- If workspace images are missing, only core images are built before entry. Renderer, AI,
-  production, longform, publishing, discovery, trends and intelligence engines warm afterward.
+- If workspace images are missing, only the API/migration image is built before entry.
+  Temporal, MinIO, renderer, AI, production, longform, publishing, discovery, trends and
+  intelligence engines warm afterward.
   Missing background images are built without blocking access to the workspace.
 - This separates **time to workspace** from **time to full production capacity** instead of
   forcing the operator to wait for every heavyweight service before entering Katcha.
