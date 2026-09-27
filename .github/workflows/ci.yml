@@ -143,7 +143,7 @@ jobs:
           docker compose --env-file .env.example -f docker-compose.yml -f docker-compose.trends.yml config >/dev/null
           docker compose --env-file .env.example -f docker-compose.yml -f docker-compose.acceptance.yml config >/dev/null
           AWS_PROFILE=katcha-ci KATCHA_HOST_UID=1000 KATCHA_HOST_GID=1000 HOME=/tmp docker compose --env-file .env.example -f docker-compose.yml -f docker-compose.aws-render.yml config >/dev/null
-          AWS_PROFILE=katcha-ci KATCHA_HOST_UID=1000 KATCHA_HOST_GID=1000 HOME=/tmp KATCHA_AWS_SIGNING_HELPER_PATH=/tmp/aws_signing_helper KATCHA_AWS_CERT_PATH=/tmp/client.pem KATCHA_AWS_PRIVATE_KEY_PATH=/tmp/client-key.pem docker compose --env-file .env.example -f docker-compose.yml -f docker-compose.aws-render.yml -f docker-compose.aws-roles-anywhere.yml config >/dev/null
+          KATCHA_AWS_PROFILE=katcha-ci KATCHA_HOST_UID=1000 KATCHA_HOST_GID=1000 HOME=/tmp KATCHA_AWS_SIGNING_HELPER_PATH=/tmp/aws_signing_helper KATCHA_AWS_CERT_PATH=/tmp/client.pem KATCHA_AWS_PRIVATE_KEY_PATH=/tmp/client-key.pem docker compose --env-file .env.example -f docker-compose.yml -f docker-compose.aws-render.yml -f docker-compose.aws-roles-anywhere.yml config >/dev/null
 
 
   terraform:
