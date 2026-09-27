@@ -321,5 +321,6 @@ def test_background_warmup_builds_only_when_images_are_missing(tmp_path):
         app._warm_background()
 
     build = next(cmd for cmd in calls if "build" in cmd)
-    assert set(runtime.BACKGROUND_SERVICES) <= set(build)
+    assert set(runtime.BACKGROUND_BUILD_SERVICES) <= set(build)
+    assert "temporal-ui" not in build
     assert app.background_phase == "ready"
