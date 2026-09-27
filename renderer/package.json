@@ -3,17 +3,22 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "start": "node src/index.mjs"
+    "start": "node src/index.mjs",
+    "test:config": "node test/render-config.mjs && node test/lambda-renderer.mjs && node test/remotion-versions.mjs",
+    "lambda:policy:user": "remotion lambda policies user",
+    "lambda:policy:role": "remotion lambda policies role",
+    "lambda:policy:validate": "remotion lambda policies validate"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.900.0",
     "@aws-sdk/s3-request-presigner": "^3.900.0",
-    "@remotion/bundler": "^4.0.0",
-    "@remotion/cli": "^4.0.0",
-    "@remotion/renderer": "^4.0.0",
+    "@remotion/bundler": "4.0.529",
+    "@remotion/cli": "4.0.529",
+    "@remotion/renderer": "4.0.529",
     "express": "^5.1.0",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
-    "remotion": "^4.0.0"
+    "remotion": "4.0.529",
+    "@remotion/lambda": "4.0.529"
   }
 }
