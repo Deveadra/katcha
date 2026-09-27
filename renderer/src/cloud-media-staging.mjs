@@ -2,6 +2,7 @@ import {createHash} from 'node:crypto';
 import path from 'node:path';
 import {
   GetObjectCommand,
+  HeadObjectCommand,
   PutObjectCommand,
   S3Client,
 } from '@aws-sdk/client-s3';
@@ -16,9 +17,10 @@ export const stagingKeyFor = ({
   prefix,
   sourceBucket,
   sourceKey,
+  sourceIdentity,
 }) => {
   const digest = createHash('sha256')
-    .update(`${sourceBucket}\0${sourceKey}`)
+    .update(`${sourceBucket}\0${sourceKey}\0${sourceIdentity}`)
     .digest('hex');
   const normalizedPrefix = String(prefix || 'katcha-render-staging')
     .replace(/^\/+|\/+$/g, '');
@@ -55,14 +57,23 @@ export const createCloudAssetUrlResolver = ({
       }),
     );
     const size = Number(source.ContentLength || 0);
+    const etag = String(source.ETag || '').replaceAll('"', '').trim();
+    const lastModified = source.LastModified instanceof Date
+      ? source.LastModified.toISOString()
+      : String(source.LastModified || '').trim();
     if (!(size > 0) || !source.Body) {
       throw new Error(`cannot stage empty or unreadable render asset: ${sourceKey}`);
     }
+    if (!etag) {
+      throw new Error(`cannot freeze render asset without an ETag: ${sourceKey}`);
+    }
+    const sourceIdentity = `${etag}:${size}:${lastModified || 'unknown-time'}`;
 
     const stagedKey = stagingKeyFor({
       prefix: stagingPrefix,
       sourceBucket,
       sourceKey,
+      sourceIdentity,
     });
 
     await destinationClient.send(
@@ -77,9 +88,24 @@ export const createCloudAssetUrlResolver = ({
           'katcha-source-key-sha256': createHash('sha256')
             .update(String(sourceKey))
             .digest('hex'),
+          'katcha-source-etag-sha256': createHash('sha256')
+            .update(etag)
+            .digest('hex'),
         },
       }),
     );
+
+    const staged = await destinationClient.send(
+      new HeadObjectCommand({
+        Bucket: stagingBucket,
+        Key: stagedKey,
+      }),
+    );
+    if (Number(staged.ContentLength || 0) !== size) {
+      throw new Error(
+        `staged render asset verification failed for ${sourceKey}: expected ${size} bytes`,
+      );
+    }
 
     return signer(
       destinationClient,
