@@ -242,7 +242,15 @@ const app = express();
 app.use(express.json({limit: '8mb'}));
 
 app.get('/health', (_request, response) => {
-  response.json({status: 'ok', service: 'katcha-renderer'});
+  response.json({
+    status: 'ok',
+    service: 'katcha-renderer',
+    render_backend: renderSettings.backend,
+    lambda_region: renderSettings.backend === 'lambda' ? renderSettings.lambda.region : null,
+    cloud_staging_enabled: Boolean(
+      renderSettings.backend === 'lambda' && renderSettings.lambda.stagingBucket,
+    ),
+  });
 });
 
 app.post('/thumbnail', async (request, response) => {
