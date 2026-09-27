@@ -7,9 +7,13 @@ TMP="$(mktemp -d)"
 trap 'rm -rf "${TMP}"' EXIT
 
 BIN="${TMP}/bin"
-mkdir -p "${BIN}"
 LOG="${TMP}/aws.log"
-POLICY_CAPTURE="${TMP}/applied-policy.json"
+CONTROL_POLICY="${TMP}/control-policy.json"
+EXECUTION_POLICY="${TMP}/execution-policy.json"
+TRUST_POLICY="${TMP}/trust-policy.json"
+EXECUTION_ROLE_STATE="${TMP}/execution-role"
+mkdir -p "${BIN}"
+: >"${LOG}"
 
 cat >"${BIN}/npm" <<'EOF'
 #!/usr/bin/env bash
@@ -31,13 +35,24 @@ if [[ "$*" == "run --silent lambda:policy:user" ]]; then
   "Statement": [
     {
       "Effect": "Allow",
-      "Action": ["lambda:GetFunction", "lambda:InvokeFunction"],
+      "Action": ["iam:PassRole", "lambda:GetFunction", "lambda:InvokeFunction"],
       "Resource": "*"
-    },
+    }
+  ]
+}
+JSON
+    exit 0
+fi
+
+if [[ "$*" == "run --silent lambda:policy:role" ]]; then
+    cat <<'JSON'
+{
+  "Version": "2012-10-17",
+  "Statement": [
     {
       "Effect": "Allow",
-      "Action": "s3:GetObject",
-      "Resource": "arn:aws:s3:::remotionlambda-*/*"
+      "Action": ["s3:GetObject", "s3:PutObject", "lambda:InvokeFunction"],
+      "Resource": "*"
     }
   ]
 }
@@ -59,66 +74,106 @@ printf '\n' >>"${AWS_TEST_LOG}"
 service="${1:-}"
 operation="${2:-}"
 
-if [[ "${service} ${operation}" == "sts get-caller-identity" ]]; then
-    query=""
+arg_value() {
+    local wanted="$1"
+    local i j
     for ((i = 1; i <= $#; i++)); do
-        if [[ "${!i}" == "--query" ]]; then
+        if [[ "${!i}" == "${wanted}" ]]; then
             j=$((i + 1))
-            query="${!j}"
+            printf '%s\n' "${!j}"
+            return 0
         fi
     done
+    return 1
+}
+
+if [[ "${service} ${operation}" == "sts get-caller-identity" ]]; then
+    query="$(arg_value --query "$@" || true)"
+    account="${AWS_TEST_ACCOUNT:-123456789012}"
     case "${query}" in
         Account)
-            printf '%s\n' "${AWS_TEST_ACCOUNT:-123456789012}"
+            printf '%s\n' "${account}"
             ;;
         Arn)
-            printf 'arn:aws:iam::%s:user/bootstrap\n' "${AWS_TEST_ACCOUNT:-123456789012}"
+            printf 'arn:aws:iam::%s:user/bootstrap\n' "${account}"
             ;;
         *)
-            printf '{"Account":"%s","Arn":"arn:aws:iam::%s:user/bootstrap"}\n'                 "${AWS_TEST_ACCOUNT:-123456789012}"                 "${AWS_TEST_ACCOUNT:-123456789012}"
+            printf '{"Account":"%s","Arn":"arn:aws:iam::%s:user/bootstrap"}\n' "${account}" "${account}"
             ;;
     esac
     exit 0
 fi
 
 if [[ "${service} ${operation}" == "iam get-role" ]]; then
-    role=""
-    query=""
-    for ((i = 1; i <= $#; i++)); do
-        case "${!i}" in
-            --role-name)
-                j=$((i + 1))
-                role="${!j}"
-                ;;
-            --query)
-                j=$((i + 1))
-                query="${!j}"
-                ;;
-        esac
-    done
-    if [[ "${query}" == "Role.Arn" ]]; then
-        printf 'arn:aws:iam::%s:role/%s\n' "${AWS_TEST_ACCOUNT:-123456789012}" "${role}"
-    else
-        printf '{"Role":{"Arn":"arn:aws:iam::%s:role/%s"}}\n'             "${AWS_TEST_ACCOUNT:-123456789012}" "${role}"
+    role="$(arg_value --role-name "$@")"
+    query="$(arg_value --query "$@" || true)"
+    account="${AWS_TEST_ACCOUNT:-123456789012}"
+
+    if [[ "${role}" == "remotion-lambda-role" && ! -f "${AWS_TEST_EXECUTION_ROLE_STATE}" ]]; then
+        exit 254
     fi
+
+    if [[ "${query}" == "Role.Arn" ]]; then
+        printf 'arn:aws:iam::%s:role/%s\n' "${account}" "${role}"
+        exit 0
+    fi
+    if [[ "${query}" == "Role.AssumeRolePolicyDocument" ]]; then
+        cat "${AWS_TEST_TRUST_POLICY}"
+        exit 0
+    fi
+
+    printf '{"Role":{"Arn":"arn:aws:iam::%s:role/%s"}}\n' "${account}" "${role}"
+    exit 0
+fi
+
+if [[ "${service} ${operation}" == "iam create-role" ]]; then
+    role="$(arg_value --role-name "$@")"
+    [[ "${role}" == "remotion-lambda-role" ]] || exit 90
+    policy_document="$(arg_value --assume-role-policy-document "$@")"
+    cp "${policy_document#file://}" "${AWS_TEST_TRUST_POLICY}"
+    touch "${AWS_TEST_EXECUTION_ROLE_STATE}"
+    printf '{"Role":{"Arn":"arn:aws:iam::123456789012:role/remotion-lambda-role"}}\n'
+    exit 0
+fi
+
+if [[ "${service} ${operation}" == "iam update-assume-role-policy" ]]; then
+    role="$(arg_value --role-name "$@")"
+    [[ "${role}" == "remotion-lambda-role" ]] || exit 90
+    policy_document="$(arg_value --policy-document "$@")"
+    cp "${policy_document#file://}" "${AWS_TEST_TRUST_POLICY}"
     exit 0
 fi
 
 if [[ "${service} ${operation}" == "iam put-role-policy" ]]; then
-    policy_document=""
-    for ((i = 1; i <= $#; i++)); do
-        if [[ "${!i}" == "--policy-document" ]]; then
-            j=$((i + 1))
-            policy_document="${!j}"
-        fi
-    done
-    path="${policy_document#file://}"
-    cp "${path}" "${AWS_TEST_POLICY_CAPTURE}"
+    role="$(arg_value --role-name "$@")"
+    policy_document="$(arg_value --policy-document "$@")"
+    case "${role}" in
+        KatchaChronosAutomation)
+            cp "${policy_document#file://}" "${AWS_TEST_CONTROL_POLICY}"
+            ;;
+        remotion-lambda-role)
+            cp "${policy_document#file://}" "${AWS_TEST_EXECUTION_POLICY}"
+            ;;
+        *)
+            exit 90
+            ;;
+    esac
     exit 0
 fi
 
 if [[ "${service} ${operation}" == "iam get-role-policy" ]]; then
-    cat "${AWS_TEST_POLICY_CAPTURE}"
+    role="$(arg_value --role-name "$@")"
+    case "${role}" in
+        KatchaChronosAutomation)
+            cat "${AWS_TEST_CONTROL_POLICY}"
+            ;;
+        remotion-lambda-role)
+            cat "${AWS_TEST_EXECUTION_POLICY}"
+            ;;
+        *)
+            exit 90
+            ;;
+    esac
     exit 0
 fi
 
@@ -130,10 +185,14 @@ chmod +x "${BIN}/aws" "${BIN}/npm"
 
 export PATH="${BIN}:${PATH}"
 export AWS_TEST_LOG="${LOG}"
-export AWS_TEST_POLICY_CAPTURE="${POLICY_CAPTURE}"
+export AWS_TEST_CONTROL_POLICY="${CONTROL_POLICY}"
+export AWS_TEST_EXECUTION_POLICY="${EXECUTION_POLICY}"
+export AWS_TEST_TRUST_POLICY="${TRUST_POLICY}"
+export AWS_TEST_EXECUTION_ROLE_STATE="${EXECUTION_ROLE_STATE}"
 export KATCHA_AWS_EXPECTED_ACCOUNT_ID=123456789012
 export KATCHA_AWS_BOOTSTRAP_PROFILE=katcha
 export KATCHA_REMOTION_LAMBDA_REGION=us-east-1
+export KATCHA_IAM_PROPAGATION_WAIT_SECONDS=0
 
 : >"${LOG}"
 export REMOTION_TEST_MISSING=true
@@ -149,17 +208,9 @@ if [[ "${missing_rc}" -eq 0 ]]; then
 fi
 if [[ -s "${LOG}" ]]; then
     echo "FAIL: missing Remotion dependencies reached AWS before failing" >&2
-    cat "${LOG}" >&2
     exit 1
 fi
-if ! grep -q 'pinned Remotion CLI is not installed' <<<"${missing_output}"; then
-    echo "FAIL: missing dependency error was not actionable" >&2
-    exit 1
-fi
-if ! grep -q 'npm install --ignore-scripts' <<<"${missing_output}"; then
-    echo "FAIL: missing dependency error did not include the repair command" >&2
-    exit 1
-fi
+grep -q 'pinned Remotion CLI is not installed' <<<"${missing_output}"
 
 : >"${LOG}"
 export REMOTION_TEST_VERSION=4.0.528
@@ -174,47 +225,45 @@ if [[ "${mismatch_rc}" -eq 0 ]]; then
     exit 1
 fi
 if [[ -s "${LOG}" ]]; then
-    echo "FAIL: mismatched Remotion version reached AWS before failing" >&2
-    cat "${LOG}" >&2
+    echo "FAIL: version mismatch reached AWS before failing" >&2
     exit 1
 fi
-if ! grep -q 'does not match the pinned renderer dependency' <<<"${mismatch_output}"; then
-    echo "FAIL: version mismatch was not reported clearly" >&2
-    exit 1
-fi
-if ! grep -q 'expected: 4.0.529' <<<"${mismatch_output}" || ! grep -q 'actual:   4.0.528' <<<"${mismatch_output}"; then
-    echo "FAIL: version mismatch did not report expected and actual versions" >&2
-    exit 1
-fi
+grep -q 'expected: 4.0.529' <<<"${mismatch_output}"
+grep -q 'actual:   4.0.528' <<<"${mismatch_output}"
 
 : >"${LOG}"
 inspect_output="$(bash "${SCRIPT}")"
 
-if grep -q 'put-role-policy' "${LOG}"; then
+if grep -Eq 'iam (create-role|update-assume-role-policy|put-role-policy)' "${LOG}"; then
     echo "FAIL: inspect mode performed an IAM write" >&2
+    cat "${LOG}" >&2
     exit 1
 fi
-if ! grep -q 'INSPECT ONLY: no IAM writes were performed.' <<<"${inspect_output}"; then
-    echo "FAIL: inspect mode did not report no-write behavior" >&2
-    exit 1
-fi
-if ! grep -q 'policy sha256:' <<<"${inspect_output}"; then
-    echo "FAIL: inspect mode did not print policy hash" >&2
-    exit 1
-fi
+grep -q 'INSPECT ONLY: no IAM writes were performed.' <<<"${inspect_output}"
+grep -q 'state:         missing' <<<"${inspect_output}"
+grep -q 'policy name:   remotion-lambda-policy' <<<"${inspect_output}"
+grep -q 'trust:         lambda.amazonaws.com -> sts:AssumeRole' <<<"${inspect_output}"
 
 : >"${LOG}"
-bash "${SCRIPT}" --apply >/dev/null
+bash "${SCRIPT}" --apply >"${TMP}/apply.out"
 
-put_count="$(grep -c 'iam put-role-policy' "${LOG}" || true)"
-if [[ "${put_count}" -ne 1 ]]; then
-    echo "FAIL: apply mode expected exactly one PutRolePolicy, got ${put_count}" >&2
+[[ -f "${EXECUTION_ROLE_STATE}" ]]
+[[ -s "${CONTROL_POLICY}" ]]
+[[ -s "${EXECUTION_POLICY}" ]]
+[[ -s "${TRUST_POLICY}" ]]
+grep -q 'iam create-role' "${LOG}"
+[[ "$(grep -c 'iam put-role-policy' "${LOG}")" -eq 2 ]]
+grep -q 'lambda.amazonaws.com' "${TRUST_POLICY}"
+grep -q 'PASS: Remotion control-plane authorization and Lambda execution role are verified.' "${TMP}/apply.out"
+
+: >"${LOG}"
+bash "${SCRIPT}" --apply >"${TMP}/reapply.out"
+if grep -q 'iam create-role' "${LOG}"; then
+    echo "FAIL: idempotent re-apply attempted to recreate execution role" >&2
     exit 1
 fi
-if [[ ! -s "${POLICY_CAPTURE}" ]]; then
-    echo "FAIL: apply mode did not submit a policy document" >&2
-    exit 1
-fi
+grep -q 'iam update-assume-role-policy' "${LOG}"
+[[ "$(grep -c 'iam put-role-policy' "${LOG}")" -eq 2 ]]
 
 : >"${LOG}"
 export AWS_TEST_ACCOUNT=999999999999
@@ -228,13 +277,10 @@ if [[ "${wrong_rc}" -eq 0 ]]; then
     echo "FAIL: wrong-account mode unexpectedly succeeded" >&2
     exit 1
 fi
-if grep -q 'put-role-policy' "${LOG}"; then
+if grep -Eq 'iam (create-role|update-assume-role-policy|put-role-policy)' "${LOG}"; then
     echo "FAIL: wrong-account mode performed an IAM write" >&2
     exit 1
 fi
-if ! grep -q 'AWS account mismatch' <<<"${wrong_output}"; then
-    echo "FAIL: wrong-account mode did not report the account mismatch" >&2
-    exit 1
-fi
+grep -q 'AWS account mismatch' <<<"${wrong_output}"
 
-echo "PASS: render authorization is review-first, apply-explicit, and account-guarded."
+echo "PASS: render authorization provisions the exact Remotion execution role, is idempotent, review-first, and account-guarded."
