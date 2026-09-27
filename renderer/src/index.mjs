@@ -14,28 +14,48 @@ import {
   S3Client,
 } from '@aws-sdk/client-s3';
 import {getSignedUrl} from '@aws-sdk/s3-request-presigner';
-import {resolveRenderSettings} from './render-config.mjs';
+import {renderMediaViaLambda} from './lambda-renderer.mjs';
+import {resolveRenderSettings, validateLambdaSettings} from './render-config.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const bucket = process.env.KATCHA_S3_BUCKET || 'katcha-media';
-const endpoint = process.env.KATCHA_S3_ENDPOINT_URL || 'http://minio:9000';
+const hasEndpointSetting = Object.prototype.hasOwnProperty.call(
+  process.env,
+  'KATCHA_S3_ENDPOINT_URL',
+);
+const rawEndpoint = String(process.env.KATCHA_S3_ENDPOINT_URL ?? '').trim();
+const endpoint = hasEndpointSetting
+  ? (rawEndpoint || undefined)
+  : 'http://minio:9000';
 const region = process.env.KATCHA_S3_REGION || 'auto';
 const port = Number(process.env.PORT || 8787);
 const renderSettings = resolveRenderSettings();
+validateLambdaSettings(renderSettings);
 const exec = promisify(execFile);
 
-const s3 = new S3Client({
+const s3AccessKey = String(process.env.KATCHA_S3_ACCESS_KEY ?? '').trim();
+const s3SecretKey = String(process.env.KATCHA_S3_SECRET_KEY ?? '').trim();
+const s3Options = {
   endpoint,
   region,
   forcePathStyle: String(process.env.KATCHA_S3_FORCE_PATH_STYLE || 'true') === 'true',
-  credentials: {
-    accessKeyId: process.env.KATCHA_S3_ACCESS_KEY || 'katcha',
-    secretAccessKey: process.env.KATCHA_S3_SECRET_KEY || 'katcha-local-secret',
-  },
-});
+};
+if (s3AccessKey && s3SecretKey) {
+  s3Options.credentials = {
+    accessKeyId: s3AccessKey,
+    secretAccessKey: s3SecretKey,
+  };
+}
+const s3 = new S3Client(s3Options);
 
 const entryPoint = path.resolve(__dirname, 'entry.jsx');
-const serveUrlPromise = bundle({entryPoint});
+let localServeUrlPromise = null;
+const getLocalServeUrl = () => {
+  if (localServeUrlPromise === null) {
+    localServeUrlPromise = bundle({entryPoint});
+  }
+  return localServeUrlPromise;
+};
 
 const exists = async (key) => {
   try {
@@ -245,7 +265,7 @@ app.post('/thumbnail', async (request, response) => {
     }
 
     const inputProps = await hydrateThumbnailManifest(manifest);
-    const serveUrl = await serveUrlPromise;
+    const serveUrl = await getLocalServeUrl();
     const composition = await selectComposition({
       serveUrl,
       id: 'Thumbnail',
@@ -382,12 +402,16 @@ app.post('/render', async (request, response) => {
         : isBlueprint
           ? await hydrateBlueprintManifest(manifest)
           : await hydrateShortManifest(manifest);
-    const serveUrl = await serveUrlPromise;
-    const composition = await selectComposition({
-      serveUrl,
-      id: compositionId,
-      inputProps,
-    });
+    const serveUrl = renderSettings.backend === 'local'
+      ? await getLocalServeUrl()
+      : null;
+    const composition = serveUrl
+      ? await selectComposition({
+          serveUrl,
+          id: compositionId,
+          inputProps,
+        })
+      : null;
     const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'katcha-render-'));
     const outputPath = path.join(
       tempDir,
@@ -401,15 +425,25 @@ app.post('/render', async (request, response) => {
     );
 
     try {
-      await renderMedia({
-        composition,
-        serveUrl,
-        codec: 'h264',
-        outputLocation: outputPath,
-        inputProps,
-        concurrency: renderSettings.concurrency,
-        timeoutInMilliseconds: renderSettings.timeoutInMilliseconds,
-      });
+      let backendMetadata = {};
+      if (renderSettings.backend === 'lambda') {
+        backendMetadata = await renderMediaViaLambda({
+          compositionId,
+          inputProps,
+          outputPath,
+          renderSettings,
+        });
+      } else {
+        await renderMedia({
+          composition,
+          serveUrl,
+          codec: 'h264',
+          outputLocation: outputPath,
+          inputProps,
+          concurrency: renderSettings.concurrency,
+          timeoutInMilliseconds: renderSettings.timeoutInMilliseconds,
+        });
+      }
       const probe = await inspectMedia(outputPath);
       verifyRender(probe, manifest);
       await s3.send(
@@ -431,6 +465,8 @@ app.post('/render', async (request, response) => {
       inputProps.__renderVerification = {
         ...probe,
         object_size_bytes: Number(stored.ContentLength || 0),
+        render_backend: renderSettings.backend,
+        ...backendMetadata,
       };
     } finally {
       await fs.promises.rm(tempDir, {recursive: true, force: true});
@@ -443,7 +479,7 @@ app.post('/render', async (request, response) => {
         reused: false,
         verified: true,
         verification_mode: 'ffprobe+object-head',
-        renderer: 'remotion',
+        renderer: renderSettings.backend === 'lambda' ? 'remotion-lambda' : 'remotion',
         composition: compositionId,
         fps: manifest.fps,
         width: manifest.width,
@@ -460,7 +496,8 @@ app.post('/render', async (request, response) => {
 app.listen(port, '0.0.0.0', () => {
   console.log(
     `katcha renderer listening on ${port} `
-    + `(concurrency=${renderSettings.concurrency}, `
+    + `(backend=${renderSettings.backend}, `
+    + `concurrency=${renderSettings.concurrency}, `
     + `frame_timeout_ms=${renderSettings.timeoutInMilliseconds})`,
   );
 });
