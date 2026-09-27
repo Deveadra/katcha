@@ -1,0 +1,9 @@
+services:
+  renderer:
+    volumes:
+      # The durable profile's credential_process uses absolute host paths.
+      # Mirror those exact paths into the container read-only so the same
+      # ~/.aws/config works for both the host CLI and the renderer SDK.
+      - ${KATCHA_AWS_SIGNING_HELPER_PATH:?Set KATCHA_AWS_SIGNING_HELPER_PATH to the absolute aws_signing_helper path}:${KATCHA_AWS_SIGNING_HELPER_PATH:?Set KATCHA_AWS_SIGNING_HELPER_PATH to the absolute aws_signing_helper path}:ro
+      - ${KATCHA_AWS_CERT_PATH:?Set KATCHA_AWS_CERT_PATH to the absolute Roles Anywhere certificate path}:${KATCHA_AWS_CERT_PATH:?Set KATCHA_AWS_CERT_PATH to the absolute Roles Anywhere certificate path}:ro
+      - ${KATCHA_AWS_PRIVATE_KEY_PATH:?Set KATCHA_AWS_PRIVATE_KEY_PATH to the absolute Roles Anywhere private-key path}:${KATCHA_AWS_PRIVATE_KEY_PATH:?Set KATCHA_AWS_PRIVATE_KEY_PATH to the absolute Roles Anywhere private-key path}:ro
