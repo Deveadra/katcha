@@ -60,7 +60,10 @@ BACKGROUND_BUILD_SERVICES = tuple(
 ONE_SHOT_SERVICES = {"migrate", "minio-init"}
 CORE_BUILD_SERVICES = ("api", "migrate", "minio-init", "minio")
 MISSING_IMAGE = re.compile(
-    r"no such image|pull access denied|image .+ not found|unable to get image|repository does not exist",
+    (
+        r"no such image|pull access denied|image .+ not found|"
+        r"unable to get image|repository does not exist"
+    ),
     re.I,
 )
 
@@ -403,7 +406,10 @@ class Runtime:
                 "error",
                 "launcher",
                 f"Workspace is usable, but background engine warmup failed: {exc}",
-                recovery="Use diagnostics to identify the affected engine; the workspace remains available.",
+                recovery=(
+                    "Use diagnostics to identify the affected engine; "
+                    "the workspace remains available."
+                ),
             )
 
     def start_logs(self):
@@ -534,10 +540,10 @@ class Runtime:
         present = set(by_service)
         phase = (
             "ready"
-            if ready and CORE_REQUIRED <= present and not core_bad and not one_shot_bad
+            if ready and present >= CORE_REQUIRED and not core_bad and not one_shot_bad
             else "degraded"
         )
-        if BACKGROUND_REQUIRED <= present:
+        if present >= BACKGROUND_REQUIRED:
             background_bad = [
                 by_service[name]
                 for name in BACKGROUND_REQUIRED
