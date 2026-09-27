@@ -4,18 +4,32 @@ variable "aws_region" {
   default     = "us-east-1"
 }
 
-variable "bucket_name" {
-  description = "Globally unique private S3 bucket name used only for temporary render inputs."
+variable "expected_account_id" {
+  description = "The exact 12-digit AWS account ID where Katcha cloud rendering is allowed."
   type        = string
 
   validation {
+    condition     = can(regex("^[0-9]{12}$", var.expected_account_id))
+    error_message = "expected_account_id must be exactly 12 digits."
+  }
+}
+
+variable "bucket_name" {
+  description = "Optional globally unique private S3 bucket name. Defaults to an account+region-scoped Katcha name."
+  type        = string
+  default     = null
+
+  validation {
     condition = (
-      length(var.bucket_name) >= 3
-      && length(var.bucket_name) <= 63
-      && can(regex("^[a-z0-9][a-z0-9.-]*[a-z0-9]$", var.bucket_name))
-      && !strcontains(var.bucket_name, "..")
+      var.bucket_name == null
+      || (
+        length(var.bucket_name) >= 3
+        && length(var.bucket_name) <= 63
+        && can(regex("^[a-z0-9][a-z0-9.-]*[a-z0-9]$", var.bucket_name))
+        && !strcontains(var.bucket_name, "..")
+      )
     )
-    error_message = "bucket_name must be a valid lowercase S3 bucket name."
+    error_message = "bucket_name must be null or a valid lowercase S3 bucket name."
   }
 }
 
