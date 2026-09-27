@@ -28,7 +28,7 @@ printf '\n' >>"${DEPLOY_TEST_LOG}"
 
 case " $* " in
     *"lambda-deployment-state.mjs function-name "*)
-        printf '%s\n' 'remotion-render-4-0-529-mem4096mb-disk4096mb-900sec'
+        printf 'remotion-render-4-0-529-mem%smb-disk%smb-%ssec\n' "$3" "$4" "$5"
         ;;
     *"lambda-deployment-state.mjs site "*)
         if [[ ! -f "${DEPLOY_TEST_STATE}/site" ]]; then
@@ -89,10 +89,17 @@ if [[ "${service} ${operation}" == "lambda get-function" ]]; then
             query="${!j}"
         fi
     done
+    function_name=""
+    for ((i = 1; i <= $#; i++)); do
+        if [[ "${!i}" == "--function-name" ]]; then
+            j=$((i + 1))
+            function_name="${!j}"
+        fi
+    done
     if [[ "${query}" == "Configuration.FunctionName" ]]; then
-        printf '%s\n' 'remotion-render-4-0-529-mem4096mb-disk4096mb-900sec'
+        printf '%s\n' "${function_name}"
     else
-        printf '%s\n' '{"Configuration":{"FunctionName":"remotion-render-4-0-529-mem4096mb-disk4096mb-900sec"}}'
+        printf '{"Configuration":{"FunctionName":"%s"}}\n' "${function_name}"
     fi
     exit 0
 fi
@@ -218,6 +225,37 @@ if ! grep -q 'does not match the pinned renderer dependency' <<<"${mismatch_outp
 fi
 
 : >"${LOG}"
+export KATCHA_REMOTION_LAMBDA_MEMORY_MB=0
+set +e
+invalid_memory_output="$(bash "${SCRIPT}" 2>&1)"
+invalid_memory_rc=$?
+set -e
+unset KATCHA_REMOTION_LAMBDA_MEMORY_MB
+
+if [[ "${invalid_memory_rc}" -eq 0 ]]; then
+    echo "FAIL: invalid Lambda memory unexpectedly succeeded" >&2
+    exit 1
+fi
+if ! grep -q 'KATCHA_REMOTION_LAMBDA_MEMORY_MB must be an integer from 128 through 10240' <<<"${invalid_memory_output}"; then
+    echo "FAIL: invalid Lambda memory was not reported clearly" >&2
+    exit 1
+fi
+
+: >"${LOG}"
+export KATCHA_REMOTION_LAMBDA_MEMORY_MB=2048
+override_output="$(bash "${SCRIPT}")"
+unset KATCHA_REMOTION_LAMBDA_MEMORY_MB
+
+if ! grep -q 'memory:        2048 MB' <<<"${override_output}"; then
+    echo "FAIL: Lambda memory override was not honored" >&2
+    exit 1
+fi
+if ! grep -q 'remotion-render-4-0-529-mem2048mb-disk4096mb-900sec' <<<"${override_output}"; then
+    echo "FAIL: Lambda memory override did not change deterministic function name" >&2
+    exit 1
+fi
+
+: >"${LOG}"
 inspect_output="$(bash "${SCRIPT}")"
 
 if grep -q 'remotion lambda functions deploy' "${LOG}"; then
@@ -257,7 +295,8 @@ if [[ "${composition_count}" -ne 1 ]]; then
     exit 1
 fi
 
-grep -q '^KATCHA_REMOTION_LAMBDA_FUNCTION_NAME=remotion-render-4-0-529-mem4096mb-disk4096mb-900sec$' "${ENV_FILE}"
+grep -q '^KATCHA_REMOTION_LAMBDA_MEMORY_MB=3008$' "${ENV_FILE}"
+grep -q '^KATCHA_REMOTION_LAMBDA_FUNCTION_NAME=remotion-render-4-0-529-mem3008mb-disk4096mb-900sec$' "${ENV_FILE}"
 grep -q '^KATCHA_REMOTION_LAMBDA_SERVE_URL=https://remotionlambda-test.s3.us-east-1.amazonaws.com/sites/katcha-production/index.html$' "${ENV_FILE}"
 grep -q '^KATCHA_RENDER_BACKEND=local$' "${ENV_FILE}"
 

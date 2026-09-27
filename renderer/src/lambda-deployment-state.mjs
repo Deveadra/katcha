@@ -1,7 +1,7 @@
 import {getSites, speculateFunctionName} from '@remotion/lambda/client';
 import {pathToFileURL} from 'node:url';
 
-export const DEFAULT_FUNCTION_MEMORY_MB = 4096;
+export const DEFAULT_FUNCTION_MEMORY_MB = 3008;
 export const DEFAULT_FUNCTION_DISK_MB = 4096;
 export const DEFAULT_FUNCTION_TIMEOUT_SECONDS = 900;
 export const DEFAULT_SITE_NAME = 'katcha-production';
