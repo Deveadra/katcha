@@ -118,6 +118,13 @@ printf '%q ' "$@" >>"${DEPLOY_TEST_LOG}"
 printf '\n' >>"${DEPLOY_TEST_LOG}"
 
 case " $* " in
+    *" --no-install remotion --version "*)
+        if [[ "${REMOTION_TEST_MISSING:-false}" == "true" ]]; then
+            exit 127
+        fi
+        printf '%s\n' '4.0.529'
+        exit 0
+        ;;
     *" remotion lambda quotas "*)
         exit 0
         ;;
@@ -151,6 +158,32 @@ export KATCHA_AWS_ROLES_ANYWHERE_DIR="${TMP}/roles-anywhere"
 unset KATCHA_AWS_EXPECTED_ACCOUNT_ID
 unset KATCHA_REMOTION_LAMBDA_REGION
 unset KATCHA_AWS_PROFILE
+
+: >"${LOG}"
+export REMOTION_TEST_MISSING=true
+set +e
+missing_output="$(bash "${SCRIPT}" 2>&1)"
+missing_rc=$?
+set -e
+unset REMOTION_TEST_MISSING
+
+if [[ "${missing_rc}" -eq 0 ]]; then
+    echo "FAIL: missing Remotion dependencies unexpectedly succeeded" >&2
+    exit 1
+fi
+if grep -q '^aws ' "${LOG}" || grep -q '^node ' "${LOG}"; then
+    echo "FAIL: missing Remotion dependencies reached AWS/deployment state checks before failing" >&2
+    cat "${LOG}" >&2
+    exit 1
+fi
+if ! grep -q 'pinned Remotion CLI is not installed' <<<"${missing_output}"; then
+    echo "FAIL: missing dependency error was not actionable" >&2
+    exit 1
+fi
+if ! grep -q 'npm install --ignore-scripts' <<<"${missing_output}"; then
+    echo "FAIL: missing dependency error did not include the repair command" >&2
+    exit 1
+fi
 
 : >"${LOG}"
 inspect_output="$(bash "${SCRIPT}")"
