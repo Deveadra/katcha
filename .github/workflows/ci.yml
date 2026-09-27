@@ -135,6 +135,7 @@ jobs:
           docker compose --env-file .env.example -f docker-compose.yml -f docker-compose.discovery.yml config >/dev/null
           docker compose --env-file .env.example -f docker-compose.yml -f docker-compose.trends.yml config >/dev/null
           docker compose --env-file .env.example -f docker-compose.yml -f docker-compose.acceptance.yml config >/dev/null
+          AWS_PROFILE=katcha-ci HOME=/tmp docker compose --env-file .env.example -f docker-compose.yml -f docker-compose.aws-render.yml config >/dev/null
 
 
   terraform:
