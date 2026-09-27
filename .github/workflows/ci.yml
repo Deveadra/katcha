@@ -123,6 +123,9 @@ jobs:
           )
           PY
 
+      - name: Validate AWS render preflight syntax
+        run: bash -n scripts/aws_render_preflight.sh
+
       - name: Validate Compose
         env:
           KATCHA_ENV_FILE: .env.example
