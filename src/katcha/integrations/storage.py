@@ -17,14 +17,16 @@ class ObjectStore:
         config = Config(
             s3={"addressing_style": "path" if self.settings.s3_force_path_style else "auto"}
         )
-        self.client = boto3.client(
-            "s3",
-            endpoint_url=self.settings.s3_endpoint_url,
-            aws_access_key_id=self.settings.s3_access_key,
-            aws_secret_access_key=self.settings.s3_secret_key,
-            region_name=self.settings.s3_region,
-            config=config,
-        )
+        client_kwargs: dict[str, Any] = {
+            "region_name": self.settings.s3_region,
+            "config": config,
+        }
+        if self.settings.s3_endpoint_url:
+            client_kwargs["endpoint_url"] = self.settings.s3_endpoint_url
+        if self.settings.s3_access_key and self.settings.s3_secret_key:
+            client_kwargs["aws_access_key_id"] = self.settings.s3_access_key
+            client_kwargs["aws_secret_access_key"] = self.settings.s3_secret_key
+        self.client = boto3.client("s3", **client_kwargs)
 
     def ensure_bucket(self) -> None:
         try:
