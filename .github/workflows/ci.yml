@@ -131,6 +131,7 @@ jobs:
           bash -n scripts/test_aws_lambda_backend_enable.sh
           bash -n scripts/aws_render_authorize.sh
           bash -n scripts/aws_remotion_deploy.sh
+          bash -n scripts/aws_render_staging.sh
           bash -n scripts/aws_roles_anywhere_bootstrap.sh
           bash -n scripts/aws_tf_state_bootstrap.sh
           bash -n scripts/aws_render_staging_deploy.sh
@@ -138,12 +139,14 @@ jobs:
           bash -n scripts/test_aws_render_staging_deploy.sh
           bash -n scripts/test_aws_render_authorize.sh
           bash -n scripts/test_aws_remotion_deploy.sh
+          bash -n scripts/test_aws_render_staging.sh
           bash -n scripts/test_aws_tf_state_bootstrap.sh
           bash scripts/aws_lambda_render_acceptance.sh --help >/dev/null
           bash scripts/aws_lambda_backend_enable.sh --help >/dev/null
           bash scripts/test_aws_lambda_backend_enable.sh
           bash scripts/aws_render_authorize.sh --help >/dev/null
           bash scripts/aws_remotion_deploy.sh --help >/dev/null
+          bash scripts/aws_render_staging.sh --help >/dev/null
           bash scripts/aws_roles_anywhere_bootstrap.sh --help >/dev/null
           bash scripts/aws_tf_state_bootstrap.sh --help >/dev/null
           bash scripts/aws_render_staging_deploy.sh --help >/dev/null
@@ -151,6 +154,7 @@ jobs:
           bash scripts/test_aws_render_staging_deploy.sh
           bash scripts/test_aws_render_authorize.sh
           bash scripts/test_aws_remotion_deploy.sh
+          bash scripts/test_aws_render_staging.sh
           bash scripts/test_aws_tf_state_bootstrap.sh
 
       - name: Validate Compose
