@@ -251,3 +251,104 @@ def test_reconcile_runtime_failure_is_recoverable(tmp_path):
     assert app.phase == "degraded"
     assert app.stage == "waiting for runtime"
     assert any(event.get("recovery") for event in app.events)
+
+
+def test_unchanged_images_skip_build_and_source_changes_invalidate(tmp_path):
+    app = instance(tmp_path)
+    source = tmp_path / "src"
+    source.mkdir()
+    (source / "app.py").write_text("version = 1")
+    with patch.object(app, "run", return_value="katcha-api") as run:
+        app.prepare_images()
+        assert any(call.args[0][-1] == "build" for call in run.call_args_list)
+        run.reset_mock()
+        app.prepare_images()
+        assert not any(call.args[0][-1] == "build" for call in run.call_args_list)
+        (source / "app.py").write_text("version = 2")
+        app.prepare_images()
+        assert any(call.args[0][-1] == "build" for call in run.call_args_list)
+
+
+def test_deleted_images_rebuild(tmp_path):
+    app = instance(tmp_path)
+    (app.directory / "build-fingerprint").write_text(app.build_fingerprint())
+    with patch.object(app, "run", side_effect=["image", RuntimeError("missing"), ""]) as run:
+        app.prepare_images()
+    assert run.call_args.args[0][-1] == "build"
+
+
+def test_failed_build_does_not_write_cache(tmp_path):
+    import pytest
+    app = instance(tmp_path)
+    with (
+        patch.object(app, "run", side_effect=["image", RuntimeError("build failed")]),
+        pytest.raises(RuntimeError),
+    ):
+        app.prepare_images()
+    assert not (app.directory / "build-fingerprint").exists()
+
+
+def test_run_intent_survives_restart_and_stop_clears_it(tmp_path):
+    app = instance(tmp_path)
+    with patch.object(runtime.threading.Thread, "start"):
+        assert app.operate("start")
+        app.lock.release()
+        assert runtime.Runtime(tmp_path).desired_running
+        assert app.operate("stop")
+        app.lock.release()
+        assert not runtime.Runtime(tmp_path).desired_running
+
+
+def test_recovery_backoff_and_explicit_stop(tmp_path):
+    app = instance(tmp_path)
+    app.phase = "failed"
+    app.desired_running = True
+    app.retry_at = runtime.time.monotonic() + 100
+    with patch.object(app, "probe_workspace"), patch.object(app, "operate") as operate:
+        app.monitor_once()
+        operate.assert_not_called()
+        app.retry_at = 0
+        app.monitor_once()
+        operate.assert_called_once_with("start")
+        operate.reset_mock()
+        app.desired_running = False
+        app.monitor_once()
+        operate.assert_not_called()
+
+
+def test_workspace_probe_runs_while_startup_lock_is_held(tmp_path):
+    app = instance(tmp_path)
+    app.phase = "starting"
+    app.lock.acquire()
+    with patch.object(app, "probe_workspace") as probe:
+        app.monitor_once()
+        probe.assert_called_once()
+    app.lock.release()
+
+
+def test_recovery_recreates_missing_worker_even_when_remaining_services_run(tmp_path):
+    app = instance(tmp_path)
+    app.desired_running = True
+    app.phase = "degraded"
+    app.health_check_at = runtime.time.monotonic() + 100
+    app.services = [
+        {"Service": service, "State": "running"}
+        for service in runtime.REQUIRED_SERVICES - {"discovery-worker"}
+    ]
+    with patch.object(app, "probe_workspace"), patch.object(app, "operate") as operate:
+        app.monitor_once()
+        operate.assert_called_once_with("start")
+
+
+def test_unhealthy_running_containers_are_not_restart_looped(tmp_path):
+    app = instance(tmp_path)
+    app.desired_running = True
+    app.phase = "degraded"
+    app.health_check_at = runtime.time.monotonic() + 100
+    app.services = [
+        {"Service": service, "State": "running", "Health": "unhealthy"}
+        for service in runtime.REQUIRED_SERVICES
+    ]
+    with patch.object(app, "probe_workspace"), patch.object(app, "operate") as operate:
+        app.monitor_once()
+        operate.assert_not_called()
