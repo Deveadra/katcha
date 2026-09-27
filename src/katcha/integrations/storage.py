@@ -32,8 +32,11 @@ class ObjectStore:
         try:
             self.client.head_bucket(Bucket=self.settings.s3_bucket)
             return
-        except ClientError:
-            pass
+        except ClientError as exc:
+            code = str(exc.response.get("Error", {}).get("Code") or "")
+            status = int(exc.response.get("ResponseMetadata", {}).get("HTTPStatusCode") or 0)
+            if code not in {"404", "NoSuchBucket", "NotFound"} and status != 404:
+                raise
         kwargs: dict[str, object] = {"Bucket": self.settings.s3_bucket}
         if self.settings.s3_region not in {"auto", "us-east-1"}:
             kwargs["CreateBucketConfiguration"] = {
