@@ -148,8 +148,12 @@ bash scripts/aws_remotion_deploy.sh --apply
 ```
 
 The apply path first reruns the no-write permission/quota preflight, then deploys the
-pinned function with 4096 MB memory, 4096 MB disk, a 900-second timeout, and 14-day
-retention. It deploys the `katcha-production` site from `renderer/src/entry.jsx`,
+pinned function with **3008 MB memory by default**, 4096 MB disk, a 900-second timeout,
+and 14-day retention. AWS can impose a reduced per-function memory ceiling on some
+accounts even when billing is active; 3008 MB keeps initial deployment compatible with
+that restriction. The memory value is configurable through
+`KATCHA_REMOTION_LAMBDA_MEMORY_MB` (128-10240) and is persisted after a verified
+deployment, so it can be raised later without changing code when the account supports it. It deploys the `katcha-production` site from `renderer/src/entry.jsx`,
 verifies the function through AWS Lambda, resolves a compatible site through the
 Remotion API, validates its HTTPS Serve URL, and confirms the function/site can
 enumerate Katcha compositions.
@@ -157,6 +161,7 @@ enumerate Katcha compositions.
 Only after those checks pass does the helper persist:
 
 ```env
+KATCHA_REMOTION_LAMBDA_MEMORY_MB=<verified deployed memory>
 KATCHA_REMOTION_LAMBDA_FUNCTION_NAME=<verified function name>
 KATCHA_REMOTION_LAMBDA_SERVE_URL=<verified HTTPS serve URL>
 ```
