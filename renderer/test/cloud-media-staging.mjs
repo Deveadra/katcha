@@ -8,11 +8,13 @@ const keyA = stagingKeyFor({
   prefix: 'tmp/render-inputs/',
   sourceBucket: 'katcha-media',
   sourceKey: 'raw/aa/example clip.mp4',
+  sourceIdentity: 'etag-123:13:2026-09-26T00:00:00.000Z',
 });
 const keyB = stagingKeyFor({
   prefix: 'tmp/render-inputs',
   sourceBucket: 'katcha-media',
   sourceKey: 'raw/aa/example clip.mp4',
+  sourceIdentity: 'etag-123:13:2026-09-26T00:00:00.000Z',
 });
 
 assert.equal(keyA, keyB);
@@ -30,12 +32,17 @@ const sourceClient = {
       Body: Buffer.from('owned-fixture'),
       ContentLength: 13,
       ContentType: 'video/mp4',
+      ETag: '"etag-123"',
+      LastModified: new Date('2026-09-26T00:00:00.000Z'),
     };
   },
 };
 const cloudClient = {
   async send(command) {
     cloudCommands.push(command);
+    if (command.constructor.name === 'HeadObjectCommand') {
+      return {ContentLength: 13};
+    }
     return {};
   },
 };
@@ -60,11 +67,36 @@ const url = await resolveUrl('short-episode/example/audio/beat-00.wav');
 assert.match(url, /^https:\/\/katcha-render-staging-/);
 assert.equal(sourceCommands.length, 1);
 assert.equal(sourceCommands[0].constructor.name, 'GetObjectCommand');
-assert.equal(cloudCommands.length, 1);
+assert.equal(cloudCommands.length, 2);
 assert.equal(cloudCommands[0].constructor.name, 'PutObjectCommand');
+assert.equal(cloudCommands[1].constructor.name, 'HeadObjectCommand');
 assert.equal(cloudCommands[0].input.ServerSideEncryption, 'AES256');
 assert.equal(cloudCommands[0].input.ContentLength, 13);
 assert.equal(cloudCommands[0].input.ContentType, 'video/mp4');
 assert.equal(cloudCommands[0].input.ACL, undefined);
+assert.ok(cloudCommands[0].input.Metadata['katcha-source-etag-sha256']);
 
-console.log('PASS: cloud staging is private, deterministic, and source-preserving.');
+const missingEtagResolver = createCloudAssetUrlResolver({
+  sourceClient: {
+    async send() {
+      return {
+        Body: Buffer.from('owned-fixture'),
+        ContentLength: 13,
+        ContentType: 'video/mp4',
+      };
+    },
+  },
+  sourceBucket: 'katcha-media',
+  region: 'us-east-1',
+  stagingBucket: 'katcha-render-staging-123456789012',
+  stagingPrefix: 'tmp/render-inputs',
+  expiresInSeconds: 3600,
+  cloudClient,
+  signer,
+});
+await assert.rejects(
+  () => missingEtagResolver('short-episode/example/audio/beat-00.wav'),
+  /without an ETag/,
+);
+
+console.log('PASS: cloud staging freezes, verifies, and privately signs render inputs.');
