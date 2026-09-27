@@ -14,7 +14,7 @@ assert.deepEqual(defaults, {
     functionName: null,
     serveUrl: null,
     pollIntervalMs: 2000,
-    maxWaitMs: 1800000,
+    maxWaitMs: 1500000,
     maxRetries: 2,
     framesPerLambda: 20,
     concurrencyPerLambda: 1,
