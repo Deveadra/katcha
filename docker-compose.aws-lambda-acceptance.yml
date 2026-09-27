@@ -1,0 +1,4 @@
+services:
+  renderer:
+    environment:
+      KATCHA_RENDER_BACKEND: lambda
