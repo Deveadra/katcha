@@ -214,7 +214,10 @@ def test_reconcile_existing_runtime_without_relaunch(tmp_path):
     assert app.phase == "ready"
     assert app.stage == "ready"
     assert all("build" not in command and "up" not in command for command in commands)
-    assert any(event["message"] == "Reattached to the existing Katcha runtime." for event in app.events)
+    assert any(
+        event["message"] == "Reattached to the existing Katcha runtime."
+        for event in app.events
+    )
 
 
 def test_reconcile_empty_runtime_stays_idle(tmp_path):
