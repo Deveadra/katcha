@@ -325,6 +325,7 @@ class Runtime:
         if not self.lock.acquire(blocking=False):
             return False
         try:
+            self.phase = "reconnecting"
             self.stage = "checking existing runtime"
             output = self.run(
                 self.command() + ["ps", "--all", "--format", "json"],
