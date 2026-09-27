@@ -1,4 +1,4 @@
 @echo off
-rem Place this launcher in a Windows or WSL checkout; WSL runs the application.
-wsl.exe --cd "%~dp0" bash ./Katcha.sh
+rem %~dp0 resolves the launcher location even when opened from a WSL UNC path.
+powershell.exe -NoProfile -File "%~dp0Katcha.ps1"
 if errorlevel 1 pause

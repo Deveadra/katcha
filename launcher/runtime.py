@@ -132,12 +132,11 @@ class Runtime:
             component=component,
             phase=self.phase,
             message=self.redact(message),
-            **details,
+            **{
+                key: self.redact(value) if isinstance(value, str) else value
+                for key, value in details.items()
+            },
         )
-        row = {
-            key: self.redact(value) if isinstance(value, str) else value
-            for key, value in row.items()
-        }
         with self.events_lock:
             self.events.append(row)
         self.logger.info(json.dumps(row))
@@ -324,7 +323,7 @@ class Runtime:
             if (r["Service"] in ("migrate", "minio-init") and r["ExitCode"] != 0)
             or (
                 r["Service"] not in ("migrate", "minio-init")
-                and (r["State"] != "running" or r["Health"] == "unhealthy")
+                and (r["State"] != "running" or r["Health"] not in (None, "", "healthy"))
             )
         ]
         connection = http.client.HTTPConnection("127.0.0.1", 8000, timeout=5)
@@ -481,6 +480,7 @@ class Handler(BaseHTTPRequestHandler):
         if not self.path.startswith(("/v1/", "/editing", "/explorer", "/ingestion")):
             return self.send(404, {"error": "Not found"})
         connection = http.client.HTTPConnection("127.0.0.1", 8000, timeout=120)
+        headers_sent = False
         try:
             length = int(self.headers.get("Content-Length", "0"))
             if not 0 <= length <= 10_000_000:
@@ -507,6 +507,7 @@ class Handler(BaseHTTPRequestHandler):
                 ):
                     self.send_header(key, value)
             self.end_headers()
+            headers_sent = True
             while chunk := response.read(65536):
                 self.wfile.write(chunk)
             if response.status >= 500:
@@ -515,9 +516,10 @@ class Handler(BaseHTTPRequestHandler):
                 )
         except (OSError, ValueError) as exc:
             self.server.runtime.event("error", "gateway", str(exc))
-            self.send(
-                502, {"error": "Katcha is unavailable. Open the launch console for diagnostics."}
-            )
+            if not headers_sent:
+                self.send(502, {"error": "Katcha is unavailable. Open the launch console."})
+            else:
+                self.close_connection = True
         finally:
             connection.close()
 

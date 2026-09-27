@@ -1,9 +1,12 @@
 # Katcha application launcher
 
 From the repository on Ubuntu/WSL, open **Katcha.sh** (or run `./Katcha.sh`).
-From a Windows checkout, double-click **Katcha.cmd** using the default WSL distribution.
-For a repository inside WSL, launch `~/src/katcha/Katcha.sh` within that distribution;
-Windows UNC paths are not a supported batch-launch location.
+From Windows, double-click **Katcha.cmd**. Windows checkouts use the default WSL
+distribution; `\\wsl.localhost\Ubuntu\home\...` and `\\wsl$\Ubuntu\home\...` checkouts
+automatically select the matching distribution and Linux directory.
+To add a desktop shortcut, run `powershell.exe -NoProfile -File .\Katcha.ps1 -InstallShortcut`
+from the checkout in PowerShell. Local PowerShell execution policy must permit this script;
+the launcher does not bypass organizational policy.
 
 The launch console opens at **http://localhost:8765**. It starts the full stack,
 checks readiness, and enables **Open workspace** when healthy. No virtualenv,

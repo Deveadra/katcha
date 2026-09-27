@@ -136,3 +136,12 @@ def test_single_operation_lock(tmp_path):
         assert app.operate("start") is False
     finally:
         app.lock.release()
+
+
+def test_redaction_does_not_corrupt_diagnostic_schema(tmp_path):
+    app = instance(tmp_path)
+    app.save({"KATCHA_S3_ACCESS_KEY": "katcha"})
+    app.event("error", "launcher", "value katcha")
+    row = json.loads((app.directory / "events.jsonl").read_text())
+    assert row["schema"] == "katcha.diagnostic.v1"
+    assert row["message"] == "value [REDACTED]"
