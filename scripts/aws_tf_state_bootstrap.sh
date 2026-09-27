@@ -203,12 +203,11 @@ if [[ "${ENCRYPTION}" != "AES256" ]]; then
 fi
 
 POLICY_JSON="$(aws s3api get-bucket-policy --bucket "${BUCKET}" --query Policy --output text)"
-POLICY_OK="$(python3 - <<'PY' <<<"${POLICY_JSON}"
+POLICY_OK="$(POLICY_JSON="${POLICY_JSON}" python3 -c '
 import json
-import sys
+import os
 
-raw = sys.stdin.read()
-policy = json.loads(raw)
+policy = json.loads(os.environ["POLICY_JSON"])
 ok = False
 for statement in policy.get("Statement", []):
     condition = statement.get("Condition", {})
@@ -221,8 +220,7 @@ for statement in policy.get("Statement", []):
         ok = True
         break
 print("true" if ok else "false")
-PY
-)"
+')"
 if [[ "${POLICY_OK}" != "true" ]]; then
     echo "ERROR: HTTPS-only state bucket policy verification failed." >&2
     exit 4
