@@ -135,6 +135,29 @@ jobs:
           docker compose --env-file .env.example -f docker-compose.yml -f docker-compose.discovery.yml config >/dev/null
           docker compose --env-file .env.example -f docker-compose.yml -f docker-compose.trends.yml config >/dev/null
           docker compose --env-file .env.example -f docker-compose.yml -f docker-compose.acceptance.yml config >/dev/null
+          AWS_PROFILE=katcha-ci KATCHA_HOST_UID=1000 KATCHA_HOST_GID=1000 HOME=/tmp docker compose --env-file .env.example -f docker-compose.yml -f docker-compose.aws-render.yml config >/dev/null
+
+
+  terraform:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.16.4"
+
+      - name: Format check
+        run: terraform fmt -check -recursive infra/aws-render-staging
+
+      - name: Initialize without backend
+        run: terraform -chdir=infra/aws-render-staging init -backend=false -input=false
+
+      - name: Validate staging infrastructure
+        run: terraform -chdir=infra/aws-render-staging validate
 
   acceptance-media:
     runs-on: ubuntu-latest

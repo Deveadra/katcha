@@ -14,6 +14,7 @@ import {
   S3Client,
 } from '@aws-sdk/client-s3';
 import {getSignedUrl} from '@aws-sdk/s3-request-presigner';
+import {createCloudAssetUrlResolver} from './cloud-media-staging.mjs';
 import {renderMediaViaLambda} from './lambda-renderer.mjs';
 import {resolveRenderSettings, validateLambdaSettings} from './render-config.mjs';
 
@@ -126,20 +127,33 @@ const verifyRender = (probe, manifest) => {
 const signedGet = (key) =>
   getSignedUrl(s3, new GetObjectCommand({Bucket: bucket, Key: key}), {expiresIn: 3600});
 
+const renderAssetUrl = (
+  renderSettings.backend === 'lambda' && renderSettings.lambda.stagingBucket
+)
+  ? createCloudAssetUrlResolver({
+      sourceClient: s3,
+      sourceBucket: bucket,
+      region: renderSettings.lambda.region,
+      stagingBucket: renderSettings.lambda.stagingBucket,
+      stagingPrefix: renderSettings.lambda.stagingPrefix,
+      expiresInSeconds: renderSettings.lambda.stagingUrlExpiresSeconds,
+    })
+  : signedGet;
+
 const hydrateReactions = async (events = []) =>
   Promise.all(events.map(async (event) => {
     if (!(await exists(event.storage_key))) {
       throw new Error(`missing reaction asset: ${event.storage_key}`);
     }
-    return {...event, url: await signedGet(event.storage_key)};
+    return {...event, url: await renderAssetUrl(event.storage_key)};
   }));
 
 const hydrateShortManifest = async (manifest) => {
-  const sourceUrl = await signedGet(manifest.source.storage_key);
+  const sourceUrl = await renderAssetUrl(manifest.source.storage_key);
   const overlays = await Promise.all(
     (manifest.overlays || []).map(async (overlay) => ({
       ...overlay,
-      url: await signedGet(overlay.asset_key),
+      url: await renderAssetUrl(overlay.asset_key),
     })),
   );
   return {
@@ -153,10 +167,10 @@ const hydrateShortManifest = async (manifest) => {
 const hydrateBlueprintManifest = async (manifest) => {
   const source = {
     ...manifest.source,
-    url: await signedGet(manifest.source.storage_key),
+    url: await renderAssetUrl(manifest.source.storage_key),
   };
   const narration = manifest.narration?.asset_key
-    ? {...manifest.narration, url: await signedGet(manifest.narration.asset_key)}
+    ? {...manifest.narration, url: await renderAssetUrl(manifest.narration.asset_key)}
     : null;
   return {...manifest, source, narration};
 };
@@ -167,14 +181,14 @@ const hydrateRankedEpisodeManifest = async (manifest) => {
       ...item,
       source: {
         ...item.source,
-        url: await signedGet(item.source.storage_key),
+        url: await renderAssetUrl(item.source.storage_key),
       },
     })),
   );
   const overlays = await Promise.all(
     (manifest.overlays || []).map(async (overlay) => ({
       ...overlay,
-      url: await signedGet(overlay.asset_key),
+      url: await renderAssetUrl(overlay.asset_key),
     })),
   );
   return {...manifest, items, overlays, reaction_events: await hydrateReactions(manifest.reaction_events)};
@@ -201,19 +215,19 @@ const hydrateLongformManifest = async (manifest) => {
           ...item,
           clip: {
             ...item.clip,
-            url: await signedGet(item.clip.storage_key),
+            url: await renderAssetUrl(item.clip.storage_key),
           },
         };
       }
       if (item.kind === 'narration' && item.narration?.asset_key) {
         const backgroundUrl = item.narration.background_key
-          ? await signedGet(item.narration.background_key)
+          ? await renderAssetUrl(item.narration.background_key)
           : null;
         return {
           ...item,
           narration: {
             ...item.narration,
-            url: await signedGet(item.narration.asset_key),
+            url: await renderAssetUrl(item.narration.asset_key),
             background_url: backgroundUrl,
           },
         };
@@ -228,7 +242,15 @@ const app = express();
 app.use(express.json({limit: '8mb'}));
 
 app.get('/health', (_request, response) => {
-  response.json({status: 'ok', service: 'katcha-renderer'});
+  response.json({
+    status: 'ok',
+    service: 'katcha-renderer',
+    render_backend: renderSettings.backend,
+    lambda_region: renderSettings.backend === 'lambda' ? renderSettings.lambda.region : null,
+    cloud_staging_enabled: Boolean(
+      renderSettings.backend === 'lambda' && renderSettings.lambda.stagingBucket,
+    ),
+  });
 });
 
 app.post('/thumbnail', async (request, response) => {

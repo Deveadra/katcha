@@ -90,10 +90,56 @@ Record the returned HTTPS Serve URL exactly.
 A Remotion function is version-specific; one function per region/version is sufficient. Redeploy
 the site whenever the Remotion composition code changes.
 
-## Phase 2: Katcha S3 production storage
+## Phase 2A: hybrid local storage with private AWS staging
 
-Production Lambda rendering cannot use the local MinIO endpoint. Katcha must use a cloud-reachable
-Amazon S3 bucket for source media and narration.
+For the current workstation workflow, Katcha can keep MinIO as its canonical object store.
+The renderer stages only the exact video/audio/image objects needed by a Lambda render into
+a private S3 bucket, signs those temporary objects, and leaves lifecycle expiration to S3.
+
+Provision the bucket from the review-first Terraform root:
+
+```bash
+cd ~/src/katcha/infra/aws-render-staging
+terraform init
+terraform plan \
+  -var='expected_account_id=123456789012' \
+  -var='aws_region=us-east-1' \
+  -out=/tmp/katcha-render-staging.tfplan
+terraform show /tmp/katcha-render-staging.tfplan
+```
+
+Apply only after the plan is reviewed. Then set:
+
+```env
+KATCHA_REMOTION_STAGING_BUCKET=katcha-render-staging-123456789012-us-east-1
+KATCHA_REMOTION_STAGING_PREFIX=katcha-render-staging
+KATCHA_REMOTION_STAGING_URL_EXPIRES_SECONDS=3600
+```
+
+The staging URL expiry must exceed Katcha's Lambda wait ceiling by at least five minutes.
+Staged objects are private, encrypted, and expire automatically. Katcha never makes the
+bucket public.
+
+For a local AWS SSO/profile session, start only the renderer with the explicit overlay:
+
+```bash
+export AWS_PROFILE=<dedicated-katcha-profile>
+export KATCHA_HOST_UID="$(id -u)"
+export KATCHA_HOST_GID="$(id -g)"
+
+docker compose \
+  -f docker-compose.yml \
+  -f docker-compose.aws-render.yml \
+  up -d --no-deps --force-recreate renderer
+```
+
+The overlay mounts `$HOME/.aws` read-only and runs the renderer with your host UID/GID so owner-only AWS profile and SSO cache files remain readable without running the container as root. It sets both `AWS_PROFILE` and `REMOTION_AWS_PROFILE`. Refresh SSO on the host before starting the renderer. Do not copy static AWS keys into `.env`.
+
+## Phase 2B: hosted production S3
+
+For a fully hosted deployment, Katcha can instead use Amazon S3 as its canonical object
+store. In that mode staging is unnecessary because the renderer can presign the canonical
+objects directly.
 
 Production settings:
 
@@ -127,8 +173,10 @@ KATCHA_REMOTION_LAMBDA_FRAMES_PER_LAMBDA=20
 KATCHA_REMOTION_LAMBDA_CONCURRENCY_PER_LAMBDA=1
 ```
 
-The renderer validates required Lambda configuration at startup. It also rejects local/private
-media URLs before invoking AWS.
+The renderer validates required Lambda configuration at startup. Without a staging bucket it
+rejects local/private media URLs before invoking AWS. With staging enabled, local MinIO objects
+are copied into private AWS S3 objects first and only the temporary HTTPS presigned URLs are
+sent to Remotion Lambda.
 
 ## Acceptance order
 
@@ -136,12 +184,13 @@ Do not start with a live YouTube production.
 
 1. Validate IAM and quotas.
 2. Deploy the Remotion function and site.
-3. Put a small owned fixture into the Katcha AWS S3 media bucket.
-4. Run a single synthetic ranked render through the normal Katcha HTTP renderer.
-5. Verify the returned metadata says `renderer=remotion-lambda` and `verified=true`.
-6. Download and inspect the resulting Katcha S3 object.
-7. Recover the existing RankSnaxx render lineage using the cloud backend.
-8. Only after visual/audio inspection continue to private YouTube upload.
+3. Provision/review the private staging bucket, or configure canonical AWS S3.
+4. Stage a small owned fixture through the normal Katcha renderer.
+5. Run a single synthetic ranked render through the normal Katcha HTTP renderer.
+6. Verify the returned metadata says `renderer=remotion-lambda` and `verified=true`.
+7. Download and inspect the resulting Katcha object.
+8. Recover the existing RankSnaxx render lineage using the cloud backend.
+9. Only after visual/audio inspection continue to private YouTube upload.
 
 ## Rollback
 
