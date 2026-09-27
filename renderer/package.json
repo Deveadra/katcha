@@ -4,7 +4,7 @@
   "type": "module",
   "scripts": {
     "start": "node src/index.mjs",
-    "test:config": "node test/render-config.mjs && node test/lambda-renderer.mjs",
+    "test:config": "node test/render-config.mjs && node test/lambda-renderer.mjs && node test/remotion-versions.mjs",
     "lambda:policy:user": "remotion lambda policies user",
     "lambda:policy:role": "remotion lambda policies role",
     "lambda:policy:validate": "remotion lambda policies validate"
