@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import uuid
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from types import SimpleNamespace
+from zoneinfo import ZoneInfo
 
 import pytest
 from fastapi.testclient import TestClient
@@ -38,14 +39,15 @@ from katcha.services.packaging_experiments import (
 
 
 @pytest.fixture
-def records(monkeypatch):
+def records(monkeypatch, request):
     engine = create_engine(
         "sqlite://", poolclass=StaticPool, connect_args={"check_same_thread": False}
     )
     db.Base.metadata.create_all(engine)
     factory = sessionmaker(engine, expire_on_commit=False)
     monkeypatch.setattr(db, "SessionLocal", factory)
-    now = datetime.now(UTC)
+    now = getattr(request, "param", datetime.now(UTC))
+    reporting_day = now.astimezone(ZoneInfo("America/Los_Angeles")).date()
     channel_id, publication_id, previous_id, candidate_id, snapshot_id, window_id = (
         uuid.uuid4() for _ in range(6)
     )
@@ -131,8 +133,8 @@ def records(monkeypatch):
                 packaging_variant_id=previous_id,
                 evidence_key="baseline",
                 maturity_days=7,
-                window_start=date.today() - timedelta(days=18),
-                window_end=date.today() - timedelta(days=12),
+                window_start=reporting_day - timedelta(days=18),
+                window_end=reporting_day - timedelta(days=12),
                 impressions=2000,
                 ctr=Decimal("0.06"),
                 average_view_percentage=Decimal("70"),
@@ -172,6 +174,7 @@ def records(monkeypatch):
     yield SimpleNamespace(
         factory=factory,
         now=now,
+        reporting_day=reporting_day,
         channel=channel_id,
         publication=publication_id,
         previous=previous_id,
@@ -277,6 +280,11 @@ def test_demoted_channel_cannot_mutate_automatic_activation(records):
     assert reconcile_packaging_experiment(row.id).status == "needs_review"
 
 
+@pytest.mark.parametrize(
+    "records",
+    [datetime(2026, 9, 27, 1, tzinfo=UTC), datetime(2026, 9, 27, 18, tzinfo=UTC)],
+    indirect=True,
+)
 def test_guardrail_deterioration_requests_same_service_rollback(records):
     row = start_packaging_experiment(records.publication, records.candidate, now=records.now)
     with records.factory.begin() as session:
@@ -288,8 +296,8 @@ def test_guardrail_deterioration_requests_same_service_rollback(records):
             packaging_variant_id=records.candidate,
             evidence_key="candidate",
             maturity_days=7,
-            window_start=date.today() - timedelta(days=8),
-            window_end=date.today() - timedelta(days=2),
+            window_start=records.reporting_day - timedelta(days=8),
+            window_end=records.reporting_day - timedelta(days=2),
             impressions=2000,
             ctr=Decimal("0.08"),
             average_view_percentage=Decimal("58"),
