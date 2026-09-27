@@ -28,6 +28,8 @@ Optional configuration:
   KATCHA_REMOTION_LAMBDA_REGION    AWS region. Default: us-east-1
   KATCHA_AWS_AUTOMATION_ROLE       Dedicated durable renderer role.
                                    Default: KatchaChronosAutomation
+  KATCHA_IAM_PROPAGATION_WAIT_SECONDS
+                                   Wait after IAM role updates. Default: 10
 
 This helper generates both Remotion policies from the renderer's pinned dependencies.
 It attaches the control-plane policy to Katcha's durable automation role and ensures
@@ -89,6 +91,7 @@ EXPECTED_ACCOUNT="${KATCHA_AWS_EXPECTED_ACCOUNT_ID:-$(read_env_key KATCHA_AWS_EX
 BOOTSTRAP_PROFILE="${KATCHA_AWS_BOOTSTRAP_PROFILE:-katcha}"
 REGION="${KATCHA_REMOTION_LAMBDA_REGION:-$(read_env_key KATCHA_REMOTION_LAMBDA_REGION)}"
 AUTOMATION_ROLE="${KATCHA_AWS_AUTOMATION_ROLE:-KatchaChronosAutomation}"
+IAM_PROPAGATION_WAIT_SECONDS="${KATCHA_IAM_PROPAGATION_WAIT_SECONDS:-10}"
 REGION="${REGION:-us-east-1}"
 
 POLICY_NAME="KatchaRemotionControlPlane"
@@ -110,7 +113,12 @@ if [[ ! "${AUTOMATION_ROLE}" =~ ^[A-Za-z0-9+=,.@_-]{1,64}$ ]]; then
     exit 2
 fi
 
-for command in aws npm python3 sha256sum mktemp; do
+if [[ ! "${IAM_PROPAGATION_WAIT_SECONDS}" =~ ^[0-9]+$ ]] || (( IAM_PROPAGATION_WAIT_SECONDS > 60 )); then
+    echo "ERROR: KATCHA_IAM_PROPAGATION_WAIT_SECONDS must be an integer from 0 through 60." >&2
+    exit 2
+fi
+
+for command in aws npm python3 sha256sum mktemp sleep; do
     if ! command -v "${command}" >/dev/null 2>&1; then
         echo "ERROR: required command is not installed: ${command}" >&2
         exit 2
@@ -453,8 +461,10 @@ if [[ "${EXECUTION_ROLE_ARN}" != "${EXPECTED_EXECUTION_ROLE_ARN}" ]]; then
     exit 5
 fi
 
-echo "Waiting briefly for IAM role/trust propagation before Lambda deployment..."
-sleep 10
+if (( IAM_PROPAGATION_WAIT_SECONDS > 0 )); then
+    echo "Waiting ${IAM_PROPAGATION_WAIT_SECONDS}s for IAM role/trust propagation before Lambda deployment..."
+    sleep "${IAM_PROPAGATION_WAIT_SECONDS}"
+fi
 
 echo
 echo "PASS: Remotion control-plane authorization and Lambda execution role are verified."
