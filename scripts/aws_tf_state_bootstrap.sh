@@ -90,7 +90,8 @@ verify_bucket_region() {
 if [[ "${MODE}" == "inspect" ]]; then
     if aws s3api head-bucket --bucket "${BUCKET}" >/dev/null 2>&1; then
         echo "Existing bucket is reachable. Current controls:"
-        echo "  bucket region: $(verify_bucket_region)"
+        INSPECT_BUCKET_REGION="$(verify_bucket_region)"
+        echo "  bucket region: ${INSPECT_BUCKET_REGION}"
         aws s3api get-bucket-versioning --bucket "${BUCKET}" --output json || true
         aws s3api get-public-access-block --bucket "${BUCKET}" --output json || true
         aws s3api get-bucket-encryption --bucket "${BUCKET}" --output json || true
@@ -129,7 +130,8 @@ if ! aws s3api head-bucket --bucket "${BUCKET}" >/dev/null 2>&1; then
     fi
 else
     echo "State bucket already exists and is reachable."
-    echo "Verified existing bucket region: $(verify_bucket_region)"
+    EXISTING_BUCKET_REGION="$(verify_bucket_region)"
+    echo "Verified existing bucket region: ${EXISTING_BUCKET_REGION}"
 fi
 
 aws s3api put-public-access-block   --bucket "${BUCKET}"   --public-access-block-configuration '{"BlockPublicAcls":true,"IgnorePublicAcls":true,"BlockPublicPolicy":true,"RestrictPublicBuckets":true}'
