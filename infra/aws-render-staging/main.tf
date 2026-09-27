@@ -101,14 +101,16 @@ resource "aws_s3_bucket_policy" "secure_transport" {
 
 data "aws_iam_policy_document" "renderer_access" {
   statement {
-    sid    = "ListStagingPrefix"
-    effect = "Allow"
+    sid       = "ReadBucketLocation"
+    effect    = "Allow"
+    actions   = ["s3:GetBucketLocation"]
+    resources = [aws_s3_bucket.render_staging.arn]
+  }
 
-    actions = [
-      "s3:GetBucketLocation",
-      "s3:ListBucket",
-    ]
-
+  statement {
+    sid       = "ListStagingPrefix"
+    effect    = "Allow"
+    actions   = ["s3:ListBucket"]
     resources = [aws_s3_bucket.render_staging.arn]
 
     condition {
