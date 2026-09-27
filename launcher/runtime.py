@@ -40,8 +40,12 @@ FIELDS = {
     "KATCHA_REMOTION_STAGING_BUCKET",
 }
 SENSITIVE = re.compile(r"KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL", re.I)
-CORE_REQUIRED = {"postgres", "temporal", "minio", "api"}
+CORE_REQUIRED = {"postgres", "api"}
 BACKGROUND_SERVICES = (
+    "temporal",
+    "minio",
+    "minio-init",
+    "temporal-ui",
     "worker",
     "analysis-worker",
     "renderer",
@@ -51,14 +55,23 @@ BACKGROUND_SERVICES = (
     "discovery-worker",
     "trends-worker",
     "intelligence-worker",
-    "temporal-ui",
 )
-BACKGROUND_REQUIRED = set(BACKGROUND_SERVICES) - {"temporal-ui"}
-BACKGROUND_BUILD_SERVICES = tuple(
-    service for service in BACKGROUND_SERVICES if service != "temporal-ui"
+BACKGROUND_REQUIRED = set(BACKGROUND_SERVICES) - {"temporal-ui", "minio-init"}
+BACKGROUND_BUILD_SERVICES = (
+    "minio",
+    "minio-init",
+    "worker",
+    "analysis-worker",
+    "renderer",
+    "production-worker",
+    "longform-worker",
+    "publishing-worker",
+    "discovery-worker",
+    "trends-worker",
+    "intelligence-worker",
 )
 ONE_SHOT_SERVICES = {"migrate", "minio-init"}
-CORE_BUILD_SERVICES = ("api", "migrate", "minio-init", "minio")
+CORE_BUILD_SERVICES = ("api", "migrate")
 MISSING_IMAGE = re.compile(
     (
         r"no such image|pull access denied|image .+ not found|"
@@ -533,7 +546,7 @@ class Runtime:
         ]
         connection = http.client.HTTPConnection("127.0.0.1", 8000, timeout=5)
         try:
-            connection.request("GET", "/v1/health/ready")
+            connection.request("GET", "/v1/health/workspace")
             ready = connection.getresponse().status == 200
         finally:
             connection.close()
