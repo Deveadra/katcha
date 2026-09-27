@@ -78,10 +78,15 @@ if __name__ == "__main__":
         state = wait_for("ready", 420)
         assert state["workspace_ready"]
         assert state["desired_running"]
-        assert any(
-            event["message"] == "Reusing unchanged application images."
-            for event in state["events"]
+        # Status retains only 300 events; busy worker logs can evict the build event.
+        journal = [json.loads(line) for line in request("/runtime/diagnostics").splitlines()]
+        last_start = max(
+            index for index, event in enumerate(journal)
+            if event["component"] == "launcher" and event["message"] == "start requested"
         )
+        messages = [event["message"] for event in journal[last_start:]]
+        assert "Reusing unchanged application images." in messages
+        assert "Preparing new or changed application images." not in messages
         print(f"Warm restart readiness: {time.monotonic() - warm_started:.2f}s", flush=True)
         request("/runtime/stop", {})
         state = wait_for("stopped", 120)
