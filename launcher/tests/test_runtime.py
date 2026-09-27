@@ -407,3 +407,81 @@ def test_background_failure_preserves_workspace_access(tmp_path):
     assert app.workspace_ready is True
     assert app.phase == "degraded"
     assert app.stage == "background capability warm-up failed"
+
+
+
+def test_visible_services_color_code_and_missing_dependencies(tmp_path):
+    app = instance(tmp_path)
+    app.services = [
+        {"Service": "api", "State": "running", "Health": "healthy", "ExitCode": 0},
+        {"Service": "renderer", "State": "running", "Health": "starting", "ExitCode": 0},
+        {"Service": "worker", "State": "exited", "Health": "", "ExitCode": 1},
+        {"Service": "migrate", "State": "exited", "Health": "", "ExitCode": 0},
+    ]
+    rows = {row["Service"]: row for row in app.visible_services()}
+    assert rows["api"]["StatusColor"] == "green"
+    assert rows["renderer"]["StatusColor"] == "yellow"
+    assert rows["worker"]["StatusColor"] == "red"
+    assert rows["migrate"]["StatusColor"] == "green"
+    assert rows["temporal"]["StatusColor"] == "red"
+    assert rows["temporal"]["Missing"] is True
+
+
+def test_service_repair_is_targeted_and_never_runs_global_start(tmp_path):
+    app = instance(tmp_path)
+    calls = []
+
+    def fake_run(args, **_kwargs):
+        calls.append(args)
+        if "ps" in args:
+            return "[]"
+        return ""
+
+    with patch.object(app, "run", side_effect=fake_run), patch.object(app, "check"):
+        assert app.repair_service("renderer", "restart")
+        thread = app.lock
+        for _ in range(100):
+            if not thread.locked():
+                break
+            runtime.time.sleep(0.01)
+
+    commands = calls
+    assert any("restart" in cmd and cmd[-1] == "renderer" for cmd in commands)
+    assert not any("build" in cmd for cmd in commands)
+    assert not any("up" in cmd for cmd in commands)
+
+
+def test_service_rebuild_only_builds_selected_image(tmp_path):
+    app = instance(tmp_path)
+    calls = []
+
+    def fake_run(args, **_kwargs):
+        calls.append(args)
+        return ""
+
+    with patch.object(app, "run", side_effect=fake_run), patch.object(app, "check"):
+        assert app.repair_service("renderer", "rebuild")
+        for _ in range(100):
+            if not app.lock.locked():
+                break
+            runtime.time.sleep(0.01)
+
+    assert any(cmd[-2:] == ["build", "renderer"] for cmd in calls)
+    assert any("force-recreate" in cmd and cmd[-1] == "renderer" for cmd in calls)
+    assert not any(cmd[-1:] == ["build"] for cmd in calls)
+
+
+def test_shared_core_rebuild_builds_api_image_for_worker_only(tmp_path):
+    app = instance(tmp_path)
+    calls = []
+
+    with patch.object(app, "run", side_effect=lambda args, **_kwargs: calls.append(args) or ""), \
+         patch.object(app, "check"):
+        assert app.repair_service("discovery-worker", "rebuild")
+        for _ in range(100):
+            if not app.lock.locked():
+                break
+            runtime.time.sleep(0.01)
+
+    assert any(cmd[-2:] == ["build", "api"] for cmd in calls)
+    assert any(cmd[-1] == "discovery-worker" and "force-recreate" in cmd for cmd in calls)
