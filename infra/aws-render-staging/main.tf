@@ -1,5 +1,9 @@
 data "aws_caller_identity" "current" {}
 
+data "aws_iam_role" "renderer" {
+  name = var.renderer_role_name
+}
+
 locals {
   bucket_name = coalesce(
     var.bucket_name,
@@ -132,5 +136,23 @@ data "aws_iam_policy_document" "renderer_access" {
     resources = [
       "${aws_s3_bucket.render_staging.arn}/${trim(var.staging_prefix, "/")}/*",
     ]
+  }
+}
+
+resource "aws_iam_role_policy" "renderer_staging_access" {
+  name   = "KatchaRenderStagingAccess"
+  role   = data.aws_iam_role.renderer.name
+  policy = data.aws_iam_policy_document.renderer_access.json
+
+  lifecycle {
+    precondition {
+      condition     = data.aws_caller_identity.current.account_id == var.expected_account_id
+      error_message = "Refusing to attach staging permissions in an unexpected AWS account."
+    }
+
+    precondition {
+      condition     = startswith(data.aws_iam_role.renderer.arn, "arn:aws:iam::${var.expected_account_id}:role/")
+      error_message = "Resolved renderer role does not belong to the expected AWS account."
+    }
   }
 }
