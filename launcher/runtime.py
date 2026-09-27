@@ -265,6 +265,47 @@ class Runtime:
             digest.update(path.read_bytes())
         return digest.hexdigest()
 
+    def core_build_fingerprint(self):
+        """Hash only inputs needed by the interactive API/runtime image."""
+        digest = hashlib.sha256()
+        paths = [
+            self.root / "Dockerfile",
+            self.root / "pyproject.toml",
+            self.root / "README.md",
+            self.root / "alembic.ini",
+            self.root / "docker-compose.yml",
+            self.root / "docker-compose.app.yml",
+        ]
+        for name in ("src", "migrations"):
+            paths.extend((self.root / name).rglob("*"))
+        for path in sorted(set(paths)):
+            if not path.is_file() or any(
+                part in {"node_modules", "__pycache__", ".cache"} for part in path.parts
+            ) or path.suffix == ".pyc":
+                continue
+            digest.update(str(path.relative_to(self.root)).encode())
+            digest.update(path.read_bytes())
+        return digest.hexdigest()
+
+    def prepare_core_image(self):
+        fingerprint = self.core_build_fingerprint()
+        stamp = self.directory / "core-build-fingerprint"
+        cached = stamp.exists() and stamp.read_text() == fingerprint
+        if cached:
+            try:
+                self.run(["docker", "image", "inspect", "katcha-python-core:local"], capture=True)
+            except RuntimeError:
+                cached = False
+        if cached:
+            self.event("info", "launcher", "Reusing unchanged interactive core image.")
+            return
+        self.stage = "preparing interactive core"
+        self.event("info", "launcher", "Preparing the interactive Katcha core image.")
+        self.run(self.command() + ["build", "api"], timeout=1200)
+        temporary = stamp.with_suffix(".pending")
+        temporary.write_text(fingerprint)
+        temporary.replace(stamp)
+
     def prepare_images(self):
         fingerprint = self.build_fingerprint()
         stamp = self.directory / "build-fingerprint"
@@ -323,26 +364,58 @@ class Runtime:
                 return
             self.stage = "validating configuration"
             self.run(self.command() + ["config", "--quiet"])
+
+            # Boot the interactive shell first. The API is intentionally decoupled from
+            # Temporal/MinIO in the application overlay so heavy production capabilities
+            # cannot block the operator from entering Katcha.
+            self.prepare_core_image()
+            self.stage = "starting interactive core"
+            self.event("info", "launcher", "Starting the interactive Katcha core.")
+            self.run(
+                self.command()
+                + [
+                    "up",
+                    "-d",
+                    "--no-build",
+                    "--wait",
+                    "--wait-timeout",
+                    "120",
+                    "api",
+                ],
+                timeout=180,
+            )
+            if not self.probe_workspace():
+                raise RuntimeError("Interactive API started but did not become reachable.")
+            self.start_logs()
+            self.stage = "warming background capabilities"
+            self.event(
+                "info",
+                "launcher",
+                "Workspace is ready; background production capabilities are warming.",
+            )
+
+            # The expensive renderer and worker images prepare only after the UI is usable.
             self.prepare_images()
-            self.stage = "starting services"
-            self.event("info", "launcher", "Starting services and waiting for health checks.")
+            self.stage = "starting background capabilities"
+            self.event("info", "launcher", "Starting background production capabilities.")
             self.run(
                 self.command() + ["up", "-d", "--no-build", "--wait", "--wait-timeout", "300"],
                 timeout=420,
             )
-            self.stage = "checking readiness"
-            self.start_logs()
+            self.stage = "checking full readiness"
             self.check()
             if self.phase != "ready":
                 raise RuntimeError(
-                    "Services started but readiness failed; inspect the service list."
+                    "Workspace is available but background capability readiness failed."
                 )
             self.stage = "ready"
             self.retry_delay = 10
-            self.event("info", "launcher", "Katcha is ready")
+            self.event("info", "launcher", "Katcha is fully ready")
         except Exception:
-            self.phase = "failed"
-            self.stage = "failed"
+            self.phase = "degraded" if self.workspace_ready else "failed"
+            self.stage = (
+                "background capability warm-up failed" if self.workspace_ready else "failed"
+            )
             self.event(
                 "error",
                 "launcher",
@@ -484,7 +557,7 @@ class Runtime:
     def probe_workspace(self):
         connection = http.client.HTTPConnection("127.0.0.1", 8000, timeout=2)
         try:
-            connection.request("GET", "/v1/health/ready")
+            connection.request("GET", "/v1/health/live")
             self.workspace_ready = connection.getresponse().status == 200
         except (OSError, http.client.HTTPException):
             self.workspace_ready = False
