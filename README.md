@@ -1,5 +1,12 @@
 # Katcha
 
+## Launch the application
+
+Run `./Katcha.sh` from Ubuntu/WSL to open the local launch console. It manages the
+full service stack, saved connections, workspace access, and diagnostic export.
+See [application launcher](docs/application-launcher.md) for setup and recovery.
+
+
 Katcha is a standalone, automation-first video intelligence, production, publishing, analytics, and channel-learning system.
 
 It turns canonical source clips into Shorts and long-form compilations, publishes through durable YouTube workflows, measures real outcomes, and feeds those outcomes back into channel-specific ranking, scheduling, budget, and automation policy.
