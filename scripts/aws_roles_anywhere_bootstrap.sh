@@ -287,11 +287,33 @@ aws configure set credential_process "${credential_process}" --profile "${AUTOMA
 chmod 600 "${HOME}/.aws/config"
 
 echo "Validating durable credential_process profile..."
-DURABLE_ACCOUNT="$(
-    aws sts get-caller-identity         --profile "${AUTOMATION_PROFILE}"         --region "${REGION}"         --query Account         --output text
-)"
+DURABLE_ACCOUNT=""
+for attempt in {1..12}; do
+    if DURABLE_ACCOUNT="$(
+        aws sts get-caller-identity \
+            --profile "${AUTOMATION_PROFILE}" \
+            --region "${REGION}" \
+            --query Account \
+            --output text 2>/dev/null
+    )"; then
+        break
+    fi
+    if [[ "${attempt}" -eq 12 ]]; then
+        echo "ERROR: durable profile did not become usable after IAM/Roles Anywhere propagation." >&2
+        aws sts get-caller-identity \
+            --profile "${AUTOMATION_PROFILE}" \
+            --region "${REGION}" || true
+        exit 6
+    fi
+    sleep 5
+done
+
 DURABLE_ARN="$(
-    aws sts get-caller-identity         --profile "${AUTOMATION_PROFILE}"         --region "${REGION}"         --query Arn         --output text
+    aws sts get-caller-identity \
+        --profile "${AUTOMATION_PROFILE}" \
+        --region "${REGION}" \
+        --query Arn \
+        --output text
 )"
 
 if [[ "${DURABLE_ACCOUNT}" != "${EXPECTED_ACCOUNT}" ]]; then
