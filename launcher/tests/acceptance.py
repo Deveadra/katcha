@@ -43,6 +43,15 @@ def wait_for(target, seconds):
 if __name__ == "__main__":
     process = subprocess.Popen(["python3", "launcher/runtime.py", "--no-browser"])
     try:
+        deadline = time.monotonic() + 30
+        while True:
+            try:
+                request("/runtime/start", {})
+                break
+            except OSError:
+                if time.monotonic() >= deadline:
+                    raise
+                time.sleep(0.5)
         state = wait_for("ready", 1800)
         assert len(state["services"]) >= 15
         assert b"Editing control center" in request("/editing/assets/editing.html")
