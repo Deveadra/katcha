@@ -3,8 +3,8 @@ services:
     user: ${KATCHA_HOST_UID:?Set KATCHA_HOST_UID to id -u}:${KATCHA_HOST_GID:?Set KATCHA_HOST_GID to id -g}
     environment:
       HOME: /tmp/katcha-home
-      AWS_PROFILE: ${KATCHA_AWS_PROFILE:-${AWS_PROFILE:?Set KATCHA_AWS_PROFILE or AWS_PROFILE to the dedicated Katcha/Remotion AWS profile}}
-      REMOTION_AWS_PROFILE: ${KATCHA_AWS_PROFILE:-${AWS_PROFILE:?Set KATCHA_AWS_PROFILE or AWS_PROFILE to the dedicated Katcha/Remotion AWS profile}}
+      AWS_PROFILE: ${KATCHA_AWS_PROFILE:-${AWS_PROFILE:-katcha-automation}}
+      REMOTION_AWS_PROFILE: ${KATCHA_AWS_PROFILE:-${AWS_PROFILE:-katcha-automation}}
       AWS_SDK_LOAD_CONFIG: "1"
       AWS_REGION: ${KATCHA_REMOTION_LAMBDA_REGION:-us-east-1}
       AWS_DEFAULT_REGION: ${KATCHA_REMOTION_LAMBDA_REGION:-us-east-1}
