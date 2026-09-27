@@ -159,7 +159,9 @@ as described in `infra/aws-render-staging/README.md`:
 
 ```bash
 cd ~/src/katcha/infra/aws-render-staging
-AWS_PROFILE=katcha terraform plan \
+export AWS_PROFILE=katcha
+
+terraform plan \
   -var='expected_account_id=123456789012' \
   -var='aws_region=us-east-1' \
   -var='renderer_role_name=KatchaChronosAutomation' \
