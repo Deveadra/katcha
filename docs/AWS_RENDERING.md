@@ -31,6 +31,17 @@ All Remotion packages are pinned to `4.0.529`. Remotion requires all `remotion` 
 
 Do not independently bump one Remotion package.
 
+## Authentication prerequisite
+
+For unattended rendering from Chronos/WSL, do not use `aws login` as the runtime
+credential source. Configure the dedicated IAM Roles Anywhere profile first by
+following [`AWS_AUTHENTICATION.md`](AWS_AUTHENTICATION.md). That path uses
+short-lived credentials obtained through `credential_process` and keeps long-lived
+AWS access keys out of Katcha.
+
+The interactive `katcha` profile remains appropriate for initial bootstrap,
+reviewed infrastructure changes, and break-glass administration.
+
 ## Phase 0: no-write preflight
 
 From `~/src/katcha/renderer`:
@@ -140,20 +151,33 @@ The staging URL expiry must exceed Katcha's Lambda wait ceiling by at least five
 Staged objects are private, encrypted, and expire automatically. Katcha never makes the
 bucket public.
 
-For a local AWS SSO/profile session, start only the renderer with the explicit overlay:
+For the durable Chronos IAM Roles Anywhere profile, export the values produced by
+`scripts/aws_roles_anywhere_bootstrap.sh --apply` and start only the renderer with
+both AWS overlays:
 
 ```bash
-export AWS_PROFILE=<dedicated-katcha-profile>
+export AWS_PROFILE=katcha-automation
 export KATCHA_HOST_UID="$(id -u)"
 export KATCHA_HOST_GID="$(id -g)"
+export KATCHA_AWS_SIGNING_HELPER_PATH="$HOME/.local/bin/aws_signing_helper"
+export KATCHA_AWS_CERT_PATH="$HOME/.aws/katcha-roles-anywhere/runtime/client.pem"
+export KATCHA_AWS_PRIVATE_KEY_PATH="$HOME/.aws/katcha-roles-anywhere/runtime/client-key.pem"
 
 docker compose \
   -f docker-compose.yml \
   -f docker-compose.aws-render.yml \
+  -f docker-compose.aws-roles-anywhere.yml \
   up -d --no-deps --force-recreate renderer
 ```
 
-The overlay mounts `$HOME/.aws` read-only and runs the renderer with your host UID/GID so owner-only AWS profile and SSO cache files remain readable without running the container as root. It sets both `AWS_PROFILE` and `REMOTION_AWS_PROFILE`. Refresh SSO on the host before starting the renderer. Do not copy static AWS keys into `.env`.
+The base AWS overlay mounts `$HOME/.aws` read-only and runs the renderer with your
+host UID/GID. The Roles Anywhere overlay additionally mirrors the signing helper,
+workload certificate, and workload private key at the exact absolute paths referenced
+by the profile's `credential_process`. All three are read-only in the container.
+
+A temporary interactive profile can still use only `docker-compose.aws-render.yml`
+for bootstrap or break-glass work, but unattended Katcha automation must use the
+durable Roles Anywhere path. Do not copy static AWS keys into `.env`.
 
 ## Phase 2B: hosted production S3
 
