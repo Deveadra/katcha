@@ -22,3 +22,11 @@ renderer/reaction-smoke-previews/
 # Explorer browser tests
 web-tests/node_modules/
 web-tests/test-results/
+
+# Terraform transient state/caches. Keep .terraform.lock.hcl committed when generated.
+**/.terraform/
+*.tfstate
+*.tfstate.*
+crash.log
+crash.*.log
+*.tfplan
