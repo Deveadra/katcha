@@ -1,6 +1,22 @@
+data "aws_caller_identity" "current" {}
+
+locals {
+  bucket_name = coalesce(
+    var.bucket_name,
+    "katcha-render-staging-${var.expected_account_id}-${var.aws_region}",
+  )
+}
+
 resource "aws_s3_bucket" "render_staging" {
-  bucket        = var.bucket_name
+  bucket        = local.bucket_name
   force_destroy = false
+
+  lifecycle {
+    precondition {
+      condition     = data.aws_caller_identity.current.account_id == var.expected_account_id
+      error_message = "Refusing to manage staging resources in an unexpected AWS account."
+    }
+  }
 }
 
 resource "aws_s3_bucket_public_access_block" "render_staging" {
