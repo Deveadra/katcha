@@ -60,6 +60,23 @@ Lambda quota. It contains no resource-creation command.
 
 Do not proceed if any preflight check fails.
 
+## Phase 0.5: durable Terraform state
+
+Before provisioning any Terraform-managed AWS render resources, bootstrap remote S3 state.
+The bootstrap script is inspect-only unless `--apply` is supplied:
+
+```bash
+export KATCHA_AWS_EXPECTED_ACCOUNT_ID=123456789012
+export KATCHA_REMOTION_LAMBDA_REGION=us-east-1
+
+bash scripts/aws_tf_state_bootstrap.sh
+# Review the output.
+bash scripts/aws_tf_state_bootstrap.sh --apply
+```
+
+The state bucket is separate from both Katcha media and Remotion render buckets. It has
+versioning enabled and Terraform uses the S3 backend's native lockfile support.
+
 ## Phase 1: Remotion infrastructure
 
 This section creates AWS resources and must be run intentionally.
@@ -96,11 +113,11 @@ For the current workstation workflow, Katcha can keep MinIO as its canonical obj
 The renderer stages only the exact video/audio/image objects needed by a Lambda render into
 a private S3 bucket, signs those temporary objects, and leaves lifecycle expiration to S3.
 
-Provision the bucket from the review-first Terraform root:
+Provision the bucket from the review-first Terraform root after remote state is initialized
+as described in `infra/aws-render-staging/README.md`:
 
 ```bash
 cd ~/src/katcha/infra/aws-render-staging
-terraform init
 terraform plan \
   -var='expected_account_id=123456789012' \
   -var='aws_region=us-east-1' \
