@@ -94,8 +94,14 @@ export const renderMediaViaLambda = async ({
     isProduction: true,
   });
 
+  console.log(
+    `lambda render launched render_id=${launch.renderId} region=${lambda.region}`,
+  );
+
   const deadline = Date.now() + lambda.maxWaitMs;
   let progress = null;
+  let lastProgressReportAt = 0;
+  let lastReportedPercent = -1;
   while (Date.now() < deadline) {
     progress = await getRenderProgress({
       renderId: launch.renderId,
@@ -104,6 +110,25 @@ export const renderMediaViaLambda = async ({
       region: lambda.region,
       logLevel: 'info',
     });
+
+    const now = Date.now();
+    const percent = Math.max(
+      0,
+      Math.min(100, Math.floor(Number(progress.overallProgress || 0) * 100)),
+    );
+    if (
+      percent >= lastReportedPercent + 10
+      || now - lastProgressReportAt >= 30000
+      || progress.done
+    ) {
+      console.log(
+        `lambda render progress render_id=${launch.renderId} progress=${percent}% `
+        + `frames=${Number(progress.framesRendered || 0)} `
+        + `lambdas=${Number(progress.lambdasInvoked || 0)}`,
+      );
+      lastProgressReportAt = now;
+      lastReportedPercent = percent;
+    }
 
     if (progress.fatalErrorEncountered) {
       const detail = errorSummary(progress.errors);
