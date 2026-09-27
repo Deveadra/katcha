@@ -17,3 +17,13 @@ output "renderer_iam_policy_json" {
   description = "Least-privilege S3 policy document to attach to the renderer's AWS principal."
   value       = data.aws_iam_policy_document.renderer_access.json
 }
+
+output "renderer_role_arn" {
+  description = "Existing durable renderer role receiving staging access."
+  value       = data.aws_iam_role.renderer.arn
+}
+
+output "renderer_staging_policy_name" {
+  description = "Inline IAM policy name attached to the durable renderer role."
+  value       = aws_iam_role_policy.renderer_staging_access.name
+}
