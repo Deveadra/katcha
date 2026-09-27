@@ -179,28 +179,36 @@ read-only.
 ## 6. Authorization is the next gate
 
 A successful Roles Anywhere setup proves only that Katcha can obtain temporary AWS
-credentials for the dedicated role.
+credentials for the dedicated role. The role is intentionally created with no
+resource permissions.
 
-Before Remotion infrastructure deployment or cloud rendering, separately review and
-apply the required permissions:
+Use the authorization helper from the repository root:
 
 ```bash
-cd ~/src/katcha/renderer
-
-npm install
-npm run lambda:policy:user > /tmp/remotion-user-policy.json
-npm run lambda:policy:role > /tmp/remotion-role-policy.json
+bash scripts/aws_render_authorize.sh
 ```
 
-Review both files before attaching or applying anything.
+That invocation is inspect-only. It verifies the bootstrap account and dedicated
+role, generates the Remotion control-plane policy from the pinned renderer
+dependencies, and prints the policy hash and exact action list.
 
-The Katcha render-staging bucket policy is also generated separately from
-`infra/aws-render-staging`. Keep those permissions scoped to the dedicated
-automation role.
+After reviewing that output:
+
+```bash
+bash scripts/aws_render_authorize.sh --apply
+```
+
+The helper attaches only the Remotion **control-plane/user** policy to
+`KatchaChronosAutomation`. It does not attach the Remotion Lambda execution-role
+policy and it does not grant access to the Katcha staging bucket.
+
+The staging-bucket permission document is generated separately by
+`infra/aws-render-staging` after that bucket exists. Keeping those permissions
+separate makes the control-plane and Katcha media-access boundaries auditable.
 
 After authorization is configured, return to
-[`AWS_RENDERING.md`](AWS_RENDERING.md) and run the no-write preflight before
-creating Remotion resources.
+[`AWS_RENDERING.md`](AWS_RENDERING.md) and run the no-write preflight using the
+durable `katcha-automation` profile before creating Remotion resources.
 
 ## Rotation
 
