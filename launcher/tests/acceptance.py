@@ -48,7 +48,7 @@ if __name__ == "__main__":
             try:
                 request("/runtime/start", {})
                 break
-            except OSError:
+            except (OSError, RuntimeError):
                 if time.monotonic() >= deadline:
                     raise
                 time.sleep(0.5)
