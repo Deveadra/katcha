@@ -24,7 +24,7 @@ def request(path, body=None):
         connection.close()
 
 
-def wait_for(target, seconds):
+def wait_for(target, seconds, background=None):
     deadline = time.monotonic() + seconds
     while time.monotonic() < deadline:
         try:
@@ -32,7 +32,9 @@ def wait_for(target, seconds):
         except OSError:
             time.sleep(2)
             continue
-        if snapshot["phase"] == target:
+        if snapshot["phase"] == target and (
+            background is None or snapshot.get("background_phase") == background
+        ):
             return snapshot
         if snapshot["phase"] == "failed":
             raise RuntimeError(json.dumps(snapshot["events"][-20:], indent=2))
@@ -52,10 +54,11 @@ if __name__ == "__main__":
                 if time.monotonic() >= deadline:
                     raise
                 time.sleep(0.5)
-        state = wait_for("ready", 1800)
-        assert len(state["services"]) >= 15
+        workspace = wait_for("ready", 1800)
         assert b"Editing control center" in request("/editing/assets/editing.html")
         assert isinstance(json.loads(request("/v1/channels")), list)
+        state = wait_for("ready", 1800, background="ready")
+        assert len(state["services"]) >= 15
         volume_args = [
             "docker",
             "volume",
@@ -70,7 +73,10 @@ if __name__ == "__main__":
         request("/runtime/stop", {})
         wait_for("stopped", 120)
         assert subprocess.check_output(volume_args, text=True) == before
-        print("Full application startup, authenticated GUI/API, and non-destructive stop passed.")
+        print(
+            "Workspace-first startup, background engine warmup, authenticated GUI/API, "
+            "and non-destructive stop passed."
+        )
     finally:
         process.terminate()
         process.wait(timeout=10)
