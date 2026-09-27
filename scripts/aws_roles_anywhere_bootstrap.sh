@@ -55,6 +55,7 @@ HELPER_PATH="${HOME}/.local/bin/aws_signing_helper"
 
 CA_DIR="${ROLES_DIR}/ca"
 RUNTIME_DIR="${ROLES_DIR}/runtime"
+ENV_BACKUP_DIR="${ROLES_DIR}/env-backups"
 CA_KEY="${CA_DIR}/root-ca-key.pem"
 CA_CERT="${CA_DIR}/root-ca.pem"
 CLIENT_KEY="${RUNTIME_DIR}/client-key.pem"
@@ -154,8 +155,8 @@ if [[ "${APPLY}" != "true" ]]; then
 fi
 
 umask 077
-mkdir -p "${CA_DIR}" "${RUNTIME_DIR}" "$(dirname "${HELPER_PATH}")" "${HOME}/.aws"
-chmod 700 "${ROLES_DIR}" "${CA_DIR}" "${RUNTIME_DIR}" "${HOME}/.aws"
+mkdir -p "${CA_DIR}" "${RUNTIME_DIR}" "${ENV_BACKUP_DIR}" "$(dirname "${HELPER_PATH}")" "${HOME}/.aws"
+chmod 700 "${ROLES_DIR}" "${CA_DIR}" "${RUNTIME_DIR}" "${ENV_BACKUP_DIR}" "${HOME}/.aws"
 
 cert_files=("${CA_KEY}" "${CA_CERT}" "${CLIENT_KEY}" "${CLIENT_CERT}")
 present=0
@@ -353,10 +354,10 @@ else
 fi
 
 if [[ "${env_existed}" == "true" ]]; then
-    env_backup="${ENV_FILE}.bak.$(date +%Y%m%d%H%M%S)"
+    env_backup="${ENV_BACKUP_DIR}/katcha.env.$(date +%Y%m%d%H%M%S).bak"
     cp -a "${ENV_FILE}" "${env_backup}"
     chmod 600 "${env_backup}"
-    echo "Backed up Katcha env file to ${env_backup}"
+    echo "Backed up Katcha env file outside the repository: ${env_backup}"
 fi
 
 HOST_UID="$(id -u)"
