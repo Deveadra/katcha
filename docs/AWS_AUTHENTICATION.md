@@ -124,7 +124,8 @@ KATCHA_AWS_PRIVATE_KEY_PATH=/home/<user>/.aws/katcha-roles-anywhere/runtime/clie
 Those entries contain an account guard, profile name, numeric UID/GID, and file
 paths. They are not AWS access credentials. The private key itself remains outside
 the repository with owner-only permissions. If `.env` already exists, the script
-backs it up before changing only these managed keys.
+backs it up under `~/.aws/katcha-roles-anywhere/env-backups/` before changing only
+these managed keys, so a secret-bearing env backup is never placed in the repository.
 
 This persistence is what removes the need for per-shell AWS exports during normal
 Docker Compose automation.
