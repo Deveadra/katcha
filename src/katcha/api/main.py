@@ -192,6 +192,17 @@ def ai_runtime() -> dict[str, object]:
     }
 
 
+@app.get("/v1/health/workspace", response_model=HealthResponse)
+def workspace_ready() -> HealthResponse:
+    """Readiness for the operator workspace; execution engines may still be warming."""
+    try:
+        with session_scope() as session:
+            session.execute(text("SELECT 1"))
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"database unavailable: {exc}") from exc
+    return HealthResponse(status="ok", version=__version__)
+
+
 @app.get("/v1/health/ready", response_model=HealthResponse)
 async def ready() -> HealthResponse:
     try:
