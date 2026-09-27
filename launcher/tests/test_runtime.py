@@ -161,14 +161,19 @@ def test_start_builds_before_starting_services_and_reports_stage(tmp_path):
     with (
         patch.object(app, "run", side_effect=fake_run),
         patch.object(app, "start_logs"),
+        patch.object(app, "probe_workspace", return_value=True),
         patch.object(app, "check", side_effect=lambda: setattr(app, "phase", "ready")),
     ):
         app._operate("start")
 
-    build = next(cmd for cmd in calls if cmd[-1:] == ["build"])
-    up = next(cmd for cmd in calls if "up" in cmd)
-    assert build
-    assert "--build" not in up
+    core_build = next(cmd for cmd in calls if cmd[-2:] == ["build", "api"])
+    full_build = next(cmd for cmd in calls if cmd[-1:] == ["build"])
+    up_commands = [cmd for cmd in calls if "up" in cmd]
+    assert core_build
+    assert full_build
+    assert len(up_commands) == 2
+    assert up_commands[0][-1] == "api"
+    assert all("--build" not in cmd for cmd in up_commands)
     assert app.phase == "ready"
     assert app.stage == "ready"
     assert app.snapshot()["operation_elapsed_seconds"] is None
@@ -352,3 +357,53 @@ def test_unhealthy_running_containers_are_not_restart_looped(tmp_path):
     with patch.object(app, "probe_workspace"), patch.object(app, "operate") as operate:
         app.monitor_once()
         operate.assert_not_called()
+
+
+
+def test_core_image_cache_is_independent_of_renderer(tmp_path):
+    app = instance(tmp_path)
+    source = tmp_path / "src"
+    source.mkdir()
+    (source / "app.py").write_text("version = 1")
+    renderer = tmp_path / "renderer"
+    renderer.mkdir()
+    (renderer / "package.json").write_text('{"version":"1"}')
+
+    with patch.object(app, "run", return_value="") as run:
+        app.prepare_core_image()
+        assert any(call.args[0][-2:] == ["build", "api"] for call in run.call_args_list)
+        run.reset_mock()
+        app.prepare_core_image()
+        assert not any(call.args[0][-2:] == ["build", "api"] for call in run.call_args_list)
+        (renderer / "package.json").write_text('{"version":"2"}')
+        app.prepare_core_image()
+        assert not any(call.args[0][-2:] == ["build", "api"] for call in run.call_args_list)
+        (source / "app.py").write_text("version = 2")
+        app.prepare_core_image()
+        assert any(call.args[0][-2:] == ["build", "api"] for call in run.call_args_list)
+
+
+def test_background_failure_preserves_workspace_access(tmp_path):
+    app = instance(tmp_path)
+    app.lock.acquire()
+    calls = []
+
+    def fake_run(args, **_kwargs):
+        calls.append(args)
+        if "version" in args:
+            return "2.30.0"
+        if args[-1:] == ["build"] and args[-2:] != ["build", "api"]:
+            raise RuntimeError("renderer build failed")
+        return ""
+
+    with (
+        patch.object(app, "run", side_effect=fake_run),
+        patch.object(app, "start_logs"),
+        patch.object(app, "probe_workspace", return_value=True),
+    ):
+        app.workspace_ready = True
+        app._operate("start")
+
+    assert app.workspace_ready is True
+    assert app.phase == "degraded"
+    assert app.stage == "background capability warm-up failed"
