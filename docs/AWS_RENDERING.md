@@ -103,20 +103,16 @@ Do not proceed if any preflight check fails.
 
 ## Phase 0.5: durable Terraform state
 
-Before provisioning any Terraform-managed AWS render resources, bootstrap remote S3 state.
-The bootstrap script is inspect-only unless `--apply` is supplied:
+Terraform state must be remote before Katcha provisions cloud-render staging. The
+staging orchestration helper exposes state bootstrap as a separate explicit write
+gate:
 
 ```bash
-export KATCHA_AWS_EXPECTED_ACCOUNT_ID=123456789012
-export KATCHA_REMOTION_LAMBDA_REGION=us-east-1
-
-bash scripts/aws_tf_state_bootstrap.sh
-# Review the output.
-bash scripts/aws_tf_state_bootstrap.sh --apply
+bash scripts/aws_render_staging.sh --bootstrap-state
 ```
 
-The state bucket is separate from both Katcha media and Remotion render buckets. It has
-versioning enabled and Terraform uses the S3 backend's native lockfile support.
+This creates/repairs only the guarded S3 state bucket. It does not apply the staging
+Terraform root.
 
 ## Phase 1: Remotion infrastructure
 
@@ -163,67 +159,39 @@ sufficient. Redeploy the site whenever the Remotion composition code changes.
 
 ## Phase 2A: hybrid local storage with private AWS staging
 
-For the current workstation workflow, Katcha can keep MinIO as its canonical object store.
-The renderer stages only the exact video/audio/image objects needed by a Lambda render into
-a private S3 bucket, signs those temporary objects, and leaves lifecycle expiration to S3.
+For the current workstation workflow, Katcha keeps MinIO as its canonical object
+store. The renderer stages only the exact source assets needed by a Lambda render into
+the private AWS staging bucket and gives Remotion short-lived HTTPS URLs.
 
-Provision the bucket from the review-first Terraform root after remote state is initialized
-as described in `infra/aws-render-staging/README.md`:
+Generate a reviewable Terraform plan from the repository root:
 
 ```bash
-cd ~/src/katcha/infra/aws-render-staging
-export AWS_PROFILE=katcha
-
-terraform plan \
-  -var='expected_account_id=123456789012' \
-  -var='aws_region=us-east-1' \
-  -var='renderer_role_name=KatchaChronosAutomation' \
-  -out=/tmp/katcha-render-staging.tfplan
-terraform show /tmp/katcha-render-staging.tfplan
+bash scripts/aws_render_staging.sh
 ```
 
-Apply only after the plan is reviewed. The plan should include the private staging
-bucket resources plus one `KatchaRenderStagingAccess` inline policy attached to the
-existing `KatchaChronosAutomation` role. This S3 policy is separate from the
-already-reviewed `KatchaRemotionControlPlane` policy.
+The command prints the full plan and a SHA-256 and performs no apply. After reviewing
+the plan, apply only that exact artifact:
 
-After apply, set:
-
-```env
-KATCHA_REMOTION_STAGING_BUCKET=katcha-render-staging-123456789012-us-east-1
-KATCHA_REMOTION_STAGING_PREFIX=katcha-render-staging
-KATCHA_REMOTION_STAGING_URL_EXPIRES_SECONDS=3600
+```bash
+bash scripts/aws_render_staging.sh --apply <reviewed-plan-sha256>
 ```
 
-The staging URL expiry must exceed Katcha's Lambda wait ceiling by at least five minutes.
-Staged objects are private, encrypted, and expire automatically. Katcha never makes the
-bucket public.
+The helper verifies the resulting bucket, prefix, durable renderer role, staging IAM
+policy, and bucket region before persisting the verified staging settings into the
+ignored local `.env`. It keeps `KATCHA_RENDER_BACKEND=local` unchanged.
+
+The staging URL expiry is automatically kept at least five minutes beyond Katcha's
+Lambda wait ceiling. Staged objects are private, encrypted, prefix-scoped, and expire
+automatically. Katcha never makes the bucket public.
 
 For the durable Chronos IAM Roles Anywhere profile,
-`scripts/aws_roles_anywhere_bootstrap.sh --apply` persists the verified account
-guard, profile name, host UID/GID, and credential-file paths into Katcha's ignored
-local `.env`. No per-shell AWS exports are required during normal automation.
+`scripts/aws_roles_anywhere_bootstrap.sh --apply` has already persisted the profile
+name, host UID/GID, and credential-file paths. No per-shell AWS exports are required
+during normal Compose automation.
 
-Start only the renderer with both AWS overlays:
-
-```bash
-docker compose \
-  -f docker-compose.yml \
-  -f docker-compose.aws-render.yml \
-  -f docker-compose.aws-roles-anywhere.yml \
-  up -d --no-deps --force-recreate renderer
-```
-
-The base AWS overlay mounts `$HOME/.aws` read-only, selects
-`KATCHA_AWS_PROFILE`, and runs the renderer with the persisted host UID/GID. The
-Roles Anywhere overlay additionally mirrors the signing helper, workload
-certificate, and workload private key at the exact absolute paths referenced by the
-profile's `credential_process`. All three are read-only in the container. The
-`.env` contains only the private-key path, never the private-key contents.
-
-A temporary interactive profile can still use only `docker-compose.aws-render.yml`
-for bootstrap or break-glass work, but unattended Katcha automation must use the
-durable Roles Anywhere path. Do not copy static AWS keys into `.env`.
+Cloud-render acceptance will start the renderer with the AWS profile and Roles
+Anywhere overlays. Do not switch the normal renderer to Lambda merely because staging
+has been provisioned.
 
 ## Phase 2B: hosted production S3
 
