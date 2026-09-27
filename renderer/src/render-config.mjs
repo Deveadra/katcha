@@ -38,7 +38,7 @@ export const resolveRenderSettings = (env = process.env) => ({
     ),
     maxWaitMs: positiveInteger(
       env.KATCHA_REMOTION_LAMBDA_MAX_WAIT_MS,
-      1800000,
+      1500000,
       60000,
     ),
     maxRetries: positiveInteger(
