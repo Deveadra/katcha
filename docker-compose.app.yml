@@ -34,6 +34,9 @@ services:
     ports: !reset []
   api:
     restart: unless-stopped
+    depends_on: !override
+      migrate:
+        condition: service_completed_successfully
     logging:
       driver: json-file
       options:
@@ -41,7 +44,7 @@ services:
         max-file: "3"
     ports: !override ["127.0.0.1:8000:8000"]
     healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://localhost:8000/v1/health/ready"]
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/v1/health/workspace"]
       interval: 10s
       timeout: 8s
       retries: 30
