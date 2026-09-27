@@ -104,18 +104,30 @@ The script is deliberately conservative:
 - it reuses complete named resources on rerun;
 - it verifies the final durable profile through STS;
 - it never creates an AWS access key;
-- it never attaches broad Remotion or S3 permissions.
+- it never attaches broad Remotion or S3 permissions;
+- it persists only non-secret runtime metadata into Katcha's ignored local `.env`.
 
-The successful output prints the runtime exports. With default paths they are:
+With the default project layout, the bootstrap writes these values to
+`~/src/katcha/.env`:
 
-```bash
-export AWS_PROFILE=katcha-automation
-export KATCHA_AWS_SIGNING_HELPER_PATH="$HOME/.local/bin/aws_signing_helper"
-export KATCHA_AWS_CERT_PATH="$HOME/.aws/katcha-roles-anywhere/runtime/client.pem"
-export KATCHA_AWS_PRIVATE_KEY_PATH="$HOME/.aws/katcha-roles-anywhere/runtime/client-key.pem"
+```env
+KATCHA_AWS_EXPECTED_ACCOUNT_ID=<verified-account-id>
+KATCHA_REMOTION_LAMBDA_REGION=us-east-1
+KATCHA_AWS_PROFILE=katcha-automation
+KATCHA_HOST_UID=<host-uid>
+KATCHA_HOST_GID=<host-gid>
+KATCHA_AWS_SIGNING_HELPER_PATH=/home/<user>/.local/bin/aws_signing_helper
+KATCHA_AWS_CERT_PATH=/home/<user>/.aws/katcha-roles-anywhere/runtime/client.pem
+KATCHA_AWS_PRIVATE_KEY_PATH=/home/<user>/.aws/katcha-roles-anywhere/runtime/client-key.pem
 ```
 
-These are paths and a profile name, not AWS credentials.
+Those entries contain an account guard, profile name, numeric UID/GID, and file
+paths. They are not AWS access credentials. The private key itself remains outside
+the repository with owner-only permissions. If `.env` already exists, the script
+backs it up before changing only these managed keys.
+
+This persistence is what removes the need for per-shell AWS exports during normal
+Docker Compose automation.
 
 ## 4. Prove that browser login is no longer required
 
@@ -144,18 +156,11 @@ credential helper, workload certificate, and workload private key at their exact
 absolute host paths. This is required because `credential_process` in
 `~/.aws/config` references those paths directly.
 
-Set the host identity and durable-auth paths:
+After the bootstrap succeeds, no per-shell exports are needed for the renderer.
+Docker Compose reads the persisted non-secret metadata from the project's local
+`.env`.
 
-```bash
-export AWS_PROFILE=katcha-automation
-export KATCHA_HOST_UID="$(id -u)"
-export KATCHA_HOST_GID="$(id -g)"
-export KATCHA_AWS_SIGNING_HELPER_PATH="$HOME/.local/bin/aws_signing_helper"
-export KATCHA_AWS_CERT_PATH="$HOME/.aws/katcha-roles-anywhere/runtime/client.pem"
-export KATCHA_AWS_PRIVATE_KEY_PATH="$HOME/.aws/katcha-roles-anywhere/runtime/client-key.pem"
-```
-
-Then start or recreate only the renderer:
+Start or recreate only the renderer:
 
 ```bash
 docker compose \
@@ -165,9 +170,10 @@ docker compose \
   up -d --no-deps --force-recreate renderer
 ```
 
-Do not put the certificate private key in `.env`, the repository, a Docker image,
-or a Compose secret value. The file itself remains outside the repository and is
-mounted read-only.
+Do not put the certificate private-key **contents** in `.env`, the repository,
+a Docker image, or a Compose value. Only its filesystem path is persisted. The key
+file itself remains outside the repository, owner-readable only, and is mounted
+read-only.
 
 ## 6. Authorization is the next gate
 
@@ -214,17 +220,16 @@ aws sts get-caller-identity --profile katcha-automation
 
 ## Rollback
 
-To stop using the durable profile without deleting any AWS resources:
-
-```bash
-unset AWS_PROFILE
-```
-
-Then use the interactive bootstrap profile explicitly when needed:
+To stop using durable authentication for the renderer, switch the local
+`KATCHA_AWS_PROFILE` value in `.env` only as part of a deliberate operator
+change, or omit the Roles Anywhere Compose overlay. The interactive bootstrap
+profile remains available explicitly when needed:
 
 ```bash
 aws sts get-caller-identity --profile katcha
 ```
+
+Do not replace the durable profile with static access keys.
 
 Do not delete the IAM role, trust anchor, Roles Anywhere profile, CA, or workload
 certificate as an incident-response shortcut. Disable or rotate credentials first,
