@@ -1,8 +1,6 @@
 services:
   trends-worker:
-    build:
-      context: .
-      dockerfile: Dockerfile.trends
+    image: katcha-python-core:local
     env_file: ${KATCHA_ENV_FILE:-.env}
     depends_on:
       migrate:
