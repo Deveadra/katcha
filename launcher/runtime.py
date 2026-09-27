@@ -41,6 +41,28 @@ REQUIRED_SERVICES = {
     "intelligence-worker",
 }
 
+ONE_SHOT_SERVICES = {"migrate", "minio-init"}
+VISIBLE_SERVICES = REQUIRED_SERVICES | ONE_SHOT_SERVICES | {"temporal-ui"}
+SHARED_CORE_SERVICES = {
+    "api",
+    "migrate",
+    "minio-init",
+    "worker",
+    "publishing-worker",
+    "discovery-worker",
+    "trends-worker",
+    "intelligence-worker",
+}
+BUILD_SERVICE_FOR = {
+    **{service: "api" for service in SHARED_CORE_SERVICES},
+    "minio": "minio",
+    "analysis-worker": "analysis-worker",
+    "renderer": "renderer",
+    "production-worker": "production-worker",
+    "longform-worker": "longform-worker",
+}
+PULLABLE_SERVICES = {"postgres", "temporal", "temporal-ui"}
+
 FIELDS = {
     "KATCHA_OPENAI_API_KEY",
     "KATCHA_GEMINI_API_KEY",
@@ -325,6 +347,104 @@ class Runtime:
         temporary = stamp.with_suffix(".pending")
         temporary.write_text(fingerprint)
         temporary.replace(stamp)
+
+    def service_actions(self, service):
+        actions = ["restart", "recreate"]
+        if service in BUILD_SERVICE_FOR:
+            actions.append("rebuild")
+        if service in PULLABLE_SERVICES:
+            actions.append("redownload")
+        return actions
+
+    def service_health(self, row):
+        service = row.get("Service")
+        state = str(row.get("State") or "").lower()
+        health = str(row.get("Health") or "").lower()
+        exit_code = row.get("ExitCode")
+        if row.get("Missing"):
+            return "red"
+        if service in ONE_SHOT_SERVICES:
+            return "green" if exit_code == 0 else "red"
+        if state != "running":
+            return "red"
+        if health in {"unhealthy"}:
+            return "red"
+        if health in {"starting", "unknown"}:
+            return "yellow"
+        return "green"
+
+    def visible_services(self):
+        rows = {row.get("Service"): dict(row) for row in self.services if row.get("Service")}
+        for service in sorted(VISIBLE_SERVICES - set(rows)):
+            rows[service] = {
+                "Service": service,
+                "State": "unavailable",
+                "Health": "",
+                "ExitCode": None,
+                "Missing": True,
+            }
+        result = []
+        for service in sorted(rows):
+            row = rows[service]
+            row["StatusColor"] = self.service_health(row)
+            row["Actions"] = self.service_actions(service)
+            result.append(row)
+        return result
+
+    def repair_service(self, service, action):
+        if service not in VISIBLE_SERVICES:
+            raise ValueError("Unknown service")
+        if action not in self.service_actions(service):
+            raise ValueError("Unsupported repair action for service")
+        if not self.lock.acquire(blocking=False):
+            return False
+
+        def repair():
+            try:
+                self.event("info", "repair", f"{action} requested for {service}")
+                if action == "restart":
+                    self.run(self.command() + ["restart", service], timeout=180)
+                elif action == "recreate":
+                    self.run(
+                        self.command()
+                        + ["up", "-d", "--no-deps", "--no-build", "--force-recreate", service],
+                        timeout=240,
+                    )
+                elif action == "rebuild":
+                    build_service = BUILD_SERVICE_FOR[service]
+                    self.run(self.command() + ["build", build_service], timeout=1800)
+                    self.run(
+                        self.command()
+                        + ["up", "-d", "--no-deps", "--no-build", "--force-recreate", service],
+                        timeout=240,
+                    )
+                elif action == "redownload":
+                    self.run(self.command() + ["pull", service], timeout=900)
+                    self.run(
+                        self.command()
+                        + ["up", "-d", "--no-deps", "--force-recreate", service],
+                        timeout=240,
+                    )
+                self.check()
+                self.event("info", "repair", f"{service} repair completed", action=action)
+            except Exception:
+                self.event(
+                    "error",
+                    "repair",
+                    traceback.format_exc(),
+                    service=service,
+                    action=action,
+                    recovery="Try the next stronger per-service repair action or inspect diagnostics.",
+                )
+                try:
+                    self.check()
+                except Exception:
+                    pass
+            finally:
+                self.lock.release()
+
+        threading.Thread(target=repair, daemon=True).start()
+        return True
 
     def operate(self, action):
         if not self.lock.acquire(blocking=False):
@@ -615,7 +735,7 @@ class Runtime:
             stage=self.stage,
             operation_elapsed_seconds=elapsed,
             session=self.session,
-            services=self.services,
+            services=self.visible_services(),
             events=events,
             settings={
                 k: ("configured" if self.values.get(k) else "")
@@ -687,6 +807,14 @@ class Handler(BaseHTTPRequestHandler):
                     path=str(body.get("path", "")).split("?")[0][:200],
                 )
                 return self.send(200, {"ok": True})
+            if self.path == "/runtime/service":
+                if not isinstance(body, dict) or set(body) != {"service", "action"}:
+                    raise ValueError("service and action are required")
+                service = str(body["service"])
+                action = str(body["action"])
+                if not runtime.repair_service(service, action):
+                    return self.send(409, {"error": "Wait for the active operation"})
+                return self.send(202, {"ok": True, "service": service, "action": action})
             if self.path == "/runtime/settings":
                 if not runtime.lock.acquire(blocking=False):
                     return self.send(409, {"error": "Wait for the active operation"})
