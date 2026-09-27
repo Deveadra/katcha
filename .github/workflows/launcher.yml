@@ -1,0 +1,37 @@
+name: Application launcher
+on:
+  pull_request:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  launcher:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install pytest pytest-asyncio ruff
+      - run: ruff check launcher
+      - run: python -m pytest launcher/tests -q
+      - name: Validate complete application service model
+        run: |
+          KATCHA_ENV_FILE=.env.example docker compose --env-file .env.example -f docker-compose.yml -f docker-compose.discovery.yml -f docker-compose.trends.yml -f docker-compose.intelligence.yml -f docker-compose.app.yml config --quiet
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm ci --ignore-scripts
+        working-directory: web-tests
+      - run: npx playwright install --with-deps chromium
+        working-directory: web-tests
+      - run: node launcher.cjs
+        working-directory: web-tests
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: launcher-preview
+          path: web-tests/test-results/launcher*.png
+          if-no-files-found: ignore
