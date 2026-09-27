@@ -111,7 +111,7 @@ if [[ ! "${SITE_NAME}" =~ ^[A-Za-z0-9._-]{1,128}$ ]]; then
     exit 2
 fi
 
-for command in aws node npx npm python3 awk cp date mkdir chmod dirname; do
+for command in aws node npx npm python3 cp date mkdir chmod dirname; do
     if ! command -v "${command}" >/dev/null 2>&1; then
         echo "ERROR: required command is not installed: ${command}" >&2
         exit 2
@@ -141,14 +141,14 @@ PY
 )"
 
 set +e
-REMOTION_VERSION="$(
+REMOTION_TREE="$(
     cd "${RENDERER_DIR}"
-    npx --no-install remotion --version 2>/dev/null
+    npm ls @remotion/cli --depth=0 --json 2>/dev/null
 )"
-REMOTION_VERSION_RC=$?
+REMOTION_TREE_RC=$?
 set -e
 
-if [[ "${REMOTION_VERSION_RC}" -ne 0 ]]; then
+if [[ "${REMOTION_TREE_RC}" -ne 0 || -z "${REMOTION_TREE}" ]]; then
     echo "ERROR: the pinned Remotion CLI is not installed in renderer/node_modules." >&2
     echo "Install renderer dependencies before inspecting or deploying Remotion:" >&2
     echo "  cd ${RENDERER_DIR}" >&2
@@ -157,11 +157,31 @@ if [[ "${REMOTION_VERSION_RC}" -ne 0 ]]; then
     exit 2
 fi
 
-REMOTION_VERSION="$(printf '%s\n' "${REMOTION_VERSION}" | awk 'NF {last=$0} END {print last}')"
+set +e
+REMOTION_VERSION="$(
+    printf '%s' "${REMOTION_TREE}" | python3 -c '
+import json
+import sys
+tree = json.load(sys.stdin)
+print(tree["dependencies"]["@remotion/cli"]["version"])
+'
+)"
+REMOTION_VERSION_RC=$?
+set -e
+
+if [[ "${REMOTION_VERSION_RC}" -ne 0 || -z "${REMOTION_VERSION}" ]]; then
+    echo "ERROR: installed @remotion/cli metadata could not be verified." >&2
+    echo "Reinstall renderer dependencies before continuing:" >&2
+    echo "  cd ${RENDERER_DIR}" >&2
+    echo "  npm install --ignore-scripts" >&2
+    echo "No Lambda or site deployment writes were attempted." >&2
+    exit 2
+fi
+
 if [[ "${REMOTION_VERSION}" != "${EXPECTED_REMOTION_VERSION}" ]]; then
     echo "ERROR: installed Remotion CLI version does not match the pinned renderer dependency." >&2
     echo "  expected: ${EXPECTED_REMOTION_VERSION}" >&2
-    echo "  actual:   ${REMOTION_VERSION:-<empty>}" >&2
+    echo "  actual:   ${REMOTION_VERSION}" >&2
     echo "Reinstall renderer dependencies before continuing:" >&2
     echo "  cd ${RENDERER_DIR}" >&2
     echo "  npm install --ignore-scripts" >&2
