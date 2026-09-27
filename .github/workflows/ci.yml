@@ -127,7 +127,9 @@ jobs:
         run: |
           bash -n scripts/aws_render_preflight.sh
           bash -n scripts/aws_tf_state_bootstrap.sh
+          bash -n scripts/test_aws_tf_state_bootstrap.sh
           bash scripts/aws_tf_state_bootstrap.sh --help >/dev/null
+          bash scripts/test_aws_tf_state_bootstrap.sh
 
       - name: Validate Compose
         env:
