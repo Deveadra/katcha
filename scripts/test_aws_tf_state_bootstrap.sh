@@ -87,10 +87,19 @@ export MOCK_AWS_LOG="${LOG}"
 export MOCK_AWS_STATE="${STATE}"
 export MOCK_AWS_ACCOUNT=123456789012
 export MOCK_AWS_REGION=us-east-1
-export KATCHA_AWS_EXPECTED_ACCOUNT_ID=123456789012
-export KATCHA_REMOTION_LAMBDA_REGION=us-east-1
 
-# Default invocation must be read-only.
+cat >"${TMP}/katcha.env" <<'EOF'
+KATCHA_AWS_EXPECTED_ACCOUNT_ID=123456789012
+KATCHA_REMOTION_LAMBDA_REGION=us-east-1
+KATCHA_AWS_PROFILE=katcha-automation
+EOF
+export KATCHA_ENV_FILE="${TMP}/katcha.env"
+unset KATCHA_AWS_EXPECTED_ACCOUNT_ID
+unset KATCHA_REMOTION_LAMBDA_REGION
+unset KATCHA_AWS_PROFILE
+unset AWS_PROFILE
+
+# Default invocation must be read-only and must resolve durable config from .env.
 bash "${ROOT}/scripts/aws_tf_state_bootstrap.sh" >"${TMP}/inspect.out"
 if grep -Eq 's3api (create-bucket|put-)' "${LOG}"; then
     echo "inspect mode performed an AWS write" >&2
@@ -98,6 +107,8 @@ if grep -Eq 's3api (create-bucket|put-)' "${LOG}"; then
     exit 1
 fi
 grep -q 'INSPECT ONLY: no AWS writes were performed.' "${TMP}/inspect.out"
+grep -q 'profile: katcha-automation' "${TMP}/inspect.out"
+grep -q -- '--profile katcha-automation' "${LOG}"
 
 # Wrong account must fail before any write.
 : >"${LOG}"
@@ -114,7 +125,7 @@ grep -q 'AWS account mismatch' "${TMP}/mismatch.err"
 
 # Correct account apply must create and verify all controls.
 : >"${LOG}"
-export KATCHA_AWS_EXPECTED_ACCOUNT_ID=123456789012
+unset KATCHA_AWS_EXPECTED_ACCOUNT_ID
 bash "${ROOT}/scripts/aws_tf_state_bootstrap.sh" --apply >"${TMP}/apply.out"
 grep -q 'PASS: Terraform state bucket controls verified.' "${TMP}/apply.out"
 for action in     create-bucket     put-public-access-block     put-bucket-ownership-controls     put-bucket-encryption     put-bucket-versioning     put-bucket-tagging     put-bucket-policy; do
@@ -137,4 +148,4 @@ if grep -Eq 's3api put-' "${LOG}"; then
 fi
 grep -q 'state bucket region mismatch' "${TMP}/region.err"
 
-echo "PASS: AWS Terraform state bootstrap is account-guarded, region-guarded, and inspect-only by default."
+echo "PASS: AWS Terraform state bootstrap is durable-profile aware, account-guarded, region-guarded, and inspect-only by default."

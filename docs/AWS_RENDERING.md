@@ -110,12 +110,11 @@ Do not proceed if any preflight check fails.
 ## Phase 0.5: durable Terraform state
 
 Before provisioning any Terraform-managed AWS render resources, bootstrap remote S3 state.
-The bootstrap script is inspect-only unless `--apply` is supplied:
+The bootstrap script is inspect-only unless `--apply` is supplied. It reads the
+verified account, region, and durable `katcha-automation` profile from Katcha's
+ignored local `.env`, so normal operation does not require per-shell AWS exports:
 
 ```bash
-export KATCHA_AWS_EXPECTED_ACCOUNT_ID=123456789012
-export KATCHA_REMOTION_LAMBDA_REGION=us-east-1
-
 bash scripts/aws_tf_state_bootstrap.sh
 # Review the output.
 bash scripts/aws_tf_state_bootstrap.sh --apply
