@@ -14,6 +14,7 @@ import {
   S3Client,
 } from '@aws-sdk/client-s3';
 import {getSignedUrl} from '@aws-sdk/s3-request-presigner';
+import {verifyExpectedAwsIdentity} from './aws-identity.mjs';
 import {createCloudAssetUrlResolver} from './cloud-media-staging.mjs';
 import {renderMediaViaLambda} from './lambda-renderer.mjs';
 import {resolveRenderSettings, validateLambdaSettings} from './render-config.mjs';
@@ -33,6 +34,18 @@ const port = Number(process.env.PORT || 8787);
 const renderSettings = resolveRenderSettings();
 validateLambdaSettings(renderSettings);
 const exec = promisify(execFile);
+
+let verifiedAwsIdentity = null;
+if (renderSettings.backend === 'lambda') {
+  verifiedAwsIdentity = await verifyExpectedAwsIdentity({
+    expectedAccountId: renderSettings.lambda.expectedAccountId,
+    region: renderSettings.lambda.region,
+  });
+  console.log(
+    `AWS identity verified for Lambda rendering account=${verifiedAwsIdentity.account} `
+    + `caller=${verifiedAwsIdentity.arn || 'unknown'}`,
+  );
+}
 
 const s3AccessKey = String(process.env.KATCHA_S3_ACCESS_KEY ?? '').trim();
 const s3SecretKey = String(process.env.KATCHA_S3_SECRET_KEY ?? '').trim();
@@ -247,6 +260,7 @@ app.get('/health', (_request, response) => {
     service: 'katcha-renderer',
     render_backend: renderSettings.backend,
     lambda_region: renderSettings.backend === 'lambda' ? renderSettings.lambda.region : null,
+    aws_account_id: verifiedAwsIdentity?.account || null,
     cloud_staging_enabled: Boolean(
       renderSettings.backend === 'lambda' && renderSettings.lambda.stagingBucket,
     ),
