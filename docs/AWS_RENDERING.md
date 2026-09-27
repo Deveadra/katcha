@@ -47,7 +47,7 @@ reviewed infrastructure changes, and break-glass administration.
 From `~/src/katcha/renderer`:
 
 ```bash
-npm install
+npm install --ignore-scripts
 npm run test:config
 
 npm run lambda:policy:user > /tmp/remotion-user-policy.json
@@ -56,6 +56,12 @@ npm run lambda:policy:role > /tmp/remotion-role-policy.json
 
 Review both generated policy files. They are version-specific to the pinned Remotion
 `4.0.529` dependency set.
+
+The AWS authorization, preflight, and deployment helpers fail closed before AWS
+authorization/deployment work if the local Remotion CLI is missing or does not match
+the exact version pinned in `renderer/package.json`. They never auto-install Node
+dependencies. Repair the local renderer prerequisites with
+`cd ~/src/katcha/renderer && npm install --ignore-scripts`, then rerun the helper.
 
 The **user/control-plane policy** is the permission set the durable
 `KatchaChronosAutomation` role needs in order to deploy and operate Remotion Lambda.
