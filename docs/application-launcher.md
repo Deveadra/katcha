@@ -58,7 +58,13 @@ it does not automatically discover or move another project's database.
 - **Start** validates Compose, builds images, runs migrations/bucket initialization,
   starts all workers and waits for health. Repeated clicks are serialized.
 - **Stop services** uses Compose stop; it does not delete containers, volumes or media.
-- Closing the launcher leaves services running. Reopen it to restore monitoring.
+- Closing or disconnecting the browser does not restart Katcha; the supervisor keeps the
+  current startup/runtime state and the browser picks it back up when it reconnects.
+- If the launcher process itself is restarted while Katcha containers still exist, it
+  discovers and reattaches to that Compose stack without rebuilding or relaunching it.
+  Running services resume health/log monitoring; stopped containers remain stopped.
+- If Docker or the API is temporarily unavailable during reattachment, the launcher enters
+  a recoverable degraded state and continues probing instead of resetting to a fresh launch.
   Docker's restart policy restarts long-running services when Docker returns.
 - Dependencies are probed every ten seconds while the launcher runs. Worker process
   status is checked, but this does not prove that every workflow is making progress.
@@ -74,8 +80,9 @@ it does not automatically discover or move another project's database.
   uncaught browser errors are recorded from launcher-connected workspaces. Handled
   business validation errors remain in their normal UI/workflow records.
 
-`./Katcha.sh --no-start` opens setup without starting Docker services.
-`./Katcha.sh --no-browser` starts without opening a browser.
+`./Katcha.sh` opens the console without starting stopped services; it may reattach to an
+already-running Katcha stack. `./Katcha.sh --auto-start` explicitly requests startup.
+`./Katcha.sh --no-browser` opens the launcher without opening a browser.
 If port 8765 is occupied, no second supervisor starts; the terminal explains how to
 open the existing console. If port 8000 conflicts, Compose fails and records the error.
 
