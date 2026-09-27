@@ -10,9 +10,11 @@ RUN apt-get update \
 
 WORKDIR /app
 COPY pyproject.toml README.md alembic.ini ./
+RUN pip install --upgrade pip \
+    && python -c 'import subprocess,tomllib; project=tomllib.load(open("pyproject.toml","rb"))["project"]; deps=project["dependencies"] + sum((project["optional-dependencies"][name] for name in ["ai"]), []); subprocess.check_call(["pip","install",*deps])'
 COPY migrations ./migrations
 COPY src ./src
-RUN pip install --upgrade pip && pip install -e '.[ai]'
+RUN pip install -e . --no-deps
 
 RUN useradd --create-home --uid 10001 katcha \
     && mkdir -p /tmp/katcha \
