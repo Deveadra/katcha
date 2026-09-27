@@ -63,7 +63,7 @@ if [[ ! "${AUTOMATION_ROLE}" =~ ^[A-Za-z0-9+=,.@_-]{1,64}$ ]]; then
     exit 2
 fi
 
-for command in aws npm python3 sha256sum mktemp; do
+for command in aws npm python3 sha256sum mktemp awk; do
     if ! command -v "${command}" >/dev/null 2>&1; then
         echo "ERROR: required command is not installed: ${command}" >&2
         exit 2
