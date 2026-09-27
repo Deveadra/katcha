@@ -48,6 +48,33 @@ bash scripts/aws_render_staging.sh
 ```
 
 The default mode:
+The supported operator path is now the repository-level wrapper:
+
+```bash
+cd ~/src/katcha
+
+bash scripts/aws_render_staging_deploy.sh
+```
+
+The default invocation verifies the bootstrap account, confirms the remote state
+bucket exists in the intended region, initializes this root against that backend,
+runs `terraform fmt -check` and `terraform validate`, and prints a full Terraform
+plan without applying it.
+
+After reviewing the plan:
+
+```bash
+bash scripts/aws_render_staging_deploy.sh --apply
+```
+
+The apply path applies the exact generated plan, verifies the resulting S3 controls
+and `KatchaRenderStagingAccess` attachment, then persists only the verified bucket
+name and prefix into Katcha's ignored local env file. It leaves
+`KATCHA_RENDER_BACKEND` unchanged.
+
+Direct Terraform commands remain useful for debugging, but they are no longer the
+preferred production path because the wrapper adds account checks, post-apply
+verification, safe env persistence, and consistent remote-state configuration.
 
 - verifies the bootstrap/admin caller against the explicit expected account;
 - requires the deterministic remote state bucket to already exist;

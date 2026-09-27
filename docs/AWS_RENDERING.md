@@ -179,6 +179,43 @@ bash scripts/aws_render_staging.sh --apply <reviewed-plan-sha256>
 The helper verifies the resulting bucket, prefix, durable renderer role, staging IAM
 policy, and bucket region before persisting the verified staging settings into the
 ignored local `.env`. It keeps `KATCHA_RENDER_BACKEND=local` unchanged.
+Provision the bucket through the account-guarded staging wrapper after remote state is
+initialized. The default invocation initializes the configured S3 backend, validates
+Terraform, and prints a reviewable plan without applying it:
+
+```bash
+cd ~/src/katcha
+
+bash scripts/aws_render_staging_deploy.sh
+```
+
+Review the plan. It should include the private staging bucket resources plus exactly
+one `KatchaRenderStagingAccess` inline policy attached to the existing
+`KatchaChronosAutomation` role. It must not create an IAM user, a second automation
+role, or public S3 access.
+
+After review:
+
+```bash
+bash scripts/aws_render_staging_deploy.sh --apply
+```
+
+The apply path uses the exact generated plan, then verifies the bucket region, all
+four Block Public Access controls, BucketOwnerEnforced ownership, SSE-S3 encryption,
+the lifecycle expiration rule, the HTTPS-only bucket policy, and the attached IAM
+policy. Only after those checks pass does it persist:
+
+```env
+KATCHA_REMOTION_STAGING_BUCKET=<verified bucket name>
+KATCHA_REMOTION_STAGING_PREFIX=katcha-render-staging
+```
+
+`KATCHA_REMOTION_STAGING_URL_EXPIRES_SECONDS` remains the separately configured
+runtime expiry and defaults to 3600 seconds.
+
+The staging URL expiry must exceed Katcha's Lambda wait ceiling by at least five minutes.
+Staged objects are private, encrypted, and expire automatically. Katcha never makes the
+bucket public.
 
 The staging URL expiry is automatically kept at least five minutes beyond Katcha's
 Lambda wait ceiling. Staged objects are private, encrypted, prefix-scoped, and expire
@@ -214,25 +251,84 @@ role to the workload rather than injecting long-lived user credentials.
 
 Do not reuse Remotion's `remotionlambda-*` bucket as Katcha's canonical media store.
 
+## Phase 2.5: controlled Lambda render acceptance
+
+After the durable role, Remotion function/site, and private staging bucket are all
+verified, run one synthetic ranked episode through the normal Katcha HTTP renderer
+before changing the production backend.
+
+Inspect the acceptance configuration first:
+
+```bash
+cd ~/src/katcha
+
+bash scripts/aws_lambda_render_acceptance.sh
+```
+
+The inspect path verifies the durable AWS caller, exact expected account, configured
+Remotion function, HTTPS Serve URL, and staging-bucket region. It launches no render.
+
+Then run the controlled acceptance:
+
+```bash
+bash scripts/aws_lambda_render_acceptance.sh --run
+```
+
+The acceptance overlay enables `KATCHA_RENDER_BACKEND=lambda` only for the
+temporary renderer process. The smoke fixture uses a unique run ID and unique source,
+narration, and output keys so an older local render cannot satisfy the test.
+
+Success requires the renderer health endpoint to report the expected AWS account,
+region, Lambda backend, and cloud staging. The render response must be fresh,
+`verified=true`, report `renderer=remotion-lambda`, include a Remotion Lambda
+render ID, and report at least one invoked Lambda worker. The final video is still
+downloaded, ffprobe-verified, uploaded back to Katcha's object store, and HEAD
+verified by the normal renderer path.
+
+The wrapper restores the renderer to its prior local state afterward and does not
+persist `KATCHA_RENDER_BACKEND=lambda`. On success it writes a receipt outside the
+repository at `~/.aws/katcha-roles-anywhere/acceptance/latest.json`. The receipt
+records the exact account, region, function, site, staging bucket/prefix, repository
+commit, Lambda render ID, worker count, output key, and completion time.
+
 ## Phase 3: enable cloud rendering
 
-Only after the function, site, Katcha S3 storage, and IAM path are verified. Phase 1
-already persisted the verified function name and Serve URL; do not replace them with
-manually copied values.
+Do not edit `KATCHA_RENDER_BACKEND` by hand. Enable the Lambda backend through the
+receipt gate so the switch can only happen for the exact code and AWS deployment that
+just passed acceptance.
+
+Inspect first:
+
+```bash
+bash scripts/aws_lambda_backend_enable.sh
+```
+
+The default path verifies the durable AWS caller again, verifies the configured
+function and staging-bucket region, and checks that the latest receipt:
+
+- used `renderer=remotion-lambda`;
+- was fresh and not reused;
+- has a Lambda render ID and positive Lambda invocation count;
+- produced a non-empty output object;
+- matches the current account, region, profile, function, Serve URL, staging bucket,
+  staging prefix, and exact Git commit;
+- is no older than 24 hours by default.
+
+After review:
+
+```bash
+bash scripts/aws_lambda_backend_enable.sh --apply
+```
+
+The apply path backs up the local Katcha env outside the repository and changes only:
 
 ```env
 KATCHA_RENDER_BACKEND=lambda
-KATCHA_AWS_EXPECTED_ACCOUNT_ID=<exact 12-digit AWS account ID>
-KATCHA_REMOTION_LAMBDA_REGION=us-east-1
-KATCHA_REMOTION_LAMBDA_FUNCTION_NAME=<persisted by aws_remotion_deploy.sh>
-KATCHA_REMOTION_LAMBDA_SERVE_URL=<persisted by aws_remotion_deploy.sh>
-KATCHA_REMOTION_LAMBDA_POLL_INTERVAL_MS=2000
-KATCHA_REMOTION_LAMBDA_MAX_WAIT_MS=1500000
-# 25-minute orchestration ceiling; stays below Katcha's 30-minute renderer HTTP timeout.
-KATCHA_REMOTION_LAMBDA_MAX_RETRIES=2
-KATCHA_REMOTION_LAMBDA_FRAMES_PER_LAMBDA=20
-KATCHA_REMOTION_LAMBDA_CONCURRENCY_PER_LAMBDA=1
 ```
+
+All other verified Lambda settings remain the values previously persisted by the
+bootstrap/deployment/staging workflows. A code change or AWS metadata change invalidates
+the receipt and requires the controlled acceptance to be rerun.
 
 The renderer validates required Lambda configuration at startup, verifies the AWS caller account
 with STS, and exposes only the verified account ID (never credentials) in its health response.
