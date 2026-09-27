@@ -27,10 +27,10 @@ printf '%q ' "$@" >>"${DEPLOY_TEST_LOG}"
 printf '\n' >>"${DEPLOY_TEST_LOG}"
 
 case " $* " in
-    *" lambda-deployment-state.mjs function-name "*)
+    *"lambda-deployment-state.mjs function-name "*)
         printf '%s\n' 'remotion-render-4-0-529-mem4096mb-disk4096mb-900sec'
         ;;
-    *" lambda-deployment-state.mjs site "*)
+    *"lambda-deployment-state.mjs site "*)
         if [[ ! -f "${DEPLOY_TEST_STATE}/site" ]]; then
             exit 4
         fi
