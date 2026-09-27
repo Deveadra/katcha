@@ -44,15 +44,21 @@ npm run lambda:policy:role > /tmp/remotion-role-policy.json
 
 Review both generated policy files before applying them. The generated policies are version-specific.
 
-After the policies/role are installed by an authorized AWS administrator:
+After the policies/role are installed by an authorized AWS administrator, run the
+fail-closed preflight from the repository root. The expected AWS account ID is mandatory:
 
 ```bash
-npm run lambda:policy:validate
-npx remotion lambda regions
-npx remotion lambda quotas --region=us-east-1
+export KATCHA_AWS_EXPECTED_ACCOUNT_ID=123456789012
+export KATCHA_REMOTION_LAMBDA_REGION=us-east-1
+
+bash scripts/aws_render_preflight.sh
 ```
 
-Do not proceed if permission validation fails or the AWS caller identity is not the intended account.
+The script verifies the active AWS caller against the expected account, validates the
+local renderer configuration, validates Remotion permissions, and reads the regional
+Lambda quota. It contains no resource-creation command.
+
+Do not proceed if any preflight check fails.
 
 ## Phase 1: Remotion infrastructure
 
