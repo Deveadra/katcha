@@ -320,6 +320,70 @@ class Runtime:
 
         threading.Thread(target=consume, daemon=True).start()
 
+    def reconcile_existing(self):
+        """Adopt an existing Katcha Compose stack without rebuilding or relaunching it."""
+        if not self.lock.acquire(blocking=False):
+            return False
+        try:
+            self.stage = "checking existing runtime"
+            output = self.run(
+                self.command() + ["ps", "--all", "--format", "json"],
+                timeout=30,
+                capture=True,
+            )
+            rows = (
+                json.loads(output)
+                if output.strip().startswith("[")
+                else [json.loads(line) for line in output.splitlines() if line.strip()]
+            )
+            self.services = [
+                {key: row.get(key) for key in ("Service", "State", "Health", "ExitCode")}
+                for row in rows
+            ]
+            if not rows:
+                self.phase = "idle"
+                self.stage = "idle"
+                return True
+
+            long_running = [
+                row
+                for row in self.services
+                if row["Service"] not in ("migrate", "minio-init")
+            ]
+            if long_running and not any(row["State"] == "running" for row in long_running):
+                self.phase = "stopped"
+                self.stage = "stopped"
+                self.event(
+                    "info",
+                    "launcher",
+                    "Existing Katcha containers are stopped; leaving them stopped.",
+                )
+                return True
+
+            self.phase = "degraded"
+            self.stage = "reattaching"
+            self.start_logs()
+            self.check()
+            self.stage = "ready" if self.phase == "ready" else "degraded"
+            self.event(
+                "info" if self.phase == "ready" else "warning",
+                "launcher",
+                "Reattached to the existing Katcha runtime.",
+            )
+            return True
+        except (FileNotFoundError, OSError, RuntimeError, json.JSONDecodeError) as exc:
+            self.phase = "degraded"
+            self.stage = "waiting for runtime"
+            self.event(
+                "warning",
+                "launcher",
+                f"Could not inspect the existing Katcha runtime: {exc}",
+                recovery="The launcher will keep checking Docker and the existing services.",
+            )
+            return False
+        finally:
+            self.lock.release()
+
     def check(self):
         output = self.run(self.command() + ["ps", "--all", "--format", "json"], capture=True)
         rows = (
@@ -572,6 +636,8 @@ def main():
     threading.Thread(target=runtime.monitor, daemon=True).start()
     if args.auto_start and not args.no_start:
         runtime.operate("start")
+    else:
+        threading.Thread(target=runtime.reconcile_existing, daemon=True).start()
     try:
         if not args.no_browser:
             if (
