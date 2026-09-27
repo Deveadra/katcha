@@ -129,7 +129,7 @@ if [[ -z "${STAGING_PREFIX}" || "${STAGING_PREFIX}" == /* || "${STAGING_PREFIX}"
     exit 2
 fi
 
-for command in aws terraform python3 sha256sum mkdir chmod cp date dirname; do
+for command in aws terraform python3 sha256sum awk mkdir chmod cp date dirname; do
     if ! command -v "${command}" >/dev/null 2>&1; then
         echo "ERROR: required command is not installed: ${command}" >&2
         exit 2
