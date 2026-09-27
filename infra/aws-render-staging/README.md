@@ -48,39 +48,33 @@ bash scripts/aws_tf_state_bootstrap.sh --apply
 The state bucket has versioning, SSE-S3, Block Public Access, BucketOwnerEnforced ownership,
 and an HTTPS-only bucket policy. Terraform uses native S3 lockfiles rather than DynamoDB.
 
-Initialize this root with partial backend configuration using the authorized
-bootstrap/admin profile. The durable renderer role should not be granted
-infrastructure-management permissions just to provision its own bucket access:
+The supported operator path is now the repository-level wrapper:
 
 ```bash
-cd ~/src/katcha/infra/aws-render-staging
+cd ~/src/katcha
 
-export AWS_PROFILE=katcha
-STATE_BUCKET="katcha-tfstate-${KATCHA_AWS_EXPECTED_ACCOUNT_ID}-${KATCHA_REMOTION_LAMBDA_REGION}"
-
-terraform init -reconfigure \
-  -backend-config="bucket=${STATE_BUCKET}" \
-  -backend-config="key=katcha/aws-render-staging/terraform.tfstate" \
-  -backend-config="region=${KATCHA_REMOTION_LAMBDA_REGION}" \
-  -backend-config="encrypt=true" \
-  -backend-config="use_lockfile=true"
-
-terraform fmt -check
-terraform validate
-
-terraform plan \
-  -var='expected_account_id=123456789012' \
-  -var='aws_region=us-east-1' \
-  -var='renderer_role_name=KatchaChronosAutomation' \
-  -out=/tmp/katcha-render-staging.tfplan
-
-terraform show /tmp/katcha-render-staging.tfplan
+bash scripts/aws_render_staging_deploy.sh
 ```
 
-Review the plan before applying it. In addition to the private S3 resources, the
-plan should show exactly one `aws_iam_role_policy.renderer_staging_access`
-attachment to the existing durable renderer role. It must not create an IAM user or
-a second renderer role.
+The default invocation verifies the bootstrap account, confirms the remote state
+bucket exists in the intended region, initializes this root against that backend,
+runs `terraform fmt -check` and `terraform validate`, and prints a full Terraform
+plan without applying it.
+
+After reviewing the plan:
+
+```bash
+bash scripts/aws_render_staging_deploy.sh --apply
+```
+
+The apply path applies the exact generated plan, verifies the resulting S3 controls
+and `KatchaRenderStagingAccess` attachment, then persists only the verified bucket
+name and prefix into Katcha's ignored local env file. It leaves
+`KATCHA_RENDER_BACKEND` unchanged.
+
+Direct Terraform commands remain useful for debugging, but they are no longer the
+preferred production path because the wrapper adds account checks, post-apply
+verification, safe env persistence, and consistent remote-state configuration.
 
 The default bucket name is:
 

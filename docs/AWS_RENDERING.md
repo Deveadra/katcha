@@ -167,33 +167,39 @@ For the current workstation workflow, Katcha can keep MinIO as its canonical obj
 The renderer stages only the exact video/audio/image objects needed by a Lambda render into
 a private S3 bucket, signs those temporary objects, and leaves lifecycle expiration to S3.
 
-Provision the bucket from the review-first Terraform root after remote state is initialized
-as described in `infra/aws-render-staging/README.md`:
+Provision the bucket through the account-guarded staging wrapper after remote state is
+initialized. The default invocation initializes the configured S3 backend, validates
+Terraform, and prints a reviewable plan without applying it:
 
 ```bash
-cd ~/src/katcha/infra/aws-render-staging
-export AWS_PROFILE=katcha
+cd ~/src/katcha
 
-terraform plan \
-  -var='expected_account_id=123456789012' \
-  -var='aws_region=us-east-1' \
-  -var='renderer_role_name=KatchaChronosAutomation' \
-  -out=/tmp/katcha-render-staging.tfplan
-terraform show /tmp/katcha-render-staging.tfplan
+bash scripts/aws_render_staging_deploy.sh
 ```
 
-Apply only after the plan is reviewed. The plan should include the private staging
-bucket resources plus one `KatchaRenderStagingAccess` inline policy attached to the
-existing `KatchaChronosAutomation` role. This S3 policy is separate from the
-already-reviewed `KatchaRemotionControlPlane` policy.
+Review the plan. It should include the private staging bucket resources plus exactly
+one `KatchaRenderStagingAccess` inline policy attached to the existing
+`KatchaChronosAutomation` role. It must not create an IAM user, a second automation
+role, or public S3 access.
 
-After apply, set:
+After review:
+
+```bash
+bash scripts/aws_render_staging_deploy.sh --apply
+```
+
+The apply path uses the exact generated plan, then verifies the bucket region, all
+four Block Public Access controls, BucketOwnerEnforced ownership, SSE-S3 encryption,
+the lifecycle expiration rule, the HTTPS-only bucket policy, and the attached IAM
+policy. Only after those checks pass does it persist:
 
 ```env
-KATCHA_REMOTION_STAGING_BUCKET=katcha-render-staging-123456789012-us-east-1
+KATCHA_REMOTION_STAGING_BUCKET=<verified bucket name>
 KATCHA_REMOTION_STAGING_PREFIX=katcha-render-staging
-KATCHA_REMOTION_STAGING_URL_EXPIRES_SECONDS=3600
 ```
+
+`KATCHA_REMOTION_STAGING_URL_EXPIRES_SECONDS` remains the separately configured
+runtime expiry and defaults to 3600 seconds.
 
 The staging URL expiry must exceed Katcha's Lambda wait ceiling by at least five minutes.
 Staged objects are private, encrypted, and expire automatically. Katcha never makes the
