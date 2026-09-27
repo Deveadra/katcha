@@ -40,6 +40,26 @@ FIELDS = {
     "KATCHA_REMOTION_STAGING_BUCKET",
 }
 SENSITIVE = re.compile(r"KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL", re.I)
+CORE_REQUIRED = {"postgres", "temporal", "minio", "api"}
+BACKGROUND_SERVICES = (
+    "worker",
+    "analysis-worker",
+    "renderer",
+    "production-worker",
+    "longform-worker",
+    "publishing-worker",
+    "discovery-worker",
+    "trends-worker",
+    "intelligence-worker",
+    "temporal-ui",
+)
+BACKGROUND_REQUIRED = set(BACKGROUND_SERVICES) - {"temporal-ui"}
+ONE_SHOT_SERVICES = {"migrate", "minio-init"}
+CORE_BUILD_SERVICES = ("api", "migrate", "minio-init", "minio")
+MISSING_IMAGE = re.compile(
+    r"no such image|pull access denied|not found|unable to get image|does not exist",
+    re.I,
+)
 
 
 def read_env(path):
@@ -65,6 +85,9 @@ class Runtime:
         self.phase = "idle"
         self.stage = "idle"
         self.operation_started_at = None
+        self.background_phase = "idle"
+        self.background_error = ""
+        self.background_thread = None
         self.known_secrets = set()
         self.services = []
         self.follow = None
@@ -197,6 +220,7 @@ class Runtime:
 
         threading.Thread(target=read, daemon=True).start()
         output = []
+        recent = collections.deque(maxlen=30)
         deadline = time.monotonic() + timeout
         try:
             while True:
@@ -209,15 +233,18 @@ class Runtime:
                     continue
                 if line is None:
                     break
+                recent.append(line)
                 if capture:
                     output.append(line)
                 else:
                     self.event("info", "compose", line.rstrip())
             code = process.wait(timeout=max(1, deadline - time.monotonic()))
             if code:
+                detail = "".join(output if capture else recent).strip()
                 if capture:
-                    self.event("error", "compose", "".join(output))
-                raise RuntimeError(f"Command failed (exit {code}): {args[-1]}")
+                    self.event("error", "compose", detail)
+                suffix = f"\n{detail}" if detail else ""
+                raise RuntimeError(f"Command failed (exit {code}): {args[-1]}{suffix}")
             return "".join(output)
         finally:
             if process.poll() is None:
@@ -247,34 +274,66 @@ class Runtime:
                 raise RuntimeError("Install Docker Compose 2.24.4 or newer.")
             self.run(["docker", "info", "--format", "{{.ServerVersion}}"])
             if action == "stop":
+                self.background_phase = "stopping"
                 self.run(self.command() + ["stop", "--timeout", "30"], timeout=120)
                 self.phase = "stopped"
                 self.stage = "stopped"
+                self.background_phase = "stopped"
                 return
             self.stage = "validating configuration"
             self.run(self.command() + ["config", "--quiet"])
-            self.stage = "building images"
+            self.stage = "starting workspace"
             self.event(
                 "info",
                 "launcher",
-                "Building application images. First launch can take several minutes.",
+                "Starting the workspace first; production engines will warm in the background.",
             )
-            self.run(self.command() + ["build"], timeout=1800)
-            self.stage = "starting services"
-            self.event("info", "launcher", "Starting services and waiting for health checks.")
-            self.run(
-                self.command() + ["up", "-d", "--wait", "--wait-timeout", "300"],
-                timeout=420,
-            )
-            self.stage = "checking readiness"
+            core_up = self.command() + [
+                "up",
+                "-d",
+                "--wait",
+                "--wait-timeout",
+                "180",
+                "--no-build",
+                "api",
+            ]
+            try:
+                self.run(core_up, timeout=240)
+            except RuntimeError as exc:
+                if not MISSING_IMAGE.search(str(exc)):
+                    raise
+                self.stage = "building workspace"
+                self.event(
+                    "info",
+                    "launcher",
+                    "Workspace images are not installed yet; building only the core application.",
+                )
+                self.run(
+                    self.command() + ["build", *CORE_BUILD_SERVICES],
+                    timeout=1800,
+                )
+                self.stage = "starting workspace"
+                self.run(core_up, timeout=240)
+            self.stage = "checking workspace readiness"
             self.start_logs()
             self.check()
             if self.phase != "ready":
                 raise RuntimeError(
-                    "Services started but readiness failed; inspect the service list."
+                    "Workspace services started but the API is not ready; inspect diagnostics."
                 )
             self.stage = "ready"
-            self.event("info", "launcher", "Katcha is ready")
+            self.event(
+                "info",
+                "launcher",
+                "Workspace is ready; production engines are warming in the background.",
+            )
+            self.background_phase = "warming"
+            self.background_error = ""
+            self.background_thread = threading.Thread(
+                target=self._warm_background,
+                daemon=True,
+            )
+            self.background_thread.start()
         except Exception:
             self.phase = "failed"
             self.stage = "failed"
@@ -291,6 +350,58 @@ class Runtime:
         finally:
             self.operation_started_at = None
             self.lock.release()
+
+    def _warm_background(self):
+        services = list(BACKGROUND_SERVICES)
+        command = self.command()
+        up = command + [
+            "up",
+            "-d",
+            "--wait",
+            "--wait-timeout",
+            "300",
+            "--no-build",
+            *services,
+        ]
+        try:
+            self.background_phase = "starting"
+            try:
+                self.run(up, timeout=420)
+            except RuntimeError as exc:
+                if not MISSING_IMAGE.search(str(exc)):
+                    raise
+                self.background_phase = "building"
+                self.event(
+                    "info",
+                    "launcher",
+                    "Some production-engine images are missing; building them in the background.",
+                )
+                self.run(command + ["build", *services], timeout=1800)
+                if self.phase in ("stopping", "stopped"):
+                    return
+                self.background_phase = "starting"
+                self.run(up, timeout=420)
+            if self.phase in ("stopping", "stopped"):
+                self.run(command + ["stop", "--timeout", "30"], timeout=120)
+                return
+            self.background_phase = "ready"
+            self.background_error = ""
+            self.event("info", "launcher", "All production engines are ready.")
+            try:
+                self.check()
+            except Exception as exc:
+                self.event("warning", "health", str(exc))
+        except Exception as exc:
+            if self.phase in ("stopping", "stopped"):
+                return
+            self.background_phase = "degraded"
+            self.background_error = self.redact(str(exc))
+            self.event(
+                "error",
+                "launcher",
+                f"Workspace is usable, but background engine warmup failed: {exc}",
+                recovery="Use diagnostics to identify the affected engine; the workspace remains available.",
+            )
 
     def start_logs(self):
         if self.follow and self.follow.poll() is None:
@@ -396,13 +507,19 @@ class Runtime:
             {key: row.get(key) for key in ("Service", "State", "Health", "ExitCode")}
             for row in rows
         ]
-        bad = [
-            r
-            for r in self.services
-            if (r["Service"] in ("migrate", "minio-init") and r["ExitCode"] != 0)
-            or (
-                r["Service"] not in ("migrate", "minio-init")
-                and (r["State"] != "running" or r["Health"] not in (None, "", "healthy"))
+        by_service = {row["Service"]: row for row in self.services}
+        one_shot_bad = [
+            row
+            for row in self.services
+            if row["Service"] in ONE_SHOT_SERVICES and row["ExitCode"] not in (0, "0", None)
+        ]
+        core_bad = [
+            by_service[name]
+            for name in CORE_REQUIRED
+            if name in by_service
+            and (
+                by_service[name]["State"] != "running"
+                or by_service[name]["Health"] not in (None, "", "healthy")
             )
         ]
         connection = http.client.HTTPConnection("127.0.0.1", 8000, timeout=5)
@@ -411,23 +528,23 @@ class Runtime:
             ready = connection.getresponse().status == 200
         finally:
             connection.close()
-        required = {
-            "postgres",
-            "temporal",
-            "minio",
-            "api",
-            "worker",
-            "analysis-worker",
-            "renderer",
-            "production-worker",
-            "longform-worker",
-            "publishing-worker",
-            "discovery-worker",
-            "trends-worker",
-            "intelligence-worker",
-        }
-        present = {row["Service"] for row in self.services}
-        phase = "ready" if ready and required <= present and not bad else "degraded"
+        present = set(by_service)
+        phase = (
+            "ready"
+            if ready and CORE_REQUIRED <= present and not core_bad and not one_shot_bad
+            else "degraded"
+        )
+        if BACKGROUND_REQUIRED <= present:
+            background_bad = [
+                by_service[name]
+                for name in BACKGROUND_REQUIRED
+                if (
+                    by_service[name]["State"] != "running"
+                    or by_service[name]["Health"] not in (None, "", "healthy")
+                )
+            ]
+            if not background_bad and self.background_phase not in ("building", "starting"):
+                self.background_phase = "ready"
         if phase != self.phase:
             self.event(
                 "info" if phase == "ready" else "error", "health", phase, services=self.services
@@ -459,6 +576,8 @@ class Runtime:
             phase=self.phase,
             stage=self.stage,
             operation_elapsed_seconds=elapsed,
+            background_phase=self.background_phase,
+            background_error=self.background_error,
             session=self.session,
             services=self.services,
             events=events,
