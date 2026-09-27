@@ -9,8 +9,10 @@ from the checkout in PowerShell. Local PowerShell execution policy must permit t
 the launcher does not bypass organizational policy.
 
 The launch console opens at **http://localhost:8765**. On first use it opens in an idle state so
-**Start Katcha** is immediately clickable. Starting reuses verified unchanged images, checks readiness, and enables **Open workspace**
-as soon as the API is ready, independently of worker health. No virtualenv,
+**Start Katcha** is immediately clickable. Start now boots only the interactive core first
+(PostgreSQL, migrations, and API), then automatically enters the workspace as soon as that core
+is live. Renderer, Temporal-backed workflows, object storage, discovery, trends, intelligence,
+analysis, publishing, and production capabilities continue warming in the background. No virtualenv,
 credential exports, development web server, or manual port forwarding is needed.
 Python 3.11+ and Docker Desktop with WSL integration (Compose 2.24.4+) must be installed.
 The launcher reports missing Docker in its diagnostics; it does not install system software.
@@ -22,8 +24,9 @@ The launcher reports missing Docker in its diagnostics; it does not install syst
    is absent, the example is copied; missing control and encryption keys are generated once.
 3. Enter provider credentials and choose **Live** AI explicitly when ready to use paid services.
    Fixture mode remains clearly labeled and does not make live provider calls.
-4. Save settings, then click **Start Katcha** to apply them. The console shows the current
-   startup stage and elapsed time; the first image build may take several minutes. Open the workspace.
+4. Save settings, then click **Start Katcha** to apply them. Katcha automatically opens the
+   workspace as soon as the interactive core is live; heavy production capabilities continue
+   warming in the background. The launcher remains available at the root URL for diagnostics.
    The gateway supplies control authentication without exposing its token to the browser.
 5. For YouTube, save OAuth client details and register the displayed callback URL in
    your Google OAuth application. Restart, then click **Connect YouTube** to authorize.
@@ -55,9 +58,11 @@ it does not automatically discover or move another project's database.
 
 ## Lifecycle and diagnostics
 
-- **Start** saves persistent run intent, validates Compose, prepares images only when inputs
-  change or images are missing, runs migrations/bucket initialization,
-  starts all workers and waits for health. Repeated clicks are serialized.
+- **Start** saves persistent run intent and follows an interactive-first boot path: validate
+  Compose, prepare/reuse only the shared core image, start PostgreSQL + migrations + API,
+  unlock the workspace, then prepare and start heavy/background capabilities. Repeated clicks
+  are serialized. Background warm-up failures degrade capability but do not eject the operator
+  from an already-live workspace.
 - **Stop services** uses Compose stop; it does not delete containers, volumes or media.
 - Closing or disconnecting the browser does not restart Katcha; the supervisor keeps the
   current startup/runtime state and the browser picks it back up when it reconnects.
@@ -131,3 +136,19 @@ no hardware startup timing is asserted without Docker acceptance measurements.
 
 Discovery workers consume configured topic-watch schedules. Keeping workers running
 does not create interests or schedules automatically and does not prove ingestion progress.
+
+
+## Startup performance model
+
+Katcha intentionally separates **workspace availability** from **full production readiness**.
+The operator should not wait for Remotion, AI/media workers, discovery, trend intelligence,
+publishing, MinIO, or every Temporal worker before entering the application.
+
+Common Python services now reuse one `katcha-python-core:local` image instead of exporting
+separate near-identical images for API, migrations, bucket initialization, general worker,
+publishing, discovery, trends, and intelligence. Python Dockerfiles also install dependencies
+before copying application source, so normal source edits reuse dependency layers instead of
+reinstalling the package dependency graph.
+
+The full-stack acceptance test records both workspace-availability time and full-readiness time.
+The first number is the user-facing launch metric; the second measures background warm-up.
