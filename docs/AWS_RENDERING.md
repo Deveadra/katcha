@@ -120,33 +120,46 @@ versioning enabled and Terraform uses the S3 backend's native lockfile support.
 
 ## Phase 1: Remotion infrastructure
 
-This section creates AWS resources and must be run intentionally.
+This section creates AWS resources and must be run intentionally. Katcha wraps the
+Remotion CLI in an account-guarded deployment helper so the deployed function/site
+metadata is verified and persisted instead of copied manually.
 
-From `~/src/katcha/renderer`:
-
-```bash
-npx remotion lambda functions deploy \
-  --region=us-east-1 \
-  --memory=4096 \
-  --disk=4096 \
-  --timeout=900 \
-  --retention-period=14
-```
-
-Record the returned function name exactly.
-
-Deploy the Katcha Remotion site:
+From `~/src/katcha`, inspect the exact deployment first:
 
 ```bash
-npx remotion lambda sites create src/entry.jsx \
-  --region=us-east-1 \
-  --site-name=katcha-production
+bash scripts/aws_remotion_deploy.sh
 ```
 
-Record the returned HTTPS Serve URL exactly.
+The inspect path uses the durable `katcha-automation` profile, verifies the expected
+AWS account, computes the exact function name from the pinned Remotion `4.0.529`
+package, and reports whether the matching function/site already exist. It performs no
+deployment writes.
 
-A Remotion function is version-specific; one function per region/version is sufficient. Redeploy
-the site whenever the Remotion composition code changes.
+After reviewing the account, region, function shape, and site name:
+
+```bash
+bash scripts/aws_remotion_deploy.sh --apply
+```
+
+The apply path first reruns the no-write permission/quota preflight, then deploys the
+pinned function with 4096 MB memory, 4096 MB disk, a 900-second timeout, and 14-day
+retention. It deploys the `katcha-production` site from `renderer/src/entry.jsx`,
+verifies the function through AWS Lambda, resolves a compatible site through the
+Remotion API, validates its HTTPS Serve URL, and confirms the function/site can
+enumerate Katcha compositions.
+
+Only after those checks pass does the helper persist:
+
+```env
+KATCHA_REMOTION_LAMBDA_FUNCTION_NAME=<verified function name>
+KATCHA_REMOTION_LAMBDA_SERVE_URL=<verified HTTPS serve URL>
+```
+
+It does **not** change `KATCHA_RENDER_BACKEND`. Cloud rendering remains disabled
+until private staging and the synthetic Lambda render acceptance are complete.
+
+A Remotion function is version-specific; one function per region/version is
+sufficient. Redeploy the site whenever the Remotion composition code changes.
 
 ## Phase 2A: hybrid local storage with private AWS staging
 
@@ -235,14 +248,16 @@ Do not reuse Remotion's `remotionlambda-*` bucket as Katcha's canonical media st
 
 ## Phase 3: enable cloud rendering
 
-Only after the function, site, Katcha S3 storage, and IAM path are verified:
+Only after the function, site, Katcha S3 storage, and IAM path are verified. Phase 1
+already persisted the verified function name and Serve URL; do not replace them with
+manually copied values.
 
 ```env
 KATCHA_RENDER_BACKEND=lambda
 KATCHA_AWS_EXPECTED_ACCOUNT_ID=<exact 12-digit AWS account ID>
 KATCHA_REMOTION_LAMBDA_REGION=us-east-1
-KATCHA_REMOTION_LAMBDA_FUNCTION_NAME=<exact deployed function name>
-KATCHA_REMOTION_LAMBDA_SERVE_URL=<exact HTTPS serve URL>
+KATCHA_REMOTION_LAMBDA_FUNCTION_NAME=<persisted by aws_remotion_deploy.sh>
+KATCHA_REMOTION_LAMBDA_SERVE_URL=<persisted by aws_remotion_deploy.sh>
 KATCHA_REMOTION_LAMBDA_POLL_INTERVAL_MS=2000
 KATCHA_REMOTION_LAMBDA_MAX_WAIT_MS=1500000
 # 25-minute orchestration ceiling; stays below Katcha's 30-minute renderer HTTP timeout.
