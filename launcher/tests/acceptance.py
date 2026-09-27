@@ -44,6 +44,7 @@ def wait_for(target, seconds, background=None):
 
 if __name__ == "__main__":
     process = subprocess.Popen(["python3", "launcher/runtime.py", "--no-browser"])
+    started = time.monotonic()
     try:
         deadline = time.monotonic() + 30
         while True:
@@ -55,9 +56,11 @@ if __name__ == "__main__":
                     raise
                 time.sleep(0.5)
         workspace = wait_for("ready", 1800)
+        workspace_seconds = time.monotonic() - started
         assert b"Editing control center" in request("/editing/assets/editing.html")
         assert isinstance(json.loads(request("/v1/channels")), list)
         state = wait_for("ready", 1800, background="ready")
+        full_seconds = time.monotonic() - started
         assert len(state["services"]) >= 15
         volume_args = [
             "docker",
@@ -75,7 +78,8 @@ if __name__ == "__main__":
         assert subprocess.check_output(volume_args, text=True) == before
         print(
             "Workspace-first startup, background engine warmup, authenticated GUI/API, "
-            "and non-destructive stop passed."
+            "and non-destructive stop passed. "
+            f"time_to_workspace={workspace_seconds:.1f}s time_to_full={full_seconds:.1f}s"
         )
     finally:
         process.terminate()
