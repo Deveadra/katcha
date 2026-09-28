@@ -34,6 +34,7 @@ html{scroll-behavior:smooth;scroll-padding-top:82px}
     .preview-controls>.button,.preview-controls>button{grid-column:1/-1;width:100%}
 }
 @media(max-width:700px){
+    .preview-controls{grid-template-columns:1fr}
     .stats{grid-template-columns:1fr 1fr}
     .stat-link b{right:11px;top:11px}
 }
