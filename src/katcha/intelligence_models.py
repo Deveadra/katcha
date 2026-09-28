@@ -14,6 +14,7 @@ from sqlalchemy import (
     Integer,
     Numeric,
     String,
+    Text,
     UniqueConstraint,
     Uuid,
     func,
@@ -43,6 +44,38 @@ class ChannelProfile(Base):
     active_strategy_version: Mapped[int] = mapped_column(Integer, default=1)
     active_automation_version: Mapped[int] = mapped_column(Integer, default=1)
     profile_metadata: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class ChannelIntelligenceRun(Base):
+    __tablename__ = "channel_intelligence_runs"
+    __table_args__ = (
+        UniqueConstraint("channel_profile_id", "run_key"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    channel_profile_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("channel_profiles.id"), index=True
+    )
+    run_key: Mapped[str] = mapped_column(String(128), index=True)
+    workflow_id: Mapped[str] = mapped_column(String(255), index=True)
+    status: Mapped[str] = mapped_column(String(32), default="running", index=True)
+    stage: Mapped[str] = mapped_column(String(64), default="running")
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    result_summary: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    started_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    completed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
