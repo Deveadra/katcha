@@ -71,6 +71,7 @@ def test_unscoped_legacy_production_uses_safe_builtin_blueprint() -> None:
 def test_blueprint_control_routes_are_mounted() -> None:
     paths = set(app.openapi()["paths"])
 
+    assert "/v1/channels/edit-blueprint-templates" in paths
     assert "/v1/channels/{channel_profile_id}/edit-blueprints" in paths
     assert (
         "/v1/channels/{channel_profile_id}/edit-blueprints/"
