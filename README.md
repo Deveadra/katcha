@@ -105,6 +105,28 @@ For the first live channel acceptance, [`docs/RANKSNAXX_ACCEPTANCE.md`](docs/RAN
 
 After that synthetic path is proven, [`docs/RANKSNAXX_LIVE_PRODUCTION.md`](docs/RANKSNAXX_LIVE_PRODUCTION.md) drives an activation-ready, rights-qualified real trend opportunity through the same RankSnaxx AI/editorial/render pipeline and keeps the first real YouTube upload **private-only** for review.
 
+## External production providers
+
+Katcha can use ElevenLabs as a first-class narration provider while retaining its
+channel-scoped budget and usage accounting. Configure the ElevenLabs API key,
+voice ID, and model in the local environment. Set
+`KATCHA_TTS_PROVIDER_OVERRIDE=elevenlabs` to pin narration to ElevenLabs, or
+leave it on `auto` so Katcha can route normally. Provider-reported credits and
+request IDs are stored with usage events; USD conversion is optional because the
+effective cost per credit depends on the account plan.
+
+InVideo is integrated as an external edit bridge. The Editing Control Center can
+prepare a self-contained package containing source media, narration assets,
+`manifest.json`, `brand.json`, `editing-recipe.json`, and `script.json`.
+After editing in InVideo, import the finished MP4 into the same handoff. Katcha
+verifies the returned media before an explicit operator action can adopt it as
+the canonical render for normal review. Katcha remains the source of truth and
+InVideo is never allowed to publish directly.
+
+Direct InVideo project automation is intentionally not implemented against
+undocumented/private endpoints. The handoff model provides a stable extension
+point for a documented account API later.
+
 ## Budget safety
 
 `KATCHA_AI_BUDGET_USD_MONTHLY` is the **deployment-wide emergency ceiling**.
