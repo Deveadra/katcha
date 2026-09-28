@@ -12,7 +12,9 @@ from katcha.config import Settings, get_settings
 from katcha.db import session_scope
 from katcha.integrations.storage import ObjectStore
 from katcha.intelligence_models import ChannelProfile
+from katcha.longform_models import Compilation, CompilationAsset
 from katcha.models import DomainEvent
+from katcha.production_models import Production, ProductionAsset, ProductionScript
 from katcha.publishing_models import Publication
 from katcha.services.channel_growth import channel_growth_context
 from katcha.services.channel_profiles import active_strategy
@@ -139,6 +141,72 @@ def _render_asset(
     )
 
 
+def _source_publication(
+    session: object,
+    source_kind: str,
+    source_id: uuid.UUID,
+) -> Publication | None:
+    if source_kind == "short_episode":
+        predicate = Publication.short_episode_id == source_id
+    elif source_kind == "production":
+        predicate = Publication.production_id == source_id
+    elif source_kind == "compilation":
+        predicate = Publication.compilation_id == source_id
+    else:
+        raise ValueError(f"unsupported Telegram review source kind: {source_kind}")
+    return session.scalar(
+        select(Publication)
+        .where(predicate)
+        .order_by(Publication.created_at.desc())
+        .limit(1)
+    )
+
+
+def _production_script(
+    session: object,
+    production: Production,
+) -> ProductionScript | None:
+    if production.selected_script_id is None:
+        return None
+    return session.get(ProductionScript, production.selected_script_id)
+
+
+def _production_render_asset(
+    session: object,
+    production_id: uuid.UUID,
+) -> ProductionAsset | None:
+    return session.scalar(
+        select(ProductionAsset)
+        .where(
+            ProductionAsset.production_id == production_id,
+            ProductionAsset.kind == "render",
+        )
+        .order_by(
+            ProductionAsset.generation.desc(),
+            ProductionAsset.created_at.desc(),
+        )
+        .limit(1)
+    )
+
+
+def _compilation_render_asset(
+    session: object,
+    compilation_id: uuid.UUID,
+) -> CompilationAsset | None:
+    return session.scalar(
+        select(CompilationAsset)
+        .where(
+            CompilationAsset.compilation_id == compilation_id,
+            CompilationAsset.kind == "render",
+        )
+        .order_by(
+            CompilationAsset.generation.desc(),
+            CompilationAsset.created_at.desc(),
+        )
+        .limit(1)
+    )
+
+
 def _hashtags(tags: list[str]) -> str:
     values: list[str] = []
     for raw in tags[:10]:
@@ -227,6 +295,106 @@ def _caption(
     return _truncate("\n".join(lines), 1024)
 
 
+def _production_caption(
+    production: Production,
+    script: ProductionScript | None,
+    publication: Publication | None,
+    defaults: dict[str, object],
+) -> str:
+    metadata = dict(script.script_metadata or {}) if script else {}
+    title = (
+        publication.title
+        if publication is not None
+        else str(metadata.get("title_angle") or (script.narration if script else "Katcha clip"))
+    )
+    description = (
+        publication.description
+        if publication is not None
+        else str(defaults.get("description") or "")
+    )
+    tags = (
+        list(publication.tags or [])
+        if publication is not None
+        else list(defaults.get("tags") or [])
+    )
+    category_id = (
+        publication.category_id
+        if publication is not None
+        else str(defaults.get("category_id") or get_settings().youtube_default_category_id)
+    )
+    category = _CATEGORY_NAMES.get(category_id, f"YouTube category {category_id}")
+    cta = str(script.interaction_prompt or "—") if script else "—"
+    youtube_url = (
+        f"https://youtu.be/{publication.youtube_video_id}"
+        if publication is not None and publication.youtube_video_id
+        else "Not uploaded yet"
+    )
+    lines = [
+        f"READY FOR REVIEW · generation {production.generation}",
+        "",
+        f"Title: {_truncate(str(title), 120)}",
+        f"Description: {_truncate(str(description), 180) if description else '—'}",
+        f"Category: {category}",
+        f"CTA: {_truncate(cta, 140)}",
+        f"Hashtags: {_hashtags([str(tag) for tag in tags])}",
+        f"YouTube: {youtube_url}",
+        "",
+        _goal_line(production.channel_profile_id),
+        f"Format: {production.kind} · Brand: {production.brand_key or 'default'}",
+    ]
+    return _truncate("\n".join(lines), 1024)
+
+
+def _compilation_caption(
+    compilation: Compilation,
+    publication: Publication | None,
+    defaults: dict[str, object],
+) -> str:
+    title = publication.title if publication is not None else compilation.theme
+    description = (
+        publication.description
+        if publication is not None
+        else str(defaults.get("description") or "")
+    )
+    tags = (
+        list(publication.tags or [])
+        if publication is not None
+        else list(defaults.get("tags") or [])
+    )
+    category_id = (
+        publication.category_id
+        if publication is not None
+        else str(defaults.get("category_id") or get_settings().youtube_default_category_id)
+    )
+    category = _CATEGORY_NAMES.get(category_id, f"YouTube category {category_id}")
+    final_plan = dict(compilation.final_plan or {})
+    cta = str(
+        final_plan.get("outro")
+        or final_plan.get("closing_line")
+        or defaults.get("cta")
+        or "—"
+    )
+    youtube_url = (
+        f"https://youtu.be/{publication.youtube_video_id}"
+        if publication is not None and publication.youtube_video_id
+        else "Not uploaded yet"
+    )
+    lines = [
+        f"READY FOR REVIEW · generation {compilation.generation}",
+        "",
+        f"Title: {_truncate(str(title), 120)}",
+        f"Description: {_truncate(str(description), 180) if description else '—'}",
+        f"Category: {category}",
+        f"CTA: {_truncate(cta, 140)}",
+        f"Hashtags: {_hashtags([str(tag) for tag in tags])}",
+        f"YouTube: {youtube_url}",
+        "",
+        _goal_line(compilation.channel_profile_id),
+        f"Format: long-form · Persona: {compilation.persona_key}",
+    ]
+    return _truncate("\n".join(lines), 1024)
+
+
 def keyboard(callback_token: str) -> dict[str, Any]:
     def button(text: str, action: str) -> dict[str, str]:
         return {
@@ -260,43 +428,86 @@ def ensure_review_sessions(
         return []
     created: list[TelegramReviewSession] = []
     with session_scope() as session:
-        episodes = list(
-            session.scalars(
-                select(ShortEpisode)
-                .where(ShortEpisode.status.in_(_REVIEWABLE_EPISODE_STATES))
-                .order_by(ShortEpisode.created_at)
-                .limit(limit)
-            )
-        )
-        for episode in episodes:
-            asset = _render_asset(session, episode.id)
-            if asset is None:
-                continue
-            existing = session.scalar(
-                select(TelegramReviewSession).where(
-                    TelegramReviewSession.source_kind == "short_episode",
-                    TelegramReviewSession.source_id == episode.id,
-                    TelegramReviewSession.chat_id == chat_id,
+        source_groups: list[tuple[str, list[Any]]] = [
+            (
+                "short_episode",
+                list(
+                    session.scalars(
+                        select(ShortEpisode)
+                        .where(
+                            ShortEpisode.status.in_(_REVIEWABLE_EPISODE_STATES),
+                            ShortEpisode.channel_profile_id.is_not(None),
+                        )
+                        .order_by(ShortEpisode.created_at)
+                        .limit(limit)
+                    )
+                ),
+            ),
+            (
+                "production",
+                list(
+                    session.scalars(
+                        select(Production)
+                        .where(
+                            Production.status == "review",
+                            Production.channel_profile_id.is_not(None),
+                        )
+                        .order_by(Production.created_at)
+                        .limit(limit)
+                    )
+                ),
+            ),
+            (
+                "compilation",
+                list(
+                    session.scalars(
+                        select(Compilation)
+                        .where(
+                            Compilation.status == "review",
+                            Compilation.channel_profile_id.is_not(None),
+                        )
+                        .order_by(Compilation.created_at)
+                        .limit(limit)
+                    )
+                ),
+            ),
+        ]
+        for source_kind, sources in source_groups:
+            for source in sources:
+                if source_kind == "short_episode":
+                    asset = _render_asset(session, source.id)
+                elif source_kind == "production":
+                    asset = _production_render_asset(session, source.id)
+                else:
+                    asset = _compilation_render_asset(session, source.id)
+                if asset is None:
+                    continue
+                existing = session.scalar(
+                    select(TelegramReviewSession).where(
+                        TelegramReviewSession.source_kind == source_kind,
+                        TelegramReviewSession.source_id == source.id,
+                        TelegramReviewSession.chat_id == chat_id,
+                    )
                 )
-            )
-            if existing is not None:
-                continue
-            row = TelegramReviewSession(
-                source_kind="short_episode",
-                source_id=episode.id,
-                channel_profile_id=episode.channel_profile_id,
-                callback_token=_callback_token(),
-                chat_id=chat_id,
-                state="queued",
-                session_metadata={"render_asset_id": str(asset.id)},
-            )
-            session.add(row)
-            session.flush()
-            session.refresh(row)
-            session.expunge(row)
-            created.append(row)
+                if existing is not None:
+                    continue
+                row = TelegramReviewSession(
+                    source_kind=source_kind,
+                    source_id=source.id,
+                    channel_profile_id=source.channel_profile_id,
+                    callback_token=_callback_token(),
+                    chat_id=chat_id,
+                    state="queued",
+                    session_metadata={"render_asset_id": str(asset.id)},
+                )
+                session.add(row)
+                session.flush()
+                session.refresh(row)
+                session.expunge(row)
+                created.append(row)
+                if len(created) >= limit:
+                    return created
     return created
-
 
 def pending_review_sessions(
     *,
@@ -325,30 +536,52 @@ def review_card(session_id: uuid.UUID) -> TelegramReviewCard:
         row = session.get(TelegramReviewSession, session_id)
         if row is None:
             raise ValueError(f"Telegram review session not found: {session_id}")
-        if row.source_kind != "short_episode":
-            raise ValueError("Telegram review source kind is not implemented yet")
-        episode = session.get(ShortEpisode, row.source_id)
-        if episode is None:
-            raise ValueError("Telegram review episode no longer exists")
-        profile = session.get(ChannelProfile, episode.channel_profile_id)
+
+        if row.source_kind == "short_episode":
+            source = session.get(ShortEpisode, row.source_id)
+            if source is None:
+                raise ValueError("Telegram review episode no longer exists")
+            asset = _render_asset(session, source.id)
+            script = _selected_script(session, source)
+        elif row.source_kind == "production":
+            source = session.get(Production, row.source_id)
+            if source is None:
+                raise ValueError("Telegram review production no longer exists")
+            asset = _production_render_asset(session, source.id)
+            script = _production_script(session, source)
+        elif row.source_kind == "compilation":
+            source = session.get(Compilation, row.source_id)
+            if source is None:
+                raise ValueError("Telegram review compilation no longer exists")
+            asset = _compilation_render_asset(session, source.id)
+            script = None
+        else:
+            raise ValueError("Telegram review source kind is unsupported")
+
+        if source.channel_profile_id is None:
+            raise ValueError("Telegram review source is not channel scoped")
+        profile = session.get(ChannelProfile, source.channel_profile_id)
         if profile is None:
             raise ValueError("Telegram review channel profile no longer exists")
-        asset = _render_asset(session, episode.id)
         if asset is None:
-            raise ValueError("Telegram review episode has no rendered media")
-        publication = _episode_publication(session, episode.id)
-        script = _selected_script(session, episode)
+            raise ValueError("Telegram review source has no rendered media")
+        publication = _source_publication(session, row.source_kind, source.id)
         defaults = _publication_defaults(session, profile)
+        if row.source_kind == "short_episode":
+            caption = _caption(source, script, publication, defaults)
+        elif row.source_kind == "production":
+            caption = _production_caption(source, script, publication, defaults)
+        else:
+            caption = _compilation_caption(source, publication, defaults)
         return TelegramReviewCard(
             session_id=row.id,
-            source_id=episode.id,
+            source_id=source.id,
             callback_token=row.callback_token,
-            caption=_caption(episode, script, publication, defaults),
+            caption=caption,
             render_key=asset.storage_key,
             file_id=row.telegram_file_id,
             chat_id=row.chat_id,
         )
-
 
 def mark_sent(
     session_id: uuid.UUID,
