@@ -25,6 +25,7 @@ CommandIntent = Literal[
     "clip_explanation",
     "performance_advice",
     "create_content",
+    "source_discovery",
     "channel_status",
     "unsupported",
 ]
@@ -70,6 +71,8 @@ def _planner_prompt(
         "behavior.\n"
         "- create_content: prepare a proposal to make a short/video/episode "
         "from selected context.\n"
+        "- source_discovery: inspect or prepare autonomous discovery of new "
+        "public sources, creators, communities, or sites.\n"
         "- channel_status: summarize general current channel/Katcha state.\n"
         "- unsupported: request needs a capability outside this registry.\n\n"
         f"Operator prompt: {user_prompt}\n"
@@ -200,6 +203,7 @@ def deterministic_plan(intent: str, reason: str) -> CommandPlanResult:
             "clip_explanation",
             "performance_advice",
             "create_content",
+            "source_discovery",
             "channel_status",
             "unsupported",
         }
