@@ -249,28 +249,42 @@ When `batch_key` is present, Katcha derives a stable run key:
 same discovery run instead of duplicating work. The import batch key and item
 count are also added to candidate metadata through the operator feed adapter.
 
-## Source control center
+## Content sources: guided setup
 
-Open `/ingestion` on the running Katcha API (also linked from `/editing`). Connect
-with the control-plane token when configured; it stays in memory for this tab.
+Open `/ingestion` on the running Katcha API (also linked from Editing Control
+Center). The launcher connects automatically once the workspace is ready. Direct
+API access connects automatically too; if authentication is required, the page
+asks for a workspace access token and keeps it only in memory.
 
-1. Choose a channel (or Shared source), a unique source key and an installed adapter.
-   Setup fields, platform suggestions and server credential requirements come from
-   `/v1/discovery/adapters`. Edit the supplied query defaults for your source;
-   example media lists are cleared to avoid ingesting catalog sample clips.
-2. Save the source. Existing keys are rejected by this UI to prevent accidental
-   overwrites; the existing source upsert API remains available for updates.
-3. Select a source, then create a run from its saved query or import one URL per
-   line with a batch key. Imports replace both template media lists. A reused
-   batch key returns the original run; changed content requires a new batch key.
-4. Choose **Execute** on a queued run to submit it to Temporal. Refresh runs to
-   see progress or failure details. Start a fresh run after a terminal failure.
+1. Choose **Paste links**, **Search YouTube**, **Search Reddit**, or **Follow a
+   website feed**. Katcha chooses the matching installed adapter. Unsupported
+   choices are visibly unavailable; future connectors remain available through
+   **Custom connections · advanced**.
+2. Give the source a recognizable name. Choose an active channel or explicitly
+   leave it as a shared collection. Channel labels use the saved YouTube channel
+   title. An empty channel list explains that no active profiles exist; a failed
+   channel request instead offers retry and prevents saving until resolved.
+3. For a search, enter a topic (and optionally a Reddit community). For a website,
+   enter its RSS/Atom feed URL. There is no JSON or adapter selection in guided
+   setup. Paste-link collections start empty so example content is never imported.
+4. Review the summary and save. Source keys are generated internally. Saving does
+   not start discovery or publishing. Review-first is the default intended use;
+   other preferences are explained under a disclosure and do not override policy.
+5. In **Saved sources**, paste links and choose **Add links & find content**,
+   or choose **Search now** / **Check for updates**. These actions create the
+   request and submit it for execution. Batch and run keys are generated internally.
+   Retry keys are retained in the current tab if a request fails. If dispatch
+   cannot be confirmed, activity offers **Start now** for queued requests.
+6. Use **Refresh activity** for progress. Provider errors are available in a
+   troubleshooting disclosure, rather than replacing the recovery guidance.
 
-The UI reads real control-plane state; it includes no fixture data. Discovery
-execution requires the existing Temporal service and discovery worker. This
-screen does not install native platform scrapers or enable scheduled polling.
-`poll_interval_minutes` remains source configuration, not a scheduler guarantee.
+This screen uses real control-plane data. Execution still requires the discovery
+worker and Temporal. It does not add native TikTok/Instagram search or scheduled
+polling. The source `poll_interval_minutes` field remains configuration, not a
+scheduler guarantee. A shared collection is unassigned, not broadcast to channels.
 
 `GET /v1/discovery/sources/{source_id}/runs?limit=50` returns newest-first history
 for that source, including status and errors. The limit is bounded to 1–100;
 unknown sources return 404. History uses source identity frozen in run metadata.
+
+For future interface changes, follow [the product UX guidelines](UX_GUIDELINES.md).

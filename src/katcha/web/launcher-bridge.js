@@ -2,7 +2,7 @@
 function currentWorkspace() {
     const path = location.pathname;
     if (path.startsWith('/ingestion') || path.endsWith('/ingestion.html')) {
-        return ['Ingestion sources', '/ingestion'];
+        return ['Content sources', '/ingestion'];
     }
     if (path.startsWith('/clips') || path.endsWith('/clips.html')) {
         return ['Clip library', '/clips'];
@@ -46,7 +46,7 @@ function installWorkspaceMenu() {
         <div class="workspace-menu-popover">
             <a href="/explorer" ${currentHref === '/explorer' ? 'aria-current="page"' : ''}><span>◉</span><b>Trend explorer</b></a>
             <a href="/ai" ${currentHref === '/ai' ? 'aria-current="page"' : ''}><span>✦</span><b>Katcha AI</b></a>
-            <a href="/ingestion" ${currentHref === '/ingestion' ? 'aria-current="page"' : ''}><span>↳</span><b>Ingestion sources</b></a>
+            <a href="/ingestion" ${currentHref === '/ingestion' ? 'aria-current="page"' : ''}><span>↳</span><b>Content sources</b></a>
             <a href="/clips" ${currentHref === '/clips' ? 'aria-current="page"' : ''}><span>▤</span><b>Clip library</b></a>
             <a href="/channels" ${currentHref === '/channels' ? 'aria-current="page"' : ''}><span>▦</span><b>Channel Studio</b></a>
             <a href="/editing" ${currentHref === '/editing' ? 'aria-current="page"' : ''}><span>◇</span><b>Editing control center</b></a>
