@@ -2,6 +2,8 @@ const state = {
     token: "",
     channels: [],
     channelId: "",
+    threadId: "",
+    threads: [],
     selectedClipIds: [],
     selectedProductionId: null,
     busy: false,
@@ -54,6 +56,116 @@ function channelName(channel) {
     );
 }
 
+function resetConversationView(message = "Start a new grounded conversation for this channel.") {
+    $("thread").innerHTML =
+        '<article class="message katcha-message welcome-message"><div class="message-avatar">K</div><div class="message-body"><span class="message-author">KATCHA AI</span><p>' +
+        esc(message) +
+        "</p></div></article>";
+    $("context-panel").innerHTML =
+        '<div class="context-empty"><span>◇</span><strong>Nothing hidden behind the answer.</strong><p>Evidence used by Katcha AI will appear here with IDs, stored metrics and auditable actions.</p></div>';
+    $("narrator").textContent = "NO QUERY";
+}
+
+function newConversation(message = "New conversation ready. Existing history is preserved.") {
+    state.threadId = "";
+    state.selectedClipIds = [];
+    state.selectedProductionId = null;
+    renderSelection();
+    $("thread-history").value = "";
+    $("archive-thread").disabled = true;
+    resetConversationView(message);
+}
+
+async function loadThreads({ openLatest = true } = {}) {
+    if (!state.channelId) return;
+    const rows = await api(
+        "/v1/ai/threads?channel_profile_id=" +
+            encodeURIComponent(state.channelId) +
+            "&limit=30",
+    );
+    state.threads = rows;
+    $("thread-history").innerHTML =
+        '<option value="">New conversation</option>' +
+        rows
+            .map(
+                (thread) =>
+                    '<option value="' +
+                    esc(thread.thread_id) +
+                    '">' +
+                    esc(thread.title) +
+                    "</option>",
+            )
+            .join("");
+
+    const currentExists =
+        state.threadId &&
+        rows.some((thread) => thread.thread_id === state.threadId);
+    if (currentExists) {
+        $("thread-history").value = state.threadId;
+        $("archive-thread").disabled = false;
+        return;
+    }
+    if (openLatest && rows.length) {
+        await openThread(rows[0].thread_id);
+        return;
+    }
+    newConversation();
+}
+
+async function openThread(threadId) {
+    if (!threadId) {
+        newConversation();
+        return;
+    }
+    const detail = await api(
+        "/v1/ai/threads/" + encodeURIComponent(threadId),
+    );
+    state.threadId = detail.thread.thread_id;
+    state.selectedClipIds = [];
+    state.selectedProductionId = null;
+    renderSelection();
+    $("thread-history").value = state.threadId;
+    $("archive-thread").disabled = false;
+    $("thread").innerHTML = "";
+
+    for (const turn of detail.turns || []) {
+        if (turn.role === "user") {
+            appendUser(turn.content);
+        } else if (turn.role === "assistant") {
+            appendKatcha({
+                answer: turn.content,
+                intent: turn.intent || "grounded_answer",
+                evidence: turn.evidence || [],
+            });
+        }
+    }
+    if (!(detail.turns || []).length) {
+        resetConversationView("This conversation has no recorded turns yet.");
+        return;
+    }
+
+    const assistantTurns = (detail.turns || []).filter(
+        (turn) => turn.role === "assistant",
+    );
+    const latest = assistantTurns.at(-1);
+    if (latest) {
+        const actions = (detail.actions || [])
+            .filter((action) => action.source_turn_id === latest.turn_id)
+            .map((action) => ({
+                ...action,
+                type: action.action_type,
+            }));
+        renderContext({
+            narrator: latest.narrator || "GROUNDED",
+            evidence: latest.evidence || [],
+            key_points: latest.context?.key_points || [],
+            caveats: latest.context?.caveats || [],
+            actions,
+        });
+    }
+    scrollThread();
+}
+
 function appendUser(text) {
     const article = document.createElement("article");
     article.className = "message user-message";
@@ -83,11 +195,11 @@ function appendKatcha(result) {
         '<div class="message-avatar">K</div><div class="message-body"><span class="message-author">KATCHA AI</span><p>' +
         esc(result.answer) +
         '</p><div class="message-meta">' +
-        esc(result.intent.replaceAll("_", " ")) +
+        esc(String(result.intent || "grounded_answer").replaceAll("_", " ")) +
         " · " +
-        esc(result.evidence.length) +
+        esc((result.evidence || []).length) +
         " evidence record" +
-        (result.evidence.length === 1 ? "" : "s") +
+        ((result.evidence || []).length === 1 ? "" : "s") +
         "</div></div>";
     $("thread").append(article);
     scrollThread();
@@ -208,8 +320,19 @@ function renderContext(result) {
         .join("");
 
     const actions = (result.actions || [])
-        .map(
-            (action) =>
+        .map((action) => {
+            const canExecute = ["proposed", "failed"].includes(
+                action.status || "proposed",
+            );
+            const buttonLabel =
+                action.status === "executed"
+                    ? "✓ Executed"
+                    : action.status === "executing"
+                      ? "Executing…"
+                      : action.status === "expired"
+                        ? "Expired"
+                        : "Review & confirm";
+            return (
                 '<article class="action-card" data-action-card="' +
                 esc(action.proposal_id) +
                 '"><strong>' +
@@ -220,8 +343,31 @@ function renderContext(result) {
                 esc(actionPayloadSummary(action)) +
                 '</div><button type="button" data-action-id="' +
                 esc(action.proposal_id) +
-                '">Review & confirm</button><div class="action-result" hidden></div></article>',
-        )
+                '"' +
+                (canExecute ? "" : " disabled") +
+                ">" +
+                esc(buttonLabel) +
+                '</button><div class="action-result"' +
+                (action.result && Object.keys(action.result).length
+                    ? ""
+                    : " hidden") +
+                ">" +
+                esc(
+                    action.result && Object.keys(action.result).length
+                        ? Object.entries(action.result)
+                              .slice(0, 2)
+                              .map(
+                                  ([key, value]) =>
+                                      key.replaceAll("_", " ") +
+                                      ": " +
+                                      String(value),
+                              )
+                              .join(" · ")
+                        : "",
+                ) +
+                "</div></article>"
+            );
+        })
         .join("");
 
     const keyPoints = (result.key_points || []).length
@@ -319,13 +465,18 @@ async function sendPrompt(text) {
             method: "POST",
             body: JSON.stringify({
                 channel_profile_id: state.channelId,
+                thread_id: state.threadId || null,
                 prompt,
                 selected_clip_ids: state.selectedClipIds,
                 selected_production_id: state.selectedProductionId,
             }),
         });
+        state.threadId = result.thread_id;
         appendKatcha(result);
         renderContext(result);
+        await loadThreads({ openLatest: false });
+        $("thread-history").value = state.threadId;
+        $("archive-thread").disabled = false;
         status("");
     } catch (error) {
         appendError(error.message);
@@ -365,7 +516,12 @@ async function connect(event) {
         $("command-center").hidden = false;
         $("connection-state").textContent = "CONNECTED";
         $("connection-state").className = "simulation connected";
-        status("Katcha AI is ready. Answers will be scoped to " + channelName(state.channels[0]) + ".");
+        await loadThreads({ openLatest: true });
+        status(
+            "Katcha AI is ready. Conversation history is scoped to " +
+                channelName(state.channels[0]) +
+                ".",
+        );
     } catch (error) {
         $("connection-state").textContent = "CONNECTION FAILED";
         status(error.message, true);
@@ -390,19 +546,48 @@ $("prompt").addEventListener("keydown", (event) => {
         $("command-form").requestSubmit();
     }
 });
-$("channel").onchange = () => {
+$("channel").onchange = async () => {
     state.channelId = $("channel").value;
+    state.threadId = "";
     state.selectedClipIds = [];
     state.selectedProductionId = null;
     renderSelection();
-    status("Channel context changed. New answers will use this channel's stored data.");
+    await loadThreads({ openLatest: true });
+    status("Channel context changed. Conversation history was reloaded for this channel.");
+};
+$("thread-history").onchange = async () => {
+    try {
+        await openThread($("thread-history").value);
+        status(
+            state.threadId
+                ? "Reopened durable Katcha AI conversation."
+                : "New conversation ready.",
+        );
+    } catch (error) {
+        status(error.message, true);
+    }
 };
 $("clear-thread").onclick = () => {
-    $("thread").innerHTML =
-        '<article class="message katcha-message welcome-message"><div class="message-avatar">K</div><div class="message-body"><span class="message-author">KATCHA AI</span><p>Conversation cleared. Channel context and Katcha state were not changed.</p></div></article>';
-    $("context-panel").innerHTML =
-        '<div class="context-empty"><span>◇</span><strong>Nothing hidden behind the answer.</strong><p>Evidence used by Katcha AI will appear here.</p></div>';
-    $("narrator").textContent = "NO QUERY";
+    newConversation();
+    status("New conversation ready. Previous conversations remain in history.");
+};
+$("archive-thread").onclick = async () => {
+    if (!state.threadId) return;
+    const threadId = state.threadId;
+    $("archive-thread").disabled = true;
+    try {
+        await api(
+            "/v1/ai/threads/" + encodeURIComponent(threadId) + "/archive",
+            { method: "POST", body: "{}" },
+        );
+        state.threadId = "";
+        await loadThreads({ openLatest: false });
+        newConversation("Conversation archived. Start a new conversation or reopen another saved thread.");
+        status("Conversation archived.");
+    } catch (error) {
+        $("archive-thread").disabled = false;
+        status(error.message, true);
+    }
 };
 document.querySelectorAll("[data-prompt]").forEach((button) => {
     button.onclick = () => sendPrompt(button.dataset.prompt);
