@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import uuid
 from dataclasses import dataclass
 from decimal import Decimal
@@ -18,6 +19,8 @@ from katcha.ai.router import (
 from katcha.config import Settings, get_settings
 from katcha.domain import AITask
 
+logger = logging.getLogger(__name__)
+
 
 class CommandNarrative(BaseModel):
     answer: str = Field(min_length=1, max_length=6000)
@@ -31,6 +34,7 @@ class CommandNarrativeResult:
     target: ModelTarget
     input_tokens: int
     output_tokens: int
+    degraded_reason: str | None = None
 
 
 def _prompt(
@@ -177,9 +181,13 @@ def compose_grounded_answer(
         ModelTarget("katcha", "grounded-deterministic-v1"),
         0,
         0,
+        "Live AI is not configured for this workspace.",
     )
     if settings.resolved_ai_execution_mode() == "fixture":
-        return fallback
+        return CommandNarrativeResult(
+            fallback.value, fallback.target, 0, 0,
+            "Katcha is in fixture mode; this answer uses saved data only.",
+        )
     if not settings.ai_enabled:
         return fallback
 
@@ -232,8 +240,16 @@ def compose_grounded_answer(
             raise last_error
         raise RuntimeError("no configured provider is available for command-center narration")
     except Exception as exc:
+        logger.warning(
+            "Katcha AI answer unavailable request_id=%s cause=%s",
+            request_id, type(exc).__name__,
+        )
         release_budget_reservation(
             reservation_id,
             reason=f"command_center_fallback:{type(exc).__name__}",
         )
-        return fallback
+        return CommandNarrativeResult(
+            fallback.value, fallback.target, 0, 0,
+            "The AI answer is unavailable right now. This is a saved-data summary; "
+            "check the AI connection and budget, then try again.",
+        )

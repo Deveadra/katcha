@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import uuid
 from dataclasses import dataclass
 from decimal import Decimal
@@ -29,6 +30,7 @@ CommandIntent = Literal[
     "channel_status",
     "unsupported",
 ]
+logger = logging.getLogger(__name__)
 
 
 class CommandPlan(BaseModel):
@@ -44,6 +46,10 @@ class CommandPlanResult:
     target: ModelTarget
     input_tokens: int
     output_tokens: int
+
+
+class CommandPlanningUnavailable(RuntimeError):
+    """The requested language could not be understood with a reliable plan."""
 
 
 def _planner_prompt(
@@ -234,20 +240,17 @@ def plan_ambiguous_command(
     deterministic_intent: str,
     settings: Settings | None = None,
 ) -> CommandPlanResult:
-    if deterministic_intent != "channel_status":
+    settings = settings or get_settings()
+    if deterministic_intent == "source_discovery":
+        return deterministic_plan(
+            "source_discovery",
+            "A request to find new content sources or media matched the discovery action.",
+        )
+    if settings.resolved_ai_execution_mode() == "fixture" or not settings.ai_enabled:
         return deterministic_plan(
             deterministic_intent,
-            "A registered deterministic intent matched the request.",
+            "Live AI planning is not enabled; using a registered command route.",
         )
-
-    settings = settings or get_settings()
-    fallback = deterministic_plan(
-        "channel_status",
-        "No unambiguous registered intent was resolved; using channel status.",
-    )
-    if settings.resolved_ai_execution_mode() == "fixture" or not settings.ai_enabled:
-        return fallback
-
     reservation_id: uuid.UUID | None = None
     try:
         decision = route_for_channel(
@@ -292,13 +295,28 @@ def plan_ambiguous_command(
                 else:
                     continue
                 if result.value.confidence < 0.65:
+                    if deterministic_intent != "channel_status":
+                        return CommandPlanResult(
+                            value=CommandPlan(
+                                intent=deterministic_intent,
+                                confidence=result.value.confidence,
+                                reason=(
+                                    "The AI plan was uncertain; a registered "
+                                    "command route matched."
+                                ),
+                            ),
+                            source="ai_uncertain_registered_route",
+                            target=result.target,
+                            input_tokens=result.input_tokens,
+                            output_tokens=result.output_tokens,
+                        )
                     return CommandPlanResult(
                         value=CommandPlan(
-                            intent="channel_status",
+                            intent="unsupported",
                             confidence=result.value.confidence,
                             reason=(
-                                "AI planner confidence was below the 0.65 "
-                                "execution-routing threshold; using channel status."
+                                "Katcha could not confidently determine the request. "
+                                "Ask a clarifying question rather than changing the topic."
                             ),
                         ),
                         source="ai_low_confidence_fallback",
@@ -317,21 +335,27 @@ def plan_ambiguous_command(
             raise last_error
         raise RuntimeError("no configured provider is available for command planning")
     except Exception as exc:
+        logger.warning(
+            "Katcha AI planning unavailable request_id=%s cause=%s",
+            request_id, type(exc).__name__,
+        )
         release_budget_reservation(
             reservation_id,
             reason=f"command_planner_fallback:{type(exc).__name__}",
         )
-        return CommandPlanResult(
-            value=CommandPlan(
-                intent="channel_status",
-                confidence=1.0,
-                reason=(
-                    "The AI planner was unavailable, so Katcha used the "
-                    "deterministic channel-status fallback."
+        if deterministic_intent != "channel_status":
+            return CommandPlanResult(
+                value=CommandPlan(
+                    intent=deterministic_intent,
+                    confidence=1.0,
+                    reason="Live AI planning was unavailable; a registered command route matched.",
                 ),
-            ),
-            source="planner_unavailable_fallback",
-            target=ModelTarget("katcha", "deterministic-command-router-v1"),
-            input_tokens=0,
-            output_tokens=0,
-        )
+                source="registered_route_ai_unavailable",
+                target=ModelTarget("katcha", "deterministic-command-router-v1"),
+                input_tokens=0,
+                output_tokens=0,
+            )
+        raise CommandPlanningUnavailable(
+            "Katcha AI could not interpret this request right now. Check the AI "
+            "connection and budget, then retry. Your message was not acted on."
+        ) from exc

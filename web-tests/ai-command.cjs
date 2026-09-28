@@ -57,8 +57,19 @@ let browser;
             auth: req.headers().authorization,
         });
 
+        if (url.pathname === "/v1/channels" && req.headers().authorization !== "Bearer fixture-token") {
+            await route.fulfill({status: 401, json: {detail: "Workspace token required"}});
+            return;
+        }
+        if (url.pathname === "/v1/ai/command" && body?.prompt === "Please do something ambiguous") {
+            await route.fulfill({status: 503, json: {detail: "Katcha AI could not interpret this request right now."}});
+            return;
+        }
+
         let data;
-        if (url.pathname === "/v1/channels") {
+        if (url.pathname === "/v1/ai/readiness") {
+            data = {live: false, message: "Katcha is in fixture mode. Select Live AI in the launch console."};
+        } else if (url.pathname === "/v1/channels") {
             data = [
                 {
                     id: channelId,
@@ -327,6 +338,8 @@ let browser;
     });
 
     await page.goto("http://127.0.0.1:8770/ai.html");
+    await page.waitForFunction(() => document.querySelector("#status").textContent.includes("Workspace token required"));
+    assert.equal(await page.locator("#katcha-chat-shortcut").getAttribute("href"), "#prompt");
     await page.locator(".workspace-menu").waitFor();
     await page.locator(".workspace-menu > summary").click();
     assert.match(await page.locator(".workspace-menu-popover").innerText(), /Katcha AI/);
@@ -348,9 +361,12 @@ let browser;
         );
     }
     assert.equal(await page.locator("#channel").inputValue(), channelId);
+    assert.match(await page.locator("#ai-readiness").innerText(), /fixture mode/);
     assert.equal(await page.locator("#thread-history").inputValue(), "");
     assert.equal(await page.locator("#token").inputValue(), "");
     assert.equal(await page.evaluate(() => localStorage.length), 0);
+    await page.locator("#katcha-chat-shortcut").click();
+    assert.equal(await page.evaluate(() => document.activeElement.id), "prompt");
 
     await page.locator("#prompt").fill("Show me the best Xbox clips found today and explain why they scored highly.");
     await page.locator("#command-form").evaluate((form) => form.requestSubmit());
@@ -427,7 +443,11 @@ let browser;
     assert.equal(followUpRequests[2].body.thread_id, threadId);
     assert.match(await page.locator("#selection-bar").innerText(), /1 selected clip/);
 
-    assert(requests.every((request) => request.auth === "Bearer fixture-token"));
+    await page.locator("#prompt").fill("Please do something ambiguous");
+    await page.locator("#command-form").evaluate((form) => form.requestSubmit());
+    await page.waitForFunction(() => document.querySelector("#status").textContent.includes("could not interpret"));
+    assert.equal(await page.locator("#prompt").inputValue(), "Please do something ambiguous");
+    assert(requests.filter((request) => request.path !== "/v1/channels" || request.auth).every((request) => request.auth === "Bearer fixture-token"));
 
     fs.mkdirSync(path.join(__dirname, "test-results"), { recursive: true });
     await page.screenshot({
@@ -444,6 +464,9 @@ let browser;
         path: path.join(__dirname, "test-results/ai-command-mobile.png"),
         fullPage: true,
     });
+
+    await page.goto("http://127.0.0.1:8770/index.html");
+    assert.equal(await page.locator("#katcha-chat-shortcut").getAttribute("href"), "/ai?focus=chat");
 
     assert.deepEqual(errors, []);
     console.log(
