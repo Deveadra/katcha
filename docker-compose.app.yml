@@ -17,6 +17,7 @@ services:
         max-file: "3"
     ports: !reset []
   temporal-ui:
+    profiles: ["ops"]
     restart: unless-stopped
     logging:
       driver: json-file
@@ -41,7 +42,13 @@ services:
         max-file: "3"
     ports: !override ["127.0.0.1:8000:8000"]
     healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://localhost:8000/v1/health/workspace"]
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://localhost:8000/v1/health/workspace', timeout=2).read()",
+        ]
       interval: 5s
       start_interval: 1s
       start_period: 20s

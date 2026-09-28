@@ -8,9 +8,11 @@ To add a desktop shortcut, run `powershell.exe -NoProfile -File .\Katcha.ps1 -In
 from the checkout in PowerShell. Local PowerShell execution policy must permit this script;
 the launcher does not bypass organizational policy.
 
-The launch console opens at **http://localhost:8765**. On first use it opens in an idle state so
-**Start Katcha** is immediately clickable. Starting reuses verified unchanged images, checks readiness, and enables **Open workspace**
-as soon as the API is ready, independently of worker health. No virtualenv,
+The launch console opens at **http://localhost:8765**. The interactive workspace is the first readiness milestone; discovery/trend intelligence starts before heavyweight media production services so Katcha can begin watching for opportunities while rendering and storage finish warming. On first use it opens in an idle state so
+**Start Katcha** is immediately clickable. Clicking Start enters the workspace shell immediately.
+The launcher then brings up the lightweight database/API control plane first; production workers,
+Temporal, object storage, analysis, and rendering warm behind the workspace instead of blocking it.
+No virtualenv,
 credential exports, development web server, or manual port forwarding is needed.
 Python 3.11+ and Docker Desktop with WSL integration (Compose 2.24.4+) must be installed.
 The launcher reports missing Docker in its diagnostics; it does not install system software.
@@ -22,9 +24,10 @@ The launcher reports missing Docker in its diagnostics; it does not install syst
    is absent, the example is copied; missing control and encryption keys are generated once.
 3. Enter provider credentials and choose **Live** AI explicitly when ready to use paid services.
    Fixture mode remains clearly labeled and does not make live provider calls.
-4. Save settings, then click **Start Katcha** to apply them. The console shows the current
-   startup stage and elapsed time; the first image build may take several minutes. Open the workspace.
-   The gateway supplies control authentication without exposing its token to the browser.
+4. Save settings, then click **Start Katcha** to apply them. Katcha opens immediately and reports
+   **WARMING** until the database/API control plane is ready. Heavy automation images and services
+   continue warming afterward; their status remains visible from the launch console. The gateway
+   supplies control authentication without exposing its token to the browser.
 5. For YouTube, save OAuth client details and register the displayed callback URL in
    your Google OAuth application. Restart, then click **Connect YouTube** to authorize.
 
@@ -55,9 +58,11 @@ it does not automatically discover or move another project's database.
 
 ## Lifecycle and diagnostics
 
-- **Start** saves persistent run intent, validates Compose, prepares images only when inputs
-  change or images are missing, runs migrations/bucket initialization,
-  starts all workers and waits for health. Repeated clicks are serialized.
+- **Start** saves persistent run intent and validates Compose, then performs a two-phase boot.
+  Phase 1 builds or reuses the lightweight control-plane image and starts only Postgres, migrations,
+  and the API. As soon as `/v1/health/workspace` passes, the workspace is usable. Phase 2 prepares
+  storage, orchestration, ingestion, analysis, rendering, and production workers in the background.
+  Repeated clicks are serialized.
 - **Stop services** uses Compose stop; it does not delete containers, volumes or media.
 - Closing or disconnecting the browser does not restart Katcha; the supervisor keeps the
   current startup/runtime state and the browser picks it back up when it reconnects.
@@ -121,13 +126,14 @@ To undo service installation without deleting data:
 `systemctl --user disable --now katcha-launcher.service`. Use **Stop services** first
 if the containers should also stop.
 
-Image fingerprints cover Dockerfiles, Compose files, Python sources, migrations,
-package metadata, and renderer inputs. First launch after this upgrade builds once to
-establish the fingerprint; later unchanged launches skip builds after checking images
-still exist. Credentials are never hashed or stored in the fingerprint. A failed build
-never updates it. To explicitly rebuild, remove `.local/runtime/build-fingerprint`
-then click Start. First provisioning and changed dependencies may still take minutes;
-no hardware startup timing is asserted without Docker acceptance measurements.
+The launcher keeps separate workspace and full-automation build fingerprints. Renderer-only
+changes no longer invalidate the blocking workspace image, and unchanged launches verify that
+expected Katcha-built images still exist before skipping rebuilds. Shared control-plane and AI
+images remove duplicate service builds, while BuildKit package caches accelerate unavoidable
+rebuilds. Credentials are never hashed or stored in fingerprints and failed builds never update
+them. To force a full background rebuild, remove `.local/runtime/build-fingerprint`; to force the
+control plane too, also remove `.local/runtime/workspace-build-fingerprint`. Startup acceptance
+reports workspace-ready and full-automation timings separately.
 
 Discovery workers consume configured topic-watch schedules. Keeping workers running
 does not create interests or schedules automatically and does not prove ingestion progress.

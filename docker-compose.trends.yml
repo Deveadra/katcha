@@ -1,8 +1,9 @@
 services:
   trends-worker:
+    image: katcha-control:local
     build:
       context: .
-      dockerfile: Dockerfile.trends
+      dockerfile: Dockerfile.control
     env_file: ${KATCHA_ENV_FILE:-.env}
     depends_on:
       migrate:

@@ -26,6 +26,27 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+WORKSPACE_IMAGE = "katcha-control:local"
+EARLY_AUTOMATION_SERVICES = (
+    "temporal",
+    "discovery-worker",
+    "trends-worker",
+    "intelligence-worker",
+)
+BACKGROUND_BUILD_SERVICES = (
+    "minio",
+    "worker",
+    "analysis-worker",
+    "renderer",
+    "production-worker",
+)
+BACKGROUND_DOCKERFILES = (
+    "Dockerfile",
+    "Dockerfile.analysis",
+    "Dockerfile.minio",
+    "Dockerfile.production",
+    "Dockerfile.renderer",
+)
 REQUIRED_SERVICES = {
     "postgres",
     "temporal",
@@ -250,12 +271,29 @@ class Runtime:
                 process.wait()
             process.stdout.close()
 
-    def build_fingerprint(self):
-        """Hash actual image inputs, excluding caches and credentials."""
+    def build_fingerprint(self, workspace=False):
+        """Hash image inputs, with a smaller fingerprint for the interactive control plane."""
         digest = hashlib.sha256()
-        paths = list(self.root.glob("Dockerfile*")) + list(self.root.glob("docker-compose*.yml"))
+        dockerfiles = (
+            [self.root / "Dockerfile.control"]
+            if workspace
+            else [self.root / name for name in BACKGROUND_DOCKERFILES]
+        )
+        compose_files = [
+            self.root / "docker-compose.yml",
+            self.root / "docker-compose.discovery.yml",
+            self.root / "docker-compose.trends.yml",
+            self.root / "docker-compose.intelligence.yml",
+            self.root / "docker-compose.app.yml",
+        ]
+        if self.values.get("KATCHA_RENDER_BACKEND") == "lambda":
+            compose_files.append(self.root / "docker-compose.aws-render.yml")
+            if self.values.get("KATCHA_AWS_SIGNING_HELPER_PATH"):
+                compose_files.append(self.root / "docker-compose.aws-roles-anywhere.yml")
+        paths = dockerfiles + compose_files
         paths += [self.root / name for name in ("pyproject.toml", "README.md", "alembic.ini")]
-        for name in ("src", "migrations", "renderer"):
+        source_trees = ("src", "migrations") if workspace else ("src", "migrations", "renderer")
+        for name in source_trees:
             paths.extend((self.root / name).rglob("*"))
         for path in sorted(set(paths)):
             if not path.is_file() or any(
@@ -266,11 +304,46 @@ class Runtime:
             digest.update(path.read_bytes())
         return digest.hexdigest()
 
+    def prepare_workspace_image(self):
+        fingerprint = self.build_fingerprint(workspace=True)
+        stamp = self.directory / "workspace-build-fingerprint"
+        cached = stamp.exists() and stamp.read_text() == fingerprint
+        if cached:
+            try:
+                self.run(["docker", "image", "inspect", WORKSPACE_IMAGE], capture=True)
+            except RuntimeError:
+                cached = False
+        if cached:
+            self.event("info", "launcher", "Reusing unchanged workspace image.")
+            return
+        self.stage = "building workspace image"
+        self.event(
+            "info",
+            "launcher",
+            "Preparing the lightweight workspace control plane.",
+        )
+        self.run(self.command() + ["build", "api"], timeout=900)
+        temporary = stamp.with_suffix(".pending")
+        temporary.write_text(fingerprint)
+        temporary.replace(stamp)
+
+    def built_images(self):
+        minio_version = self.values.get(
+            "KATCHA_MINIO_VERSION", "RELEASE.2025-10-15T17-29-55Z"
+        )
+        return [
+            "katcha-ingest:local",
+            "katcha-analysis:local",
+            "katcha-renderer:local",
+            "katcha-production:local",
+            f"katcha-minio:{minio_version}",
+        ]
+
     def prepare_images(self):
         fingerprint = self.build_fingerprint()
         stamp = self.directory / "build-fingerprint"
-        images = self.run(self.command() + ["config", "--images"], capture=True).split()
-        cached = stamp.exists() and stamp.read_text() == fingerprint and bool(images)
+        images = self.built_images()
+        cached = stamp.exists() and stamp.read_text() == fingerprint
         if cached:
             try:
                 self.run(["docker", "image", "inspect", *sorted(set(images))], capture=True)
@@ -281,7 +354,10 @@ class Runtime:
             return
         self.stage = "building images"
         self.event("info", "launcher", "Preparing new or changed application images.")
-        self.run(self.command() + ["build"], timeout=1800)
+        self.run(
+            self.command() + ["build", *BACKGROUND_BUILD_SERVICES],
+            timeout=1800,
+        )
         temporary = stamp.with_suffix(".pending")
         temporary.write_text(fingerprint)
         temporary.replace(stamp)
@@ -303,6 +379,10 @@ class Runtime:
         return True
 
     def _operate(self, action):
+        final_phase = None
+        final_stage = None
+        final_message = None
+        final_seconds = None
         try:
             self.phase = "starting" if action == "start" else "stopping"
             self.stage = "preflight" if action == "start" else "stopping services"
@@ -319,31 +399,89 @@ class Runtime:
             self.run(["docker", "info", "--format", "{{.ServerVersion}}"])
             if action == "stop":
                 self.run(self.command() + ["stop", "--timeout", "30"], timeout=120)
-                self.phase = "stopped"
-                self.stage = "stopped"
+                final_phase = "stopped"
+                final_stage = "stopped"
                 return
             self.stage = "validating configuration"
             self.run(self.command() + ["config", "--quiet"])
+
+            # Interactive launch is intentionally two-phase. The workspace only needs
+            # Postgres + migrations + API; production automation warms after first use.
+            self.prepare_workspace_image()
+            self.stage = "starting workspace"
+            self.event("info", "launcher", "Starting the interactive workspace.")
+            self.run(
+                self.command()
+                + ["up", "-d", "--no-build", "--wait", "--wait-timeout", "120", "api"],
+                timeout=180,
+            )
+            self.start_logs()
+            if not self.probe_workspace():
+                raise RuntimeError("Workspace services started but the control plane is not ready.")
+            self.event(
+                "info",
+                "launcher",
+                "Workspace ready; warming automation in the background.",
+                startup_seconds=round(time.monotonic() - self.operation_started_at, 2),
+            )
+
+            # Discovery/trend intelligence does not depend on media storage or rendering.
+            # Bring it online before heavyweight media images (especially MinIO) are built.
+            self.stage = "starting discovery intelligence"
+            self.event(
+                "info",
+                "launcher",
+                "Starting always-on discovery, trends, and intelligence services.",
+            )
+            self.run(
+                self.command()
+                + [
+                    "up",
+                    "-d",
+                    "--no-build",
+                    "--wait",
+                    "--wait-timeout",
+                    "180",
+                    *EARLY_AUTOMATION_SERVICES,
+                ],
+                timeout=240,
+            )
+            self.event(
+                "info",
+                "launcher",
+                "Discovery intelligence is online; warming the media factory.",
+                startup_seconds=round(time.monotonic() - self.operation_started_at, 2),
+            )
+
+            self.stage = "warming automation images"
             self.prepare_images()
-            self.stage = "starting services"
-            self.event("info", "launcher", "Starting services and waiting for health checks.")
+            self.stage = "warming automation services"
+            self.event(
+                "info",
+                "launcher",
+                "Starting production automation, storage, orchestration, and rendering.",
+            )
             self.run(
                 self.command() + ["up", "-d", "--no-build", "--wait", "--wait-timeout", "300"],
                 timeout=420,
             )
-            self.stage = "checking readiness"
-            self.start_logs()
-            self.check()
-            if self.phase != "ready":
+            self.stage = "checking full readiness"
+            if self.check(publish=False) != "ready":
                 raise RuntimeError(
-                    "Services started but readiness failed; inspect the service list."
+                    "Workspace is available but background services need attention."
                 )
-            self.stage = "ready"
+            # Do not publish READY until the lifecycle lock has been released. Otherwise
+            # a user can see READY and immediately receive 409 from Start/Stop.
+            self.stage = "finalizing startup"
             self.retry_delay = 10
-            self.event("info", "launcher", "Katcha is ready")
+            final_phase = "ready"
+            final_stage = "ready"
+            final_message = "Katcha automation is fully ready."
+            final_seconds = round(time.monotonic() - self.operation_started_at, 2)
         except Exception:
-            self.phase = "failed"
-            self.stage = "failed"
+            self.probe_workspace()
+            self.phase = "degraded" if self.workspace_ready else "failed"
+            self.stage = "automation warm-up failed" if self.workspace_ready else "failed"
             self.event(
                 "error",
                 "launcher",
@@ -359,6 +497,16 @@ class Runtime:
             self.retry_delay = min(300, self.retry_delay * 2)
             self.operation_started_at = None
             self.lock.release()
+            if final_phase is not None:
+                self.phase = final_phase
+                self.stage = final_stage
+                if final_message:
+                    self.event(
+                        "info",
+                        "launcher",
+                        final_message,
+                        startup_seconds=final_seconds,
+                    )
 
     def start_logs(self):
         if self.follow and self.follow.poll() is None:
@@ -453,7 +601,7 @@ class Runtime:
         finally:
             self.lock.release()
 
-    def check(self):
+    def check(self, publish=True):
         output = self.run(self.command() + ["ps", "--all", "--format", "json"], capture=True)
         rows = (
             json.loads(output)
@@ -476,11 +624,16 @@ class Runtime:
         ready = self.probe_workspace()
         present = {row["Service"] for row in self.services}
         phase = "ready" if ready and present >= REQUIRED_SERVICES and not bad else "degraded"
-        if phase != self.phase:
-            self.event(
-                "info" if phase == "ready" else "error", "health", phase, services=self.services
-            )
-        self.phase = phase
+        if publish:
+            if phase != self.phase:
+                self.event(
+                    "info" if phase == "ready" else "error",
+                    "health",
+                    phase,
+                    services=self.services,
+                )
+            self.phase = phase
+        return phase
 
     def probe_workspace(self):
         connection = http.client.HTTPConnection("127.0.0.1", 8000, timeout=2)

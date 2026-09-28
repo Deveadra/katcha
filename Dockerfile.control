@@ -5,17 +5,12 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1
 
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends ffmpeg curl \
-    && rm -rf /var/lib/apt/lists/*
-
 WORKDIR /app
 COPY pyproject.toml README.md alembic.ini ./
 COPY migrations ./migrations
 COPY src ./src
 RUN --mount=type=cache,target=/root/.cache/pip \
-    python -m pip install --upgrade pip \
-    && python -m pip install -e .
+    python -m pip install -e .
 
 RUN useradd --create-home --uid 10001 katcha \
     && mkdir -p /tmp/katcha \
