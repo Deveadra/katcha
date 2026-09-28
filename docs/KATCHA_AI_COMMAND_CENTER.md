@@ -58,7 +58,8 @@ Actions are separate from narration. The first contract supports:
 - channel intelligence refresh;
 - channel-scoped short production creation;
 - channel-scoped compilation creation;
-- dead-letter production render recovery.
+- dead-letter production render recovery;
+- channel-scoped autonomous source scouting.
 
 `POST /v1/ai/actions/execute` requires `confirmed=true`. The browser deliberately uses a
 two-click review/confirm interaction. Confirmed commands reuse Katcha's existing services and
@@ -67,6 +68,14 @@ Temporal workflows and emit `command_center.action_executed` into the domain eve
 The initial compilation command intentionally uses Katcha's existing candidate-freeze policy.
 Exact manual locking of an arbitrary set of selected clips is a separate control-plane
 capability and should not be faked by the conversational layer.
+
+A source-scout action creates a channel-scoped topic watch backed by
+`web_scout@v1` and a durable Temporal schedule. The default cadence is hourly.
+Each cycle searches the live public web, persists a bounded rolling set of recently
+discovered URLs as exploration memory, and asks the next cycle to branch toward
+adjacent creators, communities, sites, and newer posts rather than simply repeating
+the same pages. Search results enter the normal discovery/trend queue; starting a
+scout does **not** authorize rendering or publishing.
 
 ## Initial natural-language intents
 
@@ -77,6 +86,7 @@ The first UI slice handles common operator questions directly:
 - why a selected clip was rejected or scored the way it did;
 - editing/performance evidence and behavior changes;
 - content-creation requests, which become proposed actions rather than immediate execution;
+- source-discovery requests such as "Find new TikTok, Instagram, X, and Bluesky sources";
 - general channel status.
 
 The intent layer is deliberately conservative. Unsupported or ambiguous language falls back to
