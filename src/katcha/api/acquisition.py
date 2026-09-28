@@ -653,10 +653,15 @@ def source_run_results(source_id: uuid.UUID, run_id: uuid.UUID) -> SourceRunResu
         ):
             raise HTTPException(status_code=404, detail="source run not found")
         condition = DiscoveryObservation.discovery_run_id == run_id
-        total = session.scalar(select(func.count()).select_from(DiscoveryObservation).where(condition)) or 0
+        total = session.scalar(
+            select(func.count()).select_from(DiscoveryObservation).where(condition)
+        ) or 0
         rows = session.scalars(
             select(DiscoveryCandidate)
-            .join(DiscoveryObservation, DiscoveryObservation.discovery_candidate_id == DiscoveryCandidate.id)
+            .join(
+                DiscoveryObservation,
+                DiscoveryObservation.discovery_candidate_id == DiscoveryCandidate.id,
+            )
             .where(condition)
             .order_by(DiscoveryObservation.observed_at.desc(), DiscoveryObservation.id.desc())
             .limit(5)

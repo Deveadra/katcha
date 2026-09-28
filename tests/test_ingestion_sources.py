@@ -317,6 +317,7 @@ def test_source_run_results_follow_observations_and_reject_other_sources(
     source_scope, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     import uuid
+
     from fastapi import HTTPException
 
     from katcha.acquisition_models import DiscoveryObservation
