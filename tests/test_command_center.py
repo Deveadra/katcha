@@ -2,7 +2,11 @@ import uuid
 from datetime import UTC, datetime
 
 from katcha.api.main import app
-from katcha.command_center_models import CommandActionProposal
+from katcha.command_center_models import (
+    CommandActionProposal,
+    CommandThread,
+    CommandTurn,
+)
 from katcha.editorial.rankings import (
     RankingCandidateSignals,
     build_locked_ranking_episode_plan,
@@ -22,6 +26,9 @@ def test_command_center_routes_are_mounted() -> None:
     assert "/v1/ai/command" in paths
     assert "/v1/ai/actions/{proposal_id}" in paths
     assert "/v1/ai/actions/{proposal_id}/execute" in paths
+    assert "/v1/ai/threads" in paths
+    assert "/v1/ai/threads/{thread_id}" in paths
+    assert "/v1/ai/threads/{thread_id}/archive" in paths
     assert "/v1/ai/actions/execute" not in paths
 
 
@@ -133,3 +140,18 @@ def test_action_proposal_model_freezes_server_authority() -> None:
     assert columns.status.nullable is False
     assert columns.confirmed_by.nullable is True
     assert columns.expires_at.nullable is False
+    assert columns.thread_id.nullable is True
+    assert columns.source_turn_id.nullable is True
+
+
+def test_command_history_models_preserve_order_and_channel_scope() -> None:
+    thread_columns = CommandThread.__table__.c
+    turn_columns = CommandTurn.__table__.c
+
+    assert thread_columns.channel_profile_id.nullable is False
+    assert thread_columns.created_by.nullable is False
+    assert thread_columns.last_activity_at.nullable is False
+    assert turn_columns.thread_id.nullable is False
+    assert turn_columns.channel_profile_id.nullable is False
+    assert turn_columns.sequence_number.nullable is False
+    assert turn_columns.content.nullable is False
