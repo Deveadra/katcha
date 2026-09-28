@@ -72,6 +72,89 @@ function invideoEligible(row) {
         && ["voiced", "editorial_approved", "rendering", "rendered", "render_review", "approved", "failed"].includes(String(row.status || ""))
     );
 }
+function renderInVideoHandoff() {
+    const row = state.invideoHandoff;
+    if (!row) {
+        $("invideo-handoff-state").className = "external-edit-state empty";
+        $("invideo-handoff-state").textContent = "Prepare an episode handoff to begin.";
+        for (const id of ["download-invideo-package", "invideo-output-file", "invideo-project-id", "upload-invideo-output", "adopt-invideo-output"]) {
+            $(id).disabled = true;
+        }
+        return;
+    }
+    const imported = row.status === "output_imported";
+    const adopted = row.status === "adopted";
+    $("invideo-handoff-state").className = "external-edit-state";
+    const project = row.external_project_id ? ` · InVideo project ${escapeHTML(row.external_project_id)}` : "";
+    const verify = row.handoff_metadata?.verification;
+    const verified = verify ? `<p>Verified ${escapeHTML(Number(verify.duration_seconds || 0).toFixed(2))}s · ${escapeHTML(verify.width || "—")}×${escapeHTML(verify.height || "—")}</p>` : "";
+    $("invideo-handoff-state").innerHTML = `<div><span class="pill ${adopted ? "active" : ""}">${escapeHTML(row.status.replaceAll("_", " ").toUpperCase())}</span><strong>InVideo handoff · generation ${escapeHTML(row.generation)}</strong></div><small>Katcha handoff ID ${escapeHTML(row.id)}${project}</small>${verified}`;
+    $("download-invideo-package").disabled = adopted;
+    $("invideo-output-file").disabled = adopted;
+    $("invideo-project-id").disabled = adopted;
+    $("upload-invideo-output").disabled = adopted;
+    $("adopt-invideo-output").disabled = !imported;
+}
+async function prepareInVideo(episodeId) {
+    const row = await api("/v1/integrations/invideo/handoffs", {
+        method: "POST",
+        body: JSON.stringify({
+            source_type: "short_episode",
+            source_id: episodeId,
+            actor: "editing-control-center",
+            note: "Operator handoff from Editing Control Center",
+        }),
+    });
+    state.invideoHandoff = row;
+    renderInVideoHandoff();
+    $("invideo-dialog").showModal();
+    message("InVideo package prepared. Download it when ready.");
+}
+async function downloadInVideoPackage() {
+    if (!state.invideoHandoff) return;
+    const blob = await apiBlob(`/v1/integrations/invideo/handoffs/${encodeURIComponent(state.invideoHandoff.id)}/package`);
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `katcha-invideo-${state.invideoHandoff.id}.zip`;
+    document.body.append(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+    message("InVideo package downloaded. Return the finished MP4 to this handoff.");
+}
+async function uploadInVideoOutput() {
+    if (!state.invideoHandoff) return;
+    const file = $("invideo-output-file").files?.[0];
+    if (!file) throw new Error("Choose the finished InVideo MP4 first.");
+    const form = new FormData();
+    form.append("file", file);
+    form.append("actor", "editing-control-center");
+    const projectId = $("invideo-project-id").value.trim();
+    if (projectId) form.append("external_project_id", projectId);
+    const response = await fetch(`/v1/integrations/invideo/handoffs/${encodeURIComponent(state.invideoHandoff.id)}/output`, {
+        method: "POST",
+        headers: state.token ? { Authorization: `Bearer ${state.token}` } : {},
+        body: form,
+    });
+    if (!response.ok) {
+        let payload; try { payload = await response.json(); } catch {}
+        throw new Error(typeof payload?.detail === "string" ? payload.detail : `Upload failed (${response.status})`);
+    }
+    state.invideoHandoff = await response.json();
+    renderInVideoHandoff();
+    message("InVideo output imported and media-verified. Review verification before adoption.");
+}
+async function adoptInVideoOutput() {
+    if (!state.invideoHandoff) return;
+    state.invideoHandoff = await api(`/v1/integrations/invideo/handoffs/${encodeURIComponent(state.invideoHandoff.id)}/adopt`, {
+        method: "POST",
+        body: JSON.stringify({ actor: "editing-control-center" }),
+    });
+    renderInVideoHandoff();
+    await loadChannel();
+    message("InVideo output adopted as the Katcha render. It is waiting for normal render review.");
+}
 function clearPreviewUrl() {
     if (state.previewUrl) URL.revokeObjectURL(state.previewUrl);
     state.previewUrl = null;
