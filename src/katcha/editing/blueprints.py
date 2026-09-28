@@ -63,6 +63,8 @@ class EditBlueprintContract(BaseModel):
         voice_mode = self.narration.mode in {"persona_voice", "explanatory_voice"}
         if self.narration.required and not voice_mode:
             raise ValueError("required narration is only valid for a voice narration mode")
+        if voice_mode and self.source_layout.mode != "full_frame":
+            raise ValueError("voice narration blueprints currently require full-frame layout")
         if not voice_mode and self.narration.captions_enabled:
             raise ValueError("text/source-only blueprints cannot enable narration captions")
         return self
