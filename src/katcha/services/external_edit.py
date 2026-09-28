@@ -7,7 +7,7 @@ import uuid
 import zipfile
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Literal
+from typing import Literal
 
 from sqlalchemy import func, select
 
