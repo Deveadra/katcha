@@ -43,6 +43,10 @@ from katcha.services.command_center import (
     ranked_episode_allowed_counts,
     resolve_command_follow_up,
 )
+from katcha.services.intelligence_runs import (
+    fail_channel_intelligence_run,
+    start_channel_intelligence_run,
+)
 from katcha.services.command_history import (
     archive_command_thread,
     create_command_thread,
@@ -788,12 +792,30 @@ async def _execute_proposal(
             f"channel-intelligence-refresh-{proposal.channel_profile_id}-"
             f"{proposal.id.hex[:20]}"
         )
-        await start_channel_intelligence_refresh(
-            str(proposal.channel_profile_id),
-            workflow_id,
-            run_key,
+        run = start_channel_intelligence_run(
+            proposal.channel_profile_id,
+            run_key=run_key,
+            workflow_id=workflow_id,
         )
-        return {"workflow_id": workflow_id, "run_key": run_key}
+        try:
+            await start_channel_intelligence_refresh(
+                str(proposal.channel_profile_id),
+                workflow_id,
+                run_key,
+            )
+        except Exception as exc:
+            fail_channel_intelligence_run(
+                proposal.channel_profile_id,
+                run_key=run_key,
+                workflow_id=workflow_id,
+                error=f"{type(exc).__name__}: {exc}",
+            )
+            raise
+        return {
+            "intelligence_run_id": str(run.id),
+            "workflow_id": workflow_id,
+            "run_key": run_key,
+        }
 
     if proposal.action_type == "create_short_production":
         clip_id = uuid.UUID(str(payload["clip_id"]))
