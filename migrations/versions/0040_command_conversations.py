@@ -1,7 +1,7 @@
 """add durable command center conversations
 
-Revision ID: 0039_command_conversations
-Revises: 0038_command_action_proposals
+Revision ID: 0040_command_conversations
+Revises: 0039_telegram_reviews
 """
 
 from collections.abc import Sequence
@@ -9,8 +9,8 @@ from collections.abc import Sequence
 import sqlalchemy as sa
 from alembic import op
 
-revision: str = "0039_command_conversations"
-down_revision: str | None = "0038_command_action_proposals"
+revision: str = "0040_command_conversations"
+down_revision: str | None = "0039_telegram_reviews"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

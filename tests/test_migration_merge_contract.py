@@ -4,10 +4,13 @@ from alembic.script import ScriptDirectory
 
 def test_ranked_trend_editing_activation_and_render_revisions_share_one_history() -> None:
     script = ScriptDirectory.from_config(Config("alembic.ini"))
-    assert script.get_heads() == ["0039_command_conversations"]
+    assert script.get_heads() == ["0040_command_conversations"]
 
-    conversations = script.get_revision("0039_command_conversations")
-    assert conversations.down_revision == "0038_command_action_proposals"
+    conversations = script.get_revision("0040_command_conversations")
+    assert conversations.down_revision == "0039_telegram_reviews"
+
+    telegram = script.get_revision("0039_telegram_reviews")
+    assert telegram.down_revision == "0038_command_action_proposals"
 
     proposals = script.get_revision("0038_command_action_proposals")
     assert proposals.down_revision == "0037_clip_lifecycle"

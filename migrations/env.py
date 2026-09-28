@@ -21,6 +21,7 @@ from katcha import publishing_models  # noqa: F401
 from katcha import reach_models  # noqa: F401
 from katcha import render_models  # noqa: F401
 from katcha import short_episode_models  # noqa: F401
+from katcha import telegram_models  # noqa: F401
 from katcha import trend_activation_models  # noqa: F401
 from katcha import trend_calibration_models  # noqa: F401
 from katcha import trend_models  # noqa: F401

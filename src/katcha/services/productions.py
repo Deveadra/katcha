@@ -283,6 +283,16 @@ def register_regeneration(
         acquisition_state = assert_clip_production_eligible(parent.clip_id)
         child_snapshot = dict(parent.analysis_snapshot or {})
         child_snapshot["acquisition"] = _acquisition_snapshot(acquisition_state)
+        if note:
+            feedback = list(child_snapshot.get("operator_feedback") or [])
+            feedback.append(
+                {
+                    "actor": actor,
+                    "note": note.strip(),
+                    "regenerate_from": stage,
+                }
+            )
+            child_snapshot["operator_feedback"] = feedback[-5:]
 
         child = Production(
             clip_id=parent.clip_id,
