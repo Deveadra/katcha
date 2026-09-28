@@ -499,7 +499,6 @@ def test_launcher_serves_workspace_shell_without_api(tmp_path):
         server.server_close()
 
 
-
 def test_ready_is_not_published_before_operation_unlock(tmp_path):
     app = instance(tmp_path)
     app.lock.acquire()
@@ -519,10 +518,14 @@ def test_ready_is_not_published_before_operation_unlock(tmp_path):
         if message == "Katcha automation is fully ready.":
             observed.append((app.phase, app.lock.locked()))
 
+    def workspace_ready():
+        app.workspace_ready = True
+        return True
+
     with (
         patch.object(app, "run", side_effect=fake_run),
         patch.object(app, "start_logs"),
-        patch.object(app, "probe_workspace", side_effect=lambda: setattr(app, "workspace_ready", True) or True),
+        patch.object(app, "probe_workspace", side_effect=workspace_ready),
         patch.object(app, "check", side_effect=full_check),
         patch.object(app, "event", side_effect=record_ready),
     ):
