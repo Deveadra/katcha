@@ -19,6 +19,12 @@ const server = spawn(
 );
 
 const requests = [];
+const threadId = "77777777-7777-4777-8777-777777777777";
+const channelId = "11111111-1111-4111-8111-111111111111";
+const proposalId = "66666666-6666-4666-8666-666666666666";
+const storedTurns = [];
+let threadExists = false;
+let commandCount = 0;
 let browser;
 
 (async () => {
@@ -55,7 +61,7 @@ let browser;
         if (url.pathname === "/v1/channels") {
             data = [
                 {
-                    id: "11111111-1111-4111-8111-111111111111",
+                    id: channelId,
                     youtube_connection_id: "22222222-2222-4222-8222-222222222222",
                     status: "active",
                     timezone: "America/Chicago",
@@ -66,29 +72,158 @@ let browser;
                     updated_at: "2026-09-28T12:00:00Z",
                 },
             ];
-        } else if (url.pathname === "/v1/ai/command") {
+        } else if (url.pathname === "/v1/ai/threads" && req.method() === "GET") {
+            data = threadExists
+                ? [
+                      {
+                          thread_id: threadId,
+                          channel_profile_id: channelId,
+                          title: "Show me the best Xbox clips found today",
+                          status: "active",
+                          created_by: "control-token:fixture",
+                          last_activity_at: "2026-09-28T12:05:00Z",
+                          archived_at: null,
+                          created_at: "2026-09-28T12:00:00Z",
+                      },
+                  ]
+                : [];
+        } else if (
+            url.pathname === "/v1/ai/threads/" + threadId &&
+            req.method() === "GET"
+        ) {
             data = {
-                request_id: "33333333-3333-4333-8333-333333333333",
-                channel_profile_id: body.channel_profile_id,
-                intent: body.selected_clip_ids.length ? "clip_explanation" : "best_clips",
-                answer: body.selected_clip_ids.length
-                    ? "This clip scored highly because its stored hook and rewatch signals were strong."
-                    : "I found one strong Xbox clip from today. Its channel score is 91/100.",
-                key_points: ["The answer uses stored clip evidence."],
-                caveats: [],
-                evidence: [
-                    {
-                        kind: "clip",
-                        id: "44444444-4444-4444-8444-444444444444",
-                        title: "Xbox fixture clip",
-                        candidate_score: 88.0,
-                        channel_score: 0.91,
-                        why: ["hook score", "rewatch potential"],
-                    },
-                ],
+                thread: {
+                    thread_id: threadId,
+                    channel_profile_id: channelId,
+                    title: "Show me the best Xbox clips found today",
+                    status: "active",
+                    created_by: "control-token:fixture",
+                    last_activity_at: "2026-09-28T12:05:00Z",
+                    archived_at: null,
+                    created_at: "2026-09-28T12:00:00Z",
+                },
+                turns: storedTurns,
                 actions: [
                     {
-                        proposal_id: "66666666-6666-4666-8666-666666666666",
+                        proposal_id: proposalId,
+                        request_id: "33333333-3333-4333-8333-333333333333",
+                        thread_id: threadId,
+                        source_turn_id:
+                            storedTurns.filter((turn) => turn.role === "assistant").at(-1)?.turn_id ||
+                            "99999999-9999-4999-8999-999999999999",
+                        channel_profile_id: channelId,
+                        action_type: "create_short_production",
+                        label: "Make a short from top clip",
+                        description: "Start a channel-scoped production using the current channel defaults.",
+                        status: "proposed",
+                        execution_attempts: 0,
+                        expires_at: "2026-09-28T13:30:00Z",
+                        confirmed_by: null,
+                        confirmed_at: null,
+                        execution_started_at: null,
+                        executed_at: null,
+                        result: {},
+                        error: null,
+                        payload: {
+                            clip_id: "44444444-4444-4444-8444-444444444444",
+                            edit_blueprint_key: "persona_commentary",
+                        },
+                    },
+                ],
+            };
+        } else if (
+            url.pathname === "/v1/ai/threads/" + threadId + "/archive" &&
+            req.method() === "POST"
+        ) {
+            threadExists = false;
+            data = {
+                thread_id: threadId,
+                channel_profile_id: channelId,
+                title: "Show me the best Xbox clips found today",
+                status: "archived",
+                created_by: "control-token:fixture",
+                last_activity_at: "2026-09-28T12:10:00Z",
+                archived_at: "2026-09-28T12:10:00Z",
+                created_at: "2026-09-28T12:00:00Z",
+            };
+        } else if (url.pathname === "/v1/ai/command") {
+            commandCount += 1;
+            const userTurnId =
+                commandCount === 1
+                    ? "88888888-8888-4888-8888-888888888881"
+                    : "88888888-8888-4888-8888-888888888883";
+            const assistantTurnId =
+                commandCount === 1
+                    ? "88888888-8888-4888-8888-888888888882"
+                    : "88888888-8888-4888-8888-888888888884";
+            const answer = body.selected_clip_ids.length
+                ? "This clip scored highly because its stored hook and rewatch signals were strong."
+                : "I found one strong Xbox clip from today. Its channel score is 91/100.";
+            const intent = body.selected_clip_ids.length
+                ? "clip_explanation"
+                : "best_clips";
+            const evidence = [
+                {
+                    kind: "clip",
+                    id: "44444444-4444-4444-8444-444444444444",
+                    title: "Xbox fixture clip",
+                    candidate_score: 88.0,
+                    channel_score: 0.91,
+                    why: ["hook score", "rewatch potential"],
+                },
+            ];
+            threadExists = true;
+            storedTurns.push(
+                {
+                    turn_id: userTurnId,
+                    thread_id: threadId,
+                    channel_profile_id: channelId,
+                    sequence_number: storedTurns.length + 1,
+                    role: "user",
+                    request_id: "33333333-3333-4333-8333-333333333333",
+                    intent: null,
+                    narrator: null,
+                    content: body.prompt,
+                    evidence: [],
+                    context: {
+                        selected_clip_ids: body.selected_clip_ids,
+                    },
+                    created_at: "2026-09-28T12:00:00Z",
+                },
+                {
+                    turn_id: assistantTurnId,
+                    thread_id: threadId,
+                    channel_profile_id: channelId,
+                    sequence_number: storedTurns.length + 2,
+                    role: "assistant",
+                    request_id: "33333333-3333-4333-8333-333333333333",
+                    intent,
+                    narrator: "fixture/grounded-command-v1",
+                    content: answer,
+                    evidence,
+                    context: {
+                        key_points: ["The answer uses stored clip evidence."],
+                        caveats: [],
+                    },
+                    created_at: "2026-09-28T12:00:01Z",
+                },
+            );
+            data = {
+                request_id: "33333333-3333-4333-8333-333333333333",
+                thread_id: threadId,
+                user_turn_id: userTurnId,
+                assistant_turn_id: assistantTurnId,
+                channel_profile_id: body.channel_profile_id,
+                intent,
+                answer,
+                key_points: ["The answer uses stored clip evidence."],
+                caveats: [],
+                evidence,
+                actions: [
+                    {
+                        proposal_id: proposalId,
+                        thread_id: threadId,
+                        source_turn_id: assistantTurnId,
                         type: "create_short_production",
                         label: "Make a short from top clip",
                         description: "Start a channel-scoped production using the current channel defaults.",
@@ -147,7 +282,8 @@ let browser;
             { cause: error },
         );
     }
-    assert.equal(await page.locator("#channel").inputValue(), "11111111-1111-4111-8111-111111111111");
+    assert.equal(await page.locator("#channel").inputValue(), channelId);
+    assert.equal(await page.locator("#thread-history").inputValue(), "");
     assert.equal(await page.locator("#token").inputValue(), "");
     assert.equal(await page.evaluate(() => localStorage.length), 0);
 
@@ -168,6 +304,8 @@ let browser;
 
     const commandRequests = requests.filter((request) => request.path === "/v1/ai/command");
     assert.equal(commandRequests.length, 2);
+    assert.equal(commandRequests[0].body.thread_id, null);
+    assert.equal(commandRequests[1].body.thread_id, threadId);
     assert.deepEqual(commandRequests[1].body.selected_clip_ids, [
         "44444444-4444-4444-8444-444444444444",
     ]);
@@ -187,6 +325,20 @@ let browser;
     assert.equal(
         requests.filter((request) => request.path.endsWith("/execute")).length,
         1,
+    );
+
+    await page.locator("#clear-thread").click();
+    assert.equal(await page.locator("#thread-history").inputValue(), "");
+    await page.locator("#thread-history").selectOption(threadId);
+    await page.getByText(/stored hook and rewatch signals/i).waitFor();
+    assert.equal(await page.locator("#thread-history").inputValue(), threadId);
+    assert.match(await page.locator("#context-panel").innerText(), /Xbox fixture clip/);
+    assert(
+        requests.some(
+            (request) =>
+                request.path === "/v1/ai/threads/" + threadId &&
+                request.method === "GET",
+        ),
     );
 
     assert(requests.every((request) => request.auth === "Bearer fixture-token"));
@@ -209,7 +361,7 @@ let browser;
 
     assert.deepEqual(errors, []);
     console.log(
-        "PASS: Katcha AI grounded conversation, evidence, context selection, two-step confirmed action, auth, and mobile width",
+        "PASS: Katcha AI grounded conversation, durable history reopen, evidence, context selection, two-step confirmed action, auth, and mobile width",
     );
 })()
     .catch((error) => {
