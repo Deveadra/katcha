@@ -418,9 +418,9 @@ async def execute_action(request: ExecuteActionRequest) -> ExecuteActionResponse
                             "platforms": platforms,
                             "limit": min(top_n * 2, 100),
                         },
-                        "source_quota_limit_per_day": 96,
+                        "source_quota_limit_per_day": 24,
                         "provider_quota_limits": {
-                            "openai.web_search": 96,
+                            "openai.web_search": 24,
                         },
                     }
                 ],
