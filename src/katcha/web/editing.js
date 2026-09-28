@@ -212,6 +212,8 @@ function syncBlueprintEditor() {
     $("bp-narration-required").disabled = true;
     $("bp-narration-required").checked = voiceMode;
     $("bp-captions").disabled = !voiceMode;
+    if (!voiceMode && $("bp-audio-policy").value === "duck") $("bp-audio-policy").value = "retain";
+    $("bp-duck-volume").disabled = !voiceMode || $("bp-audio-policy").value !== "duck";
     $("bp-min-source").disabled = voiceMode;
     $("bp-max-duration").disabled = voiceMode;
     $("bp-narration-ratio").disabled = true;
