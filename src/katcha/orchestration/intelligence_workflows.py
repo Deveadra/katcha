@@ -6,7 +6,7 @@ from temporalio import workflow
 from temporalio.common import RetryPolicy
 
 
-async def _run_refresh(channel_profile_id: str, run_key: str) -> dict[str, object]:
+async def _run_refresh_body(channel_profile_id: str, run_key: str) -> dict[str, object]:
     retry = RetryPolicy(
         initial_interval=timedelta(seconds=5),
         backoff_coefficient=2.0,
@@ -138,6 +138,51 @@ async def _run_refresh(channel_profile_id: str, run_key: str) -> dict[str, objec
         "clip_lifecycle": clip_lifecycle,
         "packaging_seed": packaging_seed,
     }
+
+
+async def _run_refresh(
+    channel_profile_id: str,
+    run_key: str,
+) -> dict[str, object]:
+    workflow_id = workflow.info().workflow_id
+    ledger_retry = RetryPolicy(
+        initial_interval=timedelta(seconds=2),
+        backoff_coefficient=2.0,
+        maximum_interval=timedelta(seconds=15),
+        maximum_attempts=3,
+    )
+    await workflow.execute_activity(
+        "record_channel_intelligence_run_started_activity",
+        args=[channel_profile_id, run_key, workflow_id],
+        start_to_close_timeout=timedelta(seconds=30),
+        retry_policy=ledger_retry,
+    )
+    try:
+        result = await _run_refresh_body(channel_profile_id, run_key)
+    except Exception as exc:
+        try:
+            await workflow.execute_activity(
+                "record_channel_intelligence_run_failed_activity",
+                args=[
+                    channel_profile_id,
+                    run_key,
+                    workflow_id,
+                    f"{type(exc).__name__}: {str(exc)[:3500]}",
+                ],
+                start_to_close_timeout=timedelta(seconds=30),
+                retry_policy=ledger_retry,
+            )
+        except Exception:
+            pass
+        raise
+
+    await workflow.execute_activity(
+        "record_channel_intelligence_run_completed_activity",
+        args=[channel_profile_id, run_key, workflow_id, result],
+        start_to_close_timeout=timedelta(seconds=30),
+        retry_policy=ledger_retry,
+    )
+    return result
 
 
 @workflow.defn
