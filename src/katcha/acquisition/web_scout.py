@@ -197,13 +197,52 @@ def _web_search_tool(query: dict[str, Any]) -> dict[str, Any]:
     return tool
 
 
-def _search_prompt(query: dict[str, Any], limit: int) -> str:
+def _recent_scout_sources(cursor: dict[str, Any]) -> list[str]:
+    raw = cursor.get("recent_sources")
+    if not isinstance(raw, list):
+        return []
+    values: list[str] = []
+    for item in raw:
+        normalized = _normalized_url(str(item or ""))
+        if normalized and normalized not in values:
+            values.append(normalized)
+        if len(values) >= 60:
+            break
+    return values
+
+
+def _next_scout_cursor(
+    cursor: dict[str, Any],
+    items: tuple[DiscoveredCandidate, ...],
+) -> dict[str, Any]:
+    recent = _recent_scout_sources(cursor)
+    for item in items:
+        for raw in (item.source_url, item.creator_url):
+            normalized = _normalized_url(str(raw or ""))
+            if normalized:
+                if normalized in recent:
+                    recent.remove(normalized)
+                recent.append(normalized)
+    return {
+        "cycle": max(int(cursor.get("cycle") or 0), 0) + 1,
+        "recent_sources": recent[-60:],
+    }
+
+
+def _search_prompt(
+    query: dict[str, Any],
+    limit: int,
+    *,
+    cursor: dict[str, Any] | None = None,
+) -> str:
     include_terms = _clean_list(query.get("include_terms"), limit=30)
     exclude_terms = _clean_list(query.get("exclude_terms"), limit=30)
     platforms = _requested_platforms(query)
     operator_request = str(query.get("operator_request") or query.get("q") or "").strip()
     channel_context = str(query.get("channel_context") or "").strip()
     freshness_hours = min(max(int(query.get("freshness_horizon_hours", 72)), 1), 24 * 30)
+    recent_sources = _recent_scout_sources(cursor or {})
+    cycle = max(int((cursor or {}).get("cycle") or 0), 0)
     domain_hints = sorted(
         {
             domain
@@ -225,8 +264,12 @@ def _search_prompt(query: dict[str, Any], limit: int) -> str:
         f"Requested platforms: {platforms or ['open web']}\n"
         f"Freshness target: prioritize material from the last {freshness_hours} hours when possible.\n"
         f"Domain hints: {domain_hints or ['none; search the wider public web']}\n"
+        f"Scout cycle: {cycle + 1}\n"
+        f"Recently discovered sources to avoid simply repeating: {recent_sources[-30:]}\n"
         "Favor discovery breadth: relevant results may come from people or sites never seen "
-        "before. Return source_kind as one of post, profile, community, website, feed, or video."
+        "before. Use recent sources as exploration memory: look for adjacent creators, linked "
+        "communities, related sites, and newer posts rather than merely returning the same pages. "
+        "Return source_kind as one of post, profile, community, website, feed, or video."
     )
 
 
@@ -277,7 +320,6 @@ class WebScoutDiscoveryAdapter:
         query: dict[str, Any],
         cursor: dict[str, Any],
     ) -> DiscoveryBatch:
-        del cursor
         settings = get_settings()
         if not settings.openai_api_key:
             raise ValueError("Autonomous web scouting requires KATCHA_OPENAI_API_KEY")
@@ -312,7 +354,7 @@ class WebScoutDiscoveryAdapter:
         try:
             response = OpenAI(api_key=settings.openai_api_key).responses.create(
                 model=settings.web_scout_model,
-                input=_search_prompt(query, limit),
+                input=_search_prompt(query, limit, cursor=cursor),
                 reasoning={"effort": "low"},
                 tools=[_web_search_tool(query)],
                 tool_choice="required",
@@ -344,6 +386,7 @@ class WebScoutDiscoveryAdapter:
         )
         return DiscoveryBatch(
             items=items,
+            next_cursor=_next_scout_cursor(cursor, items),
             done=True,
             provider_usage={"openai.web_search": 1},
         )
