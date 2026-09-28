@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import base64
 import collections
+import contextlib
 import datetime as dt
 import hashlib
 import http.client
@@ -434,12 +435,13 @@ class Runtime:
                     traceback.format_exc(),
                     service=service,
                     action=action,
-                    recovery="Try the next stronger per-service repair action or inspect diagnostics.",
+                    recovery=(
+                        "Try the next stronger per-service repair action "
+                        "or inspect diagnostics."
+                    ),
                 )
-                try:
+                with contextlib.suppress(Exception):
                     self.check()
-                except Exception:
-                    pass
             finally:
                 self.lock.release()
 
