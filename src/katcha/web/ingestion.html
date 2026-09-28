@@ -1,6 +1,75 @@
 <!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Katcha · Ingestion sources</title><link rel="stylesheet" href="editing.css"><link rel="stylesheet" href="ingestion.css"><script src="ingestion.js" defer></script><script src="launcher-bridge.js" defer></script></head>
-<body><div class="shell"><aside class="sidebar"><div class="logo">✦ katcha.</div><nav aria-label="Workspace"><a href="/explorer">Trend explorer</a><a href="/ingestion" aria-current="page">Ingestion sources</a><a href="/editing">Editing control center</a></nav></aside><main><header class="topbar">Workspace / Ingestion sources <span class="tag">LIVE CONTROL PLANE</span></header><div class="content"><div class="heading"><div><div class="eyebrow">DISCOVERY / SOURCE OPERATIONS</div><h1>Find the next <em>great clip.</em></h1><p>Connect a source, bring in a batch, and follow discovery into your candidate pipeline.</p></div></div>
-<form id="connect" class="connect card"><label>Control-plane token<input id="token" type="password" autocomplete="off" placeholder="Leave blank for local development"></label><button class="button primary">Connect</button></form><p id="message" role="status" aria-live="polite"></p>
-<fieldset id="workspace" disabled><div class="grid"><section class="panel card"><div class="eyebrow">01 / SOURCE SETUP</div><h2>Add a source</h2><form id="setup"><label>Source key<input id="key" required maxlength="128" placeholder="ranksnaxx-fails"></label><label>Name<input id="name" required maxlength="255" placeholder="RankSnaxx fails watch"></label><label>Channel<select id="channel"><option value="">Shared source</option></select></label><label>Adapter<select id="adapter" required></select></label><p id="capability"></p><label>Platform<input id="platform" required maxlength="32" list="platforms"></label><datalist id="platforms"></datalist><label>Usage mode<select id="usage"><option value="candidate_review">Candidate review</option><option value="operator_authorized">Operator authorized</option><option value="render_allowed">Render allowed</option><option value="discovery_only">Discovery only</option></select></label><div id="query-fields"></div><button class="button primary">Save source</button></form><p class="section-copy">Source keys are unique. Existing keys are protected here; use the API to update an existing source.</p></section>
-<section class="panel card"><div class="eyebrow">02 / DISCOVERY OPERATIONS</div><h2>Sources & runs</h2><button id="refresh" type="button" class="button secondary">Refresh sources</button><label>Source<select id="source"></select></label><p id="source-info"></p><button id="run" type="button" class="button primary">Create discovery run</button><form id="import"><h3>Import URL batch</h3><label>Batch key<input id="batch" required maxlength="100" placeholder="drops-2026-09-27-01"></label><label>One URL per line<textarea id="urls" rows="5" required></textarea></label><button class="button secondary">Import batch</button><p>Reusing a batch key returns the original run. Use a new key for changed content.</p></form><h3>Recent runs</h3><button id="history-refresh" type="button" class="button secondary">Refresh runs</button><p>Creating a run queues its configuration. Choose Execute to start discovery. Requires the discovery worker and Temporal.</p><div id="history" class="list"></div></section></div></fieldset></div></main></div></body></html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Katcha · Content sources</title>
+    <link rel="stylesheet" href="editing.css">
+    <link rel="stylesheet" href="ingestion.css">
+    <script src="ingestion.js" defer></script>
+    <script src="launcher-bridge.js" defer></script>
+</head>
+<body>
+<div class="shell">
+    <aside class="sidebar">
+        <div class="logo"><span class="glyph">✦</span> katcha<span class="accent">.</span></div>
+        <p class="sidebar-label">WORKSPACE</p>
+        <nav aria-label="Workspace">
+            <a href="/explorer">Trend explorer</a>
+            <a href="/ingestion" aria-current="page">Content sources</a>
+            <a href="/editing">Editing control center</a>
+        </nav>
+        <div class="sidebar-bottom">YOUR CONTENT STARTS HERE<small>Find · Collect · Review</small></div>
+    </aside>
+    <main>
+        <header class="topbar"><span>Workspace / <strong>Content sources</strong></span><span id="connection" class="connection">Connecting…</span></header>
+        <div class="content">
+            <div class="heading"><div><div class="eyebrow">BUILD YOUR CONTENT LIBRARY</div><h1>Good videos start<br>with <em>good sources.</em></h1><p>A source is a place to find content—a collection of links, a search, or a website’s news feed.</p></div></div>
+            <section id="connection-panel" class="card panel" hidden>
+                <h2 id="connection-title">Connect to your workspace</h2>
+                <p id="connection-help">Enter your workspace access token if Katcha requires one. It is kept only in this tab.</p>
+                <form id="connect"><label for="token">Workspace access token</label><div class="connect-row"><input id="token" type="password" autocomplete="off"><button class="button primary">Reconnect</button></div></form>
+            </section>
+            <p id="message" class="message" role="status" aria-live="polite"></p>
+            <fieldset id="workspace" disabled>
+                <div class="workspace-grid">
+                    <section class="panel card builder" aria-labelledby="builder-title">
+                        <div class="panel-head"><div><div class="eyebrow">ADD A SOURCE</div><h2 id="builder-title">Where will the content come from?</h2></div><span id="step-label" class="tag">STEP 1 OF 3</span></div>
+                        <ol class="steps" aria-label="Setup progress"><li aria-current="step">1. Choose a source</li><li>2. Make it yours</li><li>3. Review & save</li></ol>
+                        <form id="setup">
+                            <section id="step-1" aria-label="Choose a source">
+                                <p class="section-copy">Choose what you want to do. Katcha handles the connection type for you.</p>
+                                <div id="methods" class="methods"></div>
+                                <details class="advanced"><summary>Custom connections · advanced</summary><p>For an installed connector that does not have a guided setup yet. Most people can use one of the options above.</p><label for="custom-adapter">Installed connection</label><select id="custom-adapter"></select><button id="choose-custom" type="button" class="button secondary">Use custom connection</button></details>
+                            </section>
+                            <section id="step-2" aria-label="Source details" hidden>
+                                <p id="method-help" class="callout"></p>
+                                <label for="name">What would you like to call this source?</label><input id="name" maxlength="255" placeholder="For example, Funny animal clips"><p class="hint">A name you’ll recognize when you come back.</p>
+                                <div id="channel-area"><label for="channel">Which channel is this for?</label><select id="channel" aria-describedby="channel-help"></select></div><p id="channel-help" class="hint" role="status"></p><button id="retry-channels" type="button" class="text-button" hidden>Try loading channels again</button>
+                                <div id="search-fields" hidden><label for="search">What should Katcha look for?</label><input id="search" placeholder="For example, Xbox game announcements"><p class="hint">Use a topic or a few search words.</p></div>
+                                <div id="reddit-fields" hidden><label for="community">Reddit community <span class="optional">optional</span></label><input id="community" placeholder="For example, gaming or r/gaming"><p class="hint">Leave blank to search across Reddit.</p></div>
+                                <div id="feed-fields" hidden><label for="feed">Website feed link</label><input id="feed" type="text" inputmode="url" spellcheck="false" placeholder="https://example.com/feed.xml"><p class="hint">Paste the site’s RSS or Atom feed, not its homepage. Look for a “RSS” or “Subscribe” link on the website. If it has no feed, use “Paste links” instead.</p></div>
+                                <div id="custom-fields" hidden><label for="custom-query">Connection settings (JSON)</label><textarea id="custom-query" rows="7" spellcheck="false"></textarea><p class="hint">Advanced connector configuration. Replace example settings with your own.</p></div>
+                                <details class="advanced"><summary>Content review preference</summary><p>New sources default to “Review first.” This records your intended use; it does not publish anything or change your channel’s approval rules.</p><label for="usage">How do you intend to use this content?</label><select id="usage" aria-describedby="usage-help"><option value="candidate_review">Review first (default)</option><option value="discovery_only">Research and inspiration</option><option value="operator_authorized">I will decide what can be used</option><option value="render_allowed">Intended for video production</option></select><p id="usage-help" class="hint"></p></details>
+                            </section>
+                            <section id="step-3" aria-label="Review source" hidden><p class="section-copy">Check the details before adding this source.</p><dl id="review" class="review"></dl><p class="callout">Saving adds this source to your workspace. It does not search, publish, or schedule anything yet.</p></section>
+                            <p id="setup-error" class="error-text" role="alert"></p>
+                            <div id="wizard-actions" class="wizard-actions" hidden><button id="back" type="button" class="button secondary">Back</button><button id="next" type="button" class="button primary">Review source →</button><button id="save" class="button primary" hidden>Save source</button></div>
+                        </form>
+                    </section>
+                    <section class="panel card library" aria-labelledby="library-title">
+                        <div class="panel-head"><div><div class="eyebrow">YOUR COLLECTION</div><h2 id="library-title">Saved sources</h2></div><button id="refresh" type="button" class="text-button">Refresh</button></div>
+                        <div id="empty-sources" class="empty-state"><span aria-hidden="true">↗</span><h3>Your first source starts here</h3><p>Use the setup on this page to add links or a place to search. Your saved sources will appear here.</p></div>
+                        <div id="source-controls" hidden><label for="source">Choose a saved source</label><select id="source"></select><div id="source-info" class="source-summary"></div>
+                            <form id="import" hidden><label for="urls">Paste content links</label><textarea id="urls" rows="5" placeholder="https://www.tiktok.com/@creator/video/…&#10;https://www.instagram.com/reel/…" aria-describedby="links-help"></textarea><p id="links-help" class="hint">One link per line, from any supported website. Katcha will collect them for review; this does not download or publish a video.</p><button class="button primary">Add links & find content</button></form>
+                            <button id="run" type="button" class="button primary" hidden>Search now</button><p id="operation-help" class="hint"></p>
+                            <div class="activity-heading"><h3>Recent activity</h3><button id="history-refresh" type="button" class="text-button">Refresh activity</button></div><div id="history" class="list" aria-live="polite"></div>
+                        </div>
+                    </section>
+                </div>
+            </fieldset>
+        </div>
+    </main>
+</div>
+</body>
+</html>
