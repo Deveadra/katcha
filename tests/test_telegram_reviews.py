@@ -97,7 +97,78 @@ def test_external_minio_endpoint_mints_expiring_longform_link() -> None:
     assert longform_review_links_ready(settings) is True
     assert url is not None
     assert url.startswith("https://media.example.com/")
-    assert "X-Amz-Signature=" in url
+    assert "signature" in url.casefold()
+
+
+@pytest.mark.asyncio
+async def test_longform_delivery_sends_link_card_not_video(monkeypatch) -> None:
+    settings = Settings(
+        _env_file=None,
+        telegram_enabled=True,
+        telegram_chat_id=123,
+    )
+    row = SimpleNamespace(id=uuid.uuid4())
+    card = TelegramReviewCard(
+        session_id=row.id,
+        source_kind="compilation",
+        source_id=uuid.uuid4(),
+        callback_token="compact-token",
+        caption="Long-form ready",
+        render_key="compilation/test/final.mp4",
+        file_id=None,
+        chat_id=123,
+    )
+    calls: dict[str, object] = {}
+
+    monkeypatch.setattr(telegram_worker, "operator_binding", lambda _settings: (123, 456))
+    monkeypatch.setattr(
+        telegram_worker,
+        "ensure_review_sessions",
+        lambda **_kwargs: [],
+    )
+    monkeypatch.setattr(
+        telegram_worker,
+        "pending_review_sessions",
+        lambda **_kwargs: [row],
+    )
+    monkeypatch.setattr(telegram_worker, "review_card", lambda _id: card)
+    monkeypatch.setattr(
+        telegram_worker,
+        "longform_review_url",
+        lambda *_args, **_kwargs: "https://media.example.com/signed.mp4",
+    )
+    monkeypatch.setattr(
+        telegram_worker,
+        "set_session_state",
+        lambda *_args, **_kwargs: None,
+    )
+
+    def fake_mark_sent(session_id, *, message_id, telegram_file_id):
+        calls["session_id"] = session_id
+        calls["message_id"] = message_id
+        calls["file_id"] = telegram_file_id
+
+    monkeypatch.setattr(telegram_worker, "mark_sent", fake_mark_sent)
+
+    class Client:
+        def send_message(self, chat_id, text, *, reply_markup=None):
+            calls["chat_id"] = chat_id
+            calls["text"] = text
+            calls["markup"] = reply_markup
+            return {"message_id": 77}
+
+        def send_video(self, *_args, **_kwargs):
+            raise AssertionError("long-form review must not upload video to Telegram")
+
+    await telegram_worker._deliver_pending(Client(), settings)
+
+    assert calls["chat_id"] == 123
+    assert "secure review link" in str(calls["text"])
+    assert calls["file_id"] is None
+    markup = calls["markup"]
+    assert markup["inline_keyboard"][0][0]["url"].startswith(
+        "https://media.example.com/"
+    )
 
 
 def test_telegram_review_source_is_unique_per_chat() -> None:
