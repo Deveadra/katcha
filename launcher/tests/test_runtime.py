@@ -504,6 +504,16 @@ def test_launcher_serves_workspace_shell_without_api(tmp_path):
         body = response.read()
         assert response.status == 200
         assert b"Clip library" in body
+        connection.request("GET", "/channels")
+        response = connection.getresponse()
+        assert response.status == 302
+        assert response.getheader("Location") == "/channels/assets/channels.html"
+        response.read()
+        connection.request("GET", "/channels/assets/channels.html")
+        response = connection.getresponse()
+        body = response.read()
+        assert response.status == 200
+        assert b"Channel Studio" in body
         connection.close()
     finally:
         server.shutdown()

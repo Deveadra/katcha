@@ -143,6 +143,8 @@ app.mount("/explorer/assets", StaticFiles(directory=Path(__file__).parents[1] / 
           name="explorer-assets")
 app.mount("/editing/assets", StaticFiles(directory=Path(__file__).parents[1] / "web"),
           name="editing-assets")
+app.mount("/channels/assets", StaticFiles(directory=Path(__file__).parents[1] / "web"),
+          name="channels-assets")
 
 
 @app.get("/explorer", include_in_schema=False)
@@ -153,6 +155,11 @@ def explorer_shell():
 @app.get("/editing", include_in_schema=False)
 def editing_shell():
     return RedirectResponse("/editing/assets/editing.html")
+
+
+@app.get("/channels", include_in_schema=False)
+def channels_shell():
+    return RedirectResponse("/channels/assets/channels.html")
 
 
 @app.get("/ingestion", include_in_schema=False)

@@ -73,6 +73,9 @@ separate MinIO client image is required.
 6. MinIO console: `http://localhost:9001`
 7. Trend explorer: `http://localhost:8000/explorer`
 8. Editing control center: `http://localhost:8000/editing`
+9. YouTube Channel Studio: `http://localhost:8000/channels`
+
+The YouTube Channel Studio provides a channel-scoped operating view for recent publications, stored analytics and retention, economics, production status, packaging intelligence, edit-performance evidence, brand state, scheduling, and automation policy. It can also turn an existing YouTube OAuth connection into a Katcha channel workspace without requiring API calls by hand.
 
 The editing control center uses the same control-plane token and channel-scoped APIs as
 the Trend Explorer. It shows versioned editing blueprints, measured performance,

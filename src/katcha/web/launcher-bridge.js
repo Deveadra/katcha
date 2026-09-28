@@ -7,6 +7,9 @@ function currentWorkspace() {
     if (path.startsWith('/clips') || path.endsWith('/clips.html')) {
         return ['Clip library', '/clips'];
     }
+    if (path.startsWith('/channels') || path.endsWith('/channels.html')) {
+        return ['Channel Studio', '/channels'];
+    }
     if (path.startsWith('/editing') || path.endsWith('/editing.html')) {
         return ['Editing control center', '/editing'];
     }
@@ -38,6 +41,7 @@ function installWorkspaceMenu() {
             <a href="/explorer" ${currentHref === '/explorer' ? 'aria-current="page"' : ''}><span>◉</span><b>Trend explorer</b></a>
             <a href="/ingestion" ${currentHref === '/ingestion' ? 'aria-current="page"' : ''}><span>↳</span><b>Ingestion sources</b></a>
             <a href="/clips" ${currentHref === '/clips' ? 'aria-current="page"' : ''}><span>▤</span><b>Clip library</b></a>
+            <a href="/channels" ${currentHref === '/channels' ? 'aria-current="page"' : ''}><span>▦</span><b>Channel Studio</b></a>
             <a href="/editing" ${currentHref === '/editing' ? 'aria-current="page"' : ''}><span>◇</span><b>Editing control center</b></a>
             ${location.port === '8765' ? '<a href="/"><span>⌂</span><b>Launch console & diagnostics</b></a>' : ''}
         </div>
