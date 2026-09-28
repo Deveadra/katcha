@@ -634,7 +634,7 @@ $("close-blueprint-editor").addEventListener("click", closeBlueprintEditor);
 $("cancel-blueprint-editor").addEventListener("click", closeBlueprintEditor);
 $("blueprint-editor").addEventListener("submit", saveBlueprintEditor);
 $("bp-template").addEventListener("change", () => applyNewRecipeTemplate(templateForKey($("bp-template").value)));
-for (const id of ["bp-layout", "bp-narration-mode", "bp-source-volume", "bp-duck-volume"]) {
+for (const id of ["bp-layout", "bp-narration-mode", "bp-audio-policy", "bp-source-volume", "bp-duck-volume"]) {
     $(id).addEventListener("input", syncBlueprintEditor);
     $(id).addEventListener("change", syncBlueprintEditor);
 }
