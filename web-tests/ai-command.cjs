@@ -88,24 +88,28 @@ let browser;
                 ],
                 actions: [
                     {
-                        id: "produce:44444444-4444-4444-8444-444444444444",
+                        proposal_id: "66666666-6666-4666-8666-666666666666",
                         type: "create_short_production",
                         label: "Make a short from top clip",
                         description: "Start a channel-scoped production using the current channel defaults.",
+                        status: "proposed",
+                        expires_at: "2026-09-28T13:30:00Z",
                         requires_confirmation: true,
-                        payload: {
-                            clip_id: "44444444-4444-4444-8444-444444444444",
-                        },
                     },
                 ],
                 grounded: true,
                 narrator: "fixture/grounded-command-v1",
             };
-        } else if (url.pathname === "/v1/ai/actions/execute") {
-            assert.equal(body.confirmed, true);
+        } else if (
+            url.pathname ===
+            "/v1/ai/actions/66666666-6666-4666-8666-666666666666/execute"
+        ) {
+            assert.deepEqual(body, { confirmed: true });
             data = {
-                action_type: body.action_type,
-                status: "accepted",
+                proposal_id: "66666666-6666-4666-8666-666666666666",
+                action_type: "create_short_production",
+                status: "executed",
+                execution_attempts: 1,
                 result: {
                     production_id: "55555555-5555-4555-8555-555555555555",
                     workflow_id: "fixture-production-workflow",
@@ -168,13 +172,13 @@ let browser;
     await actionButton.click();
     assert.match(await actionButton.innerText(), /Confirm:/);
     assert.equal(
-        requests.filter((request) => request.path === "/v1/ai/actions/execute").length,
+        requests.filter((request) => request.path.endsWith("/execute")).length,
         0,
     );
     await actionButton.click();
-    await page.getByText(/Accepted · production id/i).waitFor();
+    await page.getByText(/executed · production id/i).waitFor();
     assert.equal(
-        requests.filter((request) => request.path === "/v1/ai/actions/execute").length,
+        requests.filter((request) => request.path.endsWith("/execute")).length,
         1,
     );
 
