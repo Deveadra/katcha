@@ -67,6 +67,20 @@ _STOP_WORDS = {
     "please",
     "current",
     "latest",
+    "explain",
+    "score",
+    "scores",
+    "scoring",
+    "rank",
+    "ranked",
+    "ranking",
+    "strong",
+    "strongest",
+    "high",
+    "were",
+    "was",
+    "are",
+    "is",
 }
 
 
