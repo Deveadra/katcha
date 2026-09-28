@@ -180,7 +180,7 @@ def test_start_opens_workspace_before_warming_full_stack(tmp_path):
     )
     full_build = next(
         i for i, cmd in enumerate(calls)
-        if cmd[-1:] == ["build"]
+        if "build" in cmd and all(service in cmd for service in runtime.BACKGROUND_BUILD_SERVICES)
     )
     full_up = next(
         i for i, cmd in enumerate(calls)
@@ -206,7 +206,10 @@ def test_background_warmup_failure_preserves_usable_workspace(tmp_path):
         calls.append(args)
         if "version" in args:
             return "2.30.0"
-        if args[-1:] == ["build"] and any("compose" == part for part in args):
+        if (
+            "build" in args
+            and all(service in args for service in runtime.BACKGROUND_BUILD_SERVICES)
+        ):
             raise RuntimeError("renderer build failed")
         return ""
 
@@ -312,10 +315,18 @@ def test_unchanged_images_skip_build_and_source_changes_invalidate(tmp_path):
     (source / "app.py").write_text("version = 1")
     with patch.object(app, "run", return_value="katcha-api") as run:
         app.prepare_images()
-        assert any(call.args[0][-1] == "build" for call in run.call_args_list)
+        assert any(
+            "build" in call.args[0]
+            and all(service in call.args[0] for service in runtime.BACKGROUND_BUILD_SERVICES)
+            for call in run.call_args_list
+        )
         run.reset_mock()
         app.prepare_images()
-        assert not any(call.args[0][-1] == "build" for call in run.call_args_list)
+        assert not any(
+            "build" in call.args[0]
+            and all(service in call.args[0] for service in runtime.BACKGROUND_BUILD_SERVICES)
+            for call in run.call_args_list
+        )
         (source / "app.py").write_text("version = 2")
         app.prepare_images()
         assert any(call.args[0][-1] == "build" for call in run.call_args_list)
@@ -326,7 +337,8 @@ def test_deleted_images_rebuild(tmp_path):
     (app.directory / "build-fingerprint").write_text(app.build_fingerprint())
     with patch.object(app, "run", side_effect=[RuntimeError("missing"), ""]) as run:
         app.prepare_images()
-    assert run.call_args.args[0][-1] == "build"
+    assert "build" in run.call_args.args[0]
+    assert all(service in run.call_args.args[0] for service in runtime.BACKGROUND_BUILD_SERVICES)
 
 
 def test_failed_build_does_not_write_cache(tmp_path):
