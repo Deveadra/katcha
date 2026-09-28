@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import secrets
 import uuid
 from typing import Any
 
@@ -29,6 +28,8 @@ from katcha.services.telegram_reviews import (
     keyboard,
     mark_failed,
     mark_sent,
+    operator_binding,
+    pair_operator,
     pending_review_sessions,
     render_bytes,
     review_card,
@@ -39,54 +40,6 @@ from katcha.telegram_models import TelegramBotCursor, TelegramReviewSession
 
 LOGGER = logging.getLogger("katcha.telegram")
 _CURSOR_KEY = "operator-bot"
-
-
-def _operator_binding(settings: Settings) -> tuple[int | None, int | None]:
-    if settings.telegram_chat_id is not None:
-        return settings.telegram_chat_id, settings.telegram_allowed_user_id
-    with session_scope() as session:
-        row = session.get(TelegramBotCursor, _CURSOR_KEY)
-        metadata = dict(row.cursor_metadata or {}) if row is not None else {}
-    raw_chat = metadata.get("chat_id")
-    raw_user = metadata.get("user_id")
-    chat_id = int(raw_chat) if raw_chat is not None else None
-    user_id = int(raw_user) if raw_user is not None else None
-    return chat_id, user_id
-
-
-def _authorized(
-    settings: Settings,
-    *,
-    chat_id: int | None,
-    user_id: int | None,
-) -> bool:
-    allowed_chat, allowed_user = _operator_binding(settings)
-    if allowed_chat is None or chat_id != allowed_chat:
-        return False
-    return allowed_user is None or user_id == allowed_user
-
-
-def _pair_operator(
-    settings: Settings,
-    *,
-    chat_id: int,
-    user_id: int,
-    pairing_code: str,
-) -> bool:
-    configured = str(settings.telegram_pairing_code or "")
-    if not configured or not secrets.compare_digest(pairing_code, configured):
-        return False
-    with session_scope() as session:
-        row = session.get(TelegramBotCursor, _CURSOR_KEY)
-        if row is None:
-            row = TelegramBotCursor(key=_CURSOR_KEY, last_update_id=0)
-            session.add(row)
-        row.cursor_metadata = {
-            **dict(row.cursor_metadata or {}),
-            "chat_id": chat_id,
-            "user_id": user_id,
-        }
-    return True
 
 
 def _cursor() -> int | None:
@@ -142,7 +95,7 @@ async def _deliver_pending(
     client: TelegramBotClient,
     settings: Settings,
 ) -> None:
-    chat_id, _ = _operator_binding(settings)
+    chat_id, _ = operator_binding(settings)
     ensure_review_sessions(chat_id=chat_id, settings=settings)
     if chat_id is None:
         return
@@ -470,11 +423,11 @@ async def _handle_command(
         user_id=user_id,
     ):
         pairing_code = parts[1] if len(parts) > 1 else ""
-        if _pair_operator(
-            settings,
+        if pair_operator(
             chat_id=chat_id,
             user_id=user_id,
             pairing_code=pairing_code,
+            settings=settings,
         ):
             await asyncio.to_thread(
                 client.send_message,
