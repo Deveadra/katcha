@@ -5,11 +5,22 @@ import uuid
 from pathlib import Path
 from typing import Literal
 
-from fastapi import APIRouter, BackgroundTasks, File, Form, HTTPException, Query, UploadFile, status
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    File,
+    Form,
+    HTTPException,
+    Query,
+    Request,
+    UploadFile,
+    status,
+)
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 
+from katcha.api.control_auth import control_actor, require_control_scope
 from katcha.config import get_settings
 from katcha.db import session_scope
 from katcha.external_edit_models import ExternalEditHandoff
@@ -37,14 +48,11 @@ class InVideoHandoffCreate(BaseModel):
 
     source_type: Literal["production", "short_episode"]
     source_id: uuid.UUID
-    actor: str = Field(default="operator", min_length=1, max_length=128)
     note: str | None = Field(default=None, max_length=2000)
 
 
 class InVideoHandoffAction(BaseModel):
     model_config = ConfigDict(extra="forbid")
-
-    actor: str = Field(default="operator", min_length=1, max_length=128)
 
 
 class InVideoHandoffResponse(BaseModel):
@@ -76,7 +84,10 @@ def _response(row: ExternalEditHandoff) -> InVideoHandoffResponse:
 
 
 @router.get("/providers", response_model=list[IntegrationProviderStatus])
-def integration_provider_status() -> list[IntegrationProviderStatus]:
+def integration_provider_status(
+    http_request: Request,
+) -> list[IntegrationProviderStatus]:
+    require_control_scope(http_request, "integrations:read")
     settings = get_settings()
     elevenlabs_configured = bool(
         settings.elevenlabs_api_key and settings.elevenlabs_voice_id
@@ -114,12 +125,15 @@ def integration_provider_status() -> list[IntegrationProviderStatus]:
 )
 def create_invideo_handoff(
     request: InVideoHandoffCreate,
+    http_request: Request,
 ) -> InVideoHandoffResponse:
+    require_control_scope(http_request, "integrations:write")
+    actor = control_actor(http_request)
     try:
         row = prepare_invideo_handoff(
             request.source_type,
             request.source_id,
-            actor=request.actor,
+            actor=actor,
             note=request.note,
         )
         return _response(row)
@@ -131,10 +145,12 @@ def create_invideo_handoff(
 
 @router.get("/invideo/handoffs", response_model=list[InVideoHandoffResponse])
 def list_invideo_handoffs(
+    http_request: Request,
     source_type: Literal["production", "short_episode"] | None = Query(default=None),
     source_id: uuid.UUID | None = Query(default=None),
     limit: int = Query(default=50, ge=1, le=250),
 ) -> list[InVideoHandoffResponse]:
+    require_control_scope(http_request, "integrations:read")
     with session_scope() as session:
         stmt = (
             select(ExternalEditHandoff)
@@ -153,7 +169,11 @@ def list_invideo_handoffs(
     "/invideo/handoffs/{handoff_id}",
     response_model=InVideoHandoffResponse,
 )
-def get_invideo_handoff(handoff_id: uuid.UUID) -> InVideoHandoffResponse:
+def get_invideo_handoff(
+    handoff_id: uuid.UUID,
+    http_request: Request,
+) -> InVideoHandoffResponse:
+    require_control_scope(http_request, "integrations:read")
     with session_scope() as session:
         row = session.get(ExternalEditHandoff, handoff_id)
         if row is None:
@@ -162,7 +182,11 @@ def get_invideo_handoff(handoff_id: uuid.UUID) -> InVideoHandoffResponse:
 
 
 @router.get("/invideo/handoffs/{handoff_id}/manifest")
-def get_invideo_manifest(handoff_id: uuid.UUID) -> dict[str, object]:
+def get_invideo_manifest(
+    handoff_id: uuid.UUID,
+    http_request: Request,
+) -> dict[str, object]:
+    require_control_scope(http_request, "integrations:read")
     try:
         return handoff_manifest(handoff_id)
     except ValueError as exc:
@@ -177,7 +201,9 @@ def _cleanup_package(path: Path) -> None:
 def download_invideo_package(
     handoff_id: uuid.UUID,
     background_tasks: BackgroundTasks,
+    http_request: Request,
 ) -> FileResponse:
+    require_control_scope(http_request, "integrations:read")
     try:
         archive = build_handoff_zip(handoff_id)
     except ValueError as exc:
@@ -197,10 +223,12 @@ def download_invideo_package(
 )
 async def upload_invideo_output(
     handoff_id: uuid.UUID,
+    http_request: Request,
     file: UploadFile = File(...),
     external_project_id: str | None = Form(default=None, max_length=255),
-    actor: str = Form(default="operator", min_length=1, max_length=128),
 ) -> InVideoHandoffResponse:
+    require_control_scope(http_request, "integrations:write")
+    actor = control_actor(http_request)
     if file.content_type not in {None, "", "video/mp4", "application/octet-stream"}:
         raise HTTPException(status_code=415, detail="InVideo output must be an MP4 file")
 
@@ -245,12 +273,15 @@ async def upload_invideo_output(
 def adopt_invideo_output(
     handoff_id: uuid.UUID,
     request: InVideoHandoffAction,
+    http_request: Request,
 ) -> InVideoHandoffResponse:
+    require_control_scope(http_request, "integrations:write")
+    actor = control_actor(http_request)
     try:
         return _response(
             adopt_external_output(
                 handoff_id,
-                actor=request.actor,
+                actor=actor,
             )
         )
     except ValueError as exc:
