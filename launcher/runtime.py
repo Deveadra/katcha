@@ -27,6 +27,12 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKSPACE_IMAGE = "katcha-control:local"
+EARLY_AUTOMATION_SERVICES = (
+    "temporal",
+    "discovery-worker",
+    "trends-worker",
+    "intelligence-worker",
+)
 BACKGROUND_BUILD_SERVICES = (
     "minio",
     "worker",
@@ -412,6 +418,34 @@ class Runtime:
                 "info",
                 "launcher",
                 "Workspace ready; warming automation in the background.",
+                startup_seconds=round(time.monotonic() - self.operation_started_at, 2),
+            )
+
+            # Discovery/trend intelligence does not depend on media storage or rendering.
+            # Bring it online before heavyweight media images (especially MinIO) are built.
+            self.stage = "starting discovery intelligence"
+            self.event(
+                "info",
+                "launcher",
+                "Starting always-on discovery, trends, and intelligence services.",
+            )
+            self.run(
+                self.command()
+                + [
+                    "up",
+                    "-d",
+                    "--no-build",
+                    "--wait",
+                    "--wait-timeout",
+                    "180",
+                    *EARLY_AUTOMATION_SERVICES,
+                ],
+                timeout=240,
+            )
+            self.event(
+                "info",
+                "launcher",
+                "Discovery intelligence is online; warming the media factory.",
                 startup_seconds=round(time.monotonic() - self.operation_started_at, 2),
             )
 
