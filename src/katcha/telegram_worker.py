@@ -144,7 +144,9 @@ async def _deliver_pending(
 ) -> None:
     chat_id, _ = _operator_binding(settings)
     ensure_review_sessions(chat_id=chat_id, settings=settings)
-    for row in pending_review_sessions(limit=5):
+    if chat_id is None:
+        return
+    for row in pending_review_sessions(chat_id=chat_id, limit=5):
         try:
             card = review_card(row.id)
             video: bytes | str
@@ -511,7 +513,7 @@ async def _handle_command(
         return True
 
     if command == "/backlog":
-        rows = backlogged_sessions(limit=1)
+        rows = backlogged_sessions(chat_id=chat_id, limit=1)
         if not rows:
             await asyncio.to_thread(
                 client.send_message,
