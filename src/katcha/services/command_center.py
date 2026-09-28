@@ -10,6 +10,7 @@ from sqlalchemy import desc, select
 
 from katcha.db import session_scope
 from katcha.edit_performance_models import EditBlueprintPerformanceSnapshot
+from katcha.editorial.rankings import get_ranking_format
 from katcha.intelligence_models import ChannelProfile, PerformanceObservation
 from katcha.longform_models import Compilation
 from katcha.models import Clip, ClipAnalysisRun, ClipFeature, SourceItem
@@ -21,7 +22,6 @@ from katcha.services.channel_brands import brand_for_channel
 from katcha.services.channel_editorial import score_clip_for_channel
 from katcha.services.channel_profiles import ensure_active_profile
 from katcha.services.short_episodes import ShortEpisodeCandidateInput
-from katcha.editorial.rankings import get_ranking_format
 from katcha.short_episode_models import ShortEpisode
 
 _FAILURE_STATES = {"failed", "dead_letter", "retry_exhausted", "error"}
