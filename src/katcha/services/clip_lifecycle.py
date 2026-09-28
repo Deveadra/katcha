@@ -167,13 +167,80 @@ def channel_info_for_clip(
     ]
 
 
+def clip_ids_for_channel(
+    session: Session,
+    channel_profile_id: uuid.UUID,
+) -> set[uuid.UUID]:
+    ids: set[uuid.UUID] = set(
+        session.scalars(
+            select(Production.clip_id).where(
+                Production.channel_profile_id == channel_profile_id
+            )
+        )
+    )
+    ids.update(
+        session.scalars(
+            select(ShortEpisodeItem.clip_id)
+            .join(
+                ShortEpisode,
+                ShortEpisodeItem.short_episode_id == ShortEpisode.id,
+            )
+            .where(ShortEpisode.channel_profile_id == channel_profile_id)
+        )
+    )
+    ids.update(
+        session.scalars(
+            select(CompilationSegment.clip_id)
+            .join(
+                Compilation,
+                CompilationSegment.compilation_id == Compilation.id,
+            )
+            .where(Compilation.channel_profile_id == channel_profile_id)
+        )
+    )
+    ids.update(
+        value
+        for value in session.scalars(
+            select(SourceItem.clip_id).where(
+                SourceItem.clip_id.is_not(None),
+                SourceItem.source_metadata["channel_profile_id"].as_string()
+                == str(channel_profile_id),
+            )
+        )
+        if value is not None
+    )
+    ids.update(
+        value
+        for value in session.scalars(
+            select(SourceItem.clip_id)
+            .join(
+                DiscoveryCandidate,
+                DiscoveryCandidate.source_item_id == SourceItem.id,
+            )
+            .where(
+                SourceItem.clip_id.is_not(None),
+                DiscoveryCandidate.candidate_metadata[
+                    "channel_profile_id"
+                ].as_string()
+                == str(channel_profile_id),
+            )
+        )
+        if value is not None
+    )
+    return ids
+
+
 def clips_for_channel(session: Session, channel_profile_id: uuid.UUID) -> list[Clip]:
-    clips = list(session.scalars(select(Clip).order_by(Clip.created_at.desc())))
-    return [
-        clip
-        for clip in clips
-        if channel_profile_id in channel_ids_for_clip(session, clip.id)
-    ]
+    ids = clip_ids_for_channel(session, channel_profile_id)
+    if not ids:
+        return []
+    return list(
+        session.scalars(
+            select(Clip)
+            .where(Clip.id.in_(ids))
+            .order_by(Clip.created_at.desc())
+        )
+    )
 
 
 def clip_reference_summary(
