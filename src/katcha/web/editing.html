@@ -29,6 +29,10 @@
                 <form id="connect-form" class="connect card"><div><label for="token">Control-plane token</label><p>Kept in this browser tab only. Leave blank for local development.</p></div><input id="token" type="password" autocomplete="off" placeholder="Token if required"><button class="button primary">Connect ↗</button></form>
                 <div id="message" class="message" role="status" aria-live="polite"></div>
                 <section class="channel-bar card"><div><label for="channel">ACTIVE CHANNEL</label><select id="channel" disabled><option value="">Connect to load channels</option></select></div><div class="channel-hint">All editing data below belongs to the selected channel.</div></section>
+                <section id="provider-status" class="provider-strip card" aria-label="Editing providers">
+                    <div><span>ELEVENLABS</span><strong>Not checked</strong><small>Premium narration provider</small></div>
+                    <div><span>INVIDEO</span><strong>Not checked</strong><small>External edit bridge</small></div>
+                </section>
                 <nav class="stats" aria-label="Production summary">
                     <a class="stat card stat-link" href="#editorial-pipeline" data-summary-filter="all"><span>EPISODES</span><strong id="count-total">—</strong><small>Most recent 100</small><b aria-hidden="true">↘</b></a>
                     <a class="stat card stat-link stat-production" href="#editorial-pipeline" data-summary-filter="active"><span>IN PRODUCTION</span><strong id="count-active">—</strong><small>Editorial & rendering</small><b aria-hidden="true">↘</b></a>
@@ -113,5 +117,20 @@
             </div>
         </main>
     </div>
+    <dialog id="invideo-dialog" class="external-edit-dialog">
+        <div class="external-edit-head">
+            <div><div class="eyebrow">EXTERNAL EDIT PROVIDER</div><h2>InVideo handoff</h2></div>
+            <button id="close-invideo-dialog" class="mini" type="button">Close</button>
+        </div>
+        <p class="section-copy">Katcha remains the source of truth. Download the prepared package, edit it in InVideo, then return one MP4 here. Katcha verifies the media before it can replace the render path.</p>
+        <div id="invideo-handoff-state" class="external-edit-state empty">Prepare an episode handoff to begin.</div>
+        <div class="external-edit-actions">
+            <button id="download-invideo-package" class="button secondary" type="button" disabled>Download InVideo package</button>
+            <label class="external-upload">Finished MP4<input id="invideo-output-file" type="file" accept="video/mp4" disabled></label>
+            <input id="invideo-project-id" placeholder="InVideo project ID (optional)" disabled>
+            <button id="upload-invideo-output" class="button secondary" type="button" disabled>Import finished MP4</button>
+            <button id="adopt-invideo-output" class="button primary" type="button" disabled>Use as Katcha render</button>
+        </div>
+    </dialog>
 </body>
 </html>
