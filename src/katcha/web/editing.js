@@ -87,11 +87,11 @@ function blueprintSummary(contract = {}) {
         duck: "Source audio ducks",
         mute: "Source audio muted",
     }[contract.narration?.source_audio_policy] || "Audio not set";
-    const transition = contract.transition === "punch_cut" ? "Punch cuts" : "Clean cuts";
-    const duration = contract.quality?.max_duration_seconds
-        ? `${contract.quality.max_duration_seconds}s max`
-        : "Length not set";
-    return [layout, narration, audio, transition, duration];
+    const voiceMode = ["persona_voice", "explanatory_voice"].includes(contract.narration?.mode);
+    const finalDetail = voiceMode
+        ? (contract.narration?.captions_enabled ? "Captions on" : "Captions off")
+        : (contract.quality?.max_duration_seconds ? `${contract.quality.max_duration_seconds}s max` : "Length not set");
+    return [layout, narration, audio, finalDetail];
 }
 function blueprintFamilies() {
     const families = new Map();
