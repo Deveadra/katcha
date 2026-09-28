@@ -72,6 +72,21 @@ class EndCardBrandSpec(BaseModel):
     label: str | None = Field(default=None, max_length=80)
 
 
+class LogoBrandSpec(BaseModel):
+    enabled: bool = False
+    storage_key: str | None = None
+    x_percent: float = Field(default=88.0, ge=0, le=100)
+    y_percent: float = Field(default=8.0, ge=0, le=100)
+    width_percent: float = Field(default=13.0, ge=3, le=40)
+    opacity: float = Field(default=0.9, ge=0.1, le=1)
+
+    @model_validator(mode="after")
+    def validate_enabled_logo(self) -> LogoBrandSpec:
+        if self.enabled and not (self.storage_key or "").strip():
+            raise ValueError("enabled channel logo requires a storage key")
+        return self
+
+
 class ShortBrandSpec(BaseModel):
     brand_key: str = "channel_01"
     version: int = Field(default=1, ge=1)
@@ -80,6 +95,7 @@ class ShortBrandSpec(BaseModel):
     captions: CaptionBrandSpec = Field(default_factory=CaptionBrandSpec)
     motion: MotionBrandSpec = Field(default_factory=MotionBrandSpec)
     end_card: EndCardBrandSpec = Field(default_factory=EndCardBrandSpec)
+    logo: LogoBrandSpec = Field(default_factory=LogoBrandSpec)
 
     @model_validator(mode="after")
     def resolve_legacy_end_card_label(self) -> ShortBrandSpec:

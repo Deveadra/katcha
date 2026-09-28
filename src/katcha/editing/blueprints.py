@@ -38,6 +38,17 @@ class EditingQualityPolicy(BaseModel):
     max_narration_ratio: float = Field(default=0.55, ge=0, le=1)
 
 
+class AIGuidancePolicy(BaseModel):
+    """Reusable operator boundaries applied to future AI editorial passes."""
+
+    instruction_strength: Literal["strict", "balanced", "flexible"] = "balanced"
+    preserve_clip_order: bool = True
+    prefer_native_moments: bool = True
+    always_rules: list[str] = Field(default_factory=list, max_length=12)
+    never_rules: list[str] = Field(default_factory=list, max_length=12)
+    operator_notes: str = Field(default="", max_length=2000)
+
+
 class EditBlueprintContract(BaseModel):
     key: str = Field(min_length=1, max_length=96)
     version: str = Field(min_length=1, max_length=32)
@@ -47,6 +58,7 @@ class EditBlueprintContract(BaseModel):
     header: HeaderPolicy = Field(default_factory=HeaderPolicy)
     transition: Literal["cut", "punch_cut"] = "cut"
     quality: EditingQualityPolicy = Field(default_factory=EditingQualityPolicy)
+    ai_guidance: AIGuidancePolicy = Field(default_factory=AIGuidancePolicy)
 
     @model_validator(mode="after")
     def validate_contract(self) -> EditBlueprintContract:

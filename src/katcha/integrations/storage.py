@@ -87,6 +87,25 @@ class ObjectStore:
         response = self.client.get_object(Bucket=self.settings.s3_bucket, Key=key)
         return response["Body"].read()
 
+    def iter_range(
+        self,
+        key: str,
+        start: int,
+        end: int,
+        chunk_size: int = 1024 * 1024,
+    ) -> Iterator[bytes]:
+        response = self.client.get_object(
+            Bucket=self.settings.s3_bucket,
+            Key=key,
+            Range=f"bytes={start}-{end}",
+        )
+        body = response["Body"]
+        try:
+            while chunk := body.read(chunk_size):
+                yield chunk
+        finally:
+            body.close()
+
     def iter_bytes(
         self,
         key: str,
