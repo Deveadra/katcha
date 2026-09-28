@@ -9,6 +9,7 @@ from katcha.editorial.rankings import (
     rank_snaxx_countdown_v1,
 )
 from katcha.services.command_center import (
+    _search_terms,
     classify_intent,
     infer_edit_blueprint_key,
     resolve_time_window,
@@ -57,6 +58,14 @@ def test_selected_clip_explanation_is_read_only_intent() -> None:
         classify_intent("Explain why this scored highly.", selected)
         == "clip_explanation"
     )
+
+
+def test_operator_explanation_words_do_not_become_clip_filters() -> None:
+    terms = _search_terms(
+        "Show me the best Xbox clips found today and explain why they scored highly."
+    )
+
+    assert terms == ["xbox"]
 
 
 def test_command_center_maps_plain_language_recipe_names() -> None:
