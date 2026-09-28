@@ -3,6 +3,9 @@ name: Publish runtime images
 on:
   push:
     branches: [main]
+  pull_request:
+    paths:
+      - .github/workflows/runtime-images.yml
   workflow_dispatch:
 
 permissions:
@@ -10,11 +13,12 @@ permissions:
   packages: write
 
 concurrency:
-  group: runtime-images-main
+  group: runtime-images-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   publish:
+    if: github.event_name != 'pull_request'
     name: ${{ matrix.image }}
     runs-on: ubuntu-latest
     strategy:
@@ -60,3 +64,35 @@ jobs:
             org.opencontainers.image.revision=${{ github.sha }}
           cache-from: type=gha,scope=${{ matrix.image }}
           cache-to: type=gha,mode=max,scope=${{ matrix.image }}
+
+  verify-public:
+    name: Verify anonymous runtime pulls
+    needs: publish
+    if: ${{ always() && (github.event_name == 'pull_request' || needs.publish.result == 'success') }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      IMAGE_TAG: ${{ github.event_name == 'pull_request' && 'main' || github.sha }}
+    steps:
+      - name: Pull runtime images without a registry login
+        shell: bash
+        run: |
+          set -euo pipefail
+          images=(
+            katcha-control
+            katcha-ingest
+            katcha-analysis
+            katcha-renderer
+            katcha-production
+            katcha-minio
+          )
+          for image in "${images[@]}"; do
+            ref="ghcr.io/deveadra/${image}:${IMAGE_TAG}"
+            echo "Anonymous pull: ${ref}"
+            docker pull "${ref}"
+            if [[ "${GITHUB_EVENT_NAME}" != "pull_request" ]]; then
+              revision="$(docker inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "${ref}")"
+              test "${revision}" = "${GITHUB_SHA}"
+            fi
+          done
