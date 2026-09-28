@@ -1,5 +1,9 @@
 from katcha.acquisition.adapters import available_adapters
-from katcha.acquisition.web_scout import parse_web_scout_output
+from katcha.acquisition.web_scout import (
+    _next_scout_cursor,
+    _web_search_tool,
+    parse_web_scout_output,
+)
 
 
 def test_web_scout_adapter_is_registered() -> None:
@@ -36,3 +40,36 @@ def test_web_scout_parser_only_accepts_grounded_urls() -> None:
     assert items[0].source_url == "https://tiktok.com/@newcreator/video/123"
     assert items[0].metadata["platform"] == "tiktok"
     assert items[0].provenance_claims["grounded_search_result"] is True
+
+
+def test_web_scout_targets_requested_social_domains() -> None:
+    tool = _web_search_tool({"platforms": ["tiktok", "instagram", "bluesky"]})
+
+    assert tool["type"] == "web_search"
+    assert set(tool["filters"]["allowed_domains"]) == {
+        "tiktok.com",
+        "instagram.com",
+        "bsky.app",
+    }
+
+
+def test_web_scout_keeps_bounded_exploration_memory() -> None:
+    items = parse_web_scout_output(
+        '{"items":[{"source_url":"https://bsky.app/profile/example/post/1"}]}',
+        grounded_urls={"https://bsky.app/profile/example/post/1"},
+        limit=10,
+    )
+    cursor = _next_scout_cursor(
+        {
+            "cycle": 4,
+            "recent_sources": [
+                "https://example.com/old-" + str(index)
+                for index in range(65)
+            ],
+        },
+        items,
+    )
+
+    assert cursor["cycle"] == 5
+    assert len(cursor["recent_sources"]) <= 60
+    assert cursor["recent_sources"][-1] == "https://bsky.app/profile/example/post/1"
