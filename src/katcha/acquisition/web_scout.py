@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import json
+from decimal import Decimal
 from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
 import httpx
 
+from katcha.ai.pricing import estimate_token_cost
+from katcha.ai.router import ModelTarget, assert_ai_budget, record_usage
 from katcha.acquisition.adapters import (
     DiscoveryAdapterCapability,
     DiscoveryBatch,
@@ -13,6 +16,7 @@ from katcha.acquisition.adapters import (
     DiscoveryProviderError,
 )
 from katcha.config import get_settings
+from katcha.domain import AITask
 
 _PLATFORM_DOMAINS = {
     "tiktok": ("tiktok.com",),
@@ -102,6 +106,17 @@ def _platform_for_url(url: str) -> str:
     return "web"
 
 
+def _web_search_call_count(payload: dict[str, Any]) -> int:
+    raw_output = payload.get("output")
+    if not isinstance(raw_output, list):
+        return 0
+    return sum(
+        1
+        for item in raw_output
+        if isinstance(item, dict) and item.get("type") == "web_search_call"
+    )
+
+
 def _response_output_text(payload: dict[str, Any]) -> str:
     chunks: list[str] = []
     raw_output = payload.get("output")
@@ -153,7 +168,7 @@ def parse_web_scout_output(
             "OpenAI web scout response is missing items",
             kind="provider_payload",
             transient=False,
-            provider_usage={"openai.web_search": 1},
+            provider_usage={"openai.web_search": web_search_calls},
         )
 
     items: list[DiscoveredCandidate] = []
@@ -355,6 +370,13 @@ class WebScoutDiscoveryAdapter:
         settings = get_settings()
         if not settings.openai_api_key:
             raise ValueError("Autonomous web scouting requires KATCHA_OPENAI_API_KEY")
+        if not settings.ai_enabled:
+            raise ValueError("Autonomous web scouting requires KATCHA_AI_ENABLED=true")
+        if settings.resolved_ai_execution_mode() != "live":
+            raise ValueError(
+                "Autonomous web scouting requires KATCHA_AI_EXECUTION_MODE=live"
+            )
+        assert_ai_budget(Decimal("0.02"))
         limit = min(max(int(query.get("limit", 40)), 1), 100)
 
         schema = {
@@ -397,6 +419,7 @@ class WebScoutDiscoveryAdapter:
                 }
             },
             "max_output_tokens": 2200,
+            "max_tool_calls": 1,
         }
         try:
             response = httpx.post(
@@ -444,6 +467,29 @@ class WebScoutDiscoveryAdapter:
                 transient=False,
                 provider_usage={"openai.web_search": 1},
             )
+
+        web_search_calls = _web_search_call_count(response_payload)
+        usage = response_payload.get("usage")
+        usage_dict = usage if isinstance(usage, dict) else {}
+        input_tokens = max(int(usage_dict.get("input_tokens") or 0), 0)
+        output_tokens = max(int(usage_dict.get("output_tokens") or 0), 0)
+        target = ModelTarget("openai", settings.web_scout_model)
+        token_cost = estimate_token_cost(target, input_tokens, output_tokens)
+        total_cost = token_cost + (Decimal("0.01") * web_search_calls)
+        record_usage(
+            task=AITask.METADATA,
+            target=target,
+            input_units=input_tokens,
+            output_units=output_tokens,
+            cost_usd=total_cost,
+            reference_type="web_scout",
+            reference_id=str(response_payload.get("id") or ""),
+            metadata={
+                "web_search_calls": web_search_calls,
+                "web_search_tool_cost_usd": str(Decimal("0.01") * web_search_calls),
+                "token_cost_usd": str(token_cost),
+            },
+        )
 
         grounded_urls = _grounded_url_keys(response_payload)
         items = parse_web_scout_output(
