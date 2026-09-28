@@ -494,6 +494,16 @@ def test_launcher_serves_workspace_shell_without_api(tmp_path):
         body = response.read()
         assert response.status == 200
         assert b"Editing control center" in body
+        connection.request("GET", "/clips")
+        response = connection.getresponse()
+        assert response.status == 302
+        assert response.getheader("Location") == "/editing/assets/clips.html"
+        response.read()
+        connection.request("GET", "/editing/assets/clips.html")
+        response = connection.getresponse()
+        body = response.read()
+        assert response.status == 200
+        assert b"Clip library" in body
         connection.close()
     finally:
         server.shutdown()
