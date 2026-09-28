@@ -4,6 +4,11 @@ const state = {
     channel: "",
     episodes: [],
     blueprints: [],
+    templates: [],
+    editingBlueprint: null,
+    editorMode: null,
+    editorBaseContract: null,
+    editorSuggestedKey: "",
     attempts: new Map(),
     brands: [],
     candidates: [],
@@ -59,9 +64,88 @@ function statusType(row) {
     if (["published", "completed", "rejected", "cancelled"].includes(status)) return "done";
     return "active";
 }
+function blueprintName(row) {
+    const saved = row?.blueprint_metadata?.display_name;
+    if (saved) return saved;
+    return String(row?.blueprint_key || "Recipe")
+        .replaceAll("_", " ")
+        .replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+function blueprintDescription(row) {
+    return row?.blueprint_metadata?.description || "";
+}
+function blueprintSummary(contract = {}) {
+    const layout = contract.source_layout?.mode === "header_panel" ? "Header + video" : "Full-frame video";
+    const narration = {
+        persona_voice: "Persona voice",
+        explanatory_voice: "Explanatory voice",
+        text_only: "Text only",
+        source_only: "Source audio only",
+    }[contract.narration?.mode] || "Narration not set";
+    const audio = {
+        retain: "Source audio kept",
+        duck: "Source audio ducks",
+        mute: "Source audio muted",
+    }[contract.narration?.source_audio_policy] || "Audio not set";
+    const transition = contract.transition === "punch_cut" ? "Punch cuts" : "Clean cuts";
+    const duration = contract.quality?.max_duration_seconds
+        ? `${contract.quality.max_duration_seconds}s max`
+        : "Length not set";
+    return [layout, narration, audio, transition, duration];
+}
+function blueprintFamilies() {
+    const families = new Map();
+    for (const row of state.blueprints) {
+        const rows = families.get(row.blueprint_key) || [];
+        rows.push(row);
+        families.set(row.blueprint_key, rows);
+    }
+    for (const rows of families.values()) rows.sort((a, b) => Number(b.version) - Number(a.version));
+    return families;
+}
+function findBlueprint(key, version) {
+    return state.blueprints.find(
+        (row) => row.blueprint_key === key && Number(row.version) === Number(version),
+    );
+}
 function renderBlueprints() {
-    $("count-blueprints").textContent = state.blueprints.length;
-    $("blueprints").innerHTML = state.blueprints.length ? state.blueprints.map((row) => `<article class="item"><div><h3>${escapeHTML(row.blueprint_key)} <small>v${escapeHTML(row.version)}</small></h3><p>Contract ${escapeHTML(row.contract_version)} · Created ${escapeHTML(date(row.created_at))}</p></div><div class="item-actions">${row.is_default ? '<span class="pill active">DEFAULT</span>' : row.is_active ? '<span class="pill active">ACTIVE</span>' : `<button class="mini" data-blueprint-activate="${escapeHTML(row.blueprint_key)}" data-version="${escapeHTML(row.version)}">Activate</button>`}</div></article>`).join("") : '<div class="empty">No blueprints configured for this channel.</div>';
+    const families = blueprintFamilies();
+    $("count-blueprints").textContent = families.size;
+    $("new-blueprint").disabled = !state.channel;
+    if (!families.size) {
+        $("blueprints").innerHTML = '<div class="empty">No editing recipes yet. Create one from a starter template.</div>';
+        return;
+    }
+    $("blueprints").innerHTML = [...families.entries()].map(([key, versions]) => {
+        const active = versions.find((row) => row.is_active) || versions[0];
+        const summary = blueprintSummary(active.contract);
+        const history = versions.map((row) => `
+            <div class="recipe-history-row">
+                <div><strong>v${escapeHTML(row.version)}</strong><small>${escapeHTML(date(row.created_at))}</small></div>
+                <div class="item-actions">
+                    ${row.is_active ? '<span class="pill active">ACTIVE</span>' : ""}
+                    ${row.is_default ? '<span class="pill default-pill">DEFAULT</span>' : ""}
+                    <button class="mini" type="button" data-blueprint-open="${escapeHTML(key)}" data-version="${escapeHTML(row.version)}">Open</button>
+                    ${row.is_active ? "" : `<button class="mini" type="button" data-blueprint-restore="${escapeHTML(key)}" data-version="${escapeHTML(row.version)}">Restore</button>`}
+                </div>
+            </div>
+        `).join("");
+        return `<article class="recipe-card ${active.is_default ? "is-default" : ""}">
+            <div class="recipe-card-head">
+                <div>
+                    <div class="recipe-status">${active.is_default ? "DEFAULT RECIPE" : "ACTIVE RECIPE"} · v${escapeHTML(active.version)}</div>
+                    <h3>${escapeHTML(blueprintName(active))}</h3>
+                    <p>${escapeHTML(blueprintDescription(active) || "Channel editing recipe")}</p>
+                </div>
+                <div class="item-actions">
+                    <button class="mini recipe-open" type="button" data-blueprint-open="${escapeHTML(key)}" data-version="${escapeHTML(active.version)}">Edit recipe</button>
+                    ${active.is_default ? "" : `<button class="mini" type="button" data-blueprint-default="${escapeHTML(key)}" data-version="${escapeHTML(active.version)}">Make default</button>`}
+                </div>
+            </div>
+            <div class="recipe-summary">${summary.map((value) => `<span>${escapeHTML(value)}</span>`).join("")}</div>
+            <details class="recipe-history"><summary>Version history · ${versions.length}</summary>${history}</details>
+        </article>`;
+    }).join("");
 }
 function renderPerformance(row) {
     $("performance").classList.remove("empty");
