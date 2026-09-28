@@ -341,8 +341,26 @@ def mark_failed(session_id: uuid.UUID, error: str) -> None:
         row = session.get(TelegramReviewSession, session_id)
         if row is None:
             return
-        row.state = "failed"
+        metadata = dict(row.session_metadata or {})
+        attempts = int(metadata.get("delivery_attempts") or 0) + 1
+        metadata["delivery_attempts"] = attempts
+        row.session_metadata = metadata
+        row.state = "failed" if attempts >= 3 else "queued"
         row.last_error = error[:2000]
+        session.add(
+            DomainEvent(
+                aggregate_type="telegram_review",
+                aggregate_id=str(row.id),
+                event_type="telegram.review_delivery_failed",
+                payload={
+                    "source_kind": row.source_kind,
+                    "source_id": str(row.source_id),
+                    "attempt": attempts,
+                    "will_retry": attempts < 3,
+                    "error": error[:500],
+                },
+            )
+        )
 
 
 def session_for_callback(callback_token: str) -> TelegramReviewSession:
