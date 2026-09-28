@@ -730,3 +730,50 @@ def test_prebuilt_probe_is_bounded_before_workspace_fallback(tmp_path):
     commands = [call.args[0] for call in run.call_args_list]
     assert ["docker", "pull", remote] not in commands
     assert any("build" in command and command[-1:] == ["api"] for command in commands)
+
+
+
+def test_interactive_launch_starts_runtime_by_default():
+    args = runtime.argparse.Namespace(
+        no_start=False,
+        no_browser=False,
+        launcher=False,
+        auto_start=False,
+    )
+    assert runtime.startup_requested(args, desired_running=False)
+
+
+def test_background_supervisor_respects_explicit_stop():
+    args = runtime.argparse.Namespace(
+        no_start=False,
+        no_browser=True,
+        launcher=False,
+        auto_start=False,
+    )
+    assert not runtime.startup_requested(args, desired_running=False)
+    assert runtime.startup_requested(args, desired_running=True)
+
+
+def test_launcher_only_mode_does_not_force_start():
+    args = runtime.argparse.Namespace(
+        no_start=False,
+        no_browser=False,
+        launcher=True,
+        auto_start=False,
+    )
+    assert not runtime.startup_requested(args, desired_running=False)
+
+
+def test_existing_supervisor_probe_requires_katcha_status():
+    from unittest.mock import MagicMock
+
+    connection = MagicMock()
+    response = connection.getresponse.return_value
+    response.status = 200
+    response.read.return_value = b'{"session":"existing-katcha"}'
+    with patch.object(runtime.http.client, "HTTPConnection", return_value=connection):
+        assert runtime.existing_supervisor() is True
+
+    response.read.return_value = b'{"not_katcha":true}'
+    with patch.object(runtime.http.client, "HTTPConnection", return_value=connection):
+        assert runtime.existing_supervisor() is False
