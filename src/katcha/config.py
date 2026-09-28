@@ -111,6 +111,16 @@ class Settings(BaseSettings):
     def normalize_optional_telegram_setting(cls, value):
         return None if isinstance(value, str) and not value.strip() else value
 
+    @field_validator("telegram_review_storage_endpoint_url")
+    @classmethod
+    def validate_telegram_review_storage_endpoint(cls, value):
+        if value is None:
+            return None
+        text = str(value).strip().rstrip("/")
+        if not text.startswith(("https://", "http://")):
+            raise ValueError("Telegram review storage endpoint must use http:// or https://")
+        return text
+
     youtube_data_api_key: str | None = None
     reddit_client_id: str | None = None
     reddit_client_secret: str | None = None
