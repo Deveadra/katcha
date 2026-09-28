@@ -193,6 +193,11 @@ class DiscoveryCandidateResponse(BaseModel):
     updated_at: datetime
 
 
+class SourceRunResultsResponse(BaseModel):
+    total: int
+    candidates: list[DiscoveryCandidateResponse]
+
+
 class DiscoveryObservationResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -631,3 +636,37 @@ def source_run_history(source_id: uuid.UUID, limit: int = Query(default=50, ge=1
         return list_source_runs(source_id, limit=limit)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.get(
+    "/discovery/sources/{source_id}/runs/{run_id}/results",
+    response_model=SourceRunResultsResponse,
+)
+def source_run_results(source_id: uuid.UUID, run_id: uuid.UUID) -> SourceRunResultsResponse:
+    """Summarize one source's run without exposing another source's candidates."""
+    with session_scope() as session:
+        run = session.get(DiscoveryRun, run_id)
+        if (
+            session.get(IngestionSource, source_id) is None
+            or run is None
+            or (run.run_metadata or {}).get("ingestion_source_id") != str(source_id)
+        ):
+            raise HTTPException(status_code=404, detail="source run not found")
+        condition = DiscoveryObservation.discovery_run_id == run_id
+        total = session.scalar(
+            select(func.count()).select_from(DiscoveryObservation).where(condition)
+        ) or 0
+        rows = session.scalars(
+            select(DiscoveryCandidate)
+            .join(
+                DiscoveryObservation,
+                DiscoveryObservation.discovery_candidate_id == DiscoveryCandidate.id,
+            )
+            .where(condition)
+            .order_by(DiscoveryObservation.observed_at.desc(), DiscoveryObservation.id.desc())
+            .limit(5)
+        )
+        return SourceRunResultsResponse(
+            total=total,
+            candidates=[DiscoveryCandidateResponse.model_validate(row) for row in rows],
+        )

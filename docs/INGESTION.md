@@ -88,6 +88,14 @@ Manual source registration is no longer the only discovery path. For public cont
 were never registered in Katcha. Returned candidate URLs are accepted only when
 they are present in the web-search provider's grounded source list.
 
+In the Content sources page, choose **Discover new sources**, select an active
+channel, enter a topic, and optionally narrow the search to social platforms.
+Saving the source does not start or schedule searches. **Search now** starts one
+live AI and web-search request when the OpenAI key, live execution mode, and AI
+budget are configured; provider charges may apply. Completed activity offers a
+source-scoped count and links to up to five observed candidates. For recurring
+hourly scouting, use the Katcha AI Command Center's confirmed source-scout action.
+
 For a private server or non-public source, use `operator_feed@v1` when it can
 provide URLs or JSON drops. Native platform adapters remain preferable where an
 official API offers stronger freshness, metrics, pagination, or reliability; the
