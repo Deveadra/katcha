@@ -472,12 +472,12 @@ def synthesize_speech(
     text = text.strip()
     if not text:
         raise ValueError("TTS text cannot be empty")
+    if settings.resolved_ai_execution_mode() == "fixture":
+        return _fixture_tts(text)
     if settings.tts_provider_override != "auto":
         key = LATEST_VOICE_PROFILE_BY_PROVIDER[settings.tts_provider_override]
         profile = _resolve_profile(get_voice_profile(key), settings)
         fallback_profile = None
-    if settings.resolved_ai_execution_mode() == "fixture":
-        return _fixture_tts(text)
 
     profile = _resolve_profile(profile, settings) if profile is not None else None
     fallback_profile = (
@@ -485,12 +485,20 @@ def synthesize_speech(
         if fallback_profile is not None
         else None
     )
-    estimated_increment = (
+    elevenlabs_estimate = (
         (Decimal(len(text)) / Decimal("1000"))
         * _elevenlabs_rate_per_1000(settings.elevenlabs_model_id)
-        if profile is not None and profile.provider == "elevenlabs"
-        else Decimal("0.05")
     )
+    if profile is not None and profile.provider == "elevenlabs":
+        estimated_increment = elevenlabs_estimate
+    elif (
+        profile is None
+        and settings.elevenlabs_api_key
+        and settings.elevenlabs_voice_id
+    ):
+        estimated_increment = max(Decimal("0.05"), elevenlabs_estimate)
+    else:
+        estimated_increment = Decimal("0.05")
     assert_ai_budget(estimated_increment)
     reservation_id: uuid.UUID | None = None
     if channel_profile_id is not None:
