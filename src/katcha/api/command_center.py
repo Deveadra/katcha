@@ -47,7 +47,6 @@ from katcha.services.command_center import (
     resolve_command_follow_up,
     source_discovery_plan,
 )
-from katcha.services.discovery_trends import create_topic_watch_version
 from katcha.services.command_history import (
     archive_command_thread,
     create_command_thread,
@@ -57,6 +56,7 @@ from katcha.services.command_history import (
     list_thread_proposals,
     record_command_exchange,
 )
+from katcha.services.discovery_trends import create_topic_watch_version
 from katcha.services.productions import (
     register_regeneration,
     register_short_production,
