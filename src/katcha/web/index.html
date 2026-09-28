@@ -62,126 +62,119 @@
                         </div>
                     </section>
                     <section class="explorer" id="explorer">
-                        <div class="section-heading">
-                            <h2>
-                                Opportunity board
-                                <span class="result-count" id="result-count"
-                                    >0</span
-                                >
-                            </h2>
+                        <div class="section-heading discover-heading">
+                            <div>
+                                <div class="section-kicker">01 / DISCOVER</div>
+                                <h2>
+                                    Opportunity board
+                                    <span class="result-count" id="result-count">0</span>
+                                </h2>
+                            </div>
                             <span class="demo-pill">STORED BACKEND DATA</span>
                         </div>
-                        <form id="connect-form" class="interest-panel connect">
-                            <label
-                                >Control-plane token
+
+                        <form id="connect-form" class="connect compact-connect">
+                            <label>
+                                Control-plane token
                                 <input
                                     id="token"
                                     type="password"
                                     autocomplete="off"
-                                    placeholder="Required when authentication is enabled" /></label
-                            ><button type="submit" class="primary">
-                                Connect</button
-                            ><small
-                                >Token stays in this tab's memory. Leave blank
-                                for local development.</small
-                            >
+                                    placeholder="Required only when authentication is enabled"
+                                />
+                            </label>
+                            <button type="submit" class="primary">Connect</button>
+                            <small>Token stays in this tab only. The local launcher connects automatically.</small>
                         </form>
-                        <div id="status" role="status" aria-live="polite"></div>
-                        <div class="interest-panel">
+
+                        <div id="status" class="workspace-status" role="status" aria-live="polite"></div>
+
+                        <section class="interest-panel interest-workbench" aria-labelledby="interest-title">
                             <div class="interest-header">
-                                <label for="channel"
-                                    >Channel
-                                    <select id="channel" disabled>
-                                        <option value="">
-                                            Connect to load channels
-                                        </option>
-                                    </select></label
-                                ><button
-                                    id="refresh"
-                                    class="primary"
-                                    type="button"
-                                    disabled
-                                >
-                                    Refresh intelligence ↗
-                                </button>
-                            </div>
-                            <form id="watch-form">
-                                <label for="interests">Channel interests</label>
-                                <div class="interest-form">
-                                    <input
-                                        id="interests"
-                                        placeholder="gaming, xbox"
-                                        maxlength="500"
-                                        disabled
-                                    /><button
-                                        id="save-watch"
-                                        type="submit"
-                                        disabled
-                                    >
-                                        Save watch version
+                                <div>
+                                    <strong id="interest-title">Channel interests</strong>
+                                    <span>Topics Katcha actively watches for this channel.</span>
+                                </div>
+                                <div class="interest-controls">
+                                    <label class="channel-picker" for="channel">
+                                        <span>Channel</span>
+                                        <select id="channel" disabled>
+                                            <option value="">Connect to load channels</option>
+                                        </select>
+                                    </label>
+                                    <button id="refresh" class="primary refresh-button" type="button" disabled>
+                                        Refresh intelligence ↗
                                     </button>
                                 </div>
-                                <small class="muted"
-                                    >Comma-separated interests. Other watch
-                                    settings are preserved.</small
-                                >
+                            </div>
+
+                            <div id="interest-chips" class="interest-chips" aria-live="polite"></div>
+
+                            <form id="watch-form" class="interest-form add-interest-form">
+                                <input
+                                    id="interest-input"
+                                    placeholder="Add an interest, e.g. indie games"
+                                    maxlength="120"
+                                    disabled
+                                    aria-label="Add channel interest"
+                                />
+                                <button id="add-interest" type="submit" disabled>+ Add interest</button>
                             </form>
-                        </div>
-                        <section
-                            id="edit-performance"
-                            class="edit-performance-panel"
-                            aria-labelledby="edit-performance-title"
-                        >
-                            <div class="edit-performance-head">
-                                <div>
-                                    <div class="section-kicker">EDIT PERFORMANCE</div>
-                                    <h3 id="edit-performance-title">
-                                        Blueprint evidence
-                                    </h3>
+
+                            <div class="interest-footer">
+                                <div class="interest-hint">
+                                    Try a suggested focus:
+                                    <button type="button" data-suggested-interest="Gaming">Gaming</button>
+                                    <button type="button" data-suggested-interest="Xbox">Xbox</button>
+                                    <button type="button" data-suggested-interest="PC">PC</button>
+                                    <button type="button" data-suggested-interest="Indie">Indie</button>
+                                    <button type="button" data-suggested-interest="Creators">Creators</button>
                                 </div>
-                                <span class="demo-pill">72H MATCHED OUTCOMES</span>
+                                <button id="reset-interests" class="text-button" type="button" disabled>
+                                    Reset interests
+                                </button>
                             </div>
-                            <div id="edit-performance-body" class="empty">
-                                Select a channel to load maturity-matched edit evidence.
-                            </div>
+                            <div id="interest-feedback" class="interest-feedback" hidden></div>
                         </section>
+
                         <div class="board-toolbar">
                             <div class="toolbar-left">
-                                <label class="search-wrap"
-                                    ><span>⌕</span
-                                    ><input
+                                <label class="search-wrap">
+                                    <span aria-hidden="true">⌕</span>
+                                    <input
                                         id="search"
                                         type="search"
                                         aria-label="Search opportunities"
-                                        placeholder="Search opportunities" /></label
-                                ><label class="select-wrap"
-                                    >Sort
+                                        placeholder="Search opportunities"
+                                    />
+                                </label>
+                                <label class="select-wrap">
+                                    Sort
                                     <select id="sort">
-                                        <option value="score">
-                                            Opportunity
-                                        </option>
-                                        <option value="confidence">
-                                            Confidence
-                                        </option>
-                                        <option value="acceleration">
-                                            Acceleration
-                                        </option>
-                                    </select></label
-                                >
+                                        <option value="score">Opportunity</option>
+                                        <option value="confidence">Confidence</option>
+                                        <option value="acceleration">Acceleration</option>
+                                    </select>
+                                </label>
                             </div>
-                            <button
-                                type="button"
-                                id="reload"
-                                class="icon-button"
-                                disabled
-                            >
-                                Reload results
+                            <button type="button" id="reload" class="icon-button" disabled>
+                                ↻ Reload
                             </button>
                         </div>
+
+                        <div class="investigate-heading">
+                            <div>
+                                <div class="section-kicker">02 / INVESTIGATE</div>
+                                <h2>Evidence workspace</h2>
+                            </div>
+                            <span>Select an opportunity to open its dossier, source records and signal history.</span>
+                        </div>
+
                         <div class="workspace-grid">
                             <div class="list-panel">
                                 <div class="list-label">
-                                    LATEST SNAPSHOT PER TOPIC
+                                    <span>LATEST SNAPSHOT PER TOPIC</span>
+                                    <span>OPPORTUNITY</span>
                                 </div>
                                 <div id="topic-list" class="topic-list">
                                     <div class="empty">
@@ -190,13 +183,36 @@
                                 </div>
                             </div>
                             <div class="detail-panel" id="detail-panel">
-                                <div class="empty">
-                                    Select an opportunity to inspect its
-                                    evidence.
+                                <div class="dossier-empty">
+                                    <span class="dossier-empty-icon">◇</span>
+                                    <div>
+                                        <strong>Opportunity dossier</strong>
+                                        <p>Select a ranked topic to inspect why it matters, supporting source records, interactive signal history, and editorial handoff.</p>
+                                    </div>
+                                    <div class="dossier-empty-grid">
+                                        <span>Why it ranks</span>
+                                        <span>Source records</span>
+                                        <span>Signal graph</span>
+                                        <span>Editorial handoff</span>
+                                    </div>
                                 </div>
                             </div>
                         </div>
+
                         <div id="comparison" class="comparison" hidden></div>
+
+                        <details class="learning-drawer" id="edit-performance">
+                            <summary>
+                                <span>
+                                    <small>CHANNEL LEARNING</small>
+                                    <strong id="edit-performance-title">Editing performance evidence</strong>
+                                </span>
+                                <span class="demo-pill">72H MATCHED OUTCOMES</span>
+                            </summary>
+                            <div id="edit-performance-body" class="empty">
+                                Select a channel to load maturity-matched edit evidence.
+                            </div>
+                        </details>
                     </section>
                     <section class="method" id="ai-workflow">
                         <div class="section-kicker">AI WORKFLOW</div>
