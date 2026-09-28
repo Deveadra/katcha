@@ -40,6 +40,7 @@ from katcha.services.command_center import (
     infer_edit_blueprint_key,
     performance_advice,
     ranked_episode_allowed_counts,
+    resolve_command_follow_up,
 )
 from katcha.services.command_history import (
     archive_command_thread,
@@ -95,6 +96,14 @@ class CommandAction(BaseModel):
     requires_confirmation: bool = True
 
 
+class ResolvedContextResponse(BaseModel):
+    selected_clip_ids: list[uuid.UUID] = Field(default_factory=list)
+    inherited_from_thread: bool = False
+    source_turn_id: uuid.UUID | None = None
+    resolution: str | None = None
+    action_source_turn_id: uuid.UUID | None = None
+
+
 class CommandResponse(BaseModel):
     request_id: uuid.UUID
     thread_id: uuid.UUID
@@ -107,6 +116,9 @@ class CommandResponse(BaseModel):
     caveats: list[str] = Field(default_factory=list)
     evidence: list[dict[str, object]]
     actions: list[CommandAction]
+    resolved_context: ResolvedContextResponse = Field(
+        default_factory=ResolvedContextResponse
+    )
     grounded: bool = True
     narrator: str
 
@@ -364,19 +376,82 @@ def command(http_request: Request, request: CommandRequest) -> CommandResponse:
     require_control_scope(http_request, "ai:read")
     actor = control_actor(http_request)
     request_id = uuid.uuid4()
-    intent = classify_intent(request.prompt, request.selected_clip_ids)
+
+    thread: CommandThread | None = None
+    prior_turns: list[CommandTurn] = []
+    prior_proposals: list[CommandActionProposal] = []
+    if request.thread_id is not None:
+        try:
+            thread = get_command_thread(
+                request.thread_id,
+                channel_profile_id=request.channel_profile_id,
+            )
+            if thread.status != "active":
+                raise ValueError(
+                    f"command thread is not active: {thread.status}"
+                )
+            prior_turns = list_command_turns(thread.id)
+            prior_proposals = [
+                get_action_proposal(row.id)
+                for row in list_thread_proposals(thread.id)
+            ]
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    latest_assistant = next(
+        (turn for turn in reversed(prior_turns) if turn.role == "assistant"),
+        None,
+    )
+    has_pending_proposal = bool(
+        latest_assistant
+        and any(
+            proposal.source_turn_id == latest_assistant.id
+            and proposal.status in {"proposed", "failed"}
+            for proposal in prior_proposals
+        )
+    )
+    resolution = resolve_command_follow_up(
+        request.prompt,
+        request.selected_clip_ids,
+        prior_turns,
+        has_pending_proposal=has_pending_proposal,
+    )
+    resolved_selected_clip_ids = list(resolution.selected_clip_ids)
+    resolved_request = request.model_copy(
+        update={"selected_clip_ids": resolved_selected_clip_ids}
+    )
+    intent = resolution.intent_hint or classify_intent(
+        request.prompt,
+        resolved_selected_clip_ids,
+    )
+
+    reused_proposals: list[CommandActionProposal] = []
     try:
-        if intent == "best_clips":
+        if intent == "confirm_action":
+            reused_proposals = [
+                proposal
+                for proposal in prior_proposals
+                if proposal.source_turn_id == resolution.action_source_turn_id
+                and proposal.status in {"proposed", "failed"}
+            ]
+            deterministic = (
+                "I did not execute anything from that chat message. "
+                "Katcha requires the exact server-issued action payload to be "
+                "reviewed and explicitly confirmed. I restored the pending "
+                "proposal below so you can verify it before execution."
+            )
+            evidence = []
+        elif intent == "best_clips":
             deterministic, evidence = best_clips(
                 request.channel_profile_id,
-                request.prompt,
+                resolution.effective_prompt,
             )
         elif intent == "failures":
             deterministic, evidence = failures(request.channel_profile_id)
         elif intent in {"clip_rejection", "clip_explanation"}:
             clip_id = (
-                request.selected_clip_ids[0]
-                if request.selected_clip_ids
+                resolved_selected_clip_ids[0]
+                if resolved_selected_clip_ids
                 else _uuid_from_prompt(request.prompt)
             )
             if clip_id is None:
@@ -393,24 +468,24 @@ def command(http_request: Request, request: CommandRequest) -> CommandResponse:
         elif intent == "performance_advice":
             deterministic, evidence = performance_advice(
                 request.channel_profile_id,
-                request.prompt,
+                resolution.effective_prompt,
             )
         elif intent == "create_content":
             blueprint_key = infer_edit_blueprint_key(request.prompt)
-            if not request.selected_clip_ids:
+            if not resolved_selected_clip_ids:
                 deterministic = (
                     "Select the clip or clips you want to use first. I will not "
                     "silently substitute Katcha-selected media for a request that "
                     "refers to specific clips."
                 )
-            elif len(request.selected_clip_ids) == 1:
+            elif len(resolved_selected_clip_ids) == 1:
                 deterministic = (
-                    "I prepared a production proposal for the selected clip. "
+                    "I prepared a production proposal for the resolved clip. "
                     "Nothing will start until you confirm the server-issued proposal."
                 )
             else:
                 allowed = ranked_episode_allowed_counts(request.channel_profile_id)
-                selected_count = len(request.selected_clip_ids)
+                selected_count = len(resolved_selected_clip_ids)
                 if not allowed:
                     deterministic = (
                         "This channel does not currently have an enabled ranked "
@@ -419,24 +494,24 @@ def command(http_request: Request, request: CommandRequest) -> CommandResponse:
                 elif selected_count not in allowed:
                     choices = ", ".join(str(value) for value in allowed)
                     deterministic = (
-                        f"You selected {selected_count} clips, but this channel's "
-                        f"ranked format supports {choices}. Adjust the selection and "
-                        "I can prepare an exact locked-clip proposal."
+                        f"The resolved context contains {selected_count} clips, but "
+                        f"this channel's ranked format supports {choices}. Adjust "
+                        "the selection and I can prepare an exact locked-clip proposal."
                     )
                 else:
                     recipe = blueprint_key or "the channel default edit recipe"
                     deterministic = (
                         f"I prepared a ranked-episode proposal using exactly "
-                        f"{selected_count} selected clips in selection order with "
-                        f"{recipe}. The channel brand and blueprint version will be "
-                        "frozen when the action is executed."
+                        f"{selected_count} resolved clips in order with {recipe}. "
+                        "The channel brand and blueprint version will be frozen "
+                        "when the action is executed."
                     )
             evidence = [
                 {
                     "kind": "selection",
                     "id": "current",
                     "selected_clip_ids": [
-                        str(value) for value in request.selected_clip_ids
+                        str(value) for value in resolved_selected_clip_ids
                     ],
                     "selected_production_id": (
                         str(request.selected_production_id)
@@ -444,12 +519,20 @@ def command(http_request: Request, request: CommandRequest) -> CommandResponse:
                         else None
                     ),
                     "requested_edit_blueprint_key": blueprint_key,
+                    "conversation_source_turn_id": (
+                        str(resolution.source_turn_id)
+                        if resolution.source_turn_id
+                        else None
+                    ),
                 }
             ]
         else:
             deterministic, evidence = channel_status(request.channel_profile_id)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    if resolution.inherited_from_thread and resolution.resolution:
+        deterministic = f"{deterministic} Context: {resolution.resolution}"
 
     narrative = compose_grounded_answer(
         channel_profile_id=request.channel_profile_id,
@@ -460,22 +543,22 @@ def command(http_request: Request, request: CommandRequest) -> CommandResponse:
         evidence=evidence,
     )
     try:
-        if request.thread_id is None:
+        if thread is None:
             thread = create_command_thread(
                 channel_profile_id=request.channel_profile_id,
                 actor=actor,
                 title=request.prompt,
                 metadata={"surface": "katcha_ai_command_center"},
             )
-        else:
-            thread = get_command_thread(
-                request.thread_id,
-                channel_profile_id=request.channel_profile_id,
+
+        assistant_context: dict[str, object] = {
+            "key_points": list(narrative.value.key_points),
+            "caveats": list(narrative.value.caveats),
+        }
+        if resolution.action_source_turn_id is not None:
+            assistant_context["action_source_turn_id"] = str(
+                resolution.action_source_turn_id
             )
-            if thread.status != "active":
-                raise ValueError(
-                    f"command thread is not active: {thread.status}"
-                )
 
         user_turn, assistant_turn = record_command_exchange(
             thread_id=thread.id,
@@ -489,25 +572,36 @@ def command(http_request: Request, request: CommandRequest) -> CommandResponse:
                 "selected_clip_ids": [
                     str(value) for value in request.selected_clip_ids
                 ],
+                "resolved_selected_clip_ids": [
+                    str(value) for value in resolved_selected_clip_ids
+                ],
                 "selected_production_id": (
                     str(request.selected_production_id)
                     if request.selected_production_id
                     else None
                 ),
+                "inherited_from_thread": resolution.inherited_from_thread,
+                "context_source_turn_id": (
+                    str(resolution.source_turn_id)
+                    if resolution.source_turn_id
+                    else None
+                ),
+                "context_resolution": resolution.resolution,
             },
-            assistant_context={
-                "key_points": list(narrative.value.key_points),
-                "caveats": list(narrative.value.caveats),
-            },
+            assistant_context=assistant_context,
         )
-        specs = _action_specs(request, intent, evidence)
-        proposals = create_action_proposals(
-            request_id=request_id,
-            channel_profile_id=request.channel_profile_id,
-            specs=specs,
-            thread_id=thread.id,
-            source_turn_id=assistant_turn.id,
-        )
+
+        if intent == "confirm_action":
+            proposals = reused_proposals
+        else:
+            specs = _action_specs(resolved_request, intent, evidence)
+            proposals = create_action_proposals(
+                request_id=request_id,
+                channel_profile_id=request.channel_profile_id,
+                specs=specs,
+                thread_id=thread.id,
+                source_turn_id=assistant_turn.id,
+            )
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
@@ -523,9 +617,15 @@ def command(http_request: Request, request: CommandRequest) -> CommandResponse:
         caveats=narrative.value.caveats,
         evidence=evidence,
         actions=[_action_response(item) for item in proposals],
+        resolved_context=ResolvedContextResponse(
+            selected_clip_ids=resolved_selected_clip_ids,
+            inherited_from_thread=resolution.inherited_from_thread,
+            source_turn_id=resolution.source_turn_id,
+            resolution=resolution.resolution,
+            action_source_turn_id=resolution.action_source_turn_id,
+        ),
         narrator=f"{narrative.target.provider}/{narrative.target.model}",
     )
-
 
 @router.get("/threads", response_model=list[ThreadSummaryResponse])
 def threads(
