@@ -71,6 +71,7 @@ if __name__ == "__main__":
         assert b"Editing control center" in request("/editing/assets/editing.html")
         assert b"Clip library" in request("/editing/assets/clips.html")
         assert b"Channel Studio" in request("/channels/assets/channels.html")
+        assert b"Katcha AI" in request("/ai/assets/ai.html")
         cold_started = time.monotonic()
         workspace_state = wait_for_workspace(1800)
         print(

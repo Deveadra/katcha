@@ -14,6 +14,7 @@ from katcha import __version__
 from katcha.api.acquisition import router as acquisition_router
 from katcha.api.brands import router as brands_router
 from katcha.api.clip_library import router as clip_library_router
+from katcha.api.command_center import router as command_center_router
 from katcha.api.control_auth import require_control_token
 from katcha.api.edit_blueprints import router as edit_blueprints_router
 from katcha.api.explorer import router as explorer_router
@@ -136,6 +137,7 @@ app = FastAPI(
 app.include_router(acquisition_router)
 app.include_router(brands_router)
 app.include_router(clip_library_router)
+app.include_router(command_center_router)
 app.include_router(edit_blueprints_router)
 app.include_router(intelligence_router)
 app.include_router(packaging_router)
@@ -150,6 +152,8 @@ app.mount("/editing/assets", StaticFiles(directory=Path(__file__).parents[1] / "
           name="editing-assets")
 app.mount("/channels/assets", StaticFiles(directory=Path(__file__).parents[1] / "web"),
           name="channels-assets")
+app.mount("/ai/assets", StaticFiles(directory=Path(__file__).parents[1] / "web"),
+          name="ai-assets")
 
 
 @app.get("/explorer", include_in_schema=False)
@@ -165,6 +169,11 @@ def editing_shell():
 @app.get("/channels", include_in_schema=False)
 def channels_shell():
     return RedirectResponse("/channels/assets/channels.html")
+
+
+@app.get("/ai", include_in_schema=False)
+def ai_shell():
+    return RedirectResponse("/ai/assets/ai.html")
 
 
 @app.get("/ingestion", include_in_schema=False)
