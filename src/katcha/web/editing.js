@@ -67,8 +67,10 @@ function renderProviderStatus() {
     $("provider-status").innerHTML = card(eleven, "elevenlabs") + card(invideo, "invideo");
 }
 function invideoEligible(row) {
+    const provider = state.providers.find((item) => item.provider === "invideo");
     return Boolean(
-        row.selected_script_id
+        provider?.configured
+        && row.selected_script_id
         && [
             "voiced",
             "editorial_approved",
@@ -664,13 +666,16 @@ async function connect(event) {
     rememberWorkspace();
     message("Connecting…");
     try {
-        const [channels, templates, providers] = await Promise.all([
+        const [channels, templates] = await Promise.all([
             api("/v1/channels"),
             api("/v1/channels/edit-blueprint-templates"),
-            api("/v1/integrations/providers"),
         ]);
         state.templates = templates;
-        state.providers = providers;
+        try {
+            state.providers = await api("/v1/integrations/providers");
+        } catch {
+            state.providers = [];
+        }
         renderProviderStatus();
         $("channel").innerHTML = '<option value="">Select a channel</option>' + channels.map((row) => `<option value="${escapeHTML(row.id)}">${escapeHTML(row.profile_metadata?.channel_title || row.profile_metadata?.name || row.id)} · ${escapeHTML(row.status)}</option>`).join("");
         $("channel").disabled = false; $("refresh").disabled = false;
