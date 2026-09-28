@@ -95,3 +95,34 @@ html{scroll-behavior:smooth;scroll-padding-top:82px}
 
 .editor-note{margin:0;color:#8e88a1;font-size:10px;line-height:1.55;font-weight:500;letter-spacing:0}
 .editor-group input:disabled,.editor-group select:disabled{opacity:.55;cursor:not-allowed}
+
+
+.provider-strip{display:grid;grid-template-columns:1fr 1fr;margin-bottom:18px;padding:0;overflow:hidden}
+.provider-strip>div{display:grid;grid-template-columns:auto auto;gap:2px 12px;align-items:center;padding:14px 18px}
+.provider-strip>div+div{border-left:1px solid var(--line)}
+.provider-strip span{color:var(--muted);font-size:9px;letter-spacing:.13em;font-weight:850}
+.provider-strip strong{justify-self:end;font-size:10px;letter-spacing:.09em;color:var(--muted)}
+.provider-strip small{grid-column:1/-1;color:var(--muted);font-size:10px}
+.provider-strip .provider-ready strong{color:var(--cyan)}
+.provider-strip .provider-muted{opacity:.72}
+.invideo-action{border-color:#545774;background:#292b43}
+.external-edit-dialog{width:min(720px,calc(100vw - 28px));color:var(--text);background:#171525;border:1px solid #4c4562;border-radius:16px;padding:22px;box-shadow:0 30px 90px #000a}
+.external-edit-dialog::backdrop{background:#080610c9;backdrop-filter:blur(3px)}
+.external-edit-head{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;border-bottom:1px solid var(--line);padding-bottom:13px}
+.external-edit-head h2{margin:4px 0 0}
+.external-edit-state{margin:15px 0;padding:13px;border:1px solid var(--line);border-radius:11px;background:#12101f}
+.external-edit-state>div{display:flex;align-items:center;gap:9px;flex-wrap:wrap}
+.external-edit-state small{display:block;color:var(--muted);font-size:10px;margin-top:5px}
+.external-edit-state p{color:var(--cyan);font-size:11px;margin:7px 0 0}
+.external-edit-actions{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.external-edit-actions>*{min-width:0}
+.external-upload{display:grid;gap:5px;color:var(--muted);font-size:9px;letter-spacing:.1em}
+.external-upload input{padding:8px;font-size:11px}
+.external-edit-actions #adopt-invideo-output{grid-column:1/-1}
+@media(max-width:700px){
+    .provider-strip{grid-template-columns:1fr}
+    .provider-strip>div+div{border-left:0;border-top:1px solid var(--line)}
+    .external-edit-actions{grid-template-columns:1fr}
+    .external-edit-actions #adopt-invideo-output{grid-column:auto}
+    .external-edit-head{flex-direction:column}
+}
