@@ -17,6 +17,7 @@ from katcha.intelligence.runtime import DEFAULT_REFRESH_INTERVAL_HOURS
 from katcha.intelligence_models import (
     AutomationPolicyVersion,
     ChannelEconomicsSnapshot,
+    ChannelIntelligenceRun,
     ChannelProfile,
     ChannelStrategyVersion,
     RankingSnapshot,
@@ -57,6 +58,10 @@ from katcha.services.edit_blueprint_performance import (
 from katcha.services.event_stream import (
     acknowledge_consumer_event,
     list_consumer_events,
+)
+from katcha.services.intelligence_runs import (
+    get_channel_intelligence_run,
+    list_channel_intelligence_runs,
 )
 from katcha.services.packaging_intelligence import (
     latest_packaging_intelligence,
@@ -250,6 +255,23 @@ class RefreshIntelligenceResponse(BaseModel):
     channel_profile_id: uuid.UUID
     workflow_id: str
     run_key: str
+
+
+class ChannelIntelligenceRunResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    channel_profile_id: uuid.UUID
+    run_key: str
+    workflow_id: str
+    status: str
+    stage: str
+    error: str | None = None
+    result_summary: dict[str, object]
+    started_at: datetime
+    completed_at: datetime | None = None
+    created_at: datetime
+    updated_at: datetime
 
 
 class PromoteAutomationRequest(BaseModel):
@@ -520,6 +542,34 @@ async def refresh_channel_intelligence(
             workflow_id=workflow_id,
             run_key=run_key,
         )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.get(
+    "/channels/{channel_profile_id}/intelligence/runs",
+    response_model=list[ChannelIntelligenceRunResponse],
+)
+def get_channel_intelligence_runs(
+    channel_profile_id: uuid.UUID,
+    limit: int = Query(default=20, ge=1, le=100),
+) -> list[ChannelIntelligenceRun]:
+    try:
+        return list_channel_intelligence_runs(channel_profile_id, limit=limit)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.get(
+    "/channels/{channel_profile_id}/intelligence/runs/{run_key}",
+    response_model=ChannelIntelligenceRunResponse,
+)
+def get_channel_intelligence_run_status(
+    channel_profile_id: uuid.UUID,
+    run_key: str,
+) -> ChannelIntelligenceRun:
+    try:
+        return get_channel_intelligence_run(channel_profile_id, run_key)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
