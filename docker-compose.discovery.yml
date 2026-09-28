@@ -1,6 +1,9 @@
 services:
   discovery-worker:
     image: katcha-control:local
+    build:
+      context: .
+      dockerfile: Dockerfile.control
     env_file: ${KATCHA_ENV_FILE:-.env}
     depends_on:
       migrate:
