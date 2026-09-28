@@ -880,11 +880,12 @@ class Handler(BaseHTTPRequestHandler):
             "/ingestion": "/editing/assets/ingestion.html",
             "/clips": "/editing/assets/clips.html",
             "/channels": "/channels/assets/channels.html",
+            "/ai": "/ai/assets/ai.html",
         }
         if path in redirects:
             self.redirect(redirects[path])
             return True
-        prefixes = ("/editing/assets/", "/explorer/assets/", "/channels/assets/")
+        prefixes = ("/editing/assets/", "/explorer/assets/", "/channels/assets/", "/ai/assets/")
         prefix = next((item for item in prefixes if path.startswith(item)), None)
         if prefix is None:
             return False
@@ -985,6 +986,7 @@ class Handler(BaseHTTPRequestHandler):
             "/ingestion",
             "/clips",
             "/channels",
+            "/ai",
         )
         if not self.path.startswith(allowed_prefixes):
             return self.send(404, {"error": "Not found"})
