@@ -195,7 +195,7 @@ def test_start_opens_workspace_before_warming_full_stack(tmp_path):
         i
         for i, cmd in enumerate(calls)
         if "up" in cmd
-        and cmd[-1:] != ["api"]
+        and cmd[-1:] not in (["api"], ["postgres"])
         and not all(service in cmd for service in runtime.EARLY_AUTOMATION_SERVICES)
     )
     assert workspace_build < workspace_up
