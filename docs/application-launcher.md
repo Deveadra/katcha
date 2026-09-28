@@ -138,6 +138,26 @@ Discovery workers consume configured topic-watch schedules. Keeping workers runn
 does not create interests or schedules automatically and does not prove ingestion progress.
 
 
+## Per-service self-healing
+
+The System health list is color coded:
+
+- **Green** — running/healthy, or a one-shot initializer completed successfully.
+- **Yellow** — starting, warming, or health is not yet known.
+- **Red** — unavailable, exited, unhealthy, or a one-shot initializer failed.
+
+Click a service's status dot to repair only that dependency. **Restart** restarts the
+existing container. **Recreate** force-recreates only that service with `--no-deps`.
+**Rebuild** rebuilds only the image needed by that service and recreates that service;
+shared Python services rebuild the single shared core image rather than the full stack.
+**Redownload** is offered for upstream image-based infrastructure such as PostgreSQL
+and Temporal and pulls/recreates only that service.
+
+The supervisor uses the same targeted model for missing or exited background services.
+It does not invoke a global Start merely because one worker disappears. A full Start is
+reserved for the case where the application itself is actually down. Unhealthy but still
+running services remain visible for diagnosis instead of being restart-looped.
+
 ## Startup performance model
 
 Katcha intentionally separates **workspace availability** from **full production readiness**.
