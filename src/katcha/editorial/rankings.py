@@ -172,6 +172,59 @@ def _ranked_item(
     )
 
 
+def build_locked_ranking_episode_plan(
+    candidates: Sequence[RankingCandidateSignals],
+    *,
+    premise: str,
+    item_count: int | None = None,
+    contract: RankingFormatContract | None = None,
+) -> RankingEpisodePlan:
+    """Build a countdown from an operator-locked candidate order."""
+    contract = contract or rank_snaxx_countdown_v1()
+    normalized_premise = premise.strip()
+    if contract.premise_required and not normalized_premise:
+        raise ValueError("ranking episode premise cannot be empty")
+
+    count = item_count or len(candidates)
+    if count not in contract.allowed_item_counts:
+        raise ValueError(
+            f"item_count must be one of {list(contract.allowed_item_counts)} for {contract.key}"
+        )
+    if len(candidates) != count:
+        raise ValueError(
+            "locked ranking episode requires exactly item_count candidates"
+        )
+    if any(not candidate.rights_ready for candidate in candidates):
+        raise ValueError("locked ranking episode candidates must be rights-ready")
+
+    ordered_items: list[RankedCountdownItem] = []
+    for index, candidate in enumerate(candidates):
+        position = count - index
+        if index == 0:
+            role = "opener"
+        elif index == count - 1:
+            role = "payoff"
+        elif count >= 4 and index == count - 2:
+            role = "false_peak"
+        else:
+            role = "build"
+        ordered_items.append(
+            _ranked_item(
+                candidate,
+                position=position,
+                role=role,  # type: ignore[arg-type]
+            )
+        )
+
+    return RankingEpisodePlan(
+        premise=normalized_premise,
+        format_key=contract.key,
+        format_version=contract.version,
+        item_count=count,
+        ordered_items=ordered_items,
+    )
+
+
 def build_ranking_episode_plan(
     candidates: Sequence[RankingCandidateSignals],
     *,

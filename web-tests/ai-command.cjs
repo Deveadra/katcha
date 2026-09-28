@@ -88,24 +88,32 @@ let browser;
                 ],
                 actions: [
                     {
-                        id: "produce:44444444-4444-4444-8444-444444444444",
+                        proposal_id: "66666666-6666-4666-8666-666666666666",
                         type: "create_short_production",
                         label: "Make a short from top clip",
                         description: "Start a channel-scoped production using the current channel defaults.",
-                        requires_confirmation: true,
+                        status: "proposed",
+                        expires_at: "2026-09-28T13:30:00Z",
                         payload: {
                             clip_id: "44444444-4444-4444-8444-444444444444",
+                            edit_blueprint_key: "persona_commentary",
                         },
+                        requires_confirmation: true,
                     },
                 ],
                 grounded: true,
                 narrator: "fixture/grounded-command-v1",
             };
-        } else if (url.pathname === "/v1/ai/actions/execute") {
-            assert.equal(body.confirmed, true);
+        } else if (
+            url.pathname ===
+            "/v1/ai/actions/66666666-6666-4666-8666-666666666666/execute"
+        ) {
+            assert.deepEqual(body, { confirmed: true });
             data = {
-                action_type: body.action_type,
-                status: "accepted",
+                proposal_id: "66666666-6666-4666-8666-666666666666",
+                action_type: "create_short_production",
+                status: "executed",
+                execution_attempts: 1,
                 result: {
                     production_id: "55555555-5555-4555-8555-555555555555",
                     workflow_id: "fixture-production-workflow",
@@ -164,17 +172,20 @@ let browser;
         "44444444-4444-4444-8444-444444444444",
     ]);
 
+    assert.match(await page.locator(".action-payload").first().innerText(), /clip 44444444/i);
+    assert.match(await page.locator(".action-payload").first().innerText(), /persona_commentary/i);
+
     const actionButton = page.locator("[data-action-id]").first();
     await actionButton.click();
     assert.match(await actionButton.innerText(), /Confirm:/);
     assert.equal(
-        requests.filter((request) => request.path === "/v1/ai/actions/execute").length,
+        requests.filter((request) => request.path.endsWith("/execute")).length,
         0,
     );
     await actionButton.click();
-    await page.getByText(/Accepted · production id/i).waitFor();
+    await page.getByText(/executed · production id/i).waitFor();
     assert.equal(
-        requests.filter((request) => request.path === "/v1/ai/actions/execute").length,
+        requests.filter((request) => request.path.endsWith("/execute")).length,
         1,
     );
 

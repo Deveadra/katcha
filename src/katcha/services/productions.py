@@ -249,6 +249,7 @@ def register_regeneration(
     stage: str,
     note: str | None = None,
     actor: str = "operator",
+    idempotency_key: str | None = None,
 ) -> Production:
     if stage not in REGENERATE_STAGES:
         raise ValueError(f"regenerate stage must be one of: {sorted(REGENERATE_STAGES)}")
@@ -257,6 +258,18 @@ def register_regeneration(
         parent = session.get(Production, production_id)
         if parent is None:
             raise ValueError(f"production not found: {production_id}")
+        workflow_id = _workflow_id(
+            parent.clip_id,
+            idempotency_key,
+            parent.channel_profile_id,
+        )
+        if idempotency_key:
+            existing = session.scalar(
+                select(Production).where(Production.workflow_id == workflow_id)
+            )
+            if existing is not None:
+                session.expunge(existing)
+                return existing
         if parent.status not in {
             ProductionStatus.REVIEW.value,
             ProductionStatus.REJECTED.value,
@@ -276,7 +289,7 @@ def register_regeneration(
             parent_production_id=parent.id,
             generation=parent.generation + 1,
             regenerate_from=stage,
-            workflow_id=_workflow_id(parent.clip_id, None, parent.channel_profile_id),
+            workflow_id=workflow_id,
             kind=parent.kind,
             status=ProductionStatus.QUEUED.value,
             stage=f"regenerate_{stage}_queued",

@@ -1,38 +1,64 @@
 from __future__ import annotations
 
 import uuid
+from datetime import datetime
 from typing import Literal
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, Request, status
 from pydantic import BaseModel, Field
 
 from katcha.ai.command_center import compose_grounded_answer
+from katcha.api.control_auth import control_actor, require_control_scope
+from katcha.command_center_models import CommandActionProposal
 from katcha.db import session_scope
-from katcha.domain import CompilationStatus, ProductionStatus
-from katcha.models import DomainEvent
+from katcha.domain import ProductionStatus
 from katcha.orchestration.client import (
     start_channel_intelligence_refresh,
-    start_longform_workflow,
     start_production_workflow,
+    start_short_episode_editorial_workflow,
 )
-from katcha.services.channel_editorial import freeze_channel_compilation_candidates
-from katcha.services.channel_profiles import ensure_active_profile
+from katcha.production_models import Production
+from katcha.services.command_actions import (
+    ActionProposalSpec,
+    claim_action_proposal,
+    complete_action_proposal,
+    create_action_proposals,
+    fail_action_proposal,
+    get_action_proposal,
+)
 from katcha.services.command_center import (
     best_clips,
+    build_short_episode_candidates,
     channel_status,
     classify_intent,
     clip_explanation,
     failures,
+    infer_edit_blueprint_key,
     performance_advice,
+    ranked_episode_allowed_counts,
 )
-from katcha.services.compilations import register_compilation
 from katcha.services.productions import (
     register_regeneration,
     register_short_production,
 )
 from katcha.services.render_recovery import render_attempts_for_source
+from katcha.services.short_episodes import register_short_episode
 
 router = APIRouter(prefix="/v1/ai", tags=["katcha-ai"])
+
+ActionType = Literal[
+    "refresh_channel_intelligence",
+    "create_short_production",
+    "create_ranked_short_episode",
+    "recover_production_render",
+]
+
+_ACTION_SCOPES: dict[str, str] = {
+    "refresh_channel_intelligence": "intelligence:write",
+    "create_short_production": "production:create",
+    "create_ranked_short_episode": "production:create",
+    "recover_production_render": "render:recover",
+}
 
 
 class CommandRequest(BaseModel):
@@ -42,25 +68,15 @@ class CommandRequest(BaseModel):
     selected_production_id: uuid.UUID | None = None
 
 
-class EvidenceRecord(BaseModel):
-    kind: str
-    id: str
-    title: str | None = None
-    payload: dict[str, object]
-
-
 class CommandAction(BaseModel):
-    id: str
-    type: Literal[
-        "refresh_channel_intelligence",
-        "create_short_production",
-        "create_compilation",
-        "recover_production_render",
-    ]
+    proposal_id: uuid.UUID
+    type: ActionType
     label: str
     description: str
-    requires_confirmation: bool = True
+    status: str
+    expires_at: datetime
     payload: dict[str, object] = Field(default_factory=dict)
+    requires_confirmation: bool = True
 
 
 class CommandResponse(BaseModel):
@@ -77,22 +93,35 @@ class CommandResponse(BaseModel):
 
 
 class ExecuteActionRequest(BaseModel):
-    channel_profile_id: uuid.UUID
-    action_type: Literal[
-        "refresh_channel_intelligence",
-        "create_short_production",
-        "create_compilation",
-        "recover_production_render",
-    ]
-    payload: dict[str, object] = Field(default_factory=dict)
     confirmed: bool
-    actor: str = Field(default="operator:katcha-ai", min_length=1, max_length=128)
 
 
 class ExecuteActionResponse(BaseModel):
+    proposal_id: uuid.UUID
     action_type: str
     status: str
-    result: dict[str, object]
+    execution_attempts: int
+    result: dict[str, object] = Field(default_factory=dict)
+    error: str | None = None
+
+
+class ActionProposalStatusResponse(BaseModel):
+    proposal_id: uuid.UUID
+    request_id: uuid.UUID
+    channel_profile_id: uuid.UUID
+    action_type: str
+    label: str
+    description: str
+    status: str
+    execution_attempts: int
+    expires_at: datetime
+    confirmed_by: str | None = None
+    confirmed_at: datetime | None = None
+    execution_started_at: datetime | None = None
+    executed_at: datetime | None = None
+    result: dict[str, object] = Field(default_factory=dict)
+    error: str | None = None
+    payload: dict[str, object] = Field(default_factory=dict)
 
 
 def _uuid_from_prompt(prompt: str) -> uuid.UUID | None:
@@ -104,93 +133,148 @@ def _uuid_from_prompt(prompt: str) -> uuid.UUID | None:
     return None
 
 
-def _actions(
+def _action_specs(
     request: CommandRequest,
     intent: str,
     evidence: list[dict[str, object]],
-) -> list[CommandAction]:
-    actions: list[CommandAction] = []
+) -> list[ActionProposalSpec]:
+    specs: list[ActionProposalSpec] = []
+    blueprint_key = infer_edit_blueprint_key(request.prompt)
+
     if intent == "failures":
         for item in evidence:
-            production_id = (
-                item.get("production_id")
-                if item.get("kind") == "render_attempt"
-                else None
-            )
-            if item.get("kind") == "production":
-                production_id = item.get("id")
-            if production_id and item.get("status") in {"dead_letter", "failed", "retry_exhausted"}:
-                actions.append(
-                    CommandAction(
-                        id=f"recover:{production_id}",
-                        type="recover_production_render",
+            if (
+                item.get("kind") == "render_attempt"
+                and item.get("source_type") == "production"
+                and item.get("status") == "dead_letter"
+                and item.get("production_id")
+            ):
+                production_id = str(item["production_id"])
+                specs.append(
+                    ActionProposalSpec(
+                        action_type="recover_production_render",
                         label="Recover render",
                         description=(
-                            "Create a new render generation through Katcha's "
-                            "existing recovery path."
+                            "Create one idempotent render-recovery generation for "
+                            "this unresolved dead-letter production."
                         ),
-                        payload={"production_id": str(production_id)},
+                        payload={"production_id": production_id},
                     )
                 )
                 break
+
     if intent == "performance_advice":
-        actions.append(
-            CommandAction(
-                id=f"refresh:{request.channel_profile_id}",
-                type="refresh_channel_intelligence",
+        specs.append(
+            ActionProposalSpec(
+                action_type="refresh_channel_intelligence",
                 label="Refresh channel intelligence",
-                description="Recompute channel learning before making a new editing decision.",
+                description=(
+                    "Recompute channel learning before making a new editing decision."
+                ),
+                payload={},
             )
         )
+
     if intent == "best_clips" and evidence:
         lead = evidence[0]
-        actions.append(
-            CommandAction(
-                id=f"produce:{lead['id']}",
-                type="create_short_production",
+        payload: dict[str, object] = {"clip_id": str(lead["id"])}
+        if blueprint_key:
+            payload["edit_blueprint_key"] = blueprint_key
+        specs.append(
+            ActionProposalSpec(
+                action_type="create_short_production",
                 label="Make a short from top clip",
                 description=(
-                    "Start a channel-scoped production using the selected clip "
-                    "and current channel defaults."
+                    "Start one channel-scoped production from the top grounded clip."
                 ),
-                payload={"clip_id": str(lead["id"])},
+                payload=payload,
             )
         )
-    if intent == "create_content":
+
+    if intent == "create_content" and request.selected_clip_ids:
         clip_ids = [str(value) for value in request.selected_clip_ids]
         if len(clip_ids) == 1:
-            actions.append(
-                CommandAction(
-                    id=f"produce:{clip_ids[0]}",
-                    type="create_short_production",
+            payload = {"clip_id": clip_ids[0]}
+            if blueprint_key:
+                payload["edit_blueprint_key"] = blueprint_key
+            specs.append(
+                ActionProposalSpec(
+                    action_type="create_short_production",
                     label="Create production",
-                    description="Start one channel-scoped short production from the selected clip.",
-                    payload={"clip_id": clip_ids[0]},
+                    description=(
+                        "Start one channel-scoped short from the selected clip."
+                    ),
+                    payload=payload,
                 )
             )
         else:
-            count = len(clip_ids) if clip_ids else 5
-            actions.append(
-                CommandAction(
-                    id=f"compilation:{uuid.uuid4()}",
-                    type="create_compilation",
-                    label="Create ranked episode",
-                    description=(
-                        "Start a channel-scoped compilation. Katcha will use its existing "
-                        "candidate-freeze policy; exact manual clip locking is "
-                        "not yet part of this action contract."
-                    ),
-                    payload={
-                        "theme": request.prompt[:500],
-                        "target_segment_count": max(3, min(100, count)),
-                    },
+            allowed = ranked_episode_allowed_counts(request.channel_profile_id)
+            if len(clip_ids) in allowed:
+                payload = {
+                    "clip_ids": clip_ids,
+                    "premise": request.prompt[:500],
+                    "item_count": len(clip_ids),
+                    "preserve_candidate_order": True,
+                }
+                if blueprint_key:
+                    payload["edit_blueprint_key"] = blueprint_key
+                specs.append(
+                    ActionProposalSpec(
+                        action_type="create_ranked_short_episode",
+                        label=(
+                            f"Create ranked episode from {len(clip_ids)} "
+                            "selected clips"
+                        ),
+                        description=(
+                            "Freeze exactly these clips in selection order, freeze "
+                            "the channel brand/edit recipe, and start ranked-episode "
+                            "editorial."
+                        ),
+                        payload=payload,
+                    )
                 )
-            )
-    return actions[:4]
+
+    return specs[:4]
+
+
+def _action_response(proposal: CommandActionProposal) -> CommandAction:
+    return CommandAction(
+        proposal_id=proposal.id,
+        type=proposal.action_type,  # type: ignore[arg-type]
+        label=proposal.label,
+        description=proposal.description,
+        status=proposal.status,
+        expires_at=proposal.expires_at,
+        payload=dict(proposal.payload or {}),
+    )
+
+
+def _proposal_status(
+    proposal: CommandActionProposal,
+) -> ActionProposalStatusResponse:
+    return ActionProposalStatusResponse(
+        proposal_id=proposal.id,
+        request_id=proposal.request_id,
+        channel_profile_id=proposal.channel_profile_id,
+        action_type=proposal.action_type,
+        label=proposal.label,
+        description=proposal.description,
+        status=proposal.status,
+        execution_attempts=proposal.execution_attempts,
+        expires_at=proposal.expires_at,
+        confirmed_by=proposal.confirmed_by,
+        confirmed_at=proposal.confirmed_at,
+        execution_started_at=proposal.execution_started_at,
+        executed_at=proposal.executed_at,
+        result=dict(proposal.result or {}),
+        error=proposal.error,
+        payload=dict(proposal.payload or {}),
+    )
 
 
 @router.post("/command", response_model=CommandResponse)
-def command(request: CommandRequest) -> CommandResponse:
+def command(http_request: Request, request: CommandRequest) -> CommandResponse:
+    require_control_scope(http_request, "ai:read")
     request_id = uuid.uuid4()
     intent = classify_intent(request.prompt, request.selected_clip_ids)
     try:
@@ -209,8 +293,8 @@ def command(request: CommandRequest) -> CommandResponse:
             )
             if clip_id is None:
                 deterministic = (
-                    "Select a clip or include its clip ID so I can explain the stored scoring, "
-                    "analysis, and review evidence for that exact clip."
+                    "Select a clip or include its clip ID so I can explain the "
+                    "stored scoring, analysis, and review evidence for that exact clip."
                 )
                 evidence = []
             else:
@@ -219,22 +303,59 @@ def command(request: CommandRequest) -> CommandResponse:
                     clip_id,
                 )
         elif intent == "performance_advice":
-            deterministic, evidence = performance_advice(request.channel_profile_id)
-        elif intent == "create_content":
-            deterministic = (
-                "I can prepare an executable Katcha action, but I will not start production from "
-                "natural language alone. Review the proposed action and confirm it explicitly."
+            deterministic, evidence = performance_advice(
+                request.channel_profile_id,
+                request.prompt,
             )
+        elif intent == "create_content":
+            blueprint_key = infer_edit_blueprint_key(request.prompt)
+            if not request.selected_clip_ids:
+                deterministic = (
+                    "Select the clip or clips you want to use first. I will not "
+                    "silently substitute Katcha-selected media for a request that "
+                    "refers to specific clips."
+                )
+            elif len(request.selected_clip_ids) == 1:
+                deterministic = (
+                    "I prepared a production proposal for the selected clip. "
+                    "Nothing will start until you confirm the server-issued proposal."
+                )
+            else:
+                allowed = ranked_episode_allowed_counts(request.channel_profile_id)
+                selected_count = len(request.selected_clip_ids)
+                if not allowed:
+                    deterministic = (
+                        "This channel does not currently have an enabled ranked "
+                        "episode format, so I cannot propose a multi-clip episode."
+                    )
+                elif selected_count not in allowed:
+                    choices = ", ".join(str(value) for value in allowed)
+                    deterministic = (
+                        f"You selected {selected_count} clips, but this channel's "
+                        f"ranked format supports {choices}. Adjust the selection and "
+                        "I can prepare an exact locked-clip proposal."
+                    )
+                else:
+                    recipe = blueprint_key or "the channel default edit recipe"
+                    deterministic = (
+                        f"I prepared a ranked-episode proposal using exactly "
+                        f"{selected_count} selected clips in selection order with "
+                        f"{recipe}. The channel brand and blueprint version will be "
+                        "frozen when the action is executed."
+                    )
             evidence = [
                 {
                     "kind": "selection",
                     "id": "current",
-                    "selected_clip_ids": [str(value) for value in request.selected_clip_ids],
+                    "selected_clip_ids": [
+                        str(value) for value in request.selected_clip_ids
+                    ],
                     "selected_production_id": (
                         str(request.selected_production_id)
                         if request.selected_production_id
                         else None
                     ),
+                    "requested_edit_blueprint_key": blueprint_key,
                 }
             ]
         else:
@@ -250,6 +371,16 @@ def command(request: CommandRequest) -> CommandResponse:
         deterministic_answer=deterministic,
         evidence=evidence,
     )
+    specs = _action_specs(request, intent, evidence)
+    try:
+        proposals = create_action_proposals(
+            request_id=request_id,
+            channel_profile_id=request.channel_profile_id,
+            specs=specs,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
     return CommandResponse(
         request_id=request_id,
         channel_profile_id=request.channel_profile_id,
@@ -258,148 +389,210 @@ def command(request: CommandRequest) -> CommandResponse:
         key_points=narrative.value.key_points,
         caveats=narrative.value.caveats,
         evidence=evidence,
-        actions=_actions(request, intent, evidence),
+        actions=[_action_response(item) for item in proposals],
         narrator=f"{narrative.target.provider}/{narrative.target.model}",
     )
 
 
-def _audit_action(
-    channel_profile_id: uuid.UUID,
+@router.get(
+    "/actions/{proposal_id}",
+    response_model=ActionProposalStatusResponse,
+)
+def action_status(
+    proposal_id: uuid.UUID,
+    http_request: Request,
+) -> ActionProposalStatusResponse:
+    require_control_scope(http_request, "ai:read")
+    try:
+        proposal = get_action_proposal(proposal_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return _proposal_status(proposal)
+
+
+async def _execute_proposal(
+    proposal: CommandActionProposal,
     *,
-    action_type: str,
     actor: str,
-    payload: dict[str, object],
-    result: dict[str, object],
-) -> None:
-    with session_scope() as session:
-        session.add(
-            DomainEvent(
-                aggregate_type="channel_profile",
-                aggregate_id=str(channel_profile_id),
-                event_type="command_center.action_executed",
-                payload={
-                    "channel_profile_id": str(channel_profile_id),
-                    "action_type": action_type,
-                    "actor": actor,
-                    "request_payload": payload,
-                    "result": result,
-                },
-            )
+) -> dict[str, object]:
+    payload = dict(proposal.payload or {})
+
+    if proposal.action_type == "refresh_channel_intelligence":
+        run_key = f"command-proposal-{proposal.id}"
+        workflow_id = (
+            f"channel-intelligence-refresh-{proposal.channel_profile_id}-"
+            f"{proposal.id.hex[:20]}"
         )
+        await start_channel_intelligence_refresh(
+            str(proposal.channel_profile_id),
+            workflow_id,
+            run_key,
+        )
+        return {"workflow_id": workflow_id, "run_key": run_key}
+
+    if proposal.action_type == "create_short_production":
+        clip_id = uuid.UUID(str(payload["clip_id"]))
+        production = register_short_production(
+            clip_id,
+            idempotency_key=proposal.idempotency_key,
+            channel_profile_id=proposal.channel_profile_id,
+            edit_blueprint_key=(
+                str(payload["edit_blueprint_key"])
+                if payload.get("edit_blueprint_key")
+                else None
+            ),
+        )
+        if production.status == ProductionStatus.QUEUED.value:
+            await start_production_workflow(
+                str(production.id),
+                production.workflow_id,
+            )
+        return {
+            "production_id": str(production.id),
+            "workflow_id": production.workflow_id,
+            "status": production.status,
+            "edit_blueprint_key": production.edit_blueprint_key,
+            "edit_blueprint_version": production.edit_blueprint_version,
+        }
+
+    if proposal.action_type == "create_ranked_short_episode":
+        clip_ids = [uuid.UUID(str(value)) for value in payload["clip_ids"]]
+        candidates = build_short_episode_candidates(clip_ids)
+        episode = register_short_episode(
+            channel_profile_id=proposal.channel_profile_id,
+            premise=str(payload.get("premise") or "Katcha AI ranked episode"),
+            candidates=candidates,
+            item_count=int(payload.get("item_count") or len(candidates)),
+            edit_blueprint_key=(
+                str(payload["edit_blueprint_key"])
+                if payload.get("edit_blueprint_key")
+                else None
+            ),
+            idempotency_key=proposal.idempotency_key,
+            planning_metadata={
+                "command_proposal_id": str(proposal.id),
+                "command_request_id": str(proposal.request_id),
+                "confirmed_by": actor,
+                "manual_clip_selection": True,
+            },
+            preserve_candidate_order=bool(
+                payload.get("preserve_candidate_order", True)
+            ),
+        )
+        workflow_id = f"{episode.workflow_id}-editorial-script"
+        if episode.status == "planned":
+            await start_short_episode_editorial_workflow(
+                str(episode.id),
+                workflow_id,
+                start_stage="script",
+            )
+        return {
+            "short_episode_id": str(episode.id),
+            "workflow_id": workflow_id,
+            "status": episode.status,
+            "ordered_clip_ids": [str(value) for value in clip_ids],
+            "edit_blueprint_key": episode.edit_blueprint_key,
+            "edit_blueprint_version": episode.edit_blueprint_version,
+            "brand_key": episode.brand_key,
+            "brand_version": episode.brand_version,
+        }
+
+    if proposal.action_type == "recover_production_render":
+        production_id = uuid.UUID(str(payload["production_id"]))
+        with session_scope() as session:
+            production = session.get(Production, production_id)
+            if production is None:
+                raise ValueError(f"production not found: {production_id}")
+            if production.channel_profile_id != proposal.channel_profile_id:
+                raise ValueError("production is outside the proposal channel")
+        attempts = render_attempts_for_source("production", production_id)
+        if not attempts or attempts[-1].status != "dead_letter":
+            raise ValueError(
+                "production does not have a current dead-letter render attempt"
+            )
+        child = register_regeneration(
+            production_id,
+            stage="render",
+            note="Katcha AI operator-confirmed render recovery",
+            actor=actor,
+            idempotency_key=proposal.idempotency_key,
+        )
+        await start_production_workflow(
+            str(child.id),
+            child.workflow_id,
+            start_stage="render",
+        )
+        return {
+            "source_production_id": str(production_id),
+            "child_production_id": str(child.id),
+            "workflow_id": child.workflow_id,
+        }
+
+    raise ValueError(f"unsupported command action: {proposal.action_type}")
 
 
 @router.post(
-    "/actions/execute",
+    "/actions/{proposal_id}/execute",
     response_model=ExecuteActionResponse,
     status_code=status.HTTP_202_ACCEPTED,
 )
-async def execute_action(request: ExecuteActionRequest) -> ExecuteActionResponse:
+async def execute_action(
+    proposal_id: uuid.UUID,
+    http_request: Request,
+    request: ExecuteActionRequest,
+) -> ExecuteActionResponse:
     if not request.confirmed:
-        raise HTTPException(status_code=409, detail="explicit confirmation is required")
+        raise HTTPException(
+            status_code=409,
+            detail="explicit confirmation is required",
+        )
+    actor = control_actor(http_request)
 
     try:
-        with session_scope() as session:
-            ensure_active_profile(session, request.channel_profile_id)
+        current = get_action_proposal(proposal_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
-        if request.action_type == "refresh_channel_intelligence":
-            run_key = f"katcha-ai-{uuid.uuid4().hex}"
-            workflow_id = (
-                f"channel-intelligence-refresh-{request.channel_profile_id}-"
-                f"{uuid.uuid4().hex[:20]}"
-            )
-            await start_channel_intelligence_refresh(
-                str(request.channel_profile_id),
-                workflow_id,
-                run_key,
-            )
-            result = {"workflow_id": workflow_id, "run_key": run_key}
+    required_scope = _ACTION_SCOPES.get(current.action_type)
+    if required_scope is None:
+        raise HTTPException(status_code=409, detail="unsupported proposal action")
+    require_control_scope(http_request, required_scope)
 
-        elif request.action_type == "create_short_production":
-            clip_id = uuid.UUID(str(request.payload["clip_id"]))
-            production = register_short_production(
-                clip_id,
-                persona_key=str(request.payload.get("persona_key") or "youth_host"),
-                idempotency_key=str(
-                    request.payload.get("idempotency_key")
-                    or f"katcha-ai-{uuid.uuid4().hex}"
-                ),
-                channel_profile_id=request.channel_profile_id,
-                edit_blueprint_key=(
-                    str(request.payload["edit_blueprint_key"])
-                    if request.payload.get("edit_blueprint_key")
-                    else None
-                ),
-            )
-            if production.status == ProductionStatus.QUEUED.value:
-                await start_production_workflow(str(production.id), production.workflow_id)
-            result = {
-                "production_id": str(production.id),
-                "workflow_id": production.workflow_id,
-                "status": production.status,
-            }
+    try:
+        claim = claim_action_proposal(proposal_id, actor=actor)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
-        elif request.action_type == "create_compilation":
-            compilation = register_compilation(
-                theme=str(request.payload.get("theme") or "Katcha AI episode")[:500],
-                target_segment_count=int(
-                    request.payload.get("target_segment_count") or 5
-                ),
-                persona_key=str(request.payload.get("persona_key") or "youth_host"),
-                idempotency_key=str(
-                    request.payload.get("idempotency_key")
-                    or f"katcha-ai-{uuid.uuid4().hex}"
-                ),
-                channel_profile_id=request.channel_profile_id,
-            )
-            if compilation.status == CompilationStatus.QUEUED.value:
-                compilation = freeze_channel_compilation_candidates(compilation.id)
-                await start_longform_workflow(
-                    str(compilation.id),
-                    compilation.workflow_id,
-                    start_stage="select",
-                )
-            result = {
-                "compilation_id": str(compilation.id),
-                "workflow_id": compilation.workflow_id,
-                "status": compilation.status,
-                "candidate_count": len(
-                    (compilation.candidate_snapshot or {}).get("candidates") or []
-                ),
-            }
-
-        else:
-            production_id = uuid.UUID(str(request.payload["production_id"]))
-            attempts = render_attempts_for_source("production", production_id)
-            if not attempts or attempts[-1].status != "dead_letter":
-                raise ValueError("production does not have a dead-letter render attempt")
-            child = register_regeneration(
-                production_id,
-                stage="render",
-                note="Katcha AI operator-confirmed render recovery",
-                actor=request.actor,
-            )
-            await start_production_workflow(
-                str(child.id),
-                child.workflow_id,
-                start_stage="render",
-            )
-            result = {
-                "source_production_id": str(production_id),
-                "child_production_id": str(child.id),
-                "workflow_id": child.workflow_id,
-            }
-
-        _audit_action(
-            request.channel_profile_id,
-            action_type=request.action_type,
-            actor=request.actor,
-            payload=request.payload,
-            result=result,
-        )
+    if not claim.should_execute:
+        proposal = claim.proposal
         return ExecuteActionResponse(
-            action_type=request.action_type,
-            status="accepted",
-            result=result,
+            proposal_id=proposal.id,
+            action_type=proposal.action_type,
+            status=proposal.status,
+            execution_attempts=proposal.execution_attempts,
+            result=dict(proposal.result or {}),
+            error=proposal.error,
+        )
+
+    try:
+        result = await _execute_proposal(claim.proposal, actor=actor)
+        proposal = complete_action_proposal(proposal_id, result=result)
+        return ExecuteActionResponse(
+            proposal_id=proposal.id,
+            action_type=proposal.action_type,
+            status=proposal.status,
+            execution_attempts=proposal.execution_attempts,
+            result=dict(proposal.result or {}),
         )
     except (KeyError, TypeError, ValueError) as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
+        proposal = fail_action_proposal(proposal_id, error=str(exc))
+        raise HTTPException(status_code=409, detail=proposal.error) from exc
+    except Exception as exc:
+        proposal = fail_action_proposal(
+            proposal_id,
+            error=f"{type(exc).__name__}: {exc}",
+        )
+        raise HTTPException(
+            status_code=503,
+            detail=proposal.error,
+        ) from exc

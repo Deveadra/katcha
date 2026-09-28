@@ -138,6 +138,17 @@
 .action-card { border-color: #3a5140; background: #14231c; }
 .action-card strong { display: block; font-size: 10px; }
 .action-card p { margin: 4px 0 8px; color: #81958a; font-size: 8px; line-height: 1.45; }
+.action-payload {
+    margin: 0 0 8px;
+    padding: 7px 8px;
+    border: 1px solid #31483a;
+    border-radius: 6px;
+    background: #101c16;
+    color: #a9c1ad;
+    font-size: 7px;
+    line-height: 1.45;
+    overflow-wrap: anywhere;
+}
 .action-card button {
     min-height: 31px; padding: 6px 9px; border: 1px solid #536d49; border-radius: 6px;
     background: #263d2c; color: var(--lime); font-size: 8px; font-weight: 850;
