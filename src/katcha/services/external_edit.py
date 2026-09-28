@@ -170,6 +170,7 @@ def _short_episode_manifest(
             "render_review",
             "approved",
             "failed",
+            "render_failed",
         }:
             raise ValueError(
                 "short episode must reach the voiced stage before external editing handoff"
