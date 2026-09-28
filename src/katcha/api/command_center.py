@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime
 from typing import Literal
 
-from fastapi import APIRouter, HTTPException, Request, status
+from fastapi import APIRouter, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field
 
 from katcha.ai.command_center import compose_grounded_answer
@@ -721,7 +721,7 @@ def archive_thread(
 def action_activity(
     proposal_id: uuid.UUID,
     http_request: Request,
-    limit: int = 20,
+    limit: int = Query(default=20, ge=1, le=100),
 ) -> ActionActivityResponse:
     require_control_scope(http_request, "ai:read")
     try:
