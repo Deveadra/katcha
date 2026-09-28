@@ -103,6 +103,7 @@ class Runtime:
         self.events = collections.deque(maxlen=300)
         self.events_lock = threading.Lock()
         self.lock = threading.Lock()
+        self.health_lock = threading.Lock()
         self.desired_running = (self.directory / "desired-state").exists()
         self.workspace_ready = False
         self.health_check_at = 0.0
@@ -726,7 +727,7 @@ class Runtime:
         ready = self.probe_workspace()
         present = {row["Service"] for row in self.services}
         phase = "ready" if ready and present >= REQUIRED_SERVICES and not bad else "degraded"
-        if publish:
+        if publish and self.phase not in ("starting", "stopping", "reconnecting"):
             if phase != self.phase:
                 self.event(
                     "info" if phase == "ready" else "error",
@@ -753,16 +754,17 @@ class Runtime:
         self.probe_workspace()
         if (self.phase in ("ready", "degraded")
                 and time.monotonic() >= self.health_check_at
-                and self.lock.acquire(blocking=False)):
+                and self.health_lock.acquire(blocking=False)):
             self.health_check_at = time.monotonic() + 10
             try:
                 self.check()
                 self.start_logs()
             except Exception as exc:
-                self.phase = "degraded"
+                if self.phase not in ("starting", "stopping", "reconnecting"):
+                    self.phase = "degraded"
                 self.event("error", "health", str(exc))
             finally:
-                self.lock.release()
+                self.health_lock.release()
         # Reconcile missing/exited containers; never repeatedly restart unhealthy ones.
         present = {row["Service"] for row in self.services}
         missing = not present >= REQUIRED_SERVICES or any(
