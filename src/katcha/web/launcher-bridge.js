@@ -1,9 +1,15 @@
 /* Shared workspace navigation + local launcher bridge. */
 function currentWorkspace() {
     const path = location.pathname;
-    if (path.startsWith('/ingestion')) return ['Ingestion sources', '/ingestion'];
-    if (path.startsWith('/clips')) return ['Clip library', '/clips'];
-    if (path.startsWith('/editing')) return ['Editing control center', '/editing'];
+    if (path.startsWith('/ingestion') || path.endsWith('/ingestion.html')) {
+        return ['Ingestion sources', '/ingestion'];
+    }
+    if (path.startsWith('/clips') || path.endsWith('/clips.html')) {
+        return ['Clip library', '/clips'];
+    }
+    if (path.startsWith('/editing') || path.endsWith('/editing.html')) {
+        return ['Editing control center', '/editing'];
+    }
     return ['Trend explorer', '/explorer'];
 }
 
