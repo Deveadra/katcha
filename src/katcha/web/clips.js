@@ -587,7 +587,7 @@ async function confirmPurge() {
             }),
         });
         $("purge-dialog").close();
-        state.previewUrl = null;
+        clearPreview();
         await refreshLibrary();
         message("Source media deleted. Searchable metadata and lineage were retained.");
     } catch (error) {
