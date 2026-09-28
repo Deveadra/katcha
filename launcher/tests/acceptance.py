@@ -69,6 +69,8 @@ if __name__ == "__main__":
                     raise
                 time.sleep(0.5)
         assert b"Editing control center" in request("/editing/assets/editing.html")
+        assert b"Clip library" in request("/editing/assets/clips.html")
+        assert b"Channel Studio" in request("/channels/assets/channels.html")
         cold_started = time.monotonic()
         workspace_state = wait_for_workspace(1800)
         print(
