@@ -152,7 +152,10 @@ def stream_episode_render(episode_id: uuid.UUID, request: Request) -> StreamingR
         key = asset.storage_key
         expected_key = str((episode.render_manifest or {}).get("output_key") or "")
         if expected_key and key != expected_key:
-            raise HTTPException(status_code=409, detail="render asset does not match frozen manifest")
+            raise HTTPException(
+                status_code=409,
+                detail="render asset does not match frozen manifest",
+            )
     return _stream_object(request, key, f"episode-{episode_id}.mp4")
 
 
@@ -222,7 +225,11 @@ def upload_channel_logo(
     store = ObjectStore()
     store.ensure_bucket()
     store.put_bytes(data, key, content_type=request.content_type)
-    return LogoUploadResponse(storage_key=key, content_type=request.content_type, size_bytes=len(data))
+    return LogoUploadResponse(
+        storage_key=key,
+        content_type=request.content_type,
+        size_bytes=len(data),
+    )
 
 
 @router.get("/channels/{channel_profile_id}/logo/media")

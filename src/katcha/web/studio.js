@@ -343,7 +343,7 @@ async function activateLogo() {
     if (!state.stagedBrand) throw new Error("Stage a logo version first.");
     await api(channelPath(`/brands/${state.stagedBrand.version}/activate`),{method:"POST",body:JSON.stringify({actor:"clip-studio"})});
     state.brands=await api(channelPath("/brands")); await hydrateBrandPanel();
-    message(`Brand v${activeBrand()?.version} is now active for future renders.`);
+    message(`Brand v${activeBrand()?.version} is now active for future short-form renders.`);
 }
 async function renderEditedGeneration() {
     const timeline=draftTimeline(); if (!timeline) throw new Error("This episode does not have a frozen render manifest yet.");
@@ -373,7 +373,11 @@ async function loadEpisode() {
     } catch(error){ message(error.message,true); }
 }
 async function loadChannel(preferredEpisode=null) {
-    remember(); revokeMedia(); state.detail=null; state.edits.clear(); state.selectedPosition=null;
+    remember();
+    revokeMedia();
+    if (state.localLogoUrl) URL.revokeObjectURL(state.localLogoUrl);
+    state.localLogoUrl=null;
+    state.detail=null; state.edits.clear(); state.selectedPosition=null;
     if (!state.channel) { renderAll(); return; }
     message("Loading channel workspace…");
     try {

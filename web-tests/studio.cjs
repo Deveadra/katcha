@@ -116,7 +116,7 @@ const detail = {
         });
 
         await page.goto("http://127.0.0.1:8768/studio.html?channel=20000000-0000-0000-0000-000000000001&episode=10000000-0000-0000-0000-000000000001");
-        await page.getByText("Three clips worth fixing").first().waitFor();
+        await page.locator("#monitor-title").getByText("Three clips worth fixing").waitFor();
         assert.equal(await page.locator(".clip-row").count(),3);
         assert.match(await page.locator("#timeline-duration").innerText(),/^00:/);
 
