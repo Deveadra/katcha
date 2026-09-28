@@ -274,6 +274,23 @@ def test_explicit_clip_selection_wins_over_conversation_reference() -> None:
     assert resolution.intent_hint is None
 
 
+def test_typed_confirmation_stays_gated_with_explicit_clip_context() -> None:
+    prior = [uuid.uuid4()]
+    turns, assistant_id = _conversation_turns_with_clips(prior)
+    explicit = uuid.uuid4()
+
+    resolution = resolve_command_follow_up(
+        "Yes, do it.",
+        [explicit],
+        turns,
+        has_pending_proposal=True,
+    )
+
+    assert resolution.intent_hint == "confirm_action"
+    assert resolution.action_source_turn_id == assistant_id
+    assert resolution.selected_clip_ids == (explicit,)
+
+
 def test_turn_into_short_is_create_content_intent() -> None:
     selected = [uuid.uuid4()]
 
