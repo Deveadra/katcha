@@ -496,22 +496,6 @@ class Runtime:
         temporary.write_text(fingerprint)
         temporary.replace(stamp)
 
-    def prepare_workspace_database(self):
-        """Warm the interactive database while the control-plane image is prepared."""
-        self.run(
-            self.command()
-            + [
-                "up",
-                "-d",
-                "--no-build",
-                "--wait",
-                "--wait-timeout",
-                "90",
-                "postgres",
-            ],
-            timeout=120,
-        )
-
     def operate(self, action):
         if not self.lock.acquire(blocking=False):
             return False
@@ -555,19 +539,10 @@ class Runtime:
             self.stage = "validating configuration"
             self.run(self.command() + ["config", "--quiet"])
 
-            # Interactive launch is intentionally two-phase. Postgres and the
-            # control-plane image are independent, so warm them concurrently instead of
-            # paying both costs serially before migrations/API can start.
-            self.stage = "preparing workspace"
-            self.event(
-                "info",
-                "launcher",
-                "Preparing the control plane and database in parallel.",
-            )
-            with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
-                database = pool.submit(self.prepare_workspace_database)
-                self.prepare_workspace_image()
-                database.result()
+            # Keep the interactive launch serialized at the Docker boundary. Running
+            # Compose startup and image preparation concurrently is fragile on WSL/Docker
+            # Desktop and can make the launcher itself unreachable under resource pressure.
+            self.prepare_workspace_image()
 
             self.stage = "starting workspace"
             self.event("info", "launcher", "Starting the interactive workspace.")
@@ -1055,7 +1030,7 @@ def main():
     parser.add_argument("--no-start", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args()
     os.umask(0o077)
-    url = "http://localhost:8765"
+    url = "http://127.0.0.1:8765"
     try:
         server = ThreadingHTTPServer(("127.0.0.1", 8765), Handler)
     except OSError:
@@ -1069,8 +1044,28 @@ def main():
         runtime.operate("start")
     elif not args.no_start:
         threading.Thread(target=runtime.reconcile_existing, daemon=True).start()
-    try:
-        if not args.no_browser:
+    def open_when_listening():
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
+            connection = http.client.HTTPConnection("127.0.0.1", 8765, timeout=1)
+            try:
+                connection.request("GET", "/runtime/status")
+                if connection.getresponse().status == 200:
+                    break
+            except (OSError, http.client.HTTPException):
+                time.sleep(0.1)
+            finally:
+                connection.close()
+        else:
+            runtime.event(
+                "warning",
+                "browser",
+                "Launcher did not answer its local readiness probe before browser open.",
+                recovery="Open " + url,
+            )
+            return
+
+        try:
             if (
                 Path("/proc/sys/kernel/osrelease").exists()
                 and "microsoft" in Path("/proc/sys/kernel/osrelease").read_text().lower()
@@ -1082,8 +1077,11 @@ def main():
                 )
             else:
                 webbrowser.open(url)
-    except OSError as exc:
-        runtime.event("warning", "browser", str(exc), recovery="Open " + url)
+        except OSError as exc:
+            runtime.event("warning", "browser", str(exc), recovery="Open " + url)
+
+    if not args.no_browser:
+        threading.Thread(target=open_when_listening, daemon=True).start()
     print("Katcha: " + url + " — close with Ctrl+C; services remain running.")
     try:
         server.serve_forever()
