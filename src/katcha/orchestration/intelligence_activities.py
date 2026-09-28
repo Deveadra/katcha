@@ -25,6 +25,11 @@ from katcha.services.clip_lifecycle import run_channel_maintenance
 from katcha.services.edit_blueprint_performance import (
     refresh_edit_blueprint_performance,
 )
+from katcha.services.intelligence_runs import (
+    complete_channel_intelligence_run,
+    fail_channel_intelligence_run,
+    start_channel_intelligence_run,
+)
 from katcha.services.packaging_experiments import (
     reconcile_packaging_experiment,
     start_packaging_experiment,
@@ -34,6 +39,64 @@ from katcha.services.packaging_seed import seed_channel_packaging
 from katcha.services.reach_cadence import eligible_reach_connection, reach_sync_identity
 from katcha.services.trend_activation_performance import refresh_activation_performance
 from katcha.services.trend_auto_activation import run_autonomous_trend_activation
+
+
+@activity.defn
+def record_channel_intelligence_run_started_activity(
+    channel_profile_id: str,
+    run_key: str,
+    workflow_id: str,
+) -> dict[str, object]:
+    run = start_channel_intelligence_run(
+        uuid.UUID(channel_profile_id),
+        run_key=run_key,
+        workflow_id=workflow_id,
+    )
+    return {
+        "intelligence_run_id": str(run.id),
+        "status": run.status,
+        "stage": run.stage,
+    }
+
+
+@activity.defn
+def record_channel_intelligence_run_completed_activity(
+    channel_profile_id: str,
+    run_key: str,
+    workflow_id: str,
+    result: dict[str, object],
+) -> dict[str, object]:
+    run = complete_channel_intelligence_run(
+        uuid.UUID(channel_profile_id),
+        run_key=run_key,
+        workflow_id=workflow_id,
+        result=result,
+    )
+    return {
+        "intelligence_run_id": str(run.id),
+        "status": run.status,
+        "stage": run.stage,
+    }
+
+
+@activity.defn
+def record_channel_intelligence_run_failed_activity(
+    channel_profile_id: str,
+    run_key: str,
+    workflow_id: str,
+    error: str,
+) -> dict[str, object]:
+    run = fail_channel_intelligence_run(
+        uuid.UUID(channel_profile_id),
+        run_key=run_key,
+        workflow_id=workflow_id,
+        error=error,
+    )
+    return {
+        "intelligence_run_id": str(run.id),
+        "status": run.status,
+        "stage": run.stage,
+    }
 
 
 @activity.defn
