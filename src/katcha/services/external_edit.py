@@ -402,13 +402,25 @@ def build_handoff_zip(handoff_id: uuid.UUID) -> Path:
                     "Katcha → InVideo external edit package",
                     "",
                     "Upload the files in assets/ to InVideo.",
-                    "Use manifest.json as the authoritative script/brand/editing brief.",
+                    "Use manifest.json as the authoritative package index.",
+                    "Use brand.json, editing-recipe.json and script.json as frozen inputs.",
                     "Return one final MP4 to Katcha; do not publish from InVideo.",
                     "",
                     *[f"- {line}" for line in manifest.get("instructions", [])],
                 ]
             ),
         )
+        for filename, key in (
+            ("brand.json", "brand"),
+            ("editing-recipe.json", "editing_recipe"),
+            ("script.json", "script"),
+        ):
+            payload = manifest.get(key)
+            if payload is not None:
+                handle.writestr(
+                    filename,
+                    json.dumps(payload, indent=2, sort_keys=True),
+                )
         for asset in manifest.get("assets", []):
             if not isinstance(asset, dict):
                 continue
