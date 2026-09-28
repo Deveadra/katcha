@@ -352,3 +352,38 @@ def test_unhealthy_running_containers_are_not_restart_looped(tmp_path):
     with patch.object(app, "probe_workspace"), patch.object(app, "operate") as operate:
         app.monitor_once()
         operate.assert_not_called()
+
+
+
+def test_workspace_probe_uses_control_plane_readiness(tmp_path):
+    app = instance(tmp_path)
+    from unittest.mock import MagicMock
+
+    connection = MagicMock()
+    connection.getresponse.return_value.status = 200
+    with patch.object(runtime.http.client, "HTTPConnection", return_value=connection):
+        assert app.probe_workspace() is True
+    connection.request.assert_called_once_with("GET", "/v1/health/workspace")
+
+
+def test_launcher_serves_workspace_shell_without_api(tmp_path):
+    app = instance(tmp_path)
+    server = runtime.ThreadingHTTPServer(("127.0.0.1", 0), runtime.Handler)
+    server.runtime = app
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        connection = http.client.HTTPConnection("127.0.0.1", server.server_port)
+        connection.request("GET", "/editing")
+        response = connection.getresponse()
+        assert response.status == 302
+        assert response.getheader("Location") == "/editing/assets/editing.html"
+        response.read()
+        connection.request("GET", "/editing/assets/editing.html")
+        response = connection.getresponse()
+        body = response.read()
+        assert response.status == 200
+        assert b"Editing control center" in body
+        connection.close()
+    finally:
+        server.shutdown()
+        server.server_close()
