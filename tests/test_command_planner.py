@@ -5,19 +5,32 @@ from pydantic import ValidationError
 
 from katcha.ai.command_planner import (
     CommandPlan,
+    CommandPlanResult,
     _planner_prompt,
     plan_ambiguous_command,
 )
-from katcha.ai.router import route_for
+from katcha.ai.router import ModelTarget, route_for
 from katcha.domain import AITask
 
 
 class _FixtureSettings:
     ai_enabled = False
+    openai_api_key = None
+    gemini_api_key = None
 
     @staticmethod
     def resolved_ai_execution_mode() -> str:
         return "fixture"
+
+
+class _LiveSettings:
+    ai_enabled = True
+    openai_api_key = "fixture-openai"
+    gemini_api_key = None
+
+    @staticmethod
+    def resolved_ai_execution_mode() -> str:
+        return "live"
 
 
 def test_command_planner_schema_rejects_unregistered_intents() -> None:
@@ -89,3 +102,99 @@ def test_command_planning_uses_low_cost_route() -> None:
             "gpt-5.6-luna",
             "gemini-3.5-flash-lite",
         }
+
+
+
+def test_low_confidence_ai_plan_fails_closed(monkeypatch) -> None:
+    target = ModelTarget("openai", "gpt-5.6-luna")
+    decision = type(
+        "Decision",
+        (),
+        {
+            "route": type(
+                "Route",
+                (),
+                {"primary": target, "fallback": None},
+            )(),
+            "reservation_id": None,
+        },
+    )()
+
+    monkeypatch.setattr(
+        "katcha.ai.command_planner.route_for_channel",
+        lambda *args, **kwargs: decision,
+    )
+    monkeypatch.setattr(
+        "katcha.ai.command_planner._openai",
+        lambda *args, **kwargs: CommandPlanResult(
+            value=CommandPlan(
+                intent="failures",
+                confidence=0.4,
+                reason="uncertain fixture",
+            ),
+            source="ai",
+            target=target,
+            input_tokens=10,
+            output_tokens=4,
+        ),
+    )
+
+    result = plan_ambiguous_command(
+        channel_profile_id=uuid.uuid4(),
+        request_id=uuid.uuid4(),
+        user_prompt="Can you figure out the weird thing?",
+        effective_prompt="Can you figure out the weird thing?",
+        selected_clip_count=0,
+        previous_intent=None,
+        deterministic_intent="channel_status",
+        settings=_LiveSettings(),  # type: ignore[arg-type]
+    )
+
+    assert result.value.intent == "channel_status"
+    assert result.source == "ai_low_confidence_fallback"
+    assert result.value.confidence == 0.4
+
+
+def test_planner_exception_fails_closed_without_action_authority(monkeypatch) -> None:
+    target = ModelTarget("openai", "gpt-5.6-luna")
+    decision = type(
+        "Decision",
+        (),
+        {
+            "route": type(
+                "Route",
+                (),
+                {"primary": target, "fallback": None},
+            )(),
+            "reservation_id": uuid.uuid4(),
+        },
+    )()
+
+    monkeypatch.setattr(
+        "katcha.ai.command_planner.route_for_channel",
+        lambda *args, **kwargs: decision,
+    )
+    monkeypatch.setattr(
+        "katcha.ai.command_planner._openai",
+        lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("fixture")),
+    )
+    released: list[str] = []
+    monkeypatch.setattr(
+        "katcha.ai.command_planner.release_budget_reservation",
+        lambda reservation_id, *, reason: released.append(reason),
+    )
+
+    result = plan_ambiguous_command(
+        channel_profile_id=uuid.uuid4(),
+        request_id=uuid.uuid4(),
+        user_prompt="Do something clever.",
+        effective_prompt="Do something clever.",
+        selected_clip_count=0,
+        previous_intent=None,
+        deterministic_intent="channel_status",
+        settings=_LiveSettings(),  # type: ignore[arg-type]
+    )
+
+    assert result.value.intent == "channel_status"
+    assert result.source == "planner_unavailable_fallback"
+    assert released and released[0].startswith("command_planner_fallback:")
