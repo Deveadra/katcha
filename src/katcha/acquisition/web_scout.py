@@ -168,7 +168,7 @@ def parse_web_scout_output(
             "OpenAI web scout response is missing items",
             kind="provider_payload",
             transient=False,
-            provider_usage={"openai.web_search": web_search_calls},
+            provider_usage={"openai.web_search": 1},
         )
 
     items: list[DiscoveredCandidate] = []
