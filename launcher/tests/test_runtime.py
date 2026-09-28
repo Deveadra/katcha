@@ -605,3 +605,30 @@ def test_background_prebuilt_images_cover_every_local_runtime_image(tmp_path):
         assert ["docker", "pull", remote] in commands
         assert ["docker", "tag", remote, image] in commands
     assert not any("build" in command for command in commands)
+
+
+def test_health_monitor_lock_never_blocks_lifecycle_action(tmp_path):
+    app = instance(tmp_path)
+    app.health_lock.acquire()
+    try:
+        with patch.object(runtime.threading.Thread, "start"):
+            assert app.operate("stop") is True
+            assert app.lock.locked()
+            app.lock.release()
+    finally:
+        app.health_lock.release()
+
+
+def test_health_check_cannot_overwrite_active_lifecycle_phase(tmp_path):
+    app = instance(tmp_path)
+    app.phase = "stopping"
+    with (
+        patch.object(
+            app,
+            "run",
+            return_value='[{"Service":"api","State":"running","Health":"healthy","ExitCode":0}]',
+        ),
+        patch.object(app, "probe_workspace", return_value=True),
+    ):
+        app.check()
+    assert app.phase == "stopping"
