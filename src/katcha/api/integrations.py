@@ -3,7 +3,7 @@ from __future__ import annotations
 import shutil
 import uuid
 from pathlib import Path
-from typing import Literal
+from typing import Annotated, Literal
 
 from fastapi import (
     APIRouter,
@@ -206,9 +206,9 @@ def download_invideo_package(
 )
 async def upload_invideo_output(
     handoff_id: uuid.UUID,
-    file: UploadFile = File(...),
-    external_project_id: str | None = Form(default=None, max_length=255),
-    actor: str = Form(default="operator", min_length=1, max_length=128),
+    file: Annotated[UploadFile, File()],
+    external_project_id: Annotated[str | None, Form(max_length=255)] = None,
+    actor: Annotated[str, Form(min_length=1, max_length=128)] = "operator",
 ) -> InVideoHandoffResponse:
     if file.content_type not in {None, "", "video/mp4", "application/octet-stream"}:
         raise HTTPException(status_code=415, detail="InVideo output must be an MP4 file")
