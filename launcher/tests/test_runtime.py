@@ -158,10 +158,14 @@ def test_start_opens_workspace_before_warming_full_stack(tmp_path):
             return "2.30.0"
         return ""
 
+    def workspace_ready():
+        app.workspace_ready = True
+        return True
+
     with (
         patch.object(app, "run", side_effect=fake_run),
         patch.object(app, "start_logs"),
-        patch.object(app, "probe_workspace", return_value=True),
+        patch.object(app, "probe_workspace", side_effect=workspace_ready),
         patch.object(app, "check", side_effect=lambda: setattr(app, "phase", "ready")),
     ):
         app._operate("start")
@@ -206,10 +210,14 @@ def test_background_warmup_failure_preserves_usable_workspace(tmp_path):
             raise RuntimeError("renderer build failed")
         return ""
 
+    def workspace_ready():
+        app.workspace_ready = True
+        return True
+
     with (
         patch.object(app, "run", side_effect=fake_run),
         patch.object(app, "start_logs"),
-        patch.object(app, "probe_workspace", return_value=True),
+        patch.object(app, "probe_workspace", side_effect=workspace_ready),
     ):
         app._operate("start")
 
@@ -341,10 +349,11 @@ def test_workspace_image_cache_is_independent_from_heavy_renderer_inputs(tmp_pat
     renderer = tmp_path / "renderer"
     renderer.mkdir()
     (renderer / "index.mjs").write_text("version = 1")
-    first = app.build_fingerprint(workspace=True)
+    workspace_before = app.build_fingerprint(workspace=True)
+    full_before = app.build_fingerprint()
     (renderer / "index.mjs").write_text("version = 2")
-    assert app.build_fingerprint(workspace=True) == first
-    assert app.build_fingerprint() != first
+    assert app.build_fingerprint(workspace=True) == workspace_before
+    assert app.build_fingerprint() != full_before
 
 
 def test_workspace_image_cache_skips_unchanged_control_plane_build(tmp_path):
