@@ -78,6 +78,23 @@ def _require_ai_execution() -> None:
         raise HTTPException(status_code=503, detail="no AI/TTS provider key is configured")
 
 
+def _require_tts_execution() -> None:
+    settings = get_settings()
+    if not settings.ai_enabled:
+        raise HTTPException(status_code=503, detail="AI execution is disabled")
+    if settings.resolved_ai_execution_mode() == "fixture":
+        return
+    if (
+        not settings.openai_api_key
+        and not settings.gemini_api_key
+        and not (
+            settings.elevenlabs_api_key
+            and settings.elevenlabs_voice_id
+        )
+    ):
+        raise HTTPException(status_code=503, detail="no TTS provider is configured")
+
+
 def _require_youtube_execution() -> None:
     settings = get_settings()
     if not settings.youtube_client_id or not settings.youtube_client_secret:
@@ -222,8 +239,10 @@ async def start_short_episode_editorial(
     short_episode_id: uuid.UUID,
     request: StartShortEpisodeEditorialRequest,
 ) -> StartShortEpisodeEditorialResponse:
-    if request.start_stage in {"script", "voice"}:
+    if request.start_stage == "script":
         _require_ai_execution()
+    elif request.start_stage == "voice":
+        _require_tts_execution()
     with session_scope() as session:
         episode = session.get(ShortEpisode, short_episode_id)
         if episode is None:
@@ -269,8 +288,10 @@ async def review_ranked_short_episode(
     request: ReviewShortEpisodeRequest,
 ) -> ReviewShortEpisodeResponse:
     if request.decision == ReviewDecision.REGENERATE.value:
-        if request.regenerate_from in {"script", "voice"}:
+        if request.regenerate_from == "script":
             _require_ai_execution()
+        elif request.regenerate_from == "voice":
+            _require_tts_execution()
         try:
             child = register_short_episode_regeneration(
                 short_episode_id,
