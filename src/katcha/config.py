@@ -87,6 +87,7 @@ class Settings(BaseSettings):
     telegram_bot_token: SecretStr | None = None
     telegram_chat_id: int | None = None
     telegram_allowed_user_id: int | None = None
+    telegram_pairing_code: str | None = Field(default=None, min_length=8, max_length=64)
     telegram_poll_timeout_seconds: int = Field(default=25, ge=1, le=50)
     telegram_review_scan_seconds: int = Field(default=10, ge=2, le=300)
     telegram_video_max_mb: int = Field(default=50, ge=1, le=50)
