@@ -520,6 +520,7 @@ def adopt_external_output(
                 raise ValueError(
                     "production already has a canonical render; create a new generation instead"
                 )
+            original_manifest = dict(source.render_manifest or {})
             session.add(
                 ProductionAsset(
                     production_id=source.id,
@@ -532,10 +533,20 @@ def adopt_external_output(
                     asset_metadata={
                         "verified": True,
                         "external_edit_handoff_id": str(row.id),
+                        "replaced_render_manifest": original_manifest,
                         **verification,
                     },
                 )
             )
+            source.render_manifest = {
+                **original_manifest,
+                "output_key": row.output_key,
+                "external_edit": {
+                    "provider": "invideo",
+                    "handoff_id": str(row.id),
+                    "transport": "manual_bridge",
+                },
+            }
             source.status = "review"
             source.stage = "render_verified"
             source.error = None
@@ -554,6 +565,7 @@ def adopt_external_output(
                 raise ValueError(
                     "short episode already has a canonical render; create a new generation instead"
                 )
+            original_manifest = dict(source.render_manifest or {})
             session.add(
                 ShortEpisodeAsset(
                     short_episode_id=source.id,
@@ -566,10 +578,20 @@ def adopt_external_output(
                     asset_metadata={
                         "verified": True,
                         "external_edit_handoff_id": str(row.id),
+                        "replaced_render_manifest": original_manifest,
                         **verification,
                     },
                 )
             )
+            source.render_manifest = {
+                **original_manifest,
+                "output_key": row.output_key,
+                "external_edit": {
+                    "provider": "invideo",
+                    "handoff_id": str(row.id),
+                    "transport": "manual_bridge",
+                },
+            }
             source.status = "render_review"
             source.stage = "render_review"
             source.error = None
