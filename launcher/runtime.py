@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import base64
 import collections
+import concurrent.futures
 import datetime as dt
 import hashlib
 import http.client
@@ -27,6 +28,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKSPACE_IMAGE = "katcha-control:local"
+PREBUILT_REGISTRY = "ghcr.io/deveadra"
 EARLY_AUTOMATION_SERVICES = (
     "temporal",
     "discovery-worker",
@@ -271,6 +273,94 @@ class Runtime:
                 process.wait()
             process.stdout.close()
 
+    def release_revision(self):
+        """Return the publishable main-branch revision, or None for local/dev trees."""
+        try:
+            branch = subprocess.run(
+                ["git", "branch", "--show-current"],
+                cwd=self.root,
+                env=self.environment(),
+                capture_output=True,
+                text=True,
+                timeout=10,
+                check=True,
+            ).stdout.strip()
+            if branch != "main":
+                return None
+            dirty = subprocess.run(
+                ["git", "status", "--porcelain"],
+                cwd=self.root,
+                env=self.environment(),
+                capture_output=True,
+                text=True,
+                timeout=10,
+                check=True,
+            ).stdout.strip()
+            if dirty:
+                return None
+            revision = subprocess.run(
+                ["git", "rev-parse", "HEAD"],
+                cwd=self.root,
+                env=self.environment(),
+                capture_output=True,
+                text=True,
+                timeout=10,
+                check=True,
+            ).stdout.strip()
+        except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
+            return None
+        return revision if re.fullmatch(r"[0-9a-f]{40}", revision) else None
+
+    def prebuilt_ref(self, local_image, revision):
+        repository = local_image.split(":", 1)[0]
+        return f"{PREBUILT_REGISTRY}/{repository}:{revision}"
+
+    def install_prebuilt_images(self, local_images):
+        """Pull exact images published for this clean main revision and retag locally."""
+        revision = self.release_revision()
+        if not revision:
+            return False
+        pairs = [
+            (local_image, self.prebuilt_ref(local_image, revision))
+            for local_image in local_images
+        ]
+
+        def pull(pair):
+            _, remote = pair
+            self.run(["docker", "pull", remote], timeout=900, capture=True)
+            return pair
+
+        self.stage = "pulling prebuilt images"
+        try:
+            with concurrent.futures.ThreadPoolExecutor(
+                max_workers=min(4, len(pairs))
+            ) as pool:
+                pulled = list(pool.map(pull, pairs))
+            for local_image, remote in pulled:
+                self.run(
+                    ["docker", "tag", remote, local_image],
+                    timeout=30,
+                    capture=True,
+                )
+        except (RuntimeError, TimeoutError, OSError) as exc:
+            self.event(
+                "warning",
+                "launcher",
+                "Prebuilt runtime images are unavailable; falling back to a local build.",
+                reason=str(exc),
+                revision=revision[:12],
+            )
+            return False
+
+        self.event(
+            "info",
+            "launcher",
+            "Installed prebuilt runtime images.",
+            revision=revision[:12],
+            image_count=len(pairs),
+        )
+        return True
+
     def build_fingerprint(self, workspace=False):
         """Hash image inputs, with a smaller fingerprint for the interactive control plane."""
         digest = hashlib.sha256()
@@ -316,11 +406,17 @@ class Runtime:
         if cached:
             self.event("info", "launcher", "Reusing unchanged workspace image.")
             return
+        if self.install_prebuilt_images([WORKSPACE_IMAGE]):
+            temporary = stamp.with_suffix(".pending")
+            temporary.write_text(fingerprint)
+            temporary.replace(stamp)
+            self.event("info", "launcher", "Using prebuilt workspace image.")
+            return
         self.stage = "building workspace image"
         self.event(
             "info",
             "launcher",
-            "Preparing the lightweight workspace control plane.",
+            "Preparing the lightweight workspace control plane locally.",
         )
         self.run(self.command() + ["build", "api"], timeout=900)
         temporary = stamp.with_suffix(".pending")
@@ -352,8 +448,14 @@ class Runtime:
         if cached:
             self.event("info", "launcher", "Reusing unchanged application images.")
             return
+        if self.install_prebuilt_images(images):
+            temporary = stamp.with_suffix(".pending")
+            temporary.write_text(fingerprint)
+            temporary.replace(stamp)
+            self.event("info", "launcher", "Using prebuilt automation images.")
+            return
         self.stage = "building images"
-        self.event("info", "launcher", "Preparing new or changed application images.")
+        self.event("info", "launcher", "Preparing new or changed application images locally.")
         self.run(
             self.command() + ["build", *BACKGROUND_BUILD_SERVICES],
             timeout=1800,
