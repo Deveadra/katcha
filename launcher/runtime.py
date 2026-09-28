@@ -77,6 +77,7 @@ FIELDS = {
     "KATCHA_TELEGRAM_BOT_TOKEN",
     "KATCHA_TELEGRAM_CHAT_ID",
     "KATCHA_TELEGRAM_ALLOWED_USER_ID",
+    "KATCHA_TELEGRAM_PAIRING_CODE",
     "KATCHA_RENDER_BACKEND",
     "KATCHA_AWS_PROFILE",
     "KATCHA_AWS_EXPECTED_ACCOUNT_ID",
@@ -141,6 +142,8 @@ class Runtime:
             ).decode()
         if not values.get("KATCHA_CONTROL_API_TOKEN"):
             additions["KATCHA_CONTROL_API_TOKEN"] = secrets.token_urlsafe(32)
+        if not values.get("KATCHA_TELEGRAM_PAIRING_CODE"):
+            additions["KATCHA_TELEGRAM_PAIRING_CODE"] = secrets.token_urlsafe(9)
         if additions:
             self.save(additions)
         self.values = read_env(self.env_path)
