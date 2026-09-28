@@ -4,6 +4,8 @@ import uuid
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
+import httpx
+
 from katcha.db import session_scope
 from katcha.integrations.youtube.analytics import (
     YouTubeAnalyticsError,
@@ -215,6 +217,29 @@ def evaluate_growth_progress(
         stage = "pre_ypp"
 
     selected_path = _select_path(normalized, target)
+    target_date_raw = normalized.get("target_date")
+    target_date_value: date | None = None
+    if target_date_raw:
+        try:
+            target_date_value = date.fromisoformat(str(target_date_raw))
+        except ValueError:
+            target_date_value = None
+    days_remaining = (
+        (target_date_value - as_of).days
+        if target_date_value is not None
+        else None
+    )
+    if days_remaining is None:
+        urgency = "normal"
+    elif days_remaining < 0:
+        urgency = "overdue"
+    elif days_remaining <= 30:
+        urgency = "critical"
+    elif days_remaining <= 90:
+        urgency = "high"
+    else:
+        urgency = "normal"
+
     required = list(target["requirements"])
     paths = {item["metric"]: item for item in target["audience_paths"]}
     if selected_path == "shorts":
@@ -274,6 +299,13 @@ def evaluate_growth_progress(
             "stage": stage,
             "selected_path": selected_path,
             "pace": normalized["pace"],
+            "urgency": urgency,
+            "target_date": (
+                target_date_value.isoformat()
+                if target_date_value is not None
+                else None
+            ),
+            "days_remaining": days_remaining,
             "priority_metrics": priority_metrics,
         },
     }
@@ -319,6 +351,10 @@ def apply_growth_priority(
         }
 
     weight = 0.18 if ai.get("pace") == "aggressive" else 0.08
+    if ai.get("urgency") in {"critical", "overdue"}:
+        weight = min(weight + 0.04, 0.22)
+    elif ai.get("urgency") == "high":
+        weight = min(weight + 0.02, 0.20)
     signal = _growth_signal(features, str(ai.get("selected_path") or "balanced"))
     blended = max(0.0, min(score * (1.0 - weight) + signal * weight, 1.0))
     return blended, {
@@ -387,7 +423,7 @@ def refresh_channel_growth(
             reference - timedelta(days=89)
         )
         coverage["channel_statistics"] = True
-    except (YouTubeAPIError, ValueError, TypeError) as exc:
+    except (YouTubeAPIError, RuntimeError, httpx.HTTPError, ValueError, TypeError) as exc:
         errors.append(f"channel_statistics: {str(exc)[:240]}")
 
     try:
@@ -403,7 +439,13 @@ def refresh_channel_growth(
             analytics["estimated_qualified_shorts_views_90d"]
         )
         coverage["analytics"] = True
-    except (YouTubeAnalyticsError, ValueError, TypeError) as exc:
+    except (
+        YouTubeAnalyticsError,
+        RuntimeError,
+        httpx.HTTPError,
+        ValueError,
+        TypeError,
+    ) as exc:
         errors.append(f"analytics: {str(exc)[:240]}")
 
     snapshot = {
