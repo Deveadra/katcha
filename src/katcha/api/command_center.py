@@ -5,8 +5,8 @@ import uuid
 from typing import Literal
 
 from fastapi import APIRouter, HTTPException, status
-from sqlalchemy import select
 from pydantic import BaseModel, Field
+from sqlalchemy import select
 
 from katcha.acquisition_models import TopicWatchVersion
 from katcha.ai.command_center import compose_grounded_answer
