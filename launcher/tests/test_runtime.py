@@ -573,7 +573,7 @@ def test_prebuilt_failure_falls_back_to_local_build(tmp_path):
     assert any("build" in command and command[-1:] == ["api"] for command in commands)
     assert any(
         event["message"]
-        == "Prebuilt runtime images are unavailable; falling back to a local build."
+        == "Some prebuilt runtime images are unavailable; building only the missing images."
         for event in app.events
     )
 
@@ -632,3 +632,57 @@ def test_health_check_cannot_overwrite_active_lifecycle_phase(tmp_path):
     ):
         app.check()
     assert app.phase == "stopping"
+
+
+
+def test_partial_prebuilt_images_build_only_missing_services(tmp_path):
+    app = instance(tmp_path)
+    revision = "d" * 40
+    images = app.built_images()
+    missing_image = "katcha-renderer:local"
+    missing_remote = app.prebuilt_ref(missing_image, revision)
+
+    def fake_run(args, **_kwargs):
+        if args[:3] == ["docker", "manifest", "inspect"] and args[-1] == missing_remote:
+            raise RuntimeError("not published")
+        return ""
+
+    with (
+        patch.object(app, "release_revision", return_value=revision),
+        patch.object(app, "run", side_effect=fake_run) as run,
+    ):
+        app.prepare_images()
+
+    commands = [call.args[0] for call in run.call_args_list]
+    build_commands = [command for command in commands if "build" in command]
+    assert len(build_commands) == 1
+    assert build_commands[0][-1:] == ["renderer"]
+    for image in images:
+        remote = app.prebuilt_ref(image, revision)
+        if image == missing_image:
+            assert ["docker", "pull", remote] not in commands
+        else:
+            assert ["docker", "pull", remote] in commands
+            assert ["docker", "tag", remote, image] in commands
+
+
+def test_prebuilt_probe_is_bounded_before_workspace_fallback(tmp_path):
+    app = instance(tmp_path)
+    revision = "e" * 40
+    remote = app.prebuilt_ref(runtime.WORKSPACE_IMAGE, revision)
+
+    def fake_run(args, **kwargs):
+        if args == ["docker", "manifest", "inspect", remote]:
+            assert kwargs["timeout"] == 10
+            raise TimeoutError("registry probe timed out")
+        return ""
+
+    with (
+        patch.object(app, "release_revision", return_value=revision),
+        patch.object(app, "run", side_effect=fake_run) as run,
+    ):
+        app.prepare_workspace_image()
+
+    commands = [call.args[0] for call in run.call_args_list]
+    assert ["docker", "pull", remote] not in commands
+    assert any("build" in command and command[-1:] == ["api"] for command in commands)
