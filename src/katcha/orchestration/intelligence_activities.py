@@ -15,6 +15,7 @@ from katcha.packaging_intelligence_models import PackagingIntelligenceSnapshot
 from katcha.packaging_models import PackagingExperiment, PublicationPackagingActivation
 from katcha.services.channel_automation import maybe_auto_demote
 from katcha.services.channel_economics import compute_channel_economics
+from katcha.services.channel_growth import refresh_channel_growth
 from katcha.services.channel_learning import (
     derive_performance_observations,
     train_channel_ranking,
@@ -132,6 +133,11 @@ async def run_channel_packaging_experiments_activity(
                 {"publication_id": str(proposal.get("publication_id")), "reason": str(exc)[:160]}
             )
     return {"started": started, "advanced": advanced, "blocked": blocked[:100]}
+
+
+@activity.defn
+def refresh_channel_growth_activity(channel_profile_id: str) -> dict[str, object]:
+    return refresh_channel_growth(uuid.UUID(channel_profile_id))
 
 
 @activity.defn
