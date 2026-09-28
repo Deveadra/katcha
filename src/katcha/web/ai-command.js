@@ -296,6 +296,63 @@ function actionPayloadSummary(action) {
     return "";
 }
 
+
+function actionActivitySummary(activity) {
+    const resource = activity.resource;
+    if (resource) {
+        return [
+            resource.kind.replaceAll("_", " "),
+            resource.status.replaceAll("_", " "),
+            resource.stage && resource.stage !== resource.status
+                ? resource.stage.replaceAll("_", " ")
+                : "",
+            resource.error || "",
+        ]
+            .filter(Boolean)
+            .join(" · ");
+    }
+    return [
+        activity.state?.replaceAll("_", " "),
+        activity.workflow_id ? "workflow " + activity.workflow_id : "",
+    ]
+        .filter(Boolean)
+        .join(" · ");
+}
+
+async function refreshActionActivity(proposalId, card, attempt = 0, keepPolling = false) {
+    if (!card || !document.body.contains(card)) return;
+    const output = card.querySelector(".action-result");
+    try {
+        const activity = await api(
+            "/v1/ai/actions/" + encodeURIComponent(proposalId) + "/activity",
+        );
+        output.hidden = false;
+        output.textContent = actionActivitySummary(activity) || "No workflow activity yet.";
+        card.dataset.activityState = activity.state || "";
+        const activityButton = card.querySelector("[data-activity-id]");
+        if (activityButton) {
+            activityButton.textContent = activity.settled
+                ? "Status is current"
+                : "Refresh workflow status";
+            activityButton.disabled = Boolean(activity.settled);
+        }
+        if (
+            keepPolling &&
+            !activity.settled &&
+            attempt < 20 &&
+            document.body.contains(card)
+        ) {
+            window.setTimeout(
+                () => refreshActionActivity(proposalId, card, attempt + 1, true),
+                3000,
+            );
+        }
+    } catch (error) {
+        output.hidden = false;
+        output.textContent = "Status check failed: " + error.message;
+    }
+}
+
 function renderContext(result) {
     $("narrator").textContent = result.narrator || "GROUNDED";
     const evidence = (result.evidence || [])
@@ -349,7 +406,13 @@ function renderContext(result) {
                 (canExecute ? "" : " disabled") +
                 ">" +
                 esc(buttonLabel) +
-                '</button><div class="action-result"' +
+                "</button>" +
+                (["executed", "executing"].includes(action.status)
+                    ? '<button type="button" class="activity-button" data-activity-id="' +
+                      esc(action.proposal_id) +
+                      '">Check workflow status</button>'
+                    : "") +
+                '<div class="action-result"' +
                 (action.result && Object.keys(action.result).length
                     ? ""
                     : " hidden") +
@@ -406,6 +469,19 @@ function renderContext(result) {
     });
 
     const byId = new Map((result.actions || []).map((action) => [action.proposal_id, action]));
+
+    $("context-panel").querySelectorAll("[data-activity-id]").forEach((button) => {
+        button.onclick = async () => {
+            button.disabled = true;
+            button.textContent = "Checking…";
+            const card = button.closest("[data-action-card]");
+            await refreshActionActivity(button.dataset.activityId, card);
+            if (!button.disabled) {
+                button.textContent = "Refresh workflow status";
+            }
+        };
+    });
+
     $("context-panel").querySelectorAll("[data-action-id]").forEach((button) => {
         button.onclick = async () => {
             const action = byId.get(button.dataset.actionId);
@@ -437,6 +513,7 @@ function renderContext(result) {
                     .join(" · ");
                 button.textContent =
                     execution.status === "executed" ? "✓ Executed" : "✓ " + execution.status;
+                await refreshActionActivity(action.proposal_id, card, 0, true);
                 appendKatcha({
                     answer: action.label + " was accepted by the Katcha control plane. The evidence panel contains the returned workflow reference.",
                     intent: "action_execution",
