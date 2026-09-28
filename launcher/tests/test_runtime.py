@@ -516,6 +516,16 @@ def test_launcher_serves_workspace_shell_without_api(tmp_path):
         body = response.read()
         assert response.status == 200
         assert b"Channel Studio" in body
+        connection.request("GET", "/ai")
+        response = connection.getresponse()
+        assert response.status == 302
+        assert response.getheader("Location") == "/ai/assets/ai.html"
+        response.read()
+        connection.request("GET", "/ai/assets/ai.html")
+        response = connection.getresponse()
+        body = response.read()
+        assert response.status == 200
+        assert b"Katcha AI" in body
         connection.close()
     finally:
         server.shutdown()
