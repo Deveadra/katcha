@@ -301,7 +301,9 @@ const verifiedPreview = {
         await page.locator("#blueprint-editor-panel").waitFor();
         assert.equal(await page.locator("#bp-name").inputValue(), "RankSnaxx commentary");
         assert.equal(await page.locator("#bp-layout").inputValue(), "full_frame");
-        await page.locator("#bp-max-duration").fill("45");
+        assert.equal(await page.locator("#bp-max-duration").isDisabled(), true);
+        await page.locator("#bp-fit").selectOption("cover");
+        await page.locator("#bp-captions").uncheck();
         await page.locator("#blueprint-editor button[type=submit]").click();
         await page.getByText(/v2 saved/).waitFor();
         assert.equal(await page.locator("#count-blueprints").innerText(), "1");
@@ -312,7 +314,9 @@ const verifiedPreview = {
                 && request.method === "POST"
                 && request.body.contract.key === "persona_commentary",
         );
-        assert.equal(editedRecipe.body.contract.quality.max_duration_seconds, 45);
+        assert.equal(editedRecipe.body.contract.source_layout.fit, "cover");
+        assert.equal(editedRecipe.body.contract.narration.captions_enabled, false);
+        assert.equal(editedRecipe.body.contract.quality.max_duration_seconds, 60);
         assert.equal(editedRecipe.body.set_default, true);
         assert.equal(editedRecipe.body.display_name, "RankSnaxx commentary");
 
