@@ -11,6 +11,7 @@ import http.client
 import json
 import logging
 import logging.handlers
+import mimetypes
 import os
 import queue
 import re
@@ -484,7 +485,7 @@ class Runtime:
     def probe_workspace(self):
         connection = http.client.HTTPConnection("127.0.0.1", 8000, timeout=2)
         try:
-            connection.request("GET", "/v1/health/ready")
+            connection.request("GET", "/v1/health/workspace")
             self.workspace_ready = connection.getresponse().status == 200
         except (OSError, http.client.HTTPException):
             self.workspace_ready = False
@@ -567,6 +568,36 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(payload)
 
+    def redirect(self, location):
+        self.send_response(302)
+        self.send_header("Location", location)
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+
+    def workspace_asset(self):
+        path = self.path.split("?", 1)[0]
+        redirects = {
+            "/editing": "/editing/assets/editing.html",
+            "/explorer": "/explorer/assets/index.html",
+            "/ingestion": "/editing/assets/ingestion.html",
+        }
+        if path in redirects:
+            self.redirect(redirects[path])
+            return True
+        prefixes = ("/editing/assets/", "/explorer/assets/")
+        prefix = next((item for item in prefixes if path.startswith(item)), None)
+        if prefix is None:
+            return False
+        name = path.removeprefix(prefix)
+        if not name or Path(name).name != name:
+            return False
+        asset = ROOT / "src" / "katcha" / "web" / name
+        if not asset.is_file():
+            return False
+        mime = mimetypes.guess_type(asset.name)[0] or "application/octet-stream"
+        self.send(200, asset.read_bytes(), mime)
+        return True
+
     def allowed(self):
         host = self.headers.get("Host")
         hosts = {f"localhost:{self.server.server_port}", f"127.0.0.1:{self.server.server_port}"}
@@ -578,6 +609,8 @@ class Handler(BaseHTTPRequestHandler):
             return self.send(403, {"error": "Local requests only"})
         if self.path == "/":
             return self.send(200, (ROOT / "launcher" / "index.html").read_bytes(), "text/html")
+        if self.workspace_asset():
+            return
         if self.path == "/runtime/status":
             return self.send(200, self.server.runtime.snapshot())
         if self.path == "/runtime/diagnostics":

@@ -41,9 +41,11 @@ services:
         max-file: "3"
     ports: !override ["127.0.0.1:8000:8000"]
     healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://localhost:8000/v1/health/ready"]
-      interval: 10s
-      timeout: 8s
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/v1/health/workspace"]
+      interval: 5s
+      start_interval: 1s
+      start_period: 20s
+      timeout: 3s
       retries: 30
   worker:
     restart: unless-stopped

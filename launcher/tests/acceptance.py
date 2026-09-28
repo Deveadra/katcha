@@ -40,6 +40,22 @@ def wait_for(target, seconds):
     raise TimeoutError(f"Katcha did not reach {target}")
 
 
+def wait_for_workspace(seconds):
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        try:
+            snapshot = json.loads(request("/runtime/status"))
+        except OSError:
+            time.sleep(1)
+            continue
+        if snapshot.get("workspace_ready"):
+            return snapshot
+        if snapshot["phase"] == "failed":
+            raise RuntimeError(json.dumps(snapshot["events"][-20:], indent=2))
+        time.sleep(1)
+    raise TimeoutError("Katcha workspace did not become ready")
+
+
 if __name__ == "__main__":
     process = subprocess.Popen(["python3", "launcher/runtime.py", "--no-browser"])
     try:
@@ -52,11 +68,17 @@ if __name__ == "__main__":
                 if time.monotonic() >= deadline:
                     raise
                 time.sleep(0.5)
-        cold_started = time.monotonic()
-        state = wait_for("ready", 1800)
-        print(f"Initial readiness wait: {time.monotonic() - cold_started:.2f}s", flush=True)
-        assert len(state["services"]) >= 15
         assert b"Editing control center" in request("/editing/assets/editing.html")
+        cold_started = time.monotonic()
+        workspace_state = wait_for_workspace(1800)
+        print(
+            f"Initial workspace readiness: {time.monotonic() - cold_started:.2f}s",
+            flush=True,
+        )
+        assert workspace_state["workspace_ready"]
+        state = wait_for("ready", 1800)
+        print(f"Initial full readiness: {time.monotonic() - cold_started:.2f}s", flush=True)
+        assert len(state["services"]) >= 15
         assert isinstance(json.loads(request("/v1/channels")), list)
         volume_args = [
             "docker",
@@ -75,8 +97,13 @@ if __name__ == "__main__":
         # Measure a real warm restart and ensure that it does not rebuild images.
         warm_started = time.monotonic()
         request("/runtime/start", {})
+        workspace_state = wait_for_workspace(120)
+        print(
+            f"Warm workspace readiness: {time.monotonic() - warm_started:.2f}s",
+            flush=True,
+        )
+        assert workspace_state["workspace_ready"]
         state = wait_for("ready", 420)
-        assert state["workspace_ready"]
         assert state["desired_running"]
         # Status retains only 300 events; busy worker logs can evict the build event.
         journal = [json.loads(line) for line in request("/runtime/diagnostics").splitlines()]
@@ -87,7 +114,7 @@ if __name__ == "__main__":
         messages = [event["message"] for event in journal[last_start:]]
         assert "Reusing unchanged application images." in messages
         assert "Preparing new or changed application images." not in messages
-        print(f"Warm restart readiness: {time.monotonic() - warm_started:.2f}s", flush=True)
+        print(f"Warm full readiness: {time.monotonic() - warm_started:.2f}s", flush=True)
         request("/runtime/stop", {})
         state = wait_for("stopped", 120)
         assert not state["desired_running"]
