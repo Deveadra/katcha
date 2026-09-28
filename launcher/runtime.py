@@ -316,51 +316,66 @@ class Runtime:
         repository = local_image.split(":", 1)[0]
         return f"{PREBUILT_REGISTRY}/{repository}:{revision}"
 
-    def install_prebuilt_images(self, local_images):
-        """Pull exact images published for this clean main revision and retag locally."""
+    def install_prebuilt_images(self, local_images, pull_timeout=600):
+        """Install every available exact-revision image without blocking on missing ones."""
         revision = self.release_revision()
         if not revision:
-            return False
+            return set()
         pairs = [
             (local_image, self.prebuilt_ref(local_image, revision))
             for local_image in local_images
         ]
 
-        def pull(pair):
-            _, remote = pair
-            self.run(["docker", "pull", remote], timeout=900, capture=True)
-            return pair
-
-        self.stage = "pulling prebuilt images"
-        try:
-            with concurrent.futures.ThreadPoolExecutor(
-                max_workers=min(4, len(pairs))
-            ) as pool:
-                pulled = list(pool.map(pull, pairs))
-            for local_image, remote in pulled:
+        def install(pair):
+            local_image, remote = pair
+            try:
+                # Probe first so a private/unpublished registry entry fails quickly instead
+                # of consuming the full image-pull timeout on the interactive path.
+                self.run(
+                    ["docker", "manifest", "inspect", remote],
+                    timeout=10,
+                    capture=True,
+                )
+                self.run(
+                    ["docker", "pull", remote],
+                    timeout=pull_timeout,
+                    capture=True,
+                )
                 self.run(
                     ["docker", "tag", remote, local_image],
                     timeout=30,
                     capture=True,
                 )
-        except (RuntimeError, TimeoutError, OSError) as exc:
+                return local_image, None
+            except (RuntimeError, TimeoutError, OSError) as exc:
+                return local_image, exc
+
+        self.stage = "pulling prebuilt images"
+        with concurrent.futures.ThreadPoolExecutor(
+            max_workers=min(4, len(pairs))
+        ) as pool:
+            results = list(pool.map(install, pairs))
+
+        installed = {image for image, error in results if error is None}
+        missing = [(image, error) for image, error in results if error is not None]
+        if installed:
+            self.event(
+                "info",
+                "launcher",
+                "Installed prebuilt runtime images.",
+                revision=revision[:12],
+                image_count=len(installed),
+            )
+        if missing:
             self.event(
                 "warning",
                 "launcher",
-                "Prebuilt runtime images are unavailable; falling back to a local build.",
-                reason=str(exc),
+                "Some prebuilt runtime images are unavailable; building only the missing images.",
                 revision=revision[:12],
+                missing_images=[image for image, _ in missing],
+                reason="; ".join(str(error) for _, error in missing),
             )
-            return False
-
-        self.event(
-            "info",
-            "launcher",
-            "Installed prebuilt runtime images.",
-            revision=revision[:12],
-            image_count=len(pairs),
-        )
-        return True
+        return installed
 
     def build_fingerprint(self, workspace=False):
         """Hash image inputs, with a smaller fingerprint for the interactive control plane."""
@@ -407,7 +422,11 @@ class Runtime:
         if cached:
             self.event("info", "launcher", "Reusing unchanged workspace image.")
             return
-        if self.install_prebuilt_images([WORKSPACE_IMAGE]):
+        installed = self.install_prebuilt_images(
+            [WORKSPACE_IMAGE],
+            pull_timeout=180,
+        )
+        if WORKSPACE_IMAGE in installed:
             temporary = stamp.with_suffix(".pending")
             temporary.write_text(fingerprint)
             temporary.replace(stamp)
@@ -424,17 +443,20 @@ class Runtime:
         temporary.write_text(fingerprint)
         temporary.replace(stamp)
 
-    def built_images(self):
+    def image_build_services(self):
         minio_version = self.values.get(
             "KATCHA_MINIO_VERSION", "RELEASE.2025-10-15T17-29-55Z"
         )
-        return [
-            "katcha-ingest:local",
-            "katcha-analysis:local",
-            "katcha-renderer:local",
-            "katcha-production:local",
-            f"katcha-minio:{minio_version}",
-        ]
+        return {
+            "katcha-ingest:local": "worker",
+            "katcha-analysis:local": "analysis-worker",
+            "katcha-renderer:local": "renderer",
+            "katcha-production:local": "production-worker",
+            f"katcha-minio:{minio_version}": "minio",
+        }
+
+    def built_images(self):
+        return list(self.image_build_services())
 
     def prepare_images(self):
         fingerprint = self.build_fingerprint()
@@ -449,18 +471,27 @@ class Runtime:
         if cached:
             self.event("info", "launcher", "Reusing unchanged application images.")
             return
-        if self.install_prebuilt_images(images):
-            temporary = stamp.with_suffix(".pending")
-            temporary.write_text(fingerprint)
-            temporary.replace(stamp)
+        installed = self.install_prebuilt_images(images)
+        build_services = self.image_build_services()
+        missing_services = [
+            build_services[image]
+            for image in images
+            if image not in installed
+        ]
+        if missing_services:
+            self.stage = "building images"
+            self.event(
+                "info",
+                "launcher",
+                "Preparing only missing or changed application images locally.",
+                services=missing_services,
+            )
+            self.run(
+                self.command() + ["build", *missing_services],
+                timeout=1800,
+            )
+        else:
             self.event("info", "launcher", "Using prebuilt automation images.")
-            return
-        self.stage = "building images"
-        self.event("info", "launcher", "Preparing new or changed application images locally.")
-        self.run(
-            self.command() + ["build", *BACKGROUND_BUILD_SERVICES],
-            timeout=1800,
-        )
         temporary = stamp.with_suffix(".pending")
         temporary.write_text(fingerprint)
         temporary.replace(stamp)
