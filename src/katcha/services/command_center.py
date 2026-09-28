@@ -19,7 +19,6 @@ from katcha.render_models import RenderAttempt
 from katcha.services.channel_editorial import score_clip_for_channel
 from katcha.services.channel_profiles import ensure_active_profile
 
-
 _FAILURE_STATES = {"failed", "dead_letter", "retry_exhausted", "error"}
 _STOP_WORDS = {
     "best", "clip", "clips", "found", "today", "show", "me", "the", "and", "why",
