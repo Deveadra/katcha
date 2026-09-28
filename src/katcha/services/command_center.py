@@ -219,7 +219,9 @@ def _looks_like_follow_up(text: str) -> bool:
 
 
 def _looks_like_confirmation(text: str) -> bool:
-    normalized = " ".join(text.strip().casefold().split()).strip(".!?")
+    normalized = " ".join(
+        re.sub(r"[^a-z0-9]+", " ", text.casefold()).split()
+    )
     return normalized in {
         "yes",
         "yes do it",
