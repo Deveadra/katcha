@@ -162,6 +162,7 @@ async function openThread(threadId) {
             evidence: latest.evidence || [],
             key_points: latest.context?.key_points || [],
             caveats: latest.context?.caveats || [],
+            planning: latest.context?.planning || null,
             actions,
         });
     }
@@ -372,6 +373,22 @@ function renderContext(result) {
         })
         .join("");
 
+    const planning = result.planning
+        ? '<div class="context-section"><div class="context-section-head"><span>COMMAND ROUTING</span><b>' +
+          esc(String(Math.round(Number(result.planning.confidence || 0) * 100))) +
+          '%</b></div><article class="planner-card"><strong>' +
+          esc(String(result.planning.intent || "unknown").replaceAll("_", " ")) +
+          '</strong><span>' +
+          esc(result.planning.source || "deterministic") +
+          " · " +
+          esc(result.planning.provider || "katcha") +
+          "/" +
+          esc(result.planning.model || "router") +
+          '</span><p>' +
+          esc(result.planning.reason || "") +
+          "</p></article></div>"
+        : "";
+
     const keyPoints = (result.key_points || []).length
         ? '<div class="context-section"><div class="context-section-head"><span>KATCHA NOTES</span><b>' +
           result.key_points.length +
@@ -383,6 +400,7 @@ function renderContext(result) {
         : "";
 
     $("context-panel").innerHTML =
+        planning +
         keyPoints +
         '<section class="context-section"><div class="context-section-head"><span>EVIDENCE USED</span><b>' +
         (result.evidence || []).length +
