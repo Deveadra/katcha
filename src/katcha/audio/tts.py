@@ -3,9 +3,6 @@ from __future__ import annotations
 import base64
 import io
 import math
-
-import httpx
-
 import subprocess
 import tempfile
 import uuid
@@ -13,6 +10,8 @@ import wave
 from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
+
+import httpx
 
 from katcha.ai.failover import safe_to_fail_over
 from katcha.ai.pricing import estimate_token_cost
