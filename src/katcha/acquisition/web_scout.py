@@ -174,16 +174,36 @@ def _clean_list(value: object, *, limit: int = 20) -> list[str]:
     return result
 
 
-def _search_prompt(query: dict[str, Any], limit: int) -> str:
-    include_terms = _clean_list(query.get("include_terms"), limit=30)
-    exclude_terms = _clean_list(query.get("exclude_terms"), limit=30)
-    platforms = [
+def _requested_platforms(query: dict[str, Any]) -> list[str]:
+    return [
         value.casefold()
         for value in _clean_list(query.get("platforms"), limit=12)
         if value.casefold() in _PLATFORM_DOMAINS
     ]
+
+
+def _web_search_tool(query: dict[str, Any]) -> dict[str, Any]:
+    platforms = _requested_platforms(query)
+    domains = sorted(
+        {
+            domain
+            for platform in platforms
+            for domain in _PLATFORM_DOMAINS.get(platform, ())
+        }
+    )
+    tool: dict[str, Any] = {"type": "web_search"}
+    if domains:
+        tool["filters"] = {"allowed_domains": domains}
+    return tool
+
+
+def _search_prompt(query: dict[str, Any], limit: int) -> str:
+    include_terms = _clean_list(query.get("include_terms"), limit=30)
+    exclude_terms = _clean_list(query.get("exclude_terms"), limit=30)
+    platforms = _requested_platforms(query)
     operator_request = str(query.get("operator_request") or query.get("q") or "").strip()
     channel_context = str(query.get("channel_context") or "").strip()
+    freshness_hours = min(max(int(query.get("freshness_horizon_hours", 72)), 1), 24 * 30)
     domain_hints = sorted(
         {
             domain
@@ -203,6 +223,7 @@ def _search_prompt(query: dict[str, Any], limit: int) -> str:
         f"Include terms: {include_terms}\n"
         f"Exclude terms: {exclude_terms}\n"
         f"Requested platforms: {platforms or ['open web']}\n"
+        f"Freshness target: prioritize material from the last {freshness_hours} hours when possible.\n"
         f"Domain hints: {domain_hints or ['none; search the wider public web']}\n"
         "Favor discovery breadth: relevant results may come from people or sites never seen "
         "before. Return source_kind as one of post, profile, community, website, feed, or video."
@@ -292,7 +313,9 @@ class WebScoutDiscoveryAdapter:
             response = OpenAI(api_key=settings.openai_api_key).responses.create(
                 model=settings.web_scout_model,
                 input=_search_prompt(query, limit),
-                tools=[{"type": "web_search"}],
+                reasoning={"effort": "low"},
+                tools=[_web_search_tool(query)],
+                tool_choice="required",
                 include=["web_search_call.action.sources"],
                 text={
                     "format": {
