@@ -12,6 +12,7 @@ from sqlalchemy import (
     JSON,
     String,
     Text,
+    UniqueConstraint,
     Uuid,
     func,
 )
@@ -23,6 +24,12 @@ from katcha.db import Base
 class TelegramReviewSession(Base):
     __tablename__ = "telegram_review_sessions"
     __table_args__ = (
+        UniqueConstraint(
+            "source_kind",
+            "source_id",
+            "chat_id",
+            name="uq_telegram_review_source_chat",
+        ),
         CheckConstraint(
             "source_kind IN ('short_episode', 'production', 'compilation')",
             name="ck_telegram_review_source_kind",
