@@ -2,9 +2,8 @@ from __future__ import annotations
 
 import hashlib
 import uuid
-from collections import defaultdict
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy import select
@@ -13,8 +12,8 @@ from sqlalchemy.orm import Session
 from katcha.acquisition_models import DiscoveryCandidate
 from katcha.clip_lifecycle_models import ClipLifecycle, ClipRetentionPolicy
 from katcha.db import session_scope
-from katcha.intelligence_models import ChannelProfile
 from katcha.integrations.storage import ObjectStore
+from katcha.intelligence_models import ChannelProfile
 from katcha.longform_models import Compilation, CompilationSegment
 from katcha.models import Clip, ClipFeature, DomainEvent, SourceItem
 from katcha.production_models import Production
@@ -677,7 +676,11 @@ def _duplicate_candidates(
             similarity = perceptual_similarity(features[left.id], features[right.id])
             if similarity < _DUPLICATE_SIMILARITY:
                 continue
-            left_rank = (status_weight.get(left.status, 0), scores[left.id], -left.created_at.timestamp())
+            left_rank = (
+                status_weight.get(left.status, 0),
+                scores[left.id],
+                -left.created_at.timestamp(),
+            )
             right_rank = (
                 status_weight.get(right.status, 0),
                 scores[right.id],
