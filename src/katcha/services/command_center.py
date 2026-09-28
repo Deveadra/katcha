@@ -82,6 +82,13 @@ _STOP_WORDS = {
     "was",
     "are",
     "is",
+    "about",
+    "how",
+    "same",
+    "thing",
+    "do",
+    "into",
+    "one",
 }
 
 
