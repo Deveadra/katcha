@@ -149,8 +149,10 @@ async function openThread(threadId) {
     );
     const latest = assistantTurns.at(-1);
     if (latest) {
+        const actionSourceTurnId =
+            latest.context?.action_source_turn_id || latest.turn_id;
         const actions = (detail.actions || [])
-            .filter((action) => action.source_turn_id === latest.turn_id)
+            .filter((action) => action.source_turn_id === actionSourceTurnId)
             .map((action) => ({
                 ...action,
                 type: action.action_type,
@@ -472,6 +474,16 @@ async function sendPrompt(text) {
             }),
         });
         state.threadId = result.thread_id;
+        const resolved = result.resolved_context || {};
+        if (
+            resolved.inherited_from_thread &&
+            Array.isArray(resolved.selected_clip_ids) &&
+            resolved.selected_clip_ids.length
+        ) {
+            state.selectedClipIds = [...resolved.selected_clip_ids];
+            state.selectedProductionId = null;
+            renderSelection();
+        }
         appendKatcha(result);
         renderContext(result);
         await loadThreads({ openLatest: false });
