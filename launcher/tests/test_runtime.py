@@ -477,7 +477,7 @@ def test_service_rebuild_only_builds_selected_image(tmp_path):
             runtime.time.sleep(0.01)
 
     assert any(cmd[-2:] == ["build", "renderer"] for cmd in calls)
-    assert any("force-recreate" in cmd and cmd[-1] == "renderer" for cmd in calls)
+    assert any("--force-recreate" in cmd and cmd[-1] == "renderer" for cmd in calls)
     assert not any(cmd[-1:] == ["build"] for cmd in calls)
 
 
@@ -496,4 +496,4 @@ def test_shared_core_rebuild_builds_api_image_for_worker_only(tmp_path):
             runtime.time.sleep(0.01)
 
     assert any(cmd[-2:] == ["build", "api"] for cmd in calls)
-    assert any(cmd[-1] == "discovery-worker" and "force-recreate" in cmd for cmd in calls)
+    assert any(cmd[-1] == "discovery-worker" and "--force-recreate" in cmd for cmd in calls)
