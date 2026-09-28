@@ -14,13 +14,13 @@ from katcha.orchestration.client import (
 from katcha.packaging_intelligence_models import PackagingIntelligenceSnapshot
 from katcha.packaging_models import PackagingExperiment, PublicationPackagingActivation
 from katcha.services.channel_automation import maybe_auto_demote
-from katcha.services.clip_lifecycle import run_channel_maintenance
 from katcha.services.channel_economics import compute_channel_economics
 from katcha.services.channel_learning import (
     derive_performance_observations,
     train_channel_ranking,
 )
 from katcha.services.channel_scheduling import compute_schedule_recommendations
+from katcha.services.clip_lifecycle import run_channel_maintenance
 from katcha.services.edit_blueprint_performance import (
     refresh_edit_blueprint_performance,
 )
