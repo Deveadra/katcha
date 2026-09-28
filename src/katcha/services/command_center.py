@@ -253,23 +253,17 @@ def resolve_command_follow_up(
     *,
     has_pending_proposal: bool = False,
 ) -> CommandFollowUpResolution:
-    if selected_clip_ids:
+    assistant, user = _latest_conversation_reference(turns)
+    if assistant is None:
         return CommandFollowUpResolution(
             effective_prompt=prompt,
             selected_clip_ids=tuple(selected_clip_ids),
         )
 
-    assistant, user = _latest_conversation_reference(turns)
-    if assistant is None:
-        return CommandFollowUpResolution(
-            effective_prompt=prompt,
-            selected_clip_ids=(),
-        )
-
     text = prompt.casefold()
     evidence_ids = _turn_clip_ids(assistant)
     previous_selected = _context_selected_clip_ids(user)
-    reference_ids = previous_selected or evidence_ids
+    reference_ids = tuple(selected_clip_ids) or previous_selected or evidence_ids
 
     if has_pending_proposal and _looks_like_confirmation(prompt):
         return CommandFollowUpResolution(
@@ -283,6 +277,12 @@ def resolve_command_follow_up(
                 "server-issued proposal must be reviewed and confirmed explicitly."
             ),
             action_source_turn_id=assistant.id,
+        )
+
+    if selected_clip_ids:
+        return CommandFollowUpResolution(
+            effective_prompt=prompt,
+            selected_clip_ids=tuple(selected_clip_ids),
         )
 
     ordinal = _ordinal_reference(text)
