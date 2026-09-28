@@ -15,6 +15,8 @@ const state = {
     productions: [],
     preview: null,
     previewUrl: null,
+    providers: [],
+    invideoHandoff: null,
     epoch: 0,
 };
 const $ = (id) => document.getElementById(id);
@@ -53,6 +55,106 @@ async function apiBlob(path) {
     return response.blob();
 }
 function channelPath(suffix) { return `/v1/channels/${encodeURIComponent(state.channel)}${suffix}`; }
+function renderProviderStatus() {
+    const eleven = state.providers.find((row) => row.provider === "elevenlabs");
+    const invideo = state.providers.find((row) => row.provider === "invideo");
+    const card = (row, fallback) => `
+        <div class="${row?.configured ? "provider-ready" : "provider-muted"}">
+            <span>${escapeHTML((row?.provider || fallback).toUpperCase())}</span>
+            <strong>${row?.configured ? "READY" : "NOT CONFIGURED"}</strong>
+            <small>${escapeHTML(row?.detail || "Provider status unavailable")}</small>
+        </div>`;
+    $("provider-status").innerHTML = card(eleven, "elevenlabs") + card(invideo, "invideo");
+}
+function invideoEligible(row) {
+    return Boolean(
+        row.selected_script_id
+        && ["voiced", "editorial_approved", "rendering", "rendered", "render_review", "approved", "failed"].includes(String(row.status || ""))
+    );
+}
+function renderInVideoHandoff() {
+    const row = state.invideoHandoff;
+    if (!row) {
+        $("invideo-handoff-state").className = "external-edit-state empty";
+        $("invideo-handoff-state").textContent = "Prepare an episode handoff to begin.";
+        for (const id of ["download-invideo-package", "invideo-output-file", "invideo-project-id", "upload-invideo-output", "adopt-invideo-output"]) {
+            $(id).disabled = true;
+        }
+        return;
+    }
+    const imported = row.status === "output_imported";
+    const adopted = row.status === "adopted";
+    $("invideo-handoff-state").className = "external-edit-state";
+    const project = row.external_project_id ? ` · InVideo project ${escapeHTML(row.external_project_id)}` : "";
+    const verify = row.handoff_metadata?.verification;
+    const verified = verify ? `<p>Verified ${escapeHTML(Number(verify.duration_seconds || 0).toFixed(2))}s · ${escapeHTML(verify.width || "—")}×${escapeHTML(verify.height || "—")}</p>` : "";
+    $("invideo-handoff-state").innerHTML = `<div><span class="pill ${adopted ? "active" : ""}">${escapeHTML(row.status.replaceAll("_", " ").toUpperCase())}</span><strong>InVideo handoff · generation ${escapeHTML(row.generation)}</strong></div><small>Katcha handoff ID ${escapeHTML(row.id)}${project}</small>${verified}`;
+    $("download-invideo-package").disabled = adopted;
+    $("invideo-output-file").disabled = adopted;
+    $("invideo-project-id").disabled = adopted;
+    $("upload-invideo-output").disabled = adopted;
+    $("adopt-invideo-output").disabled = !imported;
+}
+async function prepareInVideo(episodeId) {
+    const row = await api("/v1/integrations/invideo/handoffs", {
+        method: "POST",
+        body: JSON.stringify({
+            source_type: "short_episode",
+            source_id: episodeId,
+            actor: "editing-control-center",
+            note: "Operator handoff from Editing Control Center",
+        }),
+    });
+    state.invideoHandoff = row;
+    renderInVideoHandoff();
+    $("invideo-dialog").showModal();
+    message("InVideo package prepared. Download it when ready.");
+}
+async function downloadInVideoPackage() {
+    if (!state.invideoHandoff) return;
+    const blob = await apiBlob(`/v1/integrations/invideo/handoffs/${encodeURIComponent(state.invideoHandoff.id)}/package`);
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `katcha-invideo-${state.invideoHandoff.id}.zip`;
+    document.body.append(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+    message("InVideo package downloaded. Return the finished MP4 to this handoff.");
+}
+async function uploadInVideoOutput() {
+    if (!state.invideoHandoff) return;
+    const file = $("invideo-output-file").files?.[0];
+    if (!file) throw new Error("Choose the finished InVideo MP4 first.");
+    const form = new FormData();
+    form.append("file", file);
+    form.append("actor", "editing-control-center");
+    const projectId = $("invideo-project-id").value.trim();
+    if (projectId) form.append("external_project_id", projectId);
+    const response = await fetch(`/v1/integrations/invideo/handoffs/${encodeURIComponent(state.invideoHandoff.id)}/output`, {
+        method: "POST",
+        headers: state.token ? { Authorization: `Bearer ${state.token}` } : {},
+        body: form,
+    });
+    if (!response.ok) {
+        let payload; try { payload = await response.json(); } catch {}
+        throw new Error(typeof payload?.detail === "string" ? payload.detail : `Upload failed (${response.status})`);
+    }
+    state.invideoHandoff = await response.json();
+    renderInVideoHandoff();
+    message("InVideo output imported and media-verified. Review verification before adoption.");
+}
+async function adoptInVideoOutput() {
+    if (!state.invideoHandoff) return;
+    state.invideoHandoff = await api(`/v1/integrations/invideo/handoffs/${encodeURIComponent(state.invideoHandoff.id)}/adopt`, {
+        method: "POST",
+        body: JSON.stringify({ actor: "editing-control-center" }),
+    });
+    renderInVideoHandoff();
+    await loadChannel();
+    message("InVideo output adopted as the Katcha render. It is waiting for normal review.");
+}
 function clearPreviewUrl() {
     if (state.previewUrl) URL.revokeObjectURL(state.previewUrl);
     state.previewUrl = null;
@@ -375,7 +477,7 @@ function renderEpisodes() {
         const stateLabel = type === "attention"
             ? (recoverable ? "RENDER FAILED" : "NEEDS ATTENTION")
             : type === "done" ? "COMPLETE" : "IN PRODUCTION";
-        return `<article class="item episode-item status-${type}" data-episode-status="${type}"><div><div class="episode-state"><span class="state-dot" aria-hidden="true"></span>${escapeHTML(stateLabel)}</div><h3>${escapeHTML(row.premise)}</h3><p>Stage: ${escapeHTML(row.stage)} · ${escapeHTML(row.status)} · Updated ${escapeHTML(date(row.updated_at))}</p><p class="meta">${escapeHTML(row.edit_blueprint_key || "Channel default blueprint")}${row.edit_blueprint_version ? ` · v${escapeHTML(row.edit_blueprint_version)}` : ""} · Generation ${escapeHTML(row.generation)}</p>${row.error || attempt?.error ? `<p class="error-text">${escapeHTML(attempt?.error || row.error)}</p>` : ""}</div><div class="item-actions"><span class="pill state-pill ${type}">${escapeHTML(stateLabel)}</span><span class="pill">${escapeHTML(String(row.status || "unknown").replaceAll("_", " ").toUpperCase())}</span>${recoverable ? `<button class="mini" data-recover="${escapeHTML(row.id)}">Recover render</button>` : ""}<a class="mini studio-launch" data-studio="${escapeHTML(row.id)}" href="/studio?episode=${encodeURIComponent(row.id)}&channel=${encodeURIComponent(state.channel)}">Open Clip Studio</a></div></article>`;
+        return `<article class="item episode-item status-${type}" data-episode-status="${type}"><div><div class="episode-state"><span class="state-dot" aria-hidden="true"></span>${escapeHTML(stateLabel)}</div><h3>${escapeHTML(row.premise)}</h3><p>Stage: ${escapeHTML(row.stage)} · ${escapeHTML(row.status)} · Updated ${escapeHTML(date(row.updated_at))}</p><p class="meta">${escapeHTML(row.edit_blueprint_key || "Channel default blueprint")}${row.edit_blueprint_version ? ` · v${escapeHTML(row.edit_blueprint_version)}` : ""} · Generation ${escapeHTML(row.generation)}</p>${row.error || attempt?.error ? `<p class="error-text">${escapeHTML(attempt?.error || row.error)}</p>` : ""}</div><div class="item-actions"><span class="pill state-pill ${type}">${escapeHTML(stateLabel)}</span><span class="pill">${escapeHTML(String(row.status || "unknown").replaceAll("_", " ").toUpperCase())}</span>${recoverable ? `<button class="mini" data-recover="${escapeHTML(row.id)}">Recover render</button>` : ""}${invideoEligible(row) ? `<button class="mini invideo-action" data-invideo="${escapeHTML(row.id)}">Send to InVideo</button>` : ""}<a class="mini studio-launch" data-studio="${escapeHTML(row.id)}" href="/studio?episode=${encodeURIComponent(row.id)}&channel=${encodeURIComponent(state.channel)}">Open Clip Studio</a></div></article>`;
     }).join("") : `<div class="empty">${filter === "all" ? "No episodes in this channel yet." : "No episodes match this filter."}</div>`;
 }
 function previewableSources() {
@@ -536,11 +638,14 @@ async function connect(event) {
     rememberWorkspace();
     message("Connecting…");
     try {
-        const [channels, templates] = await Promise.all([
+        const [channels, templates, providers] = await Promise.all([
             api("/v1/channels"),
             api("/v1/channels/edit-blueprint-templates"),
+            api("/v1/integrations/providers"),
         ]);
         state.templates = templates;
+        state.providers = providers;
+        renderProviderStatus();
         $("channel").innerHTML = '<option value="">Select a channel</option>' + channels.map((row) => `<option value="${escapeHTML(row.id)}">${escapeHTML(row.profile_metadata?.channel_title || row.profile_metadata?.name || row.id)} · ${escapeHTML(row.status)}</option>`).join("");
         $("channel").disabled = false; $("refresh").disabled = false;
         $("connection").textContent = "CONNECTED"; $("connection").classList.add("online");
@@ -554,10 +659,11 @@ async function action(event) {
     const blueprintRestore = event.target.closest("[data-blueprint-restore]");
     const recover = event.target.closest("[data-recover]");
     const studio = event.target.closest("[data-studio]");
+    const invideo = event.target.closest("[data-invideo]");
     const stageBrand = event.target.closest("[data-stage-brand]");
     const renderPreview = event.target.closest("[data-render-preview]");
     const activateBrand = event.target.closest("[data-activate-brand]");
-    if (!blueprintOpen && !blueprintDefault && !blueprintRestore && !recover && !studio && !stageBrand && !renderPreview && !activateBrand) return;
+    if (!blueprintOpen && !blueprintDefault && !blueprintRestore && !recover && !studio && !invideo && !stageBrand && !renderPreview && !activateBrand) return;
     if (blueprintOpen) {
         const row = findBlueprint(blueprintOpen.dataset.blueprintOpen, blueprintOpen.dataset.version);
         if (!row) {
@@ -569,6 +675,16 @@ async function action(event) {
     }
     if (studio) {
         rememberWorkspace();
+        return;
+    }
+    if (invideo) {
+        invideo.disabled = true;
+        try {
+            await prepareInVideo(invideo.dataset.invideo);
+        } catch (error) {
+            message(error.message, true);
+            invideo.disabled = false;
+        }
         return;
     }
     const button = blueprintDefault || blueprintRestore || recover || stageBrand || renderPreview || activateBrand;
@@ -668,3 +784,13 @@ document.querySelector(".stats").addEventListener("click", (event) => {
 $("blueprints").addEventListener("click", action);
 $("episodes").addEventListener("click", action);
 $("brand-lab").addEventListener("click", action);
+$("close-invideo-dialog").addEventListener("click", () => $("invideo-dialog").close());
+$("download-invideo-package").addEventListener("click", () => {
+    void downloadInVideoPackage().catch((error) => message(error.message, true));
+});
+$("upload-invideo-output").addEventListener("click", () => {
+    void uploadInVideoOutput().catch((error) => message(error.message, true));
+});
+$("adopt-invideo-output").addEventListener("click", () => {
+    void adoptInVideoOutput().catch((error) => message(error.message, true));
+});
