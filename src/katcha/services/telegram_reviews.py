@@ -21,7 +21,7 @@ from katcha.short_episode_models import (
     ShortEpisodeAsset,
     ShortEpisodeScript,
 )
-from katcha.telegram_models import TelegramReviewSession
+from katcha.telegram_models import TelegramBotCursor, TelegramReviewSession
 
 _CATEGORY_NAMES = {
     "1": "Film & Animation",
@@ -47,6 +47,46 @@ class TelegramReviewCard:
     render_key: str
     file_id: str | None
     chat_id: int
+
+
+def operator_binding(
+    settings: Settings | None = None,
+) -> tuple[int | None, int | None]:
+    settings = settings or get_settings()
+    if settings.telegram_chat_id is not None:
+        return settings.telegram_chat_id, settings.telegram_allowed_user_id
+    with session_scope() as session:
+        row = session.get(TelegramBotCursor, "operator-bot")
+        metadata = dict(row.cursor_metadata or {}) if row is not None else {}
+    raw_chat = metadata.get("chat_id")
+    raw_user = metadata.get("user_id")
+    chat_id = int(raw_chat) if raw_chat is not None else None
+    user_id = int(raw_user) if raw_user is not None else None
+    return chat_id, user_id
+
+
+def pair_operator(
+    *,
+    chat_id: int,
+    user_id: int,
+    pairing_code: str,
+    settings: Settings | None = None,
+) -> bool:
+    settings = settings or get_settings()
+    configured = str(settings.telegram_pairing_code or "")
+    if not configured or not secrets.compare_digest(pairing_code, configured):
+        return False
+    with session_scope() as session:
+        row = session.get(TelegramBotCursor, "operator-bot")
+        if row is None:
+            row = TelegramBotCursor(key="operator-bot", last_update_id=0)
+            session.add(row)
+        row.cursor_metadata = {
+            **dict(row.cursor_metadata or {}),
+            "chat_id": chat_id,
+            "user_id": user_id,
+        }
+    return True
 
 
 def _callback_token() -> str:
