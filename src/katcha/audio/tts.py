@@ -120,7 +120,7 @@ VOICE_PROFILES: dict[str, VoiceProfile] = {
             "earned excitement without permanent hype. Never shout, sound promotional, or "
             "perform a caricature of teenage slang. Read only the supplied wording."
         ),
-    ),,
+    ),
     "elevenlabs_rank_snaxx_v1": VoiceProfile(
         key="elevenlabs_rank_snaxx_v1",
         version="1",
