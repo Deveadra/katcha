@@ -359,8 +359,9 @@ async def test_experiment_cadence_failure_does_not_stop_intelligence(monkeypatch
     assert calls.index("run_channel_packaging_experiments_activity") > calls.index(
         "refresh_packaging_intelligence_activity"
     )
-    assert calls[-3:] == [
+    assert calls[-4:] == [
         "apply_channel_safety_demotion_activity",
+        "run_clip_lifecycle_maintenance_activity",
         "seed_channel_packaging_activity",
         "run_channel_packaging_experiments_activity",
     ]

@@ -15,13 +15,14 @@
         <aside class="sidebar">
             <a class="logo" href="/explorer" aria-label="Katcha home"><span class="glyph">✦</span> katcha<span class="accent">.</span></a>
             <nav aria-label="Workspace">
-                <a href="/ingestion">↳ <span>Ingestion sources</span></a>
                 <a href="/explorer">◌ <span>Trend explorer</span></a>
+                <a href="/ingestion">↳ <span>Ingestion sources</span></a>
                 <a href="/clips" aria-current="page">▤ <span>Clip library</span></a>
+                <a href="/channels">▦ <span>Channel Studio</span></a>
                 <a href="/editing">▣ <span>Editing control center</span></a>
                 <a href="/studio">⌁ <span>Clip Studio</span></a>
             </nav>
-            <div class="sidebar-bottom"><span class="live-dot"></span> MEDIA VAULT <small>Sources · Analysis · Production lineage</small></div>
+            <div class="sidebar-bottom"><span class="live-dot"></span> MEDIA VAULT <small>Lifecycle · Search · Lineage</small></div>
         </aside>
         <main>
             <header class="topbar">
@@ -31,9 +32,9 @@
             <div class="content clip-content">
                 <div class="heading">
                     <div>
-                        <div class="eyebrow">MEDIA LIBRARY / STORED SOURCE CLIPS</div>
-                        <h1>Every clip, <em>findable.</em></h1>
-                        <p>Browse newly ingested media, analyzed candidates, clips currently in production, and historical material without digging through API records.</p>
+                        <div class="eyebrow">MEDIA VAULT / CHANNEL STORAGE</div>
+                        <h1>Keep the library <em>lean.</em></h1>
+                        <p>Search, tag, archive, restore, and safely remove media without losing the metadata and lineage that make old clips retrievable.</p>
                     </div>
                     <button id="refresh" class="button secondary" type="button" disabled>↻ Refresh</button>
                 </div>
@@ -45,41 +46,148 @@
                 </form>
                 <div id="message" class="message" role="status" aria-live="polite"></div>
 
-                <nav class="clip-stats" aria-label="Clip library filters">
-                    <button class="clip-stat card is-active" type="button" data-bucket="all"><span>ALL STORED</span><strong id="count-all">—</strong><small>Every retained clip</small></button>
-                    <button class="clip-stat card" type="button" data-bucket="new"><span>NEW</span><strong id="count-new">—</strong><small>Ingested → scored</small></button>
-                    <button class="clip-stat card" type="button" data-bucket="production"><span>IN PRODUCTION</span><strong id="count-production">—</strong><small>Selected → scheduled</small></button>
-                    <button class="clip-stat card" type="button" data-bucket="history"><span>PUBLISHED / HISTORY</span><strong id="count-history">—</strong><small>Published & measured</small></button>
-                    <button class="clip-stat card attention" type="button" data-bucket="failed"><span>FAILED</span><strong id="count-failed">—</strong><small>Needs attention</small></button>
+                <section class="library-scope card">
+                    <div class="scope-channel">
+                        <label for="channel">CHANNEL LIBRARY</label>
+                        <select id="channel" disabled>
+                            <option value="">Connect to load channels</option>
+                        </select>
+                    </div>
+                    <div class="scope-health" id="storage-health">
+                        <span>Storage health</span>
+                        <strong>—</strong>
+                        <small>Select a channel</small>
+                    </div>
+                    <div class="scope-actions">
+                        <button id="retention-settings" class="button secondary" type="button" disabled>Retention policy</button>
+                    </div>
+                </section>
+
+                <nav class="clip-stats" aria-label="Clip lifecycle filters">
+                    <button class="clip-stat card is-active" type="button" data-bucket="all"><span>ALL</span><strong id="count-all">—</strong><small>Metadata + media</small></button>
+                    <button class="clip-stat card" type="button" data-bucket="hot"><span>HOT</span><strong id="count-hot">—</strong><small>Immediately available</small></button>
+                    <button class="clip-stat card" type="button" data-bucket="archived"><span>ARCHIVED</span><strong id="count-archived">—</strong><small>Cold-tier ready</small></button>
+                    <button class="clip-stat card attention" type="button" data-bucket="failed"><span>FAILED</span><strong id="count-failed">—</strong><small>Cleanup candidates</small></button>
+                    <button class="clip-stat card muted-stat" type="button" data-bucket="purged"><span>PURGED</span><strong id="count-purged">—</strong><small>Metadata retained</small></button>
                 </nav>
 
                 <section class="clip-toolbar card">
-                    <label>SEARCH
-                        <input id="search" type="search" placeholder="Title, creator, platform, clip ID…">
+                    <label class="search-field">SEARCH LIBRARY
+                        <input id="search" type="search" placeholder="Search titles, creators, tags, transcript, AI summary, topic…">
                     </label>
-                    <label>STATUS
+                    <label>EDITORIAL STATUS
                         <select id="status-filter">
                             <option value="all">All statuses</option>
+                            <option value="ingested">Ingested</option>
+                            <option value="normalized">Normalized</option>
+                            <option value="analyzed">Analyzed</option>
+                            <option value="scored">Scored</option>
+                            <option value="selected">Selected</option>
+                            <option value="scripted">Scripted</option>
+                            <option value="voiced">Voiced</option>
+                            <option value="rendered">Rendered</option>
+                            <option value="review">Review</option>
+                            <option value="scheduled">Scheduled</option>
+                            <option value="published">Published</option>
+                            <option value="measured">Measured</option>
+                            <option value="failed">Failed</option>
                         </select>
                     </label>
-                    <div class="toolbar-copy"><strong id="visible-count">0 clips</strong><span>Newest first</span></div>
+                    <div class="toolbar-copy"><strong id="visible-count">0 clips</strong><span id="library-range">Newest first</span></div>
                 </section>
 
                 <section class="clip-workspace">
                     <div class="clip-list card">
                         <div class="panel-head">
-                            <div><div class="eyebrow">LIBRARY</div><h2>Stored clips</h2></div>
-                            <span class="tag">BACKEND DATA</span>
+                            <div><div class="eyebrow">CHANNEL MEDIA</div><h2>Stored clips</h2></div>
+                            <span id="channel-badge" class="tag">NO CHANNEL</span>
                         </div>
                         <div id="clip-list" class="clip-list-body"><div class="empty">Connect to load stored clips.</div></div>
                     </div>
                     <div class="clip-detail card" id="clip-detail">
-                        <div class="empty">Select a clip to inspect its media, source, AI analysis, score, and production state.</div>
+                        <div class="empty">Select a clip to inspect media, metadata, source lineage, AI analysis, and lifecycle controls.</div>
                     </div>
                 </section>
-                <footer>Clip records are retained independently of later productions. Existing production lineage is never rewritten by library actions.</footer>
+                <footer>Purging removes media bytes, not history. Katcha retains metadata, source lineage, AI analysis, tags, and audit events so the clip remains searchable.</footer>
             </div>
         </main>
     </div>
+
+    <dialog id="retention-dialog" class="vault-dialog">
+        <form id="retention-form" method="dialog">
+            <div class="dialog-head">
+                <div><div class="eyebrow">CHANNEL STORAGE POLICY</div><h2 id="retention-title">Retention policy</h2></div>
+                <button type="button" class="mini" data-close-dialog="retention-dialog">Close</button>
+            </div>
+            <p class="dialog-copy">News and evergreen channels can keep source media indefinitely. High-turnover channels can archive and later purge old media while keeping searchable metadata.</p>
+
+            <div class="retention-grid">
+                <label>RETENTION MODE
+                    <select id="retention-mode">
+                        <option value="indefinite">Keep media indefinitely</option>
+                        <option value="managed">Managed lifecycle</option>
+                    </select>
+                </label>
+                <label class="check-card"><input id="auto-archive" type="checkbox"><span><strong>Auto archive published clips</strong><small>Move older posted media out of the hot library.</small></span></label>
+                <label>ARCHIVE AFTER
+                    <div class="days-input"><input id="archive-days" type="number" min="1" max="36500" value="30"><span>days</span></div>
+                </label>
+                <label class="check-card"><input id="auto-duplicates" type="checkbox"><span><strong>Clean near-duplicates</strong><small>Perceptual-hash scan; shared or active clips are skipped.</small></span></label>
+                <label class="check-card danger-check"><input id="auto-purge" type="checkbox"><span><strong>Enable automatic media deletion</strong><small>Requires two-step confirmation before Katcha may purge bytes.</small></span></label>
+                <label>PURGE ARCHIVES AFTER
+                    <div class="days-input"><input id="purge-days" type="number" min="1" max="36500" value="90"><span>days archived</span></div>
+                </label>
+                <label>PURGE FAILED CLIPS AFTER
+                    <div class="days-input"><input id="failed-days" type="number" min="1" max="36500" value="14"><span>days</span></div>
+                </label>
+            </div>
+
+            <section class="maintenance-preview">
+                <div>
+                    <span>POLICY PREVIEW</span>
+                    <strong id="maintenance-summary">Not scanned yet</strong>
+                    <small id="maintenance-detail">Preview shows what Katcha would archive or purge right now.</small>
+                </div>
+                <button id="preview-maintenance" class="mini" type="button">Preview cleanup</button>
+            </section>
+
+            <div class="dialog-actions">
+                <button id="run-maintenance" class="button secondary" type="button" disabled>Run eligible cleanup now</button>
+                <button id="save-retention" class="button primary" type="button">Save policy</button>
+            </div>
+
+            <section id="retention-confirm" class="confirm-panel" hidden>
+                <div id="retention-confirm-step1">
+                    <div class="danger-kicker">CONFIRMATION 1 OF 2</div>
+                    <h3>Automatic deletion removes media bytes.</h3>
+                    <p>Metadata remains, but purged source video cannot be restored by Katcha. Active and shared clips are still protected.</p>
+                    <button id="retention-confirm-continue" class="button danger-button" type="button">I understand — continue</button>
+                </div>
+                <div id="retention-confirm-step2" hidden>
+                    <div class="danger-kicker">CONFIRMATION 2 OF 2</div>
+                    <p>Type <code id="retention-phrase"></code> exactly:</p>
+                    <input id="retention-confirm-input" autocomplete="off">
+                    <label class="check-line"><input id="retention-irreversible" type="checkbox"> I understand this can permanently remove stored media.</label>
+                    <button id="retention-confirm-save" class="button danger-button" type="button">Enable auto deletion</button>
+                </div>
+            </section>
+        </form>
+    </dialog>
+
+    <dialog id="purge-dialog" class="vault-dialog compact-dialog">
+        <div class="dialog-head">
+            <div><div class="danger-kicker">DELETE STORED MEDIA</div><h2>Keep the record, remove the bytes</h2></div>
+            <button type="button" class="mini" data-close-dialog="purge-dialog">Close</button>
+        </div>
+        <section id="purge-step1">
+            <p class="dialog-copy">Katcha will retain metadata, tags, source lineage, transcript, AI analysis, and audit history. The source video itself will be permanently removed.</p>
+            <button id="purge-continue" class="button danger-button" type="button">Continue</button>
+        </section>
+        <section id="purge-step2" hidden>
+            <p>Type <code id="purge-phrase"></code> exactly:</p>
+            <input id="purge-confirm-input" autocomplete="off">
+            <div class="dialog-actions"><button id="purge-confirm" class="button danger-button" type="button">Delete media permanently</button></div>
+        </section>
+    </dialog>
 </body>
 </html>
