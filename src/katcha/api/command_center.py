@@ -30,6 +30,7 @@ from katcha.services.command_actions import (
     fail_action_proposal,
     get_action_proposal,
 )
+from katcha.services.command_activity import get_action_activity
 from katcha.services.command_center import (
     best_clips,
     build_short_episode_candidates,
@@ -134,6 +135,36 @@ class ExecuteActionResponse(BaseModel):
     execution_attempts: int
     result: dict[str, object] = Field(default_factory=dict)
     error: str | None = None
+
+
+class ActionResourceActivityResponse(BaseModel):
+    kind: str
+    id: uuid.UUID
+    workflow_id: str
+    status: str
+    stage: str
+    generation: int
+    error: str | None = None
+    updated_at: datetime | None = None
+
+
+class ActionActivityEventResponse(BaseModel):
+    id: uuid.UUID
+    event_type: str
+    aggregate_type: str
+    aggregate_id: str
+    created_at: datetime
+
+
+class ActionActivityResponse(BaseModel):
+    proposal_id: uuid.UUID
+    action_type: str
+    proposal_status: str
+    workflow_id: str | None = None
+    state: str
+    settled: bool
+    resource: ActionResourceActivityResponse | None = None
+    events: list[ActionActivityEventResponse] = Field(default_factory=list)
 
 
 class ActionProposalStatusResponse(BaseModel):
@@ -681,6 +712,51 @@ def archive_thread(
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return _thread_summary(thread)
+
+
+@router.get(
+    "/actions/{proposal_id}/activity",
+    response_model=ActionActivityResponse,
+)
+def action_activity(
+    proposal_id: uuid.UUID,
+    http_request: Request,
+    limit: int = 20,
+) -> ActionActivityResponse:
+    require_control_scope(http_request, "ai:read")
+    try:
+        get_action_proposal(proposal_id)
+        activity = get_action_activity(proposal_id, limit=limit)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    resource = activity.resource
+    return ActionActivityResponse(
+        proposal_id=activity.proposal.id,
+        action_type=activity.proposal.action_type,
+        proposal_status=activity.proposal.status,
+        workflow_id=activity.workflow_id,
+        state=activity.state,
+        settled=activity.settled,
+        resource=(
+            ActionResourceActivityResponse(
+                kind=resource.kind,
+                id=resource.id,
+                workflow_id=resource.workflow_id,
+                status=resource.status,
+                stage=resource.stage,
+                generation=resource.generation,
+                error=resource.error,
+                updated_at=resource.updated_at,
+            )
+            if resource is not None
+            else None
+        ),
+        events=[
+            ActionActivityEventResponse.model_validate(event)
+            for event in activity.events
+        ],
+    )
 
 
 @router.get(
