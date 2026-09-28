@@ -17,9 +17,11 @@ from katcha.packaging_intelligence_models import PackagingIntelligenceSnapshot
 from katcha.production_models import Production, ProductionReview
 from katcha.publishing_models import Publication
 from katcha.render_models import RenderAttempt
+from katcha.services.channel_brands import brand_for_channel
 from katcha.services.channel_editorial import score_clip_for_channel
 from katcha.services.channel_profiles import ensure_active_profile
 from katcha.services.short_episodes import ShortEpisodeCandidateInput
+from katcha.editorial.rankings import get_ranking_format
 from katcha.short_episode_models import ShortEpisode
 
 _FAILURE_STATES = {"failed", "dead_letter", "retry_exhausted", "error"}
@@ -242,6 +244,22 @@ def _score_reasons(features: ClipFeature) -> list[str]:
             continue
         reasons.append((value / 100.0, key.replace("_", " ")))
     return [label for _, label in sorted(reasons, reverse=True)[:3]]
+
+
+def ranked_episode_allowed_counts(
+    channel_profile_id: uuid.UUID,
+) -> tuple[int, ...]:
+    with session_scope() as session:
+        profile = ensure_active_profile(session, channel_profile_id)
+        brand, _ = brand_for_channel(session, profile.id)
+        reference = brand.editorial_format
+        if reference is None:
+            return ()
+        try:
+            contract = get_ranking_format(reference.key, reference.version)
+        except KeyError:
+            return ()
+        return tuple(contract.allowed_item_counts)
 
 
 def build_short_episode_candidates(
