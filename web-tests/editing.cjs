@@ -181,6 +181,10 @@ const verifiedPreview = {
 
             if (url.pathname === "/v1/channels") return fulfillJson([{ id: "one", status: "active", profile_metadata: { name: "RankSnaxx" } }, { id: "two", status: "active", profile_metadata: { name: "Movie clips" } }]);
             if (url.pathname === "/v1/channels/edit-blueprint-templates") return fulfillJson(blueprintTemplates);
+            if (url.pathname === "/v1/integrations/providers") return fulfillJson([
+                { provider: "elevenlabs", capability: "text_to_speech", configured: true, mode: "api", detail: "Direct ElevenLabs TTS is ready." },
+                { provider: "invideo", capability: "external_edit", configured: true, mode: "manual_bridge", detail: "Tracked external edit bridge is ready." },
+            ]);
             if (url.pathname.endsWith("/edit-blueprints") && request.method() === "GET") {
                 return fulfillJson(pathChannel === "one" ? blueprintRows : []);
             }
@@ -231,6 +235,7 @@ const verifiedPreview = {
             if (url.pathname === "/v1/short-episodes") return fulfillJson(channel === "one" ? [{
                 id: "episode-one",
                 premise: "Ranking clips",
+                selected_script_id: "script-one",
                 status: "render_failed",
                 stage: "render",
                 generation: 1,
@@ -277,6 +282,20 @@ const verifiedPreview = {
             if (url.pathname.endsWith("/brand-previews/preview-one/media")) return route.fulfill({ status: 200, contentType: "video/mp4", body: Buffer.from("fixture-video") });
             if (url.pathname.endsWith("/brands/2/activate")) { brandActivated = true; return fulfillJson({ ...v2, is_active: true }); }
             if (url.pathname.endsWith("/render-attempts")) return fulfillJson(url.pathname.includes("episode-active") ? [] : [{ attempt_number: 2, status: "dead_letter", error: "Renderer stopped" }]);
+            if (url.pathname === "/v1/integrations/invideo/handoffs" && request.method() === "POST") {
+                return fulfillJson({
+                    id: "handoff-one",
+                    provider: "invideo",
+                    source_type: "short_episode",
+                    source_id: body.source_id,
+                    generation: 1,
+                    status: "prepared",
+                    package_manifest_key: "external-edit/invideo/handoff-one/manifest.json",
+                    output_key: null,
+                    external_project_id: null,
+                    handoff_metadata: { transport: "manual_bridge" },
+                });
+            }
             if (url.pathname.endsWith("/render/recover")) return fulfillJson({ child_source_id: "new-generation" });
             throw new Error(`Unexpected request: ${request.method()} ${url.pathname}`);
         });
@@ -297,6 +316,21 @@ const verifiedPreview = {
         assert.equal(await page.locator("#count-attention").innerText(), "1");
         assert.equal(await page.locator(".episode-item.status-attention").count(), 1);
         assert.equal(await page.locator(".episode-item.status-active").count(), 1);
+        assert.match(await page.locator("#provider-status").innerText(), /ELEVENLABS/);
+        assert.match(await page.locator("#provider-status").innerText(), /INVIDEO/);
+        assert.equal(await page.getByRole("button", { name: "Send to InVideo" }).count(), 1);
+        await page.getByRole("button", { name: "Send to InVideo" }).click();
+        await page.locator("#invideo-dialog").waitFor({ state: "visible" });
+        assert.match(await page.locator("#invideo-handoff-state").innerText(), /PREPARED/);
+        assert(
+            requests.some(
+                (request) =>
+                    request.path === "/v1/integrations/invideo/handoffs"
+                    && request.method === "POST"
+                    && request.body.source_id === "episode-one",
+            ),
+        );
+        await page.locator("#close-invideo-dialog").click();
         assert.equal(await page.locator("#count-blueprints").innerText(), "1");
         assert.match(await page.locator(".recipe-card").innerText(), /RankSnaxx commentary/);
         assert.match(await page.locator(".recipe-card").innerText(), /DEFAULT RECIPE/);
