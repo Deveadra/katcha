@@ -8,7 +8,7 @@ To add a desktop shortcut, run `powershell.exe -NoProfile -File .\Katcha.ps1 -In
 from the checkout in PowerShell. Local PowerShell execution policy must permit this script;
 the launcher does not bypass organizational policy.
 
-The launch console opens at **http://localhost:8765**. On first use it opens in an idle state so
+The launch console opens at **http://localhost:8765**. The interactive workspace is the first readiness milestone; discovery/trend intelligence starts before heavyweight media production services so Katcha can begin watching for opportunities while rendering and storage finish warming. On first use it opens in an idle state so
 **Start Katcha** is immediately clickable. Clicking Start enters the workspace shell immediately.
 The launcher then brings up the lightweight database/API control plane first; production workers,
 Temporal, object storage, analysis, and rendering warm behind the workspace instead of blocking it.
