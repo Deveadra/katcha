@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 import uuid
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import desc, select
@@ -102,7 +102,13 @@ def _score_reasons(features: ClipFeature) -> list[str]:
     ai = features.ai_features or {}
     active = ai.get("deep") if isinstance(ai.get("deep"), dict) else ai.get("bulk")
     if isinstance(active, dict):
-        for key in ("hook_score", "surprise_score", "humor_score", "comment_potential", "rewatch_potential"):
+        for key in (
+            "hook_score",
+            "surprise_score",
+            "humor_score",
+            "comment_potential",
+            "rewatch_potential",
+        ):
             try:
                 value = float(active.get(key))
             except (TypeError, ValueError):
@@ -178,7 +184,8 @@ def best_clips(
     if not evidence:
         topic = ", ".join(terms) if terms else "the requested topic"
         return (
-            f"I do not have any scored clips from today matching {topic} in this channel's stored data.",
+            "I do not have any scored clips from today matching "
+            f"{topic} in this channel's stored data.",
             [],
         )
     topic = ", ".join(terms) if terms else "today's inventory"
@@ -231,7 +238,11 @@ def failures(channel_profile_id: uuid.UUID) -> tuple[str, list[dict[str, object]
         publications = list(
             session.scalars(
                 select(Publication)
-                .join(ChannelProfile, Publication.youtube_connection_id == ChannelProfile.youtube_connection_id)
+                .join(
+                    ChannelProfile,
+                    Publication.youtube_connection_id
+                    == ChannelProfile.youtube_connection_id,
+                )
                 .where(
                     ChannelProfile.id == channel_profile_id,
                     Publication.status.in_(_FAILURE_STATES),
@@ -272,12 +283,14 @@ def failures(channel_profile_id: uuid.UUID) -> tuple[str, list[dict[str, object]
     evidence.sort(key=lambda item: str(item.get("updated_at") or ""), reverse=True)
     if not evidence:
         return (
-            "I do not see a current failed production, compilation, render attempt, or publication for this channel.",
+            "I do not see a current failed production, compilation, render "
+            "attempt, or publication for this channel.",
             [],
         )
     return (
         f"I found {len(evidence)} current failure record{'s' if len(evidence) != 1 else ''}. "
-        "I sorted the newest failures first and preserved the stored stage/error text so recovery decisions are auditable.",
+        "I sorted the newest failures first and preserved the stored stage/error "
+        "text so recovery decisions are auditable.",
         evidence[:30],
     )
 
@@ -316,7 +329,11 @@ def clip_explanation(
             "id": str(clip.id),
             "title": source.title if source and source.title else f"Clip {str(clip.id)[:8]}",
             "clip_status": clip.status,
-            "candidate_score": float(features.candidate_score) if features and features.candidate_score is not None else None,
+            "candidate_score": (
+                float(features.candidate_score)
+                if features and features.candidate_score is not None
+                else None
+            ),
             "score_breakdown": dict(features.score_breakdown or {}) if features else {},
             "ai_features": dict(features.ai_features or {}) if features else {},
             "latest_analysis_status": analysis.status if analysis else None,
@@ -324,7 +341,11 @@ def clip_explanation(
             "latest_analysis_error": analysis.error if analysis else None,
             "latest_escalation_reason": analysis.escalation_reason if analysis else None,
             "reviews": [
-                {"decision": row.decision, "note": row.note, "created_at": row.created_at.isoformat()}
+                {
+                    "decision": row.decision,
+                    "note": row.note,
+                    "created_at": row.created_at.isoformat(),
+                }
                 for row in reviews
             ],
         }
@@ -333,14 +354,16 @@ def clip_explanation(
         reason_bits.append(f"analysis error: {payload['latest_analysis_error']}")
     if payload["reviews"]:
         last = payload["reviews"][0]
-        reason_bits.append(f"latest review: {last['decision']}" + (f" — {last['note']}" if last["note"] else ""))
+        review_note = f" — {last['note']}" if last["note"] else ""
+        reason_bits.append(f"latest review: {last['decision']}{review_note}")
     if payload["candidate_score"] is not None:
         reason_bits.append(f"candidate score {payload['candidate_score']:.1f}/100")
     if not reason_bits:
         reason_bits.append("no explicit rejection reason is stored")
     return (
         f"For {payload['title']}, " + "; ".join(reason_bits) + ". "
-        "I am separating stored rejection/review evidence from my explanation rather than inventing a motive.",
+        "I am separating stored rejection/review evidence from my explanation "
+        "rather than inventing a motive.",
         [payload],
     )
 
@@ -389,18 +412,23 @@ def performance_advice(channel_profile_id: uuid.UUID) -> tuple[str, list[dict[st
         )
     if not evidence:
         return (
-            "Katcha does not have enough stored performance evidence yet to recommend an editing behavior change for this channel.",
+            "Katcha does not have enough stored performance evidence yet to "
+            "recommend an editing behavior change for this channel.",
             [],
         )
     if edit is not None and edit.comparison_status != "ready":
         return (
-            f"Katcha has {edit.publication_count} maturity-matched publication samples, but the edit comparison is still "
-            f"{edit.comparison_status.replace('_', ' ')}. I can summarize the evidence, but I would not change a channel recipe from weak evidence yet.",
+            f"Katcha has {edit.publication_count} maturity-matched publication "
+            "samples, but the edit comparison is still "
+            f"{edit.comparison_status.replace('_', ' ')}. I can summarize the "
+            "evidence, but I would not change a channel recipe from weak "
+            "evidence yet.",
             evidence,
         )
     return (
         "Katcha has channel-scoped edit and/or packaging evidence ready for review. "
-        "I will base any recommendation on the measured aggregates below, not on generic YouTube advice.",
+        "I will base any recommendation on the measured aggregates below, "
+        "not on generic YouTube advice.",
         evidence,
     )
 
@@ -435,6 +463,7 @@ def channel_status(channel_profile_id: uuid.UUID) -> tuple[str, list[dict[str, o
         }
     ]
     return (
-        f"This channel is {profile.status}. I included the most recent production states so the answer is tied to current stored Katcha state.",
+        f"This channel is {profile.status}. I included the most recent "
+        "production states so the answer is tied to current stored Katcha state.",
         evidence,
     )
