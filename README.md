@@ -73,7 +73,7 @@ separate MinIO client image is required.
 6. MinIO console: `http://localhost:9001`
 7. Trend explorer: `http://localhost:8000/explorer`
 8. Editing control center: `http://localhost:8000/editing`
-9. YouTube Channel Studio: `http://localhost:8000/channels`
+9. YouTube Channel Studio: `http://localhost:8000/channels`\n10. Katcha AI Command Center: `http://localhost:8000/ai`
 
 The YouTube Channel Studio provides a channel-scoped operating view for recent publications, stored analytics and retention, economics, production status, packaging intelligence, edit-performance evidence, brand state, scheduling, and automation policy. It can also turn an existing YouTube OAuth connection into a Katcha channel workspace without requiring API calls by hand.
 
@@ -146,3 +146,4 @@ FFmpeg/ffprobe must be installed on the host for media inspection. The Docker im
 - Aerith integration happens only through stable APIs/events, never shared process state or secret-bearing payloads.
 
 The [ingestion source control center](docs/INGESTION.md#source-control-center) is available at `/ingestion` on the API server for source setup, URL imports, and discovery run execution/history.
+\nThe Katcha AI Command Center is the human-facing natural-language interface over stored Katcha evidence and confirmed control-plane actions. External orchestrators such as Aerith/Ultron should use the authenticated control API and `/v1/control/events` directly. See `docs/KATCHA_AI_COMMAND_CENTER.md`.\n
