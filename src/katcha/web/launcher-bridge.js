@@ -10,6 +10,9 @@ function currentWorkspace() {
     if (path.startsWith('/channels') || path.endsWith('/channels.html')) {
         return ['Channel Studio', '/channels'];
     }
+    if (path.startsWith('/ai') || path.endsWith('/ai.html')) {
+        return ['Katcha AI', '/ai'];
+    }
     if (path.startsWith('/editing') || path.endsWith('/editing.html')) {
         return ['Editing control center', '/editing'];
     }
@@ -42,6 +45,7 @@ function installWorkspaceMenu() {
         </summary>
         <div class="workspace-menu-popover">
             <a href="/explorer" ${currentHref === '/explorer' ? 'aria-current="page"' : ''}><span>◉</span><b>Trend explorer</b></a>
+            <a href="/ai" ${currentHref === '/ai' ? 'aria-current="page"' : ''}><span>✦</span><b>Katcha AI</b></a>
             <a href="/ingestion" ${currentHref === '/ingestion' ? 'aria-current="page"' : ''}><span>↳</span><b>Ingestion sources</b></a>
             <a href="/clips" ${currentHref === '/clips' ? 'aria-current="page"' : ''}><span>▤</span><b>Clip library</b></a>
             <a href="/channels" ${currentHref === '/channels' ? 'aria-current="page"' : ''}><span>▦</span><b>Channel Studio</b></a>
