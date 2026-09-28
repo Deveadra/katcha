@@ -121,6 +121,74 @@ def _authenticate(
     )
 
 
+def _require_named_principal_route_access(request: Request) -> None:
+    if control_principal_name(request) is None:
+        return
+
+    scopes = set(getattr(request.state, "control_scopes", set()))
+    if "*" in scopes:
+        return
+
+    path = request.url.path
+    method = request.method.upper()
+
+    if path.startswith("/v1/ai/actions/") and path.endswith("/execute"):
+        # The action endpoint resolves the proposal first and enforces the
+        # action-specific scope before claiming or executing it.
+        return
+
+    if path == "/v1/ai/command" or path.startswith("/v1/ai/"):
+        require_control_scope(request, "ai:read")
+        return
+
+    if path == "/v1/control/events":
+        require_control_scope(request, "events:read")
+        return
+    if path.startswith("/v1/control/events/") and path.endswith("/ack"):
+        require_control_scope(request, "events:ack")
+        return
+
+    if path == "/v1/channels":
+        require_control_scope(
+            request,
+            "channels:read" if method in {"GET", "HEAD"} else "channels:write",
+        )
+        return
+
+    if path.startswith("/v1/channels/"):
+        if "/trends/" in path or path.endswith("/trends"):
+            require_control_scope(
+                request,
+                "trends:read" if method in {"GET", "HEAD"} else "trends:write",
+            )
+            return
+        if path.endswith("/intelligence/refresh") or path.endswith(
+            ("/strategy", "/growth-goals", "/automation/promote")
+        ):
+            require_control_scope(request, "intelligence:write")
+            return
+        if "/clips/" in path and path.endswith("/productions"):
+            require_control_scope(request, "production:create")
+            return
+        if path.endswith("/compilations"):
+            require_control_scope(request, "production:create")
+            return
+        require_control_scope(
+            request,
+            "channels:read" if method in {"GET", "HEAD"} else "channels:write",
+        )
+        return
+
+    raise HTTPException(
+        status_code=403,
+        detail=(
+            "restricted control principals cannot access this API route; "
+            "use a wildcard operator principal or add an explicit scoped "
+            "control-plane contract"
+        ),
+    )
+
+
 def require_control_token(
     request: Request,
     credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(_bearer)],
@@ -133,6 +201,8 @@ def require_control_token(
     path_channel = request.path_params.get("channel_profile_id")
     if path_channel is not None:
         require_control_channel(request, path_channel)
+
+    _require_named_principal_route_access(request)
 
 
 def control_actor(request: Request) -> str:
