@@ -96,17 +96,30 @@ class Settings(BaseSettings):
     telegram_poll_timeout_seconds: int = Field(default=25, ge=1, le=50)
     telegram_review_scan_seconds: int = Field(default=10, ge=2, le=300)
     telegram_video_max_mb: int = Field(default=50, ge=1, le=50)
+    telegram_review_link_ttl_seconds: int = Field(default=21600, ge=300, le=604800)
+    telegram_review_storage_endpoint_url: str | None = None
 
     @field_validator(
         "telegram_bot_token",
         "telegram_chat_id",
         "telegram_allowed_user_id",
         "telegram_pairing_code",
+        "telegram_review_storage_endpoint_url",
         mode="before",
     )
     @classmethod
     def normalize_optional_telegram_setting(cls, value):
         return None if isinstance(value, str) and not value.strip() else value
+
+    @field_validator("telegram_review_storage_endpoint_url")
+    @classmethod
+    def validate_telegram_review_storage_endpoint(cls, value):
+        if value is None:
+            return None
+        text = str(value).strip().rstrip("/")
+        if not text.startswith(("https://", "http://")):
+            raise ValueError("Telegram review storage endpoint must use http:// or https://")
+        return text
 
     youtube_data_api_key: str | None = None
     reddit_client_id: str | None = None

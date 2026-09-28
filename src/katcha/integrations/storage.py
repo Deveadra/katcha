@@ -14,6 +14,9 @@ from katcha.config import Settings, get_settings
 class ObjectStore:
     def __init__(self, settings: Settings | None = None) -> None:
         self.settings = settings or get_settings()
+        self.client = self._client(self.settings.s3_endpoint_url)
+
+    def _client(self, endpoint_url: str | None):
         config = Config(
             s3={"addressing_style": "path" if self.settings.s3_force_path_style else "auto"}
         )
@@ -21,12 +24,12 @@ class ObjectStore:
             "region_name": self.settings.s3_region,
             "config": config,
         }
-        if self.settings.s3_endpoint_url:
-            client_kwargs["endpoint_url"] = self.settings.s3_endpoint_url
+        if endpoint_url:
+            client_kwargs["endpoint_url"] = endpoint_url
         if self.settings.s3_access_key and self.settings.s3_secret_key:
             client_kwargs["aws_access_key_id"] = self.settings.s3_access_key
             client_kwargs["aws_secret_access_key"] = self.settings.s3_secret_key
-        self.client = boto3.client("s3", **client_kwargs)
+        return boto3.client("s3", **client_kwargs)
 
     def ensure_bucket(self) -> None:
         try:
@@ -86,6 +89,34 @@ class ObjectStore:
     def get_bytes(self, key: str) -> bytes:
         response = self.client.get_object(Bucket=self.settings.s3_bucket, Key=key)
         return response["Body"].read()
+
+    def presigned_get_url(
+        self,
+        key: str,
+        *,
+        expires_seconds: int,
+        filename: str | None = None,
+        endpoint_url: str | None = None,
+    ) -> str:
+        params: dict[str, object] = {
+            "Bucket": self.settings.s3_bucket,
+            "Key": key,
+        }
+        if filename:
+            params["ResponseContentDisposition"] = f'inline; filename="{filename}"'
+            params["ResponseContentType"] = "video/mp4"
+        client = (
+            self.client
+            if endpoint_url in {None, self.settings.s3_endpoint_url}
+            else self._client(endpoint_url)
+        )
+        return str(
+            client.generate_presigned_url(
+                "get_object",
+                Params=params,
+                ExpiresIn=expires_seconds,
+            )
+        )
 
     def delete(self, key: str) -> None:
         self.client.delete_object(Bucket=self.settings.s3_bucket, Key=key)
