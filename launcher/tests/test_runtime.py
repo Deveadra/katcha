@@ -97,6 +97,48 @@ def test_http_rejects_foreign_origin_and_secret_exposure(tmp_path):
         server.server_close()
 
 
+def test_launcher_live_choice_enables_ai(tmp_path):
+    app = instance(tmp_path)
+    app.save({"KATCHA_AI_ENABLED": "false", "KATCHA_AI_EXECUTION_MODE": "fixture"})
+    server = runtime.ThreadingHTTPServer(("127.0.0.1", 0), runtime.Handler)
+    server.runtime = app
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        connection = http.client.HTTPConnection("127.0.0.1", server.server_port)
+        connection.request(
+            "POST", "/runtime/settings",
+            json.dumps({"KATCHA_AI_EXECUTION_MODE": "live"}),
+            {"Content-Type": "application/json"},
+        )
+        response = connection.getresponse()
+        assert response.status == 200
+        response.read()
+        assert app.values["KATCHA_AI_EXECUTION_MODE"] == "live"
+        assert app.values["KATCHA_AI_ENABLED"] == "true"
+        connection.close()
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_launcher_chat_shortcut_keeps_focus_request(tmp_path):
+    app = instance(tmp_path)
+    server = runtime.ThreadingHTTPServer(("127.0.0.1", 0), runtime.Handler)
+    server.runtime = app
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        connection = http.client.HTTPConnection("127.0.0.1", server.server_port)
+        connection.request("GET", "/ai?focus=chat")
+        response = connection.getresponse()
+        assert response.status == 302
+        assert response.getheader("Location") == "/ai/assets/ai.html?focus=chat"
+        response.read()
+        connection.close()
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
 def test_restart_redacts_existing_credentials(tmp_path):
     original = instance(tmp_path)
     restarted = runtime.Runtime(tmp_path)

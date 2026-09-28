@@ -884,7 +884,8 @@ class Handler(BaseHTTPRequestHandler):
             "/ai": "/ai/assets/ai.html",
         }
         if path in redirects:
-            self.redirect(redirects[path])
+            suffix = "?focus=chat" if path == "/ai" and self.path.endswith("?focus=chat") else ""
+            self.redirect(redirects[path] + suffix)
             return True
         prefixes = ("/editing/assets/", "/explorer/assets/", "/channels/assets/", "/ai/assets/")
         prefix = next((item for item in prefixes if path.startswith(item)), None)
@@ -966,6 +967,10 @@ class Handler(BaseHTTPRequestHandler):
                     ]:
                         if key in body and body[key] not in choices:
                             raise ValueError(f"Invalid {key}")
+                    if body.get("KATCHA_AI_EXECUTION_MODE") == "live":
+                        # The launcher exposes one Live choice. Apply its enablement too;
+                        # otherwise a saved AI_ENABLED=false silently keeps chat in fallback.
+                        body["KATCHA_AI_ENABLED"] = "true"
                     runtime.save(body)
                     runtime.event("info", "setup", "Settings saved; Start applies changes")
                 finally:
