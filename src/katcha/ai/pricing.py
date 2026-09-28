@@ -13,6 +13,7 @@ class TokenPrice:
 
 
 PRICES: dict[tuple[str, str], TokenPrice] = {
+    ("openai", "gpt-6-luna"): TokenPrice(Decimal("0.10"), Decimal("0.50")),
     ("openai", "gpt-5.6-luna"): TokenPrice(Decimal("0.20"), Decimal("1.20")),
     ("openai", "gpt-5.6-terra"): TokenPrice(Decimal("2.00"), Decimal("12.00")),
     ("openai", "gpt-5.6-sol"): TokenPrice(Decimal("4.00"), Decimal("20.00")),
