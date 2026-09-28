@@ -9,6 +9,7 @@ from fastapi import APIRouter, HTTPException, Query, status
 from pydantic import BaseModel, ConfigDict, Field
 
 from katcha.edit_blueprint_models import ChannelEditBlueprintVersion
+from katcha.editing.blueprints import header_explainer_v1, persona_commentary_v1
 from katcha.edit_performance_models import EditBlueprintPerformanceSnapshot
 from katcha.services.channel_edit_blueprints import (
     activate_edit_blueprint_version,
@@ -22,6 +23,13 @@ from katcha.services.edit_blueprint_performance import (
 )
 
 router = APIRouter(prefix="/v1/channels", tags=["channel-editing"])
+
+
+class EditBlueprintTemplateResponse(BaseModel):
+    key: str
+    display_name: str
+    description: str
+    contract: dict[str, object]
 
 
 class EditBlueprintResponse(BaseModel):
@@ -74,6 +82,8 @@ class CreateEditBlueprintRequest(BaseModel):
     contract: dict[str, object]
     actor: str = Field(default="operator", min_length=1, max_length=128)
     set_default: bool = False
+    display_name: str | None = Field(default=None, min_length=1, max_length=80)
+    description: str | None = Field(default=None, min_length=1, max_length=300)
 
 
 class ActivateEditBlueprintRequest(BaseModel):
@@ -81,6 +91,29 @@ class ActivateEditBlueprintRequest(BaseModel):
 
     actor: str = Field(default="operator", min_length=1, max_length=128)
     set_default: bool = False
+
+
+@router.get(
+    "/edit-blueprint-templates",
+    response_model=list[EditBlueprintTemplateResponse],
+)
+def get_edit_blueprint_templates() -> list[EditBlueprintTemplateResponse]:
+    persona = persona_commentary_v1()
+    explainer = header_explainer_v1()
+    return [
+        EditBlueprintTemplateResponse(
+            key=persona.key,
+            display_name="Persona commentary",
+            description="Host-led edits with narration, captions, audio ducking, and punch cuts.",
+            contract=persona.model_dump(mode="json"),
+        ),
+        EditBlueprintTemplateResponse(
+            key=explainer.key,
+            display_name="Header explainer",
+            description="Clip-led edits with a persistent explanatory header and retained source audio.",
+            contract=explainer.model_dump(mode="json"),
+        ),
+    ]
 
 
 @router.get(
@@ -111,6 +144,8 @@ def create_edit_blueprint(
             contract_payload=request.contract,
             actor=request.actor,
             set_default=request.set_default,
+            display_name=request.display_name,
+            description=request.description,
         )
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
