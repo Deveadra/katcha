@@ -26,6 +26,7 @@ def test_command_center_routes_are_mounted() -> None:
 
     assert "/v1/ai/command" in paths
     assert "/v1/ai/actions/{proposal_id}" in paths
+    assert "/v1/ai/actions/{proposal_id}/activity" in paths
     assert "/v1/ai/actions/{proposal_id}/execute" in paths
     assert "/v1/ai/threads" in paths
     assert "/v1/ai/threads/{thread_id}" in paths
