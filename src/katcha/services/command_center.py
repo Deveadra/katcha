@@ -518,8 +518,10 @@ def failures(channel_profile_id: uuid.UUID) -> tuple[str, list[dict[str, object]
             if attempt.short_episode_id in current_episode_ids:
                 latest_render[("short_episode", attempt.short_episode_id)] = attempt
 
-        publications = list(
-            session.scalars(
+        current_compilation_ids = {row.id for row in compilations}
+        publications = [
+            row
+            for row in session.scalars(
                 select(Publication)
                 .join(
                     ChannelProfile,
@@ -531,9 +533,14 @@ def failures(channel_profile_id: uuid.UUID) -> tuple[str, list[dict[str, object]
                     Publication.status.in_(_FAILURE_STATES),
                 )
                 .order_by(Publication.updated_at.desc())
-                .limit(50)
+                .limit(100)
             )
-        )
+            if (
+                row.production_id in current_production_ids
+                or row.short_episode_id in current_episode_ids
+                or row.compilation_id in current_compilation_ids
+            )
+        ]
 
     def add_source(
         kind: str,
