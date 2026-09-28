@@ -155,6 +155,18 @@ def register_short_episode_regeneration(
         if stage in {"voice", "render"} and parent.selected_script_id is None:
             raise ValueError(f"{stage} regeneration requires a selected parent script")
 
+        child_plan_snapshot = dict(parent.plan_snapshot or {})
+        if note:
+            feedback = list(child_plan_snapshot.get("operator_feedback") or [])
+            feedback.append(
+                {
+                    "actor": actor,
+                    "note": note.strip(),
+                    "regenerate_from": stage,
+                }
+            )
+            child_plan_snapshot["operator_feedback"] = feedback[-5:]
+
         child = ShortEpisode(
             channel_profile_id=parent.channel_profile_id,
             trend_opportunity_id=parent.trend_opportunity_id,
@@ -169,7 +181,7 @@ def register_short_episode_regeneration(
             format_version=parent.format_version,
             item_count=parent.item_count,
             format_snapshot=dict(parent.format_snapshot or {}),
-            plan_snapshot=dict(parent.plan_snapshot or {}),
+            plan_snapshot=child_plan_snapshot,
             persona_key=parent.persona_key,
             persona_version=parent.persona_version,
             prompt_version=parent.prompt_version,
