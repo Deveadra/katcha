@@ -5,6 +5,7 @@ import secrets
 import uuid
 from dataclasses import dataclass
 from typing import Any
+from urllib.parse import urlparse
 
 from sqlalchemy import select
 
@@ -43,6 +44,7 @@ _REVIEWABLE_EPISODE_STATES = {"rendered", "render_review"}
 @dataclass(frozen=True, slots=True)
 class TelegramReviewCard:
     session_id: uuid.UUID
+    source_kind: str
     source_id: uuid.UUID
     callback_token: str
     caption: str
@@ -395,15 +397,22 @@ def _compilation_caption(
     return _truncate("\n".join(lines), 1024)
 
 
-def keyboard(callback_token: str) -> dict[str, Any]:
+def keyboard(
+    callback_token: str,
+    *,
+    review_url: str | None = None,
+) -> dict[str, Any]:
     def button(text: str, action: str) -> dict[str, str]:
         return {
             "text": text,
             "callback_data": f"k:{action}:{callback_token}",
         }
 
-    return {
-        "inline_keyboard": [
+    rows: list[list[dict[str, str]]] = []
+    if review_url:
+        rows.append([{"text": "▶ Watch full video", "url": review_url}])
+    rows.extend(
+        [
             [
                 button("✅ Approve", "a"),
                 button("✏️ Send back", "e"),
@@ -414,7 +423,8 @@ def keyboard(callback_token: str) -> dict[str, Any]:
                 button("🔄 Refresh", "f"),
             ],
         ]
-    }
+    )
+    return {"inline_keyboard": rows}
 
 
 def ensure_review_sessions(
@@ -575,6 +585,7 @@ def review_card(session_id: uuid.UUID) -> TelegramReviewCard:
             caption = _compilation_caption(source, publication, defaults)
         return TelegramReviewCard(
             session_id=row.id,
+            source_kind=row.source_kind,
             source_id=source.id,
             callback_token=row.callback_token,
             caption=caption,
@@ -714,6 +725,61 @@ def backlogged_sessions(
         for row in rows:
             session.expunge(row)
         return rows
+
+
+def _longform_review_endpoint(
+    settings: Settings,
+) -> tuple[str | None, bool]:
+    if settings.telegram_review_storage_endpoint_url:
+        return settings.telegram_review_storage_endpoint_url, True
+    if settings.s3_endpoint_url is None:
+        return None, True
+
+    parsed = urlparse(settings.s3_endpoint_url)
+    host = (parsed.hostname or "").casefold()
+    local_hosts = {
+        "minio",
+        "localhost",
+        "127.0.0.1",
+        "0.0.0.0",
+        "host.docker.internal",
+    }
+    if (
+        host in local_hosts
+        or host.endswith(".internal")
+        or ("." not in host and ":" not in host)
+    ):
+        return settings.s3_endpoint_url, False
+    return settings.s3_endpoint_url, True
+
+
+def longform_review_links_ready(
+    settings: Settings | None = None,
+) -> bool:
+    settings = settings or get_settings()
+    _, reachable = _longform_review_endpoint(settings)
+    return reachable
+
+
+def longform_review_url(
+    card: TelegramReviewCard,
+    *,
+    settings: Settings | None = None,
+) -> str | None:
+    if card.source_kind != "compilation":
+        return None
+    settings = settings or get_settings()
+    endpoint, reachable = _longform_review_endpoint(settings)
+    if not reachable:
+        return None
+
+    store = ObjectStore(settings)
+    return store.presigned_get_url(
+        card.render_key,
+        expires_seconds=settings.telegram_review_link_ttl_seconds,
+        filename=f"katcha-longform-{card.source_id}.mp4",
+        endpoint_url=endpoint,
+    )
 
 
 def render_bytes(card: TelegramReviewCard, *, settings: Settings | None = None) -> bytes:

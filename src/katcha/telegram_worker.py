@@ -33,6 +33,7 @@ from katcha.services.telegram_reviews import (
     ensure_review_sessions,
     feedback_session,
     keyboard,
+    longform_review_url,
     mark_failed,
     mark_sent,
     operator_binding,
@@ -121,25 +122,58 @@ async def _deliver_pending(
     for row in pending_review_sessions(chat_id=chat_id, limit=5):
         try:
             card = review_card(row.id)
-            video: bytes | str
-            if card.file_id:
-                video = card.file_id
-            else:
-                video = await asyncio.to_thread(
-                    render_bytes,
-                    card,
-                    settings=settings,
+            if card.source_kind == "compilation":
+                review_url = longform_review_url(card, settings=settings)
+                if review_url:
+                    text = (
+                        card.caption
+                        + "\n\n▶ Open the full video with the secure review link below. "
+                        + "Refresh this card if the link expires."
+                    )
+                else:
+                    text = (
+                        card.caption
+                        + "\n\n⚠ Full-video review link is not externally reachable yet. "
+                        + "Configure Telegram's external review media endpoint, then tap Refresh."
+                    )
+                message = await asyncio.to_thread(
+                    client.send_message,
+                    card.chat_id,
+                    text,
+                    reply_markup=keyboard(
+                        card.callback_token,
+                        review_url=review_url,
+                    ),
                 )
-            message = await asyncio.to_thread(
-                client.send_video,
-                card.chat_id,
-                video=video,
-                filename=f"katcha-{card.source_id}.mp4",
-                caption=card.caption,
-                reply_markup=keyboard(card.callback_token),
-            )
-            telegram_video = dict(message.get("video") or {})
-            file_id = str(telegram_video.get("file_id") or "") or None
+                file_id = None
+                set_session_state(
+                    row.id,
+                    "queued",
+                    metadata={
+                        "delivery_mode": "review_link",
+                        "review_link_available": review_url is not None,
+                    },
+                )
+            else:
+                video: bytes | str
+                if card.file_id:
+                    video = card.file_id
+                else:
+                    video = await asyncio.to_thread(
+                        render_bytes,
+                        card,
+                        settings=settings,
+                    )
+                message = await asyncio.to_thread(
+                    client.send_video,
+                    card.chat_id,
+                    video=video,
+                    filename=f"katcha-{card.source_id}.mp4",
+                    caption=card.caption,
+                    reply_markup=keyboard(card.callback_token),
+                )
+                telegram_video = dict(message.get("video") or {})
+                file_id = str(telegram_video.get("file_id") or "") or None
             mark_sent(
                 row.id,
                 message_id=int(message["message_id"]),
@@ -284,18 +318,44 @@ async def _request_edit_feedback(
 async def _refresh(
     client: TelegramBotClient,
     row: TelegramReviewSession,
+    settings: Settings,
 ) -> str:
     if row.message_id is None:
         set_session_state(row.id, "queued")
         return "Review re-queued."
     card = review_card(row.id)
-    await asyncio.to_thread(
-        client.edit_caption,
-        row.chat_id,
-        row.message_id,
-        caption=card.caption,
-        reply_markup=keyboard(card.callback_token),
-    )
+    if card.source_kind == "compilation":
+        review_url = longform_review_url(card, settings=settings)
+        if review_url:
+            text = (
+                card.caption
+                + "\n\n▶ Open the full video with the secure review link below. "
+                + "This refresh minted a new expiring link."
+            )
+        else:
+            text = (
+                card.caption
+                + "\n\n⚠ Full-video review link is not externally reachable yet. "
+                + "Configure Telegram's external review media endpoint, then tap Refresh."
+            )
+        await asyncio.to_thread(
+            client.edit_text,
+            row.chat_id,
+            row.message_id,
+            text=text,
+            reply_markup=keyboard(
+                card.callback_token,
+                review_url=review_url,
+            ),
+        )
+    else:
+        await asyncio.to_thread(
+            client.edit_caption,
+            row.chat_id,
+            row.message_id,
+            caption=card.caption,
+            reply_markup=keyboard(card.callback_token),
+        )
     return "Review refreshed from current Katcha state."
 
 
@@ -354,7 +414,7 @@ async def _handle_callback(
         elif action == "e":
             result = await _request_edit_feedback(client, row, actor)
         elif action == "f":
-            result = await _refresh(client, row)
+            result = await _refresh(client, row, settings)
         else:
             raise ValueError("unknown Katcha review action")
         if callback_id:

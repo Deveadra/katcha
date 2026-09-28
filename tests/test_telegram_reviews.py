@@ -14,7 +14,12 @@ from katcha.editorial.episode_generator import build_ranked_episode_prompt
 from katcha.editorial.generator import build_script_prompt
 from katcha.editorial.personas import get_persona
 from katcha.longform.editor import _editor_prompt
-from katcha.services.telegram_reviews import keyboard
+from katcha.services.telegram_reviews import (
+    TelegramReviewCard,
+    keyboard,
+    longform_review_links_ready,
+    longform_review_url,
+)
 from katcha.telegram_models import TelegramReviewSession
 
 
@@ -29,6 +34,141 @@ def test_telegram_callback_payloads_fit_bot_api_limit() -> None:
     callbacks = [button["callback_data"] for button in buttons]
     assert {value.split(":")[1] for value in callbacks} == {"a", "e", "b", "r", "f"}
     assert all(len(value.encode("utf-8")) <= 64 for value in callbacks)
+
+
+
+
+
+def test_longform_review_keyboard_uses_url_without_expanding_callbacks() -> None:
+    review_url = "https://media.example.com/review.mp4?token=fixture"
+    markup = keyboard("compact-token", review_url=review_url)
+
+    assert markup["inline_keyboard"][0] == [
+        {"text": "▶ Watch full video", "url": review_url}
+    ]
+    callbacks = [
+        button["callback_data"]
+        for row in markup["inline_keyboard"][1:]
+        for button in row
+    ]
+    assert all(len(value.encode("utf-8")) <= 64 for value in callbacks)
+
+
+def test_local_minio_does_not_emit_dead_longform_link() -> None:
+    settings = Settings(
+        _env_file=None,
+        s3_endpoint_url="http://minio:9000",
+    )
+    card = TelegramReviewCard(
+        session_id=uuid.uuid4(),
+        source_kind="compilation",
+        source_id=uuid.uuid4(),
+        callback_token="compact-token",
+        caption="Fixture",
+        render_key="compilation/test/final.mp4",
+        file_id=None,
+        chat_id=123,
+    )
+
+    assert longform_review_links_ready(settings) is False
+    assert longform_review_url(card, settings=settings) is None
+
+
+def test_external_minio_endpoint_mints_expiring_longform_link() -> None:
+    settings = Settings(
+        _env_file=None,
+        s3_endpoint_url="http://minio:9000",
+        telegram_review_storage_endpoint_url="https://media.example.com",
+        telegram_review_link_ttl_seconds=900,
+    )
+    card = TelegramReviewCard(
+        session_id=uuid.uuid4(),
+        source_kind="compilation",
+        source_id=uuid.uuid4(),
+        callback_token="compact-token",
+        caption="Fixture",
+        render_key="compilation/test/final.mp4",
+        file_id=None,
+        chat_id=123,
+    )
+
+    url = longform_review_url(card, settings=settings)
+
+    assert longform_review_links_ready(settings) is True
+    assert url is not None
+    assert url.startswith("https://media.example.com/")
+    assert "signature" in url.casefold()
+
+
+@pytest.mark.asyncio
+async def test_longform_delivery_sends_link_card_not_video(monkeypatch) -> None:
+    settings = Settings(
+        _env_file=None,
+        telegram_enabled=True,
+        telegram_chat_id=123,
+    )
+    row = SimpleNamespace(id=uuid.uuid4())
+    card = TelegramReviewCard(
+        session_id=row.id,
+        source_kind="compilation",
+        source_id=uuid.uuid4(),
+        callback_token="compact-token",
+        caption="Long-form ready",
+        render_key="compilation/test/final.mp4",
+        file_id=None,
+        chat_id=123,
+    )
+    calls: dict[str, object] = {}
+
+    monkeypatch.setattr(telegram_worker, "operator_binding", lambda _settings: (123, 456))
+    monkeypatch.setattr(
+        telegram_worker,
+        "ensure_review_sessions",
+        lambda **_kwargs: [],
+    )
+    monkeypatch.setattr(
+        telegram_worker,
+        "pending_review_sessions",
+        lambda **_kwargs: [row],
+    )
+    monkeypatch.setattr(telegram_worker, "review_card", lambda _id: card)
+    monkeypatch.setattr(
+        telegram_worker,
+        "longform_review_url",
+        lambda *_args, **_kwargs: "https://media.example.com/signed.mp4",
+    )
+    monkeypatch.setattr(
+        telegram_worker,
+        "set_session_state",
+        lambda *_args, **_kwargs: None,
+    )
+
+    def fake_mark_sent(session_id, *, message_id, telegram_file_id):
+        calls["session_id"] = session_id
+        calls["message_id"] = message_id
+        calls["file_id"] = telegram_file_id
+
+    monkeypatch.setattr(telegram_worker, "mark_sent", fake_mark_sent)
+
+    class Client:
+        def send_message(self, chat_id, text, *, reply_markup=None):
+            calls["chat_id"] = chat_id
+            calls["text"] = text
+            calls["markup"] = reply_markup
+            return {"message_id": 77}
+
+        def send_video(self, *_args, **_kwargs):
+            raise AssertionError("long-form review must not upload video to Telegram")
+
+    await telegram_worker._deliver_pending(Client(), settings)
+
+    assert calls["chat_id"] == 123
+    assert "secure review link" in str(calls["text"])
+    assert calls["file_id"] is None
+    markup = calls["markup"]
+    assert markup["inline_keyboard"][0][0]["url"].startswith(
+        "https://media.example.com/"
+    )
 
 
 def test_telegram_review_source_is_unique_per_chat() -> None:
@@ -48,12 +188,14 @@ def test_blank_telegram_settings_are_optional() -> None:
         telegram_chat_id="",
         telegram_allowed_user_id="",
         telegram_pairing_code="",
+        telegram_review_storage_endpoint_url="",
     )
 
     assert settings.telegram_bot_token is None
     assert settings.telegram_chat_id is None
     assert settings.telegram_allowed_user_id is None
     assert settings.telegram_pairing_code is None
+    assert settings.telegram_review_storage_endpoint_url is None
 
 
 def test_configured_chat_and_user_both_gate_control() -> None:
@@ -156,6 +298,8 @@ def test_telegram_control_routes_are_mounted_without_secret_fields() -> None:
     fields = set(status_schema["properties"])
     assert "bot_configured" in fields
     assert "paired" in fields
+    assert "longform_review_links_ready" in fields
+    assert "longform_review_link_ttl_seconds" in fields
     assert "telegram_bot_token" not in fields
     assert "pairing_code" not in fields
 
