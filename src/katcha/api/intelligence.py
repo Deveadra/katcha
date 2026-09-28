@@ -60,8 +60,10 @@ from katcha.services.event_stream import (
     list_consumer_events,
 )
 from katcha.services.intelligence_runs import (
+    fail_channel_intelligence_run,
     get_channel_intelligence_run,
     list_channel_intelligence_runs,
+    start_channel_intelligence_run,
 )
 from katcha.services.packaging_intelligence import (
     latest_packaging_intelligence,
@@ -248,11 +250,12 @@ class GrowthGoalsRequest(BaseModel):
 
 
 class RefreshIntelligenceRequest(BaseModel):
-    idempotency_key: str | None = Field(default=None, max_length=256)
+    idempotency_key: str | None = Field(default=None, max_length=128)
 
 
 class RefreshIntelligenceResponse(BaseModel):
     channel_profile_id: uuid.UUID
+    intelligence_run_id: uuid.UUID
     workflow_id: str
     run_key: str
 
@@ -532,13 +535,28 @@ async def refresh_channel_intelligence(
             channel_profile_id,
             request.idempotency_key,
         )
-        await start_channel_intelligence_refresh(
-            str(channel_profile_id),
-            workflow_id,
-            run_key,
+        run = start_channel_intelligence_run(
+            channel_profile_id,
+            run_key=run_key,
+            workflow_id=workflow_id,
         )
+        try:
+            await start_channel_intelligence_refresh(
+                str(channel_profile_id),
+                workflow_id,
+                run_key,
+            )
+        except Exception as exc:
+            fail_channel_intelligence_run(
+                channel_profile_id,
+                run_key=run_key,
+                workflow_id=workflow_id,
+                error=f"{type(exc).__name__}: {exc}",
+            )
+            raise
         return RefreshIntelligenceResponse(
             channel_profile_id=channel_profile_id,
+            intelligence_run_id=run.id,
             workflow_id=workflow_id,
             run_key=run_key,
         )
