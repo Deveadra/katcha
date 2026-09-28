@@ -477,7 +477,7 @@ function renderEpisodes() {
         const stateLabel = type === "attention"
             ? (recoverable ? "RENDER FAILED" : "NEEDS ATTENTION")
             : type === "done" ? "COMPLETE" : "IN PRODUCTION";
-        return `<article class="item episode-item status-${type}" data-episode-status="${type}"><div><div class="episode-state"><span class="state-dot" aria-hidden="true"></span>${escapeHTML(stateLabel)}</div><h3>${escapeHTML(row.premise)}</h3><p>Stage: ${escapeHTML(row.stage)} · ${escapeHTML(row.status)} · Updated ${escapeHTML(date(row.updated_at))}</p><p class="meta">${escapeHTML(row.edit_blueprint_key || "Channel default blueprint")}${row.edit_blueprint_version ? ` · v${escapeHTML(row.edit_blueprint_version)}` : ""} · Generation ${escapeHTML(row.generation)}</p>${row.error || attempt?.error ? `<p class="error-text">${escapeHTML(attempt?.error || row.error)}</p>` : ""}</div><div class="item-actions"><span class="pill state-pill ${type}">${escapeHTML(stateLabel)}</span><span class="pill">${escapeHTML(String(row.status || "unknown").replaceAll("_", " ").toUpperCase())}</span>${recoverable ? `<button class="mini" data-recover="${escapeHTML(row.id)}">Recover render</button>` : ""}<a class="mini studio-launch" data-studio="${escapeHTML(row.id)}" href="/studio?episode=${encodeURIComponent(row.id)}&channel=${encodeURIComponent(state.channel)}">Open Clip Studio</a></div></article>`;
+        return `<article class="item episode-item status-${type}" data-episode-status="${type}"><div><div class="episode-state"><span class="state-dot" aria-hidden="true"></span>${escapeHTML(stateLabel)}</div><h3>${escapeHTML(row.premise)}</h3><p>Stage: ${escapeHTML(row.stage)} · ${escapeHTML(row.status)} · Updated ${escapeHTML(date(row.updated_at))}</p><p class="meta">${escapeHTML(row.edit_blueprint_key || "Channel default blueprint")}${row.edit_blueprint_version ? ` · v${escapeHTML(row.edit_blueprint_version)}` : ""} · Generation ${escapeHTML(row.generation)}</p>${row.error || attempt?.error ? `<p class="error-text">${escapeHTML(attempt?.error || row.error)}</p>` : ""}</div><div class="item-actions"><span class="pill state-pill ${type}">${escapeHTML(stateLabel)}</span><span class="pill">${escapeHTML(String(row.status || "unknown").replaceAll("_", " ").toUpperCase())}</span>${recoverable ? `<button class="mini" data-recover="${escapeHTML(row.id)}">Recover render</button>` : ""}${invideoEligible(row) ? `<button class="mini invideo-action" data-invideo="${escapeHTML(row.id)}">Send to InVideo</button>` : ""}<a class="mini studio-launch" data-studio="${escapeHTML(row.id)}" href="/studio?episode=${encodeURIComponent(row.id)}&channel=${encodeURIComponent(state.channel)}">Open Clip Studio</a></div></article>`;
     }).join("") : `<div class="empty">${filter === "all" ? "No episodes in this channel yet." : "No episodes match this filter."}</div>`;
 }
 function previewableSources() {
@@ -638,11 +638,14 @@ async function connect(event) {
     rememberWorkspace();
     message("Connecting…");
     try {
-        const [channels, templates] = await Promise.all([
+        const [channels, templates, providers] = await Promise.all([
             api("/v1/channels"),
             api("/v1/channels/edit-blueprint-templates"),
+            api("/v1/integrations/providers"),
         ]);
         state.templates = templates;
+        state.providers = providers;
+        renderProviderStatus();
         $("channel").innerHTML = '<option value="">Select a channel</option>' + channels.map((row) => `<option value="${escapeHTML(row.id)}">${escapeHTML(row.profile_metadata?.channel_title || row.profile_metadata?.name || row.id)} · ${escapeHTML(row.status)}</option>`).join("");
         $("channel").disabled = false; $("refresh").disabled = false;
         $("connection").textContent = "CONNECTED"; $("connection").classList.add("online");
@@ -656,10 +659,11 @@ async function action(event) {
     const blueprintRestore = event.target.closest("[data-blueprint-restore]");
     const recover = event.target.closest("[data-recover]");
     const studio = event.target.closest("[data-studio]");
+    const invideo = event.target.closest("[data-invideo]");
     const stageBrand = event.target.closest("[data-stage-brand]");
     const renderPreview = event.target.closest("[data-render-preview]");
     const activateBrand = event.target.closest("[data-activate-brand]");
-    if (!blueprintOpen && !blueprintDefault && !blueprintRestore && !recover && !studio && !stageBrand && !renderPreview && !activateBrand) return;
+    if (!blueprintOpen && !blueprintDefault && !blueprintRestore && !recover && !studio && !invideo && !stageBrand && !renderPreview && !activateBrand) return;
     if (blueprintOpen) {
         const row = findBlueprint(blueprintOpen.dataset.blueprintOpen, blueprintOpen.dataset.version);
         if (!row) {
@@ -671,6 +675,16 @@ async function action(event) {
     }
     if (studio) {
         rememberWorkspace();
+        return;
+    }
+    if (invideo) {
+        invideo.disabled = true;
+        try {
+            await prepareInVideo(invideo.dataset.invideo);
+        } catch (error) {
+            message(error.message, true);
+            invideo.disabled = false;
+        }
         return;
     }
     const button = blueprintDefault || blueprintRestore || recover || stageBrand || renderPreview || activateBrand;
