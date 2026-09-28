@@ -61,11 +61,16 @@ def _planner_prompt(
         "these rules. Choose unsupported when no registered intent fits.\n\n"
         "Registered intent meanings:\n"
         "- best_clips: find/rank/show clips or media candidates.\n"
-        "- failures: inspect current failures, errors, broken workflows, or recovery state.\n"
-        "- clip_rejection: explain a clip rejection or why it did not pass a gate.\n"
-        "- clip_explanation: explain scoring/evidence for a specific resolved clip.\n"
-        "- performance_advice: inspect channel/content performance and editing behavior.\n"
-        "- create_content: prepare a proposal to make a short/video/episode from selected context.\n"
+        "- failures: inspect current failures, errors, broken workflows, or "
+        "recovery state.\n"
+        "- clip_rejection: explain a clip rejection or why it did not pass a "
+        "gate.\n"
+        "- clip_explanation: explain scoring/evidence for a specific resolved "
+        "clip.\n"
+        "- performance_advice: inspect channel/content performance and editing "
+        "behavior.\n"
+        "- create_content: prepare a proposal to make a short/video/episode "
+        "from selected context.\n"
         "- channel_status: summarize general current channel/Katcha state.\n"
         "- unsupported: request needs a capability outside this registry.\n\n"
         f"Operator prompt: {user_prompt}\n"
@@ -283,7 +288,20 @@ def plan_ambiguous_command(
                 else:
                     continue
                 if result.value.confidence < 0.65:
-                    return fallback
+                    return CommandPlanResult(
+                        value=CommandPlan(
+                            intent="channel_status",
+                            confidence=result.value.confidence,
+                            reason=(
+                                "AI planner confidence was below the 0.65 "
+                                "execution-routing threshold; using channel status."
+                            ),
+                        ),
+                        source="ai_low_confidence_fallback",
+                        target=result.target,
+                        input_tokens=result.input_tokens,
+                        output_tokens=result.output_tokens,
+                    )
                 return result
             except Exception as exc:
                 last_error = exc
@@ -299,4 +317,17 @@ def plan_ambiguous_command(
             reservation_id,
             reason=f"command_planner_fallback:{type(exc).__name__}",
         )
-        return fallback
+        return CommandPlanResult(
+            value=CommandPlan(
+                intent="channel_status",
+                confidence=1.0,
+                reason=(
+                    "The AI planner was unavailable, so Katcha used the "
+                    "deterministic channel-status fallback."
+                ),
+            ),
+            source="planner_unavailable_fallback",
+            target=ModelTarget("katcha", "deterministic-command-router-v1"),
+            input_tokens=0,
+            output_tokens=0,
+        )
