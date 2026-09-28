@@ -329,7 +329,11 @@ def test_unchanged_images_skip_build_and_source_changes_invalidate(tmp_path):
         )
         (source / "app.py").write_text("version = 2")
         app.prepare_images()
-        assert any(call.args[0][-1] == "build" for call in run.call_args_list)
+        assert any(
+            "build" in call.args[0]
+            and all(service in call.args[0] for service in runtime.BACKGROUND_BUILD_SERVICES)
+            for call in run.call_args_list
+        )
 
 
 def test_deleted_images_rebuild(tmp_path):
