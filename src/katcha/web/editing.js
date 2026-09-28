@@ -508,7 +508,11 @@ async function connect(event) {
     event.preventDefault(); state.token = $("token").value.trim(); $("token").value = "";
     message("Connecting…");
     try {
-        const channels = await api("/v1/channels");
+        const [channels, templates] = await Promise.all([
+            api("/v1/channels"),
+            api("/v1/channels/edit-blueprint-templates"),
+        ]);
+        state.templates = templates;
         $("channel").innerHTML = '<option value="">Select a channel</option>' + channels.map((row) => `<option value="${escapeHTML(row.id)}">${escapeHTML(row.profile_metadata?.channel_title || row.profile_metadata?.name || row.id)} · ${escapeHTML(row.status)}</option>`).join("");
         $("channel").disabled = false; $("refresh").disabled = false;
         $("connection").textContent = "CONNECTED"; $("connection").classList.add("online");
@@ -517,24 +521,49 @@ async function connect(event) {
     } catch (error) { $("connection").textContent = "OFFLINE"; $("connection").classList.remove("online"); message(error.message, true); }
 }
 async function action(event) {
-    const blueprintActivate = event.target.closest("[data-blueprint-activate]");
+    const blueprintOpen = event.target.closest("[data-blueprint-open]");
+    const blueprintDefault = event.target.closest("[data-blueprint-default]");
+    const blueprintRestore = event.target.closest("[data-blueprint-restore]");
     const recover = event.target.closest("[data-recover]");
     const details = event.target.closest("[data-attempts]");
     const stageBrand = event.target.closest("[data-stage-brand]");
     const renderPreview = event.target.closest("[data-render-preview]");
     const activateBrand = event.target.closest("[data-activate-brand]");
-    if (!blueprintActivate && !recover && !details && !stageBrand && !renderPreview && !activateBrand) return;
+    if (!blueprintOpen && !blueprintDefault && !blueprintRestore && !recover && !details && !stageBrand && !renderPreview && !activateBrand) return;
+    if (blueprintOpen) {
+        const row = findBlueprint(blueprintOpen.dataset.blueprintOpen, blueprintOpen.dataset.version);
+        if (!row) {
+            message("That recipe version is no longer available. Refresh and try again.", true);
+            return;
+        }
+        openBlueprintEditor(row);
+        return;
+    }
     if (details) {
         const attempt = state.attempts.get(details.dataset.attempts);
         message(attempt ? `Render attempt ${attempt.attempt_number}: ${attempt.status}${attempt.error ? ` · ${attempt.error}` : ""}` : "No render attempts recorded for this episode.");
         return;
     }
-    const button = blueprintActivate || recover || stageBrand || renderPreview || activateBrand;
+    const button = blueprintDefault || blueprintRestore || recover || stageBrand || renderPreview || activateBrand;
     button.disabled = true;
     try {
-        if (blueprintActivate) {
-            await api(channelPath(`/edit-blueprints/${encodeURIComponent(blueprintActivate.dataset.blueprintActivate)}/${encodeURIComponent(blueprintActivate.dataset.version)}/activate`), { method: "POST", body: JSON.stringify({ actor: "editing-control-center", set_default: true }) });
-            await loadChannel(); message("Blueprint activated as this channel’s default.");
+        if (blueprintDefault || blueprintRestore) {
+            const target = blueprintDefault || blueprintRestore;
+            const key = blueprintDefault
+                ? blueprintDefault.dataset.blueprintDefault
+                : blueprintRestore.dataset.blueprintRestore;
+            const version = target.dataset.version;
+            await api(channelPath(`/edit-blueprints/${encodeURIComponent(key)}/${encodeURIComponent(version)}/activate`), {
+                method: "POST",
+                body: JSON.stringify({
+                    actor: "editing-control-center",
+                    set_default: Boolean(blueprintDefault),
+                }),
+            });
+            await loadChannel();
+            message(blueprintDefault
+                ? "Recipe is now the channel default for new videos."
+                : `Recipe v${version} restored. Existing videos remain unchanged.`);
         } else if (recover) {
             const result = await api(`/v1/short-episodes/${encodeURIComponent(recover.dataset.recover)}/render/recover`, { method: "POST", body: JSON.stringify({ actor: "editing-control-center", note: "Operator recovery from Editing Control Center" }) });
             await loadChannel(); message(`Render recovery started as a new episode generation (${result.child_source_id}).`);
@@ -588,8 +617,20 @@ async function action(event) {
     } catch (error) { message(error.message, true); button.disabled = false; }
 }
 $("connect-form").addEventListener("submit", connect);
-$("channel").addEventListener("change", loadChannel);
+$("channel").addEventListener("change", () => {
+    closeBlueprintEditor();
+    void loadChannel();
+});
 $("refresh").addEventListener("click", loadChannel);
+$("new-blueprint").addEventListener("click", openNewBlueprintEditor);
+$("close-blueprint-editor").addEventListener("click", closeBlueprintEditor);
+$("cancel-blueprint-editor").addEventListener("click", closeBlueprintEditor);
+$("blueprint-editor").addEventListener("submit", saveBlueprintEditor);
+$("bp-template").addEventListener("change", () => applyNewRecipeTemplate(templateForKey($("bp-template").value)));
+for (const id of ["bp-layout", "bp-narration-mode", "bp-source-volume", "bp-duck-volume"]) {
+    $(id).addEventListener("input", syncBlueprintEditor);
+    $(id).addEventListener("change", syncBlueprintEditor);
+}
 $("filter").addEventListener("change", renderEpisodes);
 document.querySelector(".stats").addEventListener("click", (event) => {
     const target = event.target.closest("[data-summary-filter]");
