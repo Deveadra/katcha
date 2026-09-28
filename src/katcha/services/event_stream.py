@@ -18,6 +18,7 @@ _SENSITIVE_PARTS = (
     "code_verifier",
 )
 _SCOPE_KEY = "_channel_profile_id"
+_PRINCIPAL_KEY = "_control_actor"
 _SCAN_BATCH = 5000
 _MAX_SCAN_BATCHES = 20
 
@@ -52,6 +53,25 @@ def _cursor_scope(cursor: EventConsumerCursor) -> str | None:
     metadata = dict(cursor.cursor_metadata or {})
     value = metadata.get(_SCOPE_KEY)
     return str(value) if value is not None else None
+
+
+def _cursor_principal(cursor: EventConsumerCursor) -> str | None:
+    metadata = dict(cursor.cursor_metadata or {})
+    value = metadata.get(_PRINCIPAL_KEY)
+    return str(value) if value is not None else None
+
+
+def _require_cursor_principal(
+    cursor: EventConsumerCursor | None,
+    consumer_actor: str | None,
+) -> None:
+    if cursor is None or consumer_actor is None:
+        return
+    if _cursor_principal(cursor) != consumer_actor:
+        raise ValueError(
+            "consumer cursor is bound to a different control principal; "
+            "use a distinct consumer_key"
+        )
 
 
 def _require_cursor_scope(
@@ -93,6 +113,7 @@ def list_consumer_events(
     consumer_key: str,
     *,
     channel_profile_id: uuid.UUID | None = None,
+    consumer_actor: str | None = None,
     limit: int = 100,
 ) -> list[dict[str, object]]:
     key = consumer_key.strip()
@@ -104,15 +125,21 @@ def list_consumer_events(
     with session_scope() as session:
         cursor = session.get(EventConsumerCursor, key)
         if cursor is None:
+            metadata: dict[str, object] = {
+                _SCOPE_KEY: _scope_value(channel_profile_id),
+            }
+            if consumer_actor is not None:
+                metadata[_PRINCIPAL_KEY] = consumer_actor
             cursor = EventConsumerCursor(
                 consumer_key=key,
                 last_event_id=None,
                 last_event_created_at=None,
-                cursor_metadata={_SCOPE_KEY: _scope_value(channel_profile_id)},
+                cursor_metadata=metadata,
             )
             session.add(cursor)
             session.flush()
         _require_cursor_scope(cursor, channel_profile_id)
+        _require_cursor_principal(cursor, consumer_actor)
         scan_created = cursor.last_event_created_at
         scan_id = cursor.last_event_id
         selected: list[DomainEvent] = []
@@ -161,6 +188,7 @@ def acknowledge_consumer_event(
     event_id: uuid.UUID,
     *,
     channel_profile_id: uuid.UUID | None = None,
+    consumer_actor: str | None = None,
     metadata: dict[str, object] | None = None,
 ) -> EventConsumerCursor:
     key = consumer_key.strip()
@@ -177,6 +205,7 @@ def acknowledge_consumer_event(
             if stored_scope is not None:
                 channel_profile_id = uuid.UUID(stored_scope)
         _require_cursor_scope(cursor, channel_profile_id)
+        _require_cursor_principal(cursor, consumer_actor)
         if channel_profile_id is not None and not _belongs_to_channel(
             event,
             channel_profile_id,
@@ -186,7 +215,10 @@ def acknowledge_consumer_event(
         scope = _scope_value(channel_profile_id)
         safe_metadata = dict(metadata or {})
         safe_metadata.pop(_SCOPE_KEY, None)
+        safe_metadata.pop(_PRINCIPAL_KEY, None)
         safe_metadata[_SCOPE_KEY] = scope
+        if consumer_actor is not None:
+            safe_metadata[_PRINCIPAL_KEY] = consumer_actor
 
         if cursor is None:
             cursor = EventConsumerCursor(
