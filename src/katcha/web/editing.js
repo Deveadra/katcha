@@ -69,7 +69,7 @@ function renderProviderStatus() {
 function invideoEligible(row) {
     return Boolean(
         row.selected_script_id
-        && ["voiced", "editorial_approved", "rendering", "rendered", "render_review", "approved", "failed"].includes(String(row.status || ""))
+        && ["voiced", "editorial_approved", "rendering", "rendered", "render_review", "approved", "failed", "render_failed"].includes(String(row.status || ""))
     );
 }
 function renderInVideoHandoff() {
