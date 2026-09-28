@@ -26,6 +26,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+WORKSPACE_IMAGE = "katcha-control:local"
 REQUIRED_SERVICES = {
     "postgres",
     "temporal",
@@ -250,12 +251,18 @@ class Runtime:
                 process.wait()
             process.stdout.close()
 
-    def build_fingerprint(self):
-        """Hash actual image inputs, excluding caches and credentials."""
+    def build_fingerprint(self, workspace=False):
+        """Hash image inputs, with a smaller fingerprint for the interactive control plane."""
         digest = hashlib.sha256()
-        paths = list(self.root.glob("Dockerfile*")) + list(self.root.glob("docker-compose*.yml"))
+        dockerfiles = (
+            [self.root / "Dockerfile.control"]
+            if workspace
+            else list(self.root.glob("Dockerfile*"))
+        )
+        paths = dockerfiles + list(self.root.glob("docker-compose*.yml"))
         paths += [self.root / name for name in ("pyproject.toml", "README.md", "alembic.ini")]
-        for name in ("src", "migrations", "renderer"):
+        source_trees = ("src", "migrations") if workspace else ("src", "migrations", "renderer")
+        for name in source_trees:
             paths.extend((self.root / name).rglob("*"))
         for path in sorted(set(paths)):
             if not path.is_file() or any(
@@ -265,6 +272,29 @@ class Runtime:
             digest.update(str(path.relative_to(self.root)).encode())
             digest.update(path.read_bytes())
         return digest.hexdigest()
+
+    def prepare_workspace_image(self):
+        fingerprint = self.build_fingerprint(workspace=True)
+        stamp = self.directory / "workspace-build-fingerprint"
+        cached = stamp.exists() and stamp.read_text() == fingerprint
+        if cached:
+            try:
+                self.run(["docker", "image", "inspect", WORKSPACE_IMAGE], capture=True)
+            except RuntimeError:
+                cached = False
+        if cached:
+            self.event("info", "launcher", "Reusing unchanged workspace image.")
+            return
+        self.stage = "building workspace image"
+        self.event(
+            "info",
+            "launcher",
+            "Preparing the lightweight workspace control plane.",
+        )
+        self.run(self.command() + ["build", "api"], timeout=900)
+        temporary = stamp.with_suffix(".pending")
+        temporary.write_text(fingerprint)
+        temporary.replace(stamp)
 
     def prepare_images(self):
         fingerprint = self.build_fingerprint()
@@ -324,26 +354,57 @@ class Runtime:
                 return
             self.stage = "validating configuration"
             self.run(self.command() + ["config", "--quiet"])
+
+            # Interactive launch is intentionally two-phase. The workspace only needs
+            # Postgres + migrations + API; production automation warms after first use.
+            self.prepare_workspace_image()
+            self.stage = "starting workspace"
+            self.event("info", "launcher", "Starting the interactive workspace.")
+            self.run(
+                self.command()
+                + ["up", "-d", "--no-build", "--wait", "--wait-timeout", "120", "api"],
+                timeout=180,
+            )
+            self.start_logs()
+            if not self.probe_workspace():
+                raise RuntimeError("Workspace services started but the control plane is not ready.")
+            self.event(
+                "info",
+                "launcher",
+                "Workspace ready; warming automation in the background.",
+                startup_seconds=round(time.monotonic() - self.operation_started_at, 2),
+            )
+
+            self.stage = "warming automation images"
             self.prepare_images()
-            self.stage = "starting services"
-            self.event("info", "launcher", "Starting services and waiting for health checks.")
+            self.stage = "warming automation services"
+            self.event(
+                "info",
+                "launcher",
+                "Starting production automation, storage, orchestration, and rendering.",
+            )
             self.run(
                 self.command() + ["up", "-d", "--no-build", "--wait", "--wait-timeout", "300"],
                 timeout=420,
             )
-            self.stage = "checking readiness"
-            self.start_logs()
+            self.stage = "checking full readiness"
             self.check()
             if self.phase != "ready":
                 raise RuntimeError(
-                    "Services started but readiness failed; inspect the service list."
+                    "Workspace is available but background services need attention."
                 )
             self.stage = "ready"
             self.retry_delay = 10
-            self.event("info", "launcher", "Katcha is ready")
+            self.event(
+                "info",
+                "launcher",
+                "Katcha automation is fully ready.",
+                startup_seconds=round(time.monotonic() - self.operation_started_at, 2),
+            )
         except Exception:
-            self.phase = "failed"
-            self.stage = "failed"
+            self.probe_workspace()
+            self.phase = "degraded" if self.workspace_ready else "failed"
+            self.stage = "automation warm-up failed" if self.workspace_ready else "failed"
             self.event(
                 "error",
                 "launcher",
