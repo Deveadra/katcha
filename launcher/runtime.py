@@ -496,22 +496,6 @@ class Runtime:
         temporary.write_text(fingerprint)
         temporary.replace(stamp)
 
-    def prepare_workspace_database(self):
-        """Warm the interactive database while the control-plane image is prepared."""
-        self.run(
-            self.command()
-            + [
-                "up",
-                "-d",
-                "--no-build",
-                "--wait",
-                "--wait-timeout",
-                "90",
-                "postgres",
-            ],
-            timeout=120,
-        )
-
     def operate(self, action):
         if not self.lock.acquire(blocking=False):
             return False
@@ -555,19 +539,10 @@ class Runtime:
             self.stage = "validating configuration"
             self.run(self.command() + ["config", "--quiet"])
 
-            # Interactive launch is intentionally two-phase. Postgres and the
-            # control-plane image are independent, so warm them concurrently instead of
-            # paying both costs serially before migrations/API can start.
-            self.stage = "preparing workspace"
-            self.event(
-                "info",
-                "launcher",
-                "Preparing the control plane and database in parallel.",
-            )
-            with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
-                database = pool.submit(self.prepare_workspace_database)
-                self.prepare_workspace_image()
-                database.result()
+            # Keep the interactive launch serialized at the Docker boundary. Running
+            # Compose startup and image preparation concurrently is fragile on WSL/Docker
+            # Desktop and can make the launcher itself unreachable under resource pressure.
+            self.prepare_workspace_image()
 
             self.stage = "starting workspace"
             self.event("info", "launcher", "Starting the interactive workspace.")
