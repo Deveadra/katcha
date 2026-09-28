@@ -1,3 +1,24 @@
+/* Keep Channel Studio discoverable across legacy workspace shells without coupling
+   those pages to the Channel Studio implementation. */
+(() => {
+    const nav = document.querySelector("nav");
+    if (!nav || nav.querySelector('a[href="/channels"]')) return;
+    const link = document.createElement("a");
+    link.href = "/channels";
+    if (nav.classList.contains("rail-nav")) {
+        link.className = "nav-item";
+        link.innerHTML = '<span class="nav-icon" aria-hidden="true">▤</span> Channel Studio';
+    } else {
+        link.innerHTML = '▤ <span>Channel Studio</span>';
+    }
+    if (location.pathname.startsWith("/channels")) {
+        link.classList.add("active");
+        link.setAttribute("aria-current", "page");
+    }
+    const editing = nav.querySelector('a[href="/editing"]');
+    nav.insertBefore(link, editing || null);
+})();
+
 /* The local gateway owns authentication; never expose its token to browser storage. */
 (async () => {
     if (location.port !== '8765') return;
