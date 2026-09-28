@@ -15,6 +15,10 @@ from katcha.orchestration.client import (
     start_longform_workflow,
     start_production_workflow,
 )
+from katcha.orchestration.trend_client import (
+    start_topic_watch_schedule,
+    start_topic_watch_workflow,
+)
 from katcha.services.channel_editorial import freeze_channel_compilation_candidates
 from katcha.services.channel_profiles import ensure_active_profile
 from katcha.services.command_center import (
@@ -24,8 +28,10 @@ from katcha.services.command_center import (
     clip_explanation,
     failures,
     performance_advice,
+    source_discovery_plan,
 )
 from katcha.services.compilations import register_compilation
+from katcha.services.discovery_trends import create_topic_watch_version
 from katcha.services.productions import (
     register_regeneration,
     register_short_production,
@@ -56,6 +62,7 @@ class CommandAction(BaseModel):
         "create_short_production",
         "create_compilation",
         "recover_production_render",
+        "start_source_scout",
     ]
     label: str
     description: str
@@ -83,6 +90,7 @@ class ExecuteActionRequest(BaseModel):
         "create_short_production",
         "create_compilation",
         "recover_production_render",
+        "start_source_scout",
     ]
     payload: dict[str, object] = Field(default_factory=dict)
     confirmed: bool
@@ -133,6 +141,39 @@ def _actions(
                     )
                 )
                 break
+    if intent == "source_discovery" and evidence:
+        overview = evidence[0]
+        if bool(overview.get("web_scout_ready")):
+            platforms = [
+                str(value)
+                for value in (overview.get("requested_platforms") or [])
+                if str(value)
+            ]
+            terms = [
+                str(value)
+                for value in (overview.get("suggested_terms") or [])
+                if str(value)
+            ]
+            actions.append(
+                CommandAction(
+                    id=f"source-scout:{request.channel_profile_id}:{uuid.uuid4().hex[:8]}",
+                    type="start_source_scout",
+                    label="Start autonomous source scout",
+                    description=(
+                        "Search the wider public web now and every hour, including new creators, "
+                        "communities, and sites. Results enter Katcha discovery and trend scoring; "
+                        "they are not automatically rendered or published."
+                    ),
+                    payload={
+                        "operator_request": request.prompt[:1000],
+                        "platforms": platforms,
+                        "terms": terms,
+                        "interval_minutes": 60,
+                        "top_n": 50,
+                        "continuous": True,
+                    },
+                )
+            )
     if intent == "performance_advice":
         actions.append(
             CommandAction(
@@ -220,6 +261,11 @@ def command(request: CommandRequest) -> CommandResponse:
                 )
         elif intent == "performance_advice":
             deterministic, evidence = performance_advice(request.channel_profile_id)
+        elif intent == "source_discovery":
+            deterministic, evidence = source_discovery_plan(
+                request.channel_profile_id,
+                request.prompt,
+            )
         elif intent == "create_content":
             deterministic = (
                 "I can prepare an executable Katcha action, but I will not start production from "
@@ -313,6 +359,119 @@ async def execute_action(request: ExecuteActionRequest) -> ExecuteActionResponse
                 run_key,
             )
             result = {"workflow_id": workflow_id, "run_key": run_key}
+
+        elif request.action_type == "start_source_scout":
+            raw_platforms = request.payload.get("platforms") or []
+            if not isinstance(raw_platforms, list):
+                raise ValueError("source scout platforms must be a list")
+            allowed_platforms = {
+                "tiktok",
+                "instagram",
+                "x",
+                "bluesky",
+                "youtube",
+                "reddit",
+                "discord",
+                "web",
+            }
+            platforms = []
+            for raw in raw_platforms:
+                value = str(raw or "").strip().casefold()
+                if value and value in allowed_platforms and value not in platforms:
+                    platforms.append(value)
+
+            raw_terms = request.payload.get("terms") or []
+            if not isinstance(raw_terms, list):
+                raise ValueError("source scout terms must be a list")
+            terms = []
+            for raw in raw_terms:
+                value = str(raw or "").strip().casefold()
+                if value and value not in terms:
+                    terms.append(value)
+                if len(terms) >= 12:
+                    break
+
+            interval_minutes = max(
+                15,
+                min(int(request.payload.get("interval_minutes") or 60), 24 * 60),
+            )
+            top_n = max(5, min(int(request.payload.get("top_n") or 50), 250))
+            operator_request = str(
+                request.payload.get("operator_request")
+                or "Find new relevant public sources for this channel."
+            )[:1000]
+            continuous = bool(request.payload.get("continuous", True))
+            watch_suffix = "-".join(platforms) if platforms else "wide-web"
+            watch = create_topic_watch_version(
+                watch_key=f"source-scout-{watch_suffix}"[:128],
+                name=(
+                    "Autonomous source scout · "
+                    + (", ".join(platforms) if platforms else "wide web")
+                )[:255],
+                include_terms=terms,
+                adapter_configs=[
+                    {
+                        "adapter_key": "web_scout",
+                        "adapter_version": "v1",
+                        "query": {
+                            "operator_request": operator_request,
+                            "platforms": platforms,
+                            "limit": min(top_n * 2, 100),
+                        },
+                        "source_quota_limit_per_day": 96,
+                        "provider_quota_limits": {
+                            "openai.web_search": 96,
+                        },
+                    }
+                ],
+                freshness_horizon_hours=72,
+                max_candidates=min(top_n * 2, 100),
+                enabled=True,
+                metadata={
+                    "kind": "autonomous_source_scout",
+                    "origin": "katcha_ai_command_center",
+                    "requested_platforms": platforms,
+                    "operator_request": operator_request,
+                },
+                channel_profile_id=request.channel_profile_id,
+            )
+            if continuous:
+                workflow_id = f"topic-watch-schedule-{watch.id}"
+                await start_topic_watch_schedule(
+                    str(watch.id),
+                    workflow_id,
+                    interval_minutes=interval_minutes,
+                    top_n=top_n,
+                )
+                result = {
+                    "topic_watch_id": str(watch.id),
+                    "watch_key": watch.watch_key,
+                    "watch_version": watch.version,
+                    "workflow_id": workflow_id,
+                    "continuous": True,
+                    "interval_minutes": interval_minutes,
+                    "platforms": platforms,
+                    "terms": terms,
+                }
+            else:
+                execution_key = f"katcha-ai-source-scout-{uuid.uuid4().hex[:32]}"
+                workflow_id = f"topic-watch-{watch.id}-{uuid.uuid4().hex[:20]}"
+                await start_topic_watch_workflow(
+                    str(watch.id),
+                    workflow_id,
+                    execution_key=execution_key,
+                    top_n=top_n,
+                )
+                result = {
+                    "topic_watch_id": str(watch.id),
+                    "watch_key": watch.watch_key,
+                    "watch_version": watch.version,
+                    "workflow_id": workflow_id,
+                    "execution_key": execution_key,
+                    "continuous": False,
+                    "platforms": platforms,
+                    "terms": terms,
+                }
 
         elif request.action_type == "create_short_production":
             clip_id = uuid.UUID(str(request.payload["clip_id"]))
