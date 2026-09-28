@@ -6,7 +6,11 @@ from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import select
 
-from katcha.command_center_models import CommandActionProposal
+from katcha.command_center_models import (
+    CommandActionProposal,
+    CommandThread,
+    CommandTurn,
+)
 from katcha.db import session_scope
 from katcha.models import DomainEvent
 from katcha.services.channel_profiles import ensure_active_profile
@@ -43,6 +47,28 @@ def create_action_proposals(
     expires_at = _now() + timedelta(minutes=ttl_minutes)
     with session_scope() as session:
         ensure_active_profile(session, channel_profile_id)
+        if (thread_id is None) != (source_turn_id is None):
+            raise ValueError(
+                "thread_id and source_turn_id must be supplied together"
+            )
+        if thread_id is not None and source_turn_id is not None:
+            thread = session.get(CommandThread, thread_id)
+            turn = session.get(CommandTurn, source_turn_id)
+            if thread is None:
+                raise ValueError(f"command thread not found: {thread_id}")
+            if turn is None:
+                raise ValueError(f"command turn not found: {source_turn_id}")
+            if thread.channel_profile_id != channel_profile_id:
+                raise ValueError("command thread belongs to a different channel")
+            if (
+                turn.thread_id != thread_id
+                or turn.channel_profile_id != channel_profile_id
+                or turn.role != "assistant"
+                or turn.request_id != request_id
+            ):
+                raise ValueError(
+                    "proposal source turn does not match the request thread"
+                )
         for spec in specs:
             proposal_id = uuid.uuid4()
             proposal = CommandActionProposal(
