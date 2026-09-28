@@ -13,9 +13,16 @@ from katcha.domain import ReviewDecision
 from katcha.integrations.telegram import TelegramAPIError, TelegramBotClient
 from katcha.models import DomainEvent
 from katcha.orchestration.client import (
+    start_longform_workflow,
+    start_production_workflow,
     start_publication_workflow,
     start_short_episode_editorial_workflow,
 )
+from katcha.services.compilations import (
+    register_compilation_regeneration,
+    review_compilation,
+)
+from katcha.services.productions import register_regeneration, review_production
 from katcha.services.render_automation import advance_render_automation
 from katcha.services.short_episode_reviews import (
     register_short_episode_regeneration,
@@ -136,57 +143,91 @@ async def _approve(
     row: TelegramReviewSession,
     actor: str,
 ) -> str:
-    if row.source_kind != "short_episode":
-        raise ValueError("Telegram approval is not implemented for this source type")
-    review_short_episode(
-        row.source_id,
-        decision=ReviewDecision.APPROVE,
-        actor=actor,
-        note="Approved from Telegram",
-    )
-    automation = advance_render_automation("short_episode", row.source_id)
-    if automation.publication_id and automation.publication_workflow_id:
+    automation = None
+    if row.source_kind == "short_episode":
+        review_short_episode(
+            row.source_id,
+            decision=ReviewDecision.APPROVE,
+            actor=actor,
+            note="Approved from Telegram",
+        )
+        automation = advance_render_automation("short_episode", row.source_id)
+    elif row.source_kind == "production":
+        review_production(
+            row.source_id,
+            decision=ReviewDecision.APPROVE,
+            actor=actor,
+            note="Approved from Telegram",
+        )
+        automation = advance_render_automation("production", row.source_id)
+    elif row.source_kind == "compilation":
+        review_compilation(
+            row.source_id,
+            decision=ReviewDecision.APPROVE,
+            actor=actor,
+            note="Approved from Telegram",
+        )
+    else:
+        raise ValueError("Telegram approval source type is unsupported")
+
+    if (
+        automation is not None
+        and automation.publication_id
+        and automation.publication_workflow_id
+    ):
         await start_publication_workflow(
             automation.publication_id,
             automation.publication_workflow_id,
         )
-    set_session_state(
-        row.id,
-        "approved",
-        metadata={"automation_action": automation.action},
-    )
+    metadata = {
+        "automation_action": automation.action if automation is not None else "approved"
+    }
+    set_session_state(row.id, "approved", metadata=metadata)
     if row.message_id is not None:
         await asyncio.to_thread(client.clear_buttons, row.chat_id, row.message_id)
     _record_action(
         row.id,
         action="approved",
         actor=actor,
-        metadata={"automation_action": automation.action},
+        metadata=metadata,
     )
-    if automation.action == "publication_queued":
+    if automation is not None and automation.action == "publication_queued":
         return "Approved. YouTube publication is queued."
     return "Approved. Katcha recorded the decision."
-
 
 async def _reject(
     client: TelegramBotClient,
     row: TelegramReviewSession,
     actor: str,
 ) -> str:
-    if row.source_kind != "short_episode":
-        raise ValueError("Telegram rejection is not implemented for this source type")
-    review_short_episode(
-        row.source_id,
-        decision=ReviewDecision.REJECT,
-        actor=actor,
-        note="Rejected from Telegram",
-    )
+    if row.source_kind == "short_episode":
+        review_short_episode(
+            row.source_id,
+            decision=ReviewDecision.REJECT,
+            actor=actor,
+            note="Rejected from Telegram",
+        )
+    elif row.source_kind == "production":
+        review_production(
+            row.source_id,
+            decision=ReviewDecision.REJECT,
+            actor=actor,
+            note="Rejected from Telegram",
+        )
+    elif row.source_kind == "compilation":
+        review_compilation(
+            row.source_id,
+            decision=ReviewDecision.REJECT,
+            actor=actor,
+            note="Rejected from Telegram",
+        )
+    else:
+        raise ValueError("Telegram rejection source type is unsupported")
     set_session_state(row.id, "rejected")
     if row.message_id is not None:
         await asyncio.to_thread(client.clear_buttons, row.chat_id, row.message_id)
     _record_action(row.id, action="rejected", actor=actor)
     return "Rejected. This generation will not move forward."
-
 
 async def _backlog(
     client: TelegramBotClient,
@@ -350,23 +391,54 @@ async def _handle_feedback(
         return True
 
     try:
-        child = register_short_episode_regeneration(
-            row.source_id,
-            stage="script",
-            note=text[:2000],
-            actor=f"telegram:{user_id}",
-        )
-        workflow_id = f"{child.workflow_id}-editorial-script"
-        await start_short_episode_editorial_workflow(
-            str(child.id),
-            workflow_id,
-            start_stage="script",
-        )
+        actor = f"telegram:{user_id}"
+        if row.source_kind == "short_episode":
+            child = register_short_episode_regeneration(
+                row.source_id,
+                stage="script",
+                note=text[:2000],
+                actor=actor,
+            )
+            workflow_id = f"{child.workflow_id}-editorial-script"
+            await start_short_episode_editorial_workflow(
+                str(child.id),
+                workflow_id,
+                start_stage="script",
+            )
+        elif row.source_kind == "production":
+            child = register_regeneration(
+                row.source_id,
+                stage="script",
+                note=text[:2000],
+                actor=actor,
+            )
+            workflow_id = child.workflow_id
+            await start_production_workflow(
+                str(child.id),
+                workflow_id,
+                start_stage="script",
+            )
+        elif row.source_kind == "compilation":
+            child = register_compilation_regeneration(
+                row.source_id,
+                stage="plan",
+                note=text[:2000],
+                actor=actor,
+            )
+            workflow_id = child.workflow_id
+            await start_longform_workflow(
+                str(child.id),
+                workflow_id,
+                start_stage=child.regenerate_from or "plan",
+            )
+        else:
+            raise ValueError("Telegram edit source type is unsupported")
+
         set_session_state(
             row.id,
             "regenerating",
             metadata={
-                "child_episode_id": str(child.id),
+                "child_source_id": str(child.id),
                 "feedback": text[:2000],
             },
         )
@@ -375,9 +447,9 @@ async def _handle_feedback(
         _record_action(
             row.id,
             action="regeneration_queued",
-            actor=f"telegram:{user_id}",
+            actor=actor,
             metadata={
-                "child_episode_id": str(child.id),
+                "child_source_id": str(child.id),
                 "feedback": text[:2000],
             },
         )
