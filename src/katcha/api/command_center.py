@@ -5,19 +5,17 @@ from typing import Literal
 
 from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel, Field
-from sqlalchemy import select
-
 from katcha.ai.command_center import compose_grounded_answer
 from katcha.db import session_scope
-from katcha.domain import ProductionStatus
+from katcha.domain import CompilationStatus, ProductionStatus
 from katcha.models import DomainEvent
 from katcha.orchestration.client import (
     start_channel_intelligence_refresh,
     start_longform_workflow,
     start_production_workflow,
 )
-from katcha.render_models import RenderAttempt
 from katcha.services.channel_editorial import freeze_channel_compilation_candidates
+from katcha.services.channel_profiles import ensure_active_profile
 from katcha.services.command_center import (
     best_clips,
     channel_status,
@@ -286,6 +284,9 @@ async def execute_action(request: ExecuteActionRequest) -> ExecuteActionResponse
         raise HTTPException(status_code=409, detail="explicit confirmation is required")
 
     try:
+        with session_scope() as session:
+            ensure_active_profile(session, request.channel_profile_id)
+
         if request.action_type == "refresh_channel_intelligence":
             run_key = f"katcha-ai-{uuid.uuid4().hex}"
             workflow_id = f"channel-intelligence-refresh-{request.channel_profile_id}-{uuid.uuid4().hex[:20]}"
@@ -325,12 +326,13 @@ async def execute_action(request: ExecuteActionRequest) -> ExecuteActionResponse
                 idempotency_key=str(request.payload.get("idempotency_key") or f"katcha-ai-{uuid.uuid4().hex}"),
                 channel_profile_id=request.channel_profile_id,
             )
-            compilation = freeze_channel_compilation_candidates(compilation.id)
-            await start_longform_workflow(
-                str(compilation.id),
-                compilation.workflow_id,
-                start_stage="select",
-            )
+            if compilation.status == CompilationStatus.QUEUED.value:
+                compilation = freeze_channel_compilation_candidates(compilation.id)
+                await start_longform_workflow(
+                    str(compilation.id),
+                    compilation.workflow_id,
+                    start_stage="select",
+                )
             result = {
                 "compilation_id": str(compilation.id),
                 "workflow_id": compilation.workflow_id,
