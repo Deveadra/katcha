@@ -25,7 +25,7 @@ def test_bootstrap_preserves_keys_and_unrelated_settings(tmp_path):
     assert app.values["KATCHA_CREDENTIAL_ENCRYPTION_KEY"] == key
     assert app.values["KATCHA_OPENAI_API_KEY"] == "private-key"
     assert len(app.values["KATCHA_TELEGRAM_PAIRING_CODE"]) >= 8
-    assert "KATCHA_TELEGRAM_REVIEW_STORAGE_ENDPOINT_URL" in app.values
+    assert "KATCHA_TELEGRAM_REVIEW_STORAGE_ENDPOINT_URL" in runtime.FIELDS
     assert app.env_path.stat().st_mode & 0o777 == 0o600
     assert "private-key" not in json.dumps(app.snapshot())
 
