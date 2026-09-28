@@ -1,8 +1,6 @@
 import io
 import wave
 from decimal import Decimal
-from types import SimpleNamespace
-
 from katcha.ai.router import ModelTarget
 from katcha.audio import tts
 from katcha.audio.tts import choose_voice_profile
