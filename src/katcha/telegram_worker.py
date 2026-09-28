@@ -505,17 +505,32 @@ async def main() -> None:
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
     )
     if not settings.telegram_enabled:
-        LOGGER.info("Telegram worker disabled; set KATCHA_TELEGRAM_ENABLED=true to enable it")
-        return
-    if settings.telegram_chat_id is None:
-        raise RuntimeError("KATCHA_TELEGRAM_CHAT_ID is required when Telegram is enabled")
+        LOGGER.info(
+            "Telegram worker is dormant; set KATCHA_TELEGRAM_ENABLED=true to enable it"
+        )
+        while True:
+            await asyncio.sleep(3600)
 
-    client = TelegramBotClient(settings)
-    identity = await asyncio.to_thread(client.get_me)
-    LOGGER.info(
-        "Telegram worker connected as @%s",
-        identity.get("username") or identity.get("id"),
-    )
+    if settings.telegram_chat_id is None or settings.telegram_bot_token is None:
+        LOGGER.error(
+            "Telegram is enabled but bot token/chat ID are incomplete; worker remains dormant"
+        )
+        while True:
+            await asyncio.sleep(300)
+
+    client: TelegramBotClient | None = None
+    while client is None:
+        try:
+            candidate = TelegramBotClient(settings)
+            identity = await asyncio.to_thread(candidate.get_me)
+            LOGGER.info(
+                "Telegram worker connected as @%s",
+                identity.get("username") or identity.get("id"),
+            )
+            client = candidate
+        except TelegramAPIError:
+            LOGGER.exception("Telegram bot authentication failed; retrying")
+            await asyncio.sleep(30)
 
     while True:
         try:
