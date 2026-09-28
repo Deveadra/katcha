@@ -1,6 +1,7 @@
 from katcha.acquisition.adapters import available_adapters
 from katcha.acquisition.web_scout import (
     _next_scout_cursor,
+    _response_output_text,
     _web_search_tool,
     parse_web_scout_output,
 )
@@ -73,3 +74,23 @@ def test_web_scout_keeps_bounded_exploration_memory() -> None:
     assert cursor["cycle"] == 5
     assert len(cursor["recent_sources"]) <= 60
     assert cursor["recent_sources"][-1] == "https://bsky.app/profile/example/post/1"
+
+
+def test_web_scout_extracts_responses_api_output_text() -> None:
+    payload = {
+        "output": [
+            {"type": "web_search_call", "action": {"sources": []}},
+            {
+                "type": "message",
+                "content": [
+                    {
+                        "type": "output_text",
+                        "text": '{"items":[]}',
+                        "annotations": [],
+                    }
+                ],
+            },
+        ]
+    }
+
+    assert _response_output_text(payload) == '{"items":[]}'
