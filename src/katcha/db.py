@@ -43,6 +43,7 @@ def load_model_metadata() -> None:
         production_models,
         publishing_models,
         short_episode_models,
+        telegram_models,
         trend_activation_models,
         trend_calibration_models,
         trend_models,

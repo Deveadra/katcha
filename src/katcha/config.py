@@ -88,6 +88,26 @@ class Settings(BaseSettings):
     youtube_processing_max_polls: int = Field(default=120, ge=1, le=720)
     youtube_analytics_offsets_hours: str = "1,6,24,72,168,720"
 
+    telegram_enabled: bool = False
+    telegram_bot_token: SecretStr | None = None
+    telegram_chat_id: int | None = None
+    telegram_allowed_user_id: int | None = None
+    telegram_pairing_code: str | None = Field(default=None, min_length=8, max_length=64)
+    telegram_poll_timeout_seconds: int = Field(default=25, ge=1, le=50)
+    telegram_review_scan_seconds: int = Field(default=10, ge=2, le=300)
+    telegram_video_max_mb: int = Field(default=50, ge=1, le=50)
+
+    @field_validator(
+        "telegram_bot_token",
+        "telegram_chat_id",
+        "telegram_allowed_user_id",
+        "telegram_pairing_code",
+        mode="before",
+    )
+    @classmethod
+    def normalize_optional_telegram_setting(cls, value):
+        return None if isinstance(value, str) and not value.strip() else value
+
     youtube_data_api_key: str | None = None
     reddit_client_id: str | None = None
     reddit_client_secret: str | None = None
