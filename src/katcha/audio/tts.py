@@ -472,12 +472,12 @@ def synthesize_speech(
     text = text.strip()
     if not text:
         raise ValueError("TTS text cannot be empty")
+    if settings.resolved_ai_execution_mode() == "fixture":
+        return _fixture_tts(text)
     if settings.tts_provider_override != "auto":
         key = LATEST_VOICE_PROFILE_BY_PROVIDER[settings.tts_provider_override]
         profile = _resolve_profile(get_voice_profile(key), settings)
         fallback_profile = None
-    if settings.resolved_ai_execution_mode() == "fixture":
-        return _fixture_tts(text)
 
     profile = _resolve_profile(profile, settings) if profile is not None else None
     fallback_profile = (
