@@ -38,6 +38,14 @@ class TelegramBotClient:
         result = self._result(response, "getMe")
         return dict(result or {})
 
+    def delete_webhook(self) -> None:
+        response = httpx.post(
+            f"{self.base_url}/deleteWebhook",
+            json={"drop_pending_updates": False},
+            timeout=20,
+        )
+        self._result(response, "deleteWebhook")
+
     def get_updates(
         self,
         *,
