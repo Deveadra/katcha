@@ -82,6 +82,16 @@ async def _run_refresh(channel_profile_id: str, run_key: str) -> dict[str, objec
 
     )
     try:
+        clip_lifecycle = await workflow.execute_activity(
+            "run_clip_lifecycle_maintenance_activity",
+            channel_profile_id,
+            start_to_close_timeout=timedelta(minutes=10),
+            retry_policy=RetryPolicy(maximum_attempts=1),
+        )
+    except Exception:
+        clip_lifecycle = {"status": "unavailable"}
+
+    try:
         packaging_seed = await workflow.execute_activity(
             "seed_channel_packaging_activity",
             channel_profile_id,
@@ -114,6 +124,7 @@ async def _run_refresh(channel_profile_id: str, run_key: str) -> dict[str, objec
         "packaging_experiments": packaging_experiments,
         "activation_performance": activation_performance,
         "automation": automation,
+        "clip_lifecycle": clip_lifecycle,
         "packaging_seed": packaging_seed,
     }
 
