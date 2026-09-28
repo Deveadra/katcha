@@ -6,6 +6,7 @@ from fastapi.security import HTTPAuthorizationCredentials
 from pydantic import ValidationError
 from starlette.requests import Request
 
+from katcha.api.command_center import CommandRequest, action_status, command
 from katcha.api.control_auth import (
     _authenticate,
     _require_named_principal_route_access,
@@ -215,3 +216,59 @@ def test_control_principal_configuration_rejects_short_tokens() -> None:
                 }
             ],
         )
+
+
+
+def _restricted_request(
+    channel_id: uuid.UUID,
+    *,
+    scopes: set[str],
+) -> Request:
+    request = _request()
+    request.state.control_actor = "control-principal:aerith"
+    request.state.control_principal_name = "aerith"
+    request.state.control_scopes = set(scopes)
+    request.state.control_channel_profile_ids = {str(channel_id)}
+    return request
+
+
+def test_command_center_body_channel_cannot_escape_principal_allowlist() -> None:
+    allowed = uuid.uuid4()
+    blocked = uuid.uuid4()
+    request = _restricted_request(allowed, scopes={"ai:read"})
+
+    with pytest.raises(HTTPException) as exc:
+        command(
+            request,
+            CommandRequest(
+                channel_profile_id=blocked,
+                prompt="What is currently failing?",
+            ),
+        )
+
+    assert exc.value.status_code == 403
+    assert "not authorized for this channel" in str(exc.value.detail)
+
+
+def test_command_action_lookup_cannot_escape_principal_allowlist(
+    monkeypatch,
+) -> None:
+    allowed = uuid.uuid4()
+    blocked = uuid.uuid4()
+    request = _restricted_request(allowed, scopes={"ai:read"})
+    proposal_id = uuid.uuid4()
+
+    class Proposal:
+        id = proposal_id
+        channel_profile_id = blocked
+
+    monkeypatch.setattr(
+        "katcha.api.command_center.get_action_proposal",
+        lambda value: Proposal(),
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        action_status(proposal_id, request)
+
+    assert exc.value.status_code == 403
+    assert "not authorized for this channel" in str(exc.value.detail)
