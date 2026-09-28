@@ -236,6 +236,143 @@
 }
 .money-cell span { display: block; color: var(--muted); font-size: 8px; text-transform: uppercase; letter-spacing: .08em; }
 .money-cell strong { display: block; margin-top: 5px; font-size: 17px; }
+.monetization-layout {
+    display: grid;
+    grid-template-columns: minmax(0, 1.15fr) minmax(360px, .85fr);
+    gap: 9px;
+    align-items: start;
+}
+.journey-card,
+.goal-card { padding: 18px; }
+.milestone-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+}
+.milestone {
+    border: 1px solid #2b3946;
+    border-radius: 9px;
+    background: #121d28;
+    padding: 13px;
+}
+.milestone-top {
+    display: flex;
+    justify-content: space-between;
+    align-items: start;
+    gap: 10px;
+    margin-bottom: 12px;
+}
+.milestone-top strong { font-size: 12px; }
+.milestone-top small { display: block; color: var(--muted); font-size: 8px; margin-top: 3px; }
+.milestone-status { color: var(--lime); font-size: 9px; font-weight: 850; white-space: nowrap; }
+.progress-item { margin-top: 10px; }
+.progress-meta {
+    display: flex;
+    justify-content: space-between;
+    gap: 10px;
+    color: #aebdc6;
+    font-size: 9px;
+}
+.progress-meta span:last-child { color: var(--muted); text-align: right; }
+.progress-track {
+    height: 5px;
+    margin-top: 5px;
+    overflow: hidden;
+    border-radius: 999px;
+    background: #273440;
+}
+.progress-track i {
+    display: block;
+    height: 100%;
+    background: var(--lime);
+    border-radius: inherit;
+}
+.audience-or {
+    margin: 10px 0 2px;
+    color: #70818f;
+    font-size: 8px;
+    font-weight: 850;
+    letter-spacing: .12em;
+}
+.policy-note {
+    margin-top: 9px;
+    padding: 10px 12px;
+    border: 1px solid #48533d;
+    border-radius: 8px;
+    background: #172219;
+    color: #b9caab;
+    font-size: 9px;
+    line-height: 1.55;
+}
+.journey-disclaimer {
+    margin: 11px 0 0;
+    color: var(--muted);
+    font-size: 8px;
+    line-height: 1.55;
+}
+.goal-fields {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+}
+.goal-fields label {
+    color: #8799a7;
+    font-size: 8px;
+    font-weight: 800;
+    letter-spacing: .05em;
+}
+.goal-fields select,
+.goal-fields input {
+    width: 100%;
+    margin-top: 5px;
+}
+.custom-goal-editor {
+    margin: 14px 0;
+    padding-top: 13px;
+    border-top: 1px solid #283643;
+}
+.custom-goal-fields {
+    display: grid;
+    grid-template-columns: 1.35fr .8fr .8fr 1fr auto;
+    gap: 6px;
+    margin-top: 7px;
+}
+.custom-goal-fields > * { min-width: 0; }
+.custom-goals {
+    display: grid;
+    gap: 5px;
+    margin-top: 8px;
+}
+.custom-goal {
+    display: grid;
+    grid-template-columns: minmax(0,1fr) auto auto;
+    gap: 8px;
+    align-items: center;
+    padding: 8px 9px;
+    border: 1px solid #2b3946;
+    border-radius: 7px;
+    background: #101923;
+    font-size: 9px;
+}
+.custom-goal small { color: var(--muted); }
+.custom-goal button {
+    border: 0;
+    background: transparent;
+    color: #9babba;
+    cursor: pointer;
+}
+.custom-goal button:hover { color: #ffb0a8; }
+.ai-growth-focus {
+    margin-top: 14px;
+    padding: 12px;
+    border: 1px solid #2b3946;
+    border-radius: 8px;
+    background: #101923;
+    font-size: 9px;
+    line-height: 1.6;
+}
+.ai-growth-focus strong { color: var(--lime); }
+
 .content-layout {
     display: grid;
     grid-template-columns: minmax(420px, 1.15fr) minmax(330px, .85fr);
@@ -387,7 +524,7 @@
     .studio-hero { min-height: 220px; }
     .connect { grid-template-columns: 1fr; }
     .channel-command { align-items: flex-start; }
-    .content-layout, .overview-grid { grid-template-columns: 1fr; }
+    .content-layout, .overview-grid, .monetization-layout { grid-template-columns: 1fr; }
     .video-detail { position: static; }
     .control-grid { grid-template-columns: 1fr; }
 }
@@ -399,7 +536,10 @@
     .command-actions { margin-top: 14px; }
     .section-title { display: block; }
     .section-title small, .section-title > .studio-button { display: inline-flex; margin-top: 8px; }
-    .metric-grid, .growth-grid, .production-grid { grid-template-columns: 1fr; }
+    .metric-grid, .growth-grid, .production-grid, .milestone-grid { grid-template-columns: 1fr; }
+    .goal-fields { grid-template-columns: 1fr; }
+    .custom-goal-fields { grid-template-columns: 1fr 1fr; }
+    .custom-goal-fields .studio-button { grid-column: 1/-1; }
     .schedule-card { grid-column: auto; }
     .publication-row { grid-template-columns: minmax(0,1fr) auto; }
     .publication-date { display: none; }
