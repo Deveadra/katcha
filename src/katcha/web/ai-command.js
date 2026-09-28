@@ -169,7 +169,7 @@ function renderContext(result) {
             return (
                 '<article class="evidence-card"><div class="evidence-top"><span class="evidence-kind">' +
                 esc(record.kind) +
-                "</span><span class="evidence-kind">" +
+                '</span><span class="evidence-kind">' +
                 esc(String(record.id || "").slice(0, 8)) +
                 "</span></div><strong>" +
                 esc(record.title || record.error || record.kind.replaceAll("_", " ")) +
@@ -204,7 +204,7 @@ function renderContext(result) {
     const keyPoints = (result.key_points || []).length
         ? '<div class="context-section"><div class="context-section-head"><span>KATCHA NOTES</span><b>' +
           result.key_points.length +
-          "</b></div><div class="evidence-list">" +
+          '</b></div><div class="evidence-list">' +
           result.key_points
               .map((point) => '<article class="evidence-card"><p>' + esc(point) + "</p></article>")
               .join("") +
