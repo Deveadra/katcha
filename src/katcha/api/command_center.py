@@ -5,6 +5,7 @@ from typing import Literal
 
 from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel, Field
+
 from katcha.ai.command_center import compose_grounded_answer
 from katcha.db import session_scope
 from katcha.domain import CompilationStatus, ProductionStatus
@@ -25,7 +26,10 @@ from katcha.services.command_center import (
     performance_advice,
 )
 from katcha.services.compilations import register_compilation
-from katcha.services.productions import register_regeneration, register_short_production
+from katcha.services.productions import (
+    register_regeneration,
+    register_short_production,
+)
 from katcha.services.render_recovery import render_attempts_for_source
 
 
@@ -109,7 +113,11 @@ def _actions(
     actions: list[CommandAction] = []
     if intent == "failures":
         for item in evidence:
-            production_id = item.get("production_id") if item.get("kind") == "render_attempt" else None
+            production_id = (
+                item.get("production_id")
+                if item.get("kind") == "render_attempt"
+                else None
+            )
             if item.get("kind") == "production":
                 production_id = item.get("id")
             if production_id and item.get("status") in {"dead_letter", "failed", "retry_exhausted"}:
@@ -118,7 +126,10 @@ def _actions(
                         id=f"recover:{production_id}",
                         type="recover_production_render",
                         label="Recover render",
-                        description="Create a new render generation through Katcha's existing recovery path.",
+                        description=(
+                            "Create a new render generation through Katcha's "
+                            "existing recovery path."
+                        ),
                         payload={"production_id": str(production_id)},
                     )
                 )
@@ -139,7 +150,10 @@ def _actions(
                 id=f"produce:{lead['id']}",
                 type="create_short_production",
                 label="Make a short from top clip",
-                description="Start a channel-scoped production using the selected clip and current channel defaults.",
+                description=(
+                    "Start a channel-scoped production using the selected clip "
+                    "and current channel defaults."
+                ),
                 payload={"clip_id": str(lead["id"])},
             )
         )
@@ -164,7 +178,8 @@ def _actions(
                     label="Create ranked episode",
                     description=(
                         "Start a channel-scoped compilation. Katcha will use its existing "
-                        "candidate-freeze policy; exact manual clip locking is not yet part of this action contract."
+                        "candidate-freeze policy; exact manual clip locking is "
+                        "not yet part of this action contract."
                     ),
                     payload={
                         "theme": request.prompt[:500],
@@ -289,7 +304,10 @@ async def execute_action(request: ExecuteActionRequest) -> ExecuteActionResponse
 
         if request.action_type == "refresh_channel_intelligence":
             run_key = f"katcha-ai-{uuid.uuid4().hex}"
-            workflow_id = f"channel-intelligence-refresh-{request.channel_profile_id}-{uuid.uuid4().hex[:20]}"
+            workflow_id = (
+                f"channel-intelligence-refresh-{request.channel_profile_id}-"
+                f"{uuid.uuid4().hex[:20]}"
+            )
             await start_channel_intelligence_refresh(
                 str(request.channel_profile_id),
                 workflow_id,
@@ -302,7 +320,10 @@ async def execute_action(request: ExecuteActionRequest) -> ExecuteActionResponse
             production = register_short_production(
                 clip_id,
                 persona_key=str(request.payload.get("persona_key") or "youth_host"),
-                idempotency_key=str(request.payload.get("idempotency_key") or f"katcha-ai-{uuid.uuid4().hex}"),
+                idempotency_key=str(
+                    request.payload.get("idempotency_key")
+                    or f"katcha-ai-{uuid.uuid4().hex}"
+                ),
                 channel_profile_id=request.channel_profile_id,
                 edit_blueprint_key=(
                     str(request.payload["edit_blueprint_key"])
@@ -321,9 +342,14 @@ async def execute_action(request: ExecuteActionRequest) -> ExecuteActionResponse
         elif request.action_type == "create_compilation":
             compilation = register_compilation(
                 theme=str(request.payload.get("theme") or "Katcha AI episode")[:500],
-                target_segment_count=int(request.payload.get("target_segment_count") or 5),
+                target_segment_count=int(
+                    request.payload.get("target_segment_count") or 5
+                ),
                 persona_key=str(request.payload.get("persona_key") or "youth_host"),
-                idempotency_key=str(request.payload.get("idempotency_key") or f"katcha-ai-{uuid.uuid4().hex}"),
+                idempotency_key=str(
+                    request.payload.get("idempotency_key")
+                    or f"katcha-ai-{uuid.uuid4().hex}"
+                ),
                 channel_profile_id=request.channel_profile_id,
             )
             if compilation.status == CompilationStatus.QUEUED.value:
@@ -337,7 +363,9 @@ async def execute_action(request: ExecuteActionRequest) -> ExecuteActionResponse
                 "compilation_id": str(compilation.id),
                 "workflow_id": compilation.workflow_id,
                 "status": compilation.status,
-                "candidate_count": len((compilation.candidate_snapshot or {}).get("candidates") or []),
+                "candidate_count": len(
+                    (compilation.candidate_snapshot or {}).get("candidates") or []
+                ),
             }
 
         else:
