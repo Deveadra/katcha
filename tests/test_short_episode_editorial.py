@@ -65,6 +65,9 @@ def test_editorial_review_and_publication_routes_are_public_api_contracts() -> N
     assert "/v1/short-episodes/{short_episode_id}/editorial" in paths
     assert "/v1/short-episodes/{short_episode_id}/review" in paths
     assert "/v1/short-episodes/{short_episode_id}/publications" in paths
+    assert "/v1/studio/episodes/{episode_id}/render" in paths
+    assert "/v1/studio/clips/{clip_id}/media" in paths
+    assert "/v1/studio/channels/{channel_profile_id}/logo" in paths
 
 
 def test_editorial_workflow_identity_is_stage_scoped() -> None:

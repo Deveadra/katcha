@@ -95,6 +95,10 @@ def _brand_voice_profiles(
             profile.provider == "openai" and settings.openai_api_key
         ) or (
             profile.provider == "gemini" and settings.gemini_api_key
+        ) or (
+            profile.provider == "elevenlabs"
+            and settings.elevenlabs_api_key
+            and settings.elevenlabs_voice_id
         ):
             available.append(profile)
 
@@ -633,7 +637,11 @@ def build_render_manifest_activity(production_id: str) -> dict[str, object]:
                 source_duration_seconds=float(clip.duration_seconds or 0),
                 source_width=clip.width,
                 source_height=clip.height,
-                source_audio_volume=settings.source_audio_volume,
+                source_audio_volume=(
+                    blueprint.narration.source_audio_volume
+                    if blueprint is not None
+                    else settings.source_audio_volume
+                ),
                 width=settings.render_width,
                 height=settings.render_height,
                 fps=settings.render_fps,
@@ -647,6 +655,29 @@ def build_render_manifest_activity(production_id: str) -> dict[str, object]:
                 reaction_pack=reaction_pack,
                 reaction_cues=list(
                     (script.script_metadata or {}).get("reaction_cues") or []
+                ),
+                source_fit=(
+                    blueprint.source_layout.fit if blueprint is not None else "contain"
+                ),
+                source_background_mode=(
+                    blueprint.source_layout.background_mode
+                    if blueprint is not None
+                    else "blurred_fill"
+                ),
+                source_audio_policy=(
+                    blueprint.narration.source_audio_policy
+                    if blueprint is not None
+                    else "retain"
+                ),
+                source_duck_volume=(
+                    blueprint.narration.narration_duck_volume
+                    if blueprint is not None
+                    else 0.16
+                ),
+                captions_enabled=(
+                    blueprint.narration.captions_enabled
+                    if blueprint is not None
+                    else True
                 ),
             )
             caption_payload = [

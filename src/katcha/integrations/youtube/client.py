@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -209,6 +209,104 @@ class YouTubeClient:
         if response.is_error:
             _raise_api_error("YouTube thumbnail update failed", response)
         return dict(response.json())
+
+    def channel_resource(self) -> dict[str, Any]:
+        response = httpx.get(
+            f"{DATA_API_BASE}/channels",
+            params={
+                "part": "snippet,statistics,contentDetails,status",
+                "mine": "true",
+            },
+            headers=self._headers(),
+            timeout=30,
+        )
+        if response.is_error:
+            _raise_api_error("YouTube channel lookup failed", response)
+        items = response.json().get("items") or []
+        if not items:
+            raise YouTubeAPIError("YouTube channel lookup returned no channel")
+        return dict(items[0])
+
+    def public_uploads_since(
+        self,
+        cutoff: datetime,
+        *,
+        max_pages: int = 10,
+    ) -> int:
+        channel = self.channel_resource()
+        uploads = (
+            (channel.get("contentDetails") or {})
+            .get("relatedPlaylists", {})
+            .get("uploads")
+        )
+        if not uploads:
+            return 0
+
+        cutoff_utc = cutoff.astimezone(UTC)
+        count = 0
+        page_token: str | None = None
+        for _ in range(max_pages):
+            params: dict[str, str | int] = {
+                "part": "contentDetails,snippet",
+                "playlistId": str(uploads),
+                "maxResults": 50,
+            }
+            if page_token:
+                params["pageToken"] = page_token
+            response = httpx.get(
+                f"{DATA_API_BASE}/playlistItems",
+                params=params,
+                headers=self._headers(),
+                timeout=30,
+            )
+            if response.is_error:
+                _raise_api_error("YouTube uploads lookup failed", response)
+            payload = response.json()
+            items = list(payload.get("items") or [])
+            if not items:
+                break
+
+            video_ids: list[str] = []
+            stop_after_page = False
+            for item in items:
+                published_raw = (item.get("contentDetails") or {}).get(
+                    "videoPublishedAt"
+                ) or (item.get("snippet") or {}).get("publishedAt")
+                if published_raw:
+                    published = datetime.fromisoformat(
+                        str(published_raw).replace("Z", "+00:00")
+                    )
+                    if published < cutoff_utc:
+                        stop_after_page = True
+                        continue
+                video_id = (item.get("contentDetails") or {}).get("videoId")
+                if video_id:
+                    video_ids.append(str(video_id))
+
+            if video_ids:
+                videos = httpx.get(
+                    f"{DATA_API_BASE}/videos",
+                    params={
+                        "part": "status",
+                        "id": ",".join(video_ids),
+                    },
+                    headers=self._headers(),
+                    timeout=30,
+                )
+                if videos.is_error:
+                    _raise_api_error("YouTube upload status lookup failed", videos)
+                count += sum(
+                    1
+                    for item in videos.json().get("items") or []
+                    if (item.get("status") or {}).get("privacyStatus") == "public"
+                )
+
+            if stop_after_page:
+                break
+            page_token = str(payload.get("nextPageToken") or "") or None
+            if page_token is None:
+                break
+        return count
 
     def video_resource(self, video_id: str) -> dict[str, Any]:
         response = httpx.get(

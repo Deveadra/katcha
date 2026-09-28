@@ -1,4 +1,5 @@
 import React from 'react';
+import {BrandLogo} from './brand-logo.jsx';
 import {
   AbsoluteFill,
   Audio,
@@ -137,6 +138,7 @@ export const BlueprintVideo = ({source, header, narration, brand}) => {
         </Sequence>
       ) : null}
 
+      <BrandLogo logo={brand?.logo} />
       <Captions narration={narration} brand={brand} />
     </AbsoluteFill>
   );

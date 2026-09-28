@@ -60,6 +60,7 @@ REQUIRED_SERVICES = {
     "production-worker",
     "longform-worker",
     "publishing-worker",
+    "telegram-worker",
     "discovery-worker",
     "trends-worker",
     "intelligence-worker",
@@ -72,6 +73,12 @@ FIELDS = {
     "KATCHA_YOUTUBE_CLIENT_ID",
     "KATCHA_YOUTUBE_CLIENT_SECRET",
     "KATCHA_YOUTUBE_DATA_API_KEY",
+    "KATCHA_TELEGRAM_ENABLED",
+    "KATCHA_TELEGRAM_BOT_TOKEN",
+    "KATCHA_TELEGRAM_CHAT_ID",
+    "KATCHA_TELEGRAM_ALLOWED_USER_ID",
+    "KATCHA_TELEGRAM_PAIRING_CODE",
+    "KATCHA_TELEGRAM_REVIEW_STORAGE_ENDPOINT_URL",
     "KATCHA_RENDER_BACKEND",
     "KATCHA_AWS_PROFILE",
     "KATCHA_AWS_EXPECTED_ACCOUNT_ID",
@@ -136,6 +143,8 @@ class Runtime:
             ).decode()
         if not values.get("KATCHA_CONTROL_API_TOKEN"):
             additions["KATCHA_CONTROL_API_TOKEN"] = secrets.token_urlsafe(32)
+        if not values.get("KATCHA_TELEGRAM_PAIRING_CODE"):
+            additions["KATCHA_TELEGRAM_PAIRING_CODE"] = secrets.token_urlsafe(9)
         if additions:
             self.save(additions)
         self.values = read_env(self.env_path)
@@ -870,11 +879,14 @@ class Handler(BaseHTTPRequestHandler):
             "/editing": "/editing/assets/editing.html",
             "/explorer": "/explorer/assets/index.html",
             "/ingestion": "/editing/assets/ingestion.html",
+            "/clips": "/editing/assets/clips.html",
+            "/channels": "/channels/assets/channels.html",
+            "/ai": "/ai/assets/ai.html",
         }
         if path in redirects:
             self.redirect(redirects[path])
             return True
-        prefixes = ("/editing/assets/", "/explorer/assets/")
+        prefixes = ("/editing/assets/", "/explorer/assets/", "/channels/assets/", "/ai/assets/")
         prefix = next((item for item in prefixes if path.startswith(item)), None)
         if prefix is None:
             return False
@@ -968,7 +980,16 @@ class Handler(BaseHTTPRequestHandler):
             return self.send(400, {"error": runtime.redact(exc)})
 
     def proxy(self):
-        if not self.path.startswith(("/v1/", "/editing", "/explorer", "/ingestion")):
+        allowed_prefixes = (
+            "/v1/",
+            "/editing",
+            "/explorer",
+            "/ingestion",
+            "/clips",
+            "/channels",
+            "/ai",
+        )
+        if not self.path.startswith(allowed_prefixes):
             return self.send(404, {"error": "Not found"})
         connection = http.client.HTTPConnection("127.0.0.1", 8000, timeout=120)
         headers_sent = False

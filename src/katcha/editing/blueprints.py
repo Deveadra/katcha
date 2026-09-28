@@ -38,6 +38,17 @@ class EditingQualityPolicy(BaseModel):
     max_narration_ratio: float = Field(default=0.55, ge=0, le=1)
 
 
+class AIGuidancePolicy(BaseModel):
+    """Reusable operator boundaries applied to future AI editorial passes."""
+
+    instruction_strength: Literal["strict", "balanced", "flexible"] = "balanced"
+    preserve_clip_order: bool = True
+    prefer_native_moments: bool = True
+    always_rules: list[str] = Field(default_factory=list, max_length=12)
+    never_rules: list[str] = Field(default_factory=list, max_length=12)
+    operator_notes: str = Field(default="", max_length=2000)
+
+
 class EditBlueprintContract(BaseModel):
     key: str = Field(min_length=1, max_length=96)
     version: str = Field(min_length=1, max_length=32)
@@ -47,6 +58,7 @@ class EditBlueprintContract(BaseModel):
     header: HeaderPolicy = Field(default_factory=HeaderPolicy)
     transition: Literal["cut", "punch_cut"] = "cut"
     quality: EditingQualityPolicy = Field(default_factory=EditingQualityPolicy)
+    ai_guidance: AIGuidancePolicy = Field(default_factory=AIGuidancePolicy)
 
     @model_validator(mode="after")
     def validate_contract(self) -> EditBlueprintContract:
@@ -63,6 +75,8 @@ class EditBlueprintContract(BaseModel):
         voice_mode = self.narration.mode in {"persona_voice", "explanatory_voice"}
         if self.narration.required and not voice_mode:
             raise ValueError("required narration is only valid for a voice narration mode")
+        if voice_mode and self.source_layout.mode != "full_frame":
+            raise ValueError("voice narration blueprints currently require full-frame layout")
         if not voice_mode and self.narration.captions_enabled:
             raise ValueError("text/source-only blueprints cannot enable narration captions")
         return self

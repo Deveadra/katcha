@@ -119,6 +119,24 @@ def test_reddit_api_and_oauth_caps_are_independent() -> None:
     assert by_bucket["reddit.api"].window_end != by_bucket["reddit.oauth"].window_end
 
 
+def test_web_scout_reserves_web_search_calls() -> None:
+    demands = provider_page_demands(
+        "web_scout",
+        {
+            "provider_quota_limits": {
+                "openai.web_search": {"limit": 24, "window_seconds": 86400}
+            }
+        },
+        now=datetime(2026, 9, 24, 6, 1, tzinfo=UTC),
+    )
+
+    assert len(demands) == 1
+    assert demands[0].provider_key == "openai"
+    assert demands[0].bucket_key == "openai.web_search"
+    assert demands[0].limit_units == 24
+    assert demands[0].units == 1
+
+
 def test_provider_quota_override_can_define_short_window() -> None:
     demands = provider_page_demands(
         "reddit",

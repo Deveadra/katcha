@@ -65,14 +65,19 @@ def _event(
     *,
     source_kind: RenderSourceKind,
     source_id: uuid.UUID,
+    channel_profile_id: uuid.UUID | None,
     event_type: str,
     payload: dict[str, object],
 ) -> DomainEvent:
+    scoped_payload = dict(payload)
+    scoped_payload["channel_profile_id"] = (
+        str(channel_profile_id) if channel_profile_id else None
+    )
     return DomainEvent(
         aggregate_type=source_kind,
         aggregate_id=str(source_id),
         event_type=event_type,
-        payload=payload,
+        payload=scoped_payload,
     )
 
 
@@ -129,6 +134,7 @@ def ensure_render_attempt(
             _event(
                 source_kind=source_kind,
                 source_id=source_id,
+                channel_profile_id=source.channel_profile_id,
                 event_type=f"{source_kind}.render_attempt_created",
                 payload={
                     "render_attempt_id": str(attempt.id),
@@ -190,6 +196,7 @@ def mark_render_attempt_retryable_failure(
                 _event(
                     source_kind=source_kind,
                     source_id=source_id,
+                    channel_profile_id=attempt.channel_profile_id,
                     event_type=f"{source_kind}.render_retryable_failure",
                     payload={
                         "render_attempt_id": str(attempt.id),
@@ -227,6 +234,7 @@ def mark_render_attempt_verified(
                 _event(
                     source_kind=source_kind,
                     source_id=source_id,
+                    channel_profile_id=attempt.channel_profile_id,
                     event_type=f"{source_kind}.render_attempt_verified",
                     payload={
                         "render_attempt_id": str(attempt.id),
@@ -256,6 +264,7 @@ def dead_letter_latest_render_attempt(
             _event(
                 source_kind=source_kind,
                 source_id=source_id,
+                channel_profile_id=attempt.channel_profile_id,
                 event_type=f"{source_kind}.render_dead_lettered",
                 payload={
                     "render_attempt_id": str(attempt.id),

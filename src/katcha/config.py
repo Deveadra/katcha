@@ -18,6 +18,11 @@ class Settings(BaseSettings):
     api_host: str = "0.0.0.0"
     api_port: int = 8000
     control_api_token: SecretStr | None = None
+    control_api_scopes: str = "*"
+
+    def resolved_control_scopes(self) -> set[str]:
+        values = {item.strip() for item in self.control_api_scopes.split(",") if item.strip()}
+        return values or {"*"}
 
     @field_validator("control_api_token", mode="before")
     @classmethod
@@ -49,14 +54,22 @@ class Settings(BaseSettings):
 
     openai_api_key: str | None = None
     gemini_api_key: str | None = None
+    elevenlabs_api_key: str | None = None
+    elevenlabs_voice_id: str | None = None
+    elevenlabs_model_id: str = "eleven_multilingual_v2"
+    elevenlabs_output_format: str = "pcm_24000"
+    elevenlabs_timeout_seconds: int = Field(default=90, ge=10, le=300)
+    elevenlabs_usd_per_1000_credits: float = Field(default=0.0, ge=0)
     ai_enabled: bool = False
     ai_execution_mode: Literal["auto", "fixture", "live"] = "auto"
     ai_live_routing_mode: Literal["free_first", "balanced", "quality", "economy"] = (
         "free_first"
     )
     ai_budget_usd_monthly: float = Field(default=25.0, ge=0)
+    web_scout_model: str = "gpt-5.6-luna"
 
     tts_profile: str = "openai_youth_v2"
+    tts_provider_override: Literal["auto", "openai", "gemini", "elevenlabs"] = "auto"
     renderer_url: str = "http://renderer:8787"
     render_width: int = Field(default=1080, ge=360, le=2160)
     render_height: int = Field(default=1920, ge=640, le=3840)
@@ -82,6 +95,39 @@ class Settings(BaseSettings):
     youtube_processing_poll_seconds: int = Field(default=30, ge=10, le=300)
     youtube_processing_max_polls: int = Field(default=120, ge=1, le=720)
     youtube_analytics_offsets_hours: str = "1,6,24,72,168,720"
+
+    telegram_enabled: bool = False
+    telegram_bot_token: SecretStr | None = None
+    telegram_chat_id: int | None = None
+    telegram_allowed_user_id: int | None = None
+    telegram_pairing_code: str | None = Field(default=None, min_length=8, max_length=64)
+    telegram_poll_timeout_seconds: int = Field(default=25, ge=1, le=50)
+    telegram_review_scan_seconds: int = Field(default=10, ge=2, le=300)
+    telegram_video_max_mb: int = Field(default=50, ge=1, le=50)
+    telegram_review_link_ttl_seconds: int = Field(default=21600, ge=300, le=604800)
+    telegram_review_storage_endpoint_url: str | None = None
+
+    @field_validator(
+        "telegram_bot_token",
+        "telegram_chat_id",
+        "telegram_allowed_user_id",
+        "telegram_pairing_code",
+        "telegram_review_storage_endpoint_url",
+        mode="before",
+    )
+    @classmethod
+    def normalize_optional_telegram_setting(cls, value):
+        return None if isinstance(value, str) and not value.strip() else value
+
+    @field_validator("telegram_review_storage_endpoint_url")
+    @classmethod
+    def validate_telegram_review_storage_endpoint(cls, value):
+        if value is None:
+            return None
+        text = str(value).strip().rstrip("/")
+        if not text.startswith(("https://", "http://")):
+            raise ValueError("Telegram review storage endpoint must use http:// or https://")
+        return text
 
     youtube_data_api_key: str | None = None
     reddit_client_id: str | None = None

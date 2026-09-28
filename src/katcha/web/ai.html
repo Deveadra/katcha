@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <meta name="theme-color" content="#0b1018">
+    <title>Katcha · AI Command Center</title>
+    <link rel="stylesheet" href="styles.css">
+    <link rel="stylesheet" href="ai-command.css">
+    <script src="ai-command.js" defer></script>
+    <script src="launcher-bridge.js" defer></script>
+</head>
+<body>
+    <div class="app-shell">
+        <aside class="rail">
+            <a class="brand" href="/explorer" aria-label="Katcha home">
+                <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
+                katcha<span class="brand-dot">.</span>
+            </a>
+            <div class="rail-label">WORKSPACE</div>
+            <nav class="rail-nav" aria-label="Workspace">
+                <a class="nav-item" href="/explorer"><span class="nav-icon">◉</span> Trend explorer</a>
+                <a class="nav-item active" href="/ai"><span class="nav-icon">✦</span> Katcha AI</a>
+                <a class="nav-item" href="/channels"><span class="nav-icon">▦</span> Channel Studio</a>
+                <a class="nav-item" href="/editing"><span class="nav-icon">◇</span> Editing control center</a>
+            </nav>
+            <div class="rail-spacer"></div>
+            <div class="rail-note">
+                <strong>Grounded, not magical</strong>
+                <p>Katcha AI explains stored evidence and proposes audited control-plane actions. It never treats a chat message as permission to publish or mutate state.</p>
+            </div>
+            <div class="rail-footer">Human interface / control plane</div>
+        </aside>
+
+        <main class="ai-main">
+            <header class="topbar">
+                <div class="breadcrumbs">Workspace / <strong>Katcha AI</strong></div>
+                <span id="connection-state" class="simulation">DISCONNECTED</span>
+            </header>
+
+            <div class="ai-shell">
+                <section class="ai-intro">
+                    <div>
+                        <div class="eyebrow">KATCHA AI / COMMAND CENTER</div>
+                        <h1>Ask Katcha what it knows.<br><em>Then decide what it does.</em></h1>
+                        <p>One human-facing interface over channel intelligence, autonomous discovery, clips, failures, production, performance learning and audited actions.</p>
+                    </div>
+                    <div class="architecture-chip">
+                        <span>YOU</span><b>→</b><strong>Katcha AI</strong><b>→</b><span>CONTROL PLANE</span>
+                    </div>
+                </section>
+
+                <form id="connect-form" class="connect-card">
+                    <div>
+                        <label for="token">Control-plane token</label>
+                        <small>Kept only in this tab. Leave blank for local development.</small>
+                    </div>
+                    <input id="token" type="password" autocomplete="off" placeholder="Token if required">
+                    <button type="submit" class="primary">Connect</button>
+                </form>
+
+                <div id="status" class="ai-status" role="status" aria-live="polite"></div>
+
+                <section id="command-center" class="command-layout" hidden>
+                    <div class="conversation-column">
+                        <div class="conversation-bar">
+                            <div class="conversation-context">
+                                <label>
+                                    <span class="micro-label">ACTIVE CHANNEL</span>
+                                    <select id="channel" aria-label="Active channel"></select>
+                                </label>
+                                <label>
+                                    <span class="micro-label">CONVERSATION HISTORY</span>
+                                    <select id="thread-history" aria-label="Conversation history">
+                                        <option value="">New conversation</option>
+                                    </select>
+                                </label>
+                            </div>
+                            <div class="conversation-actions">
+                                <button id="archive-thread" class="icon-button" type="button" disabled>Archive</button>
+                                <button id="clear-thread" class="icon-button" type="button">New conversation</button>
+                            </div>
+                        </div>
+
+                        <div id="thread" class="thread" aria-live="polite">
+                            <article class="message katcha-message welcome-message">
+                                <div class="message-avatar">K</div>
+                                <div class="message-body">
+                                    <span class="message-author">Katcha AI</span>
+                                    <p>Ask me to find new sources across the web and social platforms, or ask about this channel’s clips, failures, rejection evidence, editing performance, and production state. I’ll show the evidence I used.</p>
+                                </div>
+                            </article>
+                        </div>
+
+                        <div class="starter-wrap">
+                            <button type="button" class="starter" data-prompt="Find new sources across TikTok, Instagram, X, and Bluesky for this channel.">
+                                <span>⌕</span><strong>Scout new sources</strong><small>Discover creators, posts, communities and sites</small>
+                            </button>
+                            <button type="button" class="starter" data-prompt="Show me the best Xbox clips found today and explain why they scored highly.">
+                                <span>◉</span><strong>Best clips today</strong><small>Rank and explain stored clip evidence</small>
+                            </button>
+                            <button type="button" class="starter" data-prompt="What's currently failing?">
+                                <span>!</span><strong>What’s failing?</strong><small>Inspect production and render failures</small>
+                            </button>
+                            <button type="button" class="starter" data-prompt="Look at the latest performance evidence and tell me what editing behavior should change.">
+                                <span>↗</span><strong>Editing behavior</strong><small>Use measured channel outcomes</small>
+                            </button>
+                            <button type="button" class="starter" data-prompt="Make a ranked episode from my selected clips using the commentary recipe.">
+                                <span>▶</span><strong>Prepare an episode</strong><small>Propose an executable workflow action</small>
+                            </button>
+                        </div>
+
+                        <form id="command-form" class="composer">
+                            <div id="selection-bar" class="selection-bar" hidden></div>
+                            <div class="composer-row">
+                                <textarea id="prompt" rows="1" maxlength="4000" placeholder="Ask Katcha AI…" aria-label="Ask Katcha AI"></textarea>
+                                <button id="send" class="send-button" type="submit" aria-label="Send command">↑</button>
+                            </div>
+                            <div class="composer-foot">
+                                <span>Answers use stored Katcha evidence; source scouting uses grounded web search.</span>
+                                <span>Actions require confirmation.</span>
+                            </div>
+                        </form>
+                    </div>
+
+                    <aside class="context-column">
+                        <div class="context-head">
+                            <div>
+                                <span class="micro-label">CURRENT RESPONSE</span>
+                                <h2>Evidence & actions</h2>
+                            </div>
+                            <span id="narrator" class="model-pill">NO QUERY</span>
+                        </div>
+
+                        <div id="context-panel" class="context-panel">
+                            <div class="context-empty">
+                                <span>◇</span>
+                                <strong>Nothing hidden behind the answer.</strong>
+                                <p>Evidence used by Katcha AI will appear here with IDs, stored metrics and direct workspace links where available.</p>
+                            </div>
+                        </div>
+
+                        <div class="control-plane-note">
+                            <span class="micro-label">AERITH / ULTRON</span>
+                            <p>Aerith should use Katcha’s authenticated control API and event stream directly—not this conversational surface.</p>
+                            <a href="/docs" target="_blank" rel="noopener">Open control API ↗</a>
+                        </div>
+                    </aside>
+                </section>
+            </div>
+        </main>
+    </div>
+</body>
+</html>

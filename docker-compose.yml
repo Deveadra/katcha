@@ -213,6 +213,21 @@ services:
         condition: service_completed_successfully
     command: ["python", "-m", "katcha.orchestration.publishing_worker"]
 
+  telegram-worker:
+    image: katcha-control:local
+    build:
+      context: .
+      dockerfile: Dockerfile.control
+    env_file: ${KATCHA_ENV_FILE:-.env}
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      temporal:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+    command: ["python", "-m", "katcha.telegram_worker"]
+
 volumes:
   postgres-data:
   minio-data:

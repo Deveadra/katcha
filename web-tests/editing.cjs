@@ -8,6 +8,103 @@ const requests = [];
 let brandStaged = false;
 let brandActivated = false;
 
+const personaBlueprintContract = {
+    key: "persona_commentary",
+    version: "1.0.0",
+    composition: "blueprint_video",
+    source_layout: {
+        mode: "full_frame",
+        fit: "contain",
+        background_mode: "blurred_fill",
+        header_height_px: 0,
+    },
+    narration: {
+        mode: "persona_voice",
+        required: true,
+        captions_enabled: true,
+        source_audio_policy: "duck",
+        source_audio_volume: 0.35,
+        narration_duck_volume: 0.14,
+    },
+    header: {
+        required: false,
+        max_chars: 0,
+        background: "#000000",
+        foreground: "#ffffff",
+        font_size_px: 54,
+        font_weight: 850,
+        horizontal_padding_px: 56,
+    },
+    transition: "punch_cut",
+    quality: {
+        min_source_seconds: 2,
+        max_duration_seconds: 60,
+        max_narration_ratio: 0.48,
+    },
+};
+const headerBlueprintContract = {
+    key: "header_explainer",
+    version: "1.0.0",
+    composition: "blueprint_video",
+    source_layout: {
+        mode: "header_panel",
+        fit: "contain",
+        background_mode: "solid",
+        header_height_px: 360,
+    },
+    narration: {
+        mode: "text_only",
+        required: false,
+        captions_enabled: false,
+        source_audio_policy: "retain",
+        source_audio_volume: 0.72,
+        narration_duck_volume: 0.18,
+    },
+    header: {
+        required: true,
+        max_chars: 220,
+        background: "#000000",
+        foreground: "#ffffff",
+        font_size_px: 52,
+        font_weight: 850,
+        horizontal_padding_px: 56,
+    },
+    transition: "cut",
+    quality: {
+        min_source_seconds: 2,
+        max_duration_seconds: 60,
+        max_narration_ratio: 0,
+    },
+};
+const blueprintTemplates = [
+    {
+        key: "persona_commentary",
+        display_name: "Persona commentary",
+        description: "Host-led edits with narration, captions, audio ducking, and punch cuts.",
+        contract: personaBlueprintContract,
+    },
+    {
+        key: "header_explainer",
+        display_name: "Header explainer",
+        description: "Clip-led edits with a persistent explanatory header and retained source audio.",
+        contract: headerBlueprintContract,
+    },
+];
+let blueprintRows = [{
+    id: "blueprint-v1",
+    blueprint_key: "persona_commentary",
+    version: 1,
+    contract_version: "1.0.0",
+    is_active: true,
+    is_default: true,
+    contract: personaBlueprintContract,
+    blueprint_metadata: {
+        display_name: "RankSnaxx commentary",
+        description: "Fast host-led commentary with punch cuts.",
+    },
+    created_at: "2026-09-24T00:00:00Z",
+}];
+
 const v1 = {
     id: "brand-v1",
     version: 1,
@@ -83,11 +180,62 @@ const verifiedPreview = {
             const fulfillJson = (data) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(data) });
 
             if (url.pathname === "/v1/channels") return fulfillJson([{ id: "one", status: "active", profile_metadata: { name: "RankSnaxx" } }, { id: "two", status: "active", profile_metadata: { name: "Movie clips" } }]);
-            if (url.pathname.endsWith("/edit-blueprints")) return fulfillJson([{ blueprint_key: "persona_commentary", version: 2, contract_version: "1.0.0", is_active: false, is_default: false, created_at: "2026-09-24T00:00:00Z" }]);
+            if (url.pathname === "/v1/channels/edit-blueprint-templates") return fulfillJson(blueprintTemplates);
+            if (url.pathname === "/v1/integrations/providers") return fulfillJson([
+                { provider: "elevenlabs", capability: "text_to_speech", configured: true, mode: "api", detail: "Direct ElevenLabs TTS is ready." },
+                { provider: "invideo", capability: "external_edit", configured: true, mode: "manual_bridge", detail: "Tracked external edit bridge is ready." },
+            ]);
+            if (url.pathname.endsWith("/edit-blueprints") && request.method() === "GET") {
+                return fulfillJson(pathChannel === "one" ? blueprintRows : []);
+            }
+            if (url.pathname.endsWith("/edit-blueprints") && request.method() === "POST") {
+                for (const row of blueprintRows) {
+                    if (row.blueprint_key === body.contract.key) {
+                        row.is_active = false;
+                        row.is_default = false;
+                    }
+                    if (body.set_default) row.is_default = false;
+                }
+                const familyVersions = blueprintRows
+                    .filter((row) => row.blueprint_key === body.contract.key)
+                    .map((row) => row.version);
+                const created = {
+                    id: `blueprint-${body.contract.key}-${Math.max(0, ...familyVersions) + 1}`,
+                    blueprint_key: body.contract.key,
+                    version: Math.max(0, ...familyVersions) + 1,
+                    contract_version: body.contract.version,
+                    is_active: true,
+                    is_default: Boolean(body.set_default) || !blueprintRows.some((row) => row.is_default),
+                    contract: body.contract,
+                    blueprint_metadata: {
+                        display_name: body.display_name,
+                        description: body.description || "",
+                    },
+                    created_at: "2026-09-26T00:00:00Z",
+                };
+                if (created.is_default) {
+                    for (const row of blueprintRows) row.is_default = false;
+                }
+                blueprintRows.push(created);
+                return fulfillJson(created);
+            }
+            if (url.pathname.includes("/edit-blueprints/") && url.pathname.endsWith("/activate")) {
+                const match = url.pathname.match(/\/edit-blueprints\/([^/]+)\/(\d+)\/activate$/);
+                const target = blueprintRows.find((row) => row.blueprint_key === match?.[1] && row.version === Number(match?.[2]));
+                if (!target) throw new Error("Unknown blueprint activation");
+                for (const row of blueprintRows) {
+                    if (row.blueprint_key === target.blueprint_key) row.is_active = false;
+                    if (body.set_default) row.is_default = false;
+                }
+                target.is_active = true;
+                if (body.set_default) target.is_default = true;
+                return fulfillJson(target);
+            }
             if (url.pathname.endsWith("/performance/latest")) return fulfillJson(null);
             if (url.pathname === "/v1/short-episodes") return fulfillJson(channel === "one" ? [{
                 id: "episode-one",
                 premise: "Ranking clips",
+                selected_script_id: "script-one",
                 status: "render_failed",
                 stage: "render",
                 generation: 1,
@@ -134,12 +282,30 @@ const verifiedPreview = {
             if (url.pathname.endsWith("/brand-previews/preview-one/media")) return route.fulfill({ status: 200, contentType: "video/mp4", body: Buffer.from("fixture-video") });
             if (url.pathname.endsWith("/brands/2/activate")) { brandActivated = true; return fulfillJson({ ...v2, is_active: true }); }
             if (url.pathname.endsWith("/render-attempts")) return fulfillJson(url.pathname.includes("episode-active") ? [] : [{ attempt_number: 2, status: "dead_letter", error: "Renderer stopped" }]);
+            if (url.pathname === "/v1/integrations/invideo/handoffs" && request.method() === "POST") {
+                return fulfillJson({
+                    id: "handoff-one",
+                    provider: "invideo",
+                    source_type: "short_episode",
+                    source_id: body.source_id,
+                    generation: 1,
+                    status: "prepared",
+                    package_manifest_key: "external-edit/invideo/handoff-one/manifest.json",
+                    output_key: null,
+                    external_project_id: null,
+                    handoff_metadata: { transport: "manual_bridge" },
+                });
+            }
             if (url.pathname.endsWith("/render/recover")) return fulfillJson({ child_source_id: "new-generation" });
-            if (url.pathname.includes("/edit-blueprints/") && url.pathname.endsWith("/activate")) return fulfillJson({});
             throw new Error(`Unexpected request: ${request.method()} ${url.pathname}`);
         });
 
         await page.goto("http://127.0.0.1:8766/editing.html");
+        await page.locator(".workspace-menu").waitFor();
+        await page.locator(".workspace-menu > summary").click();
+        assert.match(await page.locator(".workspace-menu-popover").innerText(), /Clip library/);
+        assert.match(await page.locator(".workspace-menu-popover").innerText(), /Clip Studio/);
+        await page.locator(".workspace-menu > summary").click();
         await page.locator("#token").fill("fixture-token");
         await page.locator("#connect-form button").click();
         await page.getByText("Ranking clips").waitFor();
@@ -150,7 +316,71 @@ const verifiedPreview = {
         assert.equal(await page.locator("#count-attention").innerText(), "1");
         assert.equal(await page.locator(".episode-item.status-attention").count(), 1);
         assert.equal(await page.locator(".episode-item.status-active").count(), 1);
+        assert.match(await page.locator("#provider-status").innerText(), /ELEVENLABS/);
+        assert.match(await page.locator("#provider-status").innerText(), /INVIDEO/);
+        assert.equal(await page.getByRole("button", { name: "Send to InVideo" }).count(), 1);
+        await page.getByRole("button", { name: "Send to InVideo" }).click();
+        await page.locator("#invideo-dialog").waitFor({ state: "visible" });
+        assert.match(await page.locator("#invideo-handoff-state").innerText(), /PREPARED/);
+        assert(
+            requests.some(
+                (request) =>
+                    request.path === "/v1/integrations/invideo/handoffs"
+                    && request.method === "POST"
+                    && request.body.source_id === "episode-one",
+            ),
+        );
+        await page.locator("#close-invideo-dialog").click();
+        assert.equal(await page.locator("#count-blueprints").innerText(), "1");
+        assert.match(await page.locator(".recipe-card").innerText(), /RankSnaxx commentary/);
+        assert.match(await page.locator(".recipe-card").innerText(), /DEFAULT RECIPE/);
         assert(await page.getByText("ranksnaxx v1").count());
+
+        await page.getByRole("button", { name: "Edit recipe" }).click();
+        await page.locator("#blueprint-editor-panel").waitFor();
+        assert.equal(await page.locator("#bp-name").inputValue(), "RankSnaxx commentary");
+        assert.equal(await page.locator("#bp-layout").inputValue(), "full_frame");
+        assert.equal(await page.locator("#bp-max-duration").isDisabled(), true);
+        await page.locator("#bp-fit").selectOption("cover");
+        await page.locator("#bp-captions").uncheck();
+        await page.locator("#blueprint-editor button[type=submit]").click();
+        await page.getByText(/v2 saved/).waitFor();
+        assert.equal(await page.locator("#count-blueprints").innerText(), "1");
+        assert.match(await page.locator(".recipe-card").innerText(), /v2/);
+        const editedRecipe = requests.find(
+            (request) =>
+                request.path.endsWith("/edit-blueprints")
+                && request.method === "POST"
+                && request.body.contract.key === "persona_commentary",
+        );
+        assert.equal(editedRecipe.body.contract.source_layout.fit, "cover");
+        assert.equal(editedRecipe.body.contract.narration.captions_enabled, false);
+        assert.equal(editedRecipe.body.contract.quality.max_duration_seconds, 60);
+        assert.equal(editedRecipe.body.set_default, true);
+        assert.equal(editedRecipe.body.display_name, "RankSnaxx commentary");
+
+        await page.getByRole("button", { name: "+ New recipe" }).click();
+        await page.locator("#bp-template").selectOption("header_explainer");
+        await page.locator("#bp-name").fill("Quick explainer");
+        await page.locator("#blueprint-editor button[type=submit]").click();
+        await page.getByText(/Quick explainer v1 saved/).waitFor();
+        assert.equal(await page.locator("#count-blueprints").innerText(), "2");
+        const customRecipe = requests.find(
+            (request) =>
+                request.path.endsWith("/edit-blueprints")
+                && request.method === "POST"
+                && request.body.contract.key === "header_explainer_custom",
+        );
+        assert.equal(customRecipe.body.contract.source_layout.mode, "header_panel");
+        assert.equal(customRecipe.body.contract.narration.mode, "text_only");
+        await page.getByRole("button", { name: "Make default" }).click();
+        assert(
+            requests.some(
+                (request) =>
+                    request.path.endsWith("/edit-blueprints/header_explainer_custom/1/activate")
+                    && request.body.set_default === true,
+            ),
+        );
 
         await page.locator('[data-summary-filter="active"]').click();
         assert.equal(await page.locator("#filter").inputValue(), "active");

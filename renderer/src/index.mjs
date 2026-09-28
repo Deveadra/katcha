@@ -161,6 +161,18 @@ const hydrateReactions = async (events = []) =>
     return {...event, url: await renderAssetUrl(event.storage_key)};
   }));
 
+const hydrateBrand = async (brand) => {
+  const logo = brand?.logo;
+  if (!logo?.enabled || !logo?.storage_key) return brand;
+  if (!(await exists(logo.storage_key))) {
+    throw new Error(`missing channel logo asset: ${logo.storage_key}`);
+  }
+  return {
+    ...brand,
+    logo: {...logo, url: await renderAssetUrl(logo.storage_key)},
+  };
+};
+
 const hydrateShortManifest = async (manifest) => {
   const sourceUrl = await renderAssetUrl(manifest.source.storage_key);
   const overlays = await Promise.all(
@@ -173,6 +185,7 @@ const hydrateShortManifest = async (manifest) => {
     ...manifest,
     source: {...manifest.source, url: sourceUrl},
     overlays,
+    brand: await hydrateBrand(manifest.brand),
     reaction_events: await hydrateReactions(manifest.reaction_events),
   };
 };
@@ -185,7 +198,7 @@ const hydrateBlueprintManifest = async (manifest) => {
   const narration = manifest.narration?.asset_key
     ? {...manifest.narration, url: await renderAssetUrl(manifest.narration.asset_key)}
     : null;
-  return {...manifest, source, narration};
+  return {...manifest, source, narration, brand: await hydrateBrand(manifest.brand)};
 };
 
 const hydrateRankedEpisodeManifest = async (manifest) => {
@@ -204,7 +217,13 @@ const hydrateRankedEpisodeManifest = async (manifest) => {
       url: await renderAssetUrl(overlay.asset_key),
     })),
   );
-  return {...manifest, items, overlays, reaction_events: await hydrateReactions(manifest.reaction_events)};
+  return {
+    ...manifest,
+    items,
+    overlays,
+    brand: await hydrateBrand(manifest.brand),
+    reaction_events: await hydrateReactions(manifest.reaction_events),
+  };
 };
 
 const hydrateThumbnailManifest = async (manifest) => {

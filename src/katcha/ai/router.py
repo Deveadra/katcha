@@ -44,6 +44,10 @@ class RoutingDecision:
 
 
 ROUTES: dict[AITask, ModelRoute] = {
+    AITask.COMMAND_PLANNING: ModelRoute(
+        primary=ModelTarget("openai", "gpt-5.6-luna"),
+        fallback=ModelTarget("gemini", "gemini-3.5-flash-lite"),
+    ),
     AITask.BULK_VISION: ModelRoute(
         primary=ModelTarget("openai", "gpt-5.6-luna"),
         fallback=ModelTarget("gemini", "gemini-3.5-flash-lite"),
@@ -96,9 +100,13 @@ _MODEL_COST_WEIGHT: dict[tuple[str, str], float] = {
     ("openai", "gpt-5.6-sol"): 10.0,
     ("openai", "gpt-4o-mini-tts-2025-12-15"): 1.0,
     ("gemini", "gemini-3.1-flash-tts-preview"): 1.3,
+    ("elevenlabs", "eleven_multilingual_v2"): 1.7,
+    ("elevenlabs", "eleven_flash_v2_5"): 1.4,
+    ("elevenlabs", "eleven_v3"): 2.2,
 }
 
 _TASK_DEFAULT_FLOOR: dict[AITask, int] = {
+    AITask.COMMAND_PLANNING: 1,
     AITask.BULK_VISION: 1,
     AITask.DEEP_VIDEO: 2,
     AITask.SHORT_SCRIPT: 2,
@@ -136,6 +144,17 @@ def route_for(task: AITask) -> ModelRoute:
     return ModelRoute(primary=gemini, fallback=fallback)
 
 
+def _extra_targets(task: AITask) -> list[ModelTarget]:
+    settings = get_settings()
+    if (
+        task == AITask.TTS
+        and settings.elevenlabs_api_key
+        and settings.elevenlabs_voice_id
+    ):
+        return [ModelTarget("elevenlabs", settings.elevenlabs_model_id)]
+    return []
+
+
 def _available_providers() -> set[str]:
     settings = get_settings()
     providers: set[str] = set()
@@ -143,6 +162,8 @@ def _available_providers() -> set[str]:
         providers.add("openai")
     if settings.gemini_api_key:
         providers.add("gemini")
+    if settings.elevenlabs_api_key and settings.elevenlabs_voice_id:
+        providers.add("elevenlabs")
     return providers
 
 
@@ -172,11 +193,17 @@ def _eligible_targets(
     candidates = [route.primary]
     if route.fallback is not None:
         candidates.append(route.fallback)
+    candidates.extend(_extra_targets(task))
     return [
         target
         for target in candidates
         if target.provider in providers
-        and _MODEL_QUALITY.get((target.provider, target.model), 0) >= floor
+        and (
+            3
+            if target.provider == "elevenlabs"
+            else _MODEL_QUALITY.get((target.provider, target.model), 0)
+        )
+        >= floor
     ]
 
 

@@ -101,6 +101,7 @@ def _editor_prompt(
     persona: HostPersona,
     candidates: list[CandidateEvidence],
     prompt_version: str,
+    operator_feedback: list[dict[str, object]] | None = None,
 ) -> str:
     return (
         f"Prompt version: {prompt_version}\n"
@@ -114,7 +115,11 @@ def _editor_prompt(
         f"Host identity: {persona.identity}\n"
         f"Host delivery: {persona.delivery}\n"
         f"Comedy tools: {', '.join(persona.comedy)}\n"
-        f"Avoid: {', '.join(persona.avoid)}\n\n"
+        f"Avoid: {', '.join(persona.avoid)}\n"
+        f"One-off regeneration feedback: {json.dumps(operator_feedback or [], sort_keys=True)}\n\n"
+        "Treat the most recent one-off regeneration feedback as binding for this generation "
+        "when it concerns pacing, clip treatment, commentary, narration, or structure. Do not "
+        "convert one-off feedback into permanent channel policy. "
         "Build a coherent long-form episode. The host should add framing, callbacks, judgments, "
         "or jokes rather than narrating obvious action. Keep host lines short enough that clips "
         "remain the main attraction. Use the strongest clip immediately; do not waste the first "
@@ -378,6 +383,7 @@ def generate_editor_plan(
     prompt_version: str,
     compilation_id: str,
     min_segments: int,
+    operator_feedback: list[dict[str, object]] | None = None,
     settings: Settings | None = None,
 ) -> LongformAIResult:
     settings = settings or get_settings()
@@ -399,6 +405,7 @@ def generate_editor_plan(
             persona=persona,
             candidates=candidates,
             prompt_version=prompt_version,
+            operator_feedback=operator_feedback,
         ),
         schema=LongformEditorPlan,
         task=AITask.LONGFORM_EDITOR,

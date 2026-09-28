@@ -24,6 +24,8 @@ def test_bootstrap_preserves_keys_and_unrelated_settings(tmp_path):
     app.bootstrap()
     assert app.values["KATCHA_CREDENTIAL_ENCRYPTION_KEY"] == key
     assert app.values["KATCHA_OPENAI_API_KEY"] == "private-key"
+    assert len(app.values["KATCHA_TELEGRAM_PAIRING_CODE"]) >= 8
+    assert "KATCHA_TELEGRAM_REVIEW_STORAGE_ENDPOINT_URL" in runtime.FIELDS
     assert app.env_path.stat().st_mode & 0o777 == 0o600
     assert "private-key" not in json.dumps(app.snapshot())
 
@@ -259,6 +261,7 @@ def test_reconcile_existing_runtime_without_relaunch(tmp_path):
         "production-worker",
         "longform-worker",
         "publishing-worker",
+        "telegram-worker",
         "discovery-worker",
         "trends-worker",
         "intelligence-worker",
@@ -494,6 +497,36 @@ def test_launcher_serves_workspace_shell_without_api(tmp_path):
         body = response.read()
         assert response.status == 200
         assert b"Editing control center" in body
+        connection.request("GET", "/clips")
+        response = connection.getresponse()
+        assert response.status == 302
+        assert response.getheader("Location") == "/editing/assets/clips.html"
+        response.read()
+        connection.request("GET", "/editing/assets/clips.html")
+        response = connection.getresponse()
+        body = response.read()
+        assert response.status == 200
+        assert b"Clip library" in body
+        connection.request("GET", "/channels")
+        response = connection.getresponse()
+        assert response.status == 302
+        assert response.getheader("Location") == "/channels/assets/channels.html"
+        response.read()
+        connection.request("GET", "/channels/assets/channels.html")
+        response = connection.getresponse()
+        body = response.read()
+        assert response.status == 200
+        assert b"Channel Studio" in body
+        connection.request("GET", "/ai")
+        response = connection.getresponse()
+        assert response.status == 302
+        assert response.getheader("Location") == "/ai/assets/ai.html"
+        response.read()
+        connection.request("GET", "/ai/assets/ai.html")
+        response = connection.getresponse()
+        body = response.read()
+        assert response.status == 200
+        assert b"Katcha AI" in body
         connection.close()
     finally:
         server.shutdown()

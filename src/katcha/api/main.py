@@ -1,20 +1,24 @@
 from __future__ import annotations
 
 import asyncio
+import mimetypes
 import uuid
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, HTTPException, Query, status
-from fastapi.responses import RedirectResponse
+from fastapi.responses import RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import select, text
 
 from katcha import __version__
 from katcha.api.acquisition import router as acquisition_router
 from katcha.api.brands import router as brands_router
+from katcha.api.clip_library import router as clip_library_router
+from katcha.api.command_center import router as command_center_router
 from katcha.api.control_auth import require_control_token
 from katcha.api.edit_blueprints import router as edit_blueprints_router
 from katcha.api.explorer import router as explorer_router
+from katcha.api.integrations import router as integrations_router
 from katcha.api.intelligence import router as intelligence_router
 from katcha.api.packaging import router as packaging_router
 from katcha.api.reach import router as reach_router
@@ -58,7 +62,10 @@ from katcha.api.schemas import (
     YouTubeOAuthStartResponse,
 )
 from katcha.api.short_episodes import router as short_episodes_router
+from katcha.api.studio import router as studio_router
+from katcha.api.telegram import router as telegram_router
 from katcha.api.trends import router as trends_router
+from katcha.clip_lifecycle_models import ClipLifecycle
 from katcha.config import get_settings
 from katcha.db import session_scope
 from katcha.domain import (
@@ -68,6 +75,7 @@ from katcha.domain import (
     ReviewDecision,
     SourceStatus,
 )
+from katcha.integrations.storage import ObjectStore
 from katcha.integrations.youtube.oauth import (
     YouTubeOAuthError,
     begin_youtube_oauth,
@@ -130,17 +138,26 @@ app = FastAPI(
 )
 app.include_router(acquisition_router)
 app.include_router(brands_router)
+app.include_router(clip_library_router)
+app.include_router(command_center_router)
 app.include_router(edit_blueprints_router)
 app.include_router(intelligence_router)
+app.include_router(integrations_router)
 app.include_router(packaging_router)
 app.include_router(reach_router)
 app.include_router(short_episodes_router)
+app.include_router(studio_router)
+app.include_router(telegram_router)
 app.include_router(trends_router)
 app.include_router(explorer_router)
 app.mount("/explorer/assets", StaticFiles(directory=Path(__file__).parents[1] / "web"),
           name="explorer-assets")
 app.mount("/editing/assets", StaticFiles(directory=Path(__file__).parents[1] / "web"),
           name="editing-assets")
+app.mount("/channels/assets", StaticFiles(directory=Path(__file__).parents[1] / "web"),
+          name="channels-assets")
+app.mount("/ai/assets", StaticFiles(directory=Path(__file__).parents[1] / "web"),
+          name="ai-assets")
 
 
 @app.get("/explorer", include_in_schema=False)
@@ -153,9 +170,29 @@ def editing_shell():
     return RedirectResponse("/editing/assets/editing.html")
 
 
+@app.get("/channels", include_in_schema=False)
+def channels_shell():
+    return RedirectResponse("/channels/assets/channels.html")
+
+
+@app.get("/ai", include_in_schema=False)
+def ai_shell():
+    return RedirectResponse("/ai/assets/ai.html")
+
+
 @app.get("/ingestion", include_in_schema=False)
 def ingestion_shell():
     return RedirectResponse("/editing/assets/ingestion.html")
+
+
+@app.get("/clips", include_in_schema=False)
+def clips_shell():
+    return RedirectResponse("/editing/assets/clips.html")
+
+
+@app.get("/studio", include_in_schema=False)
+def studio_shell():
+    return RedirectResponse("/editing/assets/studio.html")
 
 
 def _require_ai_execution() -> None:
@@ -660,12 +697,17 @@ async def create_compilation_publication(
 def list_publications(
     limit: int = Query(default=50, ge=1, le=250),
     publication_status: str | None = Query(default=None, alias="status"),
+    youtube_connection_id: uuid.UUID | None = Query(default=None),
 ) -> list[Publication]:
     with session_scope() as session:
-        stmt = select(Publication).order_by(Publication.created_at.desc()).limit(limit)
+        stmt = select(Publication).order_by(Publication.created_at.desc())
         if publication_status:
             stmt = stmt.where(Publication.status == publication_status)
-        return list(session.scalars(stmt))
+        if youtube_connection_id:
+            stmt = stmt.where(
+                Publication.youtube_connection_id == youtube_connection_id
+            )
+        return list(session.scalars(stmt.limit(limit)))
 
 
 @app.get("/v1/publications/{publication_id}", response_model=PublicationResponse)
@@ -794,6 +836,41 @@ def list_sources(
         if source_status:
             stmt = stmt.where(SourceItem.status == source_status)
         return list(session.scalars(stmt))
+
+
+@app.get("/v1/clips/{clip_id}/media")
+def get_clip_media(clip_id: uuid.UUID) -> StreamingResponse:
+    with session_scope() as session:
+        clip = session.get(Clip, clip_id)
+        if clip is None:
+            raise HTTPException(status_code=404, detail="clip not found")
+        lifecycle = session.get(ClipLifecycle, clip_id)
+        if lifecycle is not None and lifecycle.lifecycle_state == "purged":
+            raise HTTPException(
+                status_code=410,
+                detail="clip media was permanently purged; metadata is still retained",
+            )
+        storage_key = (
+            lifecycle.archive_key
+            if lifecycle is not None
+            and lifecycle.lifecycle_state == "archived"
+            and lifecycle.archive_key
+            else clip.storage_key
+        )
+        extension = clip.extension or "mp4"
+
+    store = ObjectStore()
+    if not store.exists(storage_key):
+        raise HTTPException(status_code=404, detail="stored clip media is missing")
+    media_type = mimetypes.guess_type(f"clip.{extension.lstrip('.')}")[0]
+    return StreamingResponse(
+        store.iter_bytes(storage_key),
+        media_type=media_type or "application/octet-stream",
+        headers={
+            "Cache-Control": "private, max-age=60",
+            "Content-Disposition": 'inline; filename="clip-preview"',
+        },
+    )
 
 
 @app.get("/v1/clips/{clip_id}", response_model=ClipResponse)

@@ -1,4 +1,6 @@
-from katcha.rendering.manifest import build_short_manifest
+import pytest
+
+from katcha.rendering.manifest import ShortBrandSpec, build_short_manifest, channel_01_brand_v1
 
 
 def test_manifest_schedules_narration_without_overlap() -> None:
@@ -69,3 +71,59 @@ def test_manifest_uses_versioned_channel_01_visual_defaults() -> None:
     assert manifest.brand.end_card.treatment_key == "verdict_v1"
     assert manifest.brand.palette.signal_blue == "#5B6CFF"
     assert manifest.brand.motion.random_motion_enabled is False
+
+
+
+def test_manifest_applies_edit_recipe_media_controls() -> None:
+    manifest = build_short_manifest(
+        production_id="prod-recipe",
+        source_key="raw/source.mp4",
+        source_duration_seconds=8.0,
+        source_width=1920,
+        source_height=1080,
+        source_audio_volume=0.7,
+        width=1080,
+        height=1920,
+        fps=30,
+        script_segments=[{"placement": "pre", "text": "Recipe controlled narration."}],
+        narration_assets=[
+            {"segment_index": 0, "storage_key": "voice.wav", "duration_seconds": 1.0}
+        ],
+        output_key="production/prod-recipe/render/short.mp4",
+        title_angle="recipe",
+        interaction_prompt=None,
+        source_fit="cover",
+        source_background_mode="solid",
+        source_audio_policy="duck",
+        source_duck_volume=0.12,
+        captions_enabled=False,
+    )
+
+    assert manifest.source.fit == "cover"
+    assert manifest.source.background_mode == "solid"
+    assert manifest.source.audio_policy == "duck"
+    assert manifest.source.audio_volume == 0.7
+    assert manifest.source.duck_volume == 0.12
+    assert manifest.overlays[0].cues == []
+
+
+def test_channel_logo_contract_is_positionable_and_fails_closed_without_asset() -> None:
+    payload = channel_01_brand_v1().model_dump(mode="json")
+    payload["logo"] = {
+        "enabled": True,
+        "storage_key": "brands/channel/logo.png",
+        "x_percent": 91,
+        "y_percent": 7,
+        "width_percent": 11,
+        "opacity": 0.8,
+    }
+
+    brand = ShortBrandSpec.model_validate(payload)
+
+    assert brand.logo.enabled is True
+    assert brand.logo.x_percent == 91
+    assert brand.logo.width_percent == 11
+
+    payload["logo"]["storage_key"] = None
+    with pytest.raises(ValueError, match="requires a storage key"):
+        ShortBrandSpec.model_validate(payload)

@@ -175,6 +175,7 @@ def require_clip_transition(current: ClipStatus, target: ClipStatus) -> None:
 
 
 class AITask(StrEnum):
+    COMMAND_PLANNING = "command_planning"
     BULK_VISION = "bulk_vision"
     DEEP_VIDEO = "deep_video"
     SHORT_SCRIPT = "short_script"

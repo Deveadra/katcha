@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <meta name="theme-color" content="#100e1b">
+    <title>Katcha · Clip Studio</title>
+    <link rel="stylesheet" href="editing.css">
+    <link rel="stylesheet" href="studio.css">
+    <script src="studio.js" defer></script>
+    <script src="launcher-bridge.js" defer></script>
+</head>
+<body>
+<div class="shell studio-shell">
+    <aside class="sidebar">
+        <a class="logo" href="/explorer" aria-label="Katcha home"><span class="glyph">✦</span> katcha<span class="accent">.</span></a>
+        <p class="sidebar-label">WORKSPACE</p>
+        <nav aria-label="Workspace">
+            <a href="/explorer">◌ <span>Trend explorer</span></a>
+            <a href="/ingestion">↳ <span>Ingestion sources</span></a>
+            <a href="/clips">▤ <span>Clip library</span></a>
+            <a href="/editing">▣ <span>Editing control center</span></a>
+            <a href="/studio" aria-current="page">⌁ <span>Clip Studio</span></a>
+        </nav>
+        <div class="sidebar-bottom"><span class="live-dot"></span> CLIP STUDIO <small>Review · Correct · Teach</small></div>
+    </aside>
+    <main class="studio-main">
+        <header class="topbar">
+            <span>Workspace <span class="slash">/</span> <strong>Clip Studio</strong></span>
+            <div class="studio-top-actions"><span id="save-state" class="tag">NO EDITS</span><span id="connection" class="connection">OFFLINE</span></div>
+        </header>
+
+        <div class="studio-content">
+            <form id="connect-form" class="connect card compact-connect">
+                <div><label for="token">Control-plane token</label><p>Shared with the Editing Control Center for this browser tab.</p></div>
+                <input id="token" type="password" autocomplete="off" placeholder="Token if required">
+                <button class="button primary">Connect</button>
+            </form>
+            <div id="message" class="message" role="status" aria-live="polite"></div>
+
+            <section class="project-bar card">
+                <label>CHANNEL<select id="channel" disabled><option value="">Connect to load channels</option></select></label>
+                <label>EPISODE<select id="episode" disabled><option value="">Choose an episode</option></select></label>
+                <div class="project-status"><span id="episode-status" class="pill">NO EPISODE</span><small id="episode-meta">Select a production to inspect.</small></div>
+                <button id="refresh" class="button secondary" type="button" disabled>↻ Refresh</button>
+                <button id="render-edits" class="button primary" type="button" disabled>Render edited generation ↗</button>
+            </section>
+
+            <section class="edit-suite">
+                <aside class="media-bin studio-panel">
+                    <div class="studio-panel-head"><div><span class="panel-kicker">MEDIA</span><h2>Episode clips</h2></div><span id="clip-count" class="tag">0</span></div>
+                    <div id="clip-list" class="clip-list"><div class="studio-empty">Load an episode to inspect its source clips.</div></div>
+                </aside>
+
+                <section class="monitor studio-panel">
+                    <div class="monitor-head">
+                        <div><span class="panel-kicker">PROGRAM MONITOR</span><strong id="monitor-title">No episode loaded</strong></div>
+                        <div class="monitor-switch" role="group" aria-label="Monitor source">
+                            <button id="show-render" class="monitor-mode active" type="button">Rendered</button>
+                            <button id="show-source" class="monitor-mode" type="button">Source</button>
+                        </div>
+                    </div>
+                    <div class="viewer-wrap">
+                        <div class="video-frame">
+                            <video id="monitor-video" controls playsinline preload="metadata"></video>
+                            <img id="logo-overlay" alt="" hidden>
+                            <div id="monitor-empty" class="monitor-empty"><strong>No preview yet</strong><span>Select a clip or wait for a rendered generation.</span></div>
+                            <div id="logo-preview-label" class="logo-preview-label" hidden>LOGO POSITION PREVIEW</div>
+                        </div>
+                    </div>
+                    <div class="transport-help"><span>Space · Play/Pause</span><span>← / → · 0.5s</span><span id="timecode">00:00.000</span></div>
+                </section>
+
+                <aside class="inspector studio-panel">
+                    <div class="inspector-tabs" role="tablist">
+                        <button class="inspector-tab active" data-tab="clip" type="button">Clip</button>
+                        <button class="inspector-tab" data-tab="ai" type="button">AI rules</button>
+                        <button class="inspector-tab" data-tab="brand" type="button">Branding</button>
+                    </div>
+
+                    <section id="tab-clip" class="inspector-body">
+                        <div class="inspector-title"><span class="panel-kicker">CLIP INSPECTOR</span><h2 id="clip-title">Select a clip</h2><p id="clip-context">Precise source controls appear here.</p></div>
+                        <fieldset id="clip-controls" disabled>
+                            <div class="field-grid two">
+                                <label>Source in <div class="unit-input"><input id="clip-start" type="number" min="0" step="0.05"><span>s</span></div></label>
+                                <label>Duration <div class="unit-input"><input id="clip-duration" type="number" min="0.5" max="30" step="0.05"><span>s</span></div></label>
+                            </div>
+                            <p class="field-note">End: <strong id="clip-end">—</strong> · source max <strong id="clip-max">—</strong></p>
+                            <label>Transition<select id="clip-transition"><option value="cut">Cut</option><option value="punch_cut">Punch cut</option><option value="flash">Flash</option></select></label>
+                            <label>Source audio<select id="clip-audio-policy"><option value="retain">Keep source audio</option><option value="duck">Duck under narration</option><option value="mute">Mute source</option></select></label>
+                            <label>Source volume <output id="clip-volume-out">35%</output><input id="clip-volume" type="range" min="0" max="1" step="0.01"></label>
+                            <label>Duck volume <output id="clip-duck-out">16%</output><input id="clip-duck" type="range" min="0" max="1" step="0.01"></label>
+                            <button id="reset-clip" class="button secondary full" type="button">Reset this clip</button>
+                        </fieldset>
+                        <div class="render-options">
+                            <label class="check-row"><input id="adopt-brand" type="checkbox" checked> Use the channel's currently active brand when rendering this new generation.</label>
+                            <label>Operator note<textarea id="render-note" rows="3" maxlength="2000" placeholder="Why this manual correction was needed…"></textarea></label>
+                        </div>
+                    </section>
+
+                    <section id="tab-ai" class="inspector-body" hidden>
+                        <div class="inspector-title"><span class="panel-kicker">REUSABLE AI BOUNDARIES</span><h2>Teach the editor</h2><p>These become versioned recipe rules for future videos. The episode already loaded here stays frozen.</p></div>
+                        <div id="ai-recipe" class="inspector-badge">No active recipe</div>
+                        <label>How strictly should AI follow these rules?<select id="ai-strength"><option value="strict">Strict</option><option value="balanced">Balanced</option><option value="flexible">Flexible</option></select></label>
+                        <label class="check-row"><input id="ai-order" type="checkbox"> Preserve selected clip order</label>
+                        <label class="check-row"><input id="ai-native" type="checkbox"> Prefer strong native moments over filler commentary</label>
+                        <label>Always do <textarea id="ai-always" rows="4" placeholder="One reusable rule per line"></textarea></label>
+                        <label>Never do <textarea id="ai-never" rows="4" placeholder="One boundary per line"></textarea></label>
+                        <label>Editorial notes <textarea id="ai-notes" rows="5" maxlength="2000" placeholder="Voice, pacing, framing, recurring corrections…"></textarea></label>
+                        <button id="save-ai" class="button primary full" type="button">Save as new recipe version</button>
+                    </section>
+
+                    <section id="tab-brand" class="inspector-body" hidden>
+                        <div class="inspector-title"><span class="panel-kicker">CHANNEL BRANDING</span><h2>Persistent logo</h2><p>Position it here, stage a brand version, then activate it for future short-form renders.</p></div>
+                        <div id="brand-version" class="inspector-badge">No active brand</div>
+                        <label class="check-row"><input id="logo-enabled" type="checkbox"> Show logo on renders</label>
+                        <label>Logo image<input id="logo-file" type="file" accept="image/png,image/webp"></label>
+                        <p class="field-note">PNG or WebP · maximum 2 MB. Transparent PNG works best.</p>
+                        <label>Horizontal position <output id="logo-x-out">88%</output><input id="logo-x" type="range" min="0" max="100" step="1"></label>
+                        <label>Vertical position <output id="logo-y-out">8%</output><input id="logo-y" type="range" min="0" max="100" step="1"></label>
+                        <label>Logo width <output id="logo-width-out">13%</output><input id="logo-width" type="range" min="3" max="40" step="1"></label>
+                        <label>Opacity <output id="logo-opacity-out">90%</output><input id="logo-opacity" type="range" min="0.1" max="1" step="0.05"></label>
+                        <button id="stage-logo" class="button secondary full" type="button">Stage new brand version</button>
+                        <button id="activate-logo" class="button primary full" type="button" disabled>Activate staged version</button>
+                        <p class="field-note">Activation changes the default for new short-form renders. Existing frozen generations remain reproducible unless you explicitly render a new Studio generation with “Use active brand” enabled.</p>
+                    </section>
+                </aside>
+            </section>
+
+            <section class="timeline studio-panel">
+                <div class="timeline-head">
+                    <div><span class="panel-kicker">TIMELINE</span><strong id="timeline-duration">00:00.000</strong></div>
+                    <div class="timeline-legend"><span><i class="video-dot"></i> Video</span><span><i class="audio-dot"></i> Narration</span></div>
+                </div>
+                <div id="timeline-canvas" class="timeline-canvas">
+                    <div class="studio-empty">The timeline appears after Katcha freezes a render manifest.</div>
+                </div>
+            </section>
+        </div>
+    </main>
+</div>
+</body>
+</html>

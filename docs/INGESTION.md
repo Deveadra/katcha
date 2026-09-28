@@ -42,6 +42,9 @@ Register each source through `POST /v1/discovery/sources`.
 - `rss_atom@v1` for websites with feeds.
 - `reddit@v1` for Reddit discovery.
 - `youtube@v1` for YouTube search discovery.
+- `web_scout@v1` for grounded public-web discovery across unknown websites,
+  creators, communities, TikTok, Instagram, X, Bluesky, YouTube, Reddit, and
+  Discord pages without pre-registering every profile.
 
 Future adapters should implement `DiscoveryAdapter` and register themselves in
 `katcha.acquisition.adapters`. The rest of the pipeline does not need to know
@@ -80,9 +83,37 @@ Example response item:
 }
 ```
 
-For a newly opened website or private server, start with `operator_feed@v1` if it
-can provide URLs or JSON drops. Add a native adapter only when Katcha needs to
-actively search or page through that source itself.
+Manual source registration is no longer the only discovery path. For public content,
+`web_scout@v1` can search outward from a channel's topics and discover URLs that
+were never registered in Katcha. Returned candidate URLs are accepted only when
+they are present in the web-search provider's grounded source list.
+
+For a private server or non-public source, use `operator_feed@v1` when it can
+provide URLs or JSON drops. Native platform adapters remain preferable where an
+official API offers stronger freshness, metrics, pagination, or reliability; the
+web scout acts as broad coverage and a fallback for sources Katcha did not know to
+watch yet.
+
+
+## Autonomous source scouting
+
+The Katcha AI Command Center can turn a request such as
+`Find new sources across TikTok, Instagram, X, and Bluesky` into a confirmed
+`start_source_scout` action. The action creates a channel-scoped topic watch and
+starts its durable schedule. By default it:
+
+- searches once per hour with `web_scout@v1`;
+- inherits topical terms from the request, channel interests, or the channel's
+  latest topic watch;
+- uses domain filtering when the operator explicitly names social platforms;
+- carries a bounded rolling set of recently discovered URLs into the next cycle,
+  encouraging exploration of adjacent creators, communities, sites, and newer posts;
+- stores grounded results as ordinary discovery candidates so existing trend
+  scoring, clustering, review, acquisition policy, and audit trails still apply;
+- enforces both a daily source-poll cap and a provider web-search call quota.
+
+This is metadata-first discovery. It does not bypass downstream acquisition policy,
+and it does not make a discovered candidate publishable merely because Katcha found it.
 
 ## Usage modes
 

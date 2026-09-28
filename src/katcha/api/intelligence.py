@@ -40,6 +40,7 @@ from katcha.services.channel_editorial import (
     freeze_channel_compilation_candidates,
     score_clip_for_channel,
 )
+from katcha.services.channel_growth import channel_growth_context
 from katcha.services.channel_learning import latest_ranking_snapshot
 from katcha.services.channel_profiles import (
     active_strategy,
@@ -219,6 +220,28 @@ class ScheduleRecommendationResponse(BaseModel):
     recommendation_metadata: dict[str, object]
 
 
+class GrowthTargetRequest(BaseModel):
+    metric: Literal[
+        "subscribers",
+        "qualified_watch_hours_365d",
+        "qualified_shorts_views_90d",
+        "public_uploads_90d",
+    ]
+    target: Decimal = Field(gt=0)
+    target_date: date | None = None
+    priority: int = Field(default=3, ge=1, le=5)
+    enabled: bool = True
+
+
+class GrowthGoalsRequest(BaseModel):
+    objective: Literal["early_ypp", "ads_revenue", "channel_growth"] = "ads_revenue"
+    path: Literal["fastest", "shorts", "long_form", "balanced"] = "fastest"
+    pace: Literal["aggressive", "balanced"] = "aggressive"
+    target_date: date | None = None
+    custom_targets: list[GrowthTargetRequest] = Field(default_factory=list, max_length=20)
+    actor: str = Field(default="operator", min_length=1, max_length=128)
+
+
 class RefreshIntelligenceRequest(BaseModel):
     idempotency_key: str | None = Field(default=None, max_length=256)
 
@@ -389,6 +412,7 @@ def get_channel_summary(channel_profile_id: uuid.UUID) -> dict[str, object]:
                 if economics
                 else None
             )
+        growth = channel_growth_context(channel_profile_id)
         return {
             "profile": profile_payload,
             "strategy": strategy_payload,
@@ -413,6 +437,7 @@ def get_channel_summary(channel_profile_id: uuid.UUID) -> dict[str, object]:
                 for item in latest_schedule_recommendations(channel_profile_id)
             ],
             "automation": automation_summary(channel_profile_id),
+            "growth": growth,
         }
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -436,6 +461,33 @@ def update_channel_strategy(
             fallback_schedule=_slots(request.fallback_schedule),
             blackout_windows=_slots(request.blackout_windows),
             routing_policy=request.routing_policy,
+            actor=request.actor,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.get("/channels/{channel_profile_id}/growth")
+def get_channel_growth(channel_profile_id: uuid.UUID) -> dict[str, object]:
+    try:
+        return channel_growth_context(channel_profile_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.post(
+    "/channels/{channel_profile_id}/growth-goals",
+    response_model=StrategyResponse,
+)
+def update_channel_growth_goals(
+    channel_profile_id: uuid.UUID,
+    request: GrowthGoalsRequest,
+) -> ChannelStrategyVersion:
+    try:
+        growth_strategy = request.model_dump(mode="json", exclude={"actor"})
+        return create_strategy_version(
+            channel_profile_id,
+            growth_strategy=growth_strategy,
             actor=request.actor,
         )
     except ValueError as exc:

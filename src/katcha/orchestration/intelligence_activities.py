@@ -15,11 +15,13 @@ from katcha.packaging_intelligence_models import PackagingIntelligenceSnapshot
 from katcha.packaging_models import PackagingExperiment, PublicationPackagingActivation
 from katcha.services.channel_automation import maybe_auto_demote
 from katcha.services.channel_economics import compute_channel_economics
+from katcha.services.channel_growth import refresh_channel_growth
 from katcha.services.channel_learning import (
     derive_performance_observations,
     train_channel_ranking,
 )
 from katcha.services.channel_scheduling import compute_schedule_recommendations
+from katcha.services.clip_lifecycle import run_channel_maintenance
 from katcha.services.edit_blueprint_performance import (
     refresh_edit_blueprint_performance,
 )
@@ -135,6 +137,11 @@ async def run_channel_packaging_experiments_activity(
 
 
 @activity.defn
+def refresh_channel_growth_activity(channel_profile_id: str) -> dict[str, object]:
+    return refresh_channel_growth(uuid.UUID(channel_profile_id))
+
+
+@activity.defn
 def derive_channel_observations_activity(channel_profile_id: str) -> dict[str, object]:
     profile_id = uuid.UUID(channel_profile_id)
     created = derive_performance_observations(profile_id)
@@ -216,6 +223,16 @@ def apply_channel_safety_demotion_activity(
         "automation_version": row.version if row else None,
         "automation_level": row.level if row else None,
     }
+
+
+@activity.defn
+def run_clip_lifecycle_maintenance_activity(
+    channel_profile_id: str,
+) -> dict[str, object]:
+    return run_channel_maintenance(
+        uuid.UUID(channel_profile_id),
+        actor="scheduled-lifecycle",
+    )
 
 
 @activity.defn

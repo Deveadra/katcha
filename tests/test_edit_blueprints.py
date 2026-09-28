@@ -117,3 +117,53 @@ def test_frozen_blueprint_lineage_rejects_identity_tampering() -> None:
 
     with pytest.raises(ValueError, match="blueprint snapshot identity"):
         type(manifest).model_validate(payload)
+
+
+
+def test_voice_blueprint_rejects_header_layout_until_renderer_supports_it() -> None:
+    payload = persona_commentary_v1().model_dump(mode="json")
+    payload["source_layout"]["mode"] = "header_panel"
+    payload["source_layout"]["header_height_px"] = 300
+    payload["header"]["required"] = True
+    payload["header"]["max_chars"] = 120
+
+    from katcha.editing.blueprints import EditBlueprintContract
+
+    with pytest.raises(ValueError, match="voice narration blueprints currently require full-frame"):
+        EditBlueprintContract.model_validate(payload)
+
+
+def test_edit_blueprint_carries_reusable_ai_boundaries() -> None:
+    from katcha.editing.blueprints import EditBlueprintContract
+
+    payload = persona_commentary_v1().model_dump(mode="json")
+    payload["ai_guidance"] = {
+        "instruction_strength": "strict",
+        "preserve_clip_order": True,
+        "prefer_native_moments": True,
+        "always_rules": ["Open on the strongest native reaction."],
+        "never_rules": ["Do not cover the payoff with narration."],
+        "operator_notes": "Let visual punchlines breathe before commentary.",
+    }
+
+    contract = EditBlueprintContract.model_validate(payload)
+
+    assert contract.ai_guidance.instruction_strength == "strict"
+    assert contract.ai_guidance.always_rules == [
+        "Open on the strongest native reaction."
+    ]
+    assert contract.ai_guidance.never_rules == [
+        "Do not cover the payoff with narration."
+    ]
+
+
+def test_edit_blueprint_ai_boundaries_are_backward_compatible() -> None:
+    from katcha.editing.blueprints import EditBlueprintContract
+
+    payload = persona_commentary_v1().model_dump(mode="json")
+    payload.pop("ai_guidance", None)
+
+    contract = EditBlueprintContract.model_validate(payload)
+
+    assert contract.ai_guidance.instruction_strength == "balanced"
+    assert contract.ai_guidance.preserve_clip_order is True

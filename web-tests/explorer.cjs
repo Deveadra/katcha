@@ -68,6 +68,7 @@ const editPerformance = {
     created_at: now,
 };
 const requests = [];
+let watchInterests = ["gaming", "xbox"];
 let browser;
 (async () => {
     for (let i = 0; i < 50; i++) {
@@ -106,13 +107,28 @@ let browser;
                     profile_metadata: { name: "Fixture gaming" },
                 },
             ];
-        else if (url.pathname.endsWith("/watch-profile"))
+        else if (url.pathname.endsWith("/watch-profile")) {
+            if (req.method() === "POST") {
+                watchInterests = req.postDataJSON().interests;
+            }
             data = {
-                interests: ["gaming", "xbox"],
+                id: "watch-1",
+                channel_profile_id: "channel-1",
+                version: 2,
+                interests: watchInterests,
                 excluded_terms: ["giveaway"],
+                entities: [],
+                platforms: [],
+                languages: [],
+                regions: [],
+                source_weights: {},
+                freshness_horizon_hours: 72,
                 min_confidence: 0.45,
                 opportunity_threshold: 0.55,
+                watch_metadata: {},
+                created_at: now,
             };
+        }
         else if (url.pathname.endsWith("/source-health"))
             data = { status: "healthy", fixture: true };
         else if (url.pathname.endsWith("/editing-performance"))
@@ -175,8 +191,17 @@ let browser;
     });
     await page.goto("http://127.0.0.1:8765");
     assert.equal(await page.locator(".brand").getAttribute("href"), "/explorer");
-    await page.locator(".launcher-nav-item").waitFor();
-    assert.equal(await page.locator(".launcher-nav-item").count(), 1);
+    await page.locator(".workspace-menu").waitFor();
+    assert.equal(await page.locator(".workspace-menu").count(), 1);
+    await page.locator(".workspace-menu > summary").click();
+    const menuText = await page.locator(".workspace-menu-popover").innerText();
+    assert.match(menuText, /Trend explorer/);
+    assert.match(menuText, /Ingestion sources/);
+    assert.match(menuText, /Clip library/);
+    assert.match(menuText, /Editing control center/);
+    assert.match(menuText, /Clip Studio/);
+    assert.match(menuText, /Launch console/);
+    await page.locator(".workspace-menu > summary").click();
     await page.setViewportSize({ width: 900, height: 900 });
     assert.equal(
         await page.evaluate(() => document.documentElement.scrollWidth > innerWidth),
@@ -187,7 +212,9 @@ let browser;
     await page.locator("#connect-form button").click();
     await page.locator("#detail-panel h3").waitFor();
     assert.equal(await page.locator(".topic-row").count(), 2);
-    await page.getByRole("heading", { name: "Blueprint evidence" }).waitFor();
+    await page.locator("#edit-performance > summary").waitFor();
+    assert.equal(await page.locator("#edit-performance").getAttribute("open"), null);
+    await page.locator("#edit-performance > summary").click();
     assert.match(
         await page.locator("#edit-performance").innerText(),
         /8 maturity-matched publications/,
@@ -210,6 +237,23 @@ let browser;
     await page.locator("#search").fill("");
     await page.locator("#sort").selectOption("confidence");
     assert.match(await page.locator(".topic-row").first().innerText(), /beta/);
+    assert.equal(await page.locator("#interest-chips .chip").count(), 2);
+    assert.match(await page.locator("#interest-chips").innerText(), /gaming/i);
+    assert.match(await page.locator("#interest-chips").innerText(), /xbox/i);
+
+    assert.match(await page.locator("#detail-panel").innerText(), /OPPORTUNITY DOSSIER/);
+    await page.getByRole("button", { name: /Sources 1/ }).click();
+    assert.match(await page.locator("#detail-panel").innerText(), /SUPPORTING SOURCE RECORDS/);
+    assert.match(await page.locator("#detail-panel").innerText(), /TEST SOURCE/);
+
+    await page.getByRole("button", { name: "Signal graph" }).click();
+    await page.locator("#signal-chart .chart").waitFor();
+    assert.equal(await page.locator("#signal-chart [data-chart-point]").count(), 2);
+    await page.locator("#signal-chart [data-chart-point]").first().focus();
+    assert.match(await page.locator(".chart-tooltip").innerText(), /10/);
+    await page.locator("#hours").selectOption("24");
+    await page.locator("#signal-chart .chart").waitFor();
+
     await page.locator("#compare").click();
     await page.locator('[data-topic="beta"]').click();
     await page
@@ -217,13 +261,13 @@ let browser;
         .waitFor();
     await page.locator("#compare").click();
     assert.equal(await page.locator(".comparison-table thead th").count(), 3);
-    await page.locator("#hours").selectOption("24");
-    await page.locator("#series").waitFor();
+
+    await page.getByRole("button", { name: "Editorial" }).click();
     await page.locator("[data-episode]").click();
     await page.waitForFunction(() =>
         document
             .getElementById("status")
-            .textContent.includes("Editorial workflow accepted"),
+            .textContent.includes("Editorial workflow started"),
     );
     assert(
         requests.some(
@@ -232,18 +276,28 @@ let browser;
                 r.body.episode_id === "episode-1",
         ),
     );
-    await page.locator("#interests").fill("gaming, indie");
-    await page.locator("#save-watch").click();
+
+    await page.locator("#interest-input").fill("fails");
+    await page.locator("#add-interest").click();
     await page.waitForFunction(() =>
         document
-            .getElementById("status")
-            .textContent.includes("Watch version saved"),
+            .getElementById("interest-feedback")
+            .textContent.includes("Refresh started for gaming, xbox, fails"),
     );
-    const save = requests.find(
+    assert.match(await page.locator("#interest-chips").innerText(), /fails/i);
+    const saves = requests.filter(
         (r) => r.path.endsWith("/watch-profile") && r.method === "POST",
     );
+    assert(saves.length >= 1);
+    const save = saves.at(-1);
     assert.deepEqual(save.body.excluded_terms, ["giveaway"]);
-    assert.deepEqual(save.body.interests, ["gaming", "indie"]);
+    assert.deepEqual(save.body.interests, ["gaming", "xbox", "fails"]);
+    assert(
+        requests.some(
+            (r) => r.path.endsWith("/refresh") && r.method === "POST",
+        ),
+    );
+    assert.equal(await page.locator("#reset-interests").isDisabled(), false);
     assert(requests.every((r) => r.auth === "Bearer fixture-token"));
     fs.mkdirSync(path.join(__dirname, "test-results"), { recursive: true });
     await page.evaluate(() => scrollTo(0, 0));
@@ -264,7 +318,7 @@ let browser;
     });
     assert.deepEqual(errors, []);
     console.log(
-        "PASS: live API UI flows, edit evidence, auth handling, search/sort, comparison, time windows, watch preservation, editorial handoff, mobile width",
+        "PASS: live API UI flows, preview-parity interests, dossier tabs, source records, interactive graph, edit evidence, auth handling, search/sort, comparison, editorial handoff, mobile width",
     );
 })()
     .catch((error) => {

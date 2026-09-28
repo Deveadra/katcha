@@ -14,6 +14,9 @@ from katcha.config import Settings, get_settings
 class ObjectStore:
     def __init__(self, settings: Settings | None = None) -> None:
         self.settings = settings or get_settings()
+        self.client = self._client(self.settings.s3_endpoint_url)
+
+    def _client(self, endpoint_url: str | None):
         config = Config(
             s3={"addressing_style": "path" if self.settings.s3_force_path_style else "auto"}
         )
@@ -21,12 +24,12 @@ class ObjectStore:
             "region_name": self.settings.s3_region,
             "config": config,
         }
-        if self.settings.s3_endpoint_url:
-            client_kwargs["endpoint_url"] = self.settings.s3_endpoint_url
+        if endpoint_url:
+            client_kwargs["endpoint_url"] = endpoint_url
         if self.settings.s3_access_key and self.settings.s3_secret_key:
             client_kwargs["aws_access_key_id"] = self.settings.s3_access_key
             client_kwargs["aws_secret_access_key"] = self.settings.s3_secret_key
-        self.client = boto3.client("s3", **client_kwargs)
+        return boto3.client("s3", **client_kwargs)
 
     def ensure_bucket(self) -> None:
         try:
@@ -87,6 +90,78 @@ class ObjectStore:
         response = self.client.get_object(Bucket=self.settings.s3_bucket, Key=key)
         return response["Body"].read()
 
+    def presigned_get_url(
+        self,
+        key: str,
+        *,
+        expires_seconds: int,
+        filename: str | None = None,
+        endpoint_url: str | None = None,
+    ) -> str:
+        params: dict[str, object] = {
+            "Bucket": self.settings.s3_bucket,
+            "Key": key,
+        }
+        if filename:
+            params["ResponseContentDisposition"] = f'inline; filename="{filename}"'
+            params["ResponseContentType"] = "video/mp4"
+        client = (
+            self.client
+            if endpoint_url in {None, self.settings.s3_endpoint_url}
+            else self._client(endpoint_url)
+        )
+        return str(
+            client.generate_presigned_url(
+                "get_object",
+                Params=params,
+                ExpiresIn=expires_seconds,
+            )
+        )
+
+    def delete(self, key: str) -> None:
+        self.client.delete_object(Bucket=self.settings.s3_bucket, Key=key)
+
+    def delete_many(self, keys: list[str]) -> None:
+        unique = [key for key in dict.fromkeys(keys) if key]
+        if not unique:
+            return
+        for index in range(0, len(unique), 1000):
+            batch = unique[index : index + 1000]
+            self.client.delete_objects(
+                Bucket=self.settings.s3_bucket,
+                Delete={"Objects": [{"Key": key} for key in batch], "Quiet": True},
+            )
+
+    def move(self, source_key: str, destination_key: str) -> None:
+        if source_key == destination_key:
+            return
+        self.client.copy_object(
+            Bucket=self.settings.s3_bucket,
+            Key=destination_key,
+            CopySource={"Bucket": self.settings.s3_bucket, "Key": source_key},
+            MetadataDirective="COPY",
+        )
+        self.client.delete_object(Bucket=self.settings.s3_bucket, Key=source_key)
+
+    def iter_range(
+        self,
+        key: str,
+        start: int,
+        end: int,
+        chunk_size: int = 1024 * 1024,
+    ) -> Iterator[bytes]:
+        response = self.client.get_object(
+            Bucket=self.settings.s3_bucket,
+            Key=key,
+            Range=f"bytes={start}-{end}",
+        )
+        body = response["Body"]
+        try:
+            while chunk := body.read(chunk_size):
+                yield chunk
+        finally:
+            body.close()
+
     def iter_bytes(
         self,
         key: str,
@@ -104,6 +179,11 @@ class ObjectStore:
     def raw_key(sha256: str, extension: str | None) -> str:
         suffix = f".{extension.lstrip('.')}" if extension else ""
         return f"raw/{sha256[:2]}/{sha256}{suffix}"
+
+    @staticmethod
+    def archive_key(sha256: str, extension: str | None) -> str:
+        suffix = f".{extension.lstrip('.')}" if extension else ""
+        return f"archive/raw/{sha256[:2]}/{sha256}{suffix}"
 
     @staticmethod
     def analysis_key(sha256: str, name: str) -> str:

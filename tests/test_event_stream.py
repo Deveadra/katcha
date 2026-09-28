@@ -3,7 +3,12 @@ import uuid
 import pytest
 
 from katcha.intelligence_models import EventConsumerCursor
-from katcha.services.event_stream import _require_cursor_scope, _safe_payload
+from katcha.services.event_stream import (
+    _belongs_to_channel,
+    _require_cursor_scope,
+    _safe_payload,
+)
+from katcha.services.render_recovery import _event
 
 
 def test_event_payload_scrubs_secret_bearing_keys_recursively() -> None:
@@ -52,3 +57,19 @@ def test_unscoped_event_cursor_stays_unscoped() -> None:
     )
 
     _require_cursor_scope(cursor, None)
+
+
+
+def test_render_events_remain_visible_in_channel_scoped_streams() -> None:
+    channel_id = uuid.uuid4()
+    production_id = uuid.uuid4()
+    event = _event(
+        source_kind="production",
+        source_id=production_id,
+        channel_profile_id=channel_id,
+        event_type="production.render_attempt_verified",
+        payload={"render_attempt_id": str(uuid.uuid4())},
+    )
+
+    assert _belongs_to_channel(event, channel_id) is True
+    assert event.payload["channel_profile_id"] == str(channel_id)

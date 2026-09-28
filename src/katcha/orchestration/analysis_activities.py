@@ -16,6 +16,7 @@ from katcha.integrations.storage import ObjectStore
 from katcha.media.preprocess import preprocess_video
 from katcha.media.transcription import TranscriptResult, get_transcriber
 from katcha.models import Clip, ClipAnalysisRun, ClipFeature, DomainEvent
+from katcha.services.clip_lifecycle import ensure_lifecycle, refresh_search_document
 from katcha.services.scoring import score_candidate
 
 
@@ -296,6 +297,8 @@ def score_local_candidate(run_id: str) -> dict[str, object]:
         run.stage = "completed"
         run.completed_at = datetime.now(UTC)
         run.error = None
+        lifecycle = ensure_lifecycle(session, clip)
+        refresh_search_document(session, clip, lifecycle)
         session.add(
             DomainEvent(
                 aggregate_type="clip",

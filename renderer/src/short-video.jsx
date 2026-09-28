@@ -1,4 +1,5 @@
 import React from 'react';
+import {BrandLogo} from './brand-logo.jsx';
 import {ReactionTrack} from './reaction-track.jsx';
 import {
   AbsoluteFill,
@@ -159,30 +160,45 @@ export const ShortVideo = ({
   brand: brandInput,
   reaction_events: reactionEvents = [],
 }) => {
+  const frame = useCurrentFrame();
   const {fps} = useVideoConfig();
   const sourceFrames = secondsToFrames(source.duration_seconds, fps);
   const brand = resolveBrand(brandInput);
+  const seconds = frame / fps;
+  const narrationActive = overlays.some(
+    (overlay) =>
+      seconds >= overlay.start_seconds
+      && seconds < overlay.start_seconds + overlay.duration_seconds,
+  );
+  const sourceVolume = source.audio_policy === 'mute'
+    ? 0
+    : source.audio_policy === 'duck' && narrationActive
+      ? (source.duck_volume ?? source.audio_volume)
+      : source.audio_volume;
+  const backgroundMode = source.background_mode || 'blurred_fill';
 
   return (
     <AbsoluteFill style={{backgroundColor: brand.palette.ink}}>
       <Sequence durationInFrames={sourceFrames}>
         <AbsoluteFill>
+          {backgroundMode === 'blurred_fill' ? (
+            <OffthreadVideo
+              src={source.url}
+              muted
+              style={{
+                width: '100%',
+                height: '100%',
+                objectFit: 'cover',
+                filter: 'blur(38px)',
+                opacity: 0.42,
+                transform: 'scale(1.13)',
+              }}
+            />
+          ) : null}
           <OffthreadVideo
             src={source.url}
-            muted
-            style={{
-              width: '100%',
-              height: '100%',
-              objectFit: 'cover',
-              filter: 'blur(38px)',
-              opacity: 0.42,
-              transform: 'scale(1.13)',
-            }}
-          />
-          <OffthreadVideo
-            src={source.url}
-            volume={source.audio_volume}
-            style={{width: '100%', height: '100%', objectFit: 'contain'}}
+            volume={sourceVolume}
+            style={{width: '100%', height: '100%', objectFit: source.fit || 'contain'}}
           />
         </AbsoluteFill>
       </Sequence>
@@ -205,6 +221,7 @@ export const ShortVideo = ({
         interactionPrompt={interactionPrompt}
         brand={brand}
       />
+      <BrandLogo logo={brand.logo} />
       <ReactionTrack events={reactionEvents} captions={brand.captions} />
       <Captions overlays={overlays} brand={brand} />
     </AbsoluteFill>

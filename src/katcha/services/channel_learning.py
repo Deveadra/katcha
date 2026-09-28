@@ -27,6 +27,7 @@ from katcha.longform_models import CompilationSegment
 from katcha.models import DomainEvent
 from katcha.production_models import Production
 from katcha.publishing_models import Publication, PublicationAnalyticsSnapshot
+from katcha.services.channel_growth import apply_growth_priority, channel_growth_context
 from katcha.services.channel_profiles import ensure_active_profile
 from katcha.short_episode_models import ShortEpisode, ShortEpisodeItem
 
@@ -372,7 +373,8 @@ def train_channel_ranking(
 def score_channel_features(
     channel_profile_id: uuid.UUID,
     features: dict[str, float],
-) -> tuple[float, dict[str, float | str]]:
+) -> tuple[float, dict[str, object]]:
+    growth_context = channel_growth_context(channel_profile_id)
     with session_scope() as session:
         ensure_active_profile(session, channel_profile_id)
         snapshot = session.scalar(
@@ -383,11 +385,17 @@ def score_channel_features(
         )
         if snapshot is None:
             baseline = clamp(float(features.get("baseline_score", 0)))
-            return baseline, {
+            score, growth = apply_growth_priority(
+                baseline,
+                features,
+                growth_context,
+            )
+            return score, {
                 "baseline": baseline,
                 "learned": baseline,
                 "blend_ratio": 0.0,
                 "algorithm": "untrained",
+                **growth,
             }
         result = TrainingResult(
             algorithm=snapshot.algorithm,
@@ -410,7 +418,13 @@ def score_channel_features(
             blend_ratio=float(snapshot.blend_ratio),
             validation_metrics=dict(snapshot.validation_metrics or {}),
         )
-        return blended_score(features, result)
+        learned_score, details = blended_score(features, result)
+        score, growth = apply_growth_priority(
+            learned_score,
+            features,
+            growth_context,
+        )
+        return score, {**details, **growth}
 
 
 def latest_ranking_snapshot(

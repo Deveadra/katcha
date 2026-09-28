@@ -1,0 +1,729 @@
+const state = {
+    token: "",
+    channels: [],
+    channelId: "",
+    threadId: "",
+    threads: [],
+    selectedClipIds: [],
+    selectedProductionId: null,
+    busy: false,
+};
+
+const $ = (id) => document.getElementById(id);
+
+function headers() {
+    return {
+        "Content-Type": "application/json",
+        ...(state.token ? { Authorization: "Bearer " + state.token } : {}),
+    };
+}
+
+async function api(path, options = {}) {
+    const response = await fetch(path, {
+        ...options,
+        headers: { ...headers(), ...(options.headers || {}) },
+    });
+    if (!response.ok) {
+        let message = response.status + " " + response.statusText;
+        try {
+            const body = await response.json();
+            message = body.detail || message;
+        } catch {}
+        throw new Error(message);
+    }
+    return response.status === 204 ? null : response.json();
+}
+
+function esc(value) {
+    return String(value ?? "")
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#039;");
+}
+
+function status(message, error = false) {
+    $("status").textContent = message || "";
+    $("status").className = "ai-status" + (error ? " error" : "");
+}
+
+function channelName(channel) {
+    return (
+        channel.profile_metadata?.channel_title ||
+        channel.profile_metadata?.name ||
+        channel.id
+    );
+}
+
+function resetConversationView(message = "Start a new grounded conversation for this channel.") {
+    $("thread").innerHTML =
+        '<article class="message katcha-message welcome-message"><div class="message-avatar">K</div><div class="message-body"><span class="message-author">KATCHA AI</span><p>' +
+        esc(message) +
+        "</p></div></article>";
+    $("context-panel").innerHTML =
+        '<div class="context-empty"><span>◇</span><strong>Nothing hidden behind the answer.</strong><p>Evidence used by Katcha AI will appear here with IDs, stored metrics and auditable actions.</p></div>';
+    $("narrator").textContent = "NO QUERY";
+}
+
+function newConversation(message = "New conversation ready. Existing history is preserved.") {
+    state.threadId = "";
+    state.selectedClipIds = [];
+    state.selectedProductionId = null;
+    renderSelection();
+    $("thread-history").value = "";
+    $("archive-thread").disabled = true;
+    resetConversationView(message);
+}
+
+async function loadThreads({ openLatest = true } = {}) {
+    if (!state.channelId) return;
+    const rows = await api(
+        "/v1/ai/threads?channel_profile_id=" +
+            encodeURIComponent(state.channelId) +
+            "&limit=30",
+    );
+    state.threads = rows;
+    $("thread-history").innerHTML =
+        '<option value="">New conversation</option>' +
+        rows
+            .map(
+                (thread) =>
+                    '<option value="' +
+                    esc(thread.thread_id) +
+                    '">' +
+                    esc(thread.title) +
+                    "</option>",
+            )
+            .join("");
+
+    const currentExists =
+        state.threadId &&
+        rows.some((thread) => thread.thread_id === state.threadId);
+    if (currentExists) {
+        $("thread-history").value = state.threadId;
+        $("archive-thread").disabled = false;
+        return;
+    }
+    if (openLatest && rows.length) {
+        await openThread(rows[0].thread_id);
+        return;
+    }
+    newConversation();
+}
+
+async function openThread(threadId) {
+    if (!threadId) {
+        newConversation();
+        return;
+    }
+    const detail = await api(
+        "/v1/ai/threads/" + encodeURIComponent(threadId),
+    );
+    state.threadId = detail.thread.thread_id;
+    state.selectedClipIds = [];
+    state.selectedProductionId = null;
+    renderSelection();
+    $("thread-history").value = state.threadId;
+    $("archive-thread").disabled = false;
+    $("thread").innerHTML = "";
+
+    for (const turn of detail.turns || []) {
+        if (turn.role === "user") {
+            appendUser(turn.content);
+        } else if (turn.role === "assistant") {
+            appendKatcha({
+                answer: turn.content,
+                intent: turn.intent || "grounded_answer",
+                evidence: turn.evidence || [],
+            });
+        }
+    }
+    if (!(detail.turns || []).length) {
+        resetConversationView("This conversation has no recorded turns yet.");
+        return;
+    }
+
+    const assistantTurns = (detail.turns || []).filter(
+        (turn) => turn.role === "assistant",
+    );
+    const latest = assistantTurns.at(-1);
+    if (latest) {
+        const actionSourceTurnId =
+            latest.context?.action_source_turn_id || latest.turn_id;
+        const actions = (detail.actions || [])
+            .filter((action) => action.source_turn_id === actionSourceTurnId)
+            .map((action) => ({
+                ...action,
+                type: action.action_type,
+            }));
+        renderContext({
+            narrator: latest.narrator || "GROUNDED",
+            evidence: latest.evidence || [],
+            key_points: latest.context?.key_points || [],
+            caveats: latest.context?.caveats || [],
+            planning: latest.context?.planning || null,
+            actions,
+        });
+    }
+    scrollThread();
+}
+
+function appendUser(text) {
+    const article = document.createElement("article");
+    article.className = "message user-message";
+    article.innerHTML =
+        '<div class="message-body"><span class="message-author">YOU</span><p>' +
+        esc(text) +
+        "</p></div>";
+    $("thread").append(article);
+    scrollThread();
+}
+
+function appendThinking() {
+    const article = document.createElement("article");
+    article.className = "message katcha-message thinking";
+    article.id = "thinking-message";
+    article.innerHTML =
+        '<div class="message-avatar">K</div><div class="message-body"><span class="message-author">KATCHA AI</span><p>Checking channel evidence and discovery tools <span class="thinking-dot"></span><span class="thinking-dot"></span><span class="thinking-dot"></span></p></div>';
+    $("thread").append(article);
+    scrollThread();
+}
+
+function appendKatcha(result) {
+    $("thinking-message")?.remove();
+    const article = document.createElement("article");
+    article.className = "message katcha-message";
+    article.innerHTML =
+        '<div class="message-avatar">K</div><div class="message-body"><span class="message-author">KATCHA AI</span><p>' +
+        esc(result.answer) +
+        '</p><div class="message-meta">' +
+        esc(String(result.intent || "grounded_answer").replaceAll("_", " ")) +
+        " · " +
+        esc((result.evidence || []).length) +
+        " evidence record" +
+        ((result.evidence || []).length === 1 ? "" : "s") +
+        "</div></div>";
+    $("thread").append(article);
+    scrollThread();
+}
+
+function appendError(message) {
+    $("thinking-message")?.remove();
+    const article = document.createElement("article");
+    article.className = "message katcha-message";
+    article.innerHTML =
+        '<div class="message-avatar">!</div><div class="message-body"><span class="message-author">KATCHA</span><p>' +
+        esc(message) +
+        "</p></div>";
+    $("thread").append(article);
+    scrollThread();
+}
+
+function scrollThread() {
+    $("thread").scrollTop = $("thread").scrollHeight;
+}
+
+function renderSelection() {
+    const host = $("selection-bar");
+    if (!state.selectedClipIds.length && !state.selectedProductionId) {
+        host.hidden = true;
+        host.textContent = "";
+        return;
+    }
+    host.hidden = false;
+    host.innerHTML =
+        "Using context: " +
+        (state.selectedClipIds.length
+            ? state.selectedClipIds.length + " selected clip" + (state.selectedClipIds.length === 1 ? "" : "s")
+            : "") +
+        (state.selectedProductionId ? " · production " + esc(state.selectedProductionId.slice(0, 8)) : "") +
+        ' <button type="button" id="clear-selection">clear</button>';
+    $("clear-selection").onclick = () => {
+        state.selectedClipIds = [];
+        state.selectedProductionId = null;
+        renderSelection();
+    };
+}
+
+function evidenceSummary(record) {
+    if (record.kind === "clip") {
+        const score =
+            record.channel_score != null
+                ? (Number(record.channel_score) * 100).toFixed(1) + "/100 channel score"
+                : record.candidate_score != null
+                  ? Number(record.candidate_score).toFixed(1) + "/100 candidate score"
+                  : "Stored clip evidence";
+        return [score, ...(record.why || []).slice(0, 2)].join(" · ");
+    }
+    if (record.kind === "render_attempt" || record.kind === "production" || record.kind === "compilation" || record.kind === "publication") {
+        return [record.status, record.stage, record.error].filter(Boolean).join(" · ");
+    }
+    if (record.kind === "edit_performance") {
+        return (
+            String(record.publication_count || 0) +
+            " maturity-matched publications · " +
+            String(record.comparison_status || "unknown").replaceAll("_", " ")
+        );
+    }
+    if (record.kind === "packaging_intelligence") {
+        return (
+            String(record.publication_count || 0) +
+            " publications · " +
+            String(record.recommendation_status || "unknown").replaceAll("_", " ")
+        );
+    }
+    if (record.kind === "source_discovery") {
+        const platforms =
+            (record.requested_platforms || []).join(", ") || "wide web";
+        const readiness = record.web_scout_ready
+            ? "autonomous scout ready"
+            : String(record.web_scout_readiness || "scout unavailable");
+        return (
+            platforms +
+            " · " +
+            readiness +
+            " · " +
+            String(record.configured_source_count || 0) +
+            " saved sources"
+        );
+    }
+    return JSON.stringify(record).slice(0, 220);
+}
+
+function actionPayloadSummary(action) {
+    const payload = action.payload || {};
+    if (action.type === "create_ranked_short_episode") {
+        const clips = Array.isArray(payload.clip_ids) ? payload.clip_ids : [];
+        const recipe = payload.edit_blueprint_key || "channel default";
+        return clips.length + " locked clips · " + recipe + " · preserve order";
+    }
+    if (action.type === "create_short_production") {
+        const clip = String(payload.clip_id || "").slice(0, 8);
+        const recipe = payload.edit_blueprint_key || "channel default";
+        return "clip " + clip + " · " + recipe;
+    }
+    if (action.type === "recover_production_render") {
+        return "production " + String(payload.production_id || "").slice(0, 8);
+    }
+    if (action.type === "refresh_channel_intelligence") {
+        return "recompute channel-scoped intelligence";
+    }
+    if (action.type === "start_source_scout") {
+        const platforms =
+            (payload.platforms || []).join(", ") || "wide web";
+        const interval = Number(payload.interval_minutes || 60);
+        return (
+            platforms +
+            " · every " +
+            interval +
+            " min · " +
+            String((payload.terms || []).length) +
+            " topic terms"
+        );
+    }
+    return "";
+}
+
+
+function actionActivitySummary(activity) {
+    const resource = activity.resource;
+    if (resource) {
+        return [
+            resource.kind.replaceAll("_", " "),
+            resource.status.replaceAll("_", " "),
+            resource.stage && resource.stage !== resource.status
+                ? resource.stage.replaceAll("_", " ")
+                : "",
+            resource.error || "",
+        ]
+            .filter(Boolean)
+            .join(" · ");
+    }
+    return [
+        activity.state?.replaceAll("_", " "),
+        activity.workflow_id ? "workflow " + activity.workflow_id : "",
+    ]
+        .filter(Boolean)
+        .join(" · ");
+}
+
+async function refreshActionActivity(proposalId, card, attempt = 0, keepPolling = false) {
+    if (!card || !document.body.contains(card)) return;
+    const output = card.querySelector(".action-result");
+    try {
+        const activity = await api(
+            "/v1/ai/actions/" + encodeURIComponent(proposalId) + "/activity",
+        );
+        output.hidden = false;
+        output.textContent = actionActivitySummary(activity) || "No workflow activity yet.";
+        card.dataset.activityState = activity.state || "";
+        const activityButton = card.querySelector("[data-activity-id]");
+        if (activityButton) {
+            activityButton.textContent = activity.settled
+                ? "Status is current"
+                : "Refresh workflow status";
+            activityButton.disabled = Boolean(activity.settled);
+        }
+        if (
+            keepPolling &&
+            !activity.settled &&
+            attempt < 20 &&
+            document.body.contains(card)
+        ) {
+            window.setTimeout(
+                () => refreshActionActivity(proposalId, card, attempt + 1, true),
+                3000,
+            );
+        }
+    } catch (error) {
+        output.hidden = false;
+        output.textContent = "Status check failed: " + error.message;
+    }
+}
+
+function renderContext(result) {
+    $("narrator").textContent = result.narrator || "GROUNDED";
+    const evidence = (result.evidence || [])
+        .map((record) => {
+            const selectable = record.kind === "clip" && record.id && record.id !== "current";
+            return (
+                '<article class="evidence-card"><div class="evidence-top"><span class="evidence-kind">' +
+                esc(record.kind) +
+                '</span><span class="evidence-kind">' +
+                esc(String(record.id || "").slice(0, 8)) +
+                "</span></div><strong>" +
+                esc(record.title || record.error || record.kind.replaceAll("_", " ")) +
+                "</strong><p>" +
+                esc(evidenceSummary(record)) +
+                "</p>" +
+                (selectable
+                    ? '<button type="button" data-select-clip="' +
+                      esc(record.id) +
+                      '">+ Use this clip as command context</button>'
+                    : "") +
+                "</article>"
+            );
+        })
+        .join("");
+
+    const actions = (result.actions || [])
+        .map((action) => {
+            const canExecute = ["proposed", "failed"].includes(
+                action.status || "proposed",
+            );
+            const buttonLabel =
+                action.status === "executed"
+                    ? "✓ Executed"
+                    : action.status === "executing"
+                      ? "Executing…"
+                      : action.status === "expired"
+                        ? "Expired"
+                        : "Review & confirm";
+            return (
+                '<article class="action-card" data-action-card="' +
+                esc(action.proposal_id) +
+                '"><strong>' +
+                esc(action.label) +
+                "</strong><p>" +
+                esc(action.description) +
+                '</p><div class="action-payload">' +
+                esc(actionPayloadSummary(action)) +
+                '</div><button type="button" data-action-id="' +
+                esc(action.proposal_id) +
+                '"' +
+                (canExecute ? "" : " disabled") +
+                ">" +
+                esc(buttonLabel) +
+                "</button>" +
+                (["executed", "executing"].includes(action.status)
+                    ? '<button type="button" class="activity-button" data-activity-id="' +
+                      esc(action.proposal_id) +
+                      '">Check workflow status</button>'
+                    : "") +
+                '<div class="action-result"' +
+                (action.result && Object.keys(action.result).length
+                    ? ""
+                    : " hidden") +
+                ">" +
+                esc(
+                    action.result && Object.keys(action.result).length
+                        ? Object.entries(action.result)
+                              .slice(0, 2)
+                              .map(
+                                  ([key, value]) =>
+                                      key.replaceAll("_", " ") +
+                                      ": " +
+                                      String(value),
+                              )
+                              .join(" · ")
+                        : "",
+                ) +
+                "</div></article>"
+            );
+        })
+        .join("");
+
+    const planning = result.planning
+        ? '<div class="context-section"><div class="context-section-head"><span>COMMAND ROUTING</span><b>' +
+          esc(String(Math.round(Number(result.planning.confidence || 0) * 100))) +
+          '%</b></div><article class="planner-card"><strong>' +
+          esc(String(result.planning.intent || "unknown").replaceAll("_", " ")) +
+          '</strong><span>' +
+          esc(result.planning.source || "deterministic") +
+          " · " +
+          esc(result.planning.provider || "katcha") +
+          "/" +
+          esc(result.planning.model || "router") +
+          '</span><p>' +
+          esc(result.planning.reason || "") +
+          "</p></article></div>"
+        : "";
+
+    const keyPoints = (result.key_points || []).length
+        ? '<div class="context-section"><div class="context-section-head"><span>KATCHA NOTES</span><b>' +
+          result.key_points.length +
+          '</b></div><div class="evidence-list">' +
+          result.key_points
+              .map((point) => '<article class="evidence-card"><p>' + esc(point) + "</p></article>")
+              .join("") +
+          "</div></div>"
+        : "";
+
+    $("context-panel").innerHTML =
+        planning +
+        keyPoints +
+        '<section class="context-section"><div class="context-section-head"><span>EVIDENCE USED</span><b>' +
+        (result.evidence || []).length +
+        '</b></div><div class="evidence-list">' +
+        (evidence || '<div class="context-empty" style="min-height:120px"><p>No supporting records were available for this answer.</p></div>') +
+        "</div></section>" +
+        '<section class="context-section"><div class="context-section-head"><span>PROPOSED ACTIONS</span><b>' +
+        (result.actions || []).length +
+        '</b></div><div class="action-list">' +
+        (actions || '<div class="context-empty" style="min-height:100px"><p>This answer is informational; no action is proposed.</p></div>') +
+        "</div></section>";
+
+    $("context-panel").querySelectorAll("[data-select-clip]").forEach((button) => {
+        button.onclick = () => {
+            const id = button.dataset.selectClip;
+            if (!state.selectedClipIds.includes(id)) state.selectedClipIds.push(id);
+            renderSelection();
+            button.textContent = "✓ Added to command context";
+            button.disabled = true;
+        };
+    });
+
+    const byId = new Map((result.actions || []).map((action) => [action.proposal_id, action]));
+
+    $("context-panel").querySelectorAll("[data-activity-id]").forEach((button) => {
+        button.onclick = async () => {
+            button.disabled = true;
+            button.textContent = "Checking…";
+            const card = button.closest("[data-action-card]");
+            await refreshActionActivity(button.dataset.activityId, card);
+            if (!button.disabled) {
+                button.textContent = "Refresh workflow status";
+            }
+        };
+    });
+
+    $("context-panel").querySelectorAll("[data-action-id]").forEach((button) => {
+        button.onclick = async () => {
+            const action = byId.get(button.dataset.actionId);
+            if (!action) return;
+            if (!button.classList.contains("confirming")) {
+                button.classList.add("confirming");
+                button.textContent = "Confirm: " + action.label;
+                return;
+            }
+            button.disabled = true;
+            button.textContent = "Starting…";
+            const card = button.closest("[data-action-card]");
+            const output = card.querySelector(".action-result");
+            try {
+                const execution = await api(
+                    "/v1/ai/actions/" + encodeURIComponent(action.proposal_id) + "/execute",
+                    {
+                        method: "POST",
+                        body: JSON.stringify({ confirmed: true }),
+                    },
+                );
+                output.hidden = false;
+                output.textContent =
+                    execution.status.replaceAll("_", " ") +
+                    " · " +
+                    Object.entries(execution.result || {})
+                    .slice(0, 2)
+                    .map(([key, value]) => key.replaceAll("_", " ") + ": " + String(value))
+                    .join(" · ");
+                button.textContent =
+                    execution.status === "executed" ? "✓ Executed" : "✓ " + execution.status;
+                await refreshActionActivity(action.proposal_id, card, 0, true);
+                appendKatcha({
+                    answer: action.label + " was accepted by the Katcha control plane. The evidence panel contains the returned workflow reference.",
+                    intent: "action_execution",
+                    evidence: [],
+                });
+            } catch (error) {
+                output.hidden = false;
+                output.textContent = error.message;
+                button.disabled = false;
+                button.classList.remove("confirming");
+                button.textContent = "Review & confirm";
+            }
+        };
+    });
+}
+
+async function sendPrompt(text) {
+    const prompt = text.trim();
+    if (!prompt || !state.channelId || state.busy) return;
+    state.busy = true;
+    $("send").disabled = true;
+    appendUser(prompt);
+    appendThinking();
+    $("prompt").value = "";
+    autoResize();
+    try {
+        const result = await api("/v1/ai/command", {
+            method: "POST",
+            body: JSON.stringify({
+                channel_profile_id: state.channelId,
+                thread_id: state.threadId || null,
+                prompt,
+                selected_clip_ids: state.selectedClipIds,
+                selected_production_id: state.selectedProductionId,
+            }),
+        });
+        state.threadId = result.thread_id;
+        const resolved = result.resolved_context || {};
+        if (
+            resolved.inherited_from_thread &&
+            Array.isArray(resolved.selected_clip_ids) &&
+            resolved.selected_clip_ids.length
+        ) {
+            state.selectedClipIds = [...resolved.selected_clip_ids];
+            state.selectedProductionId = null;
+            renderSelection();
+        }
+        appendKatcha(result);
+        renderContext(result);
+        await loadThreads({ openLatest: false });
+        $("thread-history").value = state.threadId;
+        $("archive-thread").disabled = false;
+        status("");
+    } catch (error) {
+        appendError(error.message);
+        status(error.message, true);
+    } finally {
+        state.busy = false;
+        $("send").disabled = false;
+        $("prompt").focus();
+    }
+}
+
+async function connect(event) {
+    event?.preventDefault();
+    state.token = $("token").value.trim();
+    $("token").value = "";
+    status("Connecting to Katcha control plane…");
+    try {
+        state.channels = await api("/v1/channels");
+        $("channel").innerHTML = state.channels
+            .map(
+                (channel) =>
+                    '<option value="' +
+                    esc(channel.id) +
+                    '">' +
+                    esc(channelName(channel)) +
+                    " · " +
+                    esc(channel.status) +
+                    "</option>",
+            )
+            .join("");
+        if (!state.channels.length) {
+            status("No channel workspace is configured yet.", true);
+            return;
+        }
+        state.channelId = state.channels[0].id;
+        $("channel").value = state.channelId;
+        $("command-center").hidden = false;
+        $("connection-state").textContent = "CONNECTED";
+        $("connection-state").className = "simulation connected";
+        await loadThreads({ openLatest: true });
+        status(
+            "Katcha AI is ready. Conversation history is scoped to " +
+                channelName(state.channels[0]) +
+                ".",
+        );
+    } catch (error) {
+        $("connection-state").textContent = "CONNECTION FAILED";
+        status(error.message, true);
+    }
+}
+
+function autoResize() {
+    const input = $("prompt");
+    input.style.height = "auto";
+    input.style.height = Math.min(130, input.scrollHeight) + "px";
+}
+
+$("connect-form").onsubmit = connect;
+$("command-form").onsubmit = (event) => {
+    event.preventDefault();
+    sendPrompt($("prompt").value);
+};
+$("prompt").addEventListener("input", autoResize);
+$("prompt").addEventListener("keydown", (event) => {
+    if (event.key === "Enter" && !event.shiftKey) {
+        event.preventDefault();
+        $("command-form").requestSubmit();
+    }
+});
+$("channel").onchange = async () => {
+    state.channelId = $("channel").value;
+    state.threadId = "";
+    state.selectedClipIds = [];
+    state.selectedProductionId = null;
+    renderSelection();
+    await loadThreads({ openLatest: true });
+    status("Channel context changed. Conversation history was reloaded for this channel.");
+};
+$("thread-history").onchange = async () => {
+    try {
+        await openThread($("thread-history").value);
+        status(
+            state.threadId
+                ? "Reopened durable Katcha AI conversation."
+                : "New conversation ready.",
+        );
+    } catch (error) {
+        status(error.message, true);
+    }
+};
+$("clear-thread").onclick = () => {
+    newConversation();
+    status("New conversation ready. Previous conversations remain in history.");
+};
+$("archive-thread").onclick = async () => {
+    if (!state.threadId) return;
+    const threadId = state.threadId;
+    $("archive-thread").disabled = true;
+    try {
+        await api(
+            "/v1/ai/threads/" + encodeURIComponent(threadId) + "/archive",
+            { method: "POST", body: "{}" },
+        );
+        state.threadId = "";
+        await loadThreads({ openLatest: false });
+        newConversation("Conversation archived. Start a new conversation or reopen another saved thread.");
+        status("Conversation archived.");
+    } catch (error) {
+        $("archive-thread").disabled = false;
+        status(error.message, true);
+    }
+};
+document.querySelectorAll("[data-prompt]").forEach((button) => {
+    button.onclick = () => sendPrompt(button.dataset.prompt);
+});

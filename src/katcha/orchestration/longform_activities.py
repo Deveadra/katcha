@@ -163,6 +163,9 @@ def generate_longform_editor_plan_activity(compilation_id: str) -> dict[str, obj
         persona_key = compilation.persona_key
         persona_version = compilation.persona_version
         prompt_version = compilation.prompt_version
+        operator_feedback = list(
+            (compilation.candidate_snapshot or {}).get("operator_feedback") or []
+        )
 
     settings = get_settings()
     persona = get_persona(persona_key, persona_version)
@@ -174,6 +177,7 @@ def generate_longform_editor_plan_activity(compilation_id: str) -> dict[str, obj
         prompt_version=prompt_version,
         compilation_id=compilation_id,
         min_segments=settings.longform_min_segments,
+        operator_feedback=operator_feedback,
         settings=settings,
     )
     plan = _longform_result_value(result)

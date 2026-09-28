@@ -49,7 +49,7 @@ def _query(
     start_date: date,
     end_date: date,
     metrics: tuple[str, ...],
-    video_id: str,
+    video_id: str | None = None,
     dimensions: str | None = None,
     settings: Settings | None = None,
 ) -> dict[str, Any]:
@@ -60,8 +60,9 @@ def _query(
         "startDate": start_date.isoformat(),
         "endDate": end_date.isoformat(),
         "metrics": ",".join(metrics),
-        "filters": f"video=={video_id}",
     }
+    if video_id:
+        params["filters"] = f"video=={video_id}"
     if dimensions:
         params["dimensions"] = dimensions
     response = httpx.get(
@@ -154,3 +155,52 @@ def retention_curve(
         settings=settings,
     )
     return report_rows(payload), payload
+
+
+def channel_growth_metrics(
+    connection_id: uuid.UUID,
+    *,
+    as_of: date,
+    settings: Settings | None = None,
+) -> dict[str, Any]:
+    """Return channel-level growth proxies used for YPP progress.
+
+    YouTube does not expose the exact qualified counters shown in Studio's Earn
+    tab through the public APIs. These values therefore remain estimates and
+    are labelled as such by callers.
+    """
+    from datetime import timedelta
+
+    longform_payload = _query(
+        connection_id,
+        start_date=as_of - timedelta(days=364),
+        end_date=as_of,
+        metrics=("estimatedMinutesWatched",),
+        dimensions="creatorContentType",
+        settings=settings,
+    )
+    shorts_payload = _query(
+        connection_id,
+        start_date=as_of - timedelta(days=89),
+        end_date=as_of,
+        metrics=("engagedViews",),
+        dimensions="creatorContentType",
+        settings=settings,
+    )
+
+    watched_minutes = 0.0
+    for row in report_rows(longform_payload):
+        if row.get("creatorContentType") in {"VIDEO_ON_DEMAND", "LIVE_STREAM"}:
+            watched_minutes += float(row.get("estimatedMinutesWatched") or 0)
+
+    shorts_views = 0
+    for row in report_rows(shorts_payload):
+        if row.get("creatorContentType") == "SHORTS":
+            shorts_views += int(row.get("engagedViews") or 0)
+
+    return {
+        "estimated_qualified_watch_hours_365d": watched_minutes / 60.0,
+        "estimated_qualified_shorts_views_90d": shorts_views,
+        "raw_longform": longform_payload,
+        "raw_shorts": shorts_payload,
+    }

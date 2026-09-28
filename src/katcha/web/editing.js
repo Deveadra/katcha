@@ -4,12 +4,19 @@ const state = {
     channel: "",
     episodes: [],
     blueprints: [],
+    templates: [],
+    editingBlueprint: null,
+    editorMode: null,
+    editorBaseContract: null,
+    editorSuggestedKey: "",
     attempts: new Map(),
     brands: [],
     candidates: [],
     productions: [],
     preview: null,
     previewUrl: null,
+    providers: [],
+    invideoHandoff: null,
     epoch: 0,
 };
 const $ = (id) => document.getElementById(id);
@@ -17,6 +24,10 @@ const escapeHTML = (value) => String(value ?? "").replace(/[&<>"']/g, (c) => ({ 
 const date = (value) => value ? new Date(value).toLocaleString() : "—";
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 function message(value, error = false) { $("message").textContent = value; $("message").classList.toggle("error", error); }
+function rememberWorkspace() {
+    if (state.token) sessionStorage.setItem("katcha.controlToken", state.token);
+    if (state.channel) sessionStorage.setItem("katcha.channel", state.channel);
+}
 async function request(path, options = {}) {
     return fetch(path, {
         ...options,
@@ -44,6 +55,106 @@ async function apiBlob(path) {
     return response.blob();
 }
 function channelPath(suffix) { return `/v1/channels/${encodeURIComponent(state.channel)}${suffix}`; }
+function renderProviderStatus() {
+    const eleven = state.providers.find((row) => row.provider === "elevenlabs");
+    const invideo = state.providers.find((row) => row.provider === "invideo");
+    const card = (row, fallback) => `
+        <div class="${row?.configured ? "provider-ready" : "provider-muted"}">
+            <span>${escapeHTML((row?.provider || fallback).toUpperCase())}</span>
+            <strong>${row?.configured ? "READY" : "NOT CONFIGURED"}</strong>
+            <small>${escapeHTML(row?.detail || "Provider status unavailable")}</small>
+        </div>`;
+    $("provider-status").innerHTML = card(eleven, "elevenlabs") + card(invideo, "invideo");
+}
+function invideoEligible(row) {
+    return Boolean(
+        row.selected_script_id
+        && ["voiced", "editorial_approved", "rendering", "rendered", "render_review", "approved", "failed", "render_failed"].includes(String(row.status || ""))
+    );
+}
+function renderInVideoHandoff() {
+    const row = state.invideoHandoff;
+    if (!row) {
+        $("invideo-handoff-state").className = "external-edit-state empty";
+        $("invideo-handoff-state").textContent = "Prepare an episode handoff to begin.";
+        for (const id of ["download-invideo-package", "invideo-output-file", "invideo-project-id", "upload-invideo-output", "adopt-invideo-output"]) {
+            $(id).disabled = true;
+        }
+        return;
+    }
+    const imported = row.status === "output_imported";
+    const adopted = row.status === "adopted";
+    $("invideo-handoff-state").className = "external-edit-state";
+    const project = row.external_project_id ? ` · InVideo project ${escapeHTML(row.external_project_id)}` : "";
+    const verify = row.handoff_metadata?.verification;
+    const verified = verify ? `<p>Verified ${escapeHTML(Number(verify.duration_seconds || 0).toFixed(2))}s · ${escapeHTML(verify.width || "—")}×${escapeHTML(verify.height || "—")}</p>` : "";
+    $("invideo-handoff-state").innerHTML = `<div><span class="pill ${adopted ? "active" : ""}">${escapeHTML(row.status.replaceAll("_", " ").toUpperCase())}</span><strong>InVideo handoff · generation ${escapeHTML(row.generation)}</strong></div><small>Katcha handoff ID ${escapeHTML(row.id)}${project}</small>${verified}`;
+    $("download-invideo-package").disabled = adopted;
+    $("invideo-output-file").disabled = adopted;
+    $("invideo-project-id").disabled = adopted;
+    $("upload-invideo-output").disabled = adopted;
+    $("adopt-invideo-output").disabled = !imported;
+}
+async function prepareInVideo(episodeId) {
+    const row = await api("/v1/integrations/invideo/handoffs", {
+        method: "POST",
+        body: JSON.stringify({
+            source_type: "short_episode",
+            source_id: episodeId,
+            actor: "editing-control-center",
+            note: "Operator handoff from Editing Control Center",
+        }),
+    });
+    state.invideoHandoff = row;
+    renderInVideoHandoff();
+    $("invideo-dialog").showModal();
+    message("InVideo package prepared. Download it when ready.");
+}
+async function downloadInVideoPackage() {
+    if (!state.invideoHandoff) return;
+    const blob = await apiBlob(`/v1/integrations/invideo/handoffs/${encodeURIComponent(state.invideoHandoff.id)}/package`);
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `katcha-invideo-${state.invideoHandoff.id}.zip`;
+    document.body.append(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+    message("InVideo package downloaded. Return the finished MP4 to this handoff.");
+}
+async function uploadInVideoOutput() {
+    if (!state.invideoHandoff) return;
+    const file = $("invideo-output-file").files?.[0];
+    if (!file) throw new Error("Choose the finished InVideo MP4 first.");
+    const form = new FormData();
+    form.append("file", file);
+    form.append("actor", "editing-control-center");
+    const projectId = $("invideo-project-id").value.trim();
+    if (projectId) form.append("external_project_id", projectId);
+    const response = await fetch(`/v1/integrations/invideo/handoffs/${encodeURIComponent(state.invideoHandoff.id)}/output`, {
+        method: "POST",
+        headers: state.token ? { Authorization: `Bearer ${state.token}` } : {},
+        body: form,
+    });
+    if (!response.ok) {
+        let payload; try { payload = await response.json(); } catch {}
+        throw new Error(typeof payload?.detail === "string" ? payload.detail : `Upload failed (${response.status})`);
+    }
+    state.invideoHandoff = await response.json();
+    renderInVideoHandoff();
+    message("InVideo output imported and media-verified. Review verification before adoption.");
+}
+async function adoptInVideoOutput() {
+    if (!state.invideoHandoff) return;
+    state.invideoHandoff = await api(`/v1/integrations/invideo/handoffs/${encodeURIComponent(state.invideoHandoff.id)}/adopt`, {
+        method: "POST",
+        body: JSON.stringify({ actor: "editing-control-center" }),
+    });
+    renderInVideoHandoff();
+    await loadChannel();
+    message("InVideo output adopted as the Katcha render. It is waiting for normal review.");
+}
 function clearPreviewUrl() {
     if (state.previewUrl) URL.revokeObjectURL(state.previewUrl);
     state.previewUrl = null;
@@ -59,9 +170,295 @@ function statusType(row) {
     if (["published", "completed", "rejected", "cancelled"].includes(status)) return "done";
     return "active";
 }
+function blueprintName(row) {
+    const saved = row?.blueprint_metadata?.display_name;
+    if (saved) return saved;
+    return String(row?.blueprint_key || "Recipe")
+        .replaceAll("_", " ")
+        .replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+function blueprintDescription(row) {
+    return row?.blueprint_metadata?.description || "";
+}
+function blueprintSummary(contract = {}) {
+    const layout = contract.source_layout?.mode === "header_panel" ? "Header + video" : "Full-frame video";
+    const narration = {
+        persona_voice: "Persona voice",
+        explanatory_voice: "Explanatory voice",
+        text_only: "Text only",
+        source_only: "Source audio only",
+    }[contract.narration?.mode] || "Narration not set";
+    const audio = {
+        retain: "Source audio kept",
+        duck: "Source audio ducks",
+        mute: "Source audio muted",
+    }[contract.narration?.source_audio_policy] || "Audio not set";
+    const voiceMode = ["persona_voice", "explanatory_voice"].includes(contract.narration?.mode);
+    const finalDetail = voiceMode
+        ? (contract.narration?.captions_enabled ? "Captions on" : "Captions off")
+        : (contract.quality?.max_duration_seconds ? `${contract.quality.max_duration_seconds}s max` : "Length not set");
+    return [layout, narration, audio, finalDetail];
+}
+function blueprintFamilies() {
+    const families = new Map();
+    for (const row of state.blueprints) {
+        const rows = families.get(row.blueprint_key) || [];
+        rows.push(row);
+        families.set(row.blueprint_key, rows);
+    }
+    for (const rows of families.values()) rows.sort((a, b) => Number(b.version) - Number(a.version));
+    return families;
+}
+function findBlueprint(key, version) {
+    return state.blueprints.find(
+        (row) => row.blueprint_key === key && Number(row.version) === Number(version),
+    );
+}
 function renderBlueprints() {
-    $("count-blueprints").textContent = state.blueprints.length;
-    $("blueprints").innerHTML = state.blueprints.length ? state.blueprints.map((row) => `<article class="item"><div><h3>${escapeHTML(row.blueprint_key)} <small>v${escapeHTML(row.version)}</small></h3><p>Contract ${escapeHTML(row.contract_version)} · Created ${escapeHTML(date(row.created_at))}</p></div><div class="item-actions">${row.is_default ? '<span class="pill active">DEFAULT</span>' : row.is_active ? '<span class="pill active">ACTIVE</span>' : `<button class="mini" data-blueprint-activate="${escapeHTML(row.blueprint_key)}" data-version="${escapeHTML(row.version)}">Activate</button>`}</div></article>`).join("") : '<div class="empty">No blueprints configured for this channel.</div>';
+    const families = blueprintFamilies();
+    $("count-blueprints").textContent = families.size;
+    $("new-blueprint").disabled = !state.channel;
+    if (!families.size) {
+        $("blueprints").innerHTML = '<div class="empty">No editing recipes yet. Create one from a starter template.</div>';
+        return;
+    }
+    $("blueprints").innerHTML = [...families.entries()].map(([key, versions]) => {
+        const active = versions.find((row) => row.is_active) || versions[0];
+        const summary = blueprintSummary(active.contract);
+        const history = versions.map((row) => `
+            <div class="recipe-history-row">
+                <div><strong>v${escapeHTML(row.version)}</strong><small>${escapeHTML(date(row.created_at))}</small></div>
+                <div class="item-actions">
+                    ${row.is_active ? '<span class="pill active">ACTIVE</span>' : ""}
+                    ${row.is_default ? '<span class="pill default-pill">DEFAULT</span>' : ""}
+                    <button class="mini" type="button" data-blueprint-open="${escapeHTML(key)}" data-version="${escapeHTML(row.version)}">Open</button>
+                    ${row.is_active ? "" : `<button class="mini" type="button" data-blueprint-restore="${escapeHTML(key)}" data-version="${escapeHTML(row.version)}">Restore</button>`}
+                </div>
+            </div>
+        `).join("");
+        return `<article class="recipe-card ${active.is_default ? "is-default" : ""}">
+            <div class="recipe-card-head">
+                <div>
+                    <div class="recipe-status">${active.is_default ? "DEFAULT RECIPE" : "ACTIVE RECIPE"} · v${escapeHTML(active.version)}</div>
+                    <h3>${escapeHTML(blueprintName(active))}</h3>
+                    <p>${escapeHTML(blueprintDescription(active) || "Channel editing recipe")}</p>
+                </div>
+                <div class="item-actions">
+                    <button class="mini recipe-open" type="button" data-blueprint-open="${escapeHTML(key)}" data-version="${escapeHTML(active.version)}">Edit recipe</button>
+                    ${active.is_default ? "" : `<button class="mini" type="button" data-blueprint-default="${escapeHTML(key)}" data-version="${escapeHTML(active.version)}">Make default</button>`}
+                </div>
+            </div>
+            <div class="recipe-summary">${summary.map((value) => `<span>${escapeHTML(value)}</span>`).join("")}</div>
+            <details class="recipe-history"><summary>Version history · ${versions.length}</summary>${history}</details>
+        </article>`;
+    }).join("");
+}
+function setBlueprintEditorSubmitting(submitting) {
+    const submit = $("blueprint-editor").querySelector('button[type="submit"]');
+    if (submit) submit.disabled = submitting;
+}
+function closeBlueprintEditor() {
+    state.editingBlueprint = null;
+    state.editorMode = null;
+    state.editorBaseContract = null;
+    state.editorSuggestedKey = "";
+    setBlueprintEditorSubmitting(false);
+    $("blueprint-editor-panel").hidden = true;
+}
+function templateForKey(key) {
+    return state.templates.find((row) => row.key === key);
+}
+function uniqueRecipeKey(base) {
+    const used = new Set(state.blueprints.map((row) => row.blueprint_key));
+    let candidate = `${base}_custom`;
+    let index = 2;
+    while (used.has(candidate)) {
+        candidate = `${base}_custom_${index}`;
+        index += 1;
+    }
+    return candidate;
+}
+function setEditorContract(contract) {
+    const copy = structuredClone(contract);
+    state.editorBaseContract = copy;
+    $("bp-layout").value = copy.source_layout?.mode || "full_frame";
+    $("bp-fit").value = copy.source_layout?.fit || "contain";
+    $("bp-background").value = copy.source_layout?.background_mode || "solid";
+    $("bp-header-height").value = copy.source_layout?.header_height_px ?? 0;
+    $("bp-narration-mode").value = copy.narration?.mode || "source_only";
+    $("bp-narration-required").checked = Boolean(copy.narration?.required);
+    $("bp-captions").checked = Boolean(copy.narration?.captions_enabled);
+    $("bp-audio-policy").value = copy.narration?.source_audio_policy || "retain";
+    $("bp-source-volume").value = copy.narration?.source_audio_volume ?? 0.45;
+    $("bp-duck-volume").value = copy.narration?.narration_duck_volume ?? 0.16;
+    $("bp-header-required").checked = Boolean(copy.header?.required);
+    $("bp-header-max").value = copy.header?.max_chars ?? 0;
+    $("bp-header-bg").value = copy.header?.background || "#000000";
+    $("bp-header-fg").value = copy.header?.foreground || "#FFFFFF";
+    $("bp-header-font-size").value = copy.header?.font_size_px ?? 54;
+    $("bp-header-font-weight").value = copy.header?.font_weight ?? 850;
+    $("bp-header-padding").value = copy.header?.horizontal_padding_px ?? 56;
+    $("bp-min-source").value = copy.quality?.min_source_seconds ?? 1;
+    $("bp-max-duration").value = copy.quality?.max_duration_seconds ?? 60;
+    $("bp-narration-ratio").value = Math.round((copy.quality?.max_narration_ratio ?? 0.55) * 100);
+    syncBlueprintEditor();
+}
+function syncBlueprintEditor() {
+    const voiceMode = ["persona_voice", "explanatory_voice"].includes($("bp-narration-mode").value);
+    if (voiceMode) $("bp-layout").value = "full_frame";
+    $("bp-layout").disabled = voiceMode;
+    const headerMode = $("bp-layout").value === "header_panel";
+    $("bp-voice-limit-note").hidden = !voiceMode;
+    $("bp-header-group").hidden = !headerMode;
+    $("bp-header-height-wrap").hidden = !headerMode;
+    if (headerMode) {
+        if (Number($("bp-header-height").value) <= 0) $("bp-header-height").value = 360;
+        $("bp-header-required").checked = true;
+        if (Number($("bp-header-max").value) <= 0) $("bp-header-max").value = 220;
+    } else {
+        $("bp-header-height").value = 0;
+        $("bp-header-required").checked = false;
+        $("bp-header-max").value = 0;
+    }
+    $("bp-narration-required").disabled = true;
+    $("bp-narration-required").checked = voiceMode;
+    $("bp-captions").disabled = !voiceMode;
+    if (!voiceMode && $("bp-audio-policy").value === "duck") $("bp-audio-policy").value = "retain";
+    $("bp-duck-volume").disabled = !voiceMode || $("bp-audio-policy").value !== "duck";
+    $("bp-min-source").disabled = voiceMode;
+    $("bp-max-duration").disabled = voiceMode;
+    $("bp-narration-ratio").disabled = true;
+    if (!voiceMode) {
+        $("bp-captions").checked = false;
+        $("bp-narration-ratio").value = 0;
+    } else if (Number($("bp-narration-ratio").value) === 0) {
+        $("bp-narration-ratio").value = 48;
+    }
+    $("bp-source-volume-value").value = `${Math.round(Number($("bp-source-volume").value) * 100)}%`;
+    $("bp-duck-volume-value").value = `${Math.round(Number($("bp-duck-volume").value) * 100)}%`;
+}
+function openBlueprintEditor(row) {
+    if (!row) return;
+    setBlueprintEditorSubmitting(false);
+    state.editingBlueprint = row;
+    state.editorMode = "edit";
+    $("blueprint-editor-title").textContent = `Edit ${blueprintName(row)}`;
+    $("blueprint-editor-context").textContent = `You are editing from v${row.version}. Save creates a new version; videos already using v${row.version} keep it unchanged.`;
+    $("bp-template-wrap").hidden = true;
+    $("bp-key").disabled = true;
+    $("bp-key").value = row.blueprint_key;
+    $("bp-name").value = blueprintName(row);
+    $("bp-description").value = blueprintDescription(row);
+    $("bp-set-default").checked = Boolean(row.is_default);
+    setEditorContract(row.contract);
+    $("blueprint-editor-panel").hidden = false;
+    $("blueprint-editor-panel").scrollIntoView({ behavior: "smooth", block: "start" });
+}
+function applyNewRecipeTemplate(template) {
+    if (!template) return;
+    const previousSuggestion = state.editorSuggestedKey;
+    const nextSuggestion = uniqueRecipeKey(template.key);
+    if (!$("bp-key").value || $("bp-key").value === previousSuggestion) {
+        $("bp-key").value = nextSuggestion;
+    }
+    state.editorSuggestedKey = nextSuggestion;
+    $("bp-name").value = `Custom ${template.display_name}`;
+    $("bp-description").value = template.description;
+    $("bp-set-default").checked = false;
+    setEditorContract(template.contract);
+}
+function openNewBlueprintEditor() {
+    if (!state.channel || !state.templates.length) {
+        message("Connect a channel before creating an editing recipe.", true);
+        return;
+    }
+    setBlueprintEditorSubmitting(false);
+    state.editingBlueprint = null;
+    state.editorMode = "new";
+    $("blueprint-editor-title").textContent = "Create editing recipe";
+    $("blueprint-editor-context").textContent = "Start from a proven template, then adjust the editing behavior. The new recipe becomes an active option for future videos.";
+    $("bp-template-wrap").hidden = false;
+    $("bp-key").disabled = false;
+    $("bp-template").innerHTML = state.templates.map((row) => `<option value="${escapeHTML(row.key)}">${escapeHTML(row.display_name)} — ${escapeHTML(row.description)}</option>`).join("");
+    state.editorSuggestedKey = "";
+    $("bp-key").value = "";
+    applyNewRecipeTemplate(state.templates[0]);
+    $("blueprint-editor-panel").hidden = false;
+    $("blueprint-editor-panel").scrollIntoView({ behavior: "smooth", block: "start" });
+}
+function editorContract() {
+    const key = $("bp-key").value.trim();
+    if (!/^[a-z0-9_]+$/.test(key)) {
+        throw new Error("Recipe ID must use lowercase letters, numbers, and underscores only.");
+    }
+    const headerMode = $("bp-layout").value === "header_panel";
+    const voiceMode = ["persona_voice", "explanatory_voice"].includes($("bp-narration-mode").value);
+    return {
+        key,
+        version: state.editorBaseContract?.version || "1.0.0",
+        composition: "blueprint_video",
+        source_layout: {
+            mode: $("bp-layout").value,
+            fit: $("bp-fit").value,
+            background_mode: $("bp-background").value,
+            header_height_px: headerMode ? Number($("bp-header-height").value) : 0,
+        },
+        narration: {
+            mode: $("bp-narration-mode").value,
+            required: voiceMode && $("bp-narration-required").checked,
+            captions_enabled: voiceMode && $("bp-captions").checked,
+            source_audio_policy: $("bp-audio-policy").value,
+            source_audio_volume: Number($("bp-source-volume").value),
+            narration_duck_volume: Number($("bp-duck-volume").value),
+        },
+        header: {
+            required: headerMode && $("bp-header-required").checked,
+            max_chars: headerMode ? Number($("bp-header-max").value) : 0,
+            background: $("bp-header-bg").value,
+            foreground: $("bp-header-fg").value,
+            font_size_px: Number($("bp-header-font-size").value),
+            font_weight: Number($("bp-header-font-weight").value),
+            horizontal_padding_px: Number($("bp-header-padding").value),
+        },
+        transition: state.editorBaseContract?.transition || (voiceMode ? "punch_cut" : "cut"),
+        quality: {
+            min_source_seconds: Number($("bp-min-source").value),
+            max_duration_seconds: Number($("bp-max-duration").value),
+            max_narration_ratio: Number($("bp-narration-ratio").value) / 100,
+        },
+        ai_guidance: state.editorBaseContract?.ai_guidance || {
+            instruction_strength: "balanced",
+            preserve_clip_order: true,
+            prefer_native_moments: true,
+            always_rules: [],
+            never_rules: [],
+            operator_notes: "",
+        },
+    };
+}
+async function saveBlueprintEditor(event) {
+    event.preventDefault();
+    const submit = event.submitter;
+    setBlueprintEditorSubmitting(true);
+    try {
+        const contract = editorContract();
+        const created = await api(channelPath("/edit-blueprints"), {
+            method: "POST",
+            body: JSON.stringify({
+                contract,
+                actor: "editing-control-center",
+                set_default: $("bp-set-default").checked,
+                display_name: $("bp-name").value.trim(),
+                description: $("bp-description").value.trim(),
+            }),
+        });
+        closeBlueprintEditor();
+        await loadChannel();
+        message(`${blueprintName(created)} v${created.version} saved. Existing videos keep their previous recipe version.`);
+    } catch (error) {
+        message(error.message, true);
+        setBlueprintEditorSubmitting(false);
+    }
 }
 function renderPerformance(row) {
     $("performance").classList.remove("empty");
@@ -80,7 +477,7 @@ function renderEpisodes() {
         const stateLabel = type === "attention"
             ? (recoverable ? "RENDER FAILED" : "NEEDS ATTENTION")
             : type === "done" ? "COMPLETE" : "IN PRODUCTION";
-        return `<article class="item episode-item status-${type}" data-episode-status="${type}"><div><div class="episode-state"><span class="state-dot" aria-hidden="true"></span>${escapeHTML(stateLabel)}</div><h3>${escapeHTML(row.premise)}</h3><p>Stage: ${escapeHTML(row.stage)} · ${escapeHTML(row.status)} · Updated ${escapeHTML(date(row.updated_at))}</p><p class="meta">${escapeHTML(row.edit_blueprint_key || "Channel default blueprint")}${row.edit_blueprint_version ? ` · v${escapeHTML(row.edit_blueprint_version)}` : ""} · Generation ${escapeHTML(row.generation)}</p>${row.error || attempt?.error ? `<p class="error-text">${escapeHTML(attempt?.error || row.error)}</p>` : ""}</div><div class="item-actions"><span class="pill state-pill ${type}">${escapeHTML(stateLabel)}</span><span class="pill">${escapeHTML(String(row.status || "unknown").replaceAll("_", " ").toUpperCase())}</span>${recoverable ? `<button class="mini" data-recover="${escapeHTML(row.id)}">Recover render</button>` : ""}<button class="mini" data-attempts="${escapeHTML(row.id)}">Render details</button></div></article>`;
+        return `<article class="item episode-item status-${type}" data-episode-status="${type}"><div><div class="episode-state"><span class="state-dot" aria-hidden="true"></span>${escapeHTML(stateLabel)}</div><h3>${escapeHTML(row.premise)}</h3><p>Stage: ${escapeHTML(row.stage)} · ${escapeHTML(row.status)} · Updated ${escapeHTML(date(row.updated_at))}</p><p class="meta">${escapeHTML(row.edit_blueprint_key || "Channel default blueprint")}${row.edit_blueprint_version ? ` · v${escapeHTML(row.edit_blueprint_version)}` : ""} · Generation ${escapeHTML(row.generation)}</p>${row.error || attempt?.error ? `<p class="error-text">${escapeHTML(attempt?.error || row.error)}</p>` : ""}</div><div class="item-actions"><span class="pill state-pill ${type}">${escapeHTML(stateLabel)}</span><span class="pill">${escapeHTML(String(row.status || "unknown").replaceAll("_", " ").toUpperCase())}</span>${recoverable ? `<button class="mini" data-recover="${escapeHTML(row.id)}">Recover render</button>` : ""}${invideoEligible(row) ? `<button class="mini invideo-action" data-invideo="${escapeHTML(row.id)}">Send to InVideo</button>` : ""}<a class="mini studio-launch" data-studio="${escapeHTML(row.id)}" href="/studio?episode=${encodeURIComponent(row.id)}&channel=${encodeURIComponent(state.channel)}">Open Clip Studio</a></div></article>`;
     }).join("") : `<div class="empty">${filter === "all" ? "No episodes in this channel yet." : "No episodes match this filter."}</div>`;
 }
 function previewableSources() {
@@ -207,6 +604,7 @@ async function loadChannel() {
     const epoch = ++state.epoch;
     clearPreviewUrl();
     state.channel = $("channel").value;
+    rememberWorkspace();
     state.episodes = []; state.blueprints = []; state.attempts = new Map();
     state.brands = []; state.candidates = []; state.productions = []; state.preview = null;
     if (!state.channel) { renderBlueprints(); renderEpisodes(); renderPerformance(null); renderBrandLab(); return; }
@@ -237,9 +635,17 @@ async function loadChannel() {
 }
 async function connect(event) {
     event.preventDefault(); state.token = $("token").value.trim(); $("token").value = "";
+    rememberWorkspace();
     message("Connecting…");
     try {
-        const channels = await api("/v1/channels");
+        const [channels, templates, providers] = await Promise.all([
+            api("/v1/channels"),
+            api("/v1/channels/edit-blueprint-templates"),
+            api("/v1/integrations/providers"),
+        ]);
+        state.templates = templates;
+        state.providers = providers;
+        renderProviderStatus();
         $("channel").innerHTML = '<option value="">Select a channel</option>' + channels.map((row) => `<option value="${escapeHTML(row.id)}">${escapeHTML(row.profile_metadata?.channel_title || row.profile_metadata?.name || row.id)} · ${escapeHTML(row.status)}</option>`).join("");
         $("channel").disabled = false; $("refresh").disabled = false;
         $("connection").textContent = "CONNECTED"; $("connection").classList.add("online");
@@ -248,24 +654,59 @@ async function connect(event) {
     } catch (error) { $("connection").textContent = "OFFLINE"; $("connection").classList.remove("online"); message(error.message, true); }
 }
 async function action(event) {
-    const blueprintActivate = event.target.closest("[data-blueprint-activate]");
+    const blueprintOpen = event.target.closest("[data-blueprint-open]");
+    const blueprintDefault = event.target.closest("[data-blueprint-default]");
+    const blueprintRestore = event.target.closest("[data-blueprint-restore]");
     const recover = event.target.closest("[data-recover]");
-    const details = event.target.closest("[data-attempts]");
+    const studio = event.target.closest("[data-studio]");
+    const invideo = event.target.closest("[data-invideo]");
     const stageBrand = event.target.closest("[data-stage-brand]");
     const renderPreview = event.target.closest("[data-render-preview]");
     const activateBrand = event.target.closest("[data-activate-brand]");
-    if (!blueprintActivate && !recover && !details && !stageBrand && !renderPreview && !activateBrand) return;
-    if (details) {
-        const attempt = state.attempts.get(details.dataset.attempts);
-        message(attempt ? `Render attempt ${attempt.attempt_number}: ${attempt.status}${attempt.error ? ` · ${attempt.error}` : ""}` : "No render attempts recorded for this episode.");
+    if (!blueprintOpen && !blueprintDefault && !blueprintRestore && !recover && !studio && !invideo && !stageBrand && !renderPreview && !activateBrand) return;
+    if (blueprintOpen) {
+        const row = findBlueprint(blueprintOpen.dataset.blueprintOpen, blueprintOpen.dataset.version);
+        if (!row) {
+            message("That recipe version is no longer available. Refresh and try again.", true);
+            return;
+        }
+        openBlueprintEditor(row);
         return;
     }
-    const button = blueprintActivate || recover || stageBrand || renderPreview || activateBrand;
+    if (studio) {
+        rememberWorkspace();
+        return;
+    }
+    if (invideo) {
+        invideo.disabled = true;
+        try {
+            await prepareInVideo(invideo.dataset.invideo);
+        } catch (error) {
+            message(error.message, true);
+            invideo.disabled = false;
+        }
+        return;
+    }
+    const button = blueprintDefault || blueprintRestore || recover || stageBrand || renderPreview || activateBrand;
     button.disabled = true;
     try {
-        if (blueprintActivate) {
-            await api(channelPath(`/edit-blueprints/${encodeURIComponent(blueprintActivate.dataset.blueprintActivate)}/${encodeURIComponent(blueprintActivate.dataset.version)}/activate`), { method: "POST", body: JSON.stringify({ actor: "editing-control-center", set_default: true }) });
-            await loadChannel(); message("Blueprint activated as this channel’s default.");
+        if (blueprintDefault || blueprintRestore) {
+            const target = blueprintDefault || blueprintRestore;
+            const key = blueprintDefault
+                ? blueprintDefault.dataset.blueprintDefault
+                : blueprintRestore.dataset.blueprintRestore;
+            const version = target.dataset.version;
+            await api(channelPath(`/edit-blueprints/${encodeURIComponent(key)}/${encodeURIComponent(version)}/activate`), {
+                method: "POST",
+                body: JSON.stringify({
+                    actor: "editing-control-center",
+                    set_default: Boolean(blueprintDefault),
+                }),
+            });
+            await loadChannel();
+            message(blueprintDefault
+                ? "Recipe is now the channel default for new videos."
+                : `Recipe v${version} restored. Existing videos remain unchanged.`);
         } else if (recover) {
             const result = await api(`/v1/short-episodes/${encodeURIComponent(recover.dataset.recover)}/render/recover`, { method: "POST", body: JSON.stringify({ actor: "editing-control-center", note: "Operator recovery from Editing Control Center" }) });
             await loadChannel(); message(`Render recovery started as a new episode generation (${result.child_source_id}).`);
@@ -319,8 +760,20 @@ async function action(event) {
     } catch (error) { message(error.message, true); button.disabled = false; }
 }
 $("connect-form").addEventListener("submit", connect);
-$("channel").addEventListener("change", loadChannel);
+$("channel").addEventListener("change", () => {
+    closeBlueprintEditor();
+    void loadChannel();
+});
 $("refresh").addEventListener("click", loadChannel);
+$("new-blueprint").addEventListener("click", openNewBlueprintEditor);
+$("close-blueprint-editor").addEventListener("click", closeBlueprintEditor);
+$("cancel-blueprint-editor").addEventListener("click", closeBlueprintEditor);
+$("blueprint-editor").addEventListener("submit", saveBlueprintEditor);
+$("bp-template").addEventListener("change", () => applyNewRecipeTemplate(templateForKey($("bp-template").value)));
+for (const id of ["bp-layout", "bp-narration-mode", "bp-audio-policy", "bp-source-volume", "bp-duck-volume"]) {
+    $(id).addEventListener("input", syncBlueprintEditor);
+    $(id).addEventListener("change", syncBlueprintEditor);
+}
 $("filter").addEventListener("change", renderEpisodes);
 document.querySelector(".stats").addEventListener("click", (event) => {
     const target = event.target.closest("[data-summary-filter]");
@@ -331,3 +784,13 @@ document.querySelector(".stats").addEventListener("click", (event) => {
 $("blueprints").addEventListener("click", action);
 $("episodes").addEventListener("click", action);
 $("brand-lab").addEventListener("click", action);
+$("close-invideo-dialog").addEventListener("click", () => $("invideo-dialog").close());
+$("download-invideo-package").addEventListener("click", () => {
+    void downloadInVideoPackage().catch((error) => message(error.message, true));
+});
+$("upload-invideo-output").addEventListener("click", () => {
+    void uploadInVideoOutput().catch((error) => message(error.message, true));
+});
+$("adopt-invideo-output").addEventListener("click", () => {
+    void adoptInVideoOutput().catch((error) => message(error.message, true));
+});

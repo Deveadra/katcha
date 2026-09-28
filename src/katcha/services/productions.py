@@ -156,6 +156,7 @@ def register_short_production(
                 event_type="production.created",
                 payload={
                     "production_id": str(production.id),
+                    "workflow_id": production.workflow_id,
                     "clip_id": str(clip_id),
                     "channel_profile_id": (
                         str(channel_profile_id) if channel_profile_id else None
@@ -249,6 +250,7 @@ def register_regeneration(
     stage: str,
     note: str | None = None,
     actor: str = "operator",
+    idempotency_key: str | None = None,
 ) -> Production:
     if stage not in REGENERATE_STAGES:
         raise ValueError(f"regenerate stage must be one of: {sorted(REGENERATE_STAGES)}")
@@ -257,6 +259,18 @@ def register_regeneration(
         parent = session.get(Production, production_id)
         if parent is None:
             raise ValueError(f"production not found: {production_id}")
+        workflow_id = _workflow_id(
+            parent.clip_id,
+            idempotency_key,
+            parent.channel_profile_id,
+        )
+        if idempotency_key:
+            existing = session.scalar(
+                select(Production).where(Production.workflow_id == workflow_id)
+            )
+            if existing is not None:
+                session.expunge(existing)
+                return existing
         if parent.status not in {
             ProductionStatus.REVIEW.value,
             ProductionStatus.REJECTED.value,
@@ -269,6 +283,16 @@ def register_regeneration(
         acquisition_state = assert_clip_production_eligible(parent.clip_id)
         child_snapshot = dict(parent.analysis_snapshot or {})
         child_snapshot["acquisition"] = _acquisition_snapshot(acquisition_state)
+        if note:
+            feedback = list(child_snapshot.get("operator_feedback") or [])
+            feedback.append(
+                {
+                    "actor": actor,
+                    "note": note.strip(),
+                    "regenerate_from": stage,
+                }
+            )
+            child_snapshot["operator_feedback"] = feedback[-5:]
 
         child = Production(
             clip_id=parent.clip_id,
@@ -276,7 +300,7 @@ def register_regeneration(
             parent_production_id=parent.id,
             generation=parent.generation + 1,
             regenerate_from=stage,
-            workflow_id=_workflow_id(parent.clip_id, None, parent.channel_profile_id),
+            workflow_id=workflow_id,
             kind=parent.kind,
             status=ProductionStatus.QUEUED.value,
             stage=f"regenerate_{stage}_queued",
@@ -332,6 +356,7 @@ def register_regeneration(
                 payload={
                     "production_id": str(parent.id),
                     "child_production_id": str(child.id),
+                    "workflow_id": child.workflow_id,
                     "channel_profile_id": (
                         str(parent.channel_profile_id) if parent.channel_profile_id else None
                     ),
