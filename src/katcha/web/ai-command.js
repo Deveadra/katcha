@@ -70,7 +70,7 @@ function appendThinking() {
     article.className = "message katcha-message thinking";
     article.id = "thinking-message";
     article.innerHTML =
-        '<div class="message-avatar">K</div><div class="message-body"><span class="message-author">KATCHA AI</span><p>Reading channel evidence <span class="thinking-dot"></span><span class="thinking-dot"></span><span class="thinking-dot"></span></p></div>';
+        '<div class="message-avatar">K</div><div class="message-body"><span class="message-author">KATCHA AI</span><p>Checking channel evidence and discovery tools <span class="thinking-dot"></span><span class="thinking-dot"></span><span class="thinking-dot"></span></p></div>';
     $("thread").append(article);
     scrollThread();
 }
@@ -157,6 +157,11 @@ function evidenceSummary(record) {
             " publications · " +
             String(record.recommendation_status || "unknown").replaceAll("_", " ")
         );
+    }
+    if (record.kind === "source_discovery") {
+        const platforms = (record.requested_platforms || []).join(", ") || "wide web";
+        const readiness = record.web_scout_ready ? "autonomous scout ready" : "scout unavailable";
+        return platforms + " · " + readiness + " · " + String(record.configured_source_count || 0) + " saved sources";
     }
     return JSON.stringify(record).slice(0, 220);
 }
