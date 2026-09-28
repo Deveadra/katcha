@@ -1,6 +1,7 @@
 import uuid
 from datetime import UTC, datetime
 
+from katcha.api.command_center import CommandRequest, _action_specs
 from katcha.api.main import app
 from katcha.command_center_models import (
     CommandActionProposal,
@@ -57,6 +58,44 @@ def test_command_center_classifies_operator_examples() -> None:
         == "create_content"
     )
     assert classify_intent("Why did Katcha reject this clip?", [uuid.uuid4()]) == "clip_rejection"
+    assert (
+        classify_intent("Add TikTok sources to pull content from.", [])
+        == "source_discovery"
+    )
+    assert (
+        classify_intent(
+            "Find new sources across Instagram, X, and Bluesky.",
+            [],
+        )
+        == "source_discovery"
+    )
+
+
+def test_source_scout_proposal_freezes_discovery_scope() -> None:
+    request = CommandRequest(
+        channel_profile_id=uuid.uuid4(),
+        prompt="Find new gaming sources across TikTok and Bluesky.",
+    )
+
+    specs = _action_specs(
+        request,
+        "source_discovery",
+        [
+            {
+                "kind": "source_discovery",
+                "id": "current",
+                "web_scout_ready": True,
+                "requested_platforms": ["tiktok", "bluesky"],
+                "suggested_terms": ["gaming"],
+            }
+        ],
+    )
+
+    assert len(specs) == 1
+    assert specs[0].action_type == "start_source_scout"
+    assert specs[0].payload["platforms"] == ["tiktok", "bluesky"]
+    assert specs[0].payload["terms"] == ["gaming"]
+    assert specs[0].payload["interval_minutes"] == 60
 
 
 def test_selected_clip_explanation_is_read_only_intent() -> None:
