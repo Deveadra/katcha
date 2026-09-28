@@ -212,7 +212,9 @@ let browser;
     await page.locator("#connect-form button").click();
     await page.locator("#detail-panel h3").waitFor();
     assert.equal(await page.locator(".topic-row").count(), 2);
-    await page.getByRole("heading", { name: "Blueprint evidence" }).waitFor();
+    await page.locator("#edit-performance > summary").waitFor();
+    assert.equal(await page.locator("#edit-performance").getAttribute("open"), null);
+    await page.locator("#edit-performance > summary").click();
     assert.match(
         await page.locator("#edit-performance").innerText(),
         /8 maturity-matched publications/,
