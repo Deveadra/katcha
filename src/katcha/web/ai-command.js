@@ -161,6 +161,27 @@ function evidenceSummary(record) {
     return JSON.stringify(record).slice(0, 220);
 }
 
+function actionPayloadSummary(action) {
+    const payload = action.payload || {};
+    if (action.type === "create_ranked_short_episode") {
+        const clips = Array.isArray(payload.clip_ids) ? payload.clip_ids : [];
+        const recipe = payload.edit_blueprint_key || "channel default";
+        return clips.length + " locked clips · " + recipe + " · preserve order";
+    }
+    if (action.type === "create_short_production") {
+        const clip = String(payload.clip_id || "").slice(0, 8);
+        const recipe = payload.edit_blueprint_key || "channel default";
+        return "clip " + clip + " · " + recipe;
+    }
+    if (action.type === "recover_production_render") {
+        return "production " + String(payload.production_id || "").slice(0, 8);
+    }
+    if (action.type === "refresh_channel_intelligence") {
+        return "recompute channel-scoped intelligence";
+    }
+    return "";
+}
+
 function renderContext(result) {
     $("narrator").textContent = result.narrator || "GROUNDED";
     const evidence = (result.evidence || [])
@@ -195,7 +216,9 @@ function renderContext(result) {
                 esc(action.label) +
                 "</strong><p>" +
                 esc(action.description) +
-                '</p><button type="button" data-action-id="' +
+                '</p><div class="action-payload">' +
+                esc(actionPayloadSummary(action)) +
+                '</div><button type="button" data-action-id="' +
                 esc(action.proposal_id) +
                 '">Review & confirm</button><div class="action-result" hidden></div></article>',
         )
