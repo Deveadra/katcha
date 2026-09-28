@@ -804,7 +804,7 @@ def list_sources(
 
 
 @app.get("/v1/clips/{clip_id}/media")
-def get_clip_media(clip_id: uuid.UUID):
+def get_clip_media(clip_id: uuid.UUID) -> StreamingResponse:
     with session_scope() as session:
         clip = session.get(Clip, clip_id)
         if clip is None:
