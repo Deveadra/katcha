@@ -117,3 +117,17 @@ def test_frozen_blueprint_lineage_rejects_identity_tampering() -> None:
 
     with pytest.raises(ValueError, match="blueprint snapshot identity"):
         type(manifest).model_validate(payload)
+
+
+
+def test_voice_blueprint_rejects_header_layout_until_renderer_supports_it() -> None:
+    payload = persona_commentary_v1().model_dump(mode="json")
+    payload["source_layout"]["mode"] = "header_panel"
+    payload["source_layout"]["header_height_px"] = 300
+    payload["header"]["required"] = True
+    payload["header"]["max_chars"] = 120
+
+    from katcha.editing.blueprints import EditBlueprintContract
+
+    with pytest.raises(ValueError, match="voice narration blueprints currently require full-frame"):
+        EditBlueprintContract.model_validate(payload)
