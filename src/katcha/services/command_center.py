@@ -35,13 +35,13 @@ _STOP_WORDS = {
 }
 
 _PLATFORM_PATTERNS = {
-    "tiktok": r"\\btik\\s*tok\\b|\\btiktok\\b",
-    "instagram": r"\\binstagram\\b|\\big\\b",
-    "x": r"\\bx\\b|\\btwitter\\b",
-    "bluesky": r"\\bbluesky\\b|\\bbsky\\b",
-    "youtube": r"\\byoutube\\b|\\byt\\b",
-    "reddit": r"\\breddit\\b",
-    "discord": r"\\bdiscord\\b",
+    "tiktok": r"\btik\s*tok\b|\btiktok\b",
+    "instagram": r"\binstagram\b|\big\b",
+    "x": r"\bx\b|\btwitter\b",
+    "bluesky": r"\bbluesky\b|\bbsky\b",
+    "youtube": r"\byoutube\b|\byt\b",
+    "reddit": r"\breddit\b",
+    "discord": r"\bdiscord\b",
 }
 _SOURCE_DISCOVERY_VERBS = ("add", "find", "search", "discover", "scout", "expand", "look for")
 _SOURCE_DISCOVERY_NOUNS = (
