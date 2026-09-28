@@ -147,7 +147,7 @@ def test_redaction_does_not_corrupt_diagnostic_schema(tmp_path):
     assert row["message"] == "value [REDACTED]"
 
 
-def test_start_builds_before_starting_services_and_reports_stage(tmp_path):
+def test_start_opens_workspace_before_warming_full_stack(tmp_path):
     app = instance(tmp_path)
     app.lock.acquire()
     calls = []
@@ -161,17 +161,61 @@ def test_start_builds_before_starting_services_and_reports_stage(tmp_path):
     with (
         patch.object(app, "run", side_effect=fake_run),
         patch.object(app, "start_logs"),
+        patch.object(app, "probe_workspace", return_value=True),
         patch.object(app, "check", side_effect=lambda: setattr(app, "phase", "ready")),
     ):
         app._operate("start")
 
-    build = next(cmd for cmd in calls if cmd[-1:] == ["build"])
-    up = next(cmd for cmd in calls if "up" in cmd)
-    assert build
-    assert "--build" not in up
+    workspace_build = next(
+        i for i, cmd in enumerate(calls)
+        if "build" in cmd and cmd[-1:] == ["api"]
+    )
+    workspace_up = next(
+        i for i, cmd in enumerate(calls)
+        if "up" in cmd and cmd[-1:] == ["api"]
+    )
+    full_build = next(
+        i for i, cmd in enumerate(calls)
+        if cmd[-1:] == ["build"]
+    )
+    full_up = next(
+        i for i, cmd in enumerate(calls)
+        if "up" in cmd and cmd[-1:] != ["api"]
+    )
+    assert workspace_build < workspace_up < full_build < full_up
+    assert any(
+        event["message"] == "Workspace ready; warming automation in the background."
+        for event in app.events
+    )
     assert app.phase == "ready"
     assert app.stage == "ready"
     assert app.snapshot()["operation_elapsed_seconds"] is None
+    assert not app.lock.locked()
+
+
+def test_background_warmup_failure_preserves_usable_workspace(tmp_path):
+    app = instance(tmp_path)
+    app.lock.acquire()
+    calls = []
+
+    def fake_run(args, **_kwargs):
+        calls.append(args)
+        if "version" in args:
+            return "2.30.0"
+        if args[-1:] == ["build"] and any("compose" == part for part in args):
+            raise RuntimeError("renderer build failed")
+        return ""
+
+    with (
+        patch.object(app, "run", side_effect=fake_run),
+        patch.object(app, "start_logs"),
+        patch.object(app, "probe_workspace", return_value=True),
+    ):
+        app._operate("start")
+
+    assert app.phase == "degraded"
+    assert app.workspace_ready
+    assert app.stage == "automation warm-up failed"
     assert not app.lock.locked()
 
 
@@ -272,7 +316,7 @@ def test_unchanged_images_skip_build_and_source_changes_invalidate(tmp_path):
 def test_deleted_images_rebuild(tmp_path):
     app = instance(tmp_path)
     (app.directory / "build-fingerprint").write_text(app.build_fingerprint())
-    with patch.object(app, "run", side_effect=["image", RuntimeError("missing"), ""]) as run:
+    with patch.object(app, "run", side_effect=[RuntimeError("missing"), ""]) as run:
         app.prepare_images()
     assert run.call_args.args[0][-1] == "build"
 
@@ -281,11 +325,40 @@ def test_failed_build_does_not_write_cache(tmp_path):
     import pytest
     app = instance(tmp_path)
     with (
-        patch.object(app, "run", side_effect=["image", RuntimeError("build failed")]),
+        patch.object(app, "run", side_effect=RuntimeError("build failed")),
         pytest.raises(RuntimeError),
     ):
         app.prepare_images()
     assert not (app.directory / "build-fingerprint").exists()
+
+
+def test_workspace_image_cache_is_independent_from_heavy_renderer_inputs(tmp_path):
+    app = instance(tmp_path)
+    source = tmp_path / "src"
+    source.mkdir()
+    (source / "app.py").write_text("version = 1")
+    (tmp_path / "Dockerfile.control").write_text("FROM python:3.12-slim\n")
+    renderer = tmp_path / "renderer"
+    renderer.mkdir()
+    (renderer / "index.mjs").write_text("version = 1")
+    first = app.build_fingerprint(workspace=True)
+    (renderer / "index.mjs").write_text("version = 2")
+    assert app.build_fingerprint(workspace=True) == first
+    assert app.build_fingerprint() != first
+
+
+def test_workspace_image_cache_skips_unchanged_control_plane_build(tmp_path):
+    app = instance(tmp_path)
+    (tmp_path / "Dockerfile.control").write_text("FROM python:3.12-slim\n")
+    source = tmp_path / "src"
+    source.mkdir()
+    (source / "app.py").write_text("version = 1")
+    with patch.object(app, "run", return_value="") as run:
+        app.prepare_workspace_image()
+        assert any(call.args[0][-2:] == ["build", "api"] for call in run.call_args_list)
+        run.reset_mock()
+        app.prepare_workspace_image()
+        assert not any(call.args[0][-2:] == ["build", "api"] for call in run.call_args_list)
 
 
 def test_run_intent_survives_restart_and_stop_clears_it(tmp_path):
