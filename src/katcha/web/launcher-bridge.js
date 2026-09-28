@@ -4,7 +4,17 @@
     const nav = document.querySelector('nav');
     if (nav) {
         const link = document.createElement('a');
-        link.href = '/'; link.textContent = 'Launch console & diagnostics'; nav.append(link);
+        link.href = '/';
+        link.className = nav.classList.contains('rail-nav')
+            ? 'nav-item launcher-nav-item'
+            : 'launcher-nav-item';
+        link.setAttribute('aria-label', 'Open launch console and diagnostics');
+        if (nav.classList.contains('rail-nav')) {
+            link.innerHTML = '<span class="nav-icon" aria-hidden="true">⌂</span> Launch console';
+        } else {
+            link.textContent = '⌂ Launch console';
+        }
+        nav.append(link);
     }
     const form = document.getElementById('connect-form') || document.getElementById('connect');
     const connection = document.getElementById('connection');

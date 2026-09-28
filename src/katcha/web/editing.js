@@ -50,8 +50,13 @@ function clearPreviewUrl() {
 }
 function statusType(row) {
     const attempt = state.attempts.get(row.id);
-    if (attempt?.status === "dead_letter" || row.error) return "attention";
-    if (["published", "completed", "rejected", "cancelled"].includes(row.status)) return "done";
+    const status = String(row.status || "").toLowerCase();
+    if (
+        attempt?.status === "dead_letter"
+        || row.error
+        || /(fail|error|dead_letter|blocked)/.test(status)
+    ) return "attention";
+    if (["published", "completed", "rejected", "cancelled"].includes(status)) return "done";
     return "active";
 }
 function renderBlueprints() {
@@ -72,7 +77,10 @@ function renderEpisodes() {
         const attempt = state.attempts.get(row.id);
         const recoverable = attempt?.status === "dead_letter";
         const type = statusType(row);
-        return `<article class="item"><div><h3>${escapeHTML(row.premise)}</h3><p>Stage: ${escapeHTML(row.stage)} · ${escapeHTML(row.status)} · Updated ${escapeHTML(date(row.updated_at))}</p><p class="meta">${escapeHTML(row.edit_blueprint_key || "Channel default blueprint")}${row.edit_blueprint_version ? ` · v${escapeHTML(row.edit_blueprint_version)}` : ""} · Generation ${escapeHTML(row.generation)}</p>${row.error || attempt?.error ? `<p class="error-text">${escapeHTML(attempt?.error || row.error)}</p>` : ""}</div><div class="item-actions"><span class="pill ${type === "attention" ? "warning" : type === "done" ? "active" : ""}">${escapeHTML(recoverable ? "RENDER FAILED" : row.status.replaceAll("_", " ").toUpperCase())}</span>${recoverable ? `<button class="mini" data-recover="${escapeHTML(row.id)}">Recover render</button>` : ""}<button class="mini" data-attempts="${escapeHTML(row.id)}">Render details</button></div></article>`;
+        const stateLabel = type === "attention"
+            ? (recoverable ? "RENDER FAILED" : "NEEDS ATTENTION")
+            : type === "done" ? "COMPLETE" : "IN PRODUCTION";
+        return `<article class="item episode-item status-${type}" data-episode-status="${type}"><div><div class="episode-state"><span class="state-dot" aria-hidden="true"></span>${escapeHTML(stateLabel)}</div><h3>${escapeHTML(row.premise)}</h3><p>Stage: ${escapeHTML(row.stage)} · ${escapeHTML(row.status)} · Updated ${escapeHTML(date(row.updated_at))}</p><p class="meta">${escapeHTML(row.edit_blueprint_key || "Channel default blueprint")}${row.edit_blueprint_version ? ` · v${escapeHTML(row.edit_blueprint_version)}` : ""} · Generation ${escapeHTML(row.generation)}</p>${row.error || attempt?.error ? `<p class="error-text">${escapeHTML(attempt?.error || row.error)}</p>` : ""}</div><div class="item-actions"><span class="pill state-pill ${type}">${escapeHTML(stateLabel)}</span><span class="pill">${escapeHTML(String(row.status || "unknown").replaceAll("_", " ").toUpperCase())}</span>${recoverable ? `<button class="mini" data-recover="${escapeHTML(row.id)}">Recover render</button>` : ""}<button class="mini" data-attempts="${escapeHTML(row.id)}">Render details</button></div></article>`;
     }).join("") : `<div class="empty">${filter === "all" ? "No episodes in this channel yet." : "No episodes match this filter."}</div>`;
 }
 function previewableSources() {
@@ -314,6 +322,12 @@ $("connect-form").addEventListener("submit", connect);
 $("channel").addEventListener("change", loadChannel);
 $("refresh").addEventListener("click", loadChannel);
 $("filter").addEventListener("change", renderEpisodes);
+document.querySelector(".stats").addEventListener("click", (event) => {
+    const target = event.target.closest("[data-summary-filter]");
+    if (!target) return;
+    $("filter").value = target.dataset.summaryFilter;
+    renderEpisodes();
+});
 $("blueprints").addEventListener("click", action);
 $("episodes").addEventListener("click", action);
 $("brand-lab").addEventListener("click", action);
