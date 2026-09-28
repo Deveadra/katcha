@@ -29,6 +29,7 @@ def load_model_metadata() -> None:
         acquisition_models,
         brand_models,
         brand_preview_models,
+        clip_lifecycle_models,
         discovery_poll_models,
         discovery_trend_models,
         edit_blueprint_models,
