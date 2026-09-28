@@ -174,12 +174,13 @@ export const ShortVideo = ({
     : source.audio_policy === 'duck' && narrationActive
       ? (source.duck_volume ?? source.audio_volume)
       : source.audio_volume;
+  const backgroundMode = source.background_mode || 'blurred_fill';
 
   return (
     <AbsoluteFill style={{backgroundColor: brand.palette.ink}}>
       <Sequence durationInFrames={sourceFrames}>
         <AbsoluteFill>
-          {source.background_mode === 'blurred_fill' ? (
+          {backgroundMode === 'blurred_fill' ? (
             <OffthreadVideo
               src={source.url}
               muted
