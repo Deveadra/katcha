@@ -258,12 +258,19 @@ def ensure_review_sessions(
     return created
 
 
-def pending_review_sessions(limit: int = 10) -> list[TelegramReviewSession]:
+def pending_review_sessions(
+    *,
+    chat_id: int,
+    limit: int = 10,
+) -> list[TelegramReviewSession]:
     with session_scope() as session:
         rows = list(
             session.scalars(
                 select(TelegramReviewSession)
-                .where(TelegramReviewSession.state == "queued")
+                .where(
+                    TelegramReviewSession.state == "queued",
+                    TelegramReviewSession.chat_id == chat_id,
+                )
                 .order_by(TelegramReviewSession.created_at)
                 .limit(limit)
             )
@@ -414,12 +421,19 @@ def feedback_session(
         return row
 
 
-def backlogged_sessions(limit: int = 10) -> list[TelegramReviewSession]:
+def backlogged_sessions(
+    *,
+    chat_id: int,
+    limit: int = 10,
+) -> list[TelegramReviewSession]:
     with session_scope() as session:
         rows = list(
             session.scalars(
                 select(TelegramReviewSession)
-                .where(TelegramReviewSession.state == "backlogged")
+                .where(
+                    TelegramReviewSession.state == "backlogged",
+                    TelegramReviewSession.chat_id == chat_id,
+                )
                 .order_by(TelegramReviewSession.updated_at)
                 .limit(limit)
             )
