@@ -61,6 +61,7 @@ from katcha.api.schemas import (
 )
 from katcha.api.short_episodes import router as short_episodes_router
 from katcha.api.studio import router as studio_router
+from katcha.api.telegram import router as telegram_router
 from katcha.api.trends import router as trends_router
 from katcha.clip_lifecycle_models import ClipLifecycle
 from katcha.config import get_settings
@@ -142,6 +143,7 @@ app.include_router(packaging_router)
 app.include_router(reach_router)
 app.include_router(short_episodes_router)
 app.include_router(studio_router)
+app.include_router(telegram_router)
 app.include_router(trends_router)
 app.include_router(explorer_router)
 app.mount("/explorer/assets", StaticFiles(directory=Path(__file__).parents[1] / "web"),
