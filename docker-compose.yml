@@ -72,7 +72,7 @@ services:
       retries: 20
 
   minio-init:
-    build: .
+    image: katcha-control:local
     env_file: ${KATCHA_ENV_FILE:-.env}
     depends_on:
       minio:
@@ -85,7 +85,7 @@ services:
       ]
 
   migrate:
-    build: .
+    image: katcha-control:local
     env_file: ${KATCHA_ENV_FILE:-.env}
     depends_on:
       postgres:
@@ -93,7 +93,10 @@ services:
     command: ["alembic", "upgrade", "head"]
 
   api:
-    build: .
+    image: katcha-control:local
+    build:
+      context: .
+      dockerfile: Dockerfile.control
     env_file: ${KATCHA_ENV_FILE:-.env}
     depends_on:
       migrate:
@@ -103,6 +106,7 @@ services:
     command: ["uvicorn", "katcha.api.main:app", "--host", "0.0.0.0", "--port", "8000"]
 
   worker:
+    image: katcha-ingest:local
     build: .
     env_file: ${KATCHA_ENV_FILE:-.env}
     depends_on:
@@ -115,6 +119,7 @@ services:
     command: ["python", "-m", "katcha.orchestration.worker"]
 
   analysis-worker:
+    image: katcha-analysis:local
     build:
       context: .
       dockerfile: Dockerfile.analysis
@@ -131,6 +136,7 @@ services:
     command: ["python", "-m", "katcha.orchestration.analysis_worker"]
 
   renderer:
+    image: katcha-renderer:local
     build:
       context: .
       dockerfile: Dockerfile.renderer
@@ -151,6 +157,7 @@ services:
       retries: 20
 
   production-worker:
+    image: katcha-production:local
     build:
       context: .
       dockerfile: Dockerfile.production
@@ -167,9 +174,7 @@ services:
     command: ["python", "-m", "katcha.orchestration.production_worker"]
 
   longform-worker:
-    build:
-      context: .
-      dockerfile: Dockerfile.longform
+    image: katcha-production:local
     env_file: ${KATCHA_ENV_FILE:-.env}
     depends_on:
       migrate:
@@ -183,9 +188,7 @@ services:
     command: ["python", "-m", "katcha.orchestration.longform_worker"]
 
   publishing-worker:
-    build:
-      context: .
-      dockerfile: Dockerfile.publishing
+    image: katcha-control:local
     env_file: ${KATCHA_ENV_FILE:-.env}
     depends_on:
       migrate:
