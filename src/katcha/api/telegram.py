@@ -7,7 +7,10 @@ from sqlalchemy import func, select
 from katcha.config import get_settings
 from katcha.db import session_scope
 from katcha.integrations.telegram import TelegramAPIError, TelegramBotClient
-from katcha.services.telegram_reviews import operator_binding
+from katcha.services.telegram_reviews import (
+    longform_review_links_ready,
+    operator_binding,
+)
 from katcha.telegram_models import TelegramReviewSession
 
 router = APIRouter(prefix="/v1/integrations/telegram", tags=["telegram"])
@@ -19,6 +22,8 @@ class TelegramStatusResponse(BaseModel):
     paired: bool
     pairing_required: bool
     allowed_user_bound: bool
+    longform_review_links_ready: bool
+    longform_review_link_ttl_seconds: int
     review_counts: dict[str, int]
     last_delivery_error: str | None
 
@@ -70,6 +75,8 @@ def telegram_status() -> TelegramStatusResponse:
             settings.telegram_enabled and bot_configured and not paired
         ),
         allowed_user_bound=user_id is not None,
+        longform_review_links_ready=longform_review_links_ready(settings),
+        longform_review_link_ttl_seconds=settings.telegram_review_link_ttl_seconds,
         review_counts=counts,
         last_delivery_error=last_error,
     )
@@ -94,7 +101,7 @@ def send_telegram_test() -> TelegramTestResponse:
             chat_id,
             (
                 "Katcha Telegram control is connected. "
-                "Playable review cards will appear here when videos need your decision."
+                "Short videos arrive as playable cards; long-form reviews use secure links."
             ),
         )
     except TelegramAPIError as exc:
