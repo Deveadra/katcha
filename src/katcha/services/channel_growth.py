@@ -218,10 +218,44 @@ def evaluate_growth_progress(
     else:
         required.extend(target["audience_paths"])
 
+    metric_sources = {
+        "subscribers": metrics.get("subscribers"),
+        "public_uploads_90d": metrics.get("public_uploads_90d"),
+        "qualified_watch_hours_365d": metrics.get(
+            "estimated_qualified_watch_hours_365d"
+        ),
+        "qualified_shorts_views_90d": metrics.get(
+            "estimated_qualified_shorts_views_90d"
+        ),
+    }
+    for raw in normalized.get("custom_targets") or []:
+        if not isinstance(raw, dict) or not raw.get("enabled", True):
+            continue
+        metric_key = str(raw.get("metric") or "")
+        if metric_key not in metric_sources:
+            continue
+        try:
+            target_value = float(raw["target"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        custom_metric = _metric(
+            metric_key,
+            metric_sources[metric_key],
+            target_value,
+            estimated=metric_key.startswith("qualified_"),
+        )
+        custom_metric["custom"] = True
+        custom_metric["priority"] = int(raw.get("priority") or 3)
+        required.append(custom_metric)
+
     priorities = sorted(
         [item for item in required if item["progress"] is None or item["progress"] < 1],
-        key=lambda item: -1 if item["progress"] is None else float(item["progress"]),
+        key=lambda item: (
+            -int(item.get("priority") or 3),
+            -1 if item["progress"] is None else float(item["progress"]),
+        ),
     )
+    priority_metrics = list(dict.fromkeys(item["metric"] for item in priorities))
     return {
         "as_of": as_of.isoformat(),
         "benchmarks": benchmarks,
@@ -234,7 +268,7 @@ def evaluate_growth_progress(
             "stage": stage,
             "selected_path": selected_path,
             "pace": normalized["pace"],
-            "priority_metrics": [item["metric"] for item in priorities],
+            "priority_metrics": priority_metrics,
         },
     }
 
