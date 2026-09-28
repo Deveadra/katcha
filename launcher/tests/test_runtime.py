@@ -178,17 +178,29 @@ def test_start_opens_workspace_before_warming_full_stack(tmp_path):
         i for i, cmd in enumerate(calls)
         if "up" in cmd and cmd[-1:] == ["api"]
     )
+    early_up = next(
+        i
+        for i, cmd in enumerate(calls)
+        if "up" in cmd and all(service in cmd for service in runtime.EARLY_AUTOMATION_SERVICES)
+    )
     full_build = next(
         i for i, cmd in enumerate(calls)
         if "build" in cmd and all(service in cmd for service in runtime.BACKGROUND_BUILD_SERVICES)
     )
     full_up = next(
-        i for i, cmd in enumerate(calls)
-        if "up" in cmd and cmd[-1:] != ["api"]
+        i
+        for i, cmd in enumerate(calls)
+        if "up" in cmd
+        and cmd[-1:] != ["api"]
+        and not all(service in cmd for service in runtime.EARLY_AUTOMATION_SERVICES)
     )
-    assert workspace_build < workspace_up < full_build < full_up
+    assert workspace_build < workspace_up < early_up < full_build < full_up
     assert any(
         event["message"] == "Workspace ready; warming automation in the background."
+        for event in app.events
+    )
+    assert any(
+        event["message"] == "Discovery intelligence is online; warming the media factory."
         for event in app.events
     )
     assert app.phase == "ready"
