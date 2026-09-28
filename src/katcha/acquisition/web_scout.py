@@ -4,6 +4,8 @@ import json
 from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
+import httpx
+
 from katcha.acquisition.adapters import (
     DiscoveryAdapterCapability,
     DiscoveryBatch,
@@ -98,6 +100,36 @@ def _platform_for_url(url: str) -> str:
         if any(host == domain or host.endswith("." + domain) for domain in domains):
             return platform
     return "web"
+
+
+def _response_output_text(payload: dict[str, Any]) -> str:
+    chunks: list[str] = []
+    raw_output = payload.get("output")
+    if not isinstance(raw_output, list):
+        return ""
+    for item in raw_output:
+        if not isinstance(item, dict) or item.get("type") != "message":
+            continue
+        content = item.get("content")
+        if not isinstance(content, list):
+            continue
+        for part in content:
+            if not isinstance(part, dict) or part.get("type") != "output_text":
+                continue
+            text = part.get("text")
+            if isinstance(text, str):
+                chunks.append(text)
+    return "".join(chunks)
+
+
+def _retry_after_seconds(response: httpx.Response) -> int | None:
+    raw = response.headers.get("retry-after")
+    if not raw:
+        return None
+    try:
+        return max(int(float(raw)), 0)
+    except ValueError:
+        return None
 
 
 def parse_web_scout_output(
@@ -325,8 +357,6 @@ class WebScoutDiscoveryAdapter:
             raise ValueError("Autonomous web scouting requires KATCHA_OPENAI_API_KEY")
         limit = min(max(int(query.get("limit", 40)), 1), 100)
 
-        from openai import OpenAI
-
         schema = {
             "type": "object",
             "properties": {
@@ -351,36 +381,73 @@ class WebScoutDiscoveryAdapter:
             "required": ["items"],
             "additionalProperties": False,
         }
+        request_payload = {
+            "model": settings.web_scout_model,
+            "input": _search_prompt(query, limit, cursor=cursor),
+            "reasoning": {"effort": "low"},
+            "tools": [_web_search_tool(query)],
+            "tool_choice": "required",
+            "include": ["web_search_call.action.sources"],
+            "text": {
+                "format": {
+                    "type": "json_schema",
+                    "name": "katcha_web_scout_results",
+                    "schema": schema,
+                    "strict": False,
+                }
+            },
+            "max_output_tokens": 2200,
+        }
         try:
-            response = OpenAI(api_key=settings.openai_api_key).responses.create(
-                model=settings.web_scout_model,
-                input=_search_prompt(query, limit, cursor=cursor),
-                reasoning={"effort": "low"},
-                tools=[_web_search_tool(query)],
-                tool_choice="required",
-                include=["web_search_call.action.sources"],
-                text={
-                    "format": {
-                        "type": "json_schema",
-                        "name": "katcha_web_scout_results",
-                        "schema": schema,
-                        "strict": False,
-                    }
+            response = httpx.post(
+                "https://api.openai.com/v1/responses",
+                headers={
+                    "Authorization": f"Bearer {settings.openai_api_key}",
+                    "Content-Type": "application/json",
                 },
-                max_output_tokens=2200,
+                json=request_payload,
+                timeout=90.0,
             )
-        except Exception as exc:
+        except httpx.HTTPError as exc:
             raise DiscoveryProviderError(
-                "OpenAI web scout request failed",
-                kind="provider_error",
+                "OpenAI web scout request failed before a response was received",
+                kind="network_error",
                 transient=True,
                 provider_usage={"openai.web_search": 1},
             ) from exc
 
-        response_payload = response.model_dump()
+        if response.status_code >= 400:
+            retry_after = _retry_after_seconds(response)
+            rate_limited = response.status_code == 429
+            transient = rate_limited or response.status_code >= 500
+            raise DiscoveryProviderError(
+                "OpenAI web scout request was rejected",
+                kind="rate_limited" if rate_limited else "provider_http_error",
+                transient=transient,
+                status_code=response.status_code,
+                retry_after_seconds=retry_after,
+                provider_usage={"openai.web_search": 1},
+            )
+        try:
+            response_payload = response.json()
+        except ValueError as exc:
+            raise DiscoveryProviderError(
+                "OpenAI web scout returned a non-JSON response",
+                kind="provider_payload",
+                transient=True,
+                provider_usage={"openai.web_search": 1},
+            ) from exc
+        if not isinstance(response_payload, dict):
+            raise DiscoveryProviderError(
+                "OpenAI web scout returned an unexpected response shape",
+                kind="provider_payload",
+                transient=False,
+                provider_usage={"openai.web_search": 1},
+            )
+
         grounded_urls = _grounded_url_keys(response_payload)
         items = parse_web_scout_output(
-            response.output_text,
+            _response_output_text(response_payload),
             grounded_urls=grounded_urls,
             limit=limit,
         )
