@@ -15,6 +15,8 @@ const state = {
     productions: [],
     preview: null,
     previewUrl: null,
+    providers: [],
+    invideoHandoff: null,
     epoch: 0,
 };
 const $ = (id) => document.getElementById(id);
@@ -53,6 +55,23 @@ async function apiBlob(path) {
     return response.blob();
 }
 function channelPath(suffix) { return `/v1/channels/${encodeURIComponent(state.channel)}${suffix}`; }
+function renderProviderStatus() {
+    const eleven = state.providers.find((row) => row.provider === "elevenlabs");
+    const invideo = state.providers.find((row) => row.provider === "invideo");
+    const card = (row, fallback) => `
+        <div class="${row?.configured ? "provider-ready" : "provider-muted"}">
+            <span>${escapeHTML((row?.provider || fallback).toUpperCase())}</span>
+            <strong>${row?.configured ? "READY" : "NOT CONFIGURED"}</strong>
+            <small>${escapeHTML(row?.detail || "Provider status unavailable")}</small>
+        </div>`;
+    $("provider-status").innerHTML = card(eleven, "elevenlabs") + card(invideo, "invideo");
+}
+function invideoEligible(row) {
+    return Boolean(
+        row.selected_script_id
+        && ["voiced", "editorial_approved", "rendering", "rendered", "render_review", "approved", "failed"].includes(String(row.status || ""))
+    );
+}
 function clearPreviewUrl() {
     if (state.previewUrl) URL.revokeObjectURL(state.previewUrl);
     state.previewUrl = null;
