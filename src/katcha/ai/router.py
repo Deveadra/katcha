@@ -86,6 +86,7 @@ _MODEL_QUALITY: dict[tuple[str, str], int] = {
     ("openai", "gpt-5.6-sol"): 3,
     ("openai", "gpt-4o-mini-tts-2025-12-15"): 2,
     ("gemini", "gemini-3.1-flash-tts-preview"): 2,
+    ("elevenlabs", "eleven_v3"): 3,
 }
 
 _MODEL_COST_WEIGHT: dict[tuple[str, str], float] = {
@@ -96,6 +97,7 @@ _MODEL_COST_WEIGHT: dict[tuple[str, str], float] = {
     ("openai", "gpt-5.6-sol"): 10.0,
     ("openai", "gpt-4o-mini-tts-2025-12-15"): 1.0,
     ("gemini", "gemini-3.1-flash-tts-preview"): 1.3,
+    ("elevenlabs", "eleven_v3"): 1.7,
 }
 
 _TASK_DEFAULT_FLOOR: dict[AITask, int] = {
@@ -136,6 +138,17 @@ def route_for(task: AITask) -> ModelRoute:
     return ModelRoute(primary=gemini, fallback=fallback)
 
 
+def _extra_targets(task: AITask) -> list[ModelTarget]:
+    settings = get_settings()
+    if (
+        task == AITask.TTS
+        and settings.elevenlabs_api_key
+        and settings.elevenlabs_voice_id
+    ):
+        return [ModelTarget("elevenlabs", settings.elevenlabs_model_id)]
+    return []
+
+
 def _available_providers() -> set[str]:
     settings = get_settings()
     providers: set[str] = set()
@@ -143,6 +156,8 @@ def _available_providers() -> set[str]:
         providers.add("openai")
     if settings.gemini_api_key:
         providers.add("gemini")
+    if settings.elevenlabs_api_key and settings.elevenlabs_voice_id:
+        providers.add("elevenlabs")
     return providers
 
 
@@ -172,11 +187,17 @@ def _eligible_targets(
     candidates = [route.primary]
     if route.fallback is not None:
         candidates.append(route.fallback)
+    candidates.extend(_extra_targets(task))
     return [
         target
         for target in candidates
         if target.provider in providers
-        and _MODEL_QUALITY.get((target.provider, target.model), 0) >= floor
+        and (
+            _MODEL_QUALITY.get((target.provider, target.model), 0)
+            if target.provider != "elevenlabs"
+            else 3
+        )
+        >= floor
     ]
 
 
@@ -331,9 +352,13 @@ def route_for_channel(
         elif conserve:
             chosen = min(
                 candidates,
-                key=lambda item: _MODEL_COST_WEIGHT.get(
-                    (item.provider, item.model),
-                    100.0,
+                key=lambda item: (
+                    1.7
+                    if item.provider == "elevenlabs"
+                    else _MODEL_COST_WEIGHT.get(
+                        (item.provider, item.model),
+                        100.0,
+                    )
                 ),
             )
             reason = "budget_conserve"
