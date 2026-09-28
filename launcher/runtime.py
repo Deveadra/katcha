@@ -1030,7 +1030,7 @@ def main():
     parser.add_argument("--no-start", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args()
     os.umask(0o077)
-    url = "http://localhost:8765"
+    url = "http://127.0.0.1:8765"
     try:
         server = ThreadingHTTPServer(("127.0.0.1", 8765), Handler)
     except OSError:
@@ -1044,8 +1044,28 @@ def main():
         runtime.operate("start")
     elif not args.no_start:
         threading.Thread(target=runtime.reconcile_existing, daemon=True).start()
-    try:
-        if not args.no_browser:
+    def open_when_listening():
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
+            connection = http.client.HTTPConnection("127.0.0.1", 8765, timeout=1)
+            try:
+                connection.request("GET", "/runtime/status")
+                if connection.getresponse().status == 200:
+                    break
+            except (OSError, http.client.HTTPException):
+                time.sleep(0.1)
+            finally:
+                connection.close()
+        else:
+            runtime.event(
+                "warning",
+                "browser",
+                "Launcher did not answer its local readiness probe before browser open.",
+                recovery="Open " + url,
+            )
+            return
+
+        try:
             if (
                 Path("/proc/sys/kernel/osrelease").exists()
                 and "microsoft" in Path("/proc/sys/kernel/osrelease").read_text().lower()
@@ -1057,8 +1077,11 @@ def main():
                 )
             else:
                 webbrowser.open(url)
-    except OSError as exc:
-        runtime.event("warning", "browser", str(exc), recovery="Open " + url)
+        except OSError as exc:
+            runtime.event("warning", "browser", str(exc), recovery="Open " + url)
+
+    if not args.no_browser:
+        threading.Thread(target=open_when_listening, daemon=True).start()
     print("Katcha: " + url + " — close with Ctrl+C; services remain running.")
     try:
         server.serve_forever()
