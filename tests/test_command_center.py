@@ -72,6 +72,30 @@ def test_command_center_classifies_operator_examples() -> None:
     )
 
 
+    assert (
+        classify_intent(
+            "Look for funny fails that can be used in a rank video.",
+            [],
+        )
+        == "source_discovery"
+    )
+    assert (
+        classify_intent(
+            "Find funny fails that would work in a ranked video.",
+            [],
+        )
+        == "source_discovery"
+    )
+    assert (
+        classify_intent("Find the best clips found today.", [])
+        == "best_clips"
+    )
+    assert (
+        classify_intent("Look for why this render failed.", [])
+        == "failures"
+    )
+
+
 def test_source_scout_proposal_freezes_discovery_scope() -> None:
     request = CommandRequest(
         channel_profile_id=uuid.uuid4(),
@@ -114,6 +138,14 @@ def test_operator_explanation_words_do_not_become_clip_filters() -> None:
     )
 
     assert terms == ["xbox"]
+
+
+def test_natural_discovery_prompt_keeps_only_topic_terms() -> None:
+    terms = _search_terms(
+        "Look for funny fails that can be used in a rank video."
+    )
+
+    assert terms == ["funny", "fails"]
 
 
 def test_command_center_maps_plain_language_recipe_names() -> None:
