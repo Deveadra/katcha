@@ -11,9 +11,9 @@ services:
       - postgres-data:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U katcha -d katcha"]
-      interval: 5s
-      timeout: 5s
-      retries: 20
+      interval: 2s
+      timeout: 3s
+      retries: 30
 
   temporal:
     image: temporalio/auto-setup:1.27.2
@@ -97,10 +97,6 @@ services:
     env_file: ${KATCHA_ENV_FILE:-.env}
     depends_on:
       migrate:
-        condition: service_completed_successfully
-      temporal:
-        condition: service_healthy
-      minio-init:
         condition: service_completed_successfully
     ports:
       - "8000:8000"
