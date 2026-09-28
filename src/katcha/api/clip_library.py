@@ -62,6 +62,17 @@ class ClipLibraryItem(BaseModel):
     reference_count: int
 
 
+class ClipLibrarySummary(BaseModel):
+    total: int
+    hot: int
+    archived: int
+    purged: int
+    failed: int
+    hot_bytes: int
+    archived_bytes: int
+    purged_bytes: int
+
+
 class ClipLibraryPage(BaseModel):
     items: list[ClipLibraryItem]
     total: int
@@ -186,6 +197,47 @@ def _policy_response(
         confirmed_at=row.confirmed_at,
         confirmed_by=row.confirmed_by,
     )
+
+
+@router.get("/clips/library/summary", response_model=ClipLibrarySummary)
+def clip_library_summary(
+    channel_profile_id: uuid.UUID | None = Query(default=None),
+) -> ClipLibrarySummary:
+    with session_scope() as session:
+        stmt = select(Clip).order_by(Clip.created_at.desc())
+        if channel_profile_id is not None:
+            channel_ids = clip_ids_for_channel(session, channel_profile_id)
+            if not channel_ids:
+                return ClipLibrarySummary(
+                    total=0,
+                    hot=0,
+                    archived=0,
+                    purged=0,
+                    failed=0,
+                    hot_bytes=0,
+                    archived_bytes=0,
+                    purged_bytes=0,
+                )
+            stmt = stmt.where(Clip.id.in_(channel_ids))
+        clips = list(session.scalars(stmt))
+        summary = {
+            "hot": 0,
+            "archived": 0,
+            "purged": 0,
+            "hot_bytes": 0,
+            "archived_bytes": 0,
+            "purged_bytes": 0,
+        }
+        for clip in clips:
+            lifecycle = session.get(ClipLifecycle, clip.id)
+            state = lifecycle.lifecycle_state if lifecycle is not None else "hot"
+            summary[state] += 1
+            summary[f"{state}_bytes"] += int(clip.size_bytes or 0)
+        return ClipLibrarySummary(
+            total=len(clips),
+            failed=sum(clip.status == "failed" for clip in clips),
+            **summary,
+        )
 
 
 @router.get("/clips/library", response_model=ClipLibraryPage)
