@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import hashlib
 import uuid
 from typing import Literal
 
 from fastapi import APIRouter, HTTPException, status
+from sqlalchemy import select
 from pydantic import BaseModel, Field
 
+from katcha.acquisition_models import TopicWatchVersion
 from katcha.ai.command_center import compose_grounded_answer
 from katcha.db import session_scope
 from katcha.domain import CompilationStatus, ProductionStatus
@@ -402,39 +405,61 @@ async def execute_action(request: ExecuteActionRequest) -> ExecuteActionResponse
             )[:1000]
             continuous = bool(request.payload.get("continuous", True))
             watch_suffix = "-".join(platforms) if platforms else "wide-web"
-            watch = create_topic_watch_version(
-                watch_key=f"source-scout-{watch_suffix}"[:128],
-                name=(
-                    "Autonomous source scout · "
-                    + (", ".join(platforms) if platforms else "wide web")
-                )[:255],
-                include_terms=terms,
-                adapter_configs=[
-                    {
-                        "adapter_key": "web_scout",
-                        "adapter_version": "v1",
-                        "query": {
-                            "operator_request": operator_request,
-                            "platforms": platforms,
-                            "limit": min(top_n * 2, 100),
-                        },
-                        "source_quota_limit_per_day": 24,
-                        "provider_quota_limits": {
-                            "openai.web_search": 24,
-                        },
-                    }
-                ],
-                freshness_horizon_hours=72,
-                max_candidates=min(top_n * 2, 100),
-                enabled=True,
-                metadata={
-                    "kind": "autonomous_source_scout",
-                    "origin": "katcha_ai_command_center",
-                    "requested_platforms": platforms,
-                    "operator_request": operator_request,
-                },
-                channel_profile_id=request.channel_profile_id,
-            )
+            fingerprint_source = "|".join(platforms) + "::" + "|".join(terms)
+            scout_fingerprint = hashlib.sha256(
+                fingerprint_source.encode("utf-8")
+            ).hexdigest()[:12]
+            watch_key = f"source-scout-{watch_suffix}-{scout_fingerprint}"[:128]
+            with session_scope() as session:
+                watch = session.scalar(
+                    select(TopicWatchVersion)
+                    .where(
+                        TopicWatchVersion.channel_profile_id
+                        == request.channel_profile_id,
+                        TopicWatchVersion.watch_key == watch_key,
+                        TopicWatchVersion.enabled.is_(True),
+                    )
+                    .order_by(TopicWatchVersion.version.desc())
+                    .limit(1)
+                )
+                if watch is not None:
+                    session.expunge(watch)
+            reused_watch = watch is not None
+            if watch is None:
+                watch = create_topic_watch_version(
+                    watch_key=watch_key,
+                    name=(
+                        "Autonomous source scout · "
+                        + (", ".join(platforms) if platforms else "wide web")
+                    )[:255],
+                    include_terms=terms,
+                    adapter_configs=[
+                        {
+                            "adapter_key": "web_scout",
+                            "adapter_version": "v1",
+                            "query": {
+                                "operator_request": operator_request,
+                                "platforms": platforms,
+                                "limit": min(top_n * 2, 100),
+                            },
+                            "source_quota_limit_per_day": 24,
+                            "provider_quota_limits": {
+                                "openai.web_search": 24,
+                            },
+                        }
+                    ],
+                    freshness_horizon_hours=72,
+                    max_candidates=min(top_n * 2, 100),
+                    enabled=True,
+                    metadata={
+                        "kind": "autonomous_source_scout",
+                        "origin": "katcha_ai_command_center",
+                        "requested_platforms": platforms,
+                        "operator_request": operator_request,
+                        "scout_fingerprint": scout_fingerprint,
+                    },
+                    channel_profile_id=request.channel_profile_id,
+                )
             if continuous:
                 workflow_id = f"topic-watch-schedule-{watch.id}"
                 await start_topic_watch_schedule(
@@ -449,6 +474,7 @@ async def execute_action(request: ExecuteActionRequest) -> ExecuteActionResponse
                     "watch_version": watch.version,
                     "workflow_id": workflow_id,
                     "continuous": True,
+                    "reused_watch": reused_watch,
                     "interval_minutes": interval_minutes,
                     "platforms": platforms,
                     "terms": terms,
@@ -469,6 +495,7 @@ async def execute_action(request: ExecuteActionRequest) -> ExecuteActionResponse
                     "workflow_id": workflow_id,
                     "execution_key": execution_key,
                     "continuous": False,
+                    "reused_watch": reused_watch,
                     "platforms": platforms,
                     "terms": terms,
                 }
