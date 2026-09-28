@@ -376,7 +376,9 @@ class WebScoutDiscoveryAdapter:
             raise ValueError(
                 "Autonomous web scouting requires KATCHA_AI_EXECUTION_MODE=live"
             )
-        assert_ai_budget(Decimal("0.02"))
+        target = ModelTarget("openai", settings.web_scout_model)
+        estimated_cost = estimate_token_cost(target, 128000, 2200) + Decimal("0.01")
+        assert_ai_budget(max(estimated_cost, Decimal("0.02")))
         limit = min(max(int(query.get("limit", 40)), 1), 100)
 
         schema = {
@@ -473,7 +475,6 @@ class WebScoutDiscoveryAdapter:
         usage_dict = usage if isinstance(usage, dict) else {}
         input_tokens = max(int(usage_dict.get("input_tokens") or 0), 0)
         output_tokens = max(int(usage_dict.get("output_tokens") or 0), 0)
-        target = ModelTarget("openai", settings.web_scout_model)
         token_cost = estimate_token_cost(target, input_tokens, output_tokens)
         total_cost = token_cost + (Decimal("0.01") * web_search_calls)
         record_usage(
@@ -501,5 +502,5 @@ class WebScoutDiscoveryAdapter:
             items=items,
             next_cursor=_next_scout_cursor(cursor, items),
             done=True,
-            provider_usage={"openai.web_search": 1},
+            provider_usage={"openai.web_search": web_search_calls},
         )
