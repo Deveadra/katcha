@@ -49,6 +49,18 @@ LOGGER = logging.getLogger("katcha.telegram")
 _CURSOR_KEY = "operator-bot"
 
 
+def _authorized(
+    settings: Settings,
+    *,
+    chat_id: int | None,
+    user_id: int | None,
+) -> bool:
+    allowed_chat, allowed_user = operator_binding(settings)
+    if allowed_chat is None or chat_id != allowed_chat:
+        return False
+    return allowed_user is None or user_id == allowed_user
+
+
 def _cursor() -> int | None:
     with session_scope() as session:
         row = session.get(TelegramBotCursor, _CURSOR_KEY)
