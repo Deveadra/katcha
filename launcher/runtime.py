@@ -27,6 +27,20 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKSPACE_IMAGE = "katcha-control:local"
+BACKGROUND_BUILD_SERVICES = (
+    "minio",
+    "worker",
+    "analysis-worker",
+    "renderer",
+    "production-worker",
+)
+BACKGROUND_DOCKERFILES = (
+    "Dockerfile",
+    "Dockerfile.analysis",
+    "Dockerfile.minio",
+    "Dockerfile.production",
+    "Dockerfile.renderer",
+)
 REQUIRED_SERVICES = {
     "postgres",
     "temporal",
@@ -257,9 +271,20 @@ class Runtime:
         dockerfiles = (
             [self.root / "Dockerfile.control"]
             if workspace
-            else list(self.root.glob("Dockerfile*"))
+            else [self.root / name for name in BACKGROUND_DOCKERFILES]
         )
-        paths = dockerfiles + list(self.root.glob("docker-compose*.yml"))
+        compose_files = [
+            self.root / "docker-compose.yml",
+            self.root / "docker-compose.discovery.yml",
+            self.root / "docker-compose.trends.yml",
+            self.root / "docker-compose.intelligence.yml",
+            self.root / "docker-compose.app.yml",
+        ]
+        if self.values.get("KATCHA_RENDER_BACKEND") == "lambda":
+            compose_files.append(self.root / "docker-compose.aws-render.yml")
+            if self.values.get("KATCHA_AWS_SIGNING_HELPER_PATH"):
+                compose_files.append(self.root / "docker-compose.aws-roles-anywhere.yml")
+        paths = dockerfiles + compose_files
         paths += [self.root / name for name in ("pyproject.toml", "README.md", "alembic.ini")]
         source_trees = ("src", "migrations") if workspace else ("src", "migrations", "renderer")
         for name in source_trees:
@@ -301,7 +326,6 @@ class Runtime:
             "KATCHA_MINIO_VERSION", "RELEASE.2025-10-15T17-29-55Z"
         )
         return [
-            WORKSPACE_IMAGE,
             "katcha-ingest:local",
             "katcha-analysis:local",
             "katcha-renderer:local",
@@ -324,7 +348,10 @@ class Runtime:
             return
         self.stage = "building images"
         self.event("info", "launcher", "Preparing new or changed application images.")
-        self.run(self.command() + ["build"], timeout=1800)
+        self.run(
+            self.command() + ["build", *BACKGROUND_BUILD_SERVICES],
+            timeout=1800,
+        )
         temporary = stamp.with_suffix(".pending")
         temporary.write_text(fingerprint)
         temporary.replace(stamp)
