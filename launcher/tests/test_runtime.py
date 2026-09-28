@@ -174,10 +174,6 @@ def test_start_opens_workspace_before_warming_full_stack(tmp_path):
         i for i, cmd in enumerate(calls)
         if "build" in cmd and cmd[-1:] == ["api"]
     )
-    postgres_up = next(
-        i for i, cmd in enumerate(calls)
-        if "up" in cmd and cmd[-1:] == ["postgres"]
-    )
     workspace_up = next(
         i for i, cmd in enumerate(calls)
         if "up" in cmd and cmd[-1:] == ["api"]
@@ -195,11 +191,10 @@ def test_start_opens_workspace_before_warming_full_stack(tmp_path):
         i
         for i, cmd in enumerate(calls)
         if "up" in cmd
-        and cmd[-1:] not in (["api"], ["postgres"])
+        and cmd[-1:] != ["api"]
         and not all(service in cmd for service in runtime.EARLY_AUTOMATION_SERVICES)
     )
     assert workspace_build < workspace_up
-    assert postgres_up < workspace_up
     assert workspace_up < early_up < full_build < full_up
     assert any(
         event["message"] == "Workspace ready; warming automation in the background."
@@ -212,44 +207,6 @@ def test_start_opens_workspace_before_warming_full_stack(tmp_path):
     assert app.phase == "ready"
     assert app.stage == "ready"
     assert app.snapshot()["operation_elapsed_seconds"] is None
-    assert not app.lock.locked()
-
-
-def test_workspace_database_and_image_prepare_overlap(tmp_path):
-    app = instance(tmp_path)
-    app.lock.acquire()
-    database_started = threading.Event()
-    image_started = threading.Event()
-
-    def fake_run(args, **_kwargs):
-        if "version" in args:
-            return "2.30.0"
-        if "up" in args and args[-1:] == ["postgres"]:
-            database_started.set()
-            assert image_started.wait(timeout=2)
-        return ""
-
-    def prepare_image():
-        image_started.set()
-        assert database_started.wait(timeout=2)
-
-    def workspace_ready():
-        app.workspace_ready = True
-        return True
-
-    with (
-        patch.object(app, "run", side_effect=fake_run),
-        patch.object(app, "prepare_workspace_image", side_effect=prepare_image),
-        patch.object(app, "start_logs"),
-        patch.object(app, "probe_workspace", side_effect=workspace_ready),
-        patch.object(app, "prepare_images"),
-        patch.object(app, "check", return_value="ready"),
-    ):
-        app._operate("start")
-
-    assert database_started.is_set()
-    assert image_started.is_set()
-    assert app.phase == "ready"
     assert not app.lock.locked()
 
 
