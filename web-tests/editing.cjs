@@ -98,6 +98,16 @@ const verifiedPreview = {
                     overlays: [{ sequence: 4, text: "Opening narration", start_seconds: 0.4, duration_seconds: 1.5 }],
                 },
                 updated_at: "2026-09-24T00:00:00Z",
+            }, {
+                id: "episode-active",
+                premise: "Active editorial fixture",
+                status: "scripted",
+                stage: "editorial",
+                generation: 1,
+                edit_blueprint_key: "persona_commentary",
+                edit_blueprint_version: 2,
+                render_manifest: null,
+                updated_at: "2026-09-25T00:00:00Z",
             }] : []);
             if (url.pathname === "/v1/productions") return fulfillJson(channel === "one" ? [{
                 id: "production-one",
@@ -123,7 +133,7 @@ const verifiedPreview = {
             if (url.pathname.endsWith("/brands/2/previews")) return fulfillJson(verifiedPreview);
             if (url.pathname.endsWith("/brand-previews/preview-one/media")) return route.fulfill({ status: 200, contentType: "video/mp4", body: Buffer.from("fixture-video") });
             if (url.pathname.endsWith("/brands/2/activate")) { brandActivated = true; return fulfillJson({ ...v2, is_active: true }); }
-            if (url.pathname.endsWith("/render-attempts")) return fulfillJson([{ attempt_number: 2, status: "dead_letter", error: "Renderer stopped" }]);
+            if (url.pathname.endsWith("/render-attempts")) return fulfillJson(url.pathname.includes("episode-active") ? [] : [{ attempt_number: 2, status: "dead_letter", error: "Renderer stopped" }]);
             if (url.pathname.endsWith("/render/recover")) return fulfillJson({ child_source_id: "new-generation" });
             if (url.pathname.includes("/edit-blueprints/") && url.pathname.endsWith("/activate")) return fulfillJson({});
             throw new Error(`Unexpected request: ${request.method()} ${url.pathname}`);
@@ -133,11 +143,32 @@ const verifiedPreview = {
         await page.locator("#token").fill("fixture-token");
         await page.locator("#connect-form button").click();
         await page.getByText("Ranking clips").waitFor();
+        assert.equal(await page.locator(".logo").getAttribute("href"), "/explorer");
+        assert.equal(await page.locator(".stat-link").count(), 4);
+        assert.equal(await page.locator("#count-total").innerText(), "2");
+        assert.equal(await page.locator("#count-active").innerText(), "1");
         assert.equal(await page.locator("#count-attention").innerText(), "1");
+        assert.equal(await page.locator(".episode-item.status-attention").count(), 1);
+        assert.equal(await page.locator(".episode-item.status-active").count(), 1);
         assert(await page.getByText("ranksnaxx v1").count());
+
+        await page.locator('[data-summary-filter="active"]').click();
+        assert.equal(await page.locator("#filter").inputValue(), "active");
+        assert.equal(await page.locator(".episode-item").count(), 1);
+        assert.match(await page.locator(".episode-item").innerText(), /Active editorial fixture/);
+        await page.locator('[data-summary-filter="attention"]').click();
+        assert.equal(await page.locator("#filter").inputValue(), "attention");
+        assert.equal(await page.locator(".episode-item").count(), 1);
+        assert.match(await page.locator(".episode-item").innerText(), /Ranking clips/);
+        await page.locator('[data-summary-filter="all"]').click();
 
         await page.getByRole("button", { name: "Stage candidate" }).click();
         await page.getByText(/Brand v2 staged/).waitFor();
+        await page.setViewportSize({ width: 900, height: 900 });
+        assert.equal(
+            await page.evaluate(() => document.documentElement.scrollWidth > innerWidth),
+            false,
+        );
         await page.getByRole("button", { name: /Render preview/ }).click();
         await page.getByText(/Brand preview verified/).waitFor();
         await page.locator("#brand-preview-video").waitFor();

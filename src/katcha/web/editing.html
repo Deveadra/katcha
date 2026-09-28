@@ -11,7 +11,7 @@
 <body>
     <div class="shell">
         <aside class="sidebar">
-            <div class="logo"><span class="glyph">✦</span> katcha<span class="accent">.</span></div>
+            <a class="logo" href="/explorer" aria-label="Katcha home"><span class="glyph">✦</span> katcha<span class="accent">.</span></a>
             <p class="sidebar-label">WORKSPACE</p>
             <nav aria-label="Workspace">
                 <a href="/ingestion">↳ <span>Content sources</span></a>
@@ -27,15 +27,20 @@
                 <form id="connect-form" class="connect card"><div><label for="token">Control-plane token</label><p>Kept in this browser tab only. Leave blank for local development.</p></div><input id="token" type="password" autocomplete="off" placeholder="Token if required"><button class="button primary">Connect ↗</button></form>
                 <div id="message" class="message" role="status" aria-live="polite"></div>
                 <section class="channel-bar card"><div><label for="channel">ACTIVE CHANNEL</label><select id="channel" disabled><option value="">Connect to load channels</option></select></div><div class="channel-hint">All editing data below belongs to the selected channel.</div></section>
-                <div class="stats" aria-label="Production summary"><div class="stat card"><span>EPISODES</span><strong id="count-total">—</strong><small>Most recent 100</small></div><div class="stat card"><span>IN PRODUCTION</span><strong id="count-active">—</strong><small>Editorial & rendering</small></div><div class="stat card"><span>NEEDS ATTENTION</span><strong id="count-attention">—</strong><small>Errors & dead letters</small></div><div class="stat card"><span>BLUEPRINTS</span><strong id="count-blueprints">—</strong><small>Versioned per channel</small></div></div>
-                <div class="grid"><section class="panel card"><div class="panel-head"><div><div class="eyebrow">01 / CHANNEL IDENTITY</div><h2>Editing blueprints</h2></div><span class="tag">VERSIONED</span></div><p class="section-copy">Active recipes define the look and rhythm of this channel’s edits. Changes create a new version; existing episodes retain their snapshot.</p><div id="blueprints" class="list"><div class="empty">Connect to inspect blueprints.</div></div></section>
+                <nav class="stats" aria-label="Production summary">
+                    <a class="stat card stat-link" href="#editorial-pipeline" data-summary-filter="all"><span>EPISODES</span><strong id="count-total">—</strong><small>Most recent 100</small><b aria-hidden="true">↘</b></a>
+                    <a class="stat card stat-link stat-production" href="#editorial-pipeline" data-summary-filter="active"><span>IN PRODUCTION</span><strong id="count-active">—</strong><small>Editorial & rendering</small><b aria-hidden="true">↘</b></a>
+                    <a class="stat card stat-link stat-attention" href="#editorial-pipeline" data-summary-filter="attention"><span>NEEDS ATTENTION</span><strong id="count-attention">—</strong><small>Errors & dead letters</small><b aria-hidden="true">↘</b></a>
+                    <a class="stat card stat-link" href="#blueprints-panel"><span>BLUEPRINTS</span><strong id="count-blueprints">—</strong><small>Versioned per channel</small><b aria-hidden="true">↘</b></a>
+                </nav>
+                <div class="grid"><section class="panel card" id="blueprints-panel"><div class="panel-head"><div><div class="eyebrow">01 / CHANNEL IDENTITY</div><h2>Editing blueprints</h2></div><span class="tag">VERSIONED</span></div><p class="section-copy">Active recipes define the look and rhythm of this channel’s edits. Changes create a new version; existing episodes retain their snapshot.</p><div id="blueprints" class="list"><div class="empty">Connect to inspect blueprints.</div></div></section>
                 <section class="panel card"><div class="panel-head"><div><div class="eyebrow">02 / LEARNING LOOP</div><h2>Blueprint performance</h2></div><span class="tag">REAL DATA</span></div><div id="performance" class="performance empty">Select a channel to see measured results.</div></section></div>
-                <section class="panel card brand-lab">
+                <section class="panel card brand-lab" id="brand-acceptance">
                     <div class="panel-head"><div><div class="eyebrow">03 / BRAND ACCEPTANCE</div><h2>Staged brand preview lab</h2></div><span class="tag">NON-PUBLISHING</span></div>
                     <p class="section-copy">Stage a candidate without changing the live channel, render it against frozen production media, inspect the verified MP4, then activate explicitly.</p>
                     <div id="brand-lab"><div class="empty">Connect to inspect brand versions and preview sources.</div></div>
                 </section>
-                <section class="panel card episodes"><div class="panel-head"><div><div class="eyebrow">04 / EDITORIAL PIPELINE</div><h2>Ranked episode queue</h2></div><label class="filter">STATUS <select id="filter"><option value="all">All episodes</option><option value="attention">Needs attention</option><option value="active">In production</option></select></label></div><div id="episodes" class="list"><div class="empty">Connect to load episodes.</div></div></section>
+                <section class="panel card episodes" id="editorial-pipeline"><div class="panel-head"><div><div class="eyebrow">04 / EDITORIAL PIPELINE</div><h2>Ranked episode queue</h2></div><label class="filter">STATUS <select id="filter"><option value="all">All episodes</option><option value="attention">Needs attention</option><option value="active">In production</option></select></label></div><div id="episodes" class="list"><div class="empty">Connect to load episodes.</div></div></section>
                 <footer>The brand preview lab prioritizes channel-scoped ranked episodes and also supports standalone Shorts with frozen render manifests. Preview renders never mutate production/publication lineage. Brand activation is a separate explicit action. Render recovery creates a new generation only from dead-letter attempts.</footer>
             </div>
         </main>

@@ -174,6 +174,15 @@ let browser;
         await route.fulfill({ json: data });
     });
     await page.goto("http://127.0.0.1:8765");
+    assert.equal(await page.locator(".brand").getAttribute("href"), "/explorer");
+    await page.locator(".launcher-nav-item").waitFor();
+    assert.equal(await page.locator(".launcher-nav-item").count(), 1);
+    await page.setViewportSize({ width: 900, height: 900 });
+    assert.equal(
+        await page.evaluate(() => document.documentElement.scrollWidth > innerWidth),
+        false,
+    );
+    await page.setViewportSize({ width: 1440, height: 1000 });
     await page.locator("#token").fill("fixture-token");
     await page.locator("#connect-form button").click();
     await page.locator("#detail-panel h3").waitFor();
