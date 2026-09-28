@@ -94,6 +94,10 @@ let browser;
                         description: "Start a channel-scoped production using the current channel defaults.",
                         status: "proposed",
                         expires_at: "2026-09-28T13:30:00Z",
+                        payload: {
+                            clip_id: "44444444-4444-4444-8444-444444444444",
+                            edit_blueprint_key: "persona_commentary",
+                        },
                         requires_confirmation: true,
                     },
                 ],
@@ -167,6 +171,9 @@ let browser;
     assert.deepEqual(commandRequests[1].body.selected_clip_ids, [
         "44444444-4444-4444-8444-444444444444",
     ]);
+
+    assert.match(await page.locator(".action-payload").first().innerText(), /clip 44444444/i);
+    assert.match(await page.locator(".action-payload").first().innerText(), /persona_commentary/i);
 
     const actionButton = page.locator("[data-action-id]").first();
     await actionButton.click();
