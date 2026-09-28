@@ -14,6 +14,10 @@ from katcha.services.command_actions import (
     create_action_proposals,
 )
 from katcha.services.command_activity import get_action_activity
+from katcha.services.intelligence_runs import (
+    complete_channel_intelligence_run,
+    start_channel_intelligence_run,
+)
 
 
 def _profile_and_production() -> tuple[uuid.UUID, Production]:
@@ -160,3 +164,59 @@ def test_action_activity_without_resource_reports_workflow_started() -> None:
     assert activity.workflow_id == "fixture-intelligence-workflow"
     assert activity.state == "workflow_started"
     assert activity.settled is False
+
+
+
+def test_action_activity_tracks_completed_intelligence_refresh() -> None:
+    profile_id, _ = _profile_and_production()
+    workflow_id = f"fixture-intelligence-{uuid.uuid4()}"
+    run_key = f"command-fixture-{uuid.uuid4()}"
+    proposal = create_action_proposals(
+        request_id=uuid.uuid4(),
+        channel_profile_id=profile_id,
+        specs=[
+            ActionProposalSpec(
+                action_type="refresh_channel_intelligence",
+                label="Refresh intelligence",
+                description="Fixture refresh",
+                payload={},
+            )
+        ],
+    )[0]
+    claim_action_proposal(proposal.id, actor="control-token:fixture")
+    complete_action_proposal(
+        proposal.id,
+        result={
+            "workflow_id": workflow_id,
+            "run_key": run_key,
+        },
+    )
+    start_channel_intelligence_run(
+        profile_id,
+        run_key=run_key,
+        workflow_id=workflow_id,
+    )
+    complete_channel_intelligence_run(
+        profile_id,
+        run_key=run_key,
+        workflow_id=workflow_id,
+        result={
+            "ranking": {
+                "ranking_version": 8,
+                "sample_count": 41,
+                "confidence": 0.88,
+            }
+        },
+    )
+
+    activity = get_action_activity(proposal.id)
+
+    assert activity.resource is not None
+    assert activity.resource.kind == "channel_intelligence_run"
+    assert activity.resource.status == "completed"
+    assert activity.resource.stage == "completed"
+    assert activity.state == "completed"
+    assert activity.settled is True
+    event_types = [event["event_type"] for event in activity.events]
+    assert "channel_intelligence.run_started" in event_types
+    assert "channel_intelligence.run_completed" in event_types
