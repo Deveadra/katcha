@@ -185,6 +185,96 @@ def append_command_turn(
         return turn
 
 
+def record_command_exchange(
+    *,
+    thread_id: uuid.UUID,
+    request_id: uuid.UUID,
+    user_content: str,
+    assistant_content: str,
+    intent: str,
+    narrator: str,
+    evidence: list[dict[str, object]] | None = None,
+    user_context: dict[str, object] | None = None,
+    assistant_context: dict[str, object] | None = None,
+) -> tuple[CommandTurn, CommandTurn]:
+    user_text = user_content.strip()
+    assistant_text = assistant_content.strip()
+    if not user_text or not assistant_text:
+        raise ValueError("command exchange content cannot be empty")
+
+    now = _now()
+    with session_scope() as session:
+        thread = session.scalar(
+            select(CommandThread)
+            .where(CommandThread.id == thread_id)
+            .with_for_update()
+        )
+        if thread is None:
+            raise ValueError(f"command thread not found: {thread_id}")
+        if thread.status != "active":
+            raise ValueError(
+                f"command thread is not active: {thread.status}"
+            )
+        sequence = int(
+            session.scalar(
+                select(
+                    func.coalesce(func.max(CommandTurn.sequence_number), 0)
+                ).where(CommandTurn.thread_id == thread_id)
+            )
+            or 0
+        )
+        user_turn = CommandTurn(
+            thread_id=thread.id,
+            channel_profile_id=thread.channel_profile_id,
+            sequence_number=sequence + 1,
+            role="user",
+            request_id=request_id,
+            intent=None,
+            narrator=None,
+            content=user_text,
+            evidence=[],
+            turn_context=dict(user_context or {}),
+        )
+        assistant_turn = CommandTurn(
+            thread_id=thread.id,
+            channel_profile_id=thread.channel_profile_id,
+            sequence_number=sequence + 2,
+            role="assistant",
+            request_id=request_id,
+            intent=intent,
+            narrator=narrator,
+            content=assistant_text,
+            evidence=list(evidence or []),
+            turn_context=dict(assistant_context or {}),
+        )
+        thread.last_activity_at = now
+        session.add_all([user_turn, assistant_turn])
+        session.flush()
+        for turn in (user_turn, assistant_turn):
+            session.add(
+                DomainEvent(
+                    aggregate_type="command_thread",
+                    aggregate_id=str(thread.id),
+                    event_type="command_center.turn_recorded",
+                    payload={
+                        "thread_id": str(thread.id),
+                        "turn_id": str(turn.id),
+                        "channel_profile_id": str(thread.channel_profile_id),
+                        "request_id": str(request_id),
+                        "sequence_number": turn.sequence_number,
+                        "role": turn.role,
+                        "intent": turn.intent,
+                    },
+                )
+            )
+        session.flush()
+        session.refresh(user_turn)
+        session.refresh(assistant_turn)
+        session.expunge(user_turn)
+        session.expunge(assistant_turn)
+        return user_turn, assistant_turn
+
+
 def list_command_turns(thread_id: uuid.UUID) -> list[CommandTurn]:
     with session_scope() as session:
         thread = session.get(CommandThread, thread_id)
