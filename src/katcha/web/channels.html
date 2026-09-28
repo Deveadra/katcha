@@ -1,0 +1,198 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <meta name="theme-color" content="#0b1018">
+    <title>Katcha · Channel Studio</title>
+    <link rel="stylesheet" href="styles.css">
+    <link rel="stylesheet" href="channels.css">
+    <script src="channels.js" defer></script>
+    <script src="launcher-bridge.js" defer></script>
+</head>
+<body>
+    <div class="app-shell">
+        <aside class="rail">
+            <a class="brand" href="/explorer" aria-label="Katcha home">
+                <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
+                katcha<span class="brand-dot">.</span>
+            </a>
+            <div class="rail-label">WORKSPACE</div>
+            <nav class="rail-nav" aria-label="Workspace">
+                <a class="nav-item" href="/ingestion"><span class="nav-icon">↳</span> Content sources</a>
+                <a class="nav-item" href="/explorer"><span class="nav-icon">◉</span> Trend explorer</a>
+                <a class="nav-item" href="/clips"><span class="nav-icon">▤</span> Clip library</a>
+                <a class="nav-item active" href="/channels"><span class="nav-icon">▦</span> Channel Studio</a>
+                <a class="nav-item" href="/editing"><span class="nav-icon">◇</span> Editing studio</a>
+            </nav>
+            <div class="rail-spacer"></div>
+            <div class="rail-note">
+                <strong>Channel is the unit of learning</strong>
+                <p>Every budget, brand, edit decision, publishing result and AI recommendation stays scoped to the selected channel.</p>
+            </div>
+            <div class="rail-footer">YouTube operations / v1</div>
+        </aside>
+        <main>
+            <header class="topbar">
+                <div class="breadcrumbs">Workspace / <strong>Channel Studio</strong></div>
+                <span id="connection-state" class="simulation">DISCONNECTED</span>
+            </header>
+            <div class="studio-content">
+                <section class="studio-hero">
+                    <div>
+                        <div class="eyebrow">YOUTUBE COMMAND CENTER</div>
+                        <h1>Run the channel, <em>not just the video.</em></h1>
+                        <p>See what is publishing, what is earning, what viewers are responding to, what Katcha is learning, and where human attention is needed.</p>
+                    </div>
+                    <div class="hero-actions">
+                        <a class="studio-button secondary" href="/explorer">Find an opportunity</a>
+                        <a class="studio-button primary" href="/editing">Open editing studio ↗</a>
+                    </div>
+                </section>
+
+                <form id="connect-form" class="connect studio-card">
+                    <div class="connect-copy">
+                        <label for="token">Control-plane token</label>
+                        <p>Kept only in this tab. Leave blank for local development.</p>
+                    </div>
+                    <input id="token" type="password" autocomplete="off" placeholder="Token if required">
+                    <button class="studio-button primary" type="submit">Connect</button>
+                </form>
+                <div id="status" role="status" aria-live="polite"></div>
+
+                <section id="channel-setup" class="setup-panel studio-card" hidden>
+                    <div>
+                        <div class="eyebrow">CHANNEL SETUP</div>
+                        <h2>No Katcha channel workspace yet.</h2>
+                        <p id="setup-copy">Connect a YouTube account or turn an existing connection into a channel workspace.</p>
+                    </div>
+                    <div id="setup-actions" class="setup-actions"></div>
+                </section>
+
+                <section id="studio" hidden>
+                    <div class="channel-command studio-card">
+                        <div class="channel-identity">
+                            <div id="channel-avatar" class="channel-avatar" aria-hidden="true">YT</div>
+                            <div>
+                                <span class="micro-label">ACTIVE YOUTUBE CHANNEL</span>
+                                <select id="channel" aria-label="Active YouTube channel"></select>
+                                <div id="channel-meta" class="channel-meta"></div>
+                            </div>
+                        </div>
+                        <div class="command-actions">
+                            <button id="refresh-intelligence" class="studio-button secondary" type="button">Refresh intelligence</button>
+                            <button id="reload" class="studio-button primary" type="button">↻ Refresh view</button>
+                        </div>
+                    </div>
+
+                    <nav class="section-tabs" aria-label="Channel Studio sections">
+                        <a href="#overview">Overview</a>
+                        <a href="#content">Content</a>
+                        <a href="#growth">Growth & packaging</a>
+                        <a href="#production">Production</a>
+                        <a href="#identity">Identity & automation</a>
+                    </nav>
+
+                    <section id="overview" class="studio-section">
+                        <div class="section-title">
+                            <div><span>01 / CHANNEL PULSE</span><h2>What matters right now</h2></div>
+                            <small id="overview-window">Stored Katcha + YouTube data</small>
+                        </div>
+                        <div class="metric-grid">
+                            <article class="metric-card studio-card"><span>RECENT VIDEOS</span><strong id="metric-videos">—</strong><small id="metric-videos-sub">Stored publications</small></article>
+                            <article class="metric-card studio-card"><span>MEASURED VIEWS</span><strong id="metric-views">—</strong><small id="metric-views-sub">Latest snapshots</small></article>
+                            <article class="metric-card studio-card"><span>CONTRIBUTION MARGIN</span><strong id="metric-margin">—</strong><small id="metric-margin-sub">Revenue − AI cost</small></article>
+                            <article class="metric-card studio-card"><span>AUTOMATION</span><strong id="metric-automation">—</strong><small id="metric-automation-sub">Current safety level</small></article>
+                        </div>
+                        <div class="overview-grid">
+                            <article class="studio-card focus-card">
+                                <div class="panel-heading"><div><span class="eyebrow">OPERATOR FOCUS</span><h3>Next best actions</h3></div><span id="focus-count" class="badge">0</span></div>
+                                <div id="focus-list" class="focus-list empty-state">Connect a channel to calculate priorities.</div>
+                            </article>
+                            <article class="studio-card money-card">
+                                <div class="panel-heading"><div><span class="eyebrow">CHANNEL ECONOMICS</span><h3>Revenue & AI spend</h3></div><span class="badge">TRACKED</span></div>
+                                <div id="economics" class="money-grid empty-state">No economics snapshot loaded.</div>
+                            </article>
+                        </div>
+                    </section>
+
+                    <section id="content" class="studio-section">
+                        <div class="section-title">
+                            <div><span>02 / CONTENT LIBRARY</span><h2>Published & scheduled videos</h2></div>
+                            <small>Open a video for its stored analytics and retention</small>
+                        </div>
+                        <div class="content-layout">
+                            <div class="studio-card table-card">
+                                <div class="table-toolbar">
+                                    <label class="studio-search">⌕ <input id="content-search" type="search" placeholder="Search videos"></label>
+                                    <select id="content-filter" aria-label="Filter publication status">
+                                        <option value="all">All statuses</option>
+                                        <option value="published">Published</option>
+                                        <option value="queued">Queued</option>
+                                        <option value="failed">Needs attention</option>
+                                    </select>
+                                </div>
+                                <div id="publication-list" class="publication-list"><div class="empty-state">No publications loaded.</div></div>
+                            </div>
+                            <aside id="video-detail" class="studio-card video-detail">
+                                <div class="empty-state">Select a video to inspect its details.</div>
+                            </aside>
+                        </div>
+                    </section>
+
+                    <section id="growth" class="studio-section">
+                        <div class="section-title">
+                            <div><span>03 / GROWTH LOOP</span><h2>What Katcha is learning</h2></div>
+                            <small>Packaging, editing and release timing from measured outcomes</small>
+                        </div>
+                        <div class="growth-grid">
+                            <article class="studio-card">
+                                <div class="panel-heading"><div><span class="eyebrow">PACKAGING</span><h3>Titles & thumbnails</h3></div><span id="packaging-status" class="badge">—</span></div>
+                                <div id="packaging" class="insight-list empty-state">No packaging intelligence yet.</div>
+                            </article>
+                            <article class="studio-card">
+                                <div class="panel-heading"><div><span class="eyebrow">EDIT LEARNING</span><h3>Editing recipes</h3></div><a href="/editing#blueprints-panel">Manage ↗</a></div>
+                                <div id="editing-performance" class="insight-list empty-state">No edit evidence yet.</div>
+                            </article>
+                            <article class="studio-card schedule-card">
+                                <div class="panel-heading"><div><span class="eyebrow">PUBLISH TIMING</span><h3>Recommended windows</h3></div><span class="badge">LOCAL TIME</span></div>
+                                <div id="schedule" class="schedule-list empty-state">No schedule recommendations yet.</div>
+                            </article>
+                        </div>
+                    </section>
+
+                    <section id="production" class="studio-section">
+                        <div class="section-title">
+                            <div><span>04 / PRODUCTION</span><h2>Work moving through Katcha</h2></div>
+                            <a class="studio-button secondary small" href="/editing#editorial-pipeline">Open full editing queue ↗</a>
+                        </div>
+                        <div id="production-list" class="production-grid"><div class="studio-card empty-state">No productions loaded.</div></div>
+                    </section>
+
+                    <section id="identity" class="studio-section">
+                        <div class="section-title">
+                            <div><span>05 / IDENTITY & CONTROL</span><h2>How this channel operates</h2></div>
+                            <small>Inspectable defaults instead of hidden AI behavior</small>
+                        </div>
+                        <div class="control-grid">
+                            <article class="studio-card">
+                                <div class="panel-heading"><div><span class="eyebrow">BRAND</span><h3>Active identity</h3></div><a href="/editing#brand-acceptance">Preview lab ↗</a></div>
+                                <div id="brand-panel" class="key-value empty-state">No brand version loaded.</div>
+                            </article>
+                            <article class="studio-card">
+                                <div class="panel-heading"><div><span class="eyebrow">AUTOMATION</span><h3>Human review policy</h3></div><span id="automation-badge" class="badge">—</span></div>
+                                <div id="automation-panel" class="key-value empty-state">No automation evidence loaded.</div>
+                            </article>
+                            <article class="studio-card">
+                                <div class="panel-heading"><div><span class="eyebrow">AI BUDGET</span><h3>Spend guardrails</h3></div><span id="routing-badge" class="badge">—</span></div>
+                                <div id="strategy-panel" class="key-value empty-state">No channel strategy loaded.</div>
+                            </article>
+                        </div>
+                    </section>
+                </section>
+                <footer class="studio-footer">Channel Studio reads stored Katcha and YouTube observations. Analytics cards describe the sampled videos shown here; they do not pretend to be lifetime YouTube totals when Katcha has not stored that scope.</footer>
+            </div>
+        </main>
+    </div>
+</body>
+</html>
