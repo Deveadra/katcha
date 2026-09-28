@@ -105,8 +105,8 @@ def resolve_time_window(
     if "yesterday" in text:
         end_local = now_local.replace(hour=0, minute=0, second=0, microsecond=0)
         start_local = end_local - timedelta(days=1)
-        label = start_local.strftime("%b %-d")
-    elif "today" in text or default_today:
+        label = f"{start_local.strftime('%b')} {start_local.day}"
+    elif "today" in text:
         start_local = now_local.replace(hour=0, minute=0, second=0, microsecond=0)
         end_local = start_local + timedelta(days=1)
         label = "today"
@@ -125,6 +125,10 @@ def resolve_time_window(
         start_local = midnight - timedelta(days=midnight.weekday())
         end_local = now_local
         label = "this week"
+    elif default_today:
+        start_local = now_local.replace(hour=0, minute=0, second=0, microsecond=0)
+        end_local = start_local + timedelta(days=1)
+        label = "today"
     else:
         return None
 
