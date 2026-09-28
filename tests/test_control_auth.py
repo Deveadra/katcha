@@ -1,0 +1,217 @@
+import uuid
+
+import pytest
+from fastapi import HTTPException
+from fastapi.security import HTTPAuthorizationCredentials
+from pydantic import ValidationError
+from starlette.requests import Request
+
+from katcha.api.control_auth import (
+    _authenticate,
+    _require_named_principal_route_access,
+    control_actor,
+    control_allowed_channel_ids,
+    control_principal_name,
+    require_control_channel,
+)
+from katcha.config import Settings
+
+
+def _request(
+    path: str = "/v1/channels",
+    *,
+    method: str = "GET",
+    path_params: dict[str, str] | None = None,
+) -> Request:
+    return Request(
+        {
+            "type": "http",
+            "method": method,
+            "path": path,
+            "raw_path": path.encode(),
+            "headers": [],
+            "query_string": b"",
+            "scheme": "http",
+            "server": ("testserver", 80),
+            "client": ("127.0.0.1", 12345),
+            "path_params": dict(path_params or {}),
+        }
+    )
+
+
+def _credentials(token: str) -> HTTPAuthorizationCredentials:
+    return HTTPAuthorizationCredentials(
+        scheme="Bearer",
+        credentials=token,
+    )
+
+
+def _settings(
+    *,
+    channel_id: uuid.UUID | None = None,
+    scopes: list[str] | None = None,
+) -> Settings:
+    return Settings(
+        _env_file=None,
+        control_principals=[
+            {
+                "name": "aerith",
+                "token": "aerith-fixture-token-000001",
+                "scopes": scopes or ["channels:read", "events:read"],
+                "channel_profile_ids": [
+                    str(channel_id) if channel_id is not None else "*"
+                ],
+            }
+        ],
+    )
+
+
+def test_named_principal_auth_derives_identity_scopes_and_channels() -> None:
+    channel_id = uuid.uuid4()
+    request = _request()
+    settings = _settings(channel_id=channel_id)
+
+    _authenticate(
+        request,
+        _credentials("aerith-fixture-token-000001"),
+        settings,
+    )
+
+    assert control_actor(request) == "control-principal:aerith"
+    assert control_principal_name(request) == "aerith"
+    assert request.state.control_scopes == {"channels:read", "events:read"}
+    assert control_allowed_channel_ids(request) == {channel_id}
+
+    require_control_channel(request, channel_id)
+    with pytest.raises(HTTPException) as exc:
+        require_control_channel(request, uuid.uuid4())
+    assert exc.value.status_code == 403
+
+
+def test_named_principal_rejects_unknown_bearer_token() -> None:
+    request = _request()
+
+    with pytest.raises(HTTPException) as exc:
+        _authenticate(
+            request,
+            _credentials("wrong-fixture-token-000000"),
+            _settings(),
+        )
+
+    assert exc.value.status_code == 401
+    assert "authentication required" in str(exc.value.detail)
+
+
+def test_named_principal_route_policy_fails_closed_for_unmapped_api() -> None:
+    request = _request("/v1/clips")
+    settings = _settings(scopes=["events:read"])
+    _authenticate(
+        request,
+        _credentials("aerith-fixture-token-000001"),
+        settings,
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        _require_named_principal_route_access(request)
+
+    assert exc.value.status_code == 403
+    assert "restricted control principals" in str(exc.value.detail)
+
+
+def test_named_principal_route_policy_requires_surface_scope() -> None:
+    read_request = _request("/v1/channels")
+    settings = _settings(scopes=["channels:read"])
+    _authenticate(
+        read_request,
+        _credentials("aerith-fixture-token-000001"),
+        settings,
+    )
+    _require_named_principal_route_access(read_request)
+
+    write_request = _request("/v1/channels", method="POST")
+    _authenticate(
+        write_request,
+        _credentials("aerith-fixture-token-000001"),
+        settings,
+    )
+    with pytest.raises(HTTPException) as exc:
+        _require_named_principal_route_access(write_request)
+    assert exc.value.status_code == 403
+    assert "channels:write" in str(exc.value.detail)
+
+
+def test_wildcard_operator_principal_can_use_legacy_api_surfaces() -> None:
+    request = _request("/v1/clips")
+    settings = Settings(
+        _env_file=None,
+        control_principals=[
+            {
+                "name": "operator-ui",
+                "token": "operator-fixture-token-0001",
+                "scopes": ["*"],
+                "channel_profile_ids": ["*"],
+            }
+        ],
+    )
+    _authenticate(
+        request,
+        _credentials("operator-fixture-token-0001"),
+        settings,
+    )
+
+    _require_named_principal_route_access(request)
+
+
+def test_control_principal_configuration_rejects_duplicates() -> None:
+    with pytest.raises(ValidationError, match="duplicate control principal name"):
+        Settings(
+            _env_file=None,
+            control_principals=[
+                {
+                    "name": "aerith",
+                    "token": "aerith-fixture-token-000001",
+                    "scopes": ["events:read"],
+                    "channel_profile_ids": ["*"],
+                },
+                {
+                    "name": "AERITH",
+                    "token": "another-fixture-token-0001",
+                    "scopes": ["events:read"],
+                    "channel_profile_ids": ["*"],
+                },
+            ],
+        )
+
+    with pytest.raises(ValidationError, match="tokens must be unique"):
+        Settings(
+            _env_file=None,
+            control_principals=[
+                {
+                    "name": "aerith",
+                    "token": "shared-fixture-token-00001",
+                    "scopes": ["events:read"],
+                    "channel_profile_ids": ["*"],
+                },
+                {
+                    "name": "operator",
+                    "token": "shared-fixture-token-00001",
+                    "scopes": ["*"],
+                    "channel_profile_ids": ["*"],
+                },
+            ],
+        )
+
+
+def test_control_principal_configuration_rejects_short_tokens() -> None:
+    with pytest.raises(ValidationError, match="at least 16 characters"):
+        Settings(
+            _env_file=None,
+            control_principals=[
+                {
+                    "name": "aerith",
+                    "token": "short",
+                    "scopes": ["events:read"],
+                    "channel_profile_ids": ["*"],
+                }
+            ],
+        )
