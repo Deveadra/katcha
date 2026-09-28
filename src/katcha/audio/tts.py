@@ -175,7 +175,7 @@ def voice_profile_for_target(target: ModelTarget) -> VoiceProfile:
     preferred_key = LATEST_VOICE_PROFILE_BY_PROVIDER.get(target.provider)
     if preferred_key is not None:
         preferred = VOICE_PROFILES[preferred_key]
-        if preferred.model == target.model:
+        if target.provider == "elevenlabs" or preferred.model == target.model:
             return preferred
     for profile in VOICE_PROFILES.values():
         if profile.provider == target.provider and profile.model == target.model:
