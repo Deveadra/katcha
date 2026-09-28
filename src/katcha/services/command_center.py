@@ -92,6 +92,19 @@ _STOP_WORDS = {
     "do",
     "into",
     "one",
+    "a",
+    "an",
+    "be",
+    "can",
+    "could",
+    "for",
+    "in",
+    "to",
+    "use",
+    "used",
+    "video",
+    "videos",
+    "would",
     "add",
     "find",
     "search",
@@ -149,6 +162,31 @@ _SOURCE_DISCOVERY_NOUNS = (
     "communities",
     "feed",
     "feeds",
+)
+_SOURCE_DISCOVERY_MEDIA_HINTS = (
+    "clip",
+    "clips",
+    "video",
+    "videos",
+    "post",
+    "posts",
+    "content",
+    "moment",
+    "moments",
+    "fail",
+    "fails",
+    "story",
+    "stories",
+    "news",
+    "trend",
+    "trends",
+    "topic",
+    "topics",
+)
+_OPEN_DISCOVERY_PHRASES = (
+    "look for",
+    "search for",
+    "hunt for",
 )
 
 
@@ -505,13 +543,43 @@ def _requested_platforms(prompt: str) -> list[str]:
     ]
 
 
-def classify_intent(prompt: str, selected_clip_ids: list[uuid.UUID]) -> str:
+def _looks_like_source_discovery(
+    prompt: str,
+    *,
+    selected_clip_ids: list[uuid.UUID],
+) -> bool:
     text = prompt.casefold()
     platforms = _requested_platforms(prompt)
-    if any(verb in text for verb in _SOURCE_DISCOVERY_VERBS) and (
-        platforms or any(noun in text for noun in _SOURCE_DISCOVERY_NOUNS)
-    ):
-        return "source_discovery"
+
+    if any(phrase in text for phrase in _OPEN_DISCOVERY_PHRASES):
+        return not selected_clip_ids
+
+    discovery_verb = any(
+        re.search(rf"\b{re.escape(verb)}\b", text)
+        for verb in ("find", "discover", "scout", "search")
+    )
+    if not discovery_verb:
+        return False
+
+    has_explicit_source_target = any(
+        re.search(rf"\b{re.escape(noun)}\b", text)
+        for noun in _SOURCE_DISCOVERY_NOUNS
+    )
+    has_media_target = any(
+        re.search(rf"\b{re.escape(noun)}\b", text)
+        for noun in _SOURCE_DISCOVERY_MEDIA_HINTS
+    )
+    wants_new_material = bool(re.search(r"\b(new|fresh|trending|viral)\b", text))
+    return bool(
+        platforms
+        or has_explicit_source_target
+        or has_media_target
+        or wants_new_material
+    )
+
+
+def classify_intent(prompt: str, selected_clip_ids: list[uuid.UUID]) -> str:
+    text = prompt.casefold()
     if any(word in text for word in ("failing", "failed", "failure", "broken", "error")):
         return "failures"
     if any(word in text for word in ("reject", "rejected", "rejection")):
@@ -528,6 +596,11 @@ def classify_intent(prompt: str, selected_clip_ids: list[uuid.UUID]) -> str:
         return "best_clips"
     if selected_clip_ids and any(word in text for word in ("score", "why", "explain")):
         return "clip_explanation"
+    if _looks_like_source_discovery(
+        prompt,
+        selected_clip_ids=selected_clip_ids,
+    ):
+        return "source_discovery"
     return "channel_status"
 
 
