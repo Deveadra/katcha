@@ -7,6 +7,7 @@ from decimal import Decimal
 
 from pydantic import BaseModel, Field
 
+from katcha.ai.failover import safe_to_fail_over
 from katcha.ai.pricing import estimate_token_cost
 from katcha.ai.router import (
     ModelTarget,
@@ -204,7 +205,7 @@ def compose_grounded_answer(
         if decision.route.fallback is not None:
             targets.append(decision.route.fallback)
         last_error: Exception | None = None
-        for target in targets:
+        for index, target in enumerate(targets):
             try:
                 if target.provider == "openai" and settings.openai_api_key:
                     return _openai(
@@ -224,7 +225,9 @@ def compose_grounded_answer(
                     )
             except Exception as exc:
                 last_error = exc
-                continue
+                if index == 0 and len(targets) > 1 and safe_to_fail_over(exc):
+                    continue
+                break
         if last_error is not None:
             raise last_error
         raise RuntimeError("no configured provider is available for command-center narration")
