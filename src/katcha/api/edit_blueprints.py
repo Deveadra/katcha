@@ -9,8 +9,8 @@ from fastapi import APIRouter, HTTPException, Query, status
 from pydantic import BaseModel, ConfigDict, Field
 
 from katcha.edit_blueprint_models import ChannelEditBlueprintVersion
-from katcha.editing.blueprints import header_explainer_v1, persona_commentary_v1
 from katcha.edit_performance_models import EditBlueprintPerformanceSnapshot
+from katcha.editing.blueprints import header_explainer_v1, persona_commentary_v1
 from katcha.services.channel_edit_blueprints import (
     activate_edit_blueprint_version,
     create_edit_blueprint_version,
@@ -110,7 +110,10 @@ def get_edit_blueprint_templates() -> list[EditBlueprintTemplateResponse]:
         EditBlueprintTemplateResponse(
             key=explainer.key,
             display_name="Header explainer",
-            description="Clip-led edits with a persistent explanatory header and retained source audio.",
+            description=(
+                "Clip-led edits with a persistent explanatory header "
+                "and retained source audio."
+            ),
             contract=explainer.model_dump(mode="json"),
         ),
     ]
