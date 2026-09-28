@@ -89,6 +89,7 @@ def build_script_prompt(
     event_summary = ai.get("event_summary") or "Use the transcript/context conservatively."
     setup = ai.get("setup") or ""
     payoff = ai.get("payoff") or ""
+    operator_feedback = list(snapshot.get("operator_feedback") or [])
 
     return (
         f"Prompt version: {prompt_version}\n"
@@ -108,7 +109,11 @@ def build_script_prompt(
         f"Event: {event_summary}\n"
         f"Setup: {setup}\n"
         f"Payoff: {payoff}\n"
-        f"Transcript: {transcript}\n\n"
+        f"Transcript: {transcript}\n"
+        f"One-off regeneration feedback: {json.dumps(operator_feedback, sort_keys=True)}\n\n"
+        "Treat the most recent one-off regeneration feedback as binding for this generation "
+        "when it concerns narration, pacing, commentary, or edit intent. Do not convert it "
+        "into permanent channel policy. "
         "Create exactly three distinct host treatments: observational, sarcastic, and "
         "interactive. They must sound like the same host, not three different personalities. "
         "The host must add a new joke, perspective, framing, or decision for the audience; "
