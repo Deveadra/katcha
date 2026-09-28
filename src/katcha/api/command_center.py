@@ -553,7 +553,10 @@ def thread_detail(
     try:
         thread = get_command_thread(thread_id)
         turns = list_command_turns(thread_id)
-        proposals = list_thread_proposals(thread_id)
+        proposals = [
+            get_action_proposal(row.id)
+            for row in list_thread_proposals(thread_id)
+        ]
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return ThreadDetailResponse(
