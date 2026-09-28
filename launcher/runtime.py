@@ -923,6 +923,8 @@ class Handler(BaseHTTPRequestHandler):
         if not self.allowed():
             return self.send(403, {"error": "Local requests only"})
         if self.path == "/":
+            return self.redirect("/editing")
+        if self.path == "/launcher":
             return self.send(200, (ROOT / "launcher" / "index.html").read_bytes(), "text/html")
         if self.workspace_asset():
             return
@@ -1050,22 +1052,35 @@ def main():
     parser.add_argument(
         "--auto-start",
         action="store_true",
-        help="Start services immediately instead of waiting for the Start Katcha button.",
+        help="Start services even in non-interactive/no-browser mode.",
+    )
+    parser.add_argument(
+        "--launcher",
+        action="store_true",
+        help="Open the diagnostics/settings console instead of the Katcha workspace.",
     )
     parser.add_argument("--no-start", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args()
     os.umask(0o077)
-    url = "http://localhost:8765"
+    base_url = "http://localhost:8765"
+    app_url = base_url + "/editing"
+    launcher_url = base_url + "/launcher"
+    open_url = launcher_url if args.launcher else app_url
     try:
         server = ThreadingHTTPServer(("127.0.0.1", 8765), Handler)
     except OSError:
-        print("Port 8765 is in use. If Katcha is already running, open " + url)
+        print("Port 8765 is in use. If Katcha is already running, open " + app_url)
         return 1
     runtime = Runtime()
     server.runtime = runtime
-    runtime.event("info", "launcher", "Launch console listening on " + url)
+    runtime.event("info", "launcher", "Katcha gateway listening on " + base_url)
     threading.Thread(target=runtime.monitor, daemon=True).start()
-    if (args.auto_start or runtime.desired_running) and not args.no_start:
+
+    # Interactive launches behave like an application: open the workspace immediately
+    # and warm the runtime behind it. Headless/systemd supervision still respects an
+    # explicit Stop by requiring persisted desired_running or --auto-start.
+    interactive_start = not args.no_browser and not args.launcher
+    if (args.auto_start or runtime.desired_running or interactive_start) and not args.no_start:
         runtime.operate("start")
     elif not args.no_start:
         threading.Thread(target=runtime.reconcile_existing, daemon=True).start()
@@ -1076,15 +1091,15 @@ def main():
                 and "microsoft" in Path("/proc/sys/kernel/osrelease").read_text().lower()
             ):
                 subprocess.Popen(
-                    ["cmd.exe", "/c", "start", "", url],
+                    ["cmd.exe", "/c", "start", "", open_url],
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
                 )
             else:
-                webbrowser.open(url)
+                webbrowser.open(open_url)
     except OSError as exc:
-        runtime.event("warning", "browser", str(exc), recovery="Open " + url)
-    print("Katcha: " + url + " — close with Ctrl+C; services remain running.")
+        runtime.event("warning", "browser", str(exc), recovery="Open " + open_url)
+    print("Katcha: " + app_url + " — diagnostics: " + launcher_url + " — close with Ctrl+C; services remain running.")
     try:
         server.serve_forever()
     except KeyboardInterrupt:
