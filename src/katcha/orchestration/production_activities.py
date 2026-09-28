@@ -95,6 +95,10 @@ def _brand_voice_profiles(
             profile.provider == "openai" and settings.openai_api_key
         ) or (
             profile.provider == "gemini" and settings.gemini_api_key
+        ) or (
+            profile.provider == "elevenlabs"
+            and settings.elevenlabs_api_key
+            and settings.elevenlabs_voice_id
         ):
             available.append(profile)
 
