@@ -166,7 +166,7 @@ def test_start_opens_workspace_before_warming_full_stack(tmp_path):
         patch.object(app, "run", side_effect=fake_run),
         patch.object(app, "start_logs"),
         patch.object(app, "probe_workspace", side_effect=workspace_ready),
-        patch.object(app, "check", side_effect=lambda: setattr(app, "phase", "ready")),
+        patch.object(app, "check", return_value="ready"),
     ):
         app._operate("start")
 
@@ -497,3 +497,38 @@ def test_launcher_serves_workspace_shell_without_api(tmp_path):
     finally:
         server.shutdown()
         server.server_close()
+
+
+
+def test_ready_is_not_published_before_operation_unlock(tmp_path):
+    app = instance(tmp_path)
+    app.lock.acquire()
+    observed = []
+
+    def fake_run(args, **_kwargs):
+        if "version" in args:
+            return "2.30.0"
+        return ""
+
+    def full_check(publish=True):
+        assert publish is False
+        observed.append((app.phase, app.lock.locked()))
+        return "ready"
+
+    def record_ready(level, component, message, **details):
+        if message == "Katcha automation is fully ready.":
+            observed.append((app.phase, app.lock.locked()))
+
+    with (
+        patch.object(app, "run", side_effect=fake_run),
+        patch.object(app, "start_logs"),
+        patch.object(app, "probe_workspace", side_effect=lambda: setattr(app, "workspace_ready", True) or True),
+        patch.object(app, "check", side_effect=full_check),
+        patch.object(app, "event", side_effect=record_ready),
+    ):
+        app._operate("start")
+
+    assert observed[0] == ("starting", True)
+    assert observed[-1] == ("ready", False)
+    assert app.phase == "ready"
+    assert not app.lock.locked()
