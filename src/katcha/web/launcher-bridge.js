@@ -1,23 +1,43 @@
 /* The local gateway owns authentication; never expose its token to browser storage. */
 (async () => {
     if (location.port !== '8765') return;
-    try {
-        const response = await fetch('/runtime/status');
-        if (!response.ok) return;
-        const runtime = await response.json();
-        if (!runtime.session) return;
-        const nav = document.querySelector('nav');
-        if (nav) {
-            const link = document.createElement('a');
-            link.href = '/'; link.textContent = 'Launch console & diagnostics'; nav.append(link);
+    const nav = document.querySelector('nav');
+    if (nav) {
+        const link = document.createElement('a');
+        link.href = '/'; link.textContent = 'Launch console & diagnostics'; nav.append(link);
+    }
+    const form = document.getElementById('connect-form') || document.getElementById('connect');
+    const connection = document.getElementById('connection');
+    const status = document.getElementById('message');
+    for (;;) {
+        try {
+            const response = await fetch('/runtime/status', {cache: 'no-store'});
+            if (!response.ok) throw new Error('launcher unavailable');
+            const runtime = await response.json();
+            if (!runtime.session) return;
+            if (runtime.workspace_ready) {
+                if (form) {
+                    form.hidden = true;
+                    form.style.display = 'none';
+                    form.requestSubmit();
+                }
+                return;
+            }
+            if (connection) {
+                connection.textContent = 'WARMING';
+                connection.classList.remove('online');
+            }
+            if (status) {
+                status.textContent = runtime.desired_running
+                    ? 'Katcha is open. Core services are warming in the background…'
+                    : 'Katcha is open. Start services from the launch console when ready.';
+            }
+        } catch {
+            if (connection) connection.textContent = 'RECONNECTING';
+            if (status) status.textContent = 'Reconnecting to the local Katcha supervisor…';
         }
-        const form = document.getElementById('connect-form') || document.getElementById('connect');
-        if (form) {
-            form.hidden = true;
-            form.style.display = 'none';
-            form.requestSubmit();
-        }
-    } catch { /* Standard hosted installations retain their existing login flow. */ }
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+    }
 })();
 if (location.port === '8765') {
     const report = (message) => fetch('/runtime/client-error', {
