@@ -190,13 +190,13 @@ function renderContext(result) {
         .map(
             (action) =>
                 '<article class="action-card" data-action-card="' +
-                esc(action.id) +
+                esc(action.proposal_id) +
                 '"><strong>' +
                 esc(action.label) +
                 "</strong><p>" +
                 esc(action.description) +
                 '</p><button type="button" data-action-id="' +
-                esc(action.id) +
+                esc(action.proposal_id) +
                 '">Review & confirm</button><div class="action-result" hidden></div></article>',
         )
         .join("");
@@ -234,7 +234,7 @@ function renderContext(result) {
         };
     });
 
-    const byId = new Map((result.actions || []).map((action) => [action.id, action]));
+    const byId = new Map((result.actions || []).map((action) => [action.proposal_id, action]));
     $("context-panel").querySelectorAll("[data-action-id]").forEach((button) => {
         button.onclick = async () => {
             const action = byId.get(button.dataset.actionId);
@@ -249,22 +249,23 @@ function renderContext(result) {
             const card = button.closest("[data-action-card]");
             const output = card.querySelector(".action-result");
             try {
-                const execution = await api("/v1/ai/actions/execute", {
-                    method: "POST",
-                    body: JSON.stringify({
-                        channel_profile_id: state.channelId,
-                        action_type: action.type,
-                        payload: action.payload,
-                        confirmed: true,
-                        actor: "operator:katcha-ai",
-                    }),
-                });
+                const execution = await api(
+                    "/v1/ai/actions/" + encodeURIComponent(action.proposal_id) + "/execute",
+                    {
+                        method: "POST",
+                        body: JSON.stringify({ confirmed: true }),
+                    },
+                );
                 output.hidden = false;
-                output.textContent = "Accepted · " + Object.entries(execution.result)
+                output.textContent =
+                    execution.status.replaceAll("_", " ") +
+                    " · " +
+                    Object.entries(execution.result || {})
                     .slice(0, 2)
                     .map(([key, value]) => key.replaceAll("_", " ") + ": " + String(value))
                     .join(" · ");
-                button.textContent = "✓ Accepted";
+                button.textContent =
+                    execution.status === "executed" ? "✓ Executed" : "✓ " + execution.status;
                 appendKatcha({
                     answer: action.label + " was accepted by the Katcha control plane. The evidence panel contains the returned workflow reference.",
                     intent: "action_execution",
