@@ -241,14 +241,15 @@ async function loadChannel() {
     try {
         const [summary, publications, productions, brands] = await Promise.all([
             api("/v1/channels/" + state.channelId),
-            api("/v1/publications?limit=250"),
+            api(
+                "/v1/publications?limit=250&youtube_connection_id=" +
+                    encodeURIComponent(channel.youtube_connection_id),
+            ),
             api("/v1/productions?limit=100&channel_profile_id=" + encodeURIComponent(state.channelId)),
             api("/v1/channels/" + state.channelId + "/brands"),
         ]);
         state.summary = summary;
-        state.publications = publications.filter(
-            (item) => item.youtube_connection_id === channel.youtube_connection_id,
-        );
+        state.publications = publications;
         state.productions = productions;
         state.brands = brands;
 
