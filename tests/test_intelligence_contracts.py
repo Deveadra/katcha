@@ -79,6 +79,8 @@ def test_intelligence_control_routes_are_mounted() -> None:
 
     assert "/v1/channels" in paths
     assert "/v1/channels/{channel_profile_id}/intelligence/refresh" in paths
+    assert "/v1/channels/{channel_profile_id}/growth" in paths
+    assert "/v1/channels/{channel_profile_id}/growth-goals" in paths
     assert "/v1/channels/{channel_profile_id}/clips/{clip_id}/score" in paths
     assert "/v1/control/events" in paths
     assert "/v1/control/events/{event_id}/ack" in paths
