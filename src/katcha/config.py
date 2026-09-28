@@ -92,6 +92,17 @@ class Settings(BaseSettings):
     telegram_review_scan_seconds: int = Field(default=10, ge=2, le=300)
     telegram_video_max_mb: int = Field(default=50, ge=1, le=50)
 
+    @field_validator(
+        "telegram_bot_token",
+        "telegram_chat_id",
+        "telegram_allowed_user_id",
+        "telegram_pairing_code",
+        mode="before",
+    )
+    @classmethod
+    def normalize_optional_telegram_setting(cls, value):
+        return None if isinstance(value, str) and not value.strip() else value
+
     youtube_data_api_key: str | None = None
     reddit_client_id: str | None = None
     reddit_client_secret: str | None = None
