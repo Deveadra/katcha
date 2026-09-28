@@ -535,3 +535,100 @@ def test_ready_is_not_published_before_operation_unlock(tmp_path):
     assert observed[-1] == ("ready", False)
     assert app.phase == "ready"
     assert not app.lock.locked()
+
+
+def test_prebuilt_workspace_image_avoids_local_build(tmp_path):
+    app = instance(tmp_path)
+    revision = "a" * 40
+    with (
+        patch.object(app, "release_revision", return_value=revision),
+        patch.object(app, "run", return_value="") as run,
+    ):
+        app.prepare_workspace_image()
+
+    commands = [call.args[0] for call in run.call_args_list]
+    remote = f"{runtime.PREBUILT_REGISTRY}/katcha-control:{revision}"
+    assert ["docker", "pull", remote] in commands
+    assert ["docker", "tag", remote, runtime.WORKSPACE_IMAGE] in commands
+    assert not any("build" in command for command in commands)
+    assert any(event["message"] == "Using prebuilt workspace image." for event in app.events)
+
+
+def test_prebuilt_failure_falls_back_to_local_build(tmp_path):
+    app = instance(tmp_path)
+    revision = "b" * 40
+
+    def fake_run(args, **_kwargs):
+        if args[:2] == ["docker", "pull"]:
+            raise RuntimeError("registry unavailable")
+        return ""
+
+    with (
+        patch.object(app, "release_revision", return_value=revision),
+        patch.object(app, "run", side_effect=fake_run) as run,
+    ):
+        app.prepare_workspace_image()
+
+    commands = [call.args[0] for call in run.call_args_list]
+    assert any("build" in command and command[-1:] == ["api"] for command in commands)
+    assert any(
+        event["message"]
+        == "Prebuilt runtime images are unavailable; falling back to a local build."
+        for event in app.events
+    )
+
+
+def test_prebuilt_images_are_not_used_for_dirty_or_non_main_checkout(tmp_path):
+    app = instance(tmp_path)
+    with patch.object(app, "release_revision", return_value=None), patch.object(
+        app, "run", return_value=""
+    ) as run:
+        app.prepare_workspace_image()
+    commands = [call.args[0] for call in run.call_args_list]
+    assert not any(command[:2] == ["docker", "pull"] for command in commands)
+    assert any("build" in command and command[-1:] == ["api"] for command in commands)
+
+
+def test_background_prebuilt_images_cover_every_local_runtime_image(tmp_path):
+    app = instance(tmp_path)
+    revision = "c" * 40
+    images = app.built_images()
+    with (
+        patch.object(app, "release_revision", return_value=revision),
+        patch.object(app, "run", return_value="") as run,
+    ):
+        app.prepare_images()
+
+    commands = [call.args[0] for call in run.call_args_list]
+    for image in images:
+        remote = app.prebuilt_ref(image, revision)
+        assert ["docker", "pull", remote] in commands
+        assert ["docker", "tag", remote, image] in commands
+    assert not any("build" in command for command in commands)
+
+
+def test_health_monitor_lock_never_blocks_lifecycle_action(tmp_path):
+    app = instance(tmp_path)
+    app.health_lock.acquire()
+    try:
+        with patch.object(runtime.threading.Thread, "start"):
+            assert app.operate("stop") is True
+            assert app.lock.locked()
+            app.lock.release()
+    finally:
+        app.health_lock.release()
+
+
+def test_health_check_cannot_overwrite_active_lifecycle_phase(tmp_path):
+    app = instance(tmp_path)
+    app.phase = "stopping"
+    with (
+        patch.object(
+            app,
+            "run",
+            return_value='[{"Service":"api","State":"running","Health":"healthy","ExitCode":0}]',
+        ),
+        patch.object(app, "probe_workspace", return_value=True),
+    ):
+        app.check()
+    assert app.phase == "stopping"

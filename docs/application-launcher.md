@@ -56,6 +56,25 @@ shell values. Compose uses the existing **katcha** project and volumes. If the o
 stack used a different project name, migrate deliberately before using this launcher;
 it does not automatically discover or move another project's database.
 
+## Runtime image delivery
+
+Normal launches from a clean `main` checkout prefer exact commit-tagged runtime images
+published by Katcha's GitHub Actions workflow. The launcher pulls those images from GHCR
+and retags them for the local Compose stack, so operators do not have to compile Python,
+Remotion/Chromium, MinIO, or AI/media dependencies on their workstation.
+
+The optimization is deliberately fail-safe:
+
+- local source changes or non-`main` development branches use local builds;
+- an unavailable registry, offline machine, or missing commit image falls back to the
+  existing local BuildKit path;
+- image tags use the exact Git commit rather than a floating release for source/runtime
+  consistency;
+- cached local images remain the fastest repeat-start path.
+
+The interactive workspace shell is served directly by the launcher, so the UI can open
+while the control plane becomes healthy and the media factory continues warming.
+
 ## Lifecycle and diagnostics
 
 - **Start** saves persistent run intent and validates Compose, then performs a two-phase boot.
