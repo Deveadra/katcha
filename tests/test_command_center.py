@@ -35,6 +35,17 @@ def test_command_center_classifies_operator_examples() -> None:
         == "create_content"
     )
     assert classify_intent("Why did Katcha reject this clip?", [uuid.uuid4()]) == "clip_rejection"
+    assert (
+        classify_intent("Add TikTok sources to pull content from.", [])
+        == "source_discovery"
+    )
+    assert (
+        classify_intent(
+            "Find new sources across Instagram, X, and Bluesky.",
+            [],
+        )
+        == "source_discovery"
+    )
 
 
 def test_selected_clip_explanation_is_read_only_intent() -> None:
