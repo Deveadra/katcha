@@ -970,7 +970,15 @@ class Handler(BaseHTTPRequestHandler):
             return self.send(400, {"error": runtime.redact(exc)})
 
     def proxy(self):
-        if not self.path.startswith(("/v1/", "/editing", "/explorer", "/ingestion", "/clips", "/channels")):
+        allowed_prefixes = (
+            "/v1/",
+            "/editing",
+            "/explorer",
+            "/ingestion",
+            "/clips",
+            "/channels",
+        )
+        if not self.path.startswith(allowed_prefixes):
             return self.send(404, {"error": "Not found"})
         connection = http.client.HTTPConnection("127.0.0.1", 8000, timeout=120)
         headers_sent = False
