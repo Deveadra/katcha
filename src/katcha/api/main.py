@@ -684,12 +684,17 @@ async def create_compilation_publication(
 def list_publications(
     limit: int = Query(default=50, ge=1, le=250),
     publication_status: str | None = Query(default=None, alias="status"),
+    youtube_connection_id: uuid.UUID | None = Query(default=None),
 ) -> list[Publication]:
     with session_scope() as session:
-        stmt = select(Publication).order_by(Publication.created_at.desc()).limit(limit)
+        stmt = select(Publication).order_by(Publication.created_at.desc())
         if publication_status:
             stmt = stmt.where(Publication.status == publication_status)
-        return list(session.scalars(stmt))
+        if youtube_connection_id:
+            stmt = stmt.where(
+                Publication.youtube_connection_id == youtube_connection_id
+            )
+        return list(session.scalars(stmt.limit(limit)))
 
 
 @app.get("/v1/publications/{publication_id}", response_model=PublicationResponse)

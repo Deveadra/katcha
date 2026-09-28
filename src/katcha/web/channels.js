@@ -9,6 +9,8 @@ const state = {
     brands: [],
     analytics: new Map(),
     selectedPublicationId: "",
+    goalDraft: [],
+    goalChannelId: "",
 };
 
 const $ = (id) => document.getElementById(id);
@@ -239,14 +241,15 @@ async function loadChannel() {
     try {
         const [summary, publications, productions, brands] = await Promise.all([
             api("/v1/channels/" + state.channelId),
-            api("/v1/publications?limit=250"),
+            api(
+                "/v1/publications?limit=250&youtube_connection_id=" +
+                    encodeURIComponent(channel.youtube_connection_id),
+            ),
             api("/v1/productions?limit=100&channel_profile_id=" + encodeURIComponent(state.channelId)),
             api("/v1/channels/" + state.channelId + "/brands"),
         ]);
         state.summary = summary;
-        state.publications = publications.filter(
-            (item) => item.youtube_connection_id === channel.youtube_connection_id,
-        );
+        state.publications = publications;
         state.productions = productions;
         state.brands = brands;
 
@@ -283,6 +286,7 @@ function renderAll() {
     renderMetrics();
     renderFocus();
     renderEconomics();
+    renderMonetization();
     renderPublications();
     renderGrowth();
     renderProductions();
@@ -358,8 +362,24 @@ function focusItems() {
     const ranking = state.summary?.ranking;
     const economics = state.summary?.economics;
     const automation = state.summary?.automation;
+    const growth = state.summary?.growth;
     const activeBrand = state.brands.find((item) => item.is_active);
 
+    if (growth?.ai?.stage && growth.ai.stage !== "ads_thresholds_met") {
+        const priority = growth.ai.priority_metrics?.[0];
+        items.push({
+            title: priority
+                ? "Monetization focus: " + friendly(priority)
+                : "Monetization progress needs more data",
+            note:
+                "Katcha is using the " +
+                friendly(growth.ai.selected_path || "balanced") +
+                " growth path at " +
+                friendly(growth.ai.pace || "aggressive") +
+                " pace.",
+            href: "#monetization",
+        });
+    }
     if (failedPubs.length) {
         items.push({
             title: failedPubs.length + " publication" + (failedPubs.length === 1 ? "" : "s") + " need attention",
@@ -476,6 +496,227 @@ function renderEconomics() {
                 "</strong></div>",
         )
         .join("");
+}
+
+function growthMetricLabel(metric) {
+    const labels = {
+        subscribers: "Subscribers",
+        public_uploads_90d: "Public uploads · 90d",
+        qualified_watch_hours_365d: "Qualified watch hours · 365d",
+        qualified_shorts_views_90d: "Qualified Shorts views · 90d",
+    };
+    return labels[metric] || friendly(metric);
+}
+
+function growthMetricValue(metric, value) {
+    if (value == null) return "Needs refresh";
+    if (metric === "qualified_watch_hours_365d") {
+        return new Intl.NumberFormat("en-US", { maximumFractionDigits: 1 }).format(Number(value));
+    }
+    return compact(value);
+}
+
+function growthProgressRow(item) {
+    const progress = item.progress == null ? null : Number(item.progress);
+    const width = progress == null ? 0 : Math.max(0, Math.min(100, progress * 100));
+    const prefix = item.estimated ? "~" : "";
+    const current = growthMetricValue(item.metric, item.current);
+    const target = growthMetricValue(item.metric, item.target);
+    return (
+        '<div class="progress-item"><div class="progress-meta"><span>' +
+        escapeHtml(growthMetricLabel(item.metric)) +
+        '</span><span>' +
+        escapeHtml(prefix + current + " / " + target) +
+        '</span></div><div class="progress-track"><i style="width:' +
+        width.toFixed(1) +
+        '%"></i></div></div>'
+    );
+}
+
+function milestoneMarkup(milestone, title, subtitle) {
+    if (!milestone) {
+        return '<div class="milestone"><div class="empty-state">No milestone data yet.</div></div>';
+    }
+    const status = milestone.thresholds_met_estimate
+        ? "THRESHOLDS MET*"
+        : milestone.progress == null
+            ? "NEEDS DATA"
+            : Math.round(Number(milestone.progress) * 100) + "%";
+    return (
+        '<div class="milestone"><div class="milestone-top"><div><strong>' +
+        escapeHtml(title) +
+        "</strong><small>" +
+        escapeHtml(subtitle) +
+        '</small></div><span class="milestone-status">' +
+        escapeHtml(status) +
+        "</span></div>" +
+        (milestone.requirements || []).map(growthProgressRow).join("") +
+        '<div class="audience-or">AND EITHER</div>' +
+        (milestone.audience_paths || []).map(growthProgressRow).join("") +
+        "</div>"
+    );
+}
+
+function renderCustomGoals() {
+    const container = $("custom-goals");
+    if (!state.goalDraft.length) {
+        container.innerHTML = '<div class="empty-state">No extra operator benchmarks.</div>';
+        return;
+    }
+    const priorityNames = {
+        5: "Critical",
+        4: "High",
+        3: "Normal",
+        2: "Low",
+        1: "Background",
+    };
+    container.innerHTML = state.goalDraft
+        .map(
+            (goal, index) =>
+                '<div class="custom-goal"><div><strong>' +
+                escapeHtml(growthMetricLabel(goal.metric)) +
+                "</strong><small>Target " +
+                escapeHtml(growthMetricValue(goal.metric, goal.target)) +
+                (goal.target_date ? " by " + escapeHtml(dateText(goal.target_date)) : "") +
+                "</small></div><span>" +
+                escapeHtml(priorityNames[goal.priority] || "Normal") +
+                '</span><button type="button" data-remove-goal="' +
+                index +
+                '" aria-label="Remove goal">×</button></div>',
+        )
+        .join("");
+    container.querySelectorAll("[data-remove-goal]").forEach((button) => {
+        button.addEventListener("click", () => {
+            state.goalDraft.splice(Number(button.dataset.removeGoal), 1);
+            renderCustomGoals();
+        });
+    });
+}
+
+function renderMonetization() {
+    const growth = state.summary?.growth;
+    if (!growth) {
+        $("growth-stage").textContent = "NEEDS DATA";
+        $("milestone-grid").innerHTML =
+            '<div class="empty-state">No monetization progress has been measured yet.</div>';
+        return;
+    }
+
+    const goals = growth.goals || {};
+    const ai = growth.ai || {};
+    $("growth-stage").textContent = friendly(ai.stage || "needs data");
+    $("growth-pace-badge").textContent = String(ai.pace || "aggressive").toUpperCase();
+    $("growth-sampled-at").textContent = growth.sampled_at
+        ? "Measured " + dateText(growth.sampled_at)
+        : "Threshold model ready · metrics need refresh";
+
+    $("milestone-grid").innerHTML =
+        milestoneMarkup(
+            growth.milestones?.early_ypp,
+            "Early YPP access",
+            "Fan funding & Shopping where expanded YPP is available",
+        ) +
+        milestoneMarkup(
+            growth.milestones?.ads_premium,
+            "Ads & Premium",
+            "Revenue-sharing entry benchmark",
+        );
+
+    const change = growth.benchmarks?.next_change;
+    $("threshold-change").hidden = !change;
+    if (change) {
+        $("threshold-change").textContent =
+            "Scheduled YouTube change · " +
+            dateText(change.effective_date) +
+            ": new ad-revenue applicants need " +
+            number(change.ads_premium.watch_hours_365d) +
+            " watch hours or " +
+            compact(change.ads_premium.shorts_views_90d) +
+            " Shorts views, alongside 1,000 subscribers.";
+    }
+    $("monetization-disclaimer").textContent =
+        growth.disclaimer ||
+        "Watch-hour and Shorts-view progress are estimates. YouTube Studio remains the authority for exact YPP eligibility.";
+
+    if (state.goalChannelId !== state.channelId) {
+        state.goalChannelId = state.channelId;
+        state.goalDraft = (goals.custom_targets || []).map((item) => ({ ...item }));
+    }
+    $("growth-objective").value = goals.objective || "ads_revenue";
+    $("growth-path").value = goals.path || "fastest";
+    $("growth-pace").value = goals.pace || "aggressive";
+    $("growth-target-date").value = goals.target_date || "";
+    renderCustomGoals();
+
+    const priorities = (ai.priority_metrics || []).map(growthMetricLabel);
+    $("ai-growth-focus").className = "ai-growth-focus";
+    $("ai-growth-focus").innerHTML =
+        "<strong>AI focus:</strong> " +
+        escapeHtml(
+            priorities.length
+                ? priorities.join(" → ")
+                : "Current monetization benchmark is satisfied",
+        ) +
+        "<br>Route: " +
+        escapeHtml(friendly(ai.selected_path || goals.path || "balanced")) +
+        " · Pace: " +
+        escapeHtml(friendly(ai.pace || goals.pace || "aggressive")) +
+        ". Candidate ranking keeps measured quality as the majority signal while giving these growth gaps extra weight.";
+}
+
+function addCustomGoal() {
+    const target = Number($("custom-goal-target").value);
+    if (!Number.isFinite(target) || target <= 0) {
+        setStatus("Enter a custom goal target greater than zero.", "error");
+        return;
+    }
+    state.goalDraft.push({
+        metric: $("custom-goal-metric").value,
+        target,
+        target_date: $("custom-goal-date").value || null,
+        priority: Number($("custom-goal-priority").value || 3),
+        enabled: true,
+    });
+    $("custom-goal-target").value = "";
+    $("custom-goal-date").value = "";
+    renderCustomGoals();
+    setStatus("Custom benchmark staged. Save growth goals to make it active.");
+}
+
+async function saveGrowthGoals(event) {
+    event.preventDefault();
+    try {
+        setStatus("Saving channel growth goals…");
+        const strategy = await api(
+            "/v1/channels/" + state.channelId + "/growth-goals",
+            {
+                method: "POST",
+                body: JSON.stringify({
+                    objective: $("growth-objective").value,
+                    path: $("growth-path").value,
+                    pace: $("growth-pace").value,
+                    target_date: $("growth-target-date").value || null,
+                    custom_targets: state.goalDraft,
+                    actor: "channel_studio",
+                }),
+            },
+        );
+        const growth = await api("/v1/channels/" + state.channelId + "/growth");
+        state.summary.strategy = strategy;
+        state.summary.growth = growth;
+        state.goalChannelId = "";
+        renderMonetization();
+        renderFocus();
+        renderControls();
+        setStatus(
+            "Growth goals saved as strategy v" +
+                strategy.version +
+                ". Katcha is using them in channel-scoped candidate scoring.",
+            "success",
+        );
+    } catch (error) {
+        setStatus(error.message, "error");
+    }
 }
 
 function filteredPublications() {
@@ -848,6 +1089,11 @@ $("channel").addEventListener("change", async (event) => {
 });
 $("reload").addEventListener("click", loadChannel);
 $("refresh-intelligence").addEventListener("click", refreshIntelligence);
+$("growth-goals-form").addEventListener("submit", saveGrowthGoals);
+$("add-custom-goal").addEventListener("click", addCustomGoal);
+$("growth-pace").addEventListener("change", (event) => {
+    $("growth-pace-badge").textContent = event.target.value.toUpperCase();
+});
 $("content-search").addEventListener("input", renderPublications);
 $("content-filter").addEventListener("change", renderPublications);
 $("setup-actions").addEventListener("click", (event) => {
