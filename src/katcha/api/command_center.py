@@ -30,15 +30,6 @@ from katcha.services.command_actions import (
     fail_action_proposal,
     get_action_proposal,
 )
-from katcha.services.command_history import (
-    archive_command_thread,
-    create_command_thread,
-    get_command_thread,
-    list_command_threads,
-    list_command_turns,
-    list_thread_proposals,
-    record_command_exchange,
-)
 from katcha.services.command_center import (
     best_clips,
     build_short_episode_candidates,
@@ -49,6 +40,15 @@ from katcha.services.command_center import (
     infer_edit_blueprint_key,
     performance_advice,
     ranked_episode_allowed_counts,
+)
+from katcha.services.command_history import (
+    archive_command_thread,
+    create_command_thread,
+    get_command_thread,
+    list_command_threads,
+    list_command_turns,
+    list_thread_proposals,
+    record_command_exchange,
 )
 from katcha.services.productions import (
     register_regeneration,
