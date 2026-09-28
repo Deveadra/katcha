@@ -727,6 +727,40 @@ def backlogged_sessions(
         return rows
 
 
+def _longform_review_endpoint(
+    settings: Settings,
+) -> tuple[str | None, bool]:
+    if settings.telegram_review_storage_endpoint_url:
+        return settings.telegram_review_storage_endpoint_url, True
+    if settings.s3_endpoint_url is None:
+        return None, True
+
+    parsed = urlparse(settings.s3_endpoint_url)
+    host = (parsed.hostname or "").casefold()
+    local_hosts = {
+        "minio",
+        "localhost",
+        "127.0.0.1",
+        "0.0.0.0",
+        "host.docker.internal",
+    }
+    if (
+        host in local_hosts
+        or host.endswith(".internal")
+        or ("." not in host and ":" not in host)
+    ):
+        return settings.s3_endpoint_url, False
+    return settings.s3_endpoint_url, True
+
+
+def longform_review_links_ready(
+    settings: Settings | None = None,
+) -> bool:
+    settings = settings or get_settings()
+    _, reachable = _longform_review_endpoint(settings)
+    return reachable
+
+
 def longform_review_url(
     card: TelegramReviewCard,
     *,
@@ -735,14 +769,9 @@ def longform_review_url(
     if card.source_kind != "compilation":
         return None
     settings = settings or get_settings()
-    endpoint = settings.telegram_review_storage_endpoint_url
-    if endpoint is None and settings.s3_endpoint_url:
-        parsed = urlparse(settings.s3_endpoint_url)
-        host = (parsed.hostname or "").casefold()
-        local_hosts = {"minio", "localhost", "127.0.0.1", "0.0.0.0"}
-        if host in local_hosts or ("." not in host and ":" not in host):
-            return None
-        endpoint = settings.s3_endpoint_url
+    endpoint, reachable = _longform_review_endpoint(settings)
+    if not reachable:
+        return None
 
     store = ObjectStore(settings)
     return store.presigned_get_url(
