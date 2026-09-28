@@ -3,7 +3,7 @@ from __future__ import annotations
 import shutil
 import uuid
 from pathlib import Path
-from typing import Literal
+from typing import Annotated, Literal
 
 from fastapi import (
     APIRouter,
@@ -224,8 +224,11 @@ def download_invideo_package(
 async def upload_invideo_output(
     handoff_id: uuid.UUID,
     http_request: Request,
-    file: UploadFile = File(...),
-    external_project_id: str | None = Form(default=None, max_length=255),
+    file: Annotated[UploadFile, File()],
+    external_project_id: Annotated[
+        str | None,
+        Form(max_length=255),
+    ] = None,
 ) -> InVideoHandoffResponse:
     require_control_scope(http_request, "integrations:write")
     actor = control_actor(http_request)
