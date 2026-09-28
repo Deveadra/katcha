@@ -19,6 +19,7 @@ def require_control_token(
 ) -> None:
     if not request.url.path.startswith("/v1/") or request.url.path in {
         "/v1/health/live",
+        "/v1/health/workspace",
         "/v1/health/ready",
         "/v1/integrations/youtube/oauth/callback",
     }:
