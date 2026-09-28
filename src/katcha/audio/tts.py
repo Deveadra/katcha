@@ -3,6 +3,8 @@ from __future__ import annotations
 import base64
 import io
 import math
+
+import httpx
 import subprocess
 import tempfile
 import uuid
@@ -119,12 +121,24 @@ VOICE_PROFILES: dict[str, VoiceProfile] = {
             "perform a caricature of teenage slang. Read only the supplied wording."
         ),
     ),
+    "elevenlabs_rank_snaxx_v1": VoiceProfile(
+        key="elevenlabs_rank_snaxx_v1",
+        version="1",
+        provider="elevenlabs",
+        model="eleven_v3",
+        voice="configured",
+        instructions=(
+            "RankSnaxx voice profile. The concrete ElevenLabs voice ID is supplied through "
+            "KATCHA_ELEVENLABS_VOICE_ID so the credential and voice choice stay outside git."
+        ),
+    ),
 }
 
 
 LATEST_VOICE_PROFILE_BY_PROVIDER: dict[str, str] = {
     "openai": "openai_youth_v2",
     "gemini": "gemini_youth_v2",
+    "elevenlabs": "elevenlabs_rank_snaxx_v1",
 }
 
 
@@ -139,11 +153,29 @@ def _target_for_profile(profile: VoiceProfile) -> ModelTarget:
     return ModelTarget(profile.provider, profile.model)
 
 
+def _resolve_profile(
+    profile: VoiceProfile,
+    settings: Settings,
+) -> VoiceProfile:
+    if profile.provider != "elevenlabs":
+        return profile
+    if not settings.elevenlabs_api_key or not settings.elevenlabs_voice_id:
+        raise TTSUnavailable("ElevenLabs TTS provider is not configured")
+    return VoiceProfile(
+        key=profile.key,
+        version=profile.version,
+        provider=profile.provider,
+        model=settings.elevenlabs_model_id,
+        voice=settings.elevenlabs_voice_id,
+        instructions=profile.instructions,
+    )
+
+
 def voice_profile_for_target(target: ModelTarget) -> VoiceProfile:
     preferred_key = LATEST_VOICE_PROFILE_BY_PROVIDER.get(target.provider)
     if preferred_key is not None:
         preferred = VOICE_PROFILES[preferred_key]
-        if preferred.model == target.model:
+        if target.provider == "elevenlabs" or preferred.model == target.model:
             return preferred
     for profile in VOICE_PROFILES.values():
         if profile.provider == target.provider and profile.model == target.model:
@@ -165,6 +197,10 @@ def choose_voice_profile(
             raise TTSUnavailable("OpenAI TTS provider is not configured")
         if profile.provider == "gemini" and not settings.gemini_api_key:
             raise TTSUnavailable("Gemini TTS provider is not configured")
+        if profile.provider == "elevenlabs":
+            if not settings.elevenlabs_api_key or not settings.elevenlabs_voice_id:
+                raise TTSUnavailable("ElevenLabs TTS provider is not configured")
+            return _resolve_profile(profile, settings)
         return profile
 
     requested = get_voice_profile(settings.tts_profile)
@@ -172,6 +208,9 @@ def choose_voice_profile(
         return requested
     if requested.provider == "gemini" and settings.gemini_api_key:
         return requested
+    if requested.provider == "elevenlabs":
+        if settings.elevenlabs_api_key and settings.elevenlabs_voice_id:
+            return _resolve_profile(requested, settings)
     if settings.openai_api_key:
         return VOICE_PROFILES["openai_youth_v2"]
     if settings.gemini_api_key:
@@ -339,6 +378,77 @@ def _gemini_tts(text: str, profile: VoiceProfile, settings: Settings) -> TTSResu
     )
 
 
+def _elevenlabs_tts(
+    text: str,
+    profile: VoiceProfile,
+    settings: Settings,
+) -> TTSResult:
+    if not settings.elevenlabs_api_key or not settings.elevenlabs_voice_id:
+        raise TTSUnavailable("ElevenLabs API key and voice ID are required")
+    output_format = settings.elevenlabs_output_format
+    if not output_format.startswith("pcm_"):
+        raise TTSUnavailable(
+            "Katcha currently requires an ElevenLabs PCM output format for deterministic timing"
+        )
+    try:
+        sample_rate = int(output_format.split("_", 1)[1])
+    except (IndexError, ValueError) as exc:
+        raise TTSUnavailable(f"unsupported ElevenLabs output format: {output_format}") from exc
+
+    response = httpx.post(
+        f"https://api.elevenlabs.io/v1/text-to-speech/{settings.elevenlabs_voice_id}",
+        params={"output_format": output_format},
+        headers={
+            "xi-api-key": settings.elevenlabs_api_key,
+            "Content-Type": "application/json",
+            "Accept": "application/octet-stream",
+        },
+        json={
+            "text": text,
+            "model_id": settings.elevenlabs_model_id,
+            "voice_settings": {
+                "stability": 0.42,
+                "speed": 1.03,
+            },
+        },
+        timeout=settings.elevenlabs_timeout_seconds,
+    )
+    response.raise_for_status()
+    pcm = response.content
+    if not pcm:
+        raise RuntimeError("ElevenLabs TTS response did not contain audio data")
+    audio = _wrap_pcm_wav(pcm, rate=sample_rate)
+    duration = _wav_duration(audio)
+    target = ModelTarget("elevenlabs", settings.elevenlabs_model_id)
+    characters = len(text)
+    cost = (Decimal(characters) / Decimal("1000")) * Decimal("0.10")
+    return TTSResult(
+        audio=audio,
+        content_type="audio/wav",
+        extension="wav",
+        duration_seconds=duration,
+        target=target,
+        profile=VoiceProfile(
+            key=profile.key,
+            version=profile.version,
+            provider=profile.provider,
+            model=settings.elevenlabs_model_id,
+            voice=settings.elevenlabs_voice_id,
+            instructions=profile.instructions,
+        ),
+        input_units=characters,
+        output_units=max(1, round(duration * 1000)),
+        estimated_cost_usd=cost.quantize(Decimal("0.00000001")),
+        cost_metadata={
+            "estimated_cost": True,
+            "usage_basis": "public_api_rate_2026-09-28",
+            "billing_unit": "characters",
+            "rate_usd_per_1000_characters": "0.10",
+            "output_format": output_format,
+        },
+    )
+
+
 def synthesize_speech(
     text: str,
     *,
@@ -356,10 +466,25 @@ def synthesize_speech(
     text = text.strip()
     if not text:
         raise ValueError("TTS text cannot be empty")
+    if settings.tts_provider_override != "auto":
+        key = LATEST_VOICE_PROFILE_BY_PROVIDER[settings.tts_provider_override]
+        profile = _resolve_profile(get_voice_profile(key), settings)
+        fallback_profile = None
     if settings.resolved_ai_execution_mode() == "fixture":
         return _fixture_tts(text)
 
-    estimated_increment = Decimal("0.05")
+    profile = _resolve_profile(profile, settings) if profile is not None else None
+    fallback_profile = (
+        _resolve_profile(fallback_profile, settings)
+        if fallback_profile is not None
+        else None
+    )
+
+    estimated_increment = (
+        (Decimal(len(text)) / Decimal("1000")) * Decimal("0.10")
+        if profile is not None and profile.provider == "elevenlabs"
+        else Decimal("0.05")
+    )
     assert_ai_budget(estimated_increment)
     reservation_id: uuid.UUID | None = None
     if channel_profile_id is not None:
@@ -389,6 +514,8 @@ def synthesize_speech(
             return _openai_tts(text, selected, settings)
         if selected.provider == "gemini":
             return _gemini_tts(text, selected, settings)
+        if selected.provider == "elevenlabs":
+            return _elevenlabs_tts(text, selected, settings)
         raise TTSUnavailable(f"unsupported TTS provider: {selected.provider}")
 
     try:
