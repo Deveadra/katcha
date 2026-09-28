@@ -1,4 +1,6 @@
-from katcha.rendering.manifest import build_short_manifest
+import pytest
+
+from katcha.rendering.manifest import ShortBrandSpec, build_short_manifest, channel_01_brand_v1
 
 
 def test_manifest_schedules_narration_without_overlap() -> None:
@@ -103,3 +105,25 @@ def test_manifest_applies_edit_recipe_media_controls() -> None:
     assert manifest.source.audio_volume == 0.7
     assert manifest.source.duck_volume == 0.12
     assert manifest.overlays[0].cues == []
+
+
+def test_channel_logo_contract_is_positionable_and_fails_closed_without_asset() -> None:
+    payload = channel_01_brand_v1().model_dump(mode="json")
+    payload["logo"] = {
+        "enabled": True,
+        "storage_key": "brands/channel/logo.png",
+        "x_percent": 91,
+        "y_percent": 7,
+        "width_percent": 11,
+        "opacity": 0.8,
+    }
+
+    brand = ShortBrandSpec.model_validate(payload)
+
+    assert brand.logo.enabled is True
+    assert brand.logo.x_percent == 91
+    assert brand.logo.width_percent == 11
+
+    payload["logo"]["storage_key"] = None
+    with pytest.raises(ValueError, match="requires a storage key"):
+        ShortBrandSpec.model_validate(payload)
