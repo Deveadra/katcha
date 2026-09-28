@@ -270,11 +270,11 @@ function renderBoard() {
               .join("")
         : '<div class="empty"><strong>No matching opportunities</strong>Only current snapshots for this channel’s active watch are shown.</div>';
 }
-async function selectTopic(id) {
+async function selectTopic(id, { preserveTab = false } = {}) {
     const epoch = ++state.detailEpoch;
     state.selected = id;
     state.dossier = null;
-    state.dossierTab = "overview";
+    if (!preserveTab) state.dossierTab = "overview";
     renderBoard();
     $("detail-panel").innerHTML =
         '<div class="dossier-loading"><span></span><strong>Building dossier from stored evidence…</strong></div>';
@@ -470,7 +470,7 @@ function renderDossier(d, episodes, tab = state.dossierTab) {
         $("hours").onchange = (event) => {
             state.hours = Number(event.target.value);
             state.dossierTab = "signals";
-            selectTopic(o.id);
+            selectTopic(o.id, { preserveTab: true });
         };
         setupSeries(d.signals);
     }
