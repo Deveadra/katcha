@@ -34,6 +34,7 @@ services:
     healthcheck:
       test: ["CMD-SHELL", "nc -z $(hostname -i | awk '{print $1}') 7233"]
       interval: 5s
+      start_interval: 1s
       timeout: 3s
       start_period: 30s
       retries: 60
@@ -68,6 +69,8 @@ services:
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
       interval: 5s
+      start_interval: 1s
+      start_period: 20s
       timeout: 5s
       retries: 20
 
@@ -153,6 +156,8 @@ services:
           "node -e \"fetch('http://localhost:8787/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\"",
         ]
       interval: 10s
+      start_interval: 1s
+      start_period: 60s
       timeout: 5s
       retries: 20
 
