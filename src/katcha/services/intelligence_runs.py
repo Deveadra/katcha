@@ -255,10 +255,14 @@ def fail_channel_intelligence_run(
         if run.status == "completed":
             session.expunge(run)
             return run
+        bounded_error = message[:4000]
+        if run.status == "failed" and run.error == bounded_error:
+            session.expunge(run)
+            return run
 
         run.status = "failed"
         run.stage = "failed"
-        run.error = message[:4000]
+        run.error = bounded_error
         run.completed_at = now
         session.add(
             _event(
