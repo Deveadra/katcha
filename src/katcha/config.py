@@ -1,9 +1,45 @@
+import uuid
 from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
-from pydantic import Field, SecretStr, field_validator
+from pydantic import BaseModel, Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class ControlPrincipalSettings(BaseModel):
+    name: str = Field(min_length=1, max_length=64, pattern=r"^[A-Za-z0-9_.:-]+$")
+    token: SecretStr
+    scopes: list[str] = Field(default_factory=lambda: ["*"])
+    channel_profile_ids: list[str] = Field(default_factory=lambda: ["*"])
+
+    @field_validator("token", mode="before")
+    @classmethod
+    def validate_token(cls, value):
+        raw = value.get_secret_value() if isinstance(value, SecretStr) else str(value or "")
+        if len(raw.strip()) < 16:
+            raise ValueError("control principal tokens must contain at least 16 characters")
+        return raw.strip()
+
+    @field_validator("scopes")
+    @classmethod
+    def validate_scopes(cls, values: list[str]) -> list[str]:
+        normalized = list(dict.fromkeys(str(value).strip() for value in values if str(value).strip()))
+        if not normalized:
+            raise ValueError("control principal scopes cannot be empty")
+        return normalized
+
+    @field_validator("channel_profile_ids")
+    @classmethod
+    def validate_channel_profile_ids(cls, values: list[str]) -> list[str]:
+        normalized = list(dict.fromkeys(str(value).strip() for value in values if str(value).strip()))
+        if not normalized:
+            raise ValueError("control principal channel_profile_ids cannot be empty")
+        if "*" in normalized:
+            return ["*"]
+        for value in normalized:
+            uuid.UUID(value)
+        return normalized
 
 
 class Settings(BaseSettings):
@@ -19,6 +55,7 @@ class Settings(BaseSettings):
     api_port: int = 8000
     control_api_token: SecretStr | None = None
     control_api_scopes: str = "*"
+    control_principals: list[ControlPrincipalSettings] = Field(default_factory=list)
 
     def resolved_control_scopes(self) -> set[str]:
         values = {item.strip() for item in self.control_api_scopes.split(",") if item.strip()}
@@ -28,6 +65,21 @@ class Settings(BaseSettings):
     @classmethod
     def normalize_control_token(cls, value):
         return None if isinstance(value, str) and not value.strip() else value
+
+    @model_validator(mode="after")
+    def validate_control_principals(self):
+        names: set[str] = set()
+        token_values: set[str] = set()
+        for principal in self.control_principals:
+            key = principal.name.casefold()
+            if key in names:
+                raise ValueError(f"duplicate control principal name: {principal.name}")
+            names.add(key)
+            token = principal.token.get_secret_value()
+            if token in token_values:
+                raise ValueError("control principal tokens must be unique")
+            token_values.add(token)
+        return self
 
     database_url: str = "postgresql+psycopg://katcha:katcha@localhost:5432/katcha"
 
