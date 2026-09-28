@@ -24,6 +24,7 @@ def test_bootstrap_preserves_keys_and_unrelated_settings(tmp_path):
     app.bootstrap()
     assert app.values["KATCHA_CREDENTIAL_ENCRYPTION_KEY"] == key
     assert app.values["KATCHA_OPENAI_API_KEY"] == "private-key"
+    assert len(app.values["KATCHA_TELEGRAM_PAIRING_CODE"]) >= 8
     assert app.env_path.stat().st_mode & 0o777 == 0o600
     assert "private-key" not in json.dumps(app.snapshot())
 
@@ -259,6 +260,7 @@ def test_reconcile_existing_runtime_without_relaunch(tmp_path):
         "production-worker",
         "longform-worker",
         "publishing-worker",
+        "telegram-worker",
         "discovery-worker",
         "trends-worker",
         "intelligence-worker",
