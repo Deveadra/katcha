@@ -261,12 +261,14 @@ def create_edit_blueprint_version(
                 "supersedes": current_active.version if current_active else None,
                 "display_name": (
                     display_name
-                    or (current_active.blueprint_metadata or {}).get("display_name")
+                    if display_name is not None
+                    else (current_active.blueprint_metadata or {}).get("display_name")
                     or contract.key.replace("_", " ").title()
                 ),
                 "description": (
                     description
-                    or (current_active.blueprint_metadata or {}).get("description")
+                    if description is not None
+                    else (current_active.blueprint_metadata or {}).get("description")
                     or ""
                 ),
             },
