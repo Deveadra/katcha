@@ -119,3 +119,34 @@ Command Center scope checks currently use:
 
 `*` preserves the existing single-operator setup. A later multi-principal credential layer can
 assign different tokens/scopes to Aerith and human operators without changing the action API.
+
+
+## Durable conversation history
+
+Command Center conversations are now server-side records rather than browser-only state.
+
+- `command_threads` stores the channel scope, title, server-derived creator, status and activity timestamps.
+- `command_turns` stores ordered user/assistant turns, request IDs, narrator identity, grounded evidence and typed command context.
+- `POST /v1/ai/command` accepts an optional `thread_id`. New commands create a thread automatically; follow-up commands append to the same durable thread.
+- `GET /v1/ai/threads` lists active conversations for one channel.
+- `GET /v1/ai/threads/{thread_id}` reconstructs the turns plus the proposals attached to those turns.
+- `POST /v1/ai/threads/{thread_id}/archive` hides a completed conversation without deleting the audit record.
+
+The browser's **New conversation** action no longer destroys history. Existing conversations can be reopened from the channel-scoped history selector.
+
+A user/assistant exchange is recorded atomically under a row lock so the thread cannot persist only half of a successful answer.
+
+## Correlation for external orchestration
+
+Every server-issued action proposal can reference both the conversation thread and the exact assistant turn that proposed it. Proposal lifecycle events carry:
+
+- `request_id`
+- `thread_id`
+- `source_turn_id`
+- `proposal_id`
+- `channel_profile_id`
+- action type and actor
+
+Successful execution emits both `command_center.action_executed` and `command_center.workflow_started` when an underlying workflow ID exists. The result contains the authoritative production/episode/workflow identifiers that Aerith can use to correlate later resource lifecycle events.
+
+Render lifecycle events now include `channel_profile_id`, and production creation/regeneration events expose their workflow IDs. This keeps render failures and completions visible to channel-scoped consumers of `/v1/control/events`.
