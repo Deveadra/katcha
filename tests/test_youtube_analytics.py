@@ -1,6 +1,6 @@
-from katcha.config import Settings
 from datetime import date
 
+from katcha.config import Settings
 from katcha.integrations.youtube import analytics
 from katcha.integrations.youtube.analytics import channel_growth_metrics, report_rows
 
