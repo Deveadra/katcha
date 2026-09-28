@@ -2,8 +2,6 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, date, datetime, timedelta
-from typing import Any
-
 import httpx
 
 from katcha.db import session_scope
