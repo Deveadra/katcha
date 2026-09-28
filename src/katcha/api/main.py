@@ -13,6 +13,7 @@ from sqlalchemy import select, text
 from katcha import __version__
 from katcha.api.acquisition import router as acquisition_router
 from katcha.api.brands import router as brands_router
+from katcha.api.clip_library import router as clip_library_router
 from katcha.api.control_auth import require_control_token
 from katcha.api.edit_blueprints import router as edit_blueprints_router
 from katcha.api.explorer import router as explorer_router
@@ -61,6 +62,7 @@ from katcha.api.schemas import (
 from katcha.api.short_episodes import router as short_episodes_router
 from katcha.api.studio import router as studio_router
 from katcha.api.trends import router as trends_router
+from katcha.clip_lifecycle_models import ClipLifecycle
 from katcha.config import get_settings
 from katcha.db import session_scope
 from katcha.domain import (
@@ -133,6 +135,7 @@ app = FastAPI(
 )
 app.include_router(acquisition_router)
 app.include_router(brands_router)
+app.include_router(clip_library_router)
 app.include_router(edit_blueprints_router)
 app.include_router(intelligence_router)
 app.include_router(packaging_router)
@@ -823,7 +826,19 @@ def get_clip_media(clip_id: uuid.UUID) -> StreamingResponse:
         clip = session.get(Clip, clip_id)
         if clip is None:
             raise HTTPException(status_code=404, detail="clip not found")
-        storage_key = clip.storage_key
+        lifecycle = session.get(ClipLifecycle, clip_id)
+        if lifecycle is not None and lifecycle.lifecycle_state == "purged":
+            raise HTTPException(
+                status_code=410,
+                detail="clip media was permanently purged; metadata is still retained",
+            )
+        storage_key = (
+            lifecycle.archive_key
+            if lifecycle is not None
+            and lifecycle.lifecycle_state == "archived"
+            and lifecycle.archive_key
+            else clip.storage_key
+        )
         extension = clip.extension or "mp4"
 
     store = ObjectStore()
