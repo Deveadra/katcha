@@ -147,11 +147,16 @@ function renderBlueprints() {
         </article>`;
     }).join("");
 }
+function setBlueprintEditorSubmitting(submitting) {
+    const submit = $("blueprint-editor").querySelector('button[type="submit"]');
+    if (submit) submit.disabled = submitting;
+}
 function closeBlueprintEditor() {
     state.editingBlueprint = null;
     state.editorMode = null;
     state.editorBaseContract = null;
     state.editorSuggestedKey = "";
+    setBlueprintEditorSubmitting(false);
     $("blueprint-editor-panel").hidden = true;
 }
 function templateForKey(key) {
@@ -228,6 +233,7 @@ function syncBlueprintEditor() {
 }
 function openBlueprintEditor(row) {
     if (!row) return;
+    setBlueprintEditorSubmitting(false);
     state.editingBlueprint = row;
     state.editorMode = "edit";
     $("blueprint-editor-title").textContent = `Edit ${blueprintName(row)}`;
@@ -260,6 +266,7 @@ function openNewBlueprintEditor() {
         message("Connect a channel before creating an editing recipe.", true);
         return;
     }
+    setBlueprintEditorSubmitting(false);
     state.editingBlueprint = null;
     state.editorMode = "new";
     $("blueprint-editor-title").textContent = "Create editing recipe";
@@ -318,7 +325,7 @@ function editorContract() {
 async function saveBlueprintEditor(event) {
     event.preventDefault();
     const submit = event.submitter;
-    if (submit) submit.disabled = true;
+    setBlueprintEditorSubmitting(true);
     try {
         const contract = editorContract();
         const created = await api(channelPath("/edit-blueprints"), {
@@ -336,7 +343,7 @@ async function saveBlueprintEditor(event) {
         message(`${blueprintName(created)} v${created.version} saved. Existing videos keep their previous recipe version.`);
     } catch (error) {
         message(error.message, true);
-        if (submit) submit.disabled = false;
+        setBlueprintEditorSubmitting(false);
     }
 }
 function renderPerformance(row) {
