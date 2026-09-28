@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#100e1b">
+    <title>Katcha · Clip library</title>
+    <link rel="stylesheet" href="editing.css">
+    <link rel="stylesheet" href="clips.css">
+    <script src="clips.js" defer></script>
+    <script src="launcher-bridge.js" defer></script>
+</head>
+<body>
+    <div class="shell">
+        <aside class="sidebar">
+            <a class="logo" href="/explorer" aria-label="Katcha home"><span class="glyph">✦</span> katcha<span class="accent">.</span></a>
+            <nav aria-label="Workspace">
+                <a href="/ingestion">↳ <span>Ingestion sources</span></a>
+                <a href="/explorer">◌ <span>Trend explorer</span></a>
+                <a href="/clips" aria-current="page">▤ <span>Clip library</span></a>
+                <a href="/editing">▣ <span>Editing control center</span></a>
+            </nav>
+            <div class="sidebar-bottom"><span class="live-dot"></span> MEDIA VAULT <small>Sources · Analysis · Production lineage</small></div>
+        </aside>
+        <main>
+            <header class="topbar">
+                <span>Workspace <span class="slash">/</span> <strong>Clip library</strong></span>
+                <span id="connection" class="connection">OFFLINE</span>
+            </header>
+            <div class="content clip-content">
+                <div class="heading">
+                    <div>
+                        <div class="eyebrow">MEDIA LIBRARY / STORED SOURCE CLIPS</div>
+                        <h1>Every clip, <em>findable.</em></h1>
+                        <p>Browse newly ingested media, analyzed candidates, clips currently in production, and historical material without digging through API records.</p>
+                    </div>
+                    <button id="refresh" class="button secondary" type="button" disabled>↻ Refresh</button>
+                </div>
+
+                <form id="connect-form" class="connect card">
+                    <div><label for="token">Control-plane token</label><p>Kept in this browser tab only. Leave blank for local development.</p></div>
+                    <input id="token" type="password" autocomplete="off" placeholder="Token if required">
+                    <button class="button primary">Connect ↗</button>
+                </form>
+                <div id="message" class="message" role="status" aria-live="polite"></div>
+
+                <nav class="clip-stats" aria-label="Clip library filters">
+                    <button class="clip-stat card is-active" type="button" data-bucket="all"><span>ALL STORED</span><strong id="count-all">—</strong><small>Every retained clip</small></button>
+                    <button class="clip-stat card" type="button" data-bucket="new"><span>NEW</span><strong id="count-new">—</strong><small>Ingested → scored</small></button>
+                    <button class="clip-stat card" type="button" data-bucket="production"><span>IN PRODUCTION</span><strong id="count-production">—</strong><small>Selected → scheduled</small></button>
+                    <button class="clip-stat card" type="button" data-bucket="history"><span>PUBLISHED / HISTORY</span><strong id="count-history">—</strong><small>Published & measured</small></button>
+                    <button class="clip-stat card attention" type="button" data-bucket="failed"><span>FAILED</span><strong id="count-failed">—</strong><small>Needs attention</small></button>
+                </nav>
+
+                <section class="clip-toolbar card">
+                    <label>SEARCH
+                        <input id="search" type="search" placeholder="Title, creator, platform, clip ID…">
+                    </label>
+                    <label>STATUS
+                        <select id="status-filter">
+                            <option value="all">All statuses</option>
+                        </select>
+                    </label>
+                    <div class="toolbar-copy"><strong id="visible-count">0 clips</strong><span>Newest first</span></div>
+                </section>
+
+                <section class="clip-workspace">
+                    <div class="clip-list card">
+                        <div class="panel-head">
+                            <div><div class="eyebrow">LIBRARY</div><h2>Stored clips</h2></div>
+                            <span class="tag">BACKEND DATA</span>
+                        </div>
+                        <div id="clip-list" class="clip-list-body"><div class="empty">Connect to load stored clips.</div></div>
+                    </div>
+                    <div class="clip-detail card" id="clip-detail">
+                        <div class="empty">Select a clip to inspect its media, source, AI analysis, score, and production state.</div>
+                    </div>
+                </section>
+                <footer>Clip records are retained independently of later productions. Existing production lineage is never rewritten by library actions.</footer>
+            </div>
+        </main>
+    </div>
+</body>
+</html>
