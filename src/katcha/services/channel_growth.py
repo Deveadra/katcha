@@ -299,9 +299,18 @@ def channel_growth_context(channel_profile_id: uuid.UUID) -> dict[str, object]:
         )
         snapshot = dict(profile.profile_metadata or {}).get("growth_snapshot")
         if isinstance(snapshot, dict):
-            context = dict(snapshot)
-            context["goals"] = goals
-            return context
+            snapshot_metrics = dict(snapshot.get("metrics") or {})
+            as_of_raw = str(snapshot.get("as_of") or date.today().isoformat())
+            try:
+                as_of = date.fromisoformat(as_of_raw)
+            except ValueError:
+                as_of = date.today()
+            recalculated = evaluate_growth_progress(
+                snapshot_metrics,
+                goals=goals,
+                as_of=as_of,
+            )
+            return {**snapshot, **recalculated, "metrics": snapshot_metrics}
         return evaluate_growth_progress({}, goals=goals, as_of=date.today())
 
 
