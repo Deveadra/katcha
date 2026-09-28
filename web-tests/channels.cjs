@@ -20,6 +20,13 @@ const server = spawn(
 const now = "2026-09-28T10:00:00Z";
 const requests = [];
 let browser;
+let savedGrowthGoals = {
+    objective: "ads_revenue",
+    path: "fastest",
+    pace: "aggressive",
+    target_date: null,
+    custom_targets: [],
+};
 
 const channel = {
     id: "channel-1",
@@ -104,6 +111,62 @@ const summary = {
             recommendation_metadata: {},
         },
     ],
+    growth: {
+        as_of: "2026-09-28",
+        sampled_at: now,
+        source: "youtube_api_estimate",
+        disclaimer: "YouTube Studio remains the authority for exact YPP eligibility.",
+        metrics: {
+            subscribers: 620,
+            public_uploads_90d: 4,
+            estimated_qualified_watch_hours_365d: 1000,
+            estimated_qualified_shorts_views_90d: 2500000,
+        },
+        coverage: { channel_statistics: true, analytics: true },
+        benchmarks: {
+            effective_date: "2026-09-28",
+            next_change: {
+                effective_date: "2027-02-01",
+                ads_premium: {
+                    subscribers: 1000,
+                    watch_hours_365d: 8000,
+                    shorts_views_90d: 20000000,
+                },
+            },
+        },
+        goals: savedGrowthGoals,
+        milestones: {
+            early_ypp: {
+                progress: 0.62,
+                thresholds_met_estimate: false,
+                requirements: [
+                    { metric: "subscribers", current: 620, target: 500, progress: 1, estimated: false },
+                    { metric: "public_uploads_90d", current: 4, target: 3, progress: 1, estimated: false },
+                ],
+                audience_paths: [
+                    { metric: "qualified_watch_hours_365d", current: 1000, target: 3000, progress: 0.333, estimated: true },
+                    { metric: "qualified_shorts_views_90d", current: 2500000, target: 3000000, progress: 0.833, estimated: true },
+                ],
+            },
+            ads_premium: {
+                progress: 0.25,
+                thresholds_met_estimate: false,
+                requirements: [
+                    { metric: "subscribers", current: 620, target: 1000, progress: 0.62, estimated: false },
+                ],
+                audience_paths: [
+                    { metric: "qualified_watch_hours_365d", current: 1000, target: 4000, progress: 0.25, estimated: true },
+                    { metric: "qualified_shorts_views_90d", current: 2500000, target: 10000000, progress: 0.25, estimated: true },
+                ],
+            },
+        },
+        ai: {
+            stage: "pre_ypp",
+            selected_path: "shorts",
+            pace: "aggressive",
+            priority_metrics: ["qualified_shorts_views_90d", "subscribers"],
+        },
+    },
     automation: {
         level: "review_required",
         version: 1,
@@ -253,10 +316,15 @@ const analytics = [
     await page.route("**/v1/**", async (route) => {
         const req = route.request();
         const url = new URL(req.url());
+        let body = null;
+        try {
+            body = req.postDataJSON();
+        } catch {}
         requests.push({
             path: url.pathname,
             method: req.method(),
             auth: req.headers().authorization,
+            body,
         });
 
         let data;
@@ -278,6 +346,40 @@ const analytics = [
             ];
         } else if (url.pathname === "/v1/channels/channel-1") {
             data = summary;
+        } else if (
+            url.pathname === "/v1/channels/channel-1/growth-goals" &&
+            req.method() === "POST"
+        ) {
+            savedGrowthGoals = body;
+            data = {
+                id: "strategy-3",
+                channel_profile_id: "channel-1",
+                version: 3,
+                ...summary.strategy,
+                strategy_metadata: { growth: savedGrowthGoals },
+                created_at: now,
+            };
+        } else if (
+            url.pathname === "/v1/channels/channel-1/growth" &&
+            req.method() === "GET"
+        ) {
+            data = {
+                ...summary.growth,
+                goals: savedGrowthGoals,
+                ai: {
+                    ...summary.growth.ai,
+                    pace: savedGrowthGoals.pace,
+                    selected_path:
+                        savedGrowthGoals.path === "fastest"
+                            ? "shorts"
+                            : savedGrowthGoals.path,
+                    priority_metrics: [
+                        ...(savedGrowthGoals.custom_targets || []).map((goal) => goal.metric),
+                        "qualified_shorts_views_90d",
+                        "subscribers",
+                    ],
+                },
+            };
         } else if (url.pathname === "/v1/publications") {
             data = publications;
         } else if (url.pathname === "/v1/productions") {
@@ -353,6 +455,11 @@ const analytics = [
     assert.match(await page.locator("#metric-videos").innerText(), /2/);
     assert.match(await page.locator("#metric-views").innerText(), /12\.5K|12K/);
     assert.match(await page.locator("#metric-margin").innerText(), /18\.35/);
+    assert.match(await page.locator("#milestone-grid").innerText(), /Early YPP access/);
+    assert.match(await page.locator("#milestone-grid").innerText(), /Ads & Premium/);
+    assert.match(await page.locator("#ai-growth-focus").innerText(), /AI focus:/);
+    assert.equal(await page.locator("#growth-pace").inputValue(), "aggressive");
+    assert.match(await page.locator("#threshold-change").innerText(), /Feb.*1.*2027|Feb 1, 2027/);
     assert.match(await page.locator("#publication-list").innerText(), /Fixture launch breakdown/);
     assert.match(await page.locator("#video-detail").innerText(), /74\.2%/);
     assert.match(await page.locator("#packaging").innerText(), /concise curiosity-led titles/);
@@ -360,6 +467,23 @@ const analytics = [
     assert.match(await page.locator("#schedule").innerText(), /Fri · 18:00/);
     assert.match(await page.locator("#brand-panel").innerText(), /fixture_brand/);
     assert.match(await page.locator("#automation-panel").innerText(), /Review Required/);
+
+    await page.locator("#custom-goal-metric").selectOption("subscribers");
+    await page.locator("#custom-goal-target").fill("5000");
+    await page.locator("#custom-goal-priority").selectOption("5");
+    await page.locator("#add-custom-goal").click();
+    assert.match(await page.locator("#custom-goals").innerText(), /5K|5,000/);
+    await page.locator("#growth-goals-form button[type=submit]").click();
+    await page.getByText(/Growth goals saved as strategy v3/).waitFor();
+    const goalRequest = requests.find(
+        (request) =>
+            request.path === "/v1/channels/channel-1/growth-goals" &&
+            request.method === "POST",
+    );
+    assert.equal(goalRequest.body.pace, "aggressive");
+    assert.equal(goalRequest.body.objective, "ads_revenue");
+    assert.equal(goalRequest.body.custom_targets[0].metric, "subscribers");
+    assert.equal(goalRequest.body.custom_targets[0].target, 5000);
 
     await page.locator("#refresh-video-analytics").click();
     await page.getByText(/Analytics refresh queued/).waitFor();
