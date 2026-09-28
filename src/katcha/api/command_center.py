@@ -32,7 +32,6 @@ from katcha.services.productions import (
 )
 from katcha.services.render_recovery import render_attempts_for_source
 
-
 router = APIRouter(prefix="/v1/ai", tags=["katcha-ai"])
 
 
