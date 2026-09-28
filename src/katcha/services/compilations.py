@@ -217,6 +217,18 @@ def register_compilation_regeneration(
         if stage == "plan" and not parent.candidate_snapshot:
             effective_stage = "select"
 
+        candidate_snapshot = dict(parent.candidate_snapshot or {})
+        if note:
+            feedback = list(candidate_snapshot.get("operator_feedback") or [])
+            feedback.append(
+                {
+                    "actor": actor,
+                    "note": note.strip(),
+                    "regenerate_from": stage,
+                }
+            )
+            candidate_snapshot["operator_feedback"] = feedback[-5:]
+
         child = Compilation(
             channel_profile_id=parent.channel_profile_id,
             parent_compilation_id=parent.id,
@@ -231,7 +243,7 @@ def register_compilation_regeneration(
             persona_key=parent.persona_key,
             persona_version=parent.persona_version,
             prompt_version=parent.prompt_version,
-            candidate_snapshot=dict(parent.candidate_snapshot or {}),
+            candidate_snapshot=candidate_snapshot,
             estimated_cost_usd=Decimal("0"),
         )
         session.add(child)
