@@ -18,6 +18,11 @@ class Settings(BaseSettings):
     api_host: str = "0.0.0.0"
     api_port: int = 8000
     control_api_token: SecretStr | None = None
+    control_api_scopes: str = "*"
+
+    def resolved_control_scopes(self) -> set[str]:
+        values = {item.strip() for item in self.control_api_scopes.split(",") if item.strip()}
+        return values or {"*"}
 
     @field_validator("control_api_token", mode="before")
     @classmethod
