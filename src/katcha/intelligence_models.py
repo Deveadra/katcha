@@ -55,7 +55,11 @@ class ChannelProfile(Base):
 class ChannelIntelligenceRun(Base):
     __tablename__ = "channel_intelligence_runs"
     __table_args__ = (
-        UniqueConstraint("channel_profile_id", "run_key"),
+        UniqueConstraint(
+            "channel_profile_id",
+            "run_key",
+            name="uq_channel_intelligence_runs_channel_run_key",
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
