@@ -700,17 +700,29 @@ class Runtime:
                 self.event("error", "health", str(exc))
             finally:
                 self.lock.release()
-        # Reconcile missing/exited containers; never repeatedly restart unhealthy ones.
-        present = {row["Service"] for row in self.services}
-        missing = not present >= REQUIRED_SERVICES or any(
-            row["State"] != "running"
-            for row in self.services
-            if row["Service"] not in ("migrate", "minio-init")
-        )
-        if (self.desired_running and time.monotonic() >= self.retry_at
-                and (self.phase in ("failed", "idle", "stopped")
-                     or (self.phase == "degraded" and missing))):
+        # Reconcile missing/exited containers without falling back to a full-stack rebuild.
+        if not self.desired_running or time.monotonic() < self.retry_at:
+            return
+        if self.phase in ("failed", "idle", "stopped") and not self.workspace_ready:
             self.operate("start")
+            return
+        if self.phase != "degraded":
+            return
+        present = {row["Service"] for row in self.services}
+        missing = sorted(REQUIRED_SERVICES - present)
+        if missing:
+            self.repair_service(missing[0], "recreate")
+            return
+        exited = next(
+            (
+                row["Service"]
+                for row in self.services
+                if row["Service"] not in ONE_SHOT_SERVICES and row["State"] != "running"
+            ),
+            None,
+        )
+        if exited:
+            self.repair_service(exited, "restart")
 
     def monitor(self):
         while True:
