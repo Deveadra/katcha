@@ -83,7 +83,7 @@ class CreateEditBlueprintRequest(BaseModel):
     actor: str = Field(default="operator", min_length=1, max_length=128)
     set_default: bool = False
     display_name: str | None = Field(default=None, min_length=1, max_length=80)
-    description: str | None = Field(default=None, min_length=1, max_length=300)
+    description: str | None = Field(default=None, max_length=300)
 
 
 class ActivateEditBlueprintRequest(BaseModel):
