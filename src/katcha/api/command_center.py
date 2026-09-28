@@ -35,6 +35,7 @@ from katcha.services.command_center import (
     failures,
     infer_edit_blueprint_key,
     performance_advice,
+    ranked_episode_allowed_counts,
 )
 from katcha.services.productions import (
     register_regeneration,
@@ -205,25 +206,31 @@ def _action_specs(
                 )
             )
         else:
-            payload = {
-                "clip_ids": clip_ids,
-                "premise": request.prompt[:500],
-                "item_count": len(clip_ids),
-                "preserve_candidate_order": True,
-            }
-            if blueprint_key:
-                payload["edit_blueprint_key"] = blueprint_key
-            specs.append(
-                ActionProposalSpec(
-                    action_type="create_ranked_short_episode",
-                    label=f"Create ranked episode from {len(clip_ids)} selected clips",
-                    description=(
-                        "Freeze exactly these clips in selection order, freeze the "
-                        "channel brand/edit recipe, and start ranked-episode editorial."
-                    ),
-                    payload=payload,
+            allowed = ranked_episode_allowed_counts(request.channel_profile_id)
+            if len(clip_ids) in allowed:
+                payload = {
+                    "clip_ids": clip_ids,
+                    "premise": request.prompt[:500],
+                    "item_count": len(clip_ids),
+                    "preserve_candidate_order": True,
+                }
+                if blueprint_key:
+                    payload["edit_blueprint_key"] = blueprint_key
+                specs.append(
+                    ActionProposalSpec(
+                        action_type="create_ranked_short_episode",
+                        label=(
+                            f"Create ranked episode from {len(clip_ids)} "
+                            "selected clips"
+                        ),
+                        description=(
+                            "Freeze exactly these clips in selection order, freeze "
+                            "the channel brand/edit recipe, and start ranked-episode "
+                            "editorial."
+                        ),
+                        payload=payload,
+                    )
                 )
-            )
 
     return specs[:4]
 
@@ -310,13 +317,28 @@ def command(http_request: Request, request: CommandRequest) -> CommandResponse:
                     "Nothing will start until you confirm the server-issued proposal."
                 )
             else:
-                recipe = blueprint_key or "the channel default edit recipe"
-                deterministic = (
-                    f"I prepared a ranked-episode proposal using exactly "
-                    f"{len(request.selected_clip_ids)} selected clips in selection "
-                    f"order with {recipe}. The channel brand and blueprint version "
-                    "will be frozen when the action is executed."
-                )
+                allowed = ranked_episode_allowed_counts(request.channel_profile_id)
+                selected_count = len(request.selected_clip_ids)
+                if not allowed:
+                    deterministic = (
+                        "This channel does not currently have an enabled ranked "
+                        "episode format, so I cannot propose a multi-clip episode."
+                    )
+                elif selected_count not in allowed:
+                    choices = ", ".join(str(value) for value in allowed)
+                    deterministic = (
+                        f"You selected {selected_count} clips, but this channel's "
+                        f"ranked format supports {choices}. Adjust the selection and "
+                        "I can prepare an exact locked-clip proposal."
+                    )
+                else:
+                    recipe = blueprint_key or "the channel default edit recipe"
+                    deterministic = (
+                        f"I prepared a ranked-episode proposal using exactly "
+                        f"{selected_count} selected clips in selection order with "
+                        f"{recipe}. The channel brand and blueprint version will be "
+                        "frozen when the action is executed."
+                    )
             evidence = [
                 {
                     "kind": "selection",
