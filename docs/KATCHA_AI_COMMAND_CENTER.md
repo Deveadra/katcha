@@ -167,3 +167,35 @@ Katcha can deterministically resolve common references against the latest ground
 The API returns a typed `resolved_context` record with the resolved clip IDs, source turn and resolution reason. The web UI reflects inherited selections visibly before any proposal can be confirmed.
 
 Conversational acknowledgements such as `yes, do it`, `go ahead`, or `confirm` never execute a control-plane action. When the immediately preceding grounded answer has a pending proposal, Katcha re-presents that same frozen server-issued proposal for explicit review and confirmation instead. This remains true even when the UI currently has clip context selected.
+
+
+## Constrained command planning
+
+Katcha AI no longer has to treat every unfamiliar phrasing as a generic channel-status
+request. A small **read-only command planner** handles only requests that the deterministic
+router cannot classify confidently.
+
+The planner is schema-constrained to this registry:
+
+- `best_clips`
+- `failures`
+- `clip_rejection`
+- `clip_explanation`
+- `performance_advice`
+- `create_content`
+- `channel_status`
+- `unsupported`
+
+The model cannot name arbitrary tools, execute an action, confirm an existing proposal, or
+write directly to Katcha state. Clear deterministic commands bypass the planner entirely.
+Ambiguous requests use the low-cost `command_planning` AI route. A plan below the confidence
+threshold falls back to channel status, and provider/routing failures also fail closed.
+
+Planning metadata is returned with the Command Center response and stored with the assistant
+turn: resolved intent, deterministic/AI source, provider/model, confidence and reason. The
+Command Center evidence panel exposes this as **Command Routing**, making it possible to
+inspect why Katcha interpreted a request the way it did.
+
+The planner does not weaken the mutation boundary. A `create_content` plan can only produce
+the same frozen server-issued proposal used elsewhere; execution still requires the separate
+authenticated confirmation endpoint.
