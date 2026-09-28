@@ -15,7 +15,11 @@ from katcha.ai.command_planner import (
     deterministic_plan,
     plan_ambiguous_command,
 )
-from katcha.api.control_auth import control_actor, require_control_scope
+from katcha.api.control_auth import (
+    control_actor,
+    require_control_channel,
+    require_control_scope,
+)
 from katcha.command_center_models import (
     CommandActionProposal,
     CommandThread,
@@ -459,6 +463,7 @@ def _proposal_status(
 @router.post("/command", response_model=CommandResponse)
 def command(http_request: Request, request: CommandRequest) -> CommandResponse:
     require_control_scope(http_request, "ai:read")
+    require_control_channel(http_request, request.channel_profile_id)
     actor = control_actor(http_request)
     request_id = uuid.uuid4()
 
@@ -767,6 +772,7 @@ def threads(
     limit: int = 30,
 ) -> list[ThreadSummaryResponse]:
     require_control_scope(http_request, "ai:read")
+    require_control_channel(http_request, channel_profile_id)
     try:
         rows = list_command_threads(channel_profile_id, limit=limit)
     except ValueError as exc:
@@ -785,6 +791,7 @@ def thread_detail(
     require_control_scope(http_request, "ai:read")
     try:
         thread = get_command_thread(thread_id)
+        require_control_channel(http_request, thread.channel_profile_id)
         turns = list_command_turns(thread_id)
         proposals = [
             get_action_proposal(row.id)
@@ -810,6 +817,8 @@ def archive_thread(
     require_control_scope(http_request, "ai:read")
     actor = control_actor(http_request)
     try:
+        existing = get_command_thread(thread_id)
+        require_control_channel(http_request, existing.channel_profile_id)
         thread = archive_command_thread(thread_id, actor=actor)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -827,7 +836,8 @@ def action_activity(
 ) -> ActionActivityResponse:
     require_control_scope(http_request, "ai:read")
     try:
-        get_action_proposal(proposal_id)
+        proposal = get_action_proposal(proposal_id)
+        require_control_channel(http_request, proposal.channel_profile_id)
         activity = get_action_activity(proposal_id, limit=limit)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -872,6 +882,7 @@ def action_status(
     require_control_scope(http_request, "ai:read")
     try:
         proposal = get_action_proposal(proposal_id)
+        require_control_channel(http_request, proposal.channel_profile_id)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return _proposal_status(proposal)
@@ -1137,6 +1148,7 @@ async def execute_action(
 
     try:
         current = get_action_proposal(proposal_id)
+        require_control_channel(http_request, current.channel_profile_id)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
