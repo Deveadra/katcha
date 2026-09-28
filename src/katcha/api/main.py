@@ -18,8 +18,8 @@ from katcha.api.command_center import router as command_center_router
 from katcha.api.control_auth import require_control_token
 from katcha.api.edit_blueprints import router as edit_blueprints_router
 from katcha.api.explorer import router as explorer_router
-from katcha.api.intelligence import router as intelligence_router
 from katcha.api.integrations import router as integrations_router
+from katcha.api.intelligence import router as intelligence_router
 from katcha.api.packaging import router as packaging_router
 from katcha.api.reach import router as reach_router
 from katcha.api.schemas import (
