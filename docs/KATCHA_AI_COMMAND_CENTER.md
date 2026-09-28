@@ -63,7 +63,8 @@ The current contract supports:
 - channel intelligence refresh;
 - channel-scoped short production creation;
 - exact selected-clip ranked episode creation;
-- dead-letter production render recovery.
+- dead-letter production render recovery;
+- channel-scoped autonomous source scouting.
 
 Execution is `POST /v1/ai/actions/{proposal_id}/execute` with only `confirmed=true`.
 The server reloads the proposal, derives the actor from authenticated control-plane state,
@@ -82,6 +83,14 @@ Proposal lifecycle events (`proposal_created`, `action_confirmed`,
 `action_retry_claimed`, `action_executed`, `action_failed`, `proposal_expired`) flow
 through the existing domain-event stream for Aerith and other consumers.
 
+A source-scout proposal freezes the requested platforms, topical terms, cadence and
+operator request server-side before confirmation. Execution creates or reuses a
+channel-scoped `TopicWatchVersion` backed by `web_scout@v1` and starts its
+durable Temporal schedule. The default cadence is hourly with a 24-search-per-day
+provider cap. Each cycle carries bounded exploration memory so it can branch toward
+adjacent creators, communities, sites and newer posts rather than repeatedly
+returning the same pages. Discovery does not authorize rendering or publishing.
+
 ## Initial natural-language intents
 
 The first UI slice handles common operator questions directly:
@@ -91,6 +100,7 @@ The first UI slice handles common operator questions directly:
 - why a selected clip was rejected or scored the way it did;
 - editing/performance evidence and behavior changes, including true channel-local "yesterday" windows;
 - content-creation requests, which become proposed actions rather than immediate execution;
+- source-discovery requests such as "Find new TikTok, Instagram, X, and Bluesky sources";
 - general channel status.
 
 The intent layer is deliberately conservative. Unsupported or ambiguous language falls back to
@@ -116,6 +126,7 @@ Command Center scope checks currently use:
 - `intelligence:write`
 - `production:create`
 - `render:recover`
+- `discovery:write`
 
 `*` preserves the existing single-operator setup. A later multi-principal credential layer can
 assign different tokens/scopes to Aerith and human operators without changing the action API.
