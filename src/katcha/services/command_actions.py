@@ -84,7 +84,7 @@ def get_action_proposal(proposal_id: uuid.UUID) -> CommandActionProposal:
         proposal = session.get(CommandActionProposal, proposal_id)
         if proposal is None:
             raise ValueError(f"command action proposal not found: {proposal_id}")
-        if proposal.status == "proposed" and proposal.expires_at <= _now():
+        if proposal.status in {"proposed", "failed"} and proposal.expires_at <= _now():
             proposal.status = "expired"
             session.add(
                 DomainEvent(
@@ -124,9 +124,33 @@ def claim_action_proposal(
             session.expunge(proposal)
             return ProposalClaim(proposal=proposal, should_execute=False)
         if proposal.status == "executing":
-            session.expunge(proposal)
-            return ProposalClaim(proposal=proposal, should_execute=False)
-        if proposal.status not in {"proposed", "failed"}:
+            stale_before = now - timedelta(minutes=5)
+            if (
+                proposal.execution_started_at is not None
+                and proposal.execution_started_at > stale_before
+            ):
+                session.expunge(proposal)
+                return ProposalClaim(proposal=proposal, should_execute=False)
+            session.add(
+                DomainEvent(
+                    aggregate_type="command_action_proposal",
+                    aggregate_id=str(proposal.id),
+                    event_type="command_center.action_retry_claimed",
+                    payload={
+                        "proposal_id": str(proposal.id),
+                        "request_id": str(proposal.request_id),
+                        "channel_profile_id": str(proposal.channel_profile_id),
+                        "action_type": proposal.action_type,
+                        "actor": actor,
+                        "previous_execution_started_at": (
+                            proposal.execution_started_at.isoformat()
+                            if proposal.execution_started_at
+                            else None
+                        ),
+                    },
+                )
+            )
+        elif proposal.status not in {"proposed", "failed"}:
             raise ValueError(
                 f"command action proposal cannot execute from status {proposal.status}"
             )
