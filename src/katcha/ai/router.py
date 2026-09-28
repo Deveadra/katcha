@@ -138,9 +138,15 @@ def route_for(task: AITask) -> ModelRoute:
     return ModelRoute(primary=gemini, fallback=fallback)
 
 
-_TASK_EXTRA_TARGETS: dict[AITask, list[ModelTarget]] = {
-    AITask.TTS: [ModelTarget("elevenlabs", "eleven_v3")],
-}
+def _extra_targets(task: AITask) -> list[ModelTarget]:
+    settings = get_settings()
+    if (
+        task == AITask.TTS
+        and settings.elevenlabs_api_key
+        and settings.elevenlabs_voice_id
+    ):
+        return [ModelTarget("elevenlabs", settings.elevenlabs_model_id)]
+    return []
 
 
 def _available_providers() -> set[str]:
@@ -181,12 +187,17 @@ def _eligible_targets(
     candidates = [route.primary]
     if route.fallback is not None:
         candidates.append(route.fallback)
-    candidates.extend(_TASK_EXTRA_TARGETS.get(task, []))
+    candidates.extend(_extra_targets(task))
     return [
         target
         for target in candidates
         if target.provider in providers
-        and _MODEL_QUALITY.get((target.provider, target.model), 0) >= floor
+        and (
+            _MODEL_QUALITY.get((target.provider, target.model), 0)
+            if target.provider != "elevenlabs"
+            else 3
+        )
+        >= floor
     ]
 
 
@@ -341,9 +352,13 @@ def route_for_channel(
         elif conserve:
             chosen = min(
                 candidates,
-                key=lambda item: _MODEL_COST_WEIGHT.get(
-                    (item.provider, item.model),
-                    100.0,
+                key=lambda item: (
+                    1.7
+                    if item.provider == "elevenlabs"
+                    else _MODEL_COST_WEIGHT.get(
+                        (item.provider, item.model),
+                        100.0,
+                    )
                 ),
             )
             reason = "budget_conserve"
