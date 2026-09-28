@@ -212,7 +212,23 @@ def source_discovery_plan(
 
     adapter_keys = {str(row.get("key") or "") for row in catalog}
     web_scout_installed = "web_scout" in adapter_keys
-    web_scout_ready = bool(web_scout_installed and settings.openai_api_key)
+    live_mode = settings.resolved_ai_execution_mode() == "live"
+    web_scout_ready = bool(
+        web_scout_installed
+        and settings.openai_api_key
+        and settings.ai_enabled
+        and live_mode
+    )
+    if not web_scout_installed:
+        readiness_reason = "web_scout adapter is not installed"
+    elif not settings.openai_api_key:
+        readiness_reason = "KATCHA_OPENAI_API_KEY is not configured"
+    elif not settings.ai_enabled:
+        readiness_reason = "KATCHA_AI_ENABLED is false"
+    elif not live_mode:
+        readiness_reason = "KATCHA_AI_EXECUTION_MODE is not live"
+    else:
+        readiness_reason = "ready"
     evidence = [
         {
             "kind": "source_discovery",
@@ -241,6 +257,7 @@ def source_discovery_plan(
             ],
             "web_scout_installed": web_scout_installed,
             "web_scout_ready": web_scout_ready,
+            "web_scout_readiness": readiness_reason,
         }
     ]
     platform_text = ", ".join(requested) if requested else "the wider public web"
@@ -253,10 +270,10 @@ def source_discovery_plan(
             evidence,
         )
     return (
-        "The autonomous source-scout path is installed, but live web scouting is not ready "
-        "because KATCHA_OPENAI_API_KEY is not configured. Existing native discovery adapters "
-        "can still search their supported providers, but I will not pretend TikTok, Instagram, "
-        "X, Bluesky, or unknown websites were searched when they were not.",
+        "The autonomous source-scout path is installed, but live web scouting is not ready: "
+        f"{readiness_reason}. Existing native discovery adapters can still search their "
+        "supported providers, but I will not pretend TikTok, Instagram, X, Bluesky, or "
+        "unknown websites were searched when they were not.",
         evidence,
     )
 
