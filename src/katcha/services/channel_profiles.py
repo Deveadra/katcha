@@ -200,6 +200,7 @@ def create_strategy_version(
     fallback_schedule: list[dict[str, object]] | None = None,
     blackout_windows: list[dict[str, object]] | None = None,
     routing_policy: dict[str, object] | None = None,
+    growth_strategy: dict[str, object] | None = None,
     actor: str = "operator",
 ) -> ChannelStrategyVersion:
     with session_scope() as session:
@@ -242,6 +243,13 @@ def create_strategy_version(
             else list(current.blackout_windows or [])
         )
         version = profile.active_strategy_version + 1
+        strategy_metadata = dict(current.strategy_metadata or {})
+        strategy_metadata.update({"actor": actor, "supersedes": current.version})
+        if growth_strategy is not None:
+            from katcha.services.channel_growth import normalize_growth_goals
+
+            strategy_metadata["growth"] = normalize_growth_goals(growth_strategy)
+
         strategy = ChannelStrategyVersion(
             channel_profile_id=profile.id,
             version=version,
@@ -256,7 +264,7 @@ def create_strategy_version(
                 if routing_policy is not None
                 else current.routing_policy or {}
             ),
-            strategy_metadata={"actor": actor, "supersedes": current.version},
+            strategy_metadata=strategy_metadata,
         )
         session.add(strategy)
         profile.active_strategy_version = version
@@ -270,6 +278,7 @@ def create_strategy_version(
                     "strategy_version": version,
                     "monthly_base_budget_usd": str(base_budget),
                     "monthly_hard_budget_usd": str(hard_budget),
+                    "growth_strategy_updated": growth_strategy is not None,
                     "actor": actor,
                 },
             )
