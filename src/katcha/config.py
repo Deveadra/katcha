@@ -55,6 +55,7 @@ class Settings(BaseSettings):
         "free_first"
     )
     ai_budget_usd_monthly: float = Field(default=25.0, ge=0)
+    web_scout_model: str = "gpt-5.6-luna"
 
     tts_profile: str = "openai_youth_v2"
     renderer_url: str = "http://renderer:8787"
