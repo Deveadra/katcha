@@ -225,6 +225,8 @@ def create_edit_blueprint_version(
     contract_payload: dict[str, Any],
     actor: str = "operator",
     set_default: bool = False,
+    display_name: str | None = None,
+    description: str | None = None,
 ) -> ChannelEditBlueprintVersion:
     from katcha.db import session_scope
 
@@ -257,6 +259,18 @@ def create_edit_blueprint_version(
             blueprint_metadata={
                 "actor": actor,
                 "supersedes": current_active.version if current_active else None,
+                "display_name": (
+                    display_name
+                    if display_name is not None
+                    else (current_active.blueprint_metadata or {}).get("display_name")
+                    or contract.key.replace("_", " ").title()
+                ),
+                "description": (
+                    description
+                    if description is not None
+                    else (current_active.blueprint_metadata or {}).get("description")
+                    or ""
+                ),
             },
         )
         session.add(row)

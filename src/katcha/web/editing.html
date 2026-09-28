@@ -31,10 +31,76 @@
                     <a class="stat card stat-link" href="#editorial-pipeline" data-summary-filter="all"><span>EPISODES</span><strong id="count-total">—</strong><small>Most recent 100</small><b aria-hidden="true">↘</b></a>
                     <a class="stat card stat-link stat-production" href="#editorial-pipeline" data-summary-filter="active"><span>IN PRODUCTION</span><strong id="count-active">—</strong><small>Editorial & rendering</small><b aria-hidden="true">↘</b></a>
                     <a class="stat card stat-link stat-attention" href="#editorial-pipeline" data-summary-filter="attention"><span>NEEDS ATTENTION</span><strong id="count-attention">—</strong><small>Errors & dead letters</small><b aria-hidden="true">↘</b></a>
-                    <a class="stat card stat-link" href="#blueprints-panel"><span>BLUEPRINTS</span><strong id="count-blueprints">—</strong><small>Versioned per channel</small><b aria-hidden="true">↘</b></a>
+                    <a class="stat card stat-link" href="#blueprints-panel"><span>EDITING RECIPES</span><strong id="count-blueprints">—</strong><small>Editable per channel</small><b aria-hidden="true">↘</b></a>
                 </nav>
-                <div class="grid"><section class="panel card" id="blueprints-panel"><div class="panel-head"><div><div class="eyebrow">01 / CHANNEL IDENTITY</div><h2>Editing blueprints</h2></div><span class="tag">VERSIONED</span></div><p class="section-copy">Active recipes define the look and rhythm of this channel’s edits. Changes create a new version; existing episodes retain their snapshot.</p><div id="blueprints" class="list"><div class="empty">Connect to inspect blueprints.</div></div></section>
-                <section class="panel card"><div class="panel-head"><div><div class="eyebrow">02 / LEARNING LOOP</div><h2>Blueprint performance</h2></div><span class="tag">REAL DATA</span></div><div id="performance" class="performance empty">Select a channel to see measured results.</div></section></div>
+                <div class="grid">
+                    <section class="panel card" id="blueprints-panel">
+                        <div class="panel-head">
+                            <div><div class="eyebrow">01 / CHANNEL IDENTITY</div><h2>Editing recipes</h2></div>
+                            <div class="panel-head-actions"><span class="tag">SAFE VERSIONING</span><button id="new-blueprint" class="mini" type="button" disabled>+ New recipe</button></div>
+                        </div>
+                        <p class="section-copy">A recipe controls how this channel edits: layout, narration, captions, source audio, transitions, headers, and length. Open a recipe to see or change it. Saving creates a new version, so existing videos never change underneath you.</p>
+                        <div id="blueprints" class="recipe-list"><div class="empty">Connect to inspect editing recipes.</div></div>
+                    </section>
+                    <section class="panel card">
+                        <div class="panel-head"><div><div class="eyebrow">02 / LEARNING LOOP</div><h2>Recipe performance</h2></div><span class="tag">REAL DATA</span></div>
+                        <div id="performance" class="performance empty">Select a channel to see measured results.</div>
+                    </section>
+                </div>
+                <section class="panel card blueprint-editor-panel" id="blueprint-editor-panel" hidden>
+                    <div class="panel-head">
+                        <div><div class="eyebrow">RECIPE EDITOR</div><h2 id="blueprint-editor-title">Edit recipe</h2></div>
+                        <button id="close-blueprint-editor" class="mini" type="button">Close</button>
+                    </div>
+                    <p id="blueprint-editor-context" class="section-copy">Changes are saved as a new version. Existing productions keep their frozen recipe.</p>
+                    <form id="blueprint-editor" class="blueprint-editor">
+                        <div class="editor-intro-grid">
+                            <label>Recipe name<input id="bp-name" maxlength="80" required placeholder="Fast commentary"></label>
+                            <label>Recipe ID<input id="bp-key" maxlength="96" required pattern="[a-z0-9_]+" placeholder="fast_commentary"><small>Internal stable ID. Use lowercase letters, numbers, and underscores.</small></label>
+                            <label class="editor-wide">What is this recipe for?<textarea id="bp-description" maxlength="300" rows="2" placeholder="Fast host-led gaming clips with concise commentary."></textarea></label>
+                            <label id="bp-template-wrap">Start from template<select id="bp-template"></select></label>
+                        </div>
+                        <div class="editor-groups">
+                            <fieldset class="editor-group">
+                                <legend>Video layout</legend>
+                                <label>Layout<select id="bp-layout"><option value="full_frame">Full-frame video</option><option value="header_panel">Header + video</option></select></label>
+                                <label>Video fit<select id="bp-fit"><option value="contain">Show the whole source</option><option value="cover">Fill the frame</option></select></label>
+                                <label>Background<select id="bp-background"><option value="blurred_fill">Blurred source fill</option><option value="solid">Solid background</option></select></label>
+                                <label id="bp-header-height-wrap">Header height (px)<input id="bp-header-height" type="number" min="0" max="700" step="1"></label>
+                            </fieldset>
+                            <fieldset class="editor-group">
+                                <legend>Voice & source audio</legend>
+                                <label>Narration<select id="bp-narration-mode"><option value="persona_voice">Channel persona voice</option><option value="explanatory_voice">Explanatory voice</option><option value="text_only">Text only</option><option value="source_only">Source audio only</option></select></label>
+                                <p id="bp-voice-limit-note" class="editor-note" hidden>Voiced multi-beat recipes support framing, captions, and audio tuning. Header layout and timing limits stay locked until that renderer supports them.</p>
+                                <label class="check-row"><input id="bp-narration-required" type="checkbox"> Narration is required</label>
+                                <label class="check-row"><input id="bp-captions" type="checkbox"> Show narration captions</label>
+                                <label>Source audio<select id="bp-audio-policy"><option value="retain">Keep source audio</option><option value="duck">Lower it under narration</option><option value="mute">Mute source audio</option></select></label>
+                                <label>Normal source volume <output id="bp-source-volume-value"></output><input id="bp-source-volume" type="range" min="0" max="1" step="0.01"></label>
+                                <label>Source volume during narration <output id="bp-duck-volume-value"></output><input id="bp-duck-volume" type="range" min="0" max="1" step="0.01"></label>
+                            </fieldset>
+                            <fieldset class="editor-group" id="bp-header-group">
+                                <legend>Header text</legend>
+                                <label class="check-row"><input id="bp-header-required" type="checkbox"> Header text is required</label>
+                                <label>Maximum characters<input id="bp-header-max" type="number" min="0" max="400" step="1"></label>
+                                <div class="color-grid"><label>Background<input id="bp-header-bg" type="color"></label><label>Text<input id="bp-header-fg" type="color"></label></div>
+                                <label>Font size (px)<input id="bp-header-font-size" type="number" min="24" max="120" step="1"></label>
+                                <label>Font weight<input id="bp-header-font-weight" type="number" min="400" max="1000" step="50"></label>
+                                <label>Side padding (px)<input id="bp-header-padding" type="number" min="0" max="180" step="1"></label>
+                            </fieldset>
+                            <fieldset class="editor-group">
+                                <legend>Pacing & limits</legend>
+                                <p class="editor-note">These limits are enforced by the generic text/source renderer. Voiced multi-beat recipes show their saved values but keep them locked for now.</p>
+                                <label>Minimum source clip (sec)<input id="bp-min-source" type="number" min="0.1" max="30" step="0.1"></label>
+                                <label>Maximum video length (sec)<input id="bp-max-duration" type="number" min="1" max="180" step="1"></label>
+                                <label>Maximum narration share (%)<input id="bp-narration-ratio" type="number" min="0" max="100" step="1"></label>
+                            </fieldset>
+                        </div>
+                        <div class="editor-save-row">
+                            <label class="check-row"><input id="bp-set-default" type="checkbox"> Use this recipe by default for new videos</label>
+                            <div><button id="cancel-blueprint-editor" class="button secondary" type="button">Cancel</button><button class="button primary" type="submit">Save new version</button></div>
+                        </div>
+                    </form>
+                </section>
                 <section class="panel card brand-lab" id="brand-acceptance">
                     <div class="panel-head"><div><div class="eyebrow">03 / BRAND ACCEPTANCE</div><h2>Staged brand preview lab</h2></div><span class="tag">NON-PUBLISHING</span></div>
                     <p class="section-copy">Stage a candidate without changing the live channel, render it against frozen production media, inspect the verified MP4, then activate explicitly.</p>
