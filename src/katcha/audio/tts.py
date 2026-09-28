@@ -408,9 +408,6 @@ def _elevenlabs_tts(
             "model_id": settings.elevenlabs_model_id,
             "voice_settings": {
                 "stability": 0.42,
-                "similarity_boost": 0.78,
-                "style": 0.0,
-                "use_speaker_boost": True,
                 "speed": 1.03,
             },
         },
@@ -469,6 +466,10 @@ def synthesize_speech(
     text = text.strip()
     if not text:
         raise ValueError("TTS text cannot be empty")
+    if settings.tts_provider_override != "auto":
+        key = LATEST_VOICE_PROFILE_BY_PROVIDER[settings.tts_provider_override]
+        profile = _resolve_profile(get_voice_profile(key), settings)
+        fallback_profile = None
     if settings.resolved_ai_execution_mode() == "fixture":
         return _fixture_tts(text)
 
@@ -479,7 +480,11 @@ def synthesize_speech(
         else None
     )
 
-    estimated_increment = Decimal("0.05")
+    estimated_increment = (
+        (Decimal(len(text)) / Decimal("1000")) * Decimal("0.10")
+        if profile is not None and profile.provider == "elevenlabs"
+        else Decimal("0.05")
+    )
     assert_ai_budget(estimated_increment)
     reservation_id: uuid.UUID | None = None
     if channel_profile_id is not None:
