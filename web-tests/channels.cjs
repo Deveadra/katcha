@@ -344,7 +344,9 @@ const analytics = [
     assert.equal(await page.locator(".brand").getAttribute("href"), "/explorer");
     await page.locator("#token").fill("fixture-token");
     await page.locator("#connect-form button").click();
-    await page.getByText("Fixture Gaming", { exact: true }).first().waitFor();
+    await page.locator("#studio:not([hidden])").waitFor();
+    assert.equal(await page.locator("#channel").inputValue(), "channel-1");
+    assert.match(await page.locator("#channel").innerText(), /Fixture Gaming/);
 
     assert.equal(await page.locator("#token").inputValue(), "");
     assert.equal(await page.evaluate(() => localStorage.length), 0);
