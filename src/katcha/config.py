@@ -16,7 +16,11 @@ class ControlPrincipalSettings(BaseModel):
     @field_validator("token", mode="before")
     @classmethod
     def validate_token(cls, value):
-        raw = value.get_secret_value() if isinstance(value, SecretStr) else str(value or "")
+        raw = (
+            value.get_secret_value()
+            if isinstance(value, SecretStr)
+            else str(value or "")
+        )
         if len(raw.strip()) < 16:
             raise ValueError("control principal tokens must contain at least 16 characters")
         return raw.strip()
@@ -24,7 +28,13 @@ class ControlPrincipalSettings(BaseModel):
     @field_validator("scopes")
     @classmethod
     def validate_scopes(cls, values: list[str]) -> list[str]:
-        normalized = list(dict.fromkeys(str(value).strip() for value in values if str(value).strip()))
+        normalized = list(
+            dict.fromkeys(
+                str(value).strip()
+                for value in values
+                if str(value).strip()
+            )
+        )
         if not normalized:
             raise ValueError("control principal scopes cannot be empty")
         return normalized
@@ -32,7 +42,13 @@ class ControlPrincipalSettings(BaseModel):
     @field_validator("channel_profile_ids")
     @classmethod
     def validate_channel_profile_ids(cls, values: list[str]) -> list[str]:
-        normalized = list(dict.fromkeys(str(value).strip() for value in values if str(value).strip()))
+        normalized = list(
+            dict.fromkeys(
+                str(value).strip()
+                for value in values
+                if str(value).strip()
+            )
+        )
         if not normalized:
             raise ValueError("control principal channel_profile_ids cannot be empty")
         if "*" in normalized:
