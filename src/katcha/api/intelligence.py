@@ -226,8 +226,6 @@ class GrowthTargetRequest(BaseModel):
         "qualified_watch_hours_365d",
         "qualified_shorts_views_90d",
         "public_uploads_90d",
-        "monthly_views",
-        "monthly_revenue_usd",
     ]
     target: Decimal = Field(gt=0)
     target_date: date | None = None
