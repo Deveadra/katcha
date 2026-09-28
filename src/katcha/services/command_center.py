@@ -132,8 +132,6 @@ def _profile_keyword_candidates(profile: ChannelProfile) -> list[str]:
                     "niches",
                     "content_pillars",
                     "content_lanes",
-                    "channel_title",
-                    "name",
                 }:
                     walk(child)
 
