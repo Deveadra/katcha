@@ -155,6 +155,26 @@ class TelegramBotClient:
         )
         return dict(self._result(response, "editMessageCaption") or {})
 
+    def edit_text(
+        self,
+        chat_id: int,
+        message_id: int,
+        *,
+        text: str,
+        reply_markup: dict[str, Any],
+    ) -> dict[str, Any]:
+        response = httpx.post(
+            f"{self.base_url}/editMessageText",
+            json={
+                "chat_id": chat_id,
+                "message_id": message_id,
+                "text": text,
+                "reply_markup": reply_markup,
+            },
+            timeout=30,
+        )
+        return dict(self._result(response, "editMessageText") or {})
+
     def clear_buttons(self, chat_id: int, message_id: int) -> None:
         response = httpx.post(
             f"{self.base_url}/editMessageReplyMarkup",
