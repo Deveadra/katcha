@@ -331,7 +331,7 @@ def test_workspace_probe_runs_while_startup_lock_is_held(tmp_path):
     app.lock.release()
 
 
-def test_recovery_recreates_missing_worker_even_when_remaining_services_run(tmp_path):
+def test_recovery_repairs_missing_worker_without_global_start(tmp_path):
     app = instance(tmp_path)
     app.desired_running = True
     app.phase = "degraded"
@@ -340,9 +340,14 @@ def test_recovery_recreates_missing_worker_even_when_remaining_services_run(tmp_
         {"Service": service, "State": "running"}
         for service in runtime.REQUIRED_SERVICES - {"discovery-worker"}
     ]
-    with patch.object(app, "probe_workspace"), patch.object(app, "operate") as operate:
+    with (
+        patch.object(app, "probe_workspace"),
+        patch.object(app, "operate") as operate,
+        patch.object(app, "repair_service") as repair,
+    ):
         app.monitor_once()
-        operate.assert_called_once_with("start")
+        operate.assert_not_called()
+        repair.assert_called_once_with("discovery-worker", "recreate")
 
 
 def test_unhealthy_running_containers_are_not_restart_looped(tmp_path):
@@ -354,9 +359,14 @@ def test_unhealthy_running_containers_are_not_restart_looped(tmp_path):
         {"Service": service, "State": "running", "Health": "unhealthy"}
         for service in runtime.REQUIRED_SERVICES
     ]
-    with patch.object(app, "probe_workspace"), patch.object(app, "operate") as operate:
+    with (
+        patch.object(app, "probe_workspace"),
+        patch.object(app, "operate") as operate,
+        patch.object(app, "repair_service") as repair,
+    ):
         app.monitor_once()
         operate.assert_not_called()
+        repair.assert_not_called()
 
 
 
@@ -475,8 +485,10 @@ def test_shared_core_rebuild_builds_api_image_for_worker_only(tmp_path):
     app = instance(tmp_path)
     calls = []
 
-    with patch.object(app, "run", side_effect=lambda args, **_kwargs: calls.append(args) or ""), \
-         patch.object(app, "check"):
+    with (
+        patch.object(app, "run", side_effect=lambda args, **_kwargs: calls.append(args) or ""),
+        patch.object(app, "check"),
+    ):
         assert app.repair_service("discovery-worker", "rebuild")
         for _ in range(100):
             if not app.lock.locked():
