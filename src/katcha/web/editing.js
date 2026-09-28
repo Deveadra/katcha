@@ -784,3 +784,13 @@ document.querySelector(".stats").addEventListener("click", (event) => {
 $("blueprints").addEventListener("click", action);
 $("episodes").addEventListener("click", action);
 $("brand-lab").addEventListener("click", action);
+$("close-invideo-dialog").addEventListener("click", () => $("invideo-dialog").close());
+$("download-invideo-package").addEventListener("click", () => {
+    void downloadInVideoPackage().catch((error) => message(error.message, true));
+});
+$("upload-invideo-output").addEventListener("click", () => {
+    void uploadInVideoOutput().catch((error) => message(error.message, true));
+});
+$("adopt-invideo-output").addEventListener("click", () => {
+    void adoptInVideoOutput().catch((error) => message(error.message, true));
+});
