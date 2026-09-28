@@ -1,3 +1,4 @@
+import json
 import uuid
 
 import pytest
@@ -14,6 +15,7 @@ from katcha.api.control_auth import (
     control_allowed_channel_ids,
     control_principal_name,
     require_control_channel,
+    require_control_token,
 )
 from katcha.config import Settings
 
@@ -272,3 +274,73 @@ def test_command_action_lookup_cannot_escape_principal_allowlist(
 
     assert exc.value.status_code == 403
     assert "not authorized for this channel" in str(exc.value.detail)
+
+
+
+def test_control_principals_parse_from_environment_json(monkeypatch) -> None:
+    raw_token = "environment-fixture-token-0001"
+    monkeypatch.setenv(
+        "KATCHA_CONTROL_PRINCIPALS",
+        json.dumps(
+            [
+                {
+                    "name": "operator-ui",
+                    "token": raw_token,
+                    "scopes": ["*"],
+                    "channel_profile_ids": ["*"],
+                }
+            ]
+        ),
+    )
+
+    settings = Settings(_env_file=None)
+
+    assert settings.control_principals[0].name == "operator-ui"
+    assert settings.control_principals[0].token.get_secret_value() == raw_token
+    assert raw_token not in repr(settings.control_principals[0])
+
+
+def test_global_control_dependency_enforces_channel_allowlist(
+    monkeypatch,
+) -> None:
+    allowed = uuid.uuid4()
+    blocked = uuid.uuid4()
+    settings = _settings(
+        channel_id=allowed,
+        scopes=["channels:read"],
+    )
+    monkeypatch.setattr(
+        "katcha.api.control_auth.get_settings",
+        lambda: settings,
+    )
+    request = _request(
+        f"/v1/channels/{blocked}",
+        path_params={"channel_profile_id": str(blocked)},
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        require_control_token(
+            request,
+            _credentials("aerith-fixture-token-000001"),
+        )
+
+    assert exc.value.status_code == 403
+
+
+def test_global_control_dependency_denies_unmapped_route(
+    monkeypatch,
+) -> None:
+    settings = _settings(scopes=["events:read"])
+    monkeypatch.setattr(
+        "katcha.api.control_auth.get_settings",
+        lambda: settings,
+    )
+    request = _request("/v1/clips")
+
+    with pytest.raises(HTTPException) as exc:
+        require_control_token(
+            request,
+            _credentials("aerith-fixture-token-000001"),
+        )
+
+    assert exc.value.status_code == 403
