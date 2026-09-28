@@ -356,8 +356,9 @@ async function renderEditedGeneration() {
     })});
     state.episodeId=result.child_episode_id; query.set("episode",state.episodeId); query.set("channel",state.channel);
     history.replaceState(null,"",`/studio?${query.toString()}`);
-    state.edits.clear(); message(`Edited generation created (${String(state.episodeId).slice(0,8)}). Rendering has started.`);
+    state.edits.clear();
     await loadChannel(state.episodeId);
+    message(`Edited generation created (${String(state.episodeId).slice(0,8)}). Rendering has started.`);
 }
 async function loadEpisode() {
     revokeMedia(); state.edits.clear(); state.selectedPosition=null; renderDirtyState();
