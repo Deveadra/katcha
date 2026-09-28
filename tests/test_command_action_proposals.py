@@ -63,6 +63,7 @@ def test_action_proposal_claim_is_idempotent() -> None:
                 connection_metadata={},
             )
         )
+        session.flush()
         session.add(
             ChannelProfile(
                 id=profile_id,
