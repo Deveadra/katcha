@@ -18,7 +18,6 @@ from katcha.ai.router import (
 from katcha.config import Settings, get_settings
 from katcha.domain import AITask
 
-
 CommandIntent = Literal[
     "best_clips",
     "failures",
