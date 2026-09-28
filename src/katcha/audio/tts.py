@@ -203,9 +203,12 @@ def choose_voice_profile(
         return requested
     if requested.provider == "gemini" and settings.gemini_api_key:
         return requested
-    if requested.provider == "elevenlabs":
-        if settings.elevenlabs_api_key and settings.elevenlabs_voice_id:
-            return _resolve_profile(requested, settings)
+    if (
+        requested.provider == "elevenlabs"
+        and settings.elevenlabs_api_key
+        and settings.elevenlabs_voice_id
+    ):
+        return _resolve_profile(requested, settings)
     if settings.openai_api_key:
         return VOICE_PROFILES["openai_youth_v2"]
     if settings.gemini_api_key:
