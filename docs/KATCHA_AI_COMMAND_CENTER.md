@@ -169,6 +169,22 @@ The API returns a typed `resolved_context` record with the resolved clip IDs, so
 Conversational acknowledgements such as `yes, do it`, `go ahead`, or `confirm` never execute a control-plane action. When the immediately preceding grounded answer has a pending proposal, Katcha re-presents that same frozen server-issued proposal for explicit review and confirmation instead. This remains true even when the UI currently has clip context selected.
 
 
+## Action and workflow activity
+
+Confirmed actions no longer stop at a workflow ID in the chat UI.
+
+`GET /v1/ai/actions/{proposal_id}/activity` resolves the authoritative result resource created by the proposal and reports its current Katcha state. For production and ranked-episode actions this includes the resource ID, workflow ID, generation, status, stage, error, update time, and a compact event timeline. Proposal lifecycle events and resource lifecycle events are correlated through the proposal result IDs.
+
+The Command Center checks activity immediately after an action is accepted and polls while the resource is still moving. It stops automatically when the resource reaches a human-review or settled state such as `review`, `approved`, `rejected`, or `failed`. Reopened executed actions also expose an explicit workflow-status check.
+
+This distinguishes two separate facts in the UI:
+
+- **Action executed** means Katcha accepted the confirmed command and started or registered the authoritative workflow/resource.
+- **Workflow/resource state** shows what happened after that handoff, including whether the media is still processing, is awaiting review, or failed.
+
+The distinction prevents an accepted command from being mistaken for a completed render or publication.
+
+
 ## Constrained command planning
 
 Katcha AI no longer has to treat every unfamiliar phrasing as a generic channel-status
