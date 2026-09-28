@@ -211,11 +211,12 @@ def keyboard(callback_token: str) -> dict[str, Any]:
 
 def ensure_review_sessions(
     *,
+    chat_id: int | None,
     settings: Settings | None = None,
     limit: int = 20,
 ) -> list[TelegramReviewSession]:
     settings = settings or get_settings()
-    if not settings.telegram_enabled or settings.telegram_chat_id is None:
+    if not settings.telegram_enabled or chat_id is None:
         return []
     created: list[TelegramReviewSession] = []
     with session_scope() as session:
@@ -235,7 +236,7 @@ def ensure_review_sessions(
                 select(TelegramReviewSession).where(
                     TelegramReviewSession.source_kind == "short_episode",
                     TelegramReviewSession.source_id == episode.id,
-                    TelegramReviewSession.chat_id == settings.telegram_chat_id,
+                    TelegramReviewSession.chat_id == chat_id,
                 )
             )
             if existing is not None:
@@ -245,7 +246,7 @@ def ensure_review_sessions(
                 source_id=episode.id,
                 channel_profile_id=episode.channel_profile_id,
                 callback_token=_callback_token(),
-                chat_id=settings.telegram_chat_id,
+                chat_id=chat_id,
                 state="queued",
                 session_metadata={"render_asset_id": str(asset.id)},
             )
