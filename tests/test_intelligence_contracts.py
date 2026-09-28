@@ -6,6 +6,7 @@ from katcha.api.main import app
 from katcha.domain import AITask
 from katcha.intelligence_models import (
     AIBudgetReservation,
+    ChannelIntelligenceRun,
     ChannelStrategyVersion,
     RankingSnapshot,
 )
@@ -79,8 +80,25 @@ def test_intelligence_control_routes_are_mounted() -> None:
 
     assert "/v1/channels" in paths
     assert "/v1/channels/{channel_profile_id}/intelligence/refresh" in paths
+    assert "/v1/channels/{channel_profile_id}/intelligence/runs" in paths
+    assert "/v1/channels/{channel_profile_id}/intelligence/runs/{run_key}" in paths
     assert "/v1/channels/{channel_profile_id}/growth" in paths
     assert "/v1/channels/{channel_profile_id}/growth-goals" in paths
     assert "/v1/channels/{channel_profile_id}/clips/{clip_id}/score" in paths
     assert "/v1/control/events" in paths
     assert "/v1/control/events/{event_id}/ack" in paths
+
+
+def test_intelligence_runs_are_unique_per_channel_and_run_key() -> None:
+    unique_columns = {
+        tuple(column.name for column in constraint.columns)
+        for constraint in ChannelIntelligenceRun.__table__.constraints
+        if isinstance(constraint, UniqueConstraint)
+    }
+
+    assert ("channel_profile_id", "run_key") in unique_columns
+    columns = ChannelIntelligenceRun.__table__.c
+    assert columns.channel_profile_id.nullable is False
+    assert columns.workflow_id.nullable is False
+    assert columns.status.nullable is False
+    assert columns.result_summary.nullable is False
