@@ -4,11 +4,15 @@
     const nav = document.querySelector('nav');
     if (nav) {
         const link = document.createElement('a');
-        link.href = '/'; link.textContent = 'Launch console & diagnostics'; nav.append(link);
+        link.href = '/launcher'; link.textContent = 'Diagnostics & settings'; nav.append(link);
     }
     const form = document.getElementById('connect-form') || document.getElementById('connect');
     const connection = document.getElementById('connection');
     const status = document.getElementById('message');
+    if (form) {
+        form.hidden = true;
+        form.style.display = 'none';
+    }
     for (;;) {
         try {
             const response = await fetch('/runtime/status', {cache: 'no-store'});
@@ -16,11 +20,7 @@
             const runtime = await response.json();
             if (!runtime.session) return;
             if (runtime.workspace_ready) {
-                if (form) {
-                    form.hidden = true;
-                    form.style.display = 'none';
-                    form.requestSubmit();
-                }
+                if (form) form.requestSubmit();
                 return;
             }
             if (connection) {
@@ -30,7 +30,7 @@
             if (status) {
                 status.textContent = runtime.desired_running
                     ? 'Katcha is open. Core services are warming in the background…'
-                    : 'Katcha is open. Start services from the launch console when ready.';
+                    : 'Katcha is open in safe mode. Open Diagnostics & settings to start services.';
             }
         } catch {
             if (connection) connection.textContent = 'RECONNECTING';
