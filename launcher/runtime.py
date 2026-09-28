@@ -379,6 +379,10 @@ class Runtime:
         return True
 
     def _operate(self, action):
+        final_phase = None
+        final_stage = None
+        final_message = None
+        final_seconds = None
         try:
             self.phase = "starting" if action == "start" else "stopping"
             self.stage = "preflight" if action == "start" else "stopping services"
@@ -395,8 +399,8 @@ class Runtime:
             self.run(["docker", "info", "--format", "{{.ServerVersion}}"])
             if action == "stop":
                 self.run(self.command() + ["stop", "--timeout", "30"], timeout=120)
-                self.phase = "stopped"
-                self.stage = "stopped"
+                final_phase = "stopped"
+                final_stage = "stopped"
                 return
             self.stage = "validating configuration"
             self.run(self.command() + ["config", "--quiet"])
@@ -462,19 +466,18 @@ class Runtime:
                 timeout=420,
             )
             self.stage = "checking full readiness"
-            self.check()
-            if self.phase != "ready":
+            if self.check(publish=False) != "ready":
                 raise RuntimeError(
                     "Workspace is available but background services need attention."
                 )
-            self.stage = "ready"
+            # Do not publish READY until the lifecycle lock has been released. Otherwise
+            # a user can see READY and immediately receive 409 from Start/Stop.
+            self.stage = "finalizing startup"
             self.retry_delay = 10
-            self.event(
-                "info",
-                "launcher",
-                "Katcha automation is fully ready.",
-                startup_seconds=round(time.monotonic() - self.operation_started_at, 2),
-            )
+            final_phase = "ready"
+            final_stage = "ready"
+            final_message = "Katcha automation is fully ready."
+            final_seconds = round(time.monotonic() - self.operation_started_at, 2)
         except Exception:
             self.probe_workspace()
             self.phase = "degraded" if self.workspace_ready else "failed"
@@ -494,6 +497,16 @@ class Runtime:
             self.retry_delay = min(300, self.retry_delay * 2)
             self.operation_started_at = None
             self.lock.release()
+            if final_phase is not None:
+                self.phase = final_phase
+                self.stage = final_stage
+                if final_message:
+                    self.event(
+                        "info",
+                        "launcher",
+                        final_message,
+                        startup_seconds=final_seconds,
+                    )
 
     def start_logs(self):
         if self.follow and self.follow.poll() is None:
@@ -588,7 +601,7 @@ class Runtime:
         finally:
             self.lock.release()
 
-    def check(self):
+    def check(self, publish=True):
         output = self.run(self.command() + ["ps", "--all", "--format", "json"], capture=True)
         rows = (
             json.loads(output)
@@ -611,11 +624,16 @@ class Runtime:
         ready = self.probe_workspace()
         present = {row["Service"] for row in self.services}
         phase = "ready" if ready and present >= REQUIRED_SERVICES and not bad else "degraded"
-        if phase != self.phase:
-            self.event(
-                "info" if phase == "ready" else "error", "health", phase, services=self.services
-            )
-        self.phase = phase
+        if publish:
+            if phase != self.phase:
+                self.event(
+                    "info" if phase == "ready" else "error",
+                    "health",
+                    phase,
+                    services=self.services,
+                )
+            self.phase = phase
+        return phase
 
     def probe_workspace(self):
         connection = http.client.HTTPConnection("127.0.0.1", 8000, timeout=2)
