@@ -41,6 +41,11 @@ def _source_run_metadata(
         "ingestion_source_key": source.source_key,
         "source_platform": source.platform,
         "source_usage_mode": source.usage_mode,
+        **(
+            {"channel_profile_id": str(source.channel_profile_id)}
+            if source.channel_profile_id is not None
+            else {}
+        ),
         **dict(source.default_candidate_metadata or {}),
     }
     return {
@@ -49,6 +54,11 @@ def _source_run_metadata(
         "ingestion_source_key": source.source_key,
         "source_platform": source.platform,
         "source_usage_mode": source.usage_mode,
+        "channel_profile_id": (
+            str(source.channel_profile_id)
+            if source.channel_profile_id is not None
+            else None
+        ),
         "default_candidate_metadata": default_candidate_metadata,
     }
 
