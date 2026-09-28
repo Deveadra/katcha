@@ -7,14 +7,14 @@ from urllib.parse import urlsplit, urlunsplit
 
 import httpx
 
-from katcha.ai.pricing import estimate_token_cost
-from katcha.ai.router import ModelTarget, assert_ai_budget, record_usage
 from katcha.acquisition.adapters import (
+    DiscoveredCandidate,
     DiscoveryAdapterCapability,
     DiscoveryBatch,
-    DiscoveredCandidate,
     DiscoveryProviderError,
 )
+from katcha.ai.pricing import estimate_token_cost
+from katcha.ai.router import ModelTarget, assert_ai_budget, record_usage
 from katcha.config import get_settings
 from katcha.domain import AITask
 
@@ -309,7 +309,8 @@ def _search_prompt(
         f"Include terms: {include_terms}\n"
         f"Exclude terms: {exclude_terms}\n"
         f"Requested platforms: {platforms or ['open web']}\n"
-        f"Freshness target: prioritize material from the last {freshness_hours} hours when possible.\n"
+        "Freshness target: prioritize material from the last "
+        f"{freshness_hours} hours when possible.\n"
         f"Domain hints: {domain_hints or ['none; search the wider public web']}\n"
         f"Scout cycle: {cycle + 1}\n"
         f"Recently discovered sources to avoid simply repeating: {recent_sources[-30:]}\n"
