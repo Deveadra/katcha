@@ -25,6 +25,16 @@ async def _run_refresh(channel_profile_id: str, run_key: str) -> dict[str, objec
         )
     except Exception:
         reach_sync = {"status": "unavailable", "reason": "reach_sync_scheduling_failed"}
+    try:
+        growth = await workflow.execute_activity(
+            "refresh_channel_growth_activity",
+            channel_profile_id,
+            start_to_close_timeout=timedelta(minutes=3),
+            retry_policy=RetryPolicy(maximum_attempts=1),
+        )
+    except Exception:
+        growth = {"status": "unavailable", "reason": "growth_refresh_failed"}
+
     observations = await workflow.execute_activity(
         "derive_channel_observations_activity",
         channel_profile_id,
@@ -105,6 +115,7 @@ async def _run_refresh(channel_profile_id: str, run_key: str) -> dict[str, objec
         "channel_profile_id": channel_profile_id,
         "run_key": run_key,
         "reach_sync": reach_sync,
+        "growth": growth,
         "observations": observations,
         "ranking": ranking,
         "economics": economics,
