@@ -359,7 +359,7 @@ const clips = [
         await page.locator("#token").fill("clip-token");
         await page.locator("#connect-form button").click();
 
-        await page.getByText("Analyzed gaming clip").waitFor();
+        await page.locator(`[data-clip-id="${clipA}"]`).waitFor();
         assert.equal(await page.locator("#channel").inputValue(), channelA);
         assert.match(await page.locator("#channel-badge").innerText(), /RANKSNAXX/);
         assert.equal(await page.locator("#count-all").innerText(), "2");
@@ -375,7 +375,7 @@ const clips = [
         await page.locator("#search").fill("");
         await page.waitForTimeout(350);
 
-        await page.getByText("Analyzed gaming clip").click();
+        await page.locator(`[data-clip-id="${clipA}"]`).click();
         await page.getByText(/surprising gameplay moment/).waitFor();
         assert.match(await page.locator("#clip-detail").innerText(), /stored transcript/);
 
