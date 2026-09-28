@@ -148,30 +148,45 @@ let browser;
             };
         } else if (url.pathname === "/v1/ai/command") {
             commandCount += 1;
+            const contextSourceTurnId =
+                storedTurns.filter((turn) => turn.role === "assistant").at(-1)?.turn_id || null;
+            const turnSuffix = String(commandCount).padStart(2, "0");
             const userTurnId =
-                commandCount === 1
-                    ? "88888888-8888-4888-8888-888888888881"
-                    : "88888888-8888-4888-8888-888888888883";
+                "88888888-8888-4888-8888-8888888888" + turnSuffix + "1";
             const assistantTurnId =
-                commandCount === 1
-                    ? "88888888-8888-4888-8888-888888888882"
-                    : "88888888-8888-4888-8888-888888888884";
-            const answer = body.selected_clip_ids.length
-                ? "This clip scored highly because its stored hook and rewatch signals were strong."
-                : "I found one strong Xbox clip from today. Its channel score is 91/100.";
-            const intent = body.selected_clip_ids.length
-                ? "clip_explanation"
-                : "best_clips";
-            const evidence = [
-                {
-                    kind: "clip",
-                    id: "44444444-4444-4444-8444-444444444444",
-                    title: "Xbox fixture clip",
-                    candidate_score: 88.0,
-                    channel_score: 0.91,
-                    why: ["hook score", "rewatch potential"],
-                },
-            ];
+                "88888888-8888-4888-8888-8888888888" + turnSuffix + "2";
+            const inheritedFollowUp = commandCount === 3;
+            const answer = inheritedFollowUp
+                ? "I prepared a production proposal for the clip resolved from the prior grounded answer."
+                : body.selected_clip_ids.length
+                  ? "This clip scored highly because its stored hook and rewatch signals were strong."
+                  : "I found one strong Xbox clip from today. Its channel score is 91/100.";
+            const intent = inheritedFollowUp
+                ? "create_content"
+                : body.selected_clip_ids.length
+                  ? "clip_explanation"
+                  : "best_clips";
+            const evidence = inheritedFollowUp
+                ? [
+                      {
+                          kind: "selection",
+                          id: "current",
+                          selected_clip_ids: [
+                              "44444444-4444-4444-8444-444444444444",
+                          ],
+                          conversation_source_turn_id: contextSourceTurnId,
+                      },
+                  ]
+                : [
+                      {
+                          kind: "clip",
+                          id: "44444444-4444-4444-8444-444444444444",
+                          title: "Xbox fixture clip",
+                          candidate_score: 88.0,
+                          channel_score: 0.91,
+                          why: ["hook score", "rewatch potential"],
+                      },
+                  ];
             threadExists = true;
             storedTurns.push(
                 {
@@ -236,6 +251,17 @@ let browser;
                         requires_confirmation: true,
                     },
                 ],
+                resolved_context: {
+                    selected_clip_ids: inheritedFollowUp
+                        ? ["44444444-4444-4444-8444-444444444444"]
+                        : body.selected_clip_ids,
+                    inherited_from_thread: inheritedFollowUp,
+                    source_turn_id: inheritedFollowUp ? contextSourceTurnId : null,
+                    resolution: inheritedFollowUp
+                        ? "Resolved the singular reference to the first applicable clip from the previous grounded answer."
+                        : null,
+                    action_source_turn_id: null,
+                },
                 grounded: true,
                 narrator: "fixture/grounded-command-v1",
             };
@@ -341,6 +367,17 @@ let browser;
         ),
     );
 
+    await page.locator("#prompt").fill("Turn that into a short.");
+    await page.locator("#command-form").evaluate((form) => form.requestSubmit());
+    await page.getByText(/resolved from the prior grounded answer/i).waitFor();
+    const followUpRequests = requests.filter(
+        (request) => request.path === "/v1/ai/command",
+    );
+    assert.equal(followUpRequests.length, 3);
+    assert.deepEqual(followUpRequests[2].body.selected_clip_ids, []);
+    assert.equal(followUpRequests[2].body.thread_id, threadId);
+    assert.match(await page.locator("#selection-bar").innerText(), /1 selected clip/);
+
     assert(requests.every((request) => request.auth === "Bearer fixture-token"));
 
     fs.mkdirSync(path.join(__dirname, "test-results"), { recursive: true });
@@ -361,7 +398,7 @@ let browser;
 
     assert.deepEqual(errors, []);
     console.log(
-        "PASS: Katcha AI grounded conversation, durable history reopen, evidence, context selection, two-step confirmed action, auth, and mobile width",
+        "PASS: Katcha AI grounded conversation, durable history reopen, server-resolved follow-up context, evidence, two-step confirmed action, auth, and mobile width",
     );
 })()
     .catch((error) => {

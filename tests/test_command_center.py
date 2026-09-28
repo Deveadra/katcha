@@ -16,6 +16,7 @@ from katcha.services.command_center import (
     _search_terms,
     classify_intent,
     infer_edit_blueprint_key,
+    resolve_command_follow_up,
     resolve_time_window,
 )
 
@@ -155,3 +156,142 @@ def test_command_history_models_preserve_order_and_channel_scope() -> None:
     assert turn_columns.channel_profile_id.nullable is False
     assert turn_columns.sequence_number.nullable is False
     assert turn_columns.content.nullable is False
+
+
+
+def _conversation_turns_with_clips(
+    clip_ids: list[uuid.UUID],
+) -> tuple[list[CommandTurn], uuid.UUID]:
+    request_id = uuid.uuid4()
+    thread_id = uuid.uuid4()
+    user = CommandTurn(
+        id=uuid.uuid4(),
+        thread_id=thread_id,
+        channel_profile_id=uuid.uuid4(),
+        sequence_number=1,
+        role="user",
+        request_id=request_id,
+        content="Show me the best Xbox clips found today.",
+        evidence=[],
+        turn_context={"selected_clip_ids": []},
+    )
+    assistant_id = uuid.uuid4()
+    assistant = CommandTurn(
+        id=assistant_id,
+        thread_id=thread_id,
+        channel_profile_id=user.channel_profile_id,
+        sequence_number=2,
+        role="assistant",
+        request_id=request_id,
+        intent="best_clips",
+        narrator="fixture/grounded-command-v1",
+        content="Here are the best Xbox clips.",
+        evidence=[
+            {
+                "kind": "clip",
+                "id": str(clip_id),
+                "rank": index + 1,
+                "title": f"Clip {index + 1}",
+            }
+            for index, clip_id in enumerate(clip_ids)
+        ],
+        turn_context={},
+    )
+    return [user, assistant], assistant_id
+
+
+def test_conversation_follow_up_resolves_clip_references_deterministically() -> None:
+    clips = [uuid.uuid4() for _ in range(5)]
+    turns, assistant_id = _conversation_turns_with_clips(clips)
+
+    why = resolve_command_follow_up("Why?", [], turns)
+    assert why.selected_clip_ids == (clips[0],)
+    assert why.inherited_from_thread is True
+    assert why.source_turn_id == assistant_id
+
+    second = resolve_command_follow_up(
+        "Turn the second one into a short.",
+        [],
+        turns,
+    )
+    assert second.selected_clip_ids == (clips[1],)
+
+    plural = resolve_command_follow_up(
+        "Make those into an episode.",
+        [],
+        turns,
+    )
+    assert plural.selected_clip_ids == tuple(clips)
+
+
+def test_conversation_follow_up_inherits_topic_for_time_shift() -> None:
+    clips = [uuid.uuid4()]
+    turns, assistant_id = _conversation_turns_with_clips(clips)
+
+    resolution = resolve_command_follow_up(
+        "What about yesterday?",
+        [],
+        turns,
+    )
+
+    assert resolution.intent_hint == "best_clips"
+    assert resolution.selected_clip_ids == ()
+    assert resolution.inherited_from_thread is True
+    assert resolution.source_turn_id == assistant_id
+    assert "xbox" in resolution.effective_prompt.casefold()
+    assert "yesterday" in resolution.effective_prompt.casefold()
+
+
+def test_conversation_follow_up_never_treats_chat_confirmation_as_execution() -> None:
+    turns, assistant_id = _conversation_turns_with_clips([uuid.uuid4()])
+
+    resolution = resolve_command_follow_up(
+        "Yes, do it.",
+        [],
+        turns,
+        has_pending_proposal=True,
+    )
+
+    assert resolution.intent_hint == "confirm_action"
+    assert resolution.action_source_turn_id == assistant_id
+    assert "never confirms" in str(resolution.resolution).casefold()
+
+
+def test_explicit_clip_selection_wins_over_conversation_reference() -> None:
+    prior = [uuid.uuid4(), uuid.uuid4()]
+    turns, _ = _conversation_turns_with_clips(prior)
+    explicit = uuid.uuid4()
+
+    resolution = resolve_command_follow_up(
+        "Why?",
+        [explicit],
+        turns,
+        has_pending_proposal=True,
+    )
+
+    assert resolution.selected_clip_ids == (explicit,)
+    assert resolution.inherited_from_thread is False
+    assert resolution.intent_hint is None
+
+
+def test_typed_confirmation_stays_gated_with_explicit_clip_context() -> None:
+    prior = [uuid.uuid4()]
+    turns, assistant_id = _conversation_turns_with_clips(prior)
+    explicit = uuid.uuid4()
+
+    resolution = resolve_command_follow_up(
+        "Yes, do it.",
+        [explicit],
+        turns,
+        has_pending_proposal=True,
+    )
+
+    assert resolution.intent_hint == "confirm_action"
+    assert resolution.action_source_turn_id == assistant_id
+    assert resolution.selected_clip_ids == (explicit,)
+
+
+def test_turn_into_short_is_create_content_intent() -> None:
+    selected = [uuid.uuid4()]
+
+    assert classify_intent("Turn that into a short.", selected) == "create_content"

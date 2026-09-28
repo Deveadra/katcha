@@ -150,3 +150,20 @@ Every server-issued action proposal can reference both the conversation thread a
 Successful execution emits both `command_center.action_executed` and `command_center.workflow_started` when an underlying workflow ID exists. The result contains the authoritative production/episode/workflow identifiers that Aerith can use to correlate later resource lifecycle events.
 
 Render lifecycle events now include `channel_profile_id`, and production creation/regeneration events expose their workflow IDs. This keeps render failures and completions visible to channel-scoped consumers of `/v1/control/events`.
+
+
+## Grounded conversational follow-ups
+
+Durable threads now participate in command resolution rather than acting as transcript storage only.
+
+Katcha can deterministically resolve common references against the latest grounded turn:
+
+- `Why?` after a ranked clip answer resolves to the first applicable clip.
+- `Turn the second one into a short` resolves the ordinal against the prior clip evidence.
+- `Make those into an episode` resolves the ordered prior clip set without re-ranking it.
+- `What about yesterday?` can inherit the prior best-clips question type and topic terms while applying the new time window.
+- Explicit clip selections always remain authoritative over inferred conversational references.
+
+The API returns a typed `resolved_context` record with the resolved clip IDs, source turn and resolution reason. The web UI reflects inherited selections visibly before any proposal can be confirmed.
+
+Conversational acknowledgements such as `yes, do it`, `go ahead`, or `confirm` never execute a control-plane action. When the immediately preceding grounded answer has a pending proposal, Katcha re-presents that same frozen server-issued proposal for explicit review and confirmation instead. This remains true even when the UI currently has clip context selected.
