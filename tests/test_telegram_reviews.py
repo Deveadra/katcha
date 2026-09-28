@@ -6,16 +6,16 @@ from types import SimpleNamespace
 import pytest
 from sqlalchemy import UniqueConstraint
 
+from katcha import telegram_worker
+from katcha.api.main import app
 from katcha.config import Settings
 from katcha.domain import ReviewDecision
-from katcha.api.main import app
 from katcha.editorial.episode_generator import build_ranked_episode_prompt
 from katcha.editorial.generator import build_script_prompt
 from katcha.editorial.personas import get_persona
 from katcha.longform.editor import _editor_prompt
 from katcha.services.telegram_reviews import keyboard
 from katcha.telegram_models import TelegramReviewSession
-from katcha import telegram_worker
 
 
 def test_telegram_callback_payloads_fit_bot_api_limit() -> None:
