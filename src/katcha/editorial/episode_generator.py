@@ -76,10 +76,11 @@ def build_ranked_episode_prompt(
     context = [_clip_prompt_context(item) for item in ordered]
     trend_context = plan_snapshot.get("trend_context")
     edit_guidance = dict(plan_snapshot.get("edit_guidance") or {})
+    operator_feedback = list(plan_snapshot.get("operator_feedback") or [])
     countdown_plan = {
         key: value
         for key, value in plan_snapshot.items()
-        if key not in {"trend_context", "edit_guidance"}
+        if key not in {"trend_context", "edit_guidance", "operator_feedback"}
     }
     return (
         f"Prompt version: {prompt_version}\n"
@@ -93,6 +94,10 @@ def build_ranked_episode_prompt(
         f"Premise: {premise}\n"
         f"Frozen countdown plan: {json.dumps(countdown_plan, sort_keys=True)}\n"
         f"Operator editing boundaries: {json.dumps(edit_guidance, sort_keys=True)}\n"
+        f"One-off regeneration feedback: {json.dumps(operator_feedback, sort_keys=True)}\n"
+        "Treat the most recent one-off regeneration feedback as binding instructions for this "
+        "specific generation when it concerns script, pacing, commentary, or narration. Do not "
+        "silently turn one-off feedback into permanent channel policy. "
         "Treat operator editing boundaries as binding channel-level direction unless they "
         "conflict with the frozen clip order, safety constraints, or source-grounding rules. "
         "Apply always_rules, avoid never_rules, and use operator_notes as reusable editorial "
