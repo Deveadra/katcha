@@ -86,6 +86,17 @@ class ClipPurgeAction(ClipLifecycleAction):
     confirmation_text: str
 
 
+class ClipSourceLineage(BaseModel):
+    id: uuid.UUID
+    source_url: str
+    canonical_url: str
+    platform: str
+    status: str
+    title: str | None
+    creator: str | None
+    discovered_at: datetime
+
+
 class ClipLifecycleResponse(BaseModel):
     clip_id: uuid.UUID
     lifecycle_state: str
@@ -309,6 +320,51 @@ def list_clip_library(
             offset=offset,
             limit=limit,
         )
+
+
+@router.get(
+    "/clips/{clip_id}/sources",
+    response_model=list[ClipSourceLineage],
+)
+def get_clip_source_lineage(clip_id: uuid.UUID) -> list[ClipSourceLineage]:
+    with session_scope() as session:
+        if session.get(Clip, clip_id) is None:
+            raise HTTPException(status_code=404, detail="clip not found")
+        rows = list(
+            session.scalars(
+                select(SourceItem)
+                .where(SourceItem.clip_id == clip_id)
+                .order_by(SourceItem.discovered_at.asc())
+            )
+        )
+        return [
+            ClipSourceLineage(
+                id=row.id,
+                source_url=row.source_url,
+                canonical_url=row.canonical_url,
+                platform=row.platform,
+                status=row.status,
+                title=row.title,
+                creator=row.creator,
+                discovered_at=row.discovered_at,
+            )
+            for row in rows
+        ]
+
+
+@router.get(
+    "/clips/{clip_id}/library-state",
+    response_model=ClipLifecycleResponse,
+)
+def get_clip_library_state(clip_id: uuid.UUID) -> ClipLifecycleResponse:
+    with session_scope() as session:
+        clip = session.get(Clip, clip_id)
+        if clip is None:
+            raise HTTPException(status_code=404, detail="clip not found")
+        lifecycle = ensure_lifecycle(session, clip)
+        if not lifecycle.search_document:
+            refresh_search_document(session, clip, lifecycle)
+        return _lifecycle_response(lifecycle)
 
 
 @router.patch(
