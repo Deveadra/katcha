@@ -75,6 +75,7 @@ class CommandAction(BaseModel):
     description: str
     status: str
     expires_at: datetime
+    payload: dict[str, object] = Field(default_factory=dict)
     requires_confirmation: bool = True
 
 
@@ -120,6 +121,7 @@ class ActionProposalStatusResponse(BaseModel):
     executed_at: datetime | None = None
     result: dict[str, object] = Field(default_factory=dict)
     error: str | None = None
+    payload: dict[str, object] = Field(default_factory=dict)
 
 
 def _uuid_from_prompt(prompt: str) -> uuid.UUID | None:
@@ -243,6 +245,7 @@ def _action_response(proposal: CommandActionProposal) -> CommandAction:
         description=proposal.description,
         status=proposal.status,
         expires_at=proposal.expires_at,
+        payload=dict(proposal.payload or {}),
     )
 
 
@@ -265,6 +268,7 @@ def _proposal_status(
         executed_at=proposal.executed_at,
         result=dict(proposal.result or {}),
         error=proposal.error,
+        payload=dict(proposal.payload or {}),
     )
 
 
