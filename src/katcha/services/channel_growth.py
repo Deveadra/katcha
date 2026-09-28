@@ -139,6 +139,7 @@ def _milestone(
         (watch["current"] is not None and watch["progress"] == 1.0)
         or (shorts["current"] is not None and shorts["progress"] == 1.0)
     )
+    requirements_known = all(item["progress"] is not None for item in requirements)
     progress_values = [
         float(item["progress"])
         for item in requirements
@@ -150,13 +151,18 @@ def _milestone(
     )
     if audience_known:
         progress_values.append(audience_progress)
+    milestone_progress = (
+        min(progress_values)
+        if requirements_known and audience_known and progress_values
+        else None
+    )
 
     return {
         "key": key,
         "thresholds": thresholds,
         "requirements": requirements,
         "audience_paths": [watch, shorts],
-        "progress": min(progress_values) if progress_values else None,
+        "progress": milestone_progress,
         "thresholds_met_estimate": bool(
             subscriber_met and upload_met and audience_known and audience_met
         ),
