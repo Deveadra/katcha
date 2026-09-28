@@ -453,12 +453,15 @@ async def _handle_feedback(
                 "feedback": text[:2000],
             },
         )
+        rebuild_stage = (
+            "plan" if row.source_kind == "compilation" else "script"
+        )
         await asyncio.to_thread(
             client.send_message,
             chat_id,
             (
                 "Edit accepted. Katcha created generation "
-                f"{child.generation} and is rebuilding it from the script stage. "
+                f"{child.generation} and is rebuilding it from the {rebuild_stage} stage. "
                 "The revised playable video will return here for review."
             ),
         )
