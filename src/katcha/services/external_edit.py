@@ -11,6 +11,7 @@ from typing import Any, Literal
 
 from sqlalchemy import func, select
 
+from katcha.clip_lifecycle_models import ClipLifecycle
 from katcha.db import session_scope
 from katcha.external_edit_models import ExternalEditHandoff
 from katcha.integrations.storage import ObjectStore
@@ -29,6 +30,19 @@ SourceType = Literal["production", "short_episode"]
 def _safe_name(value: str) -> str:
     cleaned = "".join(char if char.isalnum() or char in "._-" else "-" for char in value)
     return cleaned.strip("-")[:120] or "asset"
+
+
+def _clip_media_key(session: Any, clip: Clip) -> str:
+    lifecycle = session.get(ClipLifecycle, clip.id)
+    if lifecycle is None or lifecycle.lifecycle_state == "hot":
+        return clip.storage_key
+    if lifecycle.lifecycle_state == "archived" and lifecycle.archive_key:
+        return lifecycle.archive_key
+    if lifecycle.lifecycle_state == "purged":
+        raise ValueError(
+            f"clip source media was purged and cannot be handed off: {clip.id}"
+        )
+    return clip.storage_key
 
 
 def _object_entry(
@@ -83,7 +97,7 @@ def _production_manifest(
         )
         object_entries = [
             _object_entry(
-                key=clip.storage_key,
+                key=_clip_media_key(session, clip),
                 role="source_video",
                 filename=f"source-{clip.id}.{(clip.extension or 'mp4').lstrip('.')}",
                 content_type="video/mp4",
@@ -200,7 +214,7 @@ def _short_episode_manifest(
             )
             object_entries.append(
                 _object_entry(
-                    key=clip.storage_key,
+                    key=_clip_media_key(session, clip),
                     role=f"source_video_{item.position:02d}",
                     filename=filename,
                     content_type="video/mp4",
@@ -402,12 +416,28 @@ def build_handoff_zip(handoff_id: uuid.UUID) -> Path:
                     "Katcha → InVideo external edit package",
                     "",
                     "Upload the files in assets/ to InVideo.",
-                    "Use manifest.json as the authoritative script/brand/editing brief.",
+                    "Use script.json, brand.json, editing-recipe.json, and manifest.json",
+                    "as the authoritative production brief.",
                     "Return one final MP4 to Katcha; do not publish from InVideo.",
                     "",
                     *[f"- {line}" for line in manifest.get("instructions", [])],
                 ]
             ),
+        )
+        brand = dict(manifest.get("brand") or {})
+        blueprint = dict(manifest.get("editing_recipe") or {})
+        script = manifest.get("script")
+        handle.writestr(
+            "brand.json",
+            json.dumps(brand.get("snapshot") or {}, indent=2, sort_keys=True),
+        )
+        handle.writestr(
+            "editing-recipe.json",
+            json.dumps(blueprint.get("snapshot") or {}, indent=2, sort_keys=True),
+        )
+        handle.writestr(
+            "script.json",
+            json.dumps(script or {}, indent=2, sort_keys=True),
         )
         for asset in manifest.get("assets", []):
             if not isinstance(asset, dict):
