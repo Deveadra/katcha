@@ -296,11 +296,24 @@ class Runtime:
         temporary.write_text(fingerprint)
         temporary.replace(stamp)
 
+    def built_images(self):
+        minio_version = self.values.get(
+            "KATCHA_MINIO_VERSION", "RELEASE.2025-10-15T17-29-55Z"
+        )
+        return [
+            WORKSPACE_IMAGE,
+            "katcha-ingest:local",
+            "katcha-analysis:local",
+            "katcha-renderer:local",
+            "katcha-production:local",
+            f"katcha-minio:{minio_version}",
+        ]
+
     def prepare_images(self):
         fingerprint = self.build_fingerprint()
         stamp = self.directory / "build-fingerprint"
-        images = self.run(self.command() + ["config", "--images"], capture=True).split()
-        cached = stamp.exists() and stamp.read_text() == fingerprint and bool(images)
+        images = self.built_images()
+        cached = stamp.exists() and stamp.read_text() == fingerprint
         if cached:
             try:
                 self.run(["docker", "image", "inspect", *sorted(set(images))], capture=True)
