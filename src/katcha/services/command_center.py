@@ -8,6 +8,7 @@ from zoneinfo import ZoneInfo
 
 from sqlalchemy import desc, select
 
+from katcha.command_center_models import CommandTurn
 from katcha.db import session_scope
 from katcha.edit_performance_models import EditBlueprintPerformanceSnapshot
 from katcha.editorial.rankings import get_ranking_format
@@ -91,6 +92,276 @@ class TimeWindow:
     label: str
 
 
+@dataclass(frozen=True, slots=True)
+class CommandFollowUpResolution:
+    effective_prompt: str
+    selected_clip_ids: tuple[uuid.UUID, ...]
+    intent_hint: str | None = None
+    inherited_from_thread: bool = False
+    source_turn_id: uuid.UUID | None = None
+    resolution: str | None = None
+    action_source_turn_id: uuid.UUID | None = None
+
+
+_ORDINAL_INDEX = {
+    "first": 0,
+    "1st": 0,
+    "top": 0,
+    "second": 1,
+    "2nd": 1,
+    "third": 2,
+    "3rd": 2,
+    "fourth": 3,
+    "4th": 3,
+    "fifth": 4,
+    "5th": 4,
+    "sixth": 5,
+    "6th": 5,
+    "seventh": 6,
+    "7th": 6,
+    "eighth": 7,
+    "8th": 7,
+    "ninth": 8,
+    "9th": 8,
+    "tenth": 9,
+    "10th": 9,
+}
+
+
+def _turn_clip_ids(turn: CommandTurn) -> tuple[uuid.UUID, ...]:
+    values: list[uuid.UUID] = []
+    for item in list(turn.evidence or []):
+        if item.get("kind") != "clip" or not item.get("id"):
+            continue
+        try:
+            value = uuid.UUID(str(item["id"]))
+        except (TypeError, ValueError):
+            continue
+        if value not in values:
+            values.append(value)
+    return tuple(values)
+
+
+def _context_selected_clip_ids(turn: CommandTurn | None) -> tuple[uuid.UUID, ...]:
+    if turn is None:
+        return ()
+    values: list[uuid.UUID] = []
+    for raw in list((turn.turn_context or {}).get("resolved_selected_clip_ids") or []):
+        try:
+            value = uuid.UUID(str(raw))
+        except (TypeError, ValueError):
+            continue
+        if value not in values:
+            values.append(value)
+    if values:
+        return tuple(values)
+    for raw in list((turn.turn_context or {}).get("selected_clip_ids") or []):
+        try:
+            value = uuid.UUID(str(raw))
+        except (TypeError, ValueError):
+            continue
+        if value not in values:
+            values.append(value)
+    return tuple(values)
+
+
+def _latest_conversation_reference(
+    turns: list[CommandTurn],
+) -> tuple[CommandTurn | None, CommandTurn | None]:
+    assistant = next(
+        (turn for turn in reversed(turns) if turn.role == "assistant"),
+        None,
+    )
+    if assistant is None:
+        return None, None
+    user = next(
+        (
+            turn
+            for turn in reversed(turns)
+            if turn.role == "user"
+            and turn.sequence_number < assistant.sequence_number
+            and (
+                assistant.request_id is None
+                or turn.request_id == assistant.request_id
+            )
+        ),
+        None,
+    )
+    return assistant, user
+
+
+def _ordinal_reference(text: str) -> int | None:
+    for label, index in _ORDINAL_INDEX.items():
+        if re.search(rf"\b{re.escape(label)}\b", text):
+            return index
+    if re.search(r"\blast\s+(?:one|clip|item)\b", text):
+        return -1
+    return None
+
+
+def _looks_like_follow_up(text: str) -> bool:
+    normalized = " ".join(text.strip().casefold().split())
+    return (
+        normalized.startswith(("what about ", "how about ", "and "))
+        or normalized
+        in {
+            "why",
+            "why?",
+            "explain",
+            "explain that",
+            "same",
+            "same thing",
+            "do the same",
+            "what about yesterday?",
+            "what about today?",
+        }
+    )
+
+
+def _looks_like_confirmation(text: str) -> bool:
+    normalized = " ".join(text.strip().casefold().split()).strip(".!?")
+    return normalized in {
+        "yes",
+        "yes do it",
+        "do it",
+        "go ahead",
+        "confirm",
+        "confirmed",
+        "run it",
+        "start it",
+        "execute it",
+        "sounds good",
+        "looks good",
+        "approved",
+        "approve it",
+    }
+
+
+def resolve_command_follow_up(
+    prompt: str,
+    selected_clip_ids: list[uuid.UUID],
+    turns: list[CommandTurn],
+    *,
+    has_pending_proposal: bool = False,
+) -> CommandFollowUpResolution:
+    if selected_clip_ids:
+        return CommandFollowUpResolution(
+            effective_prompt=prompt,
+            selected_clip_ids=tuple(selected_clip_ids),
+        )
+
+    assistant, user = _latest_conversation_reference(turns)
+    if assistant is None:
+        return CommandFollowUpResolution(
+            effective_prompt=prompt,
+            selected_clip_ids=(),
+        )
+
+    text = prompt.casefold()
+    evidence_ids = _turn_clip_ids(assistant)
+    previous_selected = _context_selected_clip_ids(user)
+    reference_ids = previous_selected or evidence_ids
+
+    if has_pending_proposal and _looks_like_confirmation(prompt):
+        return CommandFollowUpResolution(
+            effective_prompt=prompt,
+            selected_clip_ids=reference_ids,
+            intent_hint="confirm_action",
+            inherited_from_thread=True,
+            source_turn_id=assistant.id,
+            resolution=(
+                "Chat text never confirms an executable proposal; the prior "
+                "server-issued proposal must be reviewed and confirmed explicitly."
+            ),
+            action_source_turn_id=assistant.id,
+        )
+
+    ordinal = _ordinal_reference(text)
+    if ordinal is not None and evidence_ids:
+        index = len(evidence_ids) - 1 if ordinal == -1 else ordinal
+        if 0 <= index < len(evidence_ids):
+            return CommandFollowUpResolution(
+                effective_prompt=prompt,
+                selected_clip_ids=(evidence_ids[index],),
+                inherited_from_thread=True,
+                source_turn_id=assistant.id,
+                resolution=(
+                    f"Resolved the referenced item to stored clip rank {index + 1} "
+                    "from the previous grounded answer."
+                ),
+            )
+
+    create_requested = any(
+        word in text for word in ("make", "create", "build", "turn")
+    ) and any(
+        word in text for word in ("episode", "video", "production", "short")
+    )
+    explain_requested = any(
+        word in text for word in ("why", "explain", "score", "scored")
+    )
+    plural_reference = bool(
+        re.search(r"\b(these|those|them|all of them|all those)\b", text)
+    )
+    singular_reference = bool(
+        re.search(r"\b(this|that|it|one|that one|this one)\b", text)
+    )
+
+    if reference_ids and create_requested and plural_reference:
+        return CommandFollowUpResolution(
+            effective_prompt=prompt,
+            selected_clip_ids=reference_ids,
+            inherited_from_thread=True,
+            source_turn_id=assistant.id,
+            resolution=(
+                "Resolved the plural reference to the ordered clip context from "
+                "the previous grounded answer."
+            ),
+        )
+
+    if reference_ids and (
+        (create_requested and singular_reference)
+        or (explain_requested and (singular_reference or len(prompt.split()) <= 4))
+    ):
+        return CommandFollowUpResolution(
+            effective_prompt=prompt,
+            selected_clip_ids=(reference_ids[0],),
+            inherited_from_thread=True,
+            source_turn_id=assistant.id,
+            resolution=(
+                "Resolved the singular reference to the first applicable clip "
+                "from the previous grounded answer."
+            ),
+        )
+
+    prior_intent = assistant.intent
+    if prior_intent in {"best_clips", "performance_advice"} and _looks_like_follow_up(
+        prompt
+    ):
+        effective_prompt = prompt
+        if prior_intent == "best_clips" and user is not None:
+            current_terms = _search_terms(prompt)
+            if not current_terms:
+                inherited_terms = _search_terms(user.content)
+                if inherited_terms:
+                    effective_prompt = " ".join([*inherited_terms, prompt])
+        return CommandFollowUpResolution(
+            effective_prompt=effective_prompt,
+            selected_clip_ids=(),
+            intent_hint=prior_intent,
+            inherited_from_thread=True,
+            source_turn_id=assistant.id,
+            resolution=(
+                f"Inherited the previous {prior_intent.replace('_', ' ')} "
+                "question type for this follow-up."
+            ),
+        )
+
+    return CommandFollowUpResolution(
+        effective_prompt=prompt,
+        selected_clip_ids=(),
+    )
+
+
 def _profile(channel_profile_id: uuid.UUID) -> ChannelProfile:
     with session_scope() as session:
         profile = ensure_active_profile(session, channel_profile_id)
@@ -163,8 +434,8 @@ def classify_intent(prompt: str, selected_clip_ids: list[uuid.UUID]) -> str:
         return "clip_rejection"
     if "performance" in text or ("editing" in text and "change" in text):
         return "performance_advice"
-    if any(word in text for word in ("make", "create", "build")) and any(
-        word in text for word in ("episode", "video", "production")
+    if any(word in text for word in ("make", "create", "build", "turn")) and any(
+        word in text for word in ("episode", "video", "production", "short")
     ):
         return "create_content"
     if "clip" in text and any(
