@@ -187,15 +187,17 @@ function setEditorContract(contract) {
     $("bp-header-font-size").value = copy.header?.font_size_px ?? 54;
     $("bp-header-font-weight").value = copy.header?.font_weight ?? 850;
     $("bp-header-padding").value = copy.header?.horizontal_padding_px ?? 56;
-    $("bp-transition").value = copy.transition || "cut";
     $("bp-min-source").value = copy.quality?.min_source_seconds ?? 1;
     $("bp-max-duration").value = copy.quality?.max_duration_seconds ?? 60;
     $("bp-narration-ratio").value = Math.round((copy.quality?.max_narration_ratio ?? 0.55) * 100);
     syncBlueprintEditor();
 }
 function syncBlueprintEditor() {
-    const headerMode = $("bp-layout").value === "header_panel";
     const voiceMode = ["persona_voice", "explanatory_voice"].includes($("bp-narration-mode").value);
+    if (voiceMode) $("bp-layout").value = "full_frame";
+    $("bp-layout").disabled = voiceMode;
+    const headerMode = $("bp-layout").value === "header_panel";
+    $("bp-voice-limit-note").hidden = !voiceMode;
     $("bp-header-group").hidden = !headerMode;
     $("bp-header-height-wrap").hidden = !headerMode;
     if (headerMode) {
@@ -207,10 +209,13 @@ function syncBlueprintEditor() {
         $("bp-header-required").checked = false;
         $("bp-header-max").value = 0;
     }
-    $("bp-narration-required").disabled = !voiceMode;
+    $("bp-narration-required").disabled = true;
+    $("bp-narration-required").checked = voiceMode;
     $("bp-captions").disabled = !voiceMode;
+    $("bp-min-source").disabled = voiceMode;
+    $("bp-max-duration").disabled = voiceMode;
+    $("bp-narration-ratio").disabled = true;
     if (!voiceMode) {
-        $("bp-narration-required").checked = false;
         $("bp-captions").checked = false;
         $("bp-narration-ratio").value = 0;
     } else if (Number($("bp-narration-ratio").value) === 0) {
@@ -300,7 +305,7 @@ function editorContract() {
             font_weight: Number($("bp-header-font-weight").value),
             horizontal_padding_px: Number($("bp-header-padding").value),
         },
-        transition: $("bp-transition").value,
+        transition: state.editorBaseContract?.transition || (voiceMode ? "punch_cut" : "cut"),
         quality: {
             min_source_seconds: Number($("bp-min-source").value),
             max_duration_seconds: Number($("bp-max-duration").value),
