@@ -31,13 +31,13 @@ from katcha.services.command_actions import (
     get_action_proposal,
 )
 from katcha.services.command_history import (
-    append_command_turn,
     archive_command_thread,
     create_command_thread,
     get_command_thread,
     list_command_threads,
     list_command_turns,
     list_thread_proposals,
+    record_command_exchange,
 )
 from katcha.services.command_center import (
     best_clips,
@@ -477,12 +477,15 @@ def command(http_request: Request, request: CommandRequest) -> CommandResponse:
                     f"command thread is not active: {thread.status}"
                 )
 
-        user_turn = append_command_turn(
+        user_turn, assistant_turn = record_command_exchange(
             thread_id=thread.id,
-            role="user",
-            content=request.prompt,
             request_id=request_id,
-            context={
+            user_content=request.prompt,
+            assistant_content=narrative.value.answer,
+            intent=intent,
+            narrator=f"{narrative.target.provider}/{narrative.target.model}",
+            evidence=evidence,
+            user_context={
                 "selected_clip_ids": [
                     str(value) for value in request.selected_clip_ids
                 ],
@@ -492,16 +495,7 @@ def command(http_request: Request, request: CommandRequest) -> CommandResponse:
                     else None
                 ),
             },
-        )
-        assistant_turn = append_command_turn(
-            thread_id=thread.id,
-            role="assistant",
-            content=narrative.value.answer,
-            request_id=request_id,
-            intent=intent,
-            narrator=f"{narrative.target.provider}/{narrative.target.model}",
-            evidence=evidence,
-            context={
+            assistant_context={
                 "key_points": list(narrative.value.key_points),
                 "caveats": list(narrative.value.caveats),
             },
