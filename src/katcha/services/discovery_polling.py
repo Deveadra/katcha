@@ -243,6 +243,18 @@ def provider_page_demands(
         if override is not None:
             # Reserve the initial fetch plus the maximum three redirects.
             specs = [("rss_atom", "rss.http", 4, override[0], override[1])]
+    elif key == "web_scout":
+        override = _quota_override(config, "openai.web_search")
+        if override is not None:
+            specs = [
+                (
+                    "openai",
+                    "openai.web_search",
+                    1,
+                    override[0],
+                    override[1],
+                )
+            ]
 
     result: list[QuotaDemand] = []
     for provider, bucket, units, default_limit, window in specs:
