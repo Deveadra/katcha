@@ -5,8 +5,11 @@ import uuid
 from datetime import UTC, datetime
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import desc, select
+from sqlalchemy import desc, or_, select
 
+from katcha.acquisition.adapters import available_adapters
+from katcha.acquisition_models import IngestionSource, TopicWatchVersion
+from katcha.config import get_settings
 from katcha.db import session_scope
 from katcha.edit_performance_models import EditBlueprintPerformanceSnapshot
 from katcha.intelligence_models import ChannelProfile
@@ -26,7 +29,35 @@ _STOP_WORDS = {
     "episode", "from", "these", "five", "using", "commentary", "recipe", "look",
     "yesterday", "performance", "tell", "editing", "behavior", "should", "change",
     "katcha", "reject", "rejected", "this", "that", "please", "current",
+    "add", "find", "search", "discover", "scout", "source", "sources", "site",
+    "sites", "profile", "profiles", "account", "accounts", "pull", "content",
+    "new", "fresh", "across", "platform", "platforms", "feed", "feeds",
 }
+
+_PLATFORM_PATTERNS = {
+    "tiktok": r"\\btik\\s*tok\\b|\\btiktok\\b",
+    "instagram": r"\\binstagram\\b|\\big\\b",
+    "x": r"\\bx\\b|\\btwitter\\b",
+    "bluesky": r"\\bbluesky\\b|\\bbsky\\b",
+    "youtube": r"\\byoutube\\b|\\byt\\b",
+    "reddit": r"\\breddit\\b",
+    "discord": r"\\bdiscord\\b",
+}
+_SOURCE_DISCOVERY_VERBS = ("add", "find", "search", "discover", "scout", "expand", "look for")
+_SOURCE_DISCOVERY_NOUNS = (
+    "source",
+    "sources",
+    "site",
+    "sites",
+    "profile",
+    "profiles",
+    "account",
+    "accounts",
+    "community",
+    "communities",
+    "feed",
+    "feeds",
+)
 
 
 def _profile(channel_profile_id: uuid.UUID) -> ChannelProfile:
@@ -36,8 +67,22 @@ def _profile(channel_profile_id: uuid.UUID) -> ChannelProfile:
         return profile
 
 
+def _requested_platforms(prompt: str) -> list[str]:
+    text = prompt.casefold()
+    return [
+        platform
+        for platform, pattern in _PLATFORM_PATTERNS.items()
+        if re.search(pattern, text)
+    ]
+
+
 def classify_intent(prompt: str, selected_clip_ids: list[uuid.UUID]) -> str:
     text = prompt.casefold()
+    platforms = _requested_platforms(prompt)
+    if any(verb in text for verb in _SOURCE_DISCOVERY_VERBS) and (
+        platforms or any(noun in text for noun in _SOURCE_DISCOVERY_NOUNS)
+    ):
+        return "source_discovery"
     if any(word in text for word in ("failing", "failed", "failure", "broken", "error")):
         return "failures"
     if any(word in text for word in ("reject", "rejected", "rejection")):
@@ -65,6 +110,157 @@ def _search_terms(prompt: str) -> list[str]:
         if key not in values:
             values.append(key)
     return values[:6]
+
+
+def _profile_keyword_candidates(profile: ChannelProfile) -> list[str]:
+    values: list[str] = []
+    metadata = dict(profile.profile_metadata or {})
+
+    def walk(value: object) -> None:
+        if isinstance(value, str):
+            values.extend(re.findall(r"[A-Za-z0-9][A-Za-z0-9+#.-]{2,40}", value))
+        elif isinstance(value, list):
+            for child in value[:30]:
+                walk(child)
+        elif isinstance(value, dict):
+            for key, child in list(value.items())[:40]:
+                if str(key).casefold() in {
+                    "interests",
+                    "topics",
+                    "keywords",
+                    "niche",
+                    "niches",
+                    "content_pillars",
+                    "content_lanes",
+                    "channel_title",
+                    "name",
+                }:
+                    walk(child)
+
+    walk(metadata)
+    result: list[str] = []
+    blocked = set(_STOP_WORDS) | set(_PLATFORM_PATTERNS)
+    for value in values:
+        key = value.casefold()
+        if key in blocked or len(key) < 3 or key.isdigit():
+            continue
+        if key not in result:
+            result.append(key)
+        if len(result) >= 8:
+            break
+    return result
+
+
+def _source_scout_terms(
+    channel_profile_id: uuid.UUID,
+    profile: ChannelProfile,
+    prompt: str,
+) -> list[str]:
+    platforms = set(_requested_platforms(prompt))
+    prompt_terms = [
+        value
+        for value in _search_terms(prompt)
+        if value not in platforms
+    ]
+    if prompt_terms:
+        return prompt_terms[:8]
+
+    profile_terms = _profile_keyword_candidates(profile)
+    if profile_terms:
+        return profile_terms[:8]
+
+    with session_scope() as session:
+        watch = session.scalar(
+            select(TopicWatchVersion)
+            .where(TopicWatchVersion.channel_profile_id == channel_profile_id)
+            .order_by(TopicWatchVersion.created_at.desc())
+            .limit(1)
+        )
+        if watch is not None:
+            terms = [
+                str(value).strip().casefold()
+                for value in (watch.include_terms or [])
+                if str(value).strip()
+            ]
+            if terms:
+                return terms[:8]
+    return []
+
+
+def source_discovery_plan(
+    channel_profile_id: uuid.UUID,
+    prompt: str,
+) -> tuple[str, list[dict[str, object]]]:
+    profile = _profile(channel_profile_id)
+    requested = _requested_platforms(prompt)
+    terms = _source_scout_terms(channel_profile_id, profile, prompt)
+    settings = get_settings()
+    catalog = available_adapters()
+
+    with session_scope() as session:
+        configured = list(
+            session.scalars(
+                select(IngestionSource)
+                .where(
+                    or_(
+                        IngestionSource.channel_profile_id == channel_profile_id,
+                        IngestionSource.channel_profile_id.is_(None),
+                    )
+                )
+                .order_by(IngestionSource.enabled.desc(), IngestionSource.source_key)
+                .limit(100)
+            )
+        )
+
+    adapter_keys = {str(row.get("key") or "") for row in catalog}
+    web_scout_installed = "web_scout" in adapter_keys
+    web_scout_ready = bool(web_scout_installed and settings.openai_api_key)
+    evidence = [
+        {
+            "kind": "source_discovery",
+            "id": "current",
+            "requested_platforms": requested,
+            "suggested_terms": terms,
+            "configured_source_count": len(configured),
+            "configured_sources": [
+                {
+                    "source_key": row.source_key,
+                    "name": row.name,
+                    "platform": row.platform,
+                    "adapter_key": row.adapter_key,
+                    "enabled": row.enabled,
+                    "shared": row.channel_profile_id is None,
+                }
+                for row in configured[:30]
+            ],
+            "installed_adapters": [
+                {
+                    "key": row.get("key"),
+                    "label": row.get("label"),
+                    "supported_platforms": list(row.get("supported_platforms") or []),
+                }
+                for row in catalog
+            ],
+            "web_scout_installed": web_scout_installed,
+            "web_scout_ready": web_scout_ready,
+        }
+    ]
+    platform_text = ", ".join(requested) if requested else "the wider public web"
+    if web_scout_ready:
+        return (
+            "Katcha can search beyond manually registered profiles. I can start a "
+            f"channel-scoped source scout across {platform_text}, feed grounded public "
+            "results into trend discovery, and keep repeating the search so new creators, "
+            "communities, and websites can appear without you knowing about them first.",
+            evidence,
+        )
+    return (
+        "The autonomous source-scout path is installed, but live web scouting is not ready "
+        "because KATCHA_OPENAI_API_KEY is not configured. Existing native discovery adapters "
+        "can still search their supported providers, but I will not pretend TikTok, Instagram, "
+        "X, Bluesky, or unknown websites were searched when they were not.",
+        evidence,
+    )
 
 
 def _source_for_clip(session: object, clip_id: uuid.UUID) -> SourceItem | None:
