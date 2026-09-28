@@ -189,7 +189,7 @@ def _search_terms(prompt: str) -> list[str]:
     tokens = re.findall(r"[A-Za-z0-9][A-Za-z0-9+#.-]{1,40}", prompt)
     values: list[str] = []
     for token in tokens:
-        key = token.casefold()
+        key = token.casefold().rstrip(".-")
         if key in _STOP_WORDS or key.isdigit() or len(key) < 3:
             continue
         if key not in values:
