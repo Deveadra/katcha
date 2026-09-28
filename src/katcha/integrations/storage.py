@@ -87,6 +87,31 @@ class ObjectStore:
         response = self.client.get_object(Bucket=self.settings.s3_bucket, Key=key)
         return response["Body"].read()
 
+    def delete(self, key: str) -> None:
+        self.client.delete_object(Bucket=self.settings.s3_bucket, Key=key)
+
+    def delete_many(self, keys: list[str]) -> None:
+        unique = [key for key in dict.fromkeys(keys) if key]
+        if not unique:
+            return
+        for index in range(0, len(unique), 1000):
+            batch = unique[index : index + 1000]
+            self.client.delete_objects(
+                Bucket=self.settings.s3_bucket,
+                Delete={"Objects": [{"Key": key} for key in batch], "Quiet": True},
+            )
+
+    def move(self, source_key: str, destination_key: str) -> None:
+        if source_key == destination_key:
+            return
+        self.client.copy_object(
+            Bucket=self.settings.s3_bucket,
+            Key=destination_key,
+            CopySource={"Bucket": self.settings.s3_bucket, "Key": source_key},
+            MetadataDirective="COPY",
+        )
+        self.client.delete_object(Bucket=self.settings.s3_bucket, Key=source_key)
+
     def iter_bytes(
         self,
         key: str,
@@ -104,6 +129,11 @@ class ObjectStore:
     def raw_key(sha256: str, extension: str | None) -> str:
         suffix = f".{extension.lstrip('.')}" if extension else ""
         return f"raw/{sha256[:2]}/{sha256}{suffix}"
+
+    @staticmethod
+    def archive_key(sha256: str, extension: str | None) -> str:
+        suffix = f".{extension.lstrip('.')}" if extension else ""
+        return f"archive/raw/{sha256[:2]}/{sha256}{suffix}"
 
     @staticmethod
     def analysis_key(sha256: str, name: str) -> str:
