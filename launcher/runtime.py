@@ -870,6 +870,7 @@ class Handler(BaseHTTPRequestHandler):
             "/editing": "/editing/assets/editing.html",
             "/explorer": "/explorer/assets/index.html",
             "/ingestion": "/editing/assets/ingestion.html",
+            "/clips": "/editing/assets/clips.html",
         }
         if path in redirects:
             self.redirect(redirects[path])
@@ -968,7 +969,7 @@ class Handler(BaseHTTPRequestHandler):
             return self.send(400, {"error": runtime.redact(exc)})
 
     def proxy(self):
-        if not self.path.startswith(("/v1/", "/editing", "/explorer", "/ingestion")):
+        if not self.path.startswith(("/v1/", "/editing", "/explorer", "/ingestion", "/clips")):
             return self.send(404, {"error": "Not found"})
         connection = http.client.HTTPConnection("127.0.0.1", 8000, timeout=120)
         headers_sent = False

@@ -175,8 +175,17 @@ let browser;
     });
     await page.goto("http://127.0.0.1:8765");
     assert.equal(await page.locator(".brand").getAttribute("href"), "/explorer");
-    await page.locator(".launcher-nav-item").waitFor();
-    assert.equal(await page.locator(".launcher-nav-item").count(), 1);
+    await page.locator(".workspace-menu").waitFor();
+    assert.equal(await page.locator(".workspace-menu").count(), 1);
+    await page.locator(".workspace-menu > summary").click();
+    const menuText = await page.locator(".workspace-menu-popover").innerText();
+    assert.match(menuText, /Trend explorer/);
+    assert.match(menuText, /Ingestion sources/);
+    assert.match(menuText, /Clip library/);
+    assert.match(menuText, /Editing control center/);
+    assert.match(menuText, /Clip Studio/);
+    assert.match(menuText, /Launch console/);
+    await page.locator(".workspace-menu > summary").click();
     await page.setViewportSize({ width: 900, height: 900 });
     assert.equal(
         await page.evaluate(() => document.documentElement.scrollWidth > innerWidth),

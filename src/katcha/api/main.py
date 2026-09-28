@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import asyncio
+import mimetypes
 import uuid
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, HTTPException, Query, status
-from fastapi.responses import RedirectResponse
+from fastapi.responses import RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import select, text
 
@@ -69,6 +70,7 @@ from katcha.domain import (
     ReviewDecision,
     SourceStatus,
 )
+from katcha.integrations.storage import ObjectStore
 from katcha.integrations.youtube.oauth import (
     YouTubeOAuthError,
     begin_youtube_oauth,
@@ -158,6 +160,11 @@ def editing_shell():
 @app.get("/ingestion", include_in_schema=False)
 def ingestion_shell():
     return RedirectResponse("/editing/assets/ingestion.html")
+
+
+@app.get("/clips", include_in_schema=False)
+def clips_shell():
+    return RedirectResponse("/editing/assets/clips.html")
 
 
 @app.get("/studio", include_in_schema=False)
@@ -801,6 +808,29 @@ def list_sources(
         if source_status:
             stmt = stmt.where(SourceItem.status == source_status)
         return list(session.scalars(stmt))
+
+
+@app.get("/v1/clips/{clip_id}/media")
+def get_clip_media(clip_id: uuid.UUID) -> StreamingResponse:
+    with session_scope() as session:
+        clip = session.get(Clip, clip_id)
+        if clip is None:
+            raise HTTPException(status_code=404, detail="clip not found")
+        storage_key = clip.storage_key
+        extension = clip.extension or "mp4"
+
+    store = ObjectStore()
+    if not store.exists(storage_key):
+        raise HTTPException(status_code=404, detail="stored clip media is missing")
+    media_type = mimetypes.guess_type(f"clip.{extension.lstrip('.')}")[0]
+    return StreamingResponse(
+        store.iter_bytes(storage_key),
+        media_type=media_type or "application/octet-stream",
+        headers={
+            "Cache-Control": "private, max-age=60",
+            "Content-Disposition": 'inline; filename="clip-preview"',
+        },
+    )
 
 
 @app.get("/v1/clips/{clip_id}", response_model=ClipResponse)

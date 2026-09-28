@@ -33,6 +33,11 @@ const server = spawn('python3', ['-m','http.server','8767','--bind','127.0.0.1',
             return reply({detail:'unexpected request'},404);
         });
         await page.goto('http://127.0.0.1:8767/ingestion.html');
+        await page.locator('.workspace-menu').waitFor();
+        await page.locator('.workspace-menu > summary').click();
+        assert.match(await page.locator('.workspace-menu-popover').innerText(),/Clip library/);
+        assert.match(await page.locator('.workspace-menu-popover').innerText(),/Clip Studio/);
+        await page.locator('.workspace-menu > summary').click();
         await page.locator('#connect button').click();
         await page.waitForFunction(()=>document.querySelector('#message').textContent === 'Unauthorized');
         assert(await page.locator('#key').isDisabled());
