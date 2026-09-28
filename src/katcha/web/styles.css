@@ -1450,3 +1450,17 @@ pre {
     margin-top: 3px;
     font-size: 12px;
 }
+
+.brand{border-radius:10px}
+.brand:hover{color:#fff}
+.launcher-nav-item{min-width:0}
+@media(max-width:950px){
+    .rail{flex-wrap:wrap;height:auto;min-height:64px}
+    .rail-nav{flex:1 1 auto;min-width:0;display:flex;flex-wrap:wrap;justify-content:flex-end}
+    .rail-nav .nav-item{white-space:nowrap}
+}
+@media(max-width:720px){
+    .rail{gap:10px}
+    .rail-nav{flex:0 1 auto}
+    .launcher-nav-item{font-size:0}
+}
