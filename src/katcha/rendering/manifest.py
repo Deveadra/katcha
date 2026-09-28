@@ -35,6 +35,10 @@ class SourceVideoSpec(BaseModel):
     width: int | None = None
     height: int | None = None
     audio_volume: float = Field(default=0.45, ge=0, le=1)
+    fit: Literal["contain", "cover"] = "contain"
+    background_mode: Literal["solid", "blurred_fill"] = "blurred_fill"
+    audio_policy: Literal["retain", "duck", "mute"] = "retain"
+    duck_volume: float = Field(default=0.16, ge=0, le=1)
 
 
 class BrandPalette(BaseModel):
@@ -140,6 +144,11 @@ def build_short_manifest(
     brand: ShortBrandSpec | None = None,
     reaction_pack: ReactionAssetPack | None = None,
     reaction_cues: list[ReactionCue | dict[str, object]] | None = None,
+    source_fit: Literal["contain", "cover"] = "contain",
+    source_background_mode: Literal["solid", "blurred_fill"] = "blurred_fill",
+    source_audio_policy: Literal["retain", "duck", "mute"] = "retain",
+    source_duck_volume: float = 0.16,
+    captions_enabled: bool = True,
 ) -> ShortRenderManifest:
     assets_by_index = {
         int(asset["segment_index"]): asset
@@ -171,18 +180,22 @@ def build_short_manifest(
 
         start = max(requested_start, narration_cursor)
         text = str(segment.get("text") or "").strip()
-        cues = [
-            RenderCaptionCue(
-                start_seconds=cue.start_seconds,
-                end_seconds=cue.end_seconds,
-                text=cue.text,
-            )
-            for cue in build_caption_cues(
-                text,
-                duration_seconds=duration,
-                start_offset_seconds=start,
-            )
-        ]
+        cues = (
+            [
+                RenderCaptionCue(
+                    start_seconds=cue.start_seconds,
+                    end_seconds=cue.end_seconds,
+                    text=cue.text,
+                )
+                for cue in build_caption_cues(
+                    text,
+                    duration_seconds=duration,
+                    start_offset_seconds=start,
+                )
+            ]
+            if captions_enabled
+            else []
+        )
         overlays.append(
             NarrationOverlay(
                 asset_key=str(asset["storage_key"]),
@@ -219,6 +232,10 @@ def build_short_manifest(
             width=source_width,
             height=source_height,
             audio_volume=source_audio_volume,
+            fit=source_fit,
+            background_mode=source_background_mode,
+            audio_policy=source_audio_policy,
+            duck_volume=source_duck_volume,
         ),
         overlays=overlays,
         output_duration_seconds=round(output_duration, 3),
