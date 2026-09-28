@@ -77,6 +77,24 @@ separate MinIO client image is required.
 
 The YouTube Channel Studio provides a channel-scoped operating view for recent publications, stored analytics and retention, economics, production status, packaging intelligence, edit-performance evidence, brand state, scheduling, and automation policy. It can also turn an existing YouTube OAuth connection into a Katcha channel workspace without requiring API calls by hand.
 
+### External editing and premium voice providers
+
+Katcha supports **ElevenLabs** as a direct, budget-accounted TTS provider. Configure
+`KATCHA_ELEVENLABS_API_KEY` and `KATCHA_ELEVENLABS_VOICE_ID`. To deliberately
+pin a live voice test, set `KATCHA_TTS_PROVIDER_OVERRIDE=elevenlabs`; the default
+`auto` mode does not silently replace an established channel voice. ElevenLabs
+calls use the same Katcha usage events, channel budget reservations, frozen voice
+profile metadata, and ambiguous-paid-call safeguards as the existing TTS providers.
+
+**InVideo** is integrated as an external edit bridge rather than an undocumented
+API dependency. Katcha creates a tracked transfer bundle with the real source media,
+narration, frozen brand, editing recipe, script and authoritative manifest. A finished
+MP4 can be imported back into the same handoff, ffprobe-verified, and explicitly
+adopted into the normal Katcha review/publishing pipeline. InVideo never becomes the
+system of record and never publishes directly. If InVideo supplies a documented
+project API for this account later, that transport can replace the manual bridge
+without changing Katcha's handoff contract.
+
 The editing control center uses the same control-plane token and channel-scoped APIs as
 the Trend Explorer. It shows versioned editing blueprints, measured performance,
 recent ranked episodes, render attempts, and dead-letter recovery. Its staged-brand
