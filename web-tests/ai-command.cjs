@@ -280,6 +280,29 @@ let browser;
                     workflow_id: "fixture-production-workflow",
                 },
             };
+        } else if (
+            url.pathname ===
+            "/v1/ai/actions/66666666-6666-4666-8666-666666666666/activity"
+        ) {
+            data = {
+                proposal_id: "66666666-6666-4666-8666-666666666666",
+                action_type: "create_short_production",
+                proposal_status: "executed",
+                workflow_id: "fixture-production-workflow",
+                state: "awaiting_review",
+                settled: true,
+                resource: {
+                    kind: "production",
+                    id: "55555555-5555-4555-8555-555555555555",
+                    workflow_id: "fixture-production-workflow",
+                    status: "review",
+                    stage: "review",
+                    generation: 1,
+                    error: null,
+                    updated_at: "2026-09-28T12:10:00Z",
+                },
+                events: [],
+            };
         } else {
             throw new Error("Unexpected API request " + req.method() + " " + url.pathname);
         }
@@ -347,9 +370,13 @@ let browser;
         0,
     );
     await actionButton.click();
-    await page.getByText(/executed · production id/i).waitFor();
+    await page.getByText(/production · review/i).waitFor();
     assert.equal(
         requests.filter((request) => request.path.endsWith("/execute")).length,
+        1,
+    );
+    assert.equal(
+        requests.filter((request) => request.path.endsWith("/activity")).length,
         1,
     );
 
@@ -398,7 +425,7 @@ let browser;
 
     assert.deepEqual(errors, []);
     console.log(
-        "PASS: Katcha AI grounded conversation, durable history reopen, server-resolved follow-up context, evidence, two-step confirmed action, auth, and mobile width",
+        "PASS: Katcha AI grounded conversation, durable history reopen, server-resolved follow-up context, live action status, evidence, two-step confirmed action, auth, and mobile width",
     );
 })()
     .catch((error) => {
