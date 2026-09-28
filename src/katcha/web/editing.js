@@ -321,7 +321,7 @@ async function saveBlueprintEditor(event) {
                 actor: "editing-control-center",
                 set_default: $("bp-set-default").checked,
                 display_name: $("bp-name").value.trim(),
-                description: $("bp-description").value.trim() || null,
+                description: $("bp-description").value.trim(),
             }),
         });
         closeBlueprintEditor();
