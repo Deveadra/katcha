@@ -181,6 +181,22 @@ const verifiedPreview = {
 
             if (url.pathname === "/v1/channels") return fulfillJson([{ id: "one", status: "active", profile_metadata: { name: "RankSnaxx" } }, { id: "two", status: "active", profile_metadata: { name: "Movie clips" } }]);
             if (url.pathname === "/v1/channels/edit-blueprint-templates") return fulfillJson(blueprintTemplates);
+            if (url.pathname === "/v1/integrations/providers") return fulfillJson([
+                { provider: "elevenlabs", capability: "text_to_speech", configured: true, mode: "api", detail: "Direct ElevenLabs TTS is ready." },
+                { provider: "invideo", capability: "external_edit", configured: true, mode: "manual_bridge", detail: "Katcha prepares a tracked edit package." },
+            ]);
+            if (url.pathname === "/v1/integrations/invideo/handoffs" && request.method() === "POST") return fulfillJson({
+                id: "handoff-one",
+                provider: "invideo",
+                source_type: "short_episode",
+                source_id: body.source_id,
+                generation: 1,
+                status: "prepared",
+                package_manifest_key: "external-edit/invideo/handoff-one/manifest.json",
+                output_key: null,
+                external_project_id: null,
+                handoff_metadata: { transport: "manual_bridge" },
+            });
             if (url.pathname.endsWith("/edit-blueprints") && request.method() === "GET") {
                 return fulfillJson(pathChannel === "one" ? blueprintRows : []);
             }
@@ -244,8 +260,9 @@ const verifiedPreview = {
             }, {
                 id: "episode-active",
                 premise: "Active editorial fixture",
-                status: "scripted",
-                stage: "editorial",
+                status: "voiced",
+                stage: "voice_ready",
+                selected_script_id: "script-active",
                 generation: 1,
                 edit_blueprint_key: "persona_commentary",
                 edit_blueprint_version: 2,
@@ -298,6 +315,20 @@ const verifiedPreview = {
         assert.equal(await page.locator(".episode-item.status-attention").count(), 1);
         assert.equal(await page.locator(".episode-item.status-active").count(), 1);
         assert.equal(await page.locator("#count-blueprints").innerText(), "1");
+        assert.match(await page.locator("#provider-status").innerText(), /ELEVENLABS/);
+        assert.match(await page.locator("#provider-status").innerText(), /INVIDEO/);
+        assert.equal(await page.getByRole("button", { name: "Send to InVideo" }).count(), 1);
+        await page.getByRole("button", { name: "Send to InVideo" }).click();
+        await page.locator("#invideo-dialog").waitFor({ state: "visible" });
+        assert.match(await page.locator("#invideo-handoff-state").innerText(), /PREPARED/);
+        const invideoRequest = requests.find(
+            (request) =>
+                request.path === "/v1/integrations/invideo/handoffs"
+                && request.method === "POST",
+        );
+        assert.equal(invideoRequest.body.source_id, "episode-active");
+        assert.equal(invideoRequest.body.actor, undefined);
+        await page.locator("#close-invideo-dialog").click();
         assert.match(await page.locator(".recipe-card").innerText(), /RankSnaxx commentary/);
         assert.match(await page.locator(".recipe-card").innerText(), /DEFAULT RECIPE/);
         assert(await page.getByText("ranksnaxx v1").count());
