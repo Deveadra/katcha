@@ -112,7 +112,9 @@ if __name__ == "__main__":
             if event["component"] == "launcher" and event["message"] == "start requested"
         )
         messages = [event["message"] for event in journal[last_start:]]
+        assert "Reusing unchanged workspace image." in messages
         assert "Reusing unchanged application images." in messages
+        assert "Preparing the lightweight workspace control plane." not in messages
         assert "Preparing new or changed application images." not in messages
         print(f"Warm full readiness: {time.monotonic() - warm_started:.2f}s", flush=True)
         request("/runtime/stop", {})
