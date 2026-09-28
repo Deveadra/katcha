@@ -20,6 +20,7 @@ from katcha.services.channel_learning import (
     train_channel_ranking,
 )
 from katcha.services.channel_scheduling import compute_schedule_recommendations
+from katcha.services.clip_lifecycle import run_channel_maintenance
 from katcha.services.edit_blueprint_performance import (
     refresh_edit_blueprint_performance,
 )
@@ -216,6 +217,16 @@ def apply_channel_safety_demotion_activity(
         "automation_version": row.version if row else None,
         "automation_level": row.level if row else None,
     }
+
+
+@activity.defn
+def run_clip_lifecycle_maintenance_activity(
+    channel_profile_id: str,
+) -> dict[str, object]:
+    return run_channel_maintenance(
+        uuid.UUID(channel_profile_id),
+        actor="scheduled-lifecycle",
+    )
 
 
 @activity.defn

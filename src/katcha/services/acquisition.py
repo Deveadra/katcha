@@ -427,6 +427,9 @@ def promote_discovery_candidate(
             and candidate.source_item_id != managed_source.id
         ):
             raise RuntimeError("candidate was concurrently promoted to a different source")
+        candidate_channel_id = (candidate.candidate_metadata or {}).get(
+            "channel_profile_id"
+        )
         managed_source.source_metadata = {
             **dict(managed_source.source_metadata or {}),
             "acquisition_managed": True,
@@ -435,6 +438,11 @@ def promote_discovery_candidate(
             "rights_assessment_version": assessment_version,
             "rights_basis": rights_basis,
             "rights_lane": rights_lane,
+            **(
+                {"channel_profile_id": str(candidate_channel_id)}
+                if candidate_channel_id
+                else {}
+            ),
         }
         candidate.source_item_id = managed_source.id
         candidate.status = DiscoveryCandidateStatus.PROMOTED.value
