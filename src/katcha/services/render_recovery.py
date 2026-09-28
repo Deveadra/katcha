@@ -196,6 +196,7 @@ def mark_render_attempt_retryable_failure(
                 _event(
                     source_kind=source_kind,
                     source_id=source_id,
+                    channel_profile_id=attempt.channel_profile_id,
                     event_type=f"{source_kind}.render_retryable_failure",
                     payload={
                         "render_attempt_id": str(attempt.id),
@@ -233,6 +234,7 @@ def mark_render_attempt_verified(
                 _event(
                     source_kind=source_kind,
                     source_id=source_id,
+                    channel_profile_id=attempt.channel_profile_id,
                     event_type=f"{source_kind}.render_attempt_verified",
                     payload={
                         "render_attempt_id": str(attempt.id),
