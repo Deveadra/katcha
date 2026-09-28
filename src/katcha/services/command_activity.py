@@ -8,6 +8,7 @@ from sqlalchemy import select
 
 from katcha.command_center_models import CommandActionProposal
 from katcha.db import session_scope
+from katcha.intelligence_models import ChannelIntelligenceRun
 from katcha.models import DomainEvent
 from katcha.production_models import Production
 from katcha.short_episode_models import ShortEpisode
@@ -69,6 +70,33 @@ def _resource_activity(
     proposal: CommandActionProposal,
 ) -> ActionResourceActivity | None:
     result = dict(proposal.result or {})
+    if (
+        proposal.action_type == "refresh_channel_intelligence"
+        and result.get("run_key")
+    ):
+        run = session.scalar(
+            select(ChannelIntelligenceRun).where(
+                ChannelIntelligenceRun.channel_profile_id
+                == proposal.channel_profile_id,
+                ChannelIntelligenceRun.run_key == str(result["run_key"]),
+            )
+        )
+        if run is not None:
+            if run.workflow_id != str(result.get("workflow_id") or ""):
+                raise ValueError(
+                    "intelligence run workflow does not match command action"
+                )
+            return ActionResourceActivity(
+                kind="channel_intelligence_run",
+                id=run.id,
+                workflow_id=run.workflow_id,
+                status=run.status,
+                stage=run.stage,
+                generation=1,
+                error=run.error,
+                updated_at=run.updated_at,
+            )
+
     reference = _uuid_result(
         result,
         "child_production_id",
