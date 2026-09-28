@@ -147,6 +147,191 @@ function renderBlueprints() {
         </article>`;
     }).join("");
 }
+function closeBlueprintEditor() {
+    state.editingBlueprint = null;
+    state.editorMode = null;
+    state.editorBaseContract = null;
+    state.editorSuggestedKey = "";
+    $("blueprint-editor-panel").hidden = true;
+}
+function templateForKey(key) {
+    return state.templates.find((row) => row.key === key);
+}
+function uniqueRecipeKey(base) {
+    const used = new Set(state.blueprints.map((row) => row.blueprint_key));
+    let candidate = `${base}_custom`;
+    let index = 2;
+    while (used.has(candidate)) {
+        candidate = `${base}_custom_${index}`;
+        index += 1;
+    }
+    return candidate;
+}
+function setEditorContract(contract) {
+    const copy = structuredClone(contract);
+    state.editorBaseContract = copy;
+    $("bp-layout").value = copy.source_layout?.mode || "full_frame";
+    $("bp-fit").value = copy.source_layout?.fit || "contain";
+    $("bp-background").value = copy.source_layout?.background_mode || "solid";
+    $("bp-header-height").value = copy.source_layout?.header_height_px ?? 0;
+    $("bp-narration-mode").value = copy.narration?.mode || "source_only";
+    $("bp-narration-required").checked = Boolean(copy.narration?.required);
+    $("bp-captions").checked = Boolean(copy.narration?.captions_enabled);
+    $("bp-audio-policy").value = copy.narration?.source_audio_policy || "retain";
+    $("bp-source-volume").value = copy.narration?.source_audio_volume ?? 0.45;
+    $("bp-duck-volume").value = copy.narration?.narration_duck_volume ?? 0.16;
+    $("bp-header-required").checked = Boolean(copy.header?.required);
+    $("bp-header-max").value = copy.header?.max_chars ?? 0;
+    $("bp-header-bg").value = copy.header?.background || "#000000";
+    $("bp-header-fg").value = copy.header?.foreground || "#FFFFFF";
+    $("bp-header-font-size").value = copy.header?.font_size_px ?? 54;
+    $("bp-header-font-weight").value = copy.header?.font_weight ?? 850;
+    $("bp-header-padding").value = copy.header?.horizontal_padding_px ?? 56;
+    $("bp-transition").value = copy.transition || "cut";
+    $("bp-min-source").value = copy.quality?.min_source_seconds ?? 1;
+    $("bp-max-duration").value = copy.quality?.max_duration_seconds ?? 60;
+    $("bp-narration-ratio").value = Math.round((copy.quality?.max_narration_ratio ?? 0.55) * 100);
+    syncBlueprintEditor();
+}
+function syncBlueprintEditor() {
+    const headerMode = $("bp-layout").value === "header_panel";
+    const voiceMode = ["persona_voice", "explanatory_voice"].includes($("bp-narration-mode").value);
+    $("bp-header-group").hidden = !headerMode;
+    $("bp-header-height-wrap").hidden = !headerMode;
+    if (headerMode) {
+        if (Number($("bp-header-height").value) <= 0) $("bp-header-height").value = 360;
+        $("bp-header-required").checked = true;
+        if (Number($("bp-header-max").value) <= 0) $("bp-header-max").value = 220;
+    } else {
+        $("bp-header-height").value = 0;
+        $("bp-header-required").checked = false;
+        $("bp-header-max").value = 0;
+    }
+    $("bp-narration-required").disabled = !voiceMode;
+    $("bp-captions").disabled = !voiceMode;
+    if (!voiceMode) {
+        $("bp-narration-required").checked = false;
+        $("bp-captions").checked = false;
+        $("bp-narration-ratio").value = 0;
+    } else if (Number($("bp-narration-ratio").value) === 0) {
+        $("bp-narration-ratio").value = 48;
+    }
+    $("bp-source-volume-value").value = `${Math.round(Number($("bp-source-volume").value) * 100)}%`;
+    $("bp-duck-volume-value").value = `${Math.round(Number($("bp-duck-volume").value) * 100)}%`;
+}
+function openBlueprintEditor(row) {
+    if (!row) return;
+    state.editingBlueprint = row;
+    state.editorMode = "edit";
+    $("blueprint-editor-title").textContent = `Edit ${blueprintName(row)}`;
+    $("blueprint-editor-context").textContent = `You are editing from v${row.version}. Save creates a new version; videos already using v${row.version} keep it unchanged.`;
+    $("bp-template-wrap").hidden = true;
+    $("bp-key").disabled = true;
+    $("bp-key").value = row.blueprint_key;
+    $("bp-name").value = blueprintName(row);
+    $("bp-description").value = blueprintDescription(row);
+    $("bp-set-default").checked = Boolean(row.is_default);
+    setEditorContract(row.contract);
+    $("blueprint-editor-panel").hidden = false;
+    $("blueprint-editor-panel").scrollIntoView({ behavior: "smooth", block: "start" });
+}
+function applyNewRecipeTemplate(template) {
+    if (!template) return;
+    const previousSuggestion = state.editorSuggestedKey;
+    const nextSuggestion = uniqueRecipeKey(template.key);
+    if (!$("bp-key").value || $("bp-key").value === previousSuggestion) {
+        $("bp-key").value = nextSuggestion;
+    }
+    state.editorSuggestedKey = nextSuggestion;
+    $("bp-name").value = `Custom ${template.display_name}`;
+    $("bp-description").value = template.description;
+    $("bp-set-default").checked = false;
+    setEditorContract(template.contract);
+}
+function openNewBlueprintEditor() {
+    if (!state.channel || !state.templates.length) {
+        message("Connect a channel before creating an editing recipe.", true);
+        return;
+    }
+    state.editingBlueprint = null;
+    state.editorMode = "new";
+    $("blueprint-editor-title").textContent = "Create editing recipe";
+    $("blueprint-editor-context").textContent = "Start from a proven template, then adjust the editing behavior. The new recipe becomes an active option for future videos.";
+    $("bp-template-wrap").hidden = false;
+    $("bp-key").disabled = false;
+    $("bp-template").innerHTML = state.templates.map((row) => `<option value="${escapeHTML(row.key)}">${escapeHTML(row.display_name)} — ${escapeHTML(row.description)}</option>`).join("");
+    state.editorSuggestedKey = "";
+    $("bp-key").value = "";
+    applyNewRecipeTemplate(state.templates[0]);
+    $("blueprint-editor-panel").hidden = false;
+    $("blueprint-editor-panel").scrollIntoView({ behavior: "smooth", block: "start" });
+}
+function editorContract() {
+    const key = $("bp-key").value.trim();
+    if (!/^[a-z0-9_]+$/.test(key)) {
+        throw new Error("Recipe ID must use lowercase letters, numbers, and underscores only.");
+    }
+    const headerMode = $("bp-layout").value === "header_panel";
+    const voiceMode = ["persona_voice", "explanatory_voice"].includes($("bp-narration-mode").value);
+    return {
+        key,
+        version: state.editorBaseContract?.version || "1.0.0",
+        composition: "blueprint_video",
+        source_layout: {
+            mode: $("bp-layout").value,
+            fit: $("bp-fit").value,
+            background_mode: $("bp-background").value,
+            header_height_px: headerMode ? Number($("bp-header-height").value) : 0,
+        },
+        narration: {
+            mode: $("bp-narration-mode").value,
+            required: voiceMode && $("bp-narration-required").checked,
+            captions_enabled: voiceMode && $("bp-captions").checked,
+            source_audio_policy: $("bp-audio-policy").value,
+            source_audio_volume: Number($("bp-source-volume").value),
+            narration_duck_volume: Number($("bp-duck-volume").value),
+        },
+        header: {
+            required: headerMode && $("bp-header-required").checked,
+            max_chars: headerMode ? Number($("bp-header-max").value) : 0,
+            background: $("bp-header-bg").value,
+            foreground: $("bp-header-fg").value,
+            font_size_px: Number($("bp-header-font-size").value),
+            font_weight: Number($("bp-header-font-weight").value),
+            horizontal_padding_px: Number($("bp-header-padding").value),
+        },
+        transition: $("bp-transition").value,
+        quality: {
+            min_source_seconds: Number($("bp-min-source").value),
+            max_duration_seconds: Number($("bp-max-duration").value),
+            max_narration_ratio: Number($("bp-narration-ratio").value) / 100,
+        },
+    };
+}
+async function saveBlueprintEditor(event) {
+    event.preventDefault();
+    const submit = event.submitter;
+    if (submit) submit.disabled = true;
+    try {
+        const contract = editorContract();
+        const created = await api(channelPath("/edit-blueprints"), {
+            method: "POST",
+            body: JSON.stringify({
+                contract,
+                actor: "editing-control-center",
+                set_default: $("bp-set-default").checked,
+                display_name: $("bp-name").value.trim(),
+                description: $("bp-description").value.trim() || null,
+            }),
+        });
+        closeBlueprintEditor();
+        await loadChannel();
+        message(`${blueprintName(created)} v${created.version} saved. Existing videos keep their previous recipe version.`);
+    } catch (error) {
+        message(error.message, true);
+        if (submit) submit.disabled = false;
+    }
+}
 function renderPerformance(row) {
     $("performance").classList.remove("empty");
     $("performance").innerHTML = row ? `<strong>${escapeHTML(row.publication_count)}</strong><p>Publications measured in the ${escapeHTML(row.age_bucket_hours)} hour window. ${escapeHTML(row.comparison_status?.replaceAll("_", " ") || "Comparison pending")}.</p><div class="metrics"><span class="pill">${escapeHTML(row.blueprint_group_count)} blueprint groups</span><span class="pill">${escapeHTML(row.retention_covered_publications)} retention samples</span><span class="pill">${escapeHTML(row.revenue_covered_publications)} revenue samples</span></div><p>Updated ${escapeHTML(date(row.created_at))}</p>` : '<div class="empty">No measured performance yet. Results appear after published episodes have analytics.</div>';
