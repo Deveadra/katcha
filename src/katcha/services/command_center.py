@@ -556,7 +556,7 @@ def _looks_like_source_discovery(
 
     discovery_verb = any(
         re.search(rf"\b{re.escape(verb)}\b", text)
-        for verb in ("find", "discover", "scout", "search")
+        for verb in ("add", "expand", "find", "discover", "scout", "search")
     )
     if not discovery_verb:
         return False
