@@ -8,7 +8,11 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class ControlPrincipalSettings(BaseModel):
-    name: str = Field(min_length=1, max_length=64, pattern=r"^[A-Za-z0-9_.:-]+$")
+    name: str = Field(
+        min_length=1,
+        max_length=64,
+        pattern=r"^[A-Za-z0-9_.:-]+$",
+    )
     token: SecretStr
     scopes: list[str] = Field(default_factory=lambda: ["*"])
     channel_profile_ids: list[str] = Field(default_factory=lambda: ["*"])
@@ -22,7 +26,9 @@ class ControlPrincipalSettings(BaseModel):
             else str(value or "")
         )
         if len(raw.strip()) < 16:
-            raise ValueError("control principal tokens must contain at least 16 characters")
+            raise ValueError(
+                "control principal tokens must contain at least 16 characters"
+            )
         return raw.strip()
 
     @field_validator("scopes")
@@ -50,7 +56,9 @@ class ControlPrincipalSettings(BaseModel):
             )
         )
         if not normalized:
-            raise ValueError("control principal channel_profile_ids cannot be empty")
+            raise ValueError(
+                "control principal channel_profile_ids cannot be empty"
+            )
         if "*" in normalized:
             return ["*"]
         for value in normalized:
@@ -89,7 +97,9 @@ class Settings(BaseSettings):
         for principal in self.control_principals:
             key = principal.name.casefold()
             if key in names:
-                raise ValueError(f"duplicate control principal name: {principal.name}")
+                raise ValueError(
+                    f"duplicate control principal name: {principal.name}"
+                )
             names.add(key)
             token = principal.token.get_secret_value()
             if token in token_values:
@@ -122,6 +132,12 @@ class Settings(BaseSettings):
 
     openai_api_key: str | None = None
     gemini_api_key: str | None = None
+    elevenlabs_api_key: str | None = None
+    elevenlabs_voice_id: str | None = None
+    elevenlabs_model_id: str = "eleven_multilingual_v2"
+    elevenlabs_output_format: str = "pcm_24000"
+    elevenlabs_timeout_seconds: int = Field(default=90, ge=10, le=300)
+    elevenlabs_usd_per_1000_credits: float = Field(default=0.0, ge=0)
     ai_enabled: bool = False
     ai_execution_mode: Literal["auto", "fixture", "live"] = "auto"
     ai_live_routing_mode: Literal["free_first", "balanced", "quality", "economy"] = (
@@ -131,6 +147,7 @@ class Settings(BaseSettings):
     web_scout_model: str = "gpt-5.6-luna"
 
     tts_profile: str = "openai_youth_v2"
+    tts_provider_override: Literal["auto", "openai", "gemini", "elevenlabs"] = "auto"
     renderer_url: str = "http://renderer:8787"
     render_width: int = Field(default=1080, ge=360, le=2160)
     render_height: int = Field(default=1920, ge=640, le=3840)
