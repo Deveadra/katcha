@@ -9,7 +9,11 @@ from pydantic import BaseModel, Field
 
 from katcha.ai.command_center import compose_grounded_answer
 from katcha.api.control_auth import control_actor, require_control_scope
-from katcha.command_center_models import CommandActionProposal
+from katcha.command_center_models import (
+    CommandActionProposal,
+    CommandThread,
+    CommandTurn,
+)
 from katcha.db import session_scope
 from katcha.domain import ProductionStatus
 from katcha.orchestration.client import (
@@ -37,6 +41,15 @@ from katcha.services.command_center import (
     performance_advice,
     ranked_episode_allowed_counts,
 )
+from katcha.services.command_history import (
+    archive_command_thread,
+    create_command_thread,
+    get_command_thread,
+    list_command_threads,
+    list_command_turns,
+    list_thread_proposals,
+    record_command_exchange,
+)
 from katcha.services.productions import (
     register_regeneration,
     register_short_production,
@@ -63,6 +76,7 @@ _ACTION_SCOPES: dict[str, str] = {
 
 class CommandRequest(BaseModel):
     channel_profile_id: uuid.UUID
+    thread_id: uuid.UUID | None = None
     prompt: str = Field(min_length=1, max_length=4000)
     selected_clip_ids: list[uuid.UUID] = Field(default_factory=list, max_length=20)
     selected_production_id: uuid.UUID | None = None
@@ -70,6 +84,8 @@ class CommandRequest(BaseModel):
 
 class CommandAction(BaseModel):
     proposal_id: uuid.UUID
+    thread_id: uuid.UUID | None = None
+    source_turn_id: uuid.UUID | None = None
     type: ActionType
     label: str
     description: str
@@ -81,6 +97,9 @@ class CommandAction(BaseModel):
 
 class CommandResponse(BaseModel):
     request_id: uuid.UUID
+    thread_id: uuid.UUID
+    user_turn_id: uuid.UUID
+    assistant_turn_id: uuid.UUID
     channel_profile_id: uuid.UUID
     intent: str
     answer: str
@@ -108,6 +127,8 @@ class ExecuteActionResponse(BaseModel):
 class ActionProposalStatusResponse(BaseModel):
     proposal_id: uuid.UUID
     request_id: uuid.UUID
+    thread_id: uuid.UUID | None = None
+    source_turn_id: uuid.UUID | None = None
     channel_profile_id: uuid.UUID
     action_type: str
     label: str
@@ -122,6 +143,68 @@ class ActionProposalStatusResponse(BaseModel):
     result: dict[str, object] = Field(default_factory=dict)
     error: str | None = None
     payload: dict[str, object] = Field(default_factory=dict)
+
+
+class ThreadSummaryResponse(BaseModel):
+    thread_id: uuid.UUID
+    channel_profile_id: uuid.UUID
+    title: str
+    status: str
+    created_by: str
+    last_activity_at: datetime
+    archived_at: datetime | None = None
+    created_at: datetime
+
+
+class TurnResponse(BaseModel):
+    turn_id: uuid.UUID
+    thread_id: uuid.UUID
+    channel_profile_id: uuid.UUID
+    sequence_number: int
+    role: str
+    request_id: uuid.UUID | None = None
+    intent: str | None = None
+    narrator: str | None = None
+    content: str
+    evidence: list[dict[str, object]] = Field(default_factory=list)
+    context: dict[str, object] = Field(default_factory=dict)
+    created_at: datetime
+
+
+class ThreadDetailResponse(BaseModel):
+    thread: ThreadSummaryResponse
+    turns: list[TurnResponse]
+    actions: list[ActionProposalStatusResponse]
+
+
+def _thread_summary(thread: CommandThread) -> ThreadSummaryResponse:
+    return ThreadSummaryResponse(
+        thread_id=thread.id,
+        channel_profile_id=thread.channel_profile_id,
+        title=thread.title,
+        status=thread.status,
+        created_by=thread.created_by,
+        last_activity_at=thread.last_activity_at,
+        archived_at=thread.archived_at,
+        created_at=thread.created_at,
+    )
+
+
+def _turn_response(turn: CommandTurn) -> TurnResponse:
+    return TurnResponse(
+        turn_id=turn.id,
+        thread_id=turn.thread_id,
+        channel_profile_id=turn.channel_profile_id,
+        sequence_number=turn.sequence_number,
+        role=turn.role,
+        request_id=turn.request_id,
+        intent=turn.intent,
+        narrator=turn.narrator,
+        content=turn.content,
+        evidence=list(turn.evidence or []),
+        context=dict(turn.turn_context or {}),
+        created_at=turn.created_at,
+    )
 
 
 def _uuid_from_prompt(prompt: str) -> uuid.UUID | None:
@@ -240,6 +323,8 @@ def _action_specs(
 def _action_response(proposal: CommandActionProposal) -> CommandAction:
     return CommandAction(
         proposal_id=proposal.id,
+        thread_id=proposal.thread_id,
+        source_turn_id=proposal.source_turn_id,
         type=proposal.action_type,  # type: ignore[arg-type]
         label=proposal.label,
         description=proposal.description,
@@ -255,6 +340,8 @@ def _proposal_status(
     return ActionProposalStatusResponse(
         proposal_id=proposal.id,
         request_id=proposal.request_id,
+        thread_id=proposal.thread_id,
+        source_turn_id=proposal.source_turn_id,
         channel_profile_id=proposal.channel_profile_id,
         action_type=proposal.action_type,
         label=proposal.label,
@@ -275,6 +362,7 @@ def _proposal_status(
 @router.post("/command", response_model=CommandResponse)
 def command(http_request: Request, request: CommandRequest) -> CommandResponse:
     require_control_scope(http_request, "ai:read")
+    actor = control_actor(http_request)
     request_id = uuid.uuid4()
     intent = classify_intent(request.prompt, request.selected_clip_ids)
     try:
@@ -371,18 +459,63 @@ def command(http_request: Request, request: CommandRequest) -> CommandResponse:
         deterministic_answer=deterministic,
         evidence=evidence,
     )
-    specs = _action_specs(request, intent, evidence)
     try:
+        if request.thread_id is None:
+            thread = create_command_thread(
+                channel_profile_id=request.channel_profile_id,
+                actor=actor,
+                title=request.prompt,
+                metadata={"surface": "katcha_ai_command_center"},
+            )
+        else:
+            thread = get_command_thread(
+                request.thread_id,
+                channel_profile_id=request.channel_profile_id,
+            )
+            if thread.status != "active":
+                raise ValueError(
+                    f"command thread is not active: {thread.status}"
+                )
+
+        user_turn, assistant_turn = record_command_exchange(
+            thread_id=thread.id,
+            request_id=request_id,
+            user_content=request.prompt,
+            assistant_content=narrative.value.answer,
+            intent=intent,
+            narrator=f"{narrative.target.provider}/{narrative.target.model}",
+            evidence=evidence,
+            user_context={
+                "selected_clip_ids": [
+                    str(value) for value in request.selected_clip_ids
+                ],
+                "selected_production_id": (
+                    str(request.selected_production_id)
+                    if request.selected_production_id
+                    else None
+                ),
+            },
+            assistant_context={
+                "key_points": list(narrative.value.key_points),
+                "caveats": list(narrative.value.caveats),
+            },
+        )
+        specs = _action_specs(request, intent, evidence)
         proposals = create_action_proposals(
             request_id=request_id,
             channel_profile_id=request.channel_profile_id,
             specs=specs,
+            thread_id=thread.id,
+            source_turn_id=assistant_turn.id,
         )
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     return CommandResponse(
         request_id=request_id,
+        thread_id=thread.id,
+        user_turn_id=user_turn.id,
+        assistant_turn_id=assistant_turn.id,
         channel_profile_id=request.channel_profile_id,
         intent=intent,
         answer=narrative.value.answer,
@@ -392,6 +525,62 @@ def command(http_request: Request, request: CommandRequest) -> CommandResponse:
         actions=[_action_response(item) for item in proposals],
         narrator=f"{narrative.target.provider}/{narrative.target.model}",
     )
+
+
+@router.get("/threads", response_model=list[ThreadSummaryResponse])
+def threads(
+    http_request: Request,
+    channel_profile_id: uuid.UUID,
+    limit: int = 30,
+) -> list[ThreadSummaryResponse]:
+    require_control_scope(http_request, "ai:read")
+    try:
+        rows = list_command_threads(channel_profile_id, limit=limit)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return [_thread_summary(row) for row in rows]
+
+
+@router.get(
+    "/threads/{thread_id}",
+    response_model=ThreadDetailResponse,
+)
+def thread_detail(
+    thread_id: uuid.UUID,
+    http_request: Request,
+) -> ThreadDetailResponse:
+    require_control_scope(http_request, "ai:read")
+    try:
+        thread = get_command_thread(thread_id)
+        turns = list_command_turns(thread_id)
+        proposals = [
+            get_action_proposal(row.id)
+            for row in list_thread_proposals(thread_id)
+        ]
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return ThreadDetailResponse(
+        thread=_thread_summary(thread),
+        turns=[_turn_response(row) for row in turns],
+        actions=[_proposal_status(row) for row in proposals],
+    )
+
+
+@router.post(
+    "/threads/{thread_id}/archive",
+    response_model=ThreadSummaryResponse,
+)
+def archive_thread(
+    thread_id: uuid.UUID,
+    http_request: Request,
+) -> ThreadSummaryResponse:
+    require_control_scope(http_request, "ai:read")
+    actor = control_actor(http_request)
+    try:
+        thread = archive_command_thread(thread_id, actor=actor)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return _thread_summary(thread)
 
 
 @router.get(

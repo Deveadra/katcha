@@ -156,6 +156,7 @@ def register_short_production(
                 event_type="production.created",
                 payload={
                     "production_id": str(production.id),
+                    "workflow_id": production.workflow_id,
                     "clip_id": str(clip_id),
                     "channel_profile_id": (
                         str(channel_profile_id) if channel_profile_id else None
@@ -355,6 +356,7 @@ def register_regeneration(
                 payload={
                     "production_id": str(parent.id),
                     "child_production_id": str(child.id),
+                    "workflow_id": child.workflow_id,
                     "channel_profile_id": (
                         str(parent.channel_profile_id) if parent.channel_profile_id else None
                     ),

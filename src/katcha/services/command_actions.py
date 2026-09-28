@@ -6,7 +6,11 @@ from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import select
 
-from katcha.command_center_models import CommandActionProposal
+from katcha.command_center_models import (
+    CommandActionProposal,
+    CommandThread,
+    CommandTurn,
+)
 from katcha.db import session_scope
 from katcha.models import DomainEvent
 from katcha.services.channel_profiles import ensure_active_profile
@@ -35,17 +39,43 @@ def create_action_proposals(
     request_id: uuid.UUID,
     channel_profile_id: uuid.UUID,
     specs: list[ActionProposalSpec],
+    thread_id: uuid.UUID | None = None,
+    source_turn_id: uuid.UUID | None = None,
     ttl_minutes: int = 30,
 ) -> list[CommandActionProposal]:
     created: list[CommandActionProposal] = []
     expires_at = _now() + timedelta(minutes=ttl_minutes)
     with session_scope() as session:
         ensure_active_profile(session, channel_profile_id)
+        if (thread_id is None) != (source_turn_id is None):
+            raise ValueError(
+                "thread_id and source_turn_id must be supplied together"
+            )
+        if thread_id is not None and source_turn_id is not None:
+            thread = session.get(CommandThread, thread_id)
+            turn = session.get(CommandTurn, source_turn_id)
+            if thread is None:
+                raise ValueError(f"command thread not found: {thread_id}")
+            if turn is None:
+                raise ValueError(f"command turn not found: {source_turn_id}")
+            if thread.channel_profile_id != channel_profile_id:
+                raise ValueError("command thread belongs to a different channel")
+            if (
+                turn.thread_id != thread_id
+                or turn.channel_profile_id != channel_profile_id
+                or turn.role != "assistant"
+                or turn.request_id != request_id
+            ):
+                raise ValueError(
+                    "proposal source turn does not match the request thread"
+                )
         for spec in specs:
             proposal_id = uuid.uuid4()
             proposal = CommandActionProposal(
                 id=proposal_id,
                 request_id=request_id,
+                thread_id=thread_id,
+                source_turn_id=source_turn_id,
                 channel_profile_id=channel_profile_id,
                 action_type=spec.action_type,
                 label=spec.label,
@@ -66,6 +96,10 @@ def create_action_proposals(
                     payload={
                         "proposal_id": str(proposal.id),
                         "request_id": str(request_id),
+                        "thread_id": str(thread_id) if thread_id else None,
+                        "source_turn_id": (
+                            str(source_turn_id) if source_turn_id else None
+                        ),
                         "channel_profile_id": str(channel_profile_id),
                         "action_type": spec.action_type,
                         "expires_at": expires_at.isoformat(),
@@ -93,6 +127,15 @@ def get_action_proposal(proposal_id: uuid.UUID) -> CommandActionProposal:
                     event_type="command_center.proposal_expired",
                     payload={
                         "proposal_id": str(proposal.id),
+                        "request_id": str(proposal.request_id),
+                        "thread_id": (
+                            str(proposal.thread_id) if proposal.thread_id else None
+                        ),
+                        "source_turn_id": (
+                            str(proposal.source_turn_id)
+                            if proposal.source_turn_id
+                            else None
+                        ),
                         "channel_profile_id": str(proposal.channel_profile_id),
                     },
                 )
@@ -139,6 +182,14 @@ def claim_action_proposal(
                     payload={
                         "proposal_id": str(proposal.id),
                         "request_id": str(proposal.request_id),
+                        "thread_id": (
+                            str(proposal.thread_id) if proposal.thread_id else None
+                        ),
+                        "source_turn_id": (
+                            str(proposal.source_turn_id)
+                            if proposal.source_turn_id
+                            else None
+                        ),
                         "channel_profile_id": str(proposal.channel_profile_id),
                         "action_type": proposal.action_type,
                         "actor": actor,
@@ -169,6 +220,14 @@ def claim_action_proposal(
                 payload={
                     "proposal_id": str(proposal.id),
                     "request_id": str(proposal.request_id),
+                    "thread_id": (
+                        str(proposal.thread_id) if proposal.thread_id else None
+                    ),
+                    "source_turn_id": (
+                        str(proposal.source_turn_id)
+                        if proposal.source_turn_id
+                        else None
+                    ),
                     "channel_profile_id": str(proposal.channel_profile_id),
                     "action_type": proposal.action_type,
                     "actor": actor,
@@ -207,6 +266,14 @@ def complete_action_proposal(
                 payload={
                     "proposal_id": str(proposal.id),
                     "request_id": str(proposal.request_id),
+                    "thread_id": (
+                        str(proposal.thread_id) if proposal.thread_id else None
+                    ),
+                    "source_turn_id": (
+                        str(proposal.source_turn_id)
+                        if proposal.source_turn_id
+                        else None
+                    ),
                     "channel_profile_id": str(proposal.channel_profile_id),
                     "action_type": proposal.action_type,
                     "actor": proposal.confirmed_by,
@@ -214,6 +281,34 @@ def complete_action_proposal(
                 },
             )
         )
+        workflow_id = result.get("workflow_id")
+        if workflow_id:
+            session.add(
+                DomainEvent(
+                    aggregate_type="command_action_proposal",
+                    aggregate_id=str(proposal.id),
+                    event_type="command_center.workflow_started",
+                    payload={
+                        "proposal_id": str(proposal.id),
+                        "request_id": str(proposal.request_id),
+                        "thread_id": (
+                            str(proposal.thread_id)
+                            if proposal.thread_id
+                            else None
+                        ),
+                        "source_turn_id": (
+                            str(proposal.source_turn_id)
+                            if proposal.source_turn_id
+                            else None
+                        ),
+                        "channel_profile_id": str(proposal.channel_profile_id),
+                        "action_type": proposal.action_type,
+                        "actor": proposal.confirmed_by,
+                        "workflow_id": str(workflow_id),
+                        "result": dict(result),
+                    },
+                )
+            )
         session.flush()
         session.refresh(proposal)
         session.expunge(proposal)
@@ -243,6 +338,14 @@ def fail_action_proposal(
                 payload={
                     "proposal_id": str(proposal.id),
                     "request_id": str(proposal.request_id),
+                    "thread_id": (
+                        str(proposal.thread_id) if proposal.thread_id else None
+                    ),
+                    "source_turn_id": (
+                        str(proposal.source_turn_id)
+                        if proposal.source_turn_id
+                        else None
+                    ),
                     "channel_profile_id": str(proposal.channel_profile_id),
                     "action_type": proposal.action_type,
                     "actor": proposal.confirmed_by,

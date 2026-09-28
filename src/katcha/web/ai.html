@@ -64,11 +64,22 @@
                 <section id="command-center" class="command-layout" hidden>
                     <div class="conversation-column">
                         <div class="conversation-bar">
-                            <div>
-                                <span class="micro-label">ACTIVE CHANNEL</span>
-                                <select id="channel" aria-label="Active channel"></select>
+                            <div class="conversation-context">
+                                <label>
+                                    <span class="micro-label">ACTIVE CHANNEL</span>
+                                    <select id="channel" aria-label="Active channel"></select>
+                                </label>
+                                <label>
+                                    <span class="micro-label">CONVERSATION HISTORY</span>
+                                    <select id="thread-history" aria-label="Conversation history">
+                                        <option value="">New conversation</option>
+                                    </select>
+                                </label>
                             </div>
-                            <button id="clear-thread" class="icon-button" type="button">Clear conversation</button>
+                            <div class="conversation-actions">
+                                <button id="archive-thread" class="icon-button" type="button" disabled>Archive</button>
+                                <button id="clear-thread" class="icon-button" type="button">New conversation</button>
+                            </div>
                         </div>
 
                         <div id="thread" class="thread" aria-live="polite">

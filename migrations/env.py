@@ -6,6 +6,7 @@ from sqlalchemy import engine_from_config, pool, text
 from katcha import acquisition_models  # noqa: F401
 from katcha import brand_models  # noqa: F401
 from katcha import brand_preview_models  # noqa: F401
+from katcha import command_center_models  # noqa: F401
 from katcha import discovery_poll_models  # noqa: F401
 from katcha import discovery_trend_models  # noqa: F401
 from katcha import edit_blueprint_models  # noqa: F401
@@ -20,6 +21,7 @@ from katcha import publishing_models  # noqa: F401
 from katcha import reach_models  # noqa: F401
 from katcha import render_models  # noqa: F401
 from katcha import short_episode_models  # noqa: F401
+from katcha import telegram_models  # noqa: F401
 from katcha import trend_activation_models  # noqa: F401
 from katcha import trend_calibration_models  # noqa: F401
 from katcha import trend_models  # noqa: F401
