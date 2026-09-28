@@ -153,6 +153,24 @@ def _target_for_profile(profile: VoiceProfile) -> ModelTarget:
     return ModelTarget(profile.provider, profile.model)
 
 
+def _resolve_profile(
+    profile: VoiceProfile,
+    settings: Settings,
+) -> VoiceProfile:
+    if profile.provider != "elevenlabs":
+        return profile
+    if not settings.elevenlabs_api_key or not settings.elevenlabs_voice_id:
+        raise TTSUnavailable("ElevenLabs TTS provider is not configured")
+    return VoiceProfile(
+        key=profile.key,
+        version=profile.version,
+        provider=profile.provider,
+        model=settings.elevenlabs_model_id,
+        voice=settings.elevenlabs_voice_id,
+        instructions=profile.instructions,
+    )
+
+
 def voice_profile_for_target(target: ModelTarget) -> VoiceProfile:
     preferred_key = LATEST_VOICE_PROFILE_BY_PROVIDER.get(target.provider)
     if preferred_key is not None:
@@ -182,14 +200,7 @@ def choose_voice_profile(
         if profile.provider == "elevenlabs":
             if not settings.elevenlabs_api_key or not settings.elevenlabs_voice_id:
                 raise TTSUnavailable("ElevenLabs TTS provider is not configured")
-            return VoiceProfile(
-                key=profile.key,
-                version=profile.version,
-                provider=profile.provider,
-                model=settings.elevenlabs_model_id,
-                voice=settings.elevenlabs_voice_id,
-                instructions=profile.instructions,
-            )
+            return _resolve_profile(profile, settings)
         return profile
 
     requested = get_voice_profile(settings.tts_profile)
@@ -199,14 +210,7 @@ def choose_voice_profile(
         return requested
     if requested.provider == "elevenlabs":
         if settings.elevenlabs_api_key and settings.elevenlabs_voice_id:
-            return VoiceProfile(
-                key=requested.key,
-                version=requested.version,
-                provider=requested.provider,
-                model=settings.elevenlabs_model_id,
-                voice=settings.elevenlabs_voice_id,
-                instructions=requested.instructions,
-            )
+            return _resolve_profile(requested, settings)
     if settings.openai_api_key:
         return VOICE_PROFILES["openai_youth_v2"]
     if settings.gemini_api_key:
@@ -467,6 +471,13 @@ def synthesize_speech(
         raise ValueError("TTS text cannot be empty")
     if settings.resolved_ai_execution_mode() == "fixture":
         return _fixture_tts(text)
+
+    profile = _resolve_profile(profile, settings) if profile is not None else None
+    fallback_profile = (
+        _resolve_profile(fallback_profile, settings)
+        if fallback_profile is not None
+        else None
+    )
 
     estimated_increment = Decimal("0.05")
     assert_ai_budget(estimated_increment)
