@@ -55,6 +55,12 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(["channel_profile_id"], ["channel_profiles.id"]),
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint("callback_token"),
+        sa.UniqueConstraint(
+            "source_kind",
+            "source_id",
+            "chat_id",
+            name="uq_telegram_review_source_chat",
+        ),
     )
     for column in (
         "source_kind",
