@@ -625,6 +625,7 @@ async def main() -> None:
         try:
             candidate = TelegramBotClient(settings)
             identity = await asyncio.to_thread(candidate.get_me)
+            await asyncio.to_thread(candidate.delete_webhook)
             LOGGER.info(
                 "Telegram worker connected as @%s",
                 identity.get("username") or identity.get("id"),
