@@ -8,8 +8,11 @@ from sqlalchemy import UniqueConstraint
 
 from katcha.config import Settings
 from katcha.domain import ReviewDecision
+from katcha.api.main import app
 from katcha.editorial.episode_generator import build_ranked_episode_prompt
+from katcha.editorial.generator import build_script_prompt
 from katcha.editorial.personas import get_persona
+from katcha.longform.editor import _editor_prompt
 from katcha.services.telegram_reviews import keyboard
 from katcha.telegram_models import TelegramReviewSession
 from katcha import telegram_worker
@@ -141,3 +144,57 @@ async def test_telegram_approval_uses_authoritative_short_episode_review(
     assert calls["decision"] == ReviewDecision.APPROVE
     assert calls["actor"] == "telegram:456"
     assert calls["buttons_cleared"] is True
+
+
+
+def test_telegram_control_routes_are_mounted_without_secret_fields() -> None:
+    paths = app.openapi()["paths"]
+    assert "/v1/integrations/telegram/status" in paths
+    assert "/v1/integrations/telegram/test" in paths
+
+    status_schema = app.openapi()["components"]["schemas"]["TelegramStatusResponse"]
+    fields = set(status_schema["properties"])
+    assert "bot_configured" in fields
+    assert "paired" in fields
+    assert "telegram_bot_token" not in fields
+    assert "pairing_code" not in fields
+
+
+def test_single_clip_regeneration_prompt_honors_operator_feedback() -> None:
+    prompt = build_script_prompt(
+        get_persona("youth_host"),
+        {
+            "duration_seconds": 20,
+            "operator_feedback": [
+                {
+                    "actor": "telegram:123",
+                    "note": "Open faster and make the CTA less generic.",
+                    "regenerate_from": "script",
+                }
+            ],
+        },
+        prompt_version="test-v1",
+    )
+
+    assert "Open faster and make the CTA less generic." in prompt
+    assert "Do not convert it into permanent channel policy." in prompt
+
+
+def test_longform_regeneration_prompt_honors_operator_feedback() -> None:
+    prompt = _editor_prompt(
+        theme="Fixture compilation",
+        target_duration_seconds=480,
+        persona=get_persona("youth_host"),
+        candidates=[],
+        prompt_version="test-v1",
+        operator_feedback=[
+            {
+                "actor": "telegram:123",
+                "note": "The middle drags. Tighten it and preserve the strongest payoff.",
+                "regenerate_from": "plan",
+            }
+        ],
+    )
+
+    assert "The middle drags. Tighten it and preserve the strongest payoff." in prompt
+    assert "Do not convert one-off feedback into permanent channel policy." in prompt
