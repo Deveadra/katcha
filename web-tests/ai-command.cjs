@@ -219,6 +219,14 @@ let browser;
                     context: {
                         key_points: ["The answer uses stored clip evidence."],
                         caveats: [],
+                        planning: {
+                            intent,
+                            source: "deterministic",
+                            provider: "katcha",
+                            model: "deterministic-command-router-v1",
+                            confidence: 1,
+                            reason: "A registered deterministic intent matched the request.",
+                        },
                     },
                     created_at: "2026-09-28T12:00:01Z",
                 },
@@ -251,6 +259,14 @@ let browser;
                         requires_confirmation: true,
                     },
                 ],
+                planning: {
+                    intent,
+                    source: "deterministic",
+                    provider: "katcha",
+                    model: "deterministic-command-router-v1",
+                    confidence: 1,
+                    reason: "A registered deterministic intent matched the request.",
+                },
                 resolved_context: {
                     selected_clip_ids: inheritedFollowUp
                         ? ["44444444-4444-4444-8444-444444444444"]
@@ -342,6 +358,12 @@ let browser;
 
     assert.match(await page.locator("#context-panel").innerText(), /Xbox fixture clip/);
     assert.match(await page.locator("#context-panel").innerText(), /hook score/);
+    assert.match(await page.locator("#context-panel").innerText(), /COMMAND ROUTING/);
+    assert.match(await page.locator("#context-panel").innerText(), /best clips/i);
+    assert.match(
+        await page.locator("#context-panel").innerText(),
+        /deterministic-command-router-v1/i,
+    );
     assert.match(await page.locator("#narrator").innerText(), /fixture\/grounded-command-v1/);
 
     await page.locator("[data-select-clip]").click();

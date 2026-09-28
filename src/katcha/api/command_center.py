@@ -11,6 +11,10 @@ from sqlalchemy import select
 
 from katcha.acquisition_models import TopicWatchVersion
 from katcha.ai.command_center import compose_grounded_answer
+from katcha.ai.command_planner import (
+    deterministic_plan,
+    plan_ambiguous_command,
+)
 from katcha.api.control_auth import control_actor, require_control_scope
 from katcha.command_center_models import (
     CommandActionProposal,
@@ -113,6 +117,15 @@ class ResolvedContextResponse(BaseModel):
     action_source_turn_id: uuid.UUID | None = None
 
 
+class CommandPlanningResponse(BaseModel):
+    intent: str
+    source: str
+    provider: str
+    model: str
+    confidence: float
+    reason: str
+
+
 class CommandResponse(BaseModel):
     request_id: uuid.UUID
     thread_id: uuid.UUID
@@ -125,6 +138,7 @@ class CommandResponse(BaseModel):
     caveats: list[str] = Field(default_factory=list)
     evidence: list[dict[str, object]]
     actions: list[CommandAction]
+    planning: CommandPlanningResponse
     resolved_context: ResolvedContextResponse = Field(
         default_factory=ResolvedContextResponse
     )
@@ -491,10 +505,28 @@ def command(http_request: Request, request: CommandRequest) -> CommandResponse:
     resolved_request = request.model_copy(
         update={"selected_clip_ids": resolved_selected_clip_ids}
     )
-    intent = resolution.intent_hint or classify_intent(
+    deterministic_intent = resolution.intent_hint or classify_intent(
         request.prompt,
         resolved_selected_clip_ids,
     )
+    if deterministic_intent == "confirm_action":
+        planning = deterministic_plan(
+            "channel_status",
+            "A pending proposal confirmation phrase was intercepted by the "
+            "explicit confirmation gate.",
+        )
+        intent = "confirm_action"
+    else:
+        planning = plan_ambiguous_command(
+            channel_profile_id=request.channel_profile_id,
+            request_id=request_id,
+            user_prompt=request.prompt,
+            effective_prompt=resolution.effective_prompt,
+            selected_clip_count=len(resolved_selected_clip_ids),
+            previous_intent=latest_assistant.intent if latest_assistant else None,
+            deterministic_intent=deterministic_intent,
+        )
+        intent = planning.value.intent
 
     reused_proposals: list[CommandActionProposal] = []
     try:
@@ -602,6 +634,15 @@ def command(http_request: Request, request: CommandRequest) -> CommandResponse:
                     ),
                 }
             ]
+        elif intent == "unsupported":
+            deterministic = (
+                "That request does not map to a registered Katcha AI capability "
+                "yet. I did not execute anything. I can currently inspect clips, "
+                "failures, clip evidence, performance, source discovery, channel "
+                "status, or prepare a confirmed content-production proposal from "
+                "selected clips."
+            )
+            evidence = []
         else:
             deterministic, evidence = channel_status(request.channel_profile_id)
     except ValueError as exc:
@@ -630,6 +671,14 @@ def command(http_request: Request, request: CommandRequest) -> CommandResponse:
         assistant_context: dict[str, object] = {
             "key_points": list(narrative.value.key_points),
             "caveats": list(narrative.value.caveats),
+            "planning": {
+                "intent": intent,
+                "source": planning.source,
+                "provider": planning.target.provider,
+                "model": planning.target.model,
+                "confidence": planning.value.confidence,
+                "reason": planning.value.reason,
+            },
         }
         if resolution.action_source_turn_id is not None:
             assistant_context["action_source_turn_id"] = str(
@@ -693,6 +742,14 @@ def command(http_request: Request, request: CommandRequest) -> CommandResponse:
         caveats=narrative.value.caveats,
         evidence=evidence,
         actions=[_action_response(item) for item in proposals],
+        planning=CommandPlanningResponse(
+            intent=intent,
+            source=planning.source,
+            provider=planning.target.provider,
+            model=planning.target.model,
+            confidence=planning.value.confidence,
+            reason=planning.value.reason,
+        ),
         resolved_context=ResolvedContextResponse(
             selected_clip_ids=resolved_selected_clip_ids,
             inherited_from_thread=resolution.inherited_from_thread,

@@ -44,6 +44,10 @@ class RoutingDecision:
 
 
 ROUTES: dict[AITask, ModelRoute] = {
+    AITask.COMMAND_PLANNING: ModelRoute(
+        primary=ModelTarget("openai", "gpt-5.6-luna"),
+        fallback=ModelTarget("gemini", "gemini-3.5-flash-lite"),
+    ),
     AITask.BULK_VISION: ModelRoute(
         primary=ModelTarget("openai", "gpt-5.6-luna"),
         fallback=ModelTarget("gemini", "gemini-3.5-flash-lite"),
@@ -99,6 +103,7 @@ _MODEL_COST_WEIGHT: dict[tuple[str, str], float] = {
 }
 
 _TASK_DEFAULT_FLOOR: dict[AITask, int] = {
+    AITask.COMMAND_PLANNING: 1,
     AITask.BULK_VISION: 1,
     AITask.DEEP_VIDEO: 2,
     AITask.SHORT_SCRIPT: 2,
