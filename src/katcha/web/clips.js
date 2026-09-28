@@ -115,6 +115,22 @@ function renderStatusOptions() {
     ).join("");
     if (current === "all" || statuses.includes(current)) $("status-filter").value = current;
 }
+function resetDetailForEmptyView() {
+    state.selectedId = null;
+    clearPreview();
+    $("clip-detail").innerHTML = '<div class="empty">No clips match this view.</div>';
+}
+function applyFilters() {
+    renderList();
+    const rows = visibleClips();
+    if (!rows.length) {
+        resetDetailForEmptyView();
+        return;
+    }
+    if (!rows.some((row) => row.id === state.selectedId)) {
+        void selectClip(rows[0].id);
+    }
+}
 function renderList() {
     const rows = visibleClips();
     $("visible-count").textContent = `${rows.length} clip${rows.length === 1 ? "" : "s"}`;
@@ -304,15 +320,13 @@ async function analyze(id, button) {
 }
 $("connect-form").addEventListener("submit", connect);
 $("refresh").addEventListener("click", loadLibrary);
-$("search").addEventListener("input", () => {
-    renderList();
-});
-$("status-filter").addEventListener("change", renderList);
+$("search").addEventListener("input", applyFilters);
+$("status-filter").addEventListener("change", applyFilters);
 document.querySelector(".clip-stats").addEventListener("click", (event) => {
     const button = event.target.closest("[data-bucket]");
     if (!button) return;
     state.bucket = button.dataset.bucket;
-    renderList();
+    applyFilters();
 });
 $("clip-list").addEventListener("click", (event) => {
     const row = event.target.closest("[data-clip-id]");
