@@ -198,3 +198,16 @@ def test_planner_exception_fails_closed_without_action_authority(monkeypatch) ->
     assert result.value.intent == "channel_status"
     assert result.source == "planner_unavailable_fallback"
     assert released and released[0].startswith("command_planner_fallback:")
+
+
+
+def test_command_planner_registry_includes_source_discovery() -> None:
+    plan = CommandPlan.model_validate(
+        {
+            "intent": "source_discovery",
+            "confidence": 0.93,
+            "reason": "Operator is asking Katcha to find new public sources.",
+        }
+    )
+
+    assert plan.intent == "source_discovery"
