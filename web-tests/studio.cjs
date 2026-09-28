@@ -130,7 +130,7 @@ const detail = {
         await page.locator("#ai-always").fill("Keep native payoff audio\nLet reactions breathe");
         await page.locator("#ai-never").fill("Narrate over the punchline");
         await page.getByRole("button",{name:"Save as new recipe version"}).click();
-        await page.getByText(/AI boundaries saved/).waitFor();
+        await page.locator("#message").getByText(/AI boundaries saved/).waitFor();
         const aiRequest=requests.find((row)=>row.path.endsWith("/edit-blueprints")&&row.method==="POST");
         assert.equal(aiRequest.body.contract.ai_guidance.instruction_strength,"strict");
         assert.deepEqual(aiRequest.body.contract.ai_guidance.always_rules,["Keep native payoff audio","Let reactions breathe"]);
@@ -141,16 +141,16 @@ const detail = {
         await page.locator("#logo-enabled").check();
         await page.locator("#logo-file").setInputFiles({name:"logo.png",mimeType:"image/png",buffer:Buffer.from([0x89,0x50,0x4e,0x47,0x0d,0x0a,0x1a,0x0a,1,2,3,4])});
         await page.getByRole("button",{name:"Stage new brand version"}).click();
-        await page.getByText(/staged/).waitFor();
+        await page.locator("#message").getByText(/Brand v\d+ staged/).waitFor();
         const brandRequest=requests.find((row)=>row.path.endsWith("/brands")&&row.method==="POST");
         assert.equal(brandRequest.body.contract.visual.logo.x_percent,80);
         assert.equal(brandRequest.body.contract.visual.logo.enabled,true);
         await page.getByRole("button",{name:"Activate staged version"}).click();
-        await page.getByText(/active for future renders/).waitFor();
+        await page.locator("#message").getByText(/active for future short-form renders/).waitFor();
 
         await page.getByRole("button",{name:"Clip"}).click();
         await page.getByRole("button",{name:"Render edited generation"}).click();
-        await page.getByText(/Rendering has started/).waitFor();
+        await page.locator("#message").getByText(/Rendering has started/).waitFor();
         const renderRequest=requests.find((row)=>row.path.includes("/studio/episodes/")&&row.path.endsWith("/render")&&row.method==="POST");
         assert.equal(renderRequest.body.edits.length,3);
         assert.equal(renderRequest.body.edits[0].duration_seconds,5.25);
