@@ -126,7 +126,19 @@ let browser;
 
     await page.locator("#token").fill("fixture-token");
     await page.locator("#connect-form button").click();
-    await page.locator("#command-center:not([hidden])").waitFor();
+    try {
+        await page.locator("#command-center:not([hidden])").waitFor({ timeout: 5000 });
+    } catch (error) {
+        throw new Error(
+            "Katcha AI did not connect. status=" +
+                (await page.locator("#status").innerText()) +
+                " pageErrors=" +
+                JSON.stringify(errors) +
+                " requests=" +
+                JSON.stringify(requests),
+            { cause: error },
+        );
+    }
     assert.equal(await page.locator("#channel").inputValue(), "11111111-1111-4111-8111-111111111111");
     assert.equal(await page.locator("#token").inputValue(), "");
     assert.equal(await page.evaluate(() => localStorage.length), 0);
