@@ -7,8 +7,6 @@ from katcha.services import external_edit
 from katcha.services.external_edit import _invideo_instructions
 
 
-
-
 def test_external_provider_routes_are_registered() -> None:
     paths = app.openapi()["paths"]
     expected = {
