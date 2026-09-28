@@ -17,7 +17,10 @@ build/
 /tmp/
 .local/
 media/
+
+# Renderer
 renderer/reaction-smoke-previews/
+renderer/package-lock.json
 
 # Explorer browser tests
 web-tests/node_modules/
