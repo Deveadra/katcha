@@ -196,7 +196,7 @@ let browser;
     await page.locator(".workspace-menu > summary").click();
     const menuText = await page.locator(".workspace-menu-popover").innerText();
     assert.match(menuText, /Trend explorer/);
-    assert.match(menuText, /Ingestion sources/);
+    assert.match(menuText, /Content sources/);
     assert.match(menuText, /Clip library/);
     assert.match(menuText, /Editing control center/);
     assert.match(menuText, /Clip Studio/);

@@ -3,69 +3,204 @@ const assert = require('node:assert/strict');
 const { spawn } = require('node:child_process');
 const path = require('node:path');
 const fs = require('node:fs');
-const server = spawn('python3', ['-m','http.server','8767','--bind','127.0.0.1','--directory',path.resolve(__dirname,'../src/katcha/web')], {stdio:'ignore'});
+const server = spawn('python3', ['-m', 'http.server', '8767', '--bind', '127.0.0.1', '--directory', path.resolve(__dirname, '../src/katcha/web')], {stdio: 'ignore'});
+const catalog = [
+    {key: 'operator_feed', label: 'Operator Feed', supports_imports: true},
+    {key: 'web_scout', label: 'Autonomous Web Scout'},
+    {key: 'youtube', label: 'YouTube Search'},
+    {key: 'reddit', label: 'Reddit Search'},
+    {key: 'rss_atom', label: 'RSS / Atom'},
+    {key: 'future', label: 'Future connector'},
+].map(a => ({version: 'v1', description: 'Installed connection.', supported_platforms: [], ...a}));
 (async () => {
     let browser;
     try {
-        for (let i=0;i<50;i++) { try { await fetch('http://127.0.0.1:8767'); break; } catch { await new Promise(r=>setTimeout(r,100)); } }
-        browser = await chromium.launch({headless:true, executablePath:process.env.CHROMIUM_PATH || undefined, args:process.env.CHROMIUM_PATH ? ['--no-sandbox'] : []});
-        const page = await browser.newPage({viewport:{width:1440,height:1000}});
+        for (let i = 0; i < 50; i++) {
+            try { await fetch('http://127.0.0.1:8767'); break; }
+            catch { await new Promise(r => setTimeout(r, 100)); }
+        }
+        browser = await chromium.launch({headless: true, executablePath: process.env.CHROMIUM_PATH || undefined, args: process.env.CHROMIUM_PATH ? ['--no-sandbox'] : []});
+        const page = await browser.newPage({viewport: {width: 1440, height: 1100}});
         const sources = [], runs = [], requests = [], errors = [];
-        page.on('pageerror', e=>errors.push(e.message));
+        let channelMode = 'normal', executeFails = false, historyFails = false, loseSaveResponse = false;
+        page.on('pageerror', e => errors.push(e.message));
         await page.route('**/v1/**', route => {
             const req = route.request(), url = new URL(req.url());
             const body = req.method() === 'POST' ? req.postDataJSON() : null;
-            requests.push({path:url.pathname,body,auth:req.headers().authorization});
-            const reply = (data,status=200)=>route.fulfill({status,contentType:'application/json',body:JSON.stringify(data)});
-            if (req.headers().authorization !== 'Bearer test-token') return reply({detail:'Unauthorized'},401);
-            if (url.pathname.endsWith('/adapters')) return reply([{key:'operator_feed',version:'v1',label:'Operator Feed',description:'Import clips from any site.',required_credentials:[],supported_platforms:['tiktok'],query_fields:['feed_key','items','urls'],sample_query:{feed_key:'drops',items:[{source_url:'https://example.com/sample'}]},supports_imports:true}]);
-            if (url.pathname === '/v1/channels') return reply([{id:'channel-one',profile_metadata:{name:'RankSnaxx'}}]);
+            requests.push({path: url.pathname, body, auth: req.headers().authorization});
+            const reply = (data, status = 200) => route.fulfill({status, contentType: 'application/json', body: JSON.stringify(data)});
+            if (req.headers().authorization !== 'Bearer test-token') return reply({detail: 'Unauthorized'}, 401);
+            if (url.pathname.endsWith('/adapters')) return reply(catalog);
+            if (url.pathname === '/v1/channels') return channelMode === 'error' ? reply({}, 503) : reply(channelMode === 'empty' ? [] : [{id: 'channel-one', status: 'active', profile_metadata: {channel_title: 'RankSnaxx'}}]);
             if (url.pathname === '/v1/discovery/sources') {
-                if (body) { const row={...body,id:'source-one',enabled:true}; sources.push(row); return reply(row); }
-                return reply(sources);
+                if (!body) return reply(sources);
+                if (sources.some(s => s.source_key === body.source_key)) return reply({detail: 'Duplicate key'}, 409);
+                const row = {...body, id: `source-${sources.length + 1}`, enabled: true}; sources.push(row);
+                if (loseSaveResponse) { loseSaveResponse = false; return route.abort(); }
+                return reply(row);
             }
-            if (url.pathname.endsWith('/imports')) { const run={id:'run-import',run_key:body.batch_key,status:'queued',created_at:'2026-09-27T00:00:00Z'}; if (!runs.some(r=>r.id===run.id)) runs.push(run); return reply({discovery_run:run}); }
-            if (url.pathname.endsWith('/execute')) { runs.find(r=>r.id === 'run-import').status='running'; return reply({status:'queued'}); }
-            if (url.pathname.endsWith('/runs')) {
-                if (body) { const row={id:'manual-run',run_key:body.idempotency_key,status:'queued',created_at:'2026-09-27T00:00:00Z'}; runs.push(row); return reply(row); }
-                return reply(runs);
+            const sourceId = url.pathname.match(/sources\/([^/]+)/)?.[1];
+            if (url.pathname.endsWith('/results')) {
+                const runId = url.pathname.match(/runs\/([^/]+)\/results/)?.[1];
+                const run = runs.find(r => r.id === runId && r.sourceId === sourceId);
+                return run ? reply({total: 1, candidates: [{source_url: 'https://example.com/post', title: '<New creator>', creator: 'Alice'}]}) : reply({}, 404);
             }
-            return reply({detail:'unexpected request'},404);
+            if (url.pathname.endsWith('/imports') || (url.pathname.endsWith('/runs') && body)) {
+                const key = body.batch_key || body.idempotency_key;
+                let run = runs.find(r => r.run_key === key);
+                if (!run) { run = {id: `run-${runs.length + 1}`, sourceId, run_key: key, status: 'queued', created_at: '2026-09-28T12:00:00Z'}; runs.push(run); }
+                return reply(url.pathname.endsWith('/imports') ? {discovery_run: run} : run);
+            }
+            if (url.pathname.endsWith('/execute')) {
+                if (executeFails) return reply({}, 503);
+                runs.find(r => url.pathname.includes(`/${r.id}/`)).status = 'running';
+                return reply({status: 'queued'});
+            }
+            if (url.pathname.endsWith('/runs')) return historyFails ? reply({}, 503) : reply(runs.filter(r => r.sourceId === sourceId));
+            return reply({detail: 'unexpected request'}, 404);
         });
+        const choose = async method => {
+            await page.locator(`[data-method="${method}"]`).click();
+            assert.equal(await page.evaluate(() => document.activeElement.id), 'name');
+            await page.locator('#name').fill(`${method} collection`);
+        };
+        const save = async () => {
+            await page.locator('#next').click();
+            await page.locator('#save').click();
+            await page.waitForFunction(() => !document.querySelector('#step-1').hidden);
+        };
         await page.goto('http://127.0.0.1:8767/ingestion.html');
         await page.locator('.workspace-menu').waitFor();
         await page.locator('.workspace-menu > summary').click();
-        assert.match(await page.locator('.workspace-menu-popover').innerText(),/Clip library/);
-        assert.match(await page.locator('.workspace-menu-popover').innerText(),/Clip Studio/);
+        assert.match(await page.locator('.workspace-menu-popover').innerText(), /Clip library/);
+        assert.match(await page.locator('.workspace-menu-popover').innerText(), /Clip Studio/);
+        assert.match(await page.locator('.workspace-menu-popover').innerText(), /Content sources/);
         await page.locator('.workspace-menu > summary').click();
+        await page.locator('#connection-panel').waitFor({state: 'visible'});
+        assert(await page.locator('[data-method]').count() === 0);
+        await page.locator('#token').fill('test-token');
         await page.locator('#connect button').click();
-        await page.waitForFunction(()=>document.querySelector('#message').textContent === 'Unauthorized');
-        assert(await page.locator('#key').isDisabled());
-        await page.locator('#token').fill('test-token'); await page.locator('#connect button').click();
-        await page.waitForFunction(()=>!document.querySelector('#workspace').disabled);
-        assert.equal(await page.locator('[data-key="items"]').inputValue(),'[]');
-        await page.locator('#key').fill('rank-clips'); await page.locator('#name').fill('RankSnaxx clips');
-        await page.locator('#channel').selectOption('channel-one'); await page.locator('#setup button').click();
-        await page.waitForFunction(()=>document.querySelector('#message').textContent.startsWith('Source saved'));
-        assert.equal(sources[0].channel_profile_id,'channel-one'); assert.deepEqual(sources[0].query_template.items,[]);
-        await page.locator('#setup button').click();
-        await page.waitForFunction(()=>document.querySelector('#message').textContent.includes('already exists'));
-        assert.equal(sources.length,1);
-        await page.locator('#batch').fill('batch-one'); await page.locator('#urls').fill('https://example.com/clip\nhttps://example.com/clip2');
+        await page.waitForFunction(() => !document.querySelector('#workspace').disabled);
+        assert.equal(await page.locator('#connection-panel').isVisible(), false);
+        assert.equal(await page.locator('#channel option').nth(1).textContent(), 'RankSnaxx');
+        assert.equal(await page.locator('#custom-query').isVisible(), false);
+        assert.equal(await page.locator('#key').count(), 0);
+        assert.equal(await page.locator('#batch').count(), 0);
+        await choose('links');
+        await page.locator('#channel').selectOption('channel-one');
+        assert.equal(await page.locator('#usage').isVisible(), false);
+        await page.locator('#next').click();
+        assert.match(await page.locator('#review').textContent(), /RankSnaxx/);
+        // Lost save responses must recover the same source on retry.
+        loseSaveResponse = true;
+        await page.locator('#save').click();
+        await page.waitForFunction(() => document.querySelector('#setup-error').textContent.includes('could not be reached'));
+        await page.locator('#save').click();
+        await page.waitForFunction(() => !document.querySelector('#step-1').hidden);
+        assert.equal(sources.length, 1);
+        assert.equal(sources[0].channel_profile_id, 'channel-one');
+        assert.equal(sources[0].usage_mode, 'candidate_review');
+        assert.deepEqual(sources[0].query_template, {items: [], urls: []});
+        assert.match(sources[0].source_key, /^source-/);
+        await page.locator('#urls').fill('not a link');
         await page.locator('#import button').click();
-        await page.waitForFunction(()=>document.querySelector('#history').textContent.includes('batch-one'));
-        assert.deepEqual(requests.find(r=>r.path.endsWith('/imports')).body.urls,['https://example.com/clip','https://example.com/clip2']);
+        assert.equal(requests.filter(r => r.path.endsWith('/imports')).length, 0);
+        await page.locator('#urls').fill('https://example.com/clip\nhttps://example.com/clip');
+        executeFails = true;
+        await page.locator('#import button').click();
+        await page.waitForFunction(() => document.querySelector('#message').textContent.includes('request is saved'));
+        assert.equal(runs.length, 1);
+        await page.locator('#import button').click();
+        await page.waitForFunction(() => document.querySelector('#import button').disabled === false);
+        assert.equal(runs.length, 1);
+        const imports = requests.filter(r => r.path.endsWith('/imports'));
+        assert.equal(imports[0].body.batch_key, imports[1].body.batch_key);
+        assert.deepEqual(imports[0].body.urls, ['https://example.com/clip']);
+        executeFails = false;
         await page.locator('[data-execute]').click();
-        await page.waitForFunction(()=>document.querySelector('#history').textContent.includes('running'));
+        await page.waitForFunction(() => document.querySelector('#history').textContent.includes('Finding content'));
+        historyFails = true;
+        await page.locator('#history-refresh').click();
+        await page.waitForFunction(() => document.querySelector('#history').textContent.includes('could not be loaded'));
+        assert.match(await page.locator('#history').textContent(), /could not be loaded/);
+        historyFails = false;
+        await page.locator('#history-refresh').click();
+        await choose('youtube');
+        await page.locator('#search').fill('new Xbox games');
+        await save();
+        assert.equal(sources[1].adapter_key, 'youtube');
+        assert.equal(sources[1].query_template.q, 'new Xbox games');
         await page.locator('#run').click();
-        await page.waitForFunction(()=>document.querySelectorAll('#history .item').length===2);
-        assert(requests.find(r=>r.body?.idempotency_key)?.body.idempotency_key.startsWith('source-ui:'));
-        fs.mkdirSync(path.join(__dirname,'test-results'),{recursive:true});
-        await page.screenshot({path:path.join(__dirname,'test-results/ingestion-desktop.png'),fullPage:true});
-        await page.setViewportSize({width:390,height:844});
-        assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
-        await page.screenshot({path:path.join(__dirname,'test-results/ingestion-mobile.png'),fullPage:true});
-        assert.deepEqual(errors,[]);
-        console.log('Ingestion onboarding, auth, imports, execution and responsive layout passed');
-    } finally { if(browser) await browser.close(); server.kill(); }
-})().catch(e=>{console.error(e);process.exitCode=1;});
+        await page.waitForFunction(() => document.querySelector('#history').textContent.includes('Finding content'));
+        assert.equal(runs.length, 2);
+        await choose('scout');
+        await page.locator('#search').fill('funny gaming clips');
+        await page.locator('#scout-platforms').selectOption('social');
+        await page.locator('#channel').selectOption('channel-one');
+        await page.locator('#next').click();
+        assert.match(await page.locator('#save-explanation').textContent(), /provider charges/i);
+        await page.locator('#save').click();
+        await page.waitForFunction(() => !document.querySelector('#step-1').hidden);
+        assert.equal(sources[2].adapter_key, 'web_scout');
+        assert.equal(sources[2].platform, 'web');
+        assert.deepEqual(sources[2].query_template.platforms, ['tiktok', 'instagram', 'x', 'bluesky']);
+        assert.match(await page.locator('#operation-help').textContent(), /does not run automatically/);
+        await page.locator('#run').click();
+        await page.waitForFunction(() => document.querySelector('#history').textContent.includes('Finding content'));
+        runs.at(-1).status = 'completed';
+        await page.locator('#history-refresh').click();
+        await page.locator('[data-results]').click();
+        await page.waitForFunction(() => document.querySelector('.run-results').textContent.includes('item found'));
+        assert.match(await page.locator('.run-results').textContent(), /<New creator>/);
+        assert.equal(await page.locator('.run-results script').count(), 0);
+        await choose('reddit');
+        await page.locator('#search').fill('indie games');
+        await page.locator('#community').fill('r/gaming');
+        await save();
+        assert.equal(sources[3].query_template.subreddit, 'gaming');
+        await choose('feed');
+        await page.locator('#feed').fill('bad-feed');
+        await page.locator('#next').click();
+        assert.match(await page.locator('#setup-error').textContent(), /full http/);
+        await page.locator('#feed').fill('https://example.com/feed.xml');
+        await save();
+        assert.equal(sources[4].adapter_key, 'rss_atom');
+        assert.equal(sources[4].query_template.feed_url, 'https://example.com/feed.xml');
+        // Empty channels and unavailable channels are distinct, with no silent reassignment.
+        channelMode = 'error';
+        await choose('links');
+        await page.locator('#retry-channels').click();
+        await page.waitForFunction(() => !document.querySelector('#retry-channels').disabled);
+        await page.locator('#next').click();
+        assert.match(await page.locator('#setup-error').textContent(), /Load your channels/);
+        assert.equal(await page.locator('#channel-area').isVisible(), false);
+        channelMode = 'empty';
+        await page.locator('#retry-channels').click();
+        await page.waitForFunction(() => !document.querySelector('#retry-channels').disabled);
+        assert.match(await page.locator('#channel-help').textContent(), /No active channels/);
+        await save();
+        assert.equal(sources[5].channel_profile_id, null);
+        // New connectors remain available behind an explicitly advanced path.
+        await page.locator('#step-1 summary').click();
+        await page.locator('#custom-adapter').selectOption('future@v1');
+        await page.locator('#choose-custom').click();
+        await page.locator('#name').fill('Custom collection');
+        await page.locator('#custom-query').fill('{"topic":"test"}');
+        await save();
+        assert.equal(sources[6].adapter_key, 'future');
+        assert.deepEqual(sources[6].query_template, {topic: 'test'});
+        await page.locator('#source').selectOption('source-1');
+        await page.waitForFunction(() => document.querySelector('#history').textContent.includes('Finding content'));
+        fs.mkdirSync(path.join(__dirname, 'test-results'), {recursive: true});
+        await page.locator('#step-1 details').evaluate(el => { el.open = false; });
+        await page.evaluate(() => scrollTo(0, 0));
+        await page.screenshot({path: path.join(__dirname, 'test-results/ingestion-desktop.png'), fullPage: true});
+        await choose('youtube');
+        await page.screenshot({path: path.join(__dirname, 'test-results/ingestion-details.png'), fullPage: true});
+        await page.setViewportSize({width: 390, height: 844});
+        assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
+        await page.screenshot({path: path.join(__dirname, 'test-results/ingestion-mobile.png'), fullPage: true});
+        assert.deepEqual(errors, []);
+        console.log('PASS: guided source choices, human channel names, empty/error channels, automatic IDs, lost-response recovery, activity retries, custom connectors and responsive layout');
+    } finally { if (browser) await browser.close(); server.kill(); }
+})().catch(e => { console.error(e); process.exitCode = 1; });

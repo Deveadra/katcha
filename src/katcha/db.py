@@ -35,6 +35,7 @@ def load_model_metadata() -> None:
         discovery_trend_models,
         edit_blueprint_models,
         edit_performance_models,
+        external_edit_models,
         intelligence_models,
         longform_models,
         models,
