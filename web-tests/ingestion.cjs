@@ -6,6 +6,7 @@ const fs = require('node:fs');
 const server = spawn('python3', ['-m', 'http.server', '8767', '--bind', '127.0.0.1', '--directory', path.resolve(__dirname, '../src/katcha/web')], {stdio: 'ignore'});
 const catalog = [
     {key: 'operator_feed', label: 'Operator Feed', supports_imports: true},
+    {key: 'web_scout', label: 'Autonomous Web Scout'},
     {key: 'youtube', label: 'YouTube Search'},
     {key: 'reddit', label: 'Reddit Search'},
     {key: 'rss_atom', label: 'RSS / Atom'},
@@ -39,6 +40,11 @@ const catalog = [
                 return reply(row);
             }
             const sourceId = url.pathname.match(/sources\/([^/]+)/)?.[1];
+            if (url.pathname.endsWith('/results')) {
+                const runId = url.pathname.match(/runs\/([^/]+)\/results/)?.[1];
+                const run = runs.find(r => r.id === runId && r.sourceId === sourceId);
+                return run ? reply({total: 1, candidates: [{source_url: 'https://example.com/post', title: '<New creator>', creator: 'Alice'}]}) : reply({}, 404);
+            }
             if (url.pathname.endsWith('/imports') || (url.pathname.endsWith('/runs') && body)) {
                 const key = body.batch_key || body.idempotency_key;
                 let run = runs.find(r => r.run_key === key);
@@ -127,19 +133,39 @@ const catalog = [
         await page.locator('#run').click();
         await page.waitForFunction(() => document.querySelector('#history').textContent.includes('Finding content'));
         assert.equal(runs.length, 2);
+        await choose('scout');
+        await page.locator('#search').fill('funny gaming clips');
+        await page.locator('#scout-platforms').selectOption('social');
+        await page.locator('#channel').selectOption('channel-one');
+        await page.locator('#next').click();
+        assert.match(await page.locator('#save-explanation').textContent(), /provider charges/i);
+        await page.locator('#save').click();
+        await page.waitForFunction(() => !document.querySelector('#step-1').hidden);
+        assert.equal(sources[2].adapter_key, 'web_scout');
+        assert.equal(sources[2].platform, 'web');
+        assert.deepEqual(sources[2].query_template.platforms, ['tiktok', 'instagram', 'x', 'bluesky']);
+        assert.match(await page.locator('#operation-help').textContent(), /does not run automatically/);
+        await page.locator('#run').click();
+        await page.waitForFunction(() => document.querySelector('#history').textContent.includes('Finding content'));
+        runs.at(-1).status = 'completed';
+        await page.locator('#history-refresh').click();
+        await page.locator('[data-results]').click();
+        await page.waitForFunction(() => document.querySelector('.run-results').textContent.includes('item found'));
+        assert.match(await page.locator('.run-results').textContent(), /<New creator>/);
+        assert.equal(await page.locator('.run-results script').count(), 0);
         await choose('reddit');
         await page.locator('#search').fill('indie games');
         await page.locator('#community').fill('r/gaming');
         await save();
-        assert.equal(sources[2].query_template.subreddit, 'gaming');
+        assert.equal(sources[3].query_template.subreddit, 'gaming');
         await choose('feed');
         await page.locator('#feed').fill('bad-feed');
         await page.locator('#next').click();
         assert.match(await page.locator('#setup-error').textContent(), /full http/);
         await page.locator('#feed').fill('https://example.com/feed.xml');
         await save();
-        assert.equal(sources[3].adapter_key, 'rss_atom');
-        assert.equal(sources[3].query_template.feed_url, 'https://example.com/feed.xml');
+        assert.equal(sources[4].adapter_key, 'rss_atom');
+        assert.equal(sources[4].query_template.feed_url, 'https://example.com/feed.xml');
         // Empty channels and unavailable channels are distinct, with no silent reassignment.
         channelMode = 'error';
         await choose('links');
@@ -153,7 +179,7 @@ const catalog = [
         await page.waitForFunction(() => !document.querySelector('#retry-channels').disabled);
         assert.match(await page.locator('#channel-help').textContent(), /No active channels/);
         await save();
-        assert.equal(sources[4].channel_profile_id, null);
+        assert.equal(sources[5].channel_profile_id, null);
         // New connectors remain available behind an explicitly advanced path.
         await page.locator('#step-1 summary').click();
         await page.locator('#custom-adapter').selectOption('future@v1');
@@ -161,8 +187,8 @@ const catalog = [
         await page.locator('#name').fill('Custom collection');
         await page.locator('#custom-query').fill('{"topic":"test"}');
         await save();
-        assert.equal(sources[5].adapter_key, 'future');
-        assert.deepEqual(sources[5].query_template, {topic: 'test'});
+        assert.equal(sources[6].adapter_key, 'future');
+        assert.deepEqual(sources[6].query_template, {topic: 'test'});
         await page.locator('#source').selectOption('source-1');
         await page.waitForFunction(() => document.querySelector('#history').textContent.includes('Finding content'));
         fs.mkdirSync(path.join(__dirname, 'test-results'), {recursive: true});

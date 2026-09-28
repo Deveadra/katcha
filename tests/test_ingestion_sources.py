@@ -313,6 +313,48 @@ def test_source_history_is_scoped_bounded_and_includes_failures(source_scope):
         list_source_runs(uuid.uuid4())
 
 
+def test_source_run_results_follow_observations_and_reject_other_sources(
+    source_scope, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import uuid
+    from fastapi import HTTPException
+
+    from katcha.acquisition_models import DiscoveryObservation
+    from katcha.api import acquisition
+
+    first = upsert_ingestion_source(
+        source_key="result-first", name="First", adapter_key="manifest",
+        adapter_version="v1", platform="web",
+    )
+    second = upsert_ingestion_source(
+        source_key="result-second", name="Second", adapter_key="manifest",
+        adapter_version="v1", platform="web",
+    )
+    original = create_discovery_run_from_source(first.id)
+    repeated = create_discovery_run_from_source(first.id)
+    foreign = create_discovery_run_from_source(second.id)
+    candidate_id = uuid.uuid4()
+    with source_scope() as session:
+        session.add(DiscoveryCandidate(
+            id=candidate_id, discovery_run_id=original.id, adapter_key="manifest",
+            source_url="https://example.com/post", canonical_url="https://example.com/post",
+            platform="web", title="A discovered post",
+        ))
+        session.flush()
+        session.add_all([
+            DiscoveryObservation(discovery_run_id=original.id, discovery_candidate_id=candidate_id),
+            DiscoveryObservation(discovery_run_id=repeated.id, discovery_candidate_id=candidate_id),
+        ])
+    monkeypatch.setattr(acquisition, "session_scope", source_scope)
+    result = acquisition.source_run_results(first.id, repeated.id)
+    assert result.total == 1
+    assert result.candidates[0].source_url == "https://example.com/post"
+    assert acquisition.source_run_results(second.id, foreign.id).total == 0
+    with pytest.raises(HTTPException) as exc:
+        acquisition.source_run_results(second.id, repeated.id)
+    assert exc.value.status_code == 404
+
+
 def test_create_only_does_not_overwrite_existing_source(source_scope):
     original = upsert_ingestion_source(
         source_key="unique", name="Original", adapter_key="manifest",
