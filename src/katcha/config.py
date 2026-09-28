@@ -49,6 +49,11 @@ class Settings(BaseSettings):
 
     openai_api_key: str | None = None
     gemini_api_key: str | None = None
+    elevenlabs_api_key: str | None = None
+    elevenlabs_voice_id: str | None = None
+    elevenlabs_model_id: str = "eleven_v3"
+    elevenlabs_output_format: str = "pcm_24000"
+    elevenlabs_timeout_seconds: int = Field(default=90, ge=10, le=300)
     ai_enabled: bool = False
     ai_execution_mode: Literal["auto", "fixture", "live"] = "auto"
     ai_live_routing_mode: Literal["free_first", "balanced", "quality", "economy"] = (
