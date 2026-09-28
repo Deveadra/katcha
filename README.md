@@ -85,6 +85,23 @@ episode or standalone Production, stream the verified preview privately for visu
 inspection, and activate the candidate only as a separate explicit operator action. Blueprint or brand activation
 changes future work only; existing productions keep their stored snapshots.
 
+### External editing and premium voice providers
+
+Katcha supports ElevenLabs as a direct, budget-accounted TTS provider. Configure
+`KATCHA_ELEVENLABS_API_KEY` and `KATCHA_ELEVENLABS_VOICE_ID`, then set
+`KATCHA_TTS_PROVIDER_OVERRIDE=elevenlabs` for a deliberate live-channel voice
+test. The default remains `auto`, so adding credentials alone does not silently
+change an established channel voice.
+
+InVideo is integrated as an external edit bridge rather than an undocumented API
+dependency. Eligible voiced episodes expose **Send to InVideo** in the Editing
+Control Center. Katcha creates a tracked package containing source footage,
+narration assets, frozen brand/editing contracts and an authoritative manifest.
+After editing in InVideo, import the finished MP4 back into the same handoff.
+Katcha validates it with ffprobe and requires a separate **Use as Katcha render**
+action before the output enters the normal render-review/publishing pipeline.
+InVideo never becomes the system of record and never publishes directly.
+
 See [`docs/TREND_EXPLORER.md`](docs/TREND_EXPLORER.md) for private access,
 shared AI-controller APIs, and evidence-grounded editorial handoff.
 See [`docs/INGESTION.md`](docs/INGESTION.md) for configurable discovery sources
