@@ -22,6 +22,10 @@ const escapeHTML = (value) => String(value ?? "").replace(/[&<>"']/g, (c) => ({ 
 const date = (value) => value ? new Date(value).toLocaleString() : "—";
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 function message(value, error = false) { $("message").textContent = value; $("message").classList.toggle("error", error); }
+function rememberWorkspace() {
+    if (state.token) sessionStorage.setItem("katcha.controlToken", state.token);
+    if (state.channel) sessionStorage.setItem("katcha.channel", state.channel);
+}
 async function request(path, options = {}) {
     return fetch(path, {
         ...options,
@@ -320,6 +324,14 @@ function editorContract() {
             max_duration_seconds: Number($("bp-max-duration").value),
             max_narration_ratio: Number($("bp-narration-ratio").value) / 100,
         },
+        ai_guidance: state.editorBaseContract?.ai_guidance || {
+            instruction_strength: "balanced",
+            preserve_clip_order: true,
+            prefer_native_moments: true,
+            always_rules: [],
+            never_rules: [],
+            operator_notes: "",
+        },
     };
 }
 async function saveBlueprintEditor(event) {
@@ -363,7 +375,7 @@ function renderEpisodes() {
         const stateLabel = type === "attention"
             ? (recoverable ? "RENDER FAILED" : "NEEDS ATTENTION")
             : type === "done" ? "COMPLETE" : "IN PRODUCTION";
-        return `<article class="item episode-item status-${type}" data-episode-status="${type}"><div><div class="episode-state"><span class="state-dot" aria-hidden="true"></span>${escapeHTML(stateLabel)}</div><h3>${escapeHTML(row.premise)}</h3><p>Stage: ${escapeHTML(row.stage)} · ${escapeHTML(row.status)} · Updated ${escapeHTML(date(row.updated_at))}</p><p class="meta">${escapeHTML(row.edit_blueprint_key || "Channel default blueprint")}${row.edit_blueprint_version ? ` · v${escapeHTML(row.edit_blueprint_version)}` : ""} · Generation ${escapeHTML(row.generation)}</p>${row.error || attempt?.error ? `<p class="error-text">${escapeHTML(attempt?.error || row.error)}</p>` : ""}</div><div class="item-actions"><span class="pill state-pill ${type}">${escapeHTML(stateLabel)}</span><span class="pill">${escapeHTML(String(row.status || "unknown").replaceAll("_", " ").toUpperCase())}</span>${recoverable ? `<button class="mini" data-recover="${escapeHTML(row.id)}">Recover render</button>` : ""}<button class="mini" data-attempts="${escapeHTML(row.id)}">Render details</button></div></article>`;
+        return `<article class="item episode-item status-${type}" data-episode-status="${type}"><div><div class="episode-state"><span class="state-dot" aria-hidden="true"></span>${escapeHTML(stateLabel)}</div><h3>${escapeHTML(row.premise)}</h3><p>Stage: ${escapeHTML(row.stage)} · ${escapeHTML(row.status)} · Updated ${escapeHTML(date(row.updated_at))}</p><p class="meta">${escapeHTML(row.edit_blueprint_key || "Channel default blueprint")}${row.edit_blueprint_version ? ` · v${escapeHTML(row.edit_blueprint_version)}` : ""} · Generation ${escapeHTML(row.generation)}</p>${row.error || attempt?.error ? `<p class="error-text">${escapeHTML(attempt?.error || row.error)}</p>` : ""}</div><div class="item-actions"><span class="pill state-pill ${type}">${escapeHTML(stateLabel)}</span><span class="pill">${escapeHTML(String(row.status || "unknown").replaceAll("_", " ").toUpperCase())}</span>${recoverable ? `<button class="mini" data-recover="${escapeHTML(row.id)}">Recover render</button>` : ""}<a class="mini studio-launch" data-studio="${escapeHTML(row.id)}" href="/studio?episode=${encodeURIComponent(row.id)}&channel=${encodeURIComponent(state.channel)}">Open Clip Studio</a></div></article>`;
     }).join("") : `<div class="empty">${filter === "all" ? "No episodes in this channel yet." : "No episodes match this filter."}</div>`;
 }
 function previewableSources() {
@@ -490,6 +502,7 @@ async function loadChannel() {
     const epoch = ++state.epoch;
     clearPreviewUrl();
     state.channel = $("channel").value;
+    rememberWorkspace();
     state.episodes = []; state.blueprints = []; state.attempts = new Map();
     state.brands = []; state.candidates = []; state.productions = []; state.preview = null;
     if (!state.channel) { renderBlueprints(); renderEpisodes(); renderPerformance(null); renderBrandLab(); return; }
@@ -520,6 +533,7 @@ async function loadChannel() {
 }
 async function connect(event) {
     event.preventDefault(); state.token = $("token").value.trim(); $("token").value = "";
+    rememberWorkspace();
     message("Connecting…");
     try {
         const [channels, templates] = await Promise.all([
@@ -539,11 +553,11 @@ async function action(event) {
     const blueprintDefault = event.target.closest("[data-blueprint-default]");
     const blueprintRestore = event.target.closest("[data-blueprint-restore]");
     const recover = event.target.closest("[data-recover]");
-    const details = event.target.closest("[data-attempts]");
+    const studio = event.target.closest("[data-studio]");
     const stageBrand = event.target.closest("[data-stage-brand]");
     const renderPreview = event.target.closest("[data-render-preview]");
     const activateBrand = event.target.closest("[data-activate-brand]");
-    if (!blueprintOpen && !blueprintDefault && !blueprintRestore && !recover && !details && !stageBrand && !renderPreview && !activateBrand) return;
+    if (!blueprintOpen && !blueprintDefault && !blueprintRestore && !recover && !studio && !stageBrand && !renderPreview && !activateBrand) return;
     if (blueprintOpen) {
         const row = findBlueprint(blueprintOpen.dataset.blueprintOpen, blueprintOpen.dataset.version);
         if (!row) {
@@ -553,9 +567,8 @@ async function action(event) {
         openBlueprintEditor(row);
         return;
     }
-    if (details) {
-        const attempt = state.attempts.get(details.dataset.attempts);
-        message(attempt ? `Render attempt ${attempt.attempt_number}: ${attempt.status}${attempt.error ? ` · ${attempt.error}` : ""}` : "No render attempts recorded for this episode.");
+    if (studio) {
+        rememberWorkspace();
         return;
     }
     const button = blueprintDefault || blueprintRestore || recover || stageBrand || renderPreview || activateBrand;

@@ -267,6 +267,7 @@ def register_short_episode(
             contract=contract,
         )
         plan_snapshot = plan.model_dump(mode="json")
+        plan_snapshot["edit_guidance"] = edit_blueprint.ai_guidance.model_dump(mode="json")
         if trend_context is not None:
             plan_snapshot["trend_context"] = trend_context
         if planning_metadata:

@@ -1,4 +1,5 @@
 import React from 'react';
+import {BrandLogo} from './brand-logo.jsx';
 import {ReactionTrack} from './reaction-track.jsx';
 import {
   AbsoluteFill,
@@ -220,6 +221,7 @@ export const ShortVideo = ({
         interactionPrompt={interactionPrompt}
         brand={brand}
       />
+      <BrandLogo logo={brand.logo} />
       <ReactionTrack events={reactionEvents} captions={brand.captions} />
       <Captions overlays={overlays} brand={brand} />
     </AbsoluteFill>

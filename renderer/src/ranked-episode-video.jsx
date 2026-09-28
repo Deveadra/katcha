@@ -1,4 +1,5 @@
 import React from 'react';
+import {BrandLogo} from './brand-logo.jsx';
 import {ReactionTrack} from './reaction-track.jsx';
 import {
   AbsoluteFill,
@@ -237,6 +238,7 @@ export const RankedEpisodeVideo = ({items, overlays, end_card: endCard, brand: b
       })}
 
       <EndCard endCard={endCard} brand={brand} />
+      <BrandLogo logo={brand.logo} />
       <ReactionTrack events={reactionEvents} captions={brand.captions} />
       <Captions overlays={overlays} brand={brand} />
     </AbsoluteFill>

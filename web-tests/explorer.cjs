@@ -183,6 +183,7 @@ let browser;
     assert.match(menuText, /Ingestion sources/);
     assert.match(menuText, /Clip library/);
     assert.match(menuText, /Editing control center/);
+    assert.match(menuText, /Clip Studio/);
     assert.match(menuText, /Launch console/);
     await page.locator(".workspace-menu > summary").click();
     await page.setViewportSize({ width: 900, height: 900 });

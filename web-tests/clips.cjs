@@ -133,6 +133,7 @@ const server = spawn(
         assert.match(nav, /Ingestion sources/);
         assert.match(nav, /Clip library/);
         assert.match(nav, /Editing control center/);
+        assert.match(nav, /Clip Studio/);
         await page.locator(".workspace-menu > summary").click();
 
         await page.locator("#token").fill("clip-token");

@@ -59,6 +59,7 @@ from katcha.api.schemas import (
     YouTubeOAuthStartResponse,
 )
 from katcha.api.short_episodes import router as short_episodes_router
+from katcha.api.studio import router as studio_router
 from katcha.api.trends import router as trends_router
 from katcha.config import get_settings
 from katcha.db import session_scope
@@ -137,6 +138,7 @@ app.include_router(intelligence_router)
 app.include_router(packaging_router)
 app.include_router(reach_router)
 app.include_router(short_episodes_router)
+app.include_router(studio_router)
 app.include_router(trends_router)
 app.include_router(explorer_router)
 app.mount("/explorer/assets", StaticFiles(directory=Path(__file__).parents[1] / "web"),
@@ -170,6 +172,11 @@ def ingestion_shell():
 @app.get("/clips", include_in_schema=False)
 def clips_shell():
     return RedirectResponse("/editing/assets/clips.html")
+
+
+@app.get("/studio", include_in_schema=False)
+def studio_shell():
+    return RedirectResponse("/editing/assets/studio.html")
 
 
 def _require_ai_execution() -> None:

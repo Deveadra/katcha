@@ -36,6 +36,7 @@ const server = spawn('python3', ['-m','http.server','8767','--bind','127.0.0.1',
         await page.locator('.workspace-menu').waitFor();
         await page.locator('.workspace-menu > summary').click();
         assert.match(await page.locator('.workspace-menu-popover').innerText(),/Clip library/);
+        assert.match(await page.locator('.workspace-menu-popover').innerText(),/Clip Studio/);
         await page.locator('.workspace-menu > summary').click();
         await page.locator('#connect button').click();
         await page.waitForFunction(()=>document.querySelector('#message').textContent === 'Unauthorized');
