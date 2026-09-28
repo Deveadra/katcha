@@ -171,3 +171,46 @@ def test_proposal_events_carry_thread_turn_and_workflow_correlation() -> None:
     assert started["source_turn_id"] == str(assistant_turn.id)
     assert started["channel_profile_id"] == str(profile_id)
     assert started["workflow_id"] == "workflow-fixture"
+
+
+
+def test_action_proposal_rejects_mismatched_conversation_authority() -> None:
+    profile_id = _channel_profile()
+    request_id = uuid.uuid4()
+    thread = create_command_thread(
+        channel_profile_id=profile_id,
+        actor="control-token:fixture",
+        title="Authority fixture",
+    )
+    _, assistant_turn = record_command_exchange(
+        thread_id=thread.id,
+        request_id=request_id,
+        user_content="Prepare an action.",
+        assistant_content="I prepared a proposal.",
+        intent="create_content",
+        narrator="fixture/grounded-command-v1",
+    )
+
+    with pytest.raises(ValueError, match="does not match the request thread"):
+        create_action_proposals(
+            request_id=uuid.uuid4(),
+            channel_profile_id=profile_id,
+            thread_id=thread.id,
+            source_turn_id=assistant_turn.id,
+            specs=[
+                ActionProposalSpec(
+                    action_type="refresh_channel_intelligence",
+                    label="Refresh",
+                    description="Fixture",
+                    payload={},
+                )
+            ],
+        )
+
+    with pytest.raises(ValueError, match="must be supplied together"):
+        create_action_proposals(
+            request_id=request_id,
+            channel_profile_id=profile_id,
+            thread_id=thread.id,
+            specs=[],
+        )
