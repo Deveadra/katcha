@@ -14,6 +14,7 @@ from katcha.orchestration.client import (
 from katcha.packaging_intelligence_models import PackagingIntelligenceSnapshot
 from katcha.packaging_models import PackagingExperiment, PublicationPackagingActivation
 from katcha.services.channel_automation import maybe_auto_demote
+from katcha.services.clip_lifecycle import run_channel_maintenance
 from katcha.services.channel_economics import compute_channel_economics
 from katcha.services.channel_learning import (
     derive_performance_observations,
@@ -216,6 +217,16 @@ def apply_channel_safety_demotion_activity(
         "automation_version": row.version if row else None,
         "automation_level": row.level if row else None,
     }
+
+
+@activity.defn
+def run_clip_lifecycle_maintenance_activity(
+    channel_profile_id: str,
+) -> dict[str, object]:
+    return run_channel_maintenance(
+        uuid.UUID(channel_profile_id),
+        actor="scheduled-lifecycle",
+    )
 
 
 @activity.defn
