@@ -19,6 +19,8 @@ KATCHA_YOUTUBE_DATA_API_KEY=
 KATCHA_REDDIT_CLIENT_ID=
 KATCHA_REDDIT_CLIENT_SECRET=
 KATCHA_REDDIT_USER_AGENT="Katcha/0.1 trend-discovery"
+KATCHA_OPENAI_API_KEY=
+KATCHA_WEB_SCOUT_MODEL=gpt-5.6-luna
 KATCHA_TREND_COLLECTION_DEDUPE_WINDOW_SECONDS=300
 KATCHA_TREND_POLL_LEASE_SECONDS=900
 KATCHA_TREND_YOUTUBE_SEARCH_DAILY_LIMIT=100
@@ -83,6 +85,25 @@ The `youtube@v1` adapter performs metadata search with a bounded freshness windo
 ### Reddit OAuth API
 
 The `reddit@v1` adapter uses application-only OAuth with the configured client credentials. Tokens are cached only in worker memory. Listing pagination uses Reddit's `after` cursor. Observations can include score/upvotes, comments, search rank, publication time, subreddit, outbound URL, domain, and media hints.
+
+### Autonomous Web Scout
+
+The `web_scout@v1` adapter uses the OpenAI Responses API web-search tool as a
+broad discovery layer. It can surface public posts, profiles, communities, and
+websites that were not already registered with Katcha. When specific platforms
+are requested, the search tool is restricted to their public domains. When no
+platform is specified, it searches the wider public web.
+
+The adapter fails closed on provenance: a model-produced candidate URL is discarded
+unless the same page is present in the provider's returned search sources/citations.
+It also carries a bounded rolling cursor of recently found source URLs into later
+scheduled cycles so repeated runs branch toward adjacent sources rather than behaving
+like an identical static query.
+
+A topic watch can bound this provider with
+`source_quota_limit_per_day` and
+`provider_quota_limits.openai.web_search`, using the same reservation/settlement
+ledger as other metered discovery providers.
 
 ## Trend scoring
 
