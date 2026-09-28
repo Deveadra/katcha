@@ -71,6 +71,7 @@
                             <fieldset class="editor-group">
                                 <legend>Voice & source audio</legend>
                                 <label>Narration<select id="bp-narration-mode"><option value="persona_voice">Channel persona voice</option><option value="explanatory_voice">Explanatory voice</option><option value="text_only">Text only</option><option value="source_only">Source audio only</option></select></label>
+                                <p id="bp-voice-limit-note" class="editor-note" hidden>Voiced multi-beat recipes support framing, captions, and audio tuning. Header layout and timing limits stay locked until that renderer supports them.</p>
                                 <label class="check-row"><input id="bp-narration-required" type="checkbox"> Narration is required</label>
                                 <label class="check-row"><input id="bp-captions" type="checkbox"> Show narration captions</label>
                                 <label>Source audio<select id="bp-audio-policy"><option value="retain">Keep source audio</option><option value="duck">Lower it under narration</option><option value="mute">Mute source audio</option></select></label>
@@ -88,7 +89,7 @@
                             </fieldset>
                             <fieldset class="editor-group">
                                 <legend>Pacing & limits</legend>
-                                <label>Transition<select id="bp-transition"><option value="cut">Clean cut</option><option value="punch_cut">Punch cut</option></select></label>
+                                <p class="editor-note">These limits are enforced by the generic text/source renderer. Voiced multi-beat recipes show their saved values but keep them locked for now.</p>
                                 <label>Minimum source clip (sec)<input id="bp-min-source" type="number" min="0.1" max="30" step="0.1"></label>
                                 <label>Maximum video length (sec)<input id="bp-max-duration" type="number" min="1" max="180" step="1"></label>
                                 <label>Maximum narration share (%)<input id="bp-narration-ratio" type="number" min="0" max="100" step="1"></label>
