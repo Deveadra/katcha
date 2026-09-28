@@ -1046,6 +1046,42 @@ class Handler(BaseHTTPRequestHandler):
     do_DELETE = do_POST
 
 
+def open_local_url(url):
+    if (
+        Path("/proc/sys/kernel/osrelease").exists()
+        and "microsoft" in Path("/proc/sys/kernel/osrelease").read_text().lower()
+    ):
+        subprocess.Popen(
+            ["cmd.exe", "/c", "start", "", url],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+    else:
+        webbrowser.open(url)
+
+
+def existing_supervisor(port=8765):
+    connection = http.client.HTTPConnection("127.0.0.1", port, timeout=2)
+    try:
+        connection.request("GET", "/runtime/status", headers={"Host": f"127.0.0.1:{port}"})
+        response = connection.getresponse()
+        if response.status != 200:
+            return False
+        payload = json.loads(response.read())
+        return bool(payload.get("session"))
+    except (OSError, ValueError, json.JSONDecodeError, http.client.HTTPException):
+        return False
+    finally:
+        connection.close()
+
+
+def startup_requested(args, desired_running):
+    if args.no_start:
+        return False
+    interactive = not args.no_browser and not args.launcher
+    return args.auto_start or desired_running or interactive
+
+
 def main():
     parser = argparse.ArgumentParser(description="Launch the Katcha application")
     parser.add_argument("--no-browser", action="store_true")
@@ -1069,7 +1105,15 @@ def main():
     try:
         server = ThreadingHTTPServer(("127.0.0.1", 8765), Handler)
     except OSError:
-        print("Port 8765 is in use. If Katcha is already running, open " + app_url)
+        if existing_supervisor():
+            if not args.no_browser:
+                try:
+                    open_local_url(open_url)
+                except OSError:
+                    pass
+            print("Katcha is already running: " + app_url)
+            return 0
+        print("Port 8765 is occupied by another process; Katcha did not start.")
         return 1
     runtime = Runtime()
     server.runtime = runtime
@@ -1079,24 +1123,13 @@ def main():
     # Interactive launches behave like an application: open the workspace immediately
     # and warm the runtime behind it. Headless/systemd supervision still respects an
     # explicit Stop by requiring persisted desired_running or --auto-start.
-    interactive_start = not args.no_browser and not args.launcher
-    if (args.auto_start or runtime.desired_running or interactive_start) and not args.no_start:
+    if startup_requested(args, runtime.desired_running):
         runtime.operate("start")
     elif not args.no_start:
         threading.Thread(target=runtime.reconcile_existing, daemon=True).start()
     try:
         if not args.no_browser:
-            if (
-                Path("/proc/sys/kernel/osrelease").exists()
-                and "microsoft" in Path("/proc/sys/kernel/osrelease").read_text().lower()
-            ):
-                subprocess.Popen(
-                    ["cmd.exe", "/c", "start", "", open_url],
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                )
-            else:
-                webbrowser.open(open_url)
+            open_local_url(open_url)
     except OSError as exc:
         runtime.event("warning", "browser", str(exc), recovery="Open " + open_url)
     print("Katcha: " + app_url + " — diagnostics: " + launcher_url + " — close with Ctrl+C; services remain running.")
