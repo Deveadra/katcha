@@ -498,7 +498,11 @@ def synthesize_speech(
         return _fixture_tts(text)
     if settings.tts_provider_override != "auto":
         key = LATEST_VOICE_PROFILE_BY_PROVIDER[settings.tts_provider_override]
-        profile = _resolve_profile(get_voice_profile(key), settings)
+        profile = _resolve_profile(
+            get_voice_profile(key),
+            settings,
+            channel_profile_id=channel_profile_id,
+        )
         fallback_profile = None
 
     profile = (
