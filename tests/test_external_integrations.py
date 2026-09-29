@@ -1,3 +1,5 @@
+import uuid
+
 from katcha.api.main import app
 from katcha.services.external_edit import (
     _invideo_instructions,
@@ -57,8 +59,8 @@ class _GenerationSession:
 
 
 def test_invideo_adoption_uses_next_render_generation() -> None:
-    production_id = __import__("uuid").uuid4()
-    episode_id = __import__("uuid").uuid4()
+    production_id = uuid.uuid4()
+    episode_id = uuid.uuid4()
 
     assert _next_production_render_generation(
         _GenerationSession(None),
