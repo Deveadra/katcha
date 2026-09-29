@@ -85,16 +85,13 @@ def command_observability_summary(
                 .where(
                     DomainEvent.event_type == "command_center.command_completed",
                     DomainEvent.created_at >= since,
+                    DomainEvent.payload["channel_profile_id"].as_string()
+                    == channel_value,
                 )
                 .order_by(DomainEvent.created_at.desc())
                 .limit(2000)
             )
         )
-        command_events = [
-            row
-            for row in command_events
-            if str((row.payload or {}).get("channel_profile_id")) == channel_value
-        ]
         request_ids = {row.aggregate_id for row in command_events}
 
         usage_rows: list[UsageEvent] = []
@@ -123,17 +120,13 @@ def command_observability_summary(
                         )
                     ),
                     DomainEvent.created_at >= since,
+                    DomainEvent.payload["channel_profile_id"].as_string()
+                    == channel_value,
                 )
                 .order_by(DomainEvent.created_at.desc())
                 .limit(4000)
             )
         )
-        lifecycle_events = [
-            row
-            for row in lifecycle_events
-            if str((row.payload or {}).get("channel_profile_id")) == channel_value
-        ]
-
     latencies = [
         int((row.payload or {}).get("latency_ms") or 0)
         for row in command_events
