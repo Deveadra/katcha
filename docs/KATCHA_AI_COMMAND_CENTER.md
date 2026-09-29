@@ -163,6 +163,8 @@ paths, Command Center request bodies, durable threads, action proposals and even
 Command Center/action scopes currently include:
 
 - `ai:read`
+- `ai:command`
+- `ai:write`
 - `channels:read`
 - `channels:write`
 - `intelligence:write`
@@ -173,6 +175,11 @@ Command Center/action scopes currently include:
 - `events:ack`
 - `trends:read`
 - `trends:write`
+
+For named principals, `ai:read` is intentionally read-only history/status access,
+`ai:command` permits natural-language Command Center requests (which may consume AI
+budget and create frozen proposals), and `ai:write` permits thread-state mutations such as
+archiving. Legacy single-token installations keep their existing endpoint behavior.
 
 Event cursors are bound to both their channel scope and authenticated named principal so one
 controller cannot reuse another controller's cursor key. The audit actor is server-derived,
