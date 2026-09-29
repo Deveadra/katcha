@@ -2,11 +2,11 @@
 const $ = (id) => document.getElementById(id);
 const esc = (value) => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const methods = {
-    links: {key: 'operator_feed', title: 'Paste links', icon: '↗', description: 'Collect videos or posts from TikTok, Instagram, X, or any other website.', help: 'Give your collection a name. After saving, paste the links you want Katcha to consider. This option does not search social platforms for you.'},
-    scout: {key: 'web_scout', title: 'Discover new sources', icon: '✦', description: 'Search the public web for new posts, creators, and communities about your topic.', help: 'Tell Katcha what to look for. Web scouting needs live AI, a configured OpenAI key, and available budget. Searches can incur provider charges. Saving alone does not start or schedule a search.'},
-    youtube: {key: 'youtube', title: 'Search YouTube', icon: '▶', description: 'Find recent videos about a topic, such as new game trailers.', help: 'Save a topic to search for recent YouTube videos. YouTube search access must be configured in Katcha before a search can run.'},
-    reddit: {key: 'reddit', title: 'Search Reddit', icon: '◎', description: 'Find discussions and shared links, across Reddit or in one community.', help: 'Save a topic and, optionally, a Reddit community. Reddit search access must be configured in Katcha before a search can run.'},
-    feed: {key: 'rss_atom', title: 'Follow a website feed', icon: '≋', description: 'Collect updates from a news site, blog, or release feed using its RSS link.', help: 'Save a website’s RSS or Atom feed. Use “Check for updates” whenever you want to collect new entries. Scheduled checking is not enabled here.'},
+    links: {key: 'operator_feed', title: 'Paste links', icon: '↗', description: 'Add specific videos or posts from any supported site.', help: 'Give your collection a name. After saving, paste the links you want Katcha to consider. This option does not search social platforms for you.'},
+    scout: {key: 'web_scout', title: 'Discover new sources', icon: '✦', description: 'Discover public posts, creators, and communities around a topic.', help: 'Tell Katcha what to look for. Web scouting needs live AI, a configured OpenAI key, and available budget. Searches can incur provider charges. Saving alone does not start or schedule a search.'},
+    youtube: {key: 'youtube', title: 'Search YouTube', icon: '▶', description: 'Find recent YouTube videos by topic.', help: 'Save a topic to search for recent YouTube videos. YouTube search access must be configured in Katcha before a search can run.'},
+    reddit: {key: 'reddit', title: 'Search Reddit', icon: '◎', description: 'Find discussions and shared links on Reddit.', help: 'Save a topic and, optionally, a Reddit community. Reddit search access must be configured in Katcha before a search can run.'},
+    feed: {key: 'rss_atom', title: 'Follow a website feed', icon: '≋', description: 'Follow a site’s RSS or Atom updates.', help: 'Save a website’s RSS or Atom feed. Use “Check for updates” whenever you want to collect new entries. Scheduled checking is not enabled here.'},
 };
 const usage = {
     candidate_review: ['Review first', 'Keep this source marked for review before deciding what to use.'],
@@ -16,6 +16,7 @@ const usage = {
     blocked: ['Blocked', 'This source is marked as blocked.'],
 };
 let token = '', adapters = [], channels = [], sources = [], selectedMethod = '', step = 1;
+let sourceView = 'add';
 let channelsReady = false, historyEpoch = 0, connectionEpoch = 0, busy = false;
 const intents = new Map();
 const runIntents = new Map();
@@ -80,6 +81,50 @@ function channelHelp() {
     }
     return 'No active channels are set up yet. This source will be shared with all channels you add now or later.';
 }
+function sourceViewFromHash() {
+    const hash = location.hash.replace(/^#/, '');
+    if (hash === 'sources') return 'library';
+    if (hash === 'add') return 'add';
+    return null;
+}
+function setSourceView(view, {focus = false, updateHash = true} = {}) {
+    const selected = view === 'library' ? 'library' : 'add';
+    sourceView = selected;
+    document.querySelectorAll('[data-source-tab]').forEach(button => {
+        const active = button.dataset.sourceTab === selected;
+        button.setAttribute('aria-selected', active ? 'true' : 'false');
+        button.tabIndex = active ? 0 : -1;
+        if (active && focus) button.focus();
+    });
+    document.querySelectorAll('[data-source-view]').forEach(section => {
+        section.hidden = section.dataset.sourceView !== selected;
+    });
+    if (updateHash) history.replaceState(null, '', location.pathname + location.search + (selected === 'library' ? '#sources' : '#add'));
+}
+function installSourceWorkspaceTabs() {
+    const tabs = [...document.querySelectorAll('[data-source-tab]')];
+    tabs.forEach((button, index) => {
+        button.addEventListener('click', () => setSourceView(button.dataset.sourceTab));
+        button.addEventListener('keydown', event => {
+            if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+            event.preventDefault();
+            let next = index;
+            if (event.key === 'ArrowLeft') next = (index - 1 + tabs.length) % tabs.length;
+            if (event.key === 'ArrowRight') next = (index + 1) % tabs.length;
+            if (event.key === 'Home') next = 0;
+            if (event.key === 'End') next = tabs.length - 1;
+            setSourceView(tabs[next].dataset.sourceTab, {focus: true});
+        });
+    });
+    window.addEventListener('hashchange', () => {
+        const view = sourceViewFromHash();
+        if (view) setSourceView(view, {updateHash: false});
+    });
+    $('empty-add-source')?.addEventListener('click', () => setSourceView('add', {focus: true}));
+}
+
+installSourceWorkspaceTabs();
+
 function showStep(next) {
     step = next;
     for (let n = 1; n <= 3; n++) $('step-' + n).hidden = n !== next;
@@ -87,8 +132,8 @@ function showStep(next) {
         if (i + 1 === next) li.setAttribute('aria-current', 'step');
         else li.removeAttribute('aria-current');
     });
-    $('step-label').textContent = `STEP ${next} OF 3`;
-    $('builder-title').textContent = ['Where will the content come from?', 'Make this source yours', 'Ready to add this source?'][next - 1];
+    $('step-label').textContent = `${next} OF 3`;
+    $('builder-title').textContent = ['Choose a source', 'Source details', 'Review source'][next - 1];
     $('wizard-actions').hidden = next === 1;
     $('next').hidden = next !== 2;
     $('save').hidden = next !== 3;
@@ -207,6 +252,8 @@ async function connect() {
         await loadChannels(epoch);
         await refreshSources();
         if (epoch !== connectionEpoch) return;
+        const requestedView = sourceViewFromHash();
+        setSourceView(requestedView || (sources.length ? 'library' : 'add'), {updateHash: false});
         $('workspace').disabled = false;
         $('connection').textContent = 'Connected';
         $('connection-panel').hidden = true;
@@ -302,7 +349,8 @@ bind('setup', 'submit', async () => {
     await selectSource();
     $('name').value = '';
     showStep(1);
-    message(`“${saved.name}” is saved. ${saved.adapter_key === 'operator_feed' ? 'Paste links in your collection to get started.' : 'Select it under Saved sources and start a search when you are ready.'}`);
+    setSourceView('library');
+    message(`“${saved.name}” is saved. ${saved.adapter_key === 'operator_feed' ? 'Paste links in your collection to get started.' : 'Start a search when you are ready.'}`);
     $('source').focus();
 }, true);
 bind('run', 'click', async () => {
