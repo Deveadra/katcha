@@ -3,14 +3,15 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width,initial-scale=1">
-    <meta name="theme-color" content="#100e1b">
+    <meta name="theme-color" content="#090b12">
     <title>Katcha · Clip Studio</title>
     <link rel="stylesheet" href="editing.css">
     <link rel="stylesheet" href="studio.css">
+    <link rel="stylesheet" href="pages/clip-studio-aerith.css">
     <script src="studio.js" defer></script>
     <script src="launcher-bridge.js" defer></script>
 </head>
-<body>
+<body data-katcha-page="studio">
 <div class="shell studio-shell">
     <aside class="sidebar">
         <a class="logo" href="/explorer" aria-label="Katcha home"><span class="glyph">✦</span> katcha<span class="accent">.</span></a>
@@ -19,7 +20,7 @@
             <a href="/explorer">◌ <span>Trend explorer</span></a>
             <a href="/ingestion">↳ <span>Content sources</span></a>
             <a href="/clips">▤ <span>Clip library</span></a>
-            <a href="/editing">▣ <span>Editing control center</span></a>
+            <a href="/editing">▣ <span>Production</span></a>
             <a href="/studio" aria-current="page">⌁ <span>Clip Studio</span></a>
         </nav>
         <div class="sidebar-bottom"><span class="live-dot"></span> CLIP STUDIO <small>Review · Correct · Teach</small></div>
@@ -32,7 +33,7 @@
 
         <div class="studio-content">
             <form id="connect-form" class="connect card compact-connect">
-                <div><label for="token">Control-plane token</label><p>Shared with the Editing Control Center for this browser tab.</p></div>
+                <div><label for="token">Control-plane token</label><p>Shared with Production for this browser tab.</p></div>
                 <input id="token" type="password" autocomplete="off" placeholder="Token if required">
                 <button class="button primary">Connect</button>
             </form>
@@ -79,8 +80,8 @@
                 <aside class="inspector studio-panel">
                     <div class="inspector-tabs" role="tablist">
                         <button class="inspector-tab active" data-tab="clip" type="button">Clip</button>
-                        <button class="inspector-tab" data-tab="ai" type="button">AI rules</button>
-                        <button class="inspector-tab" data-tab="brand" type="button">Branding</button>
+                        <button class="inspector-tab" data-tab="ai" type="button">AI</button>
+                        <button class="inspector-tab" data-tab="brand" type="button">Brand</button>
                         <button class="inspector-tab" data-tab="external" type="button">External</button>
                     </div>
 

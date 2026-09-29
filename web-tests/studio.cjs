@@ -177,6 +177,10 @@ const detail = {
 
         await page.goto("http://127.0.0.1:8768/studio.html?channel=20000000-0000-0000-0000-000000000001&episode=10000000-0000-0000-0000-000000000001");
         await page.locator("#monitor-title").getByText("Three clips worth fixing").waitFor();
+        assert.equal(
+            await page.evaluate(() => document.documentElement.scrollHeight <= innerHeight + 2),
+            true,
+        );
         assert.equal(await page.locator(".clip-row").count(),3);
         assert.match(await page.locator("#timeline-duration").innerText(),/^00:/);
         await page.locator("#render-version-wrap").waitFor({state:"visible"});
@@ -201,7 +205,7 @@ const detail = {
         await page.locator("#clip-duration").dispatchEvent("input");
         assert.match(await page.locator("#save-state").innerText(),/1 CLIP EDIT/);
 
-        await page.getByRole("button",{name:"AI rules"}).click();
+        await page.getByRole("button",{name:"AI",exact:true}).click();
         await page.locator("#ai-strength").selectOption("strict");
         await page.locator("#ai-always").fill("Keep native payoff audio\nLet reactions breathe");
         await page.locator("#ai-never").fill("Narrate over the punchline");
@@ -211,7 +215,7 @@ const detail = {
         assert.equal(aiRequest.body.contract.ai_guidance.instruction_strength,"strict");
         assert.deepEqual(aiRequest.body.contract.ai_guidance.always_rules,["Keep native payoff audio","Let reactions breathe"]);
 
-        await page.getByRole("button",{name:"Branding"}).click();
+        await page.getByRole("button",{name:"Brand",exact:true}).click();
         await page.locator("#logo-x").fill("80");
         await page.locator("#logo-x").dispatchEvent("input");
         await page.locator("#logo-enabled").check();
@@ -258,9 +262,10 @@ const detail = {
         await page.locator("#message").getByText(/adopted into Katcha/).waitFor();
         assert.equal(invideoHandoff.status,"adopted");
 
-        await page.setViewportSize({width:900,height:900});
+        await page.setViewportSize({width:390,height:844});
         assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
+        assert.equal(await page.locator(".inspector-tab").count(),4);
         assert.deepEqual(errors,[]);
-        console.log("Clip Studio browser test passed");
+        console.log("Aerith bounded Clip Studio browser test passed");
     } finally { await browser.close(); }
 })().catch((error)=>{console.error(error);process.exitCode=1;}).finally(()=>server.kill());
