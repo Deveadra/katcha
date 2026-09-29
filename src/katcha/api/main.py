@@ -15,6 +15,7 @@ from katcha.api.acquisition import router as acquisition_router
 from katcha.api.brands import router as brands_router
 from katcha.api.clip_library import router as clip_library_router
 from katcha.api.command_center import router as command_center_router
+from katcha.api.control import router as control_router
 from katcha.api.control_auth import require_control_token
 from katcha.api.edit_blueprints import router as edit_blueprints_router
 from katcha.api.explorer import router as explorer_router
@@ -140,6 +141,7 @@ app.include_router(acquisition_router)
 app.include_router(brands_router)
 app.include_router(clip_library_router)
 app.include_router(command_center_router)
+app.include_router(control_router)
 app.include_router(edit_blueprints_router)
 app.include_router(intelligence_router)
 app.include_router(integrations_router)
