@@ -602,7 +602,6 @@ $("show-render").addEventListener("click",()=>{state.monitorMode="render";showMo
 $("show-source").addEventListener("click",()=>{state.monitorMode="source";showMonitor();});
 $("render-version").addEventListener("change",async()=>{
     state.renderGeneration=Number($("render-version").value)||null;
-    revokeMedia();
     await loadRenderedMedia();
     state.monitorMode="render";
     await showMonitor();
