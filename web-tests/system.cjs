@@ -11,6 +11,7 @@ const server = spawn(
 );
 
 const workspaces = [
+    { file: "home.html", label: "Home" },
     { file: "index.html", label: "Trends" },
     { file: "ai.html", label: "Katcha AI", help: 1 },
     { file: "ingestion.html", label: "Sources", help: 1 },
