@@ -5,12 +5,19 @@ from __future__ import annotations
 import hashlib
 import secrets
 import uuid
+from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Annotated
 
 from fastapi import Depends, HTTPException, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
-from katcha.config import ControlPrincipalSettings, Settings, get_settings
+from katcha.config import (
+    ControlCredentialSettings,
+    ControlPrincipalSettings,
+    Settings,
+    get_settings,
+)
 
 _bearer = HTTPBearer(auto_error=False)
 _PUBLIC_PATHS = {
@@ -30,6 +37,30 @@ def _principal_actor(name: str) -> str:
     return f"control-principal:{name}"
 
 
+def _credential_fingerprint(token: str) -> str:
+    return hashlib.sha256(token.encode()).hexdigest()[:12]
+
+
+@dataclass(frozen=True, slots=True)
+class _PrincipalCredentialMatch:
+    principal: ControlPrincipalSettings
+    credential: ControlCredentialSettings
+
+
+def _credential_is_active(
+    credential: ControlCredentialSettings,
+    *,
+    now: datetime,
+) -> bool:
+    if credential.disabled:
+        return False
+    if credential.not_before is not None and now < credential.not_before:
+        return False
+    if credential.expires_at is not None and now >= credential.expires_at:
+        return False
+    return True
+
+
 def _set_identity(
     request: Request,
     *,
@@ -37,25 +68,37 @@ def _set_identity(
     scopes: set[str],
     channel_profile_ids: set[str],
     principal_name: str | None,
+    credential_id: str | None = None,
+    credential_fingerprint: str | None = None,
 ) -> None:
     request.state.control_actor = actor
     request.state.control_scopes = set(scopes)
     request.state.control_channel_profile_ids = set(channel_profile_ids)
     request.state.control_principal_name = principal_name
+    request.state.control_credential_id = credential_id
+    request.state.control_credential_fingerprint = credential_fingerprint
 
 
-def _match_principal(
+def _match_principal_credential(
     settings: Settings,
     presented_token: str,
-) -> ControlPrincipalSettings | None:
-    matched: ControlPrincipalSettings | None = None
+    *,
+    now: datetime | None = None,
+) -> _PrincipalCredentialMatch | None:
+    matched: _PrincipalCredentialMatch | None = None
+    current = now or datetime.now(UTC)
     for principal in settings.control_principals:
-        same = secrets.compare_digest(
-            presented_token.encode(),
-            principal.token.get_secret_value().encode(),
-        )
-        if same:
-            matched = principal
+        for credential in principal.resolved_credentials():
+            token = credential.token.get_secret_value()
+            same = secrets.compare_digest(
+                presented_token.encode(),
+                token.encode(),
+            )
+            if same and _credential_is_active(credential, now=current):
+                matched = _PrincipalCredentialMatch(
+                    principal=principal,
+                    credential=credential,
+                )
     return matched
 
 
@@ -71,8 +114,11 @@ def _authenticate(
                 detail="control-plane authentication required",
                 headers={"WWW-Authenticate": "Bearer"},
             )
-        principal = _match_principal(settings, credentials.credentials)
-        if principal is None:
+        match = _match_principal_credential(
+            settings,
+            credentials.credentials,
+        )
+        if match is None:
             raise HTTPException(
                 status_code=401,
                 detail="control-plane authentication required",
@@ -80,10 +126,14 @@ def _authenticate(
             )
         _set_identity(
             request,
-            actor=_principal_actor(principal.name),
-            scopes=set(principal.scopes),
-            channel_profile_ids=set(principal.channel_profile_ids),
-            principal_name=principal.name,
+            actor=_principal_actor(match.principal.name),
+            scopes=set(match.principal.scopes),
+            channel_profile_ids=set(match.principal.channel_profile_ids),
+            principal_name=match.principal.name,
+            credential_id=match.credential.id,
+            credential_fingerprint=_credential_fingerprint(
+                credentials.credentials
+            ),
         )
         return
 
@@ -100,6 +150,8 @@ def _authenticate(
             scopes={"*"},
             channel_profile_ids={"*"},
             principal_name=None,
+            credential_id=None,
+            credential_fingerprint=None,
         )
         return
 
@@ -118,6 +170,10 @@ def _authenticate(
         scopes=settings.resolved_control_scopes(),
         channel_profile_ids={"*"},
         principal_name=None,
+        credential_id="legacy-control-api-token",
+        credential_fingerprint=_credential_fingerprint(
+            credentials.credentials
+        ),
     )
 
 
@@ -226,6 +282,16 @@ def control_actor(request: Request) -> str:
 
 def control_principal_name(request: Request) -> str | None:
     value = getattr(request.state, "control_principal_name", None)
+    return str(value) if value else None
+
+
+def control_credential_id(request: Request) -> str | None:
+    value = getattr(request.state, "control_credential_id", None)
+    return str(value) if value else None
+
+
+def control_credential_fingerprint(request: Request) -> str | None:
+    value = getattr(request.state, "control_credential_fingerprint", None)
     return str(value) if value else None
 
 
