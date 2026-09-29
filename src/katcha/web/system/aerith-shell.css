@@ -1,0 +1,137 @@
+.app-shell {
+    background: transparent;
+}
+
+.rail,
+.sidebar {
+    border-color: var(--ae-line) !important;
+    background: rgba(9, 11, 18, 0.74) !important;
+    backdrop-filter: blur(24px) saturate(132%);
+    -webkit-backdrop-filter: blur(24px) saturate(132%);
+}
+
+.rail {
+    padding-top: 22px !important;
+}
+
+.brand,
+.logo {
+    color: var(--ae-text) !important;
+}
+
+.brand-dot {
+    color: var(--ae-violet) !important;
+}
+
+.brand-mark {
+    border: 1px solid rgba(255, 255, 255, 0.16) !important;
+    background:
+        linear-gradient(145deg, rgba(183, 165, 255, 0.96), rgba(132, 231, 255, 0.82)) !important;
+    box-shadow:
+        0 8px 22px rgba(113, 92, 198, 0.24),
+        inset 0 1px rgba(255, 255, 255, 0.36);
+}
+
+.brand-mark i {
+    background: #171421 !important;
+}
+
+.topbar,
+.header,
+.page-topbar {
+    border-color: var(--ae-line) !important;
+    background: rgba(9, 11, 18, 0.55);
+    backdrop-filter: blur(18px) saturate(125%);
+    -webkit-backdrop-filter: blur(18px) saturate(125%);
+}
+
+.topbar {
+    min-height: 60px;
+    height: 60px !important;
+}
+
+.breadcrumbs,
+.rail-footer,
+.sidebar-footer {
+    color: var(--ae-text-tertiary) !important;
+}
+
+.breadcrumbs strong {
+    color: var(--ae-text-secondary) !important;
+}
+
+.workspace-nav-cluster {
+    gap: 16px !important;
+}
+
+.workspace-menu > summary {
+    min-height: 48px;
+    border: 1px solid var(--ae-line) !important;
+    border-radius: 12px !important;
+    background:
+        linear-gradient(120deg, rgba(183, 165, 255, 0.065), rgba(132, 231, 255, 0.035)),
+        rgba(255, 255, 255, 0.025) !important;
+    box-shadow: inset 0 1px rgba(255, 255, 255, 0.035);
+}
+
+.workspace-menu > summary:hover {
+    border-color: var(--ae-line-hover) !important;
+    background:
+        linear-gradient(120deg, rgba(183, 165, 255, 0.095), rgba(132, 231, 255, 0.05)),
+        rgba(255, 255, 255, 0.035) !important;
+}
+
+.workspace-menu-copy small {
+    color: var(--ae-text-tertiary) !important;
+}
+
+.workspace-menu-copy strong {
+    color: var(--ae-text) !important;
+}
+
+.workspace-menu-popover {
+    border: 1px solid var(--ae-line) !important;
+    border-radius: var(--ae-radius-overlay) !important;
+    background: rgba(16, 18, 29, 0.92) !important;
+    box-shadow: var(--ae-shadow-overlay) !important;
+    backdrop-filter: blur(26px) saturate(140%);
+    -webkit-backdrop-filter: blur(26px) saturate(140%);
+}
+
+.workspace-menu-popover a {
+    border-radius: 9px !important;
+    color: var(--ae-text-secondary) !important;
+}
+
+.workspace-menu-popover a:hover,
+.workspace-menu-popover a[aria-current="page"] {
+    background:
+        linear-gradient(90deg, rgba(183, 165, 255, 0.13), rgba(132, 231, 255, 0.055)) !important;
+    color: var(--ae-text) !important;
+}
+
+.workspace-menu-popover a[aria-current="page"] {
+    box-shadow: inset 2px 0 var(--ae-violet) !important;
+}
+
+#katcha-chat-shortcut {
+    border-color: rgba(183, 165, 255, 0.42) !important;
+    background:
+        linear-gradient(120deg, rgba(183, 165, 255, 0.2), rgba(132, 231, 255, 0.10)),
+        rgba(20, 22, 34, 0.86) !important;
+    box-shadow: 0 16px 44px rgba(0, 0, 0, 0.42) !important;
+    backdrop-filter: blur(20px) saturate(135%);
+    -webkit-backdrop-filter: blur(20px) saturate(135%);
+}
+
+#katcha-chat-shortcut:hover {
+    border-color: rgba(132, 231, 255, 0.56) !important;
+    transform: translateY(-1px);
+}
+
+@media (max-width: 950px) {
+    .topbar {
+        min-height: 56px;
+        height: 56px !important;
+    }
+}

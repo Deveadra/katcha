@@ -28,6 +28,12 @@ class TelegramStatusResponse(BaseModel):
     last_delivery_error: str | None
 
 
+class TelegramVerifyResponse(BaseModel):
+    status: str
+    bot_id: int
+    bot_username: str | None
+
+
 class TelegramTestResponse(BaseModel):
     status: str
     chat_id: int
@@ -79,6 +85,26 @@ def telegram_status() -> TelegramStatusResponse:
         longform_review_link_ttl_seconds=settings.telegram_review_link_ttl_seconds,
         review_counts=counts,
         last_delivery_error=last_error,
+    )
+
+
+@router.post("/verify", response_model=TelegramVerifyResponse)
+def verify_telegram_bot() -> TelegramVerifyResponse:
+    settings = get_settings()
+    if settings.telegram_bot_token is None:
+        raise HTTPException(status_code=409, detail="Telegram bot token is not configured")
+    try:
+        identity = TelegramBotClient(settings).get_me()
+    except TelegramAPIError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    bot_id = identity.get("id")
+    if bot_id is None:
+        raise HTTPException(status_code=502, detail="Telegram getMe returned no bot identity")
+    username = str(identity.get("username") or "").strip() or None
+    return TelegramVerifyResponse(
+        status="verified",
+        bot_id=int(bot_id),
+        bot_username=username,
     )
 
 

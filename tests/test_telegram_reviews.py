@@ -292,6 +292,7 @@ async def test_telegram_approval_uses_authoritative_short_episode_review(
 def test_telegram_control_routes_are_mounted_without_secret_fields() -> None:
     paths = app.openapi()["paths"]
     assert "/v1/integrations/telegram/status" in paths
+    assert "/v1/integrations/telegram/verify" in paths
     assert "/v1/integrations/telegram/test" in paths
 
     status_schema = app.openapi()["components"]["schemas"]["TelegramStatusResponse"]
@@ -342,3 +343,45 @@ def test_longform_regeneration_prompt_honors_operator_feedback() -> None:
 
     assert "The middle drags. Tighten it and preserve the strongest payoff." in prompt
     assert "Do not convert one-off feedback into permanent channel policy." in prompt
+
+
+def test_new_telegram_bot_resets_stale_cursor_and_pairing() -> None:
+    row = SimpleNamespace(
+        last_update_id=9821,
+        cursor_metadata={"chat_id": 123, "user_id": 456},
+    )
+
+    changed = telegram_worker._update_cursor_bot_identity(
+        row,
+        {"id": 777, "username": "new_katcha_bot"},
+    )
+
+    assert changed is True
+    assert row.last_update_id == 0
+    assert row.cursor_metadata == {
+        "bot_id": 777,
+        "bot_username": "new_katcha_bot",
+    }
+
+
+def test_same_telegram_bot_preserves_cursor_and_pairing() -> None:
+    row = SimpleNamespace(
+        last_update_id=9821,
+        cursor_metadata={
+            "bot_id": 777,
+            "bot_username": "old_name",
+            "chat_id": 123,
+            "user_id": 456,
+        },
+    )
+
+    changed = telegram_worker._update_cursor_bot_identity(
+        row,
+        {"id": 777, "username": "new_name"},
+    )
+
+    assert changed is False
+    assert row.last_update_id == 9821
+    assert row.cursor_metadata["chat_id"] == 123
+    assert row.cursor_metadata["user_id"] == 456
+    assert row.cursor_metadata["bot_username"] == "new_name"

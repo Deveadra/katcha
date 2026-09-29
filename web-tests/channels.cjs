@@ -560,6 +560,15 @@ const analytics = [
     );
     assert.equal(await page.locator("#channel").inputValue(), "channel-1");
     assert.match(await page.locator("#channel").innerText(), /Fixture Gaming/);
+    assert.equal(await page.locator("[data-channel-tab]").count(), 4);
+    assert.equal(
+        await page.locator('[data-channel-tab="overview"]').getAttribute("aria-selected"),
+        "true",
+    );
+    assert.equal(await page.locator("#overview").isHidden(), false);
+    assert.equal(await page.locator("#content").isHidden(), true);
+    assert.equal(await page.locator("#monetization").isHidden(), true);
+    assert.equal(await page.locator("#identity").isHidden(), true);
 
     assert.equal(await page.locator("#token").inputValue(), "");
     assert.equal(await page.evaluate(() => localStorage.length), 0);
@@ -590,6 +599,11 @@ const analytics = [
         /\/studio\?channel=channel-1/,
     );
 
+    await page.locator('[data-channel-tab="settings"]').click();
+    assert.equal(await page.locator("#identity").isHidden(), false);
+    assert.equal(await page.locator("#integrations").isHidden(), false);
+    assert.equal(await page.locator("#overview").isHidden(), true);
+    assert.equal(await page.evaluate(() => location.hash), "#settings");
     await page.locator("#elevenlabs-model").selectOption("eleven_v4_turbo");
     await page.locator("#save-elevenlabs").click();
     await page.getByText(/ElevenLabs voice saved/).waitFor();
@@ -607,6 +621,10 @@ const analytics = [
         (await page.locator("#elevenlabs-preview").getAttribute("src")).startsWith("blob:"),
     );
 
+    await page.locator('[data-channel-tab="growth"]').click();
+    assert.equal(await page.locator("#monetization").isHidden(), false);
+    assert.equal(await page.locator("#growth").isHidden(), false);
+    assert.equal(await page.locator("#content").isHidden(), true);
     await page.locator("#custom-goal-metric").selectOption("subscribers");
     await page.locator("#custom-goal-target").fill("5000");
     await page.locator("#custom-goal-priority").selectOption("5");
@@ -624,6 +642,10 @@ const analytics = [
     assert.equal(goalRequest.body.custom_targets[0].metric, "subscribers");
     assert.equal(goalRequest.body.custom_targets[0].target, 5000);
 
+    await page.locator('[data-channel-tab="content"]').click();
+    assert.equal(await page.locator("#content").isHidden(), false);
+    assert.equal(await page.locator("#production").isHidden(), false);
+    assert.equal(await page.locator("#monetization").isHidden(), true);
     await page.locator("#refresh-video-analytics").click();
     await page.getByText(/Analytics refresh queued/).waitFor();
     await page.locator("#refresh-intelligence").click();
@@ -652,11 +674,12 @@ const analytics = [
     );
     assert(requests.every((request) => request.auth === "Bearer fixture-token"));
 
-    await page.setViewportSize({ width: 700, height: 900 });
+    await page.setViewportSize({ width: 390, height: 844 });
     assert.equal(
         await page.evaluate(() => document.documentElement.scrollWidth > innerWidth),
         false,
     );
+    assert.equal(await page.locator("[data-channel-tab]").count(), 4);
     assert.deepEqual(errors, []);
 })()
     .finally(async () => {

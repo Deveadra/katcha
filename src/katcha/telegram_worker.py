@@ -80,6 +80,43 @@ def _save_cursor(update_id: int) -> None:
             row.last_update_id = update_id
 
 
+def _update_cursor_bot_identity(
+    row: TelegramBotCursor,
+    identity: dict[str, Any],
+) -> bool:
+    bot_id = int(identity["id"])
+    username = str(identity.get("username") or "").strip() or None
+    metadata = dict(row.cursor_metadata or {})
+    previous = metadata.get("bot_id")
+    stale_unidentified_state = previous is None and (
+        row.last_update_id > 0
+        or metadata.get("chat_id") is not None
+        or metadata.get("user_id") is not None
+    )
+    changed = stale_unidentified_state or (
+        previous is not None and int(previous) != bot_id
+    )
+    if changed:
+        row.last_update_id = 0
+        metadata = {}
+    metadata["bot_id"] = bot_id
+    if username is not None:
+        metadata["bot_username"] = username
+    else:
+        metadata.pop("bot_username", None)
+    row.cursor_metadata = metadata
+    return changed
+
+
+def _register_bot_identity(identity: dict[str, Any]) -> bool:
+    with session_scope() as session:
+        row = session.get(TelegramBotCursor, _CURSOR_KEY)
+        if row is None:
+            row = TelegramBotCursor(key=_CURSOR_KEY, last_update_id=0)
+            session.add(row)
+        return _update_cursor_bot_identity(row, identity)
+
+
 def _record_action(
     session_id: uuid.UUID,
     *,
@@ -697,6 +734,12 @@ async def main() -> None:
         try:
             candidate = TelegramBotClient(settings)
             identity = await asyncio.to_thread(candidate.get_me)
+            changed_bot = await asyncio.to_thread(_register_bot_identity, identity)
+            if changed_bot:
+                LOGGER.warning(
+                    "Telegram bot identity changed; cleared the old update cursor "
+                    "and operator pairing so the new bot can receive /start."
+                )
             await asyncio.to_thread(candidate.delete_webhook)
             LOGGER.info(
                 "Telegram worker connected as @%s",

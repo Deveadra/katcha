@@ -24,7 +24,6 @@ _SETTLED_STATUSES = {
     "unlisted",
     "scheduled",
 }
-
 _WORKFLOW_TERMINAL_EVENTS = {
     "command_center.workflow_completed",
     "command_center.workflow_failed",
