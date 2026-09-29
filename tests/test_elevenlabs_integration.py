@@ -123,3 +123,42 @@ def test_elevenlabs_voice_search_returns_operator_safe_fields(monkeypatch) -> No
     assert result["voices"][0]["name"] == "Calm Host"
     assert "internal_secret" not in result["voices"][0]
     assert "super-secret-key" not in str(result)
+
+
+
+def test_elevenlabs_role_specific_voice_resolution(monkeypatch) -> None:
+    monkeypatch.setattr(
+        integration,
+        "_channel_config",
+        lambda _channel_profile_id: {
+            "voice_id": "default-voice",
+            "longform_primary_voice_id": "host-a",
+            "longform_secondary_voice_id": "host-b",
+            "model_id": "eleven_multilingual_v2",
+        },
+    )
+    settings = Settings(
+        elevenlabs_api_key="test-key",
+        elevenlabs_voice_id="global-fallback",
+        elevenlabs_model_id="eleven_flash_v2_5",
+    )
+
+    default_voice, model = integration.resolve_elevenlabs_voice(
+        channel_profile_id=None,
+        settings=settings,
+    )
+    primary, _ = integration.resolve_elevenlabs_voice(
+        channel_profile_id=None,
+        settings=settings,
+        role="longform_primary",
+    )
+    secondary, _ = integration.resolve_elevenlabs_voice(
+        channel_profile_id=None,
+        settings=settings,
+        role="longform_secondary",
+    )
+
+    assert default_voice == "default-voice"
+    assert primary == "host-a"
+    assert secondary == "host-b"
+    assert model == "eleven_multilingual_v2"
