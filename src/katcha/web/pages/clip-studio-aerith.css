@@ -1,0 +1,341 @@
+body[data-katcha-page="studio"] {
+    --purple: var(--ae-violet);
+    --cyan: var(--ae-cyan);
+    --pink: var(--ae-rose);
+    --danger: var(--ae-danger);
+}
+
+body[data-katcha-page="studio"] .studio-shell {
+    grid-template-columns: 218px minmax(0,1fr);
+}
+
+body[data-katcha-page="studio"] .studio-content {
+    width: 100%;
+    max-width: none;
+    margin: 0;
+    padding: 10px clamp(12px, 1.8vw, 24px) 12px;
+}
+
+body[data-katcha-page="studio"] .card,
+body[data-katcha-page="studio"] .studio-panel {
+    border-color: var(--ae-line);
+    background: var(--ae-surface-soft);
+    box-shadow: inset 0 1px rgba(255,255,255,.025);
+}
+
+body[data-katcha-page="studio"] .compact-connect {
+    margin: 0 0 6px;
+    padding: 9px 12px;
+    border-radius: 10px;
+}
+
+body[data-katcha-page="studio"] .message {
+    min-height: 17px;
+    margin: 0 0 4px;
+    color: var(--ae-text-secondary);
+    font-size: 10px;
+}
+
+body[data-katcha-page="studio"] .project-bar {
+    margin: 0 0 7px;
+    padding: 9px 11px;
+    gap: 8px;
+    border-radius: 11px;
+}
+
+body[data-katcha-page="studio"] .project-bar label {
+    color: var(--ae-text-tertiary);
+}
+
+body[data-katcha-page="studio"] .project-bar select {
+    min-height: 34px;
+    margin-top: 3px;
+    padding-block: 6px;
+}
+
+body[data-katcha-page="studio"] .edit-suite {
+    min-height: 0;
+    height: 100%;
+    gap: 7px;
+    grid-template-columns: 210px minmax(420px,1fr) 310px;
+}
+
+body[data-katcha-page="studio"] .studio-panel {
+    border-radius: var(--ae-radius-panel);
+}
+
+body[data-katcha-page="studio"] .studio-panel-head,
+body[data-katcha-page="studio"] .monitor-head {
+    height: 50px;
+    min-height: 50px;
+    padding-inline: 11px;
+    border-color: var(--ae-line);
+    background: rgba(255,255,255,.015);
+}
+
+body[data-katcha-page="studio"] .panel-kicker {
+    color: var(--ae-text-tertiary);
+}
+
+body[data-katcha-page="studio"] .clip-list {
+    min-height: 0;
+    max-height: none;
+    flex: 1 1 auto;
+    overflow: auto;
+    padding: 7px;
+}
+
+body[data-katcha-page="studio"] .clip-row {
+    padding: 8px;
+    border-color: var(--ae-line);
+    background: rgba(255,255,255,.025);
+}
+
+body[data-katcha-page="studio"] .clip-row:hover {
+    border-color: rgba(183,165,255,.28);
+}
+
+body[data-katcha-page="studio"] .clip-row.active {
+    border-color: rgba(183,165,255,.38);
+    background: linear-gradient(90deg, rgba(183,165,255,.11), rgba(132,231,255,.025));
+    box-shadow: inset 2px 0 var(--ae-violet);
+}
+
+body[data-katcha-page="studio"] .clip-rank {
+    background: rgba(183,165,255,.08);
+    color: var(--ae-violet);
+}
+
+body[data-katcha-page="studio"] .monitor {
+    min-height: 0;
+    background: rgba(6,7,12,.82);
+}
+
+body[data-katcha-page="studio"] .viewer-wrap {
+    min-height: 0;
+    padding: 10px;
+    background:
+        radial-gradient(circle at 50% 38%, rgba(183,165,255,.10), transparent 45%),
+        rgba(5,6,10,.88);
+}
+
+body[data-katcha-page="studio"] .video-frame {
+    height: min(100%, 510px);
+    max-height: 100%;
+    border-color: var(--ae-line);
+    box-shadow: 0 20px 60px rgba(0,0,0,.50);
+}
+
+body[data-katcha-page="studio"] .monitor-switch {
+    border-color: var(--ae-line);
+}
+
+body[data-katcha-page="studio"] .monitor-mode {
+    background: rgba(255,255,255,.02);
+    color: var(--ae-text-tertiary);
+}
+
+body[data-katcha-page="studio"] .monitor-mode.active {
+    background: rgba(183,165,255,.10);
+    color: var(--ae-text);
+}
+
+body[data-katcha-page="studio"] .transport-help {
+    height: 31px;
+    min-height: 31px;
+    border-color: var(--ae-line);
+}
+
+body[data-katcha-page="studio"] .inspector {
+    min-height: 0;
+}
+
+body[data-katcha-page="studio"] .inspector-tabs {
+    border-color: var(--ae-line);
+    background: rgba(255,255,255,.012);
+}
+
+body[data-katcha-page="studio"] .inspector-tab {
+    padding: 10px 5px;
+    border-color: var(--ae-line);
+    background: transparent;
+    color: var(--ae-text-tertiary);
+}
+
+body[data-katcha-page="studio"] .inspector-tab.active {
+    background: rgba(183,165,255,.08);
+    color: var(--ae-text);
+    box-shadow: inset 0 -2px var(--ae-violet);
+}
+
+body[data-katcha-page="studio"] .inspector-body {
+    min-height: 0;
+    max-height: none;
+    flex: 1 1 auto;
+    overflow: auto;
+    padding: 12px;
+}
+
+body[data-katcha-page="studio"] .inspector-body input,
+body[data-katcha-page="studio"] .inspector-body select,
+body[data-katcha-page="studio"] .inspector-body textarea,
+body[data-katcha-page="studio"] .render-options textarea,
+body[data-katcha-page="studio"] .external-return input {
+    border-color: var(--ae-line);
+    background: rgba(255,255,255,.025);
+}
+
+body[data-katcha-page="studio"] .provider-card,
+body[data-katcha-page="studio"] .handoff-state,
+body[data-katcha-page="studio"] .inspector-badge {
+    border-color: var(--ae-line);
+    background: rgba(255,255,255,.025);
+}
+
+body[data-katcha-page="studio"] .timeline {
+    min-height: 0;
+    margin-top: 7px;
+    border-radius: var(--ae-radius-panel);
+}
+
+body[data-katcha-page="studio"] .timeline-head {
+    height: 39px;
+    min-height: 39px;
+    padding-inline: 11px;
+    border-color: var(--ae-line);
+}
+
+body[data-katcha-page="studio"] .timeline-canvas {
+    min-height: 0;
+    height: 100%;
+    padding: 7px 9px 9px;
+}
+
+body[data-katcha-page="studio"] .track-lane {
+    border-color: var(--ae-line);
+    background: rgba(0,0,0,.22);
+}
+
+body[data-katcha-page="studio"] .timeline-block.video {
+    border-color: rgba(183,165,255,.28);
+    background: rgba(183,165,255,.16);
+    color: var(--ae-text);
+}
+
+body[data-katcha-page="studio"] .timeline-block.audio {
+    border-color: rgba(132,231,255,.24);
+    background: rgba(132,231,255,.10);
+    color: var(--ae-cyan);
+}
+
+@media (min-width: 1001px) {
+    body[data-katcha-page="studio"] {
+        overflow: hidden;
+    }
+
+    body[data-katcha-page="studio"] .studio-shell,
+    body[data-katcha-page="studio"] .studio-main {
+        height: 100dvh;
+        min-height: 0;
+        overflow: hidden;
+    }
+
+    body[data-katcha-page="studio"] .studio-content {
+        height: calc(100dvh - 60px);
+        min-height: 0;
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+    }
+
+    body[data-katcha-page="studio"] .edit-suite {
+        flex: 1 1 auto;
+        overflow: hidden;
+    }
+
+    body[data-katcha-page="studio"] .timeline {
+        flex: 0 0 142px;
+        overflow: hidden;
+    }
+
+    body[data-katcha-page="studio"] .media-bin,
+    body[data-katcha-page="studio"] .monitor,
+    body[data-katcha-page="studio"] .inspector {
+        height: 100%;
+    }
+}
+
+@media (max-width: 1320px) and (min-width: 1001px) {
+    body[data-katcha-page="studio"] .edit-suite {
+        grid-template-columns: 185px minmax(390px,1fr) 280px;
+    }
+}
+
+@media (max-width: 1000px) {
+    body[data-katcha-page="studio"] .studio-shell {
+        grid-template-columns: 1fr;
+    }
+
+    body[data-katcha-page="studio"] .studio-content {
+        padding: 10px 12px 24px;
+    }
+
+    body[data-katcha-page="studio"] .edit-suite {
+        height: auto;
+        grid-template-columns: 1fr;
+    }
+
+    body[data-katcha-page="studio"] .media-bin {
+        max-height: 250px;
+    }
+
+    body[data-katcha-page="studio"] .clip-list {
+        max-height: 190px;
+    }
+
+    body[data-katcha-page="studio"] .inspector-body {
+        max-height: none;
+    }
+
+    body[data-katcha-page="studio"] .timeline {
+        overflow: hidden;
+    }
+}
+
+@media (max-width: 700px) {
+    body[data-katcha-page="studio"] .studio-content {
+        padding-inline: 10px;
+    }
+
+    body[data-katcha-page="studio"] .compact-connect {
+        display: flex;
+    }
+
+    body[data-katcha-page="studio"] .project-bar {
+        grid-template-columns: 1fr;
+    }
+
+    body[data-katcha-page="studio"] .clip-list {
+        grid-template-columns: 1fr 1fr;
+    }
+
+    body[data-katcha-page="studio"] .inspector-tabs {
+        grid-template-columns: repeat(4,minmax(0,1fr));
+    }
+
+    body[data-katcha-page="studio"] .inspector-tab {
+        font-size: 9px;
+    }
+}
+
+@media (max-width: 430px) {
+    body[data-katcha-page="studio"] .clip-list {
+        grid-template-columns: 1fr;
+    }
+
+    body[data-katcha-page="studio"] .compact-connect > *,
+    body[data-katcha-page="studio"] .project-bar > * {
+        width: 100%;
+        min-width: 0;
+    }
+}
