@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 from copy import deepcopy
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -15,6 +15,7 @@ class PersonaReference(BaseModel):
 class VoicePolicy(BaseModel):
     direction_key: str
     preferred_profiles: list[str] = Field(min_length=1)
+    routing_mode: Literal["inherit", "fixed"] = "inherit"
 
 
 class ChannelIdentity(BaseModel):
