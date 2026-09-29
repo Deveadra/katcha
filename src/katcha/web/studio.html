@@ -76,6 +76,7 @@
                         <button class="inspector-tab active" data-tab="clip" type="button">Clip</button>
                         <button class="inspector-tab" data-tab="ai" type="button">AI rules</button>
                         <button class="inspector-tab" data-tab="brand" type="button">Branding</button>
+                        <button class="inspector-tab" data-tab="external" type="button">External</button>
                     </div>
 
                     <section id="tab-clip" class="inspector-body">
@@ -108,6 +109,41 @@
                         <label>Never do <textarea id="ai-never" rows="4" placeholder="One boundary per line"></textarea></label>
                         <label>Editorial notes <textarea id="ai-notes" rows="5" maxlength="2000" placeholder="Voice, pacing, framing, recurring corrections…"></textarea></label>
                         <button id="save-ai" class="button primary full" type="button">Save as new recipe version</button>
+                    </section>
+
+                    <section id="tab-external" class="inspector-body" hidden>
+                        <div class="inspector-title">
+                            <span class="panel-kicker">EXTERNAL PROVIDERS</span>
+                            <h2>Voice & edit handoff</h2>
+                            <p>Katcha stays the source of truth. ElevenLabs supplies narration; InVideo can temporarily handle complex edits and return the finished MP4 for Katcha review.</p>
+                        </div>
+
+                        <div class="provider-card">
+                            <div class="provider-card-head"><strong>ElevenLabs</strong><span id="elevenlabs-state" class="pill">CHECKING</span></div>
+                            <p id="elevenlabs-detail">Checking configured RankSnaxx voice…</p>
+                            <dl class="provider-kv">
+                                <dt>Voice</dt><dd id="elevenlabs-voice">—</dd>
+                                <dt>Plan</dt><dd id="elevenlabs-plan">—</dd>
+                                <dt>Usage</dt><dd id="elevenlabs-usage">—</dd>
+                            </dl>
+                            <button id="refresh-providers" class="button secondary full" type="button">Refresh provider status</button>
+                        </div>
+
+                        <div class="provider-card">
+                            <div class="provider-card-head"><strong>InVideo</strong><span id="invideo-state" class="pill">BRIDGE</span></div>
+                            <p>Katcha packages the exact clips, narration, brand, script, and editing recipe. InVideo does not publish; its finished MP4 comes back here.</p>
+                            <div id="invideo-handoff" class="handoff-state">No handoff prepared for this episode.</div>
+                            <label>Operator note<textarea id="invideo-note" rows="2" maxlength="2000" placeholder="Why this episode needs an external edit…"></textarea></label>
+                            <button id="prepare-invideo" class="button primary full" type="button" disabled>Prepare InVideo handoff</button>
+                            <button id="download-invideo" class="button secondary full" type="button" disabled>Download handoff package</button>
+                            <div class="external-return">
+                                <label>InVideo project ID <input id="invideo-project-id" maxlength="255" placeholder="Optional project/reference ID"></label>
+                                <label>Returned MP4 <input id="invideo-output" type="file" accept="video/mp4"></label>
+                                <button id="import-invideo" class="button secondary full" type="button" disabled>Import returned edit</button>
+                                <button id="adopt-invideo" class="button primary full" type="button" disabled>Adopt InVideo edit for review</button>
+                            </div>
+                            <p class="field-note">Direct InVideo project automation remains disabled until your account exposes a documented API contract. This bridge is fully tracked and reversible.</p>
+                        </div>
                     </section>
 
                     <section id="tab-brand" class="inspector-body" hidden>
