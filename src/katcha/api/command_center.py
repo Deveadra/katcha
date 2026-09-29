@@ -27,6 +27,7 @@ from katcha.command_center_models import (
     CommandThread,
     CommandTurn,
 )
+from katcha.control_contract import COMMANDCOMMAND_ACTION_SCOPES
 from katcha.config import get_settings
 from katcha.db import session_scope
 from katcha.domain import ProductionStatus
@@ -93,15 +94,6 @@ ActionType = Literal[
     "recover_production_render",
     "start_source_scout",
 ]
-
-_ACTION_SCOPES: dict[str, str] = {
-    "refresh_channel_intelligence": "intelligence:write",
-    "create_short_production": "production:create",
-    "create_ranked_short_episode": "production:create",
-    "recover_production_render": "render:recover",
-    "start_source_scout": "discovery:write",
-}
-
 
 ResourceKind = Literal[
     "clip",
@@ -1361,7 +1353,7 @@ async def execute_action(
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
-    required_scope = _ACTION_SCOPES.get(current.action_type)
+    required_scope = COMMAND_ACTION_SCOPES.get(current.action_type)
     if required_scope is None:
         raise HTTPException(status_code=409, detail="unsupported proposal action")
     require_control_scope(http_request, required_scope)
