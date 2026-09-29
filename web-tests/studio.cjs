@@ -79,7 +79,37 @@ const detail = {
         id: `item-${item.position}`, short_episode_id: episode.id, clip_id: item.source.clip_id,
         position: item.position, role: item.role, analysis_snapshot: { duration_seconds: 15 }, acquisition_snapshot: {}, source_snapshot: {},
     })),
-    scripts: [], assets: [], reviews: [],
+    scripts: [],
+    assets: [
+        {
+            id: "render-native",
+            short_episode_id: episode.id,
+            kind: "render",
+            generation: 1,
+            storage_key: manifest.output_key,
+            content_type: "video/mp4",
+            provider: "remotion",
+            model: "ranked-episode-render-v1",
+            asset_metadata: { verified: true },
+            created_at: "2026-09-28T10:00:00Z",
+        },
+        {
+            id: "render-invideo",
+            short_episode_id: episode.id,
+            kind: "render",
+            generation: 2,
+            storage_key: "external-edit/invideo/previous-output.mp4",
+            content_type: "video/mp4",
+            provider: "invideo",
+            model: "manual_bridge",
+            asset_metadata: {
+                verified: true,
+                external_edit_handoff_id: "30000000-0000-0000-0000-000000000099",
+            },
+            created_at: "2026-09-28T11:00:00Z",
+        },
+    ],
+    reviews: [],
 };
 
 (async () => {
@@ -91,7 +121,12 @@ const detail = {
         await page.route("**/v1/**",(route)=>{
             const request=route.request(), url=new URL(request.url()); let body=null;
             try { body=request.postDataJSON(); } catch {}
-            requests.push({path:url.pathname,method:request.method(),body});
+            requests.push({
+                path:url.pathname,
+                query:Object.fromEntries(url.searchParams),
+                method:request.method(),
+                body,
+            });
             const json=(data,status=200)=>route.fulfill({status,contentType:"application/json",body:JSON.stringify(data)});
             if (url.pathname==="/v1/integrations/providers") return json([
                 {provider:"elevenlabs",capability:"text_to_speech",configured:true,mode:"api",detail:"Direct ElevenLabs TTS is ready."},
@@ -144,6 +179,22 @@ const detail = {
         await page.locator("#monitor-title").getByText("Three clips worth fixing").waitFor();
         assert.equal(await page.locator(".clip-row").count(),3);
         assert.match(await page.locator("#timeline-duration").innerText(),/^00:/);
+        await page.locator("#render-version-wrap").waitFor({state:"visible"});
+        assert.equal(await page.locator("#render-version").inputValue(),"2");
+        assert.match(await page.locator("#render-version").innerText(),/g2 · InVideo/);
+        assert.match(await page.locator("#render-version").innerText(),/g1 · remotion/);
+        await page.locator("#render-version").selectOption("1");
+        await page.waitForFunction(
+            () => document.querySelector("#render-version").value === "1",
+        );
+        assert(
+            requests.some(
+                (row) =>
+                    row.path === `/v1/studio/episodes/${episode.id}/media`
+                    && row.query.generation === "1",
+            ),
+        );
+        await page.locator("#render-version").selectOption("2");
 
         await page.locator(".clip-row").first().click();
         await page.locator("#clip-duration").fill("5.25");
