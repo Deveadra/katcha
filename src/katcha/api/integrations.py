@@ -5,6 +5,7 @@ import uuid
 from pathlib import Path
 from typing import Annotated, Literal
 
+import httpx
 from fastapi import (
     APIRouter,
     BackgroundTasks,
@@ -15,13 +16,19 @@ from fastapi import (
     UploadFile,
     status,
 )
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 
+from katcha.audio.tts import get_voice_profile, synthesize_speech
 from katcha.config import get_settings
 from katcha.db import session_scope
 from katcha.external_edit_models import ExternalEditHandoff
+from katcha.services.channel_brands import (
+    activate_brand_version,
+    brand_for_channel,
+    stage_brand_version,
+)
 from katcha.services.external_edit import (
     adopt_external_output,
     build_handoff_zip,
@@ -39,6 +46,44 @@ class IntegrationProviderStatus(BaseModel):
     configured: bool
     mode: str
     detail: str
+
+
+class ElevenLabsVerificationResponse(BaseModel):
+    configured: bool
+    reachable: bool
+    voice_id_hint: str | None
+    model_id: str
+    output_format: str
+    live_execution: bool
+    detail: str
+
+
+class ElevenLabsPreviewRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    channel_profile_id: uuid.UUID
+    text: str = Field(min_length=1, max_length=400)
+
+
+class ChannelVoicePolicyResponse(BaseModel):
+    channel_profile_id: uuid.UUID
+    brand_version: int
+    routing_mode: Literal["inherit", "fixed"]
+    preferred_profiles: list[str]
+    primary_provider: str
+    fallback_providers: list[str]
+
+
+class ChannelVoicePolicyUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    primary_provider: Literal["elevenlabs", "openai", "gemini"]
+    fallback_providers: list[Literal["elevenlabs", "openai", "gemini"]] = Field(
+        default_factory=list,
+        max_length=2,
+    )
+    routing_mode: Literal["inherit", "fixed"] = "fixed"
+    actor: str = Field(default="channel-studio", min_length=1, max_length=128)
 
 
 class InVideoHandoffCreate(BaseModel):
@@ -69,6 +114,50 @@ class InVideoHandoffResponse(BaseModel):
     handoff_metadata: dict[str, object]
 
 
+_VOICE_PROFILE_BY_PROVIDER = {
+    "elevenlabs": "elevenlabs_rank_snaxx_v1",
+    "openai": "openai_youth_v2",
+    "gemini": "gemini_youth_v2",
+}
+
+
+def _provider_configured(provider: str) -> bool:
+    settings = get_settings()
+    if provider == "elevenlabs":
+        return bool(settings.elevenlabs_api_key and settings.elevenlabs_voice_id)
+    if provider == "openai":
+        return bool(settings.openai_api_key)
+    if provider == "gemini":
+        return bool(settings.gemini_api_key)
+    return False
+
+
+def _provider_for_profile(profile_key: str) -> str:
+    for provider, key in _VOICE_PROFILE_BY_PROVIDER.items():
+        if key == profile_key:
+            return provider
+    return "unknown"
+
+
+def _voice_policy_response(
+    channel_profile_id: uuid.UUID,
+    *,
+    brand_version: int,
+    voice_policy: dict[str, object],
+) -> ChannelVoicePolicyResponse:
+    profiles = [str(value) for value in voice_policy.get("preferred_profiles") or []]
+    providers = [_provider_for_profile(value) for value in profiles]
+    primary = providers[0] if providers else "unknown"
+    return ChannelVoicePolicyResponse(
+        channel_profile_id=channel_profile_id,
+        brand_version=brand_version,
+        routing_mode=str(voice_policy.get("routing_mode") or "inherit"),
+        preferred_profiles=profiles,
+        primary_provider=primary,
+        fallback_providers=[value for value in providers[1:] if value != "unknown"],
+    )
+
+
 def _response(row: ExternalEditHandoff) -> InVideoHandoffResponse:
     return InVideoHandoffResponse(
         id=row.id,
@@ -82,6 +171,182 @@ def _response(row: ExternalEditHandoff) -> InVideoHandoffResponse:
         external_project_id=row.external_project_id,
         handoff_metadata=dict(row.handoff_metadata or {}),
     )
+
+
+@router.get(
+    "/elevenlabs/verify",
+    response_model=ElevenLabsVerificationResponse,
+)
+def verify_elevenlabs() -> ElevenLabsVerificationResponse:
+    settings = get_settings()
+    configured = bool(settings.elevenlabs_api_key and settings.elevenlabs_voice_id)
+    hint = None
+    if settings.elevenlabs_voice_id:
+        raw = settings.elevenlabs_voice_id
+        hint = f"{raw[:4]}…{raw[-4:]}" if len(raw) > 10 else "configured"
+    if not configured:
+        return ElevenLabsVerificationResponse(
+            configured=False,
+            reachable=False,
+            voice_id_hint=hint,
+            model_id=settings.elevenlabs_model_id,
+            output_format=settings.elevenlabs_output_format,
+            live_execution=settings.resolved_ai_execution_mode() == "live",
+            detail="ElevenLabs API key and voice ID are not both configured.",
+        )
+    try:
+        response = httpx.get(
+            (
+                "https://api.elevenlabs.io/v1/voices/"
+                f"{settings.elevenlabs_voice_id}/settings"
+            ),
+            headers={"xi-api-key": settings.elevenlabs_api_key},
+            timeout=settings.elevenlabs_timeout_seconds,
+        )
+        response.raise_for_status()
+    except httpx.HTTPStatusError as exc:
+        return ElevenLabsVerificationResponse(
+            configured=True,
+            reachable=False,
+            voice_id_hint=hint,
+            model_id=settings.elevenlabs_model_id,
+            output_format=settings.elevenlabs_output_format,
+            live_execution=settings.resolved_ai_execution_mode() == "live",
+            detail=f"ElevenLabs rejected the configured voice check (HTTP {exc.response.status_code}).",
+        )
+    except httpx.HTTPError:
+        return ElevenLabsVerificationResponse(
+            configured=True,
+            reachable=False,
+            voice_id_hint=hint,
+            model_id=settings.elevenlabs_model_id,
+            output_format=settings.elevenlabs_output_format,
+            live_execution=settings.resolved_ai_execution_mode() == "live",
+            detail="ElevenLabs could not be reached from the Katcha API.",
+        )
+    return ElevenLabsVerificationResponse(
+        configured=True,
+        reachable=True,
+        voice_id_hint=hint,
+        model_id=settings.elevenlabs_model_id,
+        output_format=settings.elevenlabs_output_format,
+        live_execution=settings.resolved_ai_execution_mode() == "live",
+        detail="Configured ElevenLabs credentials and voice are reachable.",
+    )
+
+
+@router.post("/elevenlabs/preview")
+def preview_elevenlabs_voice(request: ElevenLabsPreviewRequest) -> StreamingResponse:
+    settings = get_settings()
+    if not settings.elevenlabs_api_key or not settings.elevenlabs_voice_id:
+        raise HTTPException(status_code=409, detail="ElevenLabs is not configured")
+    if settings.resolved_ai_execution_mode() != "live":
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Voice preview is a real paid provider call. "
+                "Set KATCHA_AI_EXECUTION_MODE=live before previewing ElevenLabs."
+            ),
+        )
+    profile = get_voice_profile("elevenlabs_rank_snaxx_v1")
+    result = synthesize_speech(
+        request.text,
+        profile=profile,
+        settings=settings,
+        channel_profile_id=request.channel_profile_id,
+        reference_type="voice_preview",
+        reference_id=str(request.channel_profile_id),
+        reservation_key=(
+            f"voice-preview:{request.channel_profile_id}:{uuid.uuid4().hex}"
+        ),
+        expected_value=0.5,
+        usage_metadata={"surface": "channel_studio"},
+    )
+    return StreamingResponse(
+        iter([result.audio]),
+        media_type=result.content_type,
+        headers={
+            "Content-Disposition": 'inline; filename="elevenlabs-preview.wav"',
+            "X-Katcha-Voice-Profile": result.profile.key,
+            "X-Katcha-TTS-Provider": result.target.provider,
+            "X-Katcha-Estimated-Cost-USD": str(result.estimated_cost_usd),
+        },
+    )
+
+
+@router.get(
+    "/channels/{channel_profile_id}/voice-policy",
+    response_model=ChannelVoicePolicyResponse,
+)
+def get_channel_voice_policy(
+    channel_profile_id: uuid.UUID,
+) -> ChannelVoicePolicyResponse:
+    try:
+        with session_scope() as session:
+            contract, version = brand_for_channel(session, channel_profile_id)
+        return _voice_policy_response(
+            channel_profile_id,
+            brand_version=version,
+            voice_policy=contract.voice_policy.model_dump(mode="json"),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.put(
+    "/channels/{channel_profile_id}/voice-policy",
+    response_model=ChannelVoicePolicyResponse,
+)
+def update_channel_voice_policy(
+    channel_profile_id: uuid.UUID,
+    request: ChannelVoicePolicyUpdate,
+) -> ChannelVoicePolicyResponse:
+    providers = [request.primary_provider, *request.fallback_providers]
+    if len(providers) != len(set(providers)):
+        raise HTTPException(status_code=400, detail="voice providers cannot be repeated")
+    unavailable = [provider for provider in providers if not _provider_configured(provider)]
+    if unavailable:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "voice provider is not configured: "
+                + ", ".join(unavailable)
+            ),
+        )
+    try:
+        with session_scope() as session:
+            contract, version = brand_for_channel(session, channel_profile_id)
+        payload = contract.model_dump(mode="json")
+        payload["version"] = version + 1
+        voice_policy = dict(payload.get("voice_policy") or {})
+        voice_policy["preferred_profiles"] = [
+            _VOICE_PROFILE_BY_PROVIDER[provider] for provider in providers
+        ]
+        voice_policy["routing_mode"] = request.routing_mode
+        payload["voice_policy"] = voice_policy
+        staged = stage_brand_version(
+            channel_profile_id,
+            contract_payload=payload,
+            actor=request.actor,
+            hypothesis=(
+                f"Set {request.primary_provider} as the channel narration provider "
+                f"with {request.routing_mode} routing."
+            ),
+        )
+        active = activate_brand_version(
+            channel_profile_id,
+            version=staged.version,
+            actor=request.actor,
+        )
+        return _voice_policy_response(
+            channel_profile_id,
+            brand_version=active.version,
+            voice_policy=dict(active.contract.get("voice_policy") or {}),
+        )
+    except ValueError as exc:
+        message = str(exc)
+        code = 404 if "not found" in message else 409
+        raise HTTPException(status_code=code, detail=message) from exc
 
 
 @router.get("/providers", response_model=list[IntegrationProviderStatus])
