@@ -356,11 +356,23 @@ def update_channel_elevenlabs_config(
     request: ElevenLabsChannelConfigUpdate,
 ) -> ElevenLabsChannelConfigResponse:
     try:
+        default_voice_id = request.voice_id.strip()
+        primary_voice_id = (
+            request.longform_primary_voice_id.strip()
+            if request.longform_primary_voice_id
+            else default_voice_id
+        )
+        secondary_voice_id = (
+            request.longform_secondary_voice_id.strip()
+            if request.longform_secondary_voice_id
+            else None
+        )
+        model_id = request.model_id.strip()
         requested_ids = [
-            request.voice_id,
+            default_voice_id,
             *request.saved_voice_ids,
-            request.longform_primary_voice_id,
-            request.longform_secondary_voice_id,
+            primary_voice_id,
+            secondary_voice_id,
         ]
         voice_ids: list[str] = []
         for raw in requested_ids:
@@ -371,15 +383,15 @@ def update_channel_elevenlabs_config(
             raise ValueError("A channel can save at most 12 ElevenLabs voices.")
 
         voices = {voice_id: get_elevenlabs_voice(voice_id) for voice_id in voice_ids}
-        voice = voices[request.voice_id]
+        voice = voices[default_voice_id]
         models = list_elevenlabs_models()
         model = next(
-            (row for row in models if row.get("model_id") == request.model_id),
+            (row for row in models if row.get("model_id") == model_id),
             None,
         )
         if model is None:
             raise ValueError(
-                f"ElevenLabs model is not available for TTS: {request.model_id}"
+                f"ElevenLabs model is not available for TTS: {model_id}"
             )
         library = [
             {
@@ -395,15 +407,13 @@ def update_channel_elevenlabs_config(
             provider="elevenlabs",
             enabled=request.enabled,
             config={
-                "voice_id": request.voice_id,
-                "model_id": request.model_id,
+                "voice_id": default_voice_id,
+                "model_id": model_id,
                 "voice_name": voice.get("name"),
                 "model_name": model.get("name"),
                 "saved_voices": library,
-                "longform_primary_voice_id": (
-                    request.longform_primary_voice_id or request.voice_id
-                ),
-                "longform_secondary_voice_id": request.longform_secondary_voice_id,
+                "longform_primary_voice_id": primary_voice_id,
+                "longform_secondary_voice_id": secondary_voice_id,
             },
             actor=request.actor,
         )
