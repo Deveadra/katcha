@@ -198,7 +198,7 @@ let browser;
     assert.match(menuText, /Trend explorer/);
     assert.match(menuText, /Content sources/);
     assert.match(menuText, /Clip library/);
-    assert.match(menuText, /Editing control center/);
+    assert.match(menuText, /Production/);
     assert.match(menuText, /Clip Studio/);
     assert.match(menuText, /Launch console/);
     await page.locator(".workspace-menu > summary").click();
