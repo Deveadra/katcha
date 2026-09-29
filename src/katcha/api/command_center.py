@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import uuid
 from datetime import datetime
+from time import monotonic
 from typing import Literal
 
 from fastapi import APIRouter, HTTPException, Query, Request, status
@@ -67,6 +68,15 @@ from katcha.services.command_history import (
     list_thread_proposals,
     record_command_exchange,
 )
+from katcha.services.command_observability import (
+    command_observability_summary,
+    record_command_observation,
+)
+from katcha.services.command_resources import (
+    SUPPORTED_RESOURCE_KINDS,
+    resolve_command_resources,
+    resource_context_summary,
+)
 from katcha.services.discovery_trends import create_topic_watch_version
 from katcha.services.productions import (
     register_regeneration,
@@ -94,12 +104,27 @@ _ACTION_SCOPES: dict[str, str] = {
 }
 
 
+ResourceKind = Literal[
+    "clip",
+    "production",
+    "short_episode",
+    "publication",
+    "trend_opportunity",
+]
+
+
+class CommandResourceRef(BaseModel):
+    kind: ResourceKind
+    id: uuid.UUID
+
+
 class CommandRequest(BaseModel):
     channel_profile_id: uuid.UUID
     thread_id: uuid.UUID | None = None
     prompt: str = Field(min_length=1, max_length=4000)
     selected_clip_ids: list[uuid.UUID] = Field(default_factory=list, max_length=20)
     selected_production_id: uuid.UUID | None = None
+    resource_refs: list[CommandResourceRef] = Field(default_factory=list, max_length=8)
 
 
 class CommandAction(BaseModel):
@@ -117,6 +142,7 @@ class CommandAction(BaseModel):
 
 class ResolvedContextResponse(BaseModel):
     selected_clip_ids: list[uuid.UUID] = Field(default_factory=list)
+    resource_refs: list[CommandResourceRef] = Field(default_factory=list)
     inherited_from_thread: bool = False
     source_turn_id: uuid.UUID | None = None
     resolution: str | None = None
@@ -151,6 +177,34 @@ class CommandResponse(BaseModel):
     grounded: bool = True
     narrator: str
     ai_notice: str | None = None
+
+
+class CommandObservabilityRecent(BaseModel):
+    request_id: str
+    thread_id: str | None = None
+    intent: str | None = None
+    latency_ms: int
+    planning_source: str | None = None
+    narrator: str
+    degraded: bool
+    resource_kinds: list[str] = Field(default_factory=list)
+    created_at: str
+
+
+class CommandObservabilityResponse(BaseModel):
+    channel_profile_id: str
+    window_hours: int
+    request_count: int
+    average_latency_ms: int
+    p95_latency_ms: int
+    degraded_answer_count: int
+    ai_planned_count: int
+    typed_context_request_count: int
+    input_units: int
+    output_units: int
+    estimated_cost_usd: float
+    actions: dict[str, int]
+    recent: list[CommandObservabilityRecent] = Field(default_factory=list)
 
 
 class CommandReadinessResponse(BaseModel):
@@ -192,6 +246,19 @@ def command_readiness(http_request: Request) -> CommandReadinessResponse:
             "Live AI is configured. Each request checks the channel budget "
             "and provider availability."
         ),
+    )
+
+
+@router.get("/observability", response_model=CommandObservabilityResponse)
+def command_observability(
+    http_request: Request,
+    channel_profile_id: uuid.UUID,
+    hours: int = Query(default=24, ge=1, le=720),
+) -> CommandObservabilityResponse:
+    require_control_scope(http_request, "ai:read")
+    require_control_channel(http_request, channel_profile_id)
+    return CommandObservabilityResponse.model_validate(
+        command_observability_summary(channel_profile_id, hours=hours)
     )
 
 
@@ -511,6 +578,35 @@ def command(http_request: Request, request: CommandRequest) -> CommandResponse:
     require_control_channel(http_request, request.channel_profile_id)
     actor = control_actor(http_request)
     request_id = uuid.uuid4()
+    started_at = monotonic()
+
+    resource_pairs = [(item.kind, item.id) for item in request.resource_refs]
+    try:
+        resource_evidence = resolve_command_resources(
+            request.channel_profile_id,
+            resource_pairs,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    resource_clip_ids = [
+        uuid.UUID(str(item["id"]))
+        for item in resource_evidence
+        if item.get("kind") == "clip" and item.get("id")
+    ]
+    explicit_clip_ids = list(dict.fromkeys([
+        *request.selected_clip_ids,
+        *resource_clip_ids,
+    ]))
+    resource_production_ids = [
+        uuid.UUID(str(item["id"]))
+        for item in resource_evidence
+        if item.get("kind") == "production" and item.get("id")
+    ]
+    selected_production_id = (
+        request.selected_production_id
+        or (resource_production_ids[0] if resource_production_ids else None)
+    )
 
     thread: CommandThread | None = None
     prior_turns: list[CommandTurn] = []
@@ -547,18 +643,23 @@ def command(http_request: Request, request: CommandRequest) -> CommandResponse:
     )
     resolution = resolve_command_follow_up(
         request.prompt,
-        request.selected_clip_ids,
+        explicit_clip_ids,
         prior_turns,
         has_pending_proposal=has_pending_proposal,
     )
     resolved_selected_clip_ids = list(resolution.selected_clip_ids)
     resolved_request = request.model_copy(
-        update={"selected_clip_ids": resolved_selected_clip_ids}
+        update={
+            "selected_clip_ids": resolved_selected_clip_ids,
+            "selected_production_id": selected_production_id,
+        }
     )
     deterministic_intent = resolution.intent_hint or classify_intent(
         request.prompt,
         resolved_selected_clip_ids,
     )
+    if request.resource_refs and deterministic_intent == "channel_status":
+        deterministic_intent = "resource_context"
     if deterministic_intent == "confirm_action":
         planning = deterministic_plan(
             "channel_status",
@@ -604,6 +705,8 @@ def command(http_request: Request, request: CommandRequest) -> CommandResponse:
             )
         elif intent == "failures":
             deterministic, evidence = failures(request.channel_profile_id)
+            if resource_evidence:
+                evidence = [*resource_evidence, *evidence]
         elif intent in {"clip_rejection", "clip_explanation"}:
             clip_id = (
                 resolved_selected_clip_ids[0]
@@ -626,11 +729,18 @@ def command(http_request: Request, request: CommandRequest) -> CommandResponse:
                 request.channel_profile_id,
                 resolution.effective_prompt,
             )
+            if resource_evidence:
+                evidence = [*resource_evidence, *evidence]
+        elif intent == "resource_context":
+            deterministic = resource_context_summary(resource_evidence)
+            evidence = list(resource_evidence)
         elif intent == "source_discovery":
             deterministic, evidence = source_discovery_plan(
                 request.channel_profile_id,
                 resolution.effective_prompt,
             )
+            if resource_evidence:
+                evidence = [*resource_evidence, *evidence]
         elif intent == "create_content":
             blueprint_key = infer_edit_blueprint_key(request.prompt)
             if not resolved_selected_clip_ids:
@@ -675,10 +785,14 @@ def command(http_request: Request, request: CommandRequest) -> CommandResponse:
                         str(value) for value in resolved_selected_clip_ids
                     ],
                     "selected_production_id": (
-                        str(request.selected_production_id)
-                        if request.selected_production_id
+                        str(selected_production_id)
+                        if selected_production_id
                         else None
                     ),
+                    "resource_refs": [
+                        {"kind": item.kind, "id": str(item.id)}
+                        for item in request.resource_refs
+                    ],
                     "requested_edit_blueprint_key": blueprint_key,
                     "conversation_source_turn_id": (
                         str(resolution.source_turn_id)
@@ -756,10 +870,14 @@ def command(http_request: Request, request: CommandRequest) -> CommandResponse:
                     str(value) for value in resolved_selected_clip_ids
                 ],
                 "selected_production_id": (
-                    str(request.selected_production_id)
-                    if request.selected_production_id
+                    str(selected_production_id)
+                    if selected_production_id
                     else None
                 ),
+                "resource_refs": [
+                    {"kind": item.kind, "id": str(item.id)}
+                    for item in request.resource_refs
+                ],
                 "inherited_from_thread": resolution.inherited_from_thread,
                 "context_source_turn_id": (
                     str(resolution.source_turn_id)
@@ -785,6 +903,25 @@ def command(http_request: Request, request: CommandRequest) -> CommandResponse:
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
+    record_command_observation(
+        channel_profile_id=request.channel_profile_id,
+        request_id=request_id,
+        thread_id=thread.id,
+        actor=actor,
+        intent=intent,
+        planning_source=planning.source,
+        planning_provider=planning.target.provider,
+        planning_model=planning.target.model,
+        planning_confidence=planning.value.confidence,
+        narrator_provider=narrative.target.provider,
+        narrator_model=narrative.target.model,
+        narrator_degraded_reason=narrative.degraded_reason,
+        latency_ms=round((monotonic() - started_at) * 1000),
+        evidence_count=len(evidence),
+        action_count=len(proposals),
+        resource_kinds=[item.kind for item in request.resource_refs],
+    )
+
     return CommandResponse(
         request_id=request_id,
         thread_id=thread.id,
@@ -808,6 +945,7 @@ def command(http_request: Request, request: CommandRequest) -> CommandResponse:
         ),
         resolved_context=ResolvedContextResponse(
             selected_clip_ids=resolved_selected_clip_ids,
+            resource_refs=request.resource_refs,
             inherited_from_thread=resolution.inherited_from_thread,
             source_turn_id=resolution.source_turn_id,
             resolution=resolution.resolution,
