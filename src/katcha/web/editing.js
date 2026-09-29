@@ -769,6 +769,80 @@ async function action(event) {
         }
     } catch (error) { message(error.message, true); button.disabled = false; }
 }
+const PRODUCTION_HASH_GROUPS = {
+    queue: "queue",
+    "editorial-pipeline": "queue",
+    recipes: "recipes",
+    "blueprints-panel": "recipes",
+    "blueprint-editor-panel": "recipes",
+    brand: "brand",
+    "brand-acceptance": "brand",
+};
+
+function productionTabFromHash() {
+    const hash = window.location.hash.replace(/^#/, "");
+    return PRODUCTION_HASH_GROUPS[hash] || "queue";
+}
+
+function setProductionTab(tab, { updateHash = true, focus = false } = {}) {
+    const selected = ["queue", "recipes", "brand"].includes(tab) ? tab : "queue";
+    document.querySelectorAll("[data-production-tab]").forEach((button) => {
+        const active = button.dataset.productionTab === selected;
+        button.setAttribute("aria-selected", active ? "true" : "false");
+        button.tabIndex = active ? 0 : -1;
+        if (active && focus) button.focus();
+    });
+    document.querySelectorAll("[data-production-group]").forEach((section) => {
+        const shouldShow = section.dataset.productionGroup === selected;
+        if (section.id === "blueprint-editor-panel") {
+            if (!shouldShow) section.hidden = true;
+            return;
+        }
+        section.hidden = !shouldShow;
+    });
+
+    if (updateHash) {
+        const next = window.location.pathname + window.location.search + "#" + selected;
+        window.history.replaceState(null, "", next);
+    }
+}
+
+function installProductionTabs() {
+    const tabs = [...document.querySelectorAll("[data-production-tab]")];
+    if (!tabs.length) return;
+
+    tabs.forEach((button, index) => {
+        button.addEventListener("click", () => {
+            setProductionTab(button.dataset.productionTab);
+        });
+        button.addEventListener("keydown", (event) => {
+            if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+            event.preventDefault();
+            let nextIndex = index;
+            if (event.key === "ArrowLeft") nextIndex = (index - 1 + tabs.length) % tabs.length;
+            if (event.key === "ArrowRight") nextIndex = (index + 1) % tabs.length;
+            if (event.key === "Home") nextIndex = 0;
+            if (event.key === "End") nextIndex = tabs.length - 1;
+            setProductionTab(tabs[nextIndex].dataset.productionTab, { focus: true });
+        });
+    });
+
+    window.addEventListener("hashchange", () => {
+        const rawHash = window.location.hash.replace(/^#/, "");
+        const tab = productionTabFromHash();
+        setProductionTab(tab, { updateHash: false });
+        if (rawHash && rawHash !== tab) {
+            window.requestAnimationFrame(() => {
+                document.getElementById(rawHash)?.scrollIntoView({ block: "start" });
+            });
+        }
+    });
+
+    setProductionTab(productionTabFromHash(), { updateHash: false });
+}
+
+installProductionTabs();
+
 $("connect-form").addEventListener("submit", connect);
 $("channel").addEventListener("change", () => {
     closeBlueprintEditor();
