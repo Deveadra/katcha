@@ -753,9 +753,13 @@ async function connect(event) {
             status("No active channel is available yet. Set up a channel to chat with Katcha.", true);
             return;
         }
-        state.channelId = state.channels[0].id;
+        const requestedChannel = launchParams.get("channel");
+        state.channelId =
+            requestedChannel &&
+            state.channels.some((row) => row.id === requestedChannel)
+                ? requestedChannel
+                : state.channels[0].id;
         $("channel").value = state.channelId;
-        applyDeepLinkContext();
         $("command-center").hidden = false;
         $("connect-form").hidden = true;
         $("connection-state").textContent = "CONNECTED";
@@ -770,7 +774,10 @@ async function connect(event) {
             $("ai-readiness").className = "ai-readiness unavailable";
             $("ai-readiness").hidden = false;
         }
-        await loadThreads({ openLatest: !state.resourceRefs.length });
+        const hasTypedDeepLink = Boolean(
+            launchParams.get("resource_kind") && launchParams.get("resource_id"),
+        );
+        await loadThreads({ openLatest: !hasTypedDeepLink });
         applyDeepLinkContext();
         await refreshObservability();
         const active = state.channels.find((row) => row.id === state.channelId);
