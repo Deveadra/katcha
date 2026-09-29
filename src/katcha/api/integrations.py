@@ -330,6 +330,46 @@ def update_channel_elevenlabs_config(
         raise HTTPException(status_code=code, detail=str(exc)) from exc
 
 
+@router.post("/elevenlabs/channels/{channel_profile_id}/preview")
+def preview_channel_elevenlabs_voice(
+    channel_profile_id: uuid.UUID,
+    request: ElevenLabsPreviewRequest,
+) -> Response:
+    saved_voice_id, saved_model_id = resolve_elevenlabs_voice(
+        channel_profile_id=channel_profile_id,
+    )
+    voice_id = request.voice_id or saved_voice_id
+    model_id = request.model_id or saved_model_id
+    if not voice_id:
+        raise HTTPException(
+            status_code=400,
+            detail="Select an ElevenLabs voice before generating a preview.",
+        )
+    try:
+        audio, metadata = generate_elevenlabs_preview(
+            request.text,
+            voice_id=voice_id,
+            model_id=model_id,
+            stability=request.stability,
+            similarity_boost=request.similarity_boost,
+            style=request.style,
+            speed=request.speed,
+        )
+    except ElevenLabsIntegrationError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    headers = {
+        "Cache-Control": "no-store",
+        "X-Katcha-Voice-Id": voice_id,
+        "X-Katcha-Model-Id": model_id,
+    }
+    if metadata.get("character_cost"):
+        headers["X-Katcha-Character-Cost"] = str(metadata["character_cost"])
+    return Response(content=audio, media_type="audio/mpeg", headers=headers)
+
+
 @router.post(
     "/invideo/handoffs",
     response_model=InVideoHandoffResponse,
