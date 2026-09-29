@@ -81,7 +81,25 @@ if __name__ == "__main__":
         assert workspace_state["workspace_ready"]
         state = wait_for("ready", 1800)
         print(f"Initial full readiness: {time.monotonic() - cold_started:.2f}s", flush=True)
-        assert len(state["services"]) >= 15
+        services = {row["Service"] for row in state["services"]}
+        assert {
+            "postgres",
+            "temporal",
+            "minio",
+            "api",
+            "worker",
+            "analysis-worker",
+            "renderer",
+            "production-worker",
+            "telegram-worker",
+            "intelligence-worker",
+        } <= services
+        assert {
+            "publishing-worker",
+            "longform-worker",
+            "discovery-worker",
+            "trends-worker",
+        }.isdisjoint(services)
         assert isinstance(json.loads(request("/v1/channels")), list)
         volume_args = [
             "docker",
