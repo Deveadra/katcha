@@ -31,16 +31,16 @@ from katcha.services.elevenlabs_integration import (
     resolve_elevenlabs_voice,
     search_elevenlabs_voices,
 )
-from katcha.services.provider_settings import (
-    get_channel_provider_setting,
-    upsert_channel_provider_setting,
-)
 from katcha.services.external_edit import (
     adopt_external_output,
     build_handoff_zip,
     handoff_manifest,
     import_external_output,
     prepare_invideo_handoff,
+)
+from katcha.services.provider_settings import (
+    get_channel_provider_setting,
+    upsert_channel_provider_setting,
 )
 
 router = APIRouter(prefix="/v1/integrations", tags=["integrations"])
