@@ -237,3 +237,16 @@ def test_live_planner_can_correct_a_literal_route(monkeypatch) -> None:
     )
     assert result.value.intent == "source_discovery"
     assert result.source == "ai"
+
+
+
+def test_command_planner_registry_includes_resource_context() -> None:
+    plan = CommandPlan.model_validate(
+        {
+            "intent": "resource_context",
+            "confidence": 0.99,
+            "reason": "A typed Katcha resource is attached.",
+        }
+    )
+
+    assert plan.intent == "resource_context"
