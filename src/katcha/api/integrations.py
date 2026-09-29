@@ -85,6 +85,45 @@ class ElevenLabsVoicePage(BaseModel):
     next_page_token: str | None
 
 
+class ElevenLabsModelResponse(BaseModel):
+    model_id: str | None
+    name: str | None
+    description: str | None
+    maximum_text_length_per_request: int | None = None
+    token_cost_factor: float | None = None
+
+
+class ElevenLabsChannelConfigResponse(BaseModel):
+    channel_profile_id: uuid.UUID
+    enabled: bool
+    voice_id: str | None
+    voice_name: str | None
+    model_id: str
+    model_name: str | None
+    source: Literal["channel", "global", "unset"]
+
+
+class ElevenLabsChannelConfigUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = True
+    voice_id: str = Field(min_length=1, max_length=255)
+    model_id: str = Field(min_length=1, max_length=255)
+    actor: str = Field(default="operator", min_length=1, max_length=128)
+
+
+class ElevenLabsPreviewRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    text: str = Field(min_length=1, max_length=600)
+    voice_id: str | None = Field(default=None, min_length=1, max_length=255)
+    model_id: str | None = Field(default=None, min_length=1, max_length=255)
+    stability: float = Field(default=0.42, ge=0, le=1)
+    similarity_boost: float = Field(default=0.75, ge=0, le=1)
+    style: float = Field(default=0.0, ge=0, le=1)
+    speed: float = Field(default=1.03, ge=0.7, le=1.2)
+
+
 class InVideoHandoffCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
