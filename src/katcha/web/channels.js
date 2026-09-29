@@ -1,8 +1,9 @@
+const launchParams = new URLSearchParams(location.search);
 const state = {
-    token: "",
+    token: sessionStorage.getItem("katcha.controlToken") || "",
     channels: [],
     connections: [],
-    channelId: "",
+    channelId: launchParams.get("channel") || sessionStorage.getItem("katcha.channel") || "",
     summary: null,
     publications: [],
     productions: [],
@@ -466,6 +467,7 @@ async function previewElevenLabsVoice() {
 
 async function loadChannel() {
     if (!state.channelId) return;
+    sessionStorage.setItem("katcha.channel", state.channelId);
     setStatus("Loading channel operations…");
     state.analytics.clear();
     state.selectedPublicationId = "";
