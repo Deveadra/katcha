@@ -344,6 +344,114 @@ const analytics = [
                     updated_at: now,
                 },
             ];
+        } else if (url.pathname === "/v1/integrations/providers") {
+            data = [
+                {
+                    provider: "elevenlabs",
+                    capability: "text_to_speech",
+                    configured: true,
+                    mode: "api",
+                    detail: "ElevenLabs API is configured.",
+                },
+                {
+                    provider: "invideo",
+                    capability: "external_edit",
+                    configured: true,
+                    mode: "manual_bridge",
+                    detail: "Tracked InVideo handoff bridge is ready.",
+                },
+            ];
+        } else if (
+            url.pathname === "/v1/integrations/elevenlabs/channels/channel-1" &&
+            req.method() === "GET"
+        ) {
+            data = {
+                channel_profile_id: "channel-1",
+                enabled: true,
+                voice_id: "voice-ranksnaxx",
+                voice_name: "RankSnaxx Voice",
+                model_id: "eleven_multilingual_v2",
+                model_name: "Eleven Multilingual v2",
+                source: "channel",
+            };
+        } else if (
+            url.pathname === "/v1/integrations/elevenlabs/channels/channel-1" &&
+            req.method() === "PUT"
+        ) {
+            data = {
+                channel_profile_id: "channel-1",
+                enabled: true,
+                voice_id: body.voice_id,
+                voice_name: "RankSnaxx Voice",
+                model_id: body.model_id,
+                model_name: body.model_id === "eleven_v4_turbo"
+                    ? "Eleven v4 Turbo"
+                    : "Eleven Multilingual v2",
+                source: "channel",
+            };
+        } else if (url.pathname === "/v1/integrations/elevenlabs/status") {
+            data = {
+                configured: true,
+                connected: true,
+                voice_id: "voice-ranksnaxx",
+                voice_name: "RankSnaxx Voice",
+                voice_category: "generated",
+                voice_labels: { accent: "american" },
+                model_id: "eleven_multilingual_v2",
+                output_format: "pcm_24000",
+                subscription: {
+                    tier: "starter",
+                    status: "active",
+                    character_count: 1200,
+                    character_limit: 10000,
+                    remaining_characters: 8800,
+                },
+                detail: "ElevenLabs API and selected channel voice are reachable.",
+            };
+        } else if (url.pathname === "/v1/integrations/elevenlabs/models") {
+            data = [
+                {
+                    model_id: "eleven_multilingual_v2",
+                    name: "Eleven Multilingual v2",
+                    description: "Stable multilingual TTS",
+                    maximum_text_length_per_request: 10000,
+                    token_cost_factor: 1,
+                },
+                {
+                    model_id: "eleven_v4_turbo",
+                    name: "Eleven v4 Turbo",
+                    description: "Fast expressive TTS",
+                    maximum_text_length_per_request: 5000,
+                    token_cost_factor: 1,
+                },
+            ];
+        } else if (url.pathname === "/v1/integrations/elevenlabs/voices") {
+            data = {
+                voices: [
+                    {
+                        voice_id: "voice-ranksnaxx",
+                        name: "RankSnaxx Voice",
+                        category: "generated",
+                        description: "Fixture voice",
+                        labels: { accent: "american" },
+                        preview_url: null,
+                        is_owner: true,
+                        is_legacy: false,
+                    },
+                ],
+                has_more: false,
+                total_count: 1,
+                next_page_token: null,
+            };
+        } else if (
+            url.pathname === "/v1/integrations/elevenlabs/channels/channel-1/preview" &&
+            req.method() === "POST"
+        ) {
+            return route.fulfill({
+                status: 200,
+                contentType: "audio/mpeg",
+                body: Buffer.from("fixture-elevenlabs-audio"),
+            });
         } else if (url.pathname === "/v1/channels/channel-1") {
             data = summary;
         } else if (
@@ -467,6 +575,34 @@ const analytics = [
     assert.match(await page.locator("#schedule").innerText(), /Fri · 18:00/);
     assert.match(await page.locator("#brand-panel").innerText(), /fixture_brand/);
     assert.match(await page.locator("#automation-panel").innerText(), /Review Required/);
+    assert.equal(await page.locator("#elevenlabs-state").innerText(), "CONNECTED");
+    assert.equal(await page.locator("#elevenlabs-voice-id").inputValue(), "voice-ranksnaxx");
+    assert.equal(
+        await page.locator("#elevenlabs-model").inputValue(),
+        "eleven_multilingual_v2",
+    );
+    assert.match(await page.locator("#elevenlabs-usage").innerText(), /1,200.*10,000/);
+    assert.match(
+        await page.locator("#invideo-studio-link").getAttribute("href"),
+        /\/studio\?channel=channel-1/,
+    );
+
+    await page.locator("#elevenlabs-model").selectOption("eleven_v4_turbo");
+    await page.locator("#save-elevenlabs").click();
+    await page.getByText(/ElevenLabs voice saved/).waitFor();
+    const voiceSave = requests.find(
+        (request) =>
+            request.path === "/v1/integrations/elevenlabs/channels/channel-1" &&
+            request.method === "PUT",
+    );
+    assert.equal(voiceSave.body.voice_id, "voice-ranksnaxx");
+    assert.equal(voiceSave.body.model_id, "eleven_v4_turbo");
+
+    await page.locator("#preview-elevenlabs").click();
+    await page.locator("#elevenlabs-preview:not([hidden])").waitFor();
+    assert(
+        (await page.locator("#elevenlabs-preview").getAttribute("src")).startsWith("blob:"),
+    );
 
     await page.locator("#custom-goal-metric").selectOption("subscribers");
     await page.locator("#custom-goal-target").fill("5000");

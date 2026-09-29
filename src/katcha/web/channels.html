@@ -92,6 +92,7 @@
                         <a href="#growth">Growth & packaging</a>
                         <a href="#production">Production</a>
                         <a href="#identity">Identity & automation</a>
+                        <a href="#integrations">Integrations</a>
                     </nav>
 
                     <section id="overview" class="studio-section">
@@ -270,6 +271,59 @@
                             <article class="studio-card">
                                 <div class="panel-heading"><div><span class="eyebrow">AI BUDGET</span><h3>Spend guardrails</h3></div><span id="routing-badge" class="badge">—</span></div>
                                 <div id="strategy-panel" class="key-value empty-state">No channel strategy loaded.</div>
+                            </article>
+                        </div>
+                    </section>
+
+                    <section id="integrations" class="studio-section">
+                        <div class="section-title">
+                            <div><span>07 / PROVIDERS</span><h2>External production tools</h2></div>
+                            <small>Secrets stay server-side; selections are scoped to this channel</small>
+                        </div>
+                        <div class="provider-grid">
+                            <article class="studio-card provider-config-card">
+                                <div class="panel-heading">
+                                    <div><span class="eyebrow">VOICE</span><h3>ElevenLabs</h3></div>
+                                    <span id="elevenlabs-state" class="badge">—</span>
+                                </div>
+                                <p id="elevenlabs-detail" class="provider-copy">Connect Katcha to inspect the ElevenLabs account.</p>
+                                <div class="provider-account">
+                                    <div><span>PLAN</span><strong id="elevenlabs-plan">—</strong></div>
+                                    <div><span>USAGE</span><strong id="elevenlabs-usage">—</strong></div>
+                                </div>
+                                <label class="provider-field">CHANNEL VOICE
+                                    <input id="elevenlabs-voice-id" list="elevenlabs-voices" placeholder="Voice ID or choose a discovered voice" disabled>
+                                    <datalist id="elevenlabs-voices"></datalist>
+                                </label>
+                                <div id="elevenlabs-voice-help" class="provider-help">No channel voice selected.</div>
+                                <label class="provider-field">TTS MODEL
+                                    <select id="elevenlabs-model" disabled><option value="">Connect ElevenLabs</option></select>
+                                </label>
+                                <div class="provider-actions">
+                                    <button id="save-elevenlabs" class="studio-button primary" type="button" disabled>Save channel voice</button>
+                                    <button id="refresh-elevenlabs" class="studio-button secondary" type="button" disabled>Refresh voices</button>
+                                </div>
+                                <label class="provider-field">VOICE CHECK
+                                    <textarea id="elevenlabs-preview-text" rows="3" maxlength="600">Okay, that was absolutely not supposed to happen. Number three just turned a normal match into pure chaos.</textarea>
+                                </label>
+                                <button id="preview-elevenlabs" class="studio-button secondary" type="button" disabled>Generate voice preview</button>
+                                <audio id="elevenlabs-preview" class="provider-audio" controls hidden></audio>
+                                <p class="provider-note">The ElevenLabs API key remains in Katcha's server environment. Only this channel's non-secret voice and model IDs are stored.</p>
+                            </article>
+
+                            <article class="studio-card provider-config-card">
+                                <div class="panel-heading">
+                                    <div><span class="eyebrow">EXTERNAL EDITOR</span><h3>InVideo</h3></div>
+                                    <span id="invideo-state" class="badge">BRIDGE</span>
+                                </div>
+                                <p class="provider-copy">Use InVideo when an episode needs editing capabilities Katcha does not yet perform natively. Katcha packages the exact source clips, narration, brand and recipe, then verifies the returned MP4.</p>
+                                <div class="provider-flow">
+                                    <span>1</span><div><strong>Prepare</strong><small>Katcha freezes and packages the production inputs.</small></div>
+                                    <span>2</span><div><strong>Edit in InVideo</strong><small>Use the package as the authoritative brief.</small></div>
+                                    <span>3</span><div><strong>Return to Katcha</strong><small>Import, verify and adopt the MP4 into review.</small></div>
+                                </div>
+                                <a id="invideo-studio-link" class="studio-button primary" href="/studio">Open Clip Studio handoff ↗</a>
+                                <p id="invideo-detail" class="provider-note">Direct InVideo project automation remains intentionally disabled until your account supplies a documented API contract.</p>
                             </article>
                         </div>
                     </section>

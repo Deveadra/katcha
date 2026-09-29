@@ -17,6 +17,7 @@ from katcha.intelligence_models import (
 from katcha.models import DomainEvent, UsageEvent
 from katcha.services.channel_economics import budget_state
 from katcha.services.channel_profiles import active_strategy
+from katcha.services.provider_settings import get_channel_provider_setting
 
 
 @dataclass(frozen=True, slots=True)
@@ -144,25 +145,45 @@ def route_for(task: AITask) -> ModelRoute:
     return ModelRoute(primary=gemini, fallback=fallback)
 
 
-def _extra_targets(task: AITask) -> list[ModelTarget]:
+def _elevenlabs_target(
+    channel_profile_id: uuid.UUID | None = None,
+) -> ModelTarget | None:
     settings = get_settings()
-    if (
-        task == AITask.TTS
-        and settings.elevenlabs_api_key
-        and settings.elevenlabs_voice_id
-    ):
-        return [ModelTarget("elevenlabs", settings.elevenlabs_model_id)]
+    if not settings.elevenlabs_api_key:
+        return None
+    voice_id = settings.elevenlabs_voice_id
+    model_id = settings.elevenlabs_model_id
+    if channel_profile_id is not None:
+        row = get_channel_provider_setting(channel_profile_id, "elevenlabs")
+        if row is not None and row.enabled:
+            config = dict(row.config or {})
+            voice_id = str(config.get("voice_id") or voice_id or "").strip() or None
+            model_id = str(config.get("model_id") or model_id).strip()
+    if not voice_id:
+        return None
+    return ModelTarget("elevenlabs", model_id)
+
+
+def _extra_targets(
+    task: AITask,
+    channel_profile_id: uuid.UUID | None = None,
+) -> list[ModelTarget]:
+    if task == AITask.TTS:
+        target = _elevenlabs_target(channel_profile_id)
+        return [target] if target is not None else []
     return []
 
 
-def _available_providers() -> set[str]:
+def _available_providers(
+    channel_profile_id: uuid.UUID | None = None,
+) -> set[str]:
     settings = get_settings()
     providers: set[str] = set()
     if settings.openai_api_key:
         providers.add("openai")
     if settings.gemini_api_key:
         providers.add("gemini")
-    if settings.elevenlabs_api_key and settings.elevenlabs_voice_id:
+    if _elevenlabs_target(channel_profile_id) is not None:
         providers.add("elevenlabs")
     return providers
 
@@ -188,12 +209,13 @@ def _eligible_targets(
     *,
     floor: int,
     providers: set[str],
+    channel_profile_id: uuid.UUID | None = None,
 ) -> list[ModelTarget]:
     route = ROUTES[task]
     candidates = [route.primary]
     if route.fallback is not None:
         candidates.append(route.fallback)
-    candidates.extend(_extra_targets(task))
+    candidates.extend(_extra_targets(task, channel_profile_id))
     return [
         target
         for target in candidates
@@ -244,9 +266,20 @@ def route_for_channel(
         raise ValueError("expected_value must be between 0 and 1")
     if reservation_ttl_minutes < 1 or reservation_ttl_minutes > 240:
         raise ValueError("reservation_ttl_minutes must be between 1 and 240")
-    providers = _available_providers()
+    providers = _available_providers(channel_profile_id)
     if not providers:
         raise BudgetExceeded("no configured AI provider is available")
+    if task == AITask.TTS and preferred_target is None:
+        channel_tts = get_channel_provider_setting(
+            channel_profile_id,
+            "elevenlabs",
+        )
+        if (
+            channel_tts is not None
+            and channel_tts.enabled
+            and (channel_tts.config or {}).get("voice_id")
+        ):
+            preferred_target = _elevenlabs_target(channel_profile_id)
 
     now = datetime.now(UTC)
     key = reservation_key or f"{task.value}-{uuid.uuid4().hex}"
@@ -308,7 +341,12 @@ def route_for_channel(
 
         policy = dict(strategy.routing_policy or {})
         floor = _quality_floor(task, policy)
-        candidates = _eligible_targets(task, floor=floor, providers=providers)
+        candidates = _eligible_targets(
+            task,
+            floor=floor,
+            providers=providers,
+            channel_profile_id=channel_profile_id,
+        )
         if not candidates:
             raise BudgetExceeded(
                 f"no configured provider satisfies quality floor {floor} for {task.value}"
