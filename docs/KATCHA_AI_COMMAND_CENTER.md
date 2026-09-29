@@ -385,3 +385,43 @@ prompt text and bearer credentials.
 The Command Center shows a compact 24-hour health panel so operator-facing AI cost and
 latency are visible without opening database or container diagnostics. The endpoint remains
 subject to the authenticated principal’s `ai:read` scope and channel allowlist.
+
+
+## Authoritative workflow lifecycle
+
+Confirmed actions no longer stop at a generic `workflow_started` state when there is
+no production/episode row to inspect.
+
+Katcha uses the proposal as the correlation root and emits normalized lifecycle
+events with the proposal, request, thread, source turn, channel, action type and
+workflow ID.
+
+Finite command workflows such as channel-intelligence refreshes emit:
+
+- `command_center.workflow_started`
+- `command_center.workflow_completed` or
+  `command_center.workflow_failed`
+
+The intelligence workflow already carries `command-proposal-{proposal_id}` as its
+run key. Temporal records the terminal event through a DB-backed activity after the
+proposal has been marked executed, which keeps event ordering and retries
+idempotent.
+
+Autonomous source scouting is deliberately different because its schedule is
+continuous. A source-scout action stays active while its topic watch is enabled and
+emits per-cycle events:
+
+- `command_center.workflow_cycle_completed`
+- `command_center.workflow_cycle_failed`
+
+Each cycle carries its execution key and a bounded outcome summary. A failed cycle
+puts action activity into `active_degraded`; a later successful cycle returns it to
+`active`. Disabling the topic watch settles the action as `disabled`. A
+continuous scout is never falsely reported as globally completed just because one
+poll cycle finished.
+
+`GET /v1/ai/actions/{proposal_id}/activity` therefore presents one normalized
+read model across production, ranked-episode, intelligence-refresh and source-scout
+actions. Aerith can also consume the same normalized lifecycle events from
+`/v1/control/events` without inferring completion from chat text or Temporal IDs
+alone.
