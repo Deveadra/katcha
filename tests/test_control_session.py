@@ -1,4 +1,5 @@
 import uuid
+from datetime import UTC, datetime
 
 from starlette.requests import Request
 
@@ -22,6 +23,14 @@ def test_control_session_reports_named_principal_capabilities_without_secrets() 
     request = _request()
     request.state.control_actor = "control-principal:aerith"
     request.state.control_principal_name = "aerith"
+    request.state.control_credential_id = "2026-q4"
+    request.state.control_credential_fingerprint = "abc123def456"
+    request.state.control_credential_not_before = datetime(
+        2026, 9, 1, tzinfo=UTC
+    )
+    request.state.control_credential_expires_at = datetime(
+        2026, 12, 1, tzinfo=UTC
+    )
     request.state.control_scopes = {
         "channels:read",
         "events:read",
@@ -37,6 +46,15 @@ def test_control_session_reports_named_principal_capabilities_without_secrets() 
     assert response.authentication_mode == "named_principal"
     assert response.actor == "control-principal:aerith"
     assert response.principal_name == "aerith"
+    assert response.credential is not None
+    assert response.credential.id == "2026-q4"
+    assert response.credential.fingerprint == "abc123def456"
+    assert response.credential.not_before == datetime(
+        2026, 9, 1, tzinfo=UTC
+    )
+    assert response.credential.expires_at == datetime(
+        2026, 12, 1, tzinfo=UTC
+    )
     assert response.channel_access.all_channels is False
     assert response.channel_access.channel_profile_ids == [channel_id]
     assert response.capabilities.channels_read is True
@@ -68,6 +86,7 @@ def test_control_session_reports_wildcard_legacy_and_local_modes() -> None:
 
     legacy_response = control_session(legacy)
     assert legacy_response.authentication_mode == "legacy_token"
+    assert legacy_response.credential is None
     assert legacy_response.channel_access.all_channels is True
     assert legacy_response.capabilities.ai_command is True
     assert legacy_response.capabilities.trends_write is True
