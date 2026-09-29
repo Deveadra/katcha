@@ -7,6 +7,11 @@
     <title>Katcha · Channel Studio</title>
     <link rel="stylesheet" href="styles.css">
     <link rel="stylesheet" href="channels.css">
+    <link id="aerith-tokens" rel="stylesheet" href="/system/aerith-tokens.css">
+    <link id="aerith-base" rel="stylesheet" href="/system/aerith-base.css">
+    <link id="aerith-shell" rel="stylesheet" href="/system/aerith-shell.css">
+    <link id="aerith-components" rel="stylesheet" href="/system/aerith-components.css">
+    <link id="aerith-motion" rel="stylesheet" href="/system/aerith-motion.css">
     <link rel="stylesheet" href="pages/channel-studio-aerith.css">
     <script src="channels.js" defer></script>
     <script src="launcher-bridge.js" defer></script>
@@ -20,9 +25,9 @@
             </a>
             <div class="rail-label">WORKSPACE</div>
             <nav class="rail-nav" aria-label="Workspace">
-                <a class="nav-item" href="/ingestion"><span class="nav-icon">↳</span> Content sources</a>
-                <a class="nav-item" href="/explorer"><span class="nav-icon">◉</span> Trend explorer</a>
-                <a class="nav-item" href="/clips"><span class="nav-icon">▤</span> Clip library</a>
+                <a class="nav-item" href="/ingestion"><span class="nav-icon">↳</span> Sources</a>
+                <a class="nav-item" href="/explorer"><span class="nav-icon">◉</span> Trends</a>
+                <a class="nav-item" href="/clips"><span class="nav-icon">▤</span> Clips</a>
                 <a class="nav-item active" href="/channels"><span class="nav-icon">▦</span> Channel Studio</a>
                 <a class="nav-item" href="/editing"><span class="nav-icon">◇</span> Editing studio</a>
             </nav>
@@ -306,7 +311,7 @@
                                 </label>
                                 <button id="preview-elevenlabs" class="studio-button secondary" type="button" disabled>Generate voice preview</button>
                                 <audio id="elevenlabs-preview" class="provider-audio" controls hidden></audio>
-                                <p class="provider-note">The ElevenLabs API key remains in Katcha's server environment. Only this channel's non-secret voice and model IDs are stored.</p>
+                                <details class="ae-help"><summary>How voice credentials are stored</summary><p>The ElevenLabs API key remains in Katcha's server environment. Only this channel's non-secret voice and model IDs are stored.</p></details>
                             </article>
 
                             <article class="studio-card provider-config-card">
@@ -314,7 +319,7 @@
                                     <div><span class="eyebrow">EXTERNAL EDITOR</span><h3>InVideo</h3></div>
                                     <span id="invideo-state" class="badge">BRIDGE</span>
                                 </div>
-                                <p class="provider-copy">Use InVideo when an episode needs editing capabilities Katcha does not yet perform natively. Katcha packages the exact source clips, narration, brand and recipe, then verifies the returned MP4.</p>
+                                <details class="ae-help"><summary>When to use InVideo</summary><p>Use InVideo when an episode needs editing capabilities Katcha does not yet perform natively. Katcha packages the exact source clips, narration, brand and recipe, then verifies the returned MP4.</p></details>
                                 <div class="provider-flow">
                                     <span>1</span><div><strong>Prepare</strong><small>Katcha freezes and packages the production inputs.</small></div>
                                     <span>2</span><div><strong>Edit in InVideo</strong><small>Use the package as the authoritative brief.</small></div>

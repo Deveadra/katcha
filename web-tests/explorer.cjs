@@ -195,12 +195,12 @@ let browser;
     assert.equal(await page.locator(".workspace-menu").count(), 1);
     await page.locator(".workspace-menu > summary").click();
     const menuText = await page.locator(".workspace-menu-popover").innerText();
-    assert.match(menuText, /Trend explorer/);
-    assert.match(menuText, /Content sources/);
-    assert.match(menuText, /Clip library/);
+    assert.match(menuText, /Trends/);
+    assert.match(menuText, /Sources/);
+    assert.match(menuText, /Clips/);
     assert.match(menuText, /Production/);
     assert.match(menuText, /Clip Studio/);
-    assert.match(menuText, /Launch console/);
+    assert.match(menuText, /System/);
     await page.locator(".workspace-menu > summary").click();
     await page.setViewportSize({ width: 900, height: 900 });
     assert.equal(
