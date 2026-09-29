@@ -301,3 +301,70 @@
         font-size: 12px;
     }
 }
+
+
+/* Aerith prism shell reinforcement. */
+.rail,
+.sidebar {
+    background:
+        linear-gradient(160deg, rgba(185, 168, 255, 0.065), transparent 30%),
+        linear-gradient(20deg, rgba(124, 232, 255, 0.028), transparent 42%),
+        rgba(7, 9, 19, 0.66) !important;
+    border-color: rgba(220, 226, 255, 0.14) !important;
+    box-shadow:
+        inset -1px 0 rgba(255, 255, 255, 0.03),
+        14px 0 44px rgba(0, 0, 0, 0.12);
+    backdrop-filter: blur(26px) saturate(150%);
+    -webkit-backdrop-filter: blur(26px) saturate(150%);
+}
+
+.topbar,
+.header,
+.page-topbar {
+    background:
+        linear-gradient(105deg, rgba(185, 168, 255, 0.055), rgba(124, 232, 255, 0.025) 48%, rgba(246, 166, 217, 0.035)),
+        rgba(8, 10, 22, 0.54) !important;
+    border-color: rgba(220, 226, 255, 0.13) !important;
+    box-shadow: inset 0 -1px rgba(255, 255, 255, 0.025);
+    backdrop-filter: blur(28px) saturate(152%);
+    -webkit-backdrop-filter: blur(28px) saturate(152%);
+}
+
+.workspace-menu > summary,
+.workspace-menu-popover {
+    background:
+        linear-gradient(120deg, rgba(185, 168, 255, 0.12), rgba(124, 232, 255, 0.055) 46%, rgba(246, 166, 217, 0.07)),
+        rgba(12, 14, 28, 0.76) !important;
+    border-color: rgba(220, 226, 255, 0.16) !important;
+    box-shadow:
+        inset 0 1px rgba(255, 255, 255, 0.09),
+        0 18px 52px rgba(0, 0, 0, 0.26) !important;
+    backdrop-filter: blur(24px) saturate(155%);
+    -webkit-backdrop-filter: blur(24px) saturate(155%);
+}
+
+#katcha-chat-shortcut {
+    z-index: 3200;
+    border: 1px solid rgba(214, 220, 255, 0.26) !important;
+    background:
+        linear-gradient(
+            112deg,
+            rgba(185, 168, 255, 0.34),
+            rgba(124, 232, 255, 0.22) 45%,
+            rgba(246, 166, 217, 0.24)
+        ),
+        rgba(16, 17, 34, 0.82) !important;
+    box-shadow:
+        inset 0 1px rgba(255, 255, 255, 0.18),
+        0 14px 38px rgba(79, 61, 149, 0.30),
+        0 0 32px rgba(124, 232, 255, 0.08) !important;
+    backdrop-filter: blur(22px) saturate(160%);
+    -webkit-backdrop-filter: blur(22px) saturate(160%);
+}
+
+#katcha-chat-shortcut > span:first-child {
+    color: #ffffff;
+    text-shadow:
+        0 0 14px rgba(185, 168, 255, 0.78),
+        0 0 24px rgba(124, 232, 255, 0.30);
+}
