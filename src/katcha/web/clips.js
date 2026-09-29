@@ -1,5 +1,5 @@
 const state = {
-    token: "",
+    token: sessionStorage.getItem("katcha.controlToken") || "",
     channels: [],
     selectedChannel: "",
     clips: [],
@@ -112,6 +112,24 @@ function channelName(channel) {
 
 function clipTitle(clip) {
     return clip.title || `${clip.platform || "Stored"} clip · ${clip.id.slice(0, 8)}`;
+}
+
+function askKatchaHref(clip, prompt) {
+    const channelId =
+        state.selectedChannel && state.selectedChannel !== "all"
+            ? state.selectedChannel
+            : (clip.channels || []).length === 1
+              ? clip.channels[0].id
+              : "";
+    if (!channelId) return "";
+    const params = new URLSearchParams({
+        channel: channelId,
+        resource_kind: "clip",
+        resource_id: clip.id,
+        prompt,
+        focus: "chat",
+    });
+    return "/ai?" + params.toString();
 }
 
 function queryString(extra = {}) {
@@ -243,6 +261,14 @@ function renderDetail(clip, features, sources) {
     const metadata = clip.library_metadata || {};
     const tags = (clip.tags || []).join(", ");
     const embeddingStatus = clip.embedding_metadata?.status || "pending";
+    const askHref = askKatchaHref(
+        clip,
+        "Explain this clip’s score, stored evidence, and whether it is strong enough to use.",
+    );
+    const askAction = askHref
+        ? `<a class="mini" href="${escapeHTML(askHref)}">Ask Katcha ✦</a>`
+        : "";
+
     const lifecycleActions = clip.lifecycle_state === "hot"
         ? `<button class="mini" type="button" data-archive="${escapeHTML(clip.id)}">Archive</button>
            <button class="mini danger" type="button" data-purge="${escapeHTML(clip.id)}">Delete media</button>`
@@ -262,6 +288,7 @@ function renderDetail(clip, features, sources) {
                 ${lifecycleChip(clip)}
                 ${canPreview ? `<button class="mini" type="button" data-load-preview="${escapeHTML(clip.id)}">Load preview</button>` : ""}
                 ${canAnalyze ? `<button class="mini" type="button" data-analyze="${escapeHTML(clip.id)}">Analyze</button>` : ""}
+                ${askAction}
                 ${lifecycleActions}
             </div>
         </div>
@@ -461,8 +488,9 @@ async function selectClip(id) {
 
 async function connect(event) {
     event.preventDefault();
-    state.token = $("token").value.trim();
+    state.token = $("token").value.trim() || state.token;
     $("token").value = "";
+    if (state.token) sessionStorage.setItem("katcha.controlToken", state.token);
     try {
         await loadChannels();
         await refreshLibrary();

@@ -204,6 +204,34 @@
 }
 .action-card button.confirming { border-color: #9f724c; background: #3a2b20; color: #ffd29b; }
 .action-result { margin-top: 7px; color: #a9c39f; font-size: 8px; line-height: 1.45; }
+.observability-card {
+    border-top: 1px solid var(--line);
+    padding: 13px 14px;
+    background: #101923;
+}
+.observability-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 6px;
+    margin-top: 8px;
+}
+.observability-grid > div {
+    padding: 8px;
+    border: 1px solid #293b35;
+    border-radius: 7px;
+    background: #111e1a;
+}
+.observability-grid strong {
+    display: block;
+    color: #d8e4dc;
+    font-size: 10px;
+}
+.observability-grid small {
+    display: block;
+    margin-top: 2px;
+    color: #74887d;
+    font-size: 7px;
+}
 .control-plane-note { border-top: 1px solid var(--line); padding: 13px 14px; background: #101923; }
 .control-plane-note p { margin: 5px 0 8px; color: #728590; font-size: 8px; line-height: 1.55; }
 .control-plane-note a { color: var(--lime); font-size: 8px; }

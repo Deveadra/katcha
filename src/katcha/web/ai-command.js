@@ -1,12 +1,15 @@
+const launchParams = new URLSearchParams(location.search);
 const state = {
-    token: "",
+    token: sessionStorage.getItem("katcha.controlToken") || "",
     channels: [],
     channelId: "",
     threadId: "",
     threads: [],
     selectedClipIds: [],
     selectedProductionId: null,
+    resourceRefs: [],
     busy: false,
+    deepLinkApplied: false,
 };
 
 const $ = (id) => document.getElementById(id);
@@ -70,6 +73,7 @@ function newConversation(message = "New conversation ready. Existing history is 
     state.threadId = "";
     state.selectedClipIds = [];
     state.selectedProductionId = null;
+    state.resourceRefs = [];
     renderSelection();
     $("thread-history").value = "";
     $("archive-thread").disabled = true;
@@ -123,6 +127,7 @@ async function openThread(threadId) {
     state.threadId = detail.thread.thread_id;
     state.selectedClipIds = [];
     state.selectedProductionId = null;
+    state.resourceRefs = [];
     renderSelection();
     $("thread-history").value = state.threadId;
     $("archive-thread").disabled = false;
@@ -230,22 +235,42 @@ function scrollThread() {
 
 function renderSelection() {
     const host = $("selection-bar");
-    if (!state.selectedClipIds.length && !state.selectedProductionId) {
+    if (
+        !state.selectedClipIds.length &&
+        !state.selectedProductionId &&
+        !state.resourceRefs.length
+    ) {
         host.hidden = true;
         host.textContent = "";
         return;
     }
+    const parts = [];
+    if (state.selectedClipIds.length) {
+        parts.push(
+            state.selectedClipIds.length +
+                " selected clip" +
+                (state.selectedClipIds.length === 1 ? "" : "s"),
+        );
+    }
+    if (state.selectedProductionId) {
+        parts.push("production " + state.selectedProductionId.slice(0, 8));
+    }
+    for (const ref of state.resourceRefs) {
+        parts.push(
+            ref.kind.replaceAll("_", " ") +
+                " " +
+                String(ref.id).slice(0, 8),
+        );
+    }
     host.hidden = false;
     host.innerHTML =
         "Using context: " +
-        (state.selectedClipIds.length
-            ? state.selectedClipIds.length + " selected clip" + (state.selectedClipIds.length === 1 ? "" : "s")
-            : "") +
-        (state.selectedProductionId ? " · production " + esc(state.selectedProductionId.slice(0, 8)) : "") +
+        parts.map(esc).join(" · ") +
         ' <button type="button" id="clear-selection">clear</button>';
     $("clear-selection").onclick = () => {
         state.selectedClipIds = [];
         state.selectedProductionId = null;
+        state.resourceRefs = [];
         renderSelection();
     };
 }
@@ -260,8 +285,17 @@ function evidenceSummary(record) {
                   : "Stored clip evidence";
         return [score, ...(record.why || []).slice(0, 2)].join(" · ");
     }
-    if (record.kind === "render_attempt" || record.kind === "production" || record.kind === "compilation" || record.kind === "publication") {
-        return [record.status, record.stage, record.error].filter(Boolean).join(" · ");
+    if (record.kind === "render_attempt" || record.kind === "production" || record.kind === "compilation" || record.kind === "publication" || record.kind === "short_episode") {
+        return [record.status, record.stage, record.error, record.premise].filter(Boolean).join(" · ");
+    }
+    if (record.kind === "trend_opportunity") {
+        const score = record.calibrated_score ?? record.opportunity_score;
+        return [
+            record.topic,
+            score != null ? (Number(score) * 100).toFixed(0) + "/100" : "",
+            record.lifecycle,
+            ...(record.reasons || []).slice(0, 2),
+        ].filter(Boolean).join(" · ");
     }
     if (record.kind === "edit_performance") {
         return (
@@ -293,6 +327,65 @@ function evidenceSummary(record) {
         );
     }
     return JSON.stringify(record).slice(0, 220);
+}
+
+async function refreshObservability() {
+    if (!state.channelId || !$("observability")) return;
+    try {
+        const row = await api(
+            "/v1/ai/observability?channel_profile_id=" +
+                encodeURIComponent(state.channelId) +
+                "&hours=24",
+        );
+        $("obs-requests").textContent = String(row.request_count || 0);
+        $("obs-latency").textContent =
+            String(row.p95_latency_ms || 0) + " ms";
+        $("obs-cost").textContent =
+            "$" + Number(row.estimated_cost_usd || 0).toFixed(4);
+        $("obs-context").textContent =
+            String(row.typed_context_request_count || 0);
+        $("observability").hidden = false;
+    } catch {
+        $("observability").hidden = true;
+    }
+}
+
+function applyDeepLinkContext() {
+    if (state.deepLinkApplied) return;
+    const requestedChannel = launchParams.get("channel");
+    const kind = launchParams.get("resource_kind");
+    const id = launchParams.get("resource_id");
+    const prompt = launchParams.get("prompt");
+    const allowedKinds = new Set([
+        "clip",
+        "production",
+        "short_episode",
+        "publication",
+        "trend_opportunity",
+    ]);
+    if (requestedChannel && state.channels.some((row) => row.id === requestedChannel)) {
+        state.channelId = requestedChannel;
+        $("channel").value = requestedChannel;
+    }
+    if (kind && id && allowedKinds.has(kind)) {
+        state.threadId = "";
+        state.selectedClipIds = [];
+        state.selectedProductionId = kind === "production" ? id : null;
+        state.resourceRefs = [{ kind, id }];
+        $("thread-history").value = "";
+        $("archive-thread").disabled = true;
+        resetConversationView(
+            "Typed " +
+                kind.replaceAll("_", " ") +
+                " context is attached from another Katcha workspace.",
+        );
+        renderSelection();
+    }
+    if (prompt) {
+        $("prompt").value = prompt.slice(0, 4000);
+        autoResize();
+    }
+    state.deepLinkApplied = true;
 }
 
 function actionPayloadSummary(action) {
@@ -598,10 +691,14 @@ async function sendPrompt(text) {
                 prompt,
                 selected_clip_ids: state.selectedClipIds,
                 selected_production_id: state.selectedProductionId,
+                resource_refs: state.resourceRefs,
             }),
         });
         state.threadId = result.thread_id;
         const resolved = result.resolved_context || {};
+        if (Array.isArray(resolved.resource_refs)) {
+            state.resourceRefs = [...resolved.resource_refs];
+        }
         if (
             resolved.inherited_from_thread &&
             Array.isArray(resolved.selected_clip_ids) &&
@@ -616,6 +713,7 @@ async function sendPrompt(text) {
         await loadThreads({ openLatest: false });
         $("thread-history").value = state.threadId;
         $("archive-thread").disabled = false;
+        await refreshObservability();
         status("");
     } catch (error) {
         appendError(error.message);
@@ -633,6 +731,7 @@ async function connect(event) {
     event?.preventDefault();
     state.token = $("token").value.trim() || state.token;
     $("token").value = "";
+    if (state.token) sessionStorage.setItem("katcha.controlToken", state.token);
     status("Connecting to Katcha control plane…");
     try {
         state.channels = (await api("/v1/channels")).filter(
@@ -654,7 +753,12 @@ async function connect(event) {
             status("No active channel is available yet. Set up a channel to chat with Katcha.", true);
             return;
         }
-        state.channelId = state.channels[0].id;
+        const requestedChannel = launchParams.get("channel");
+        state.channelId =
+            requestedChannel &&
+            state.channels.some((row) => row.id === requestedChannel)
+                ? requestedChannel
+                : state.channels[0].id;
         $("channel").value = state.channelId;
         $("command-center").hidden = false;
         $("connect-form").hidden = true;
@@ -670,10 +774,16 @@ async function connect(event) {
             $("ai-readiness").className = "ai-readiness unavailable";
             $("ai-readiness").hidden = false;
         }
-        await loadThreads({ openLatest: true });
+        const hasTypedDeepLink = Boolean(
+            launchParams.get("resource_kind") && launchParams.get("resource_id"),
+        );
+        await loadThreads({ openLatest: !hasTypedDeepLink });
+        applyDeepLinkContext();
+        await refreshObservability();
+        const active = state.channels.find((row) => row.id === state.channelId);
         status(
             "Katcha AI is ready. Conversation history is scoped to " +
-                channelName(state.channels[0]) +
+                channelName(active || state.channels[0]) +
                 ".",
         );
         if (new URLSearchParams(location.search).get("focus") === "chat") $("prompt").focus();
@@ -707,6 +817,7 @@ $("channel").onchange = async () => {
     state.threadId = "";
     state.selectedClipIds = [];
     state.selectedProductionId = null;
+    state.resourceRefs = [];
     renderSelection();
     await loadThreads({ openLatest: true });
     status("Channel context changed. Conversation history was reloaded for this channel.");

@@ -69,6 +69,22 @@ let browser;
         let data;
         if (url.pathname === "/v1/ai/readiness") {
             data = {live: false, message: "Katcha is in fixture mode. Select Live AI in the launch console."};
+        } else if (url.pathname === "/v1/ai/observability") {
+            data = {
+                channel_profile_id: channelId,
+                window_hours: 24,
+                request_count: commandCount,
+                average_latency_ms: commandCount ? 120 : 0,
+                p95_latency_ms: commandCount ? 180 : 0,
+                degraded_answer_count: 0,
+                ai_planned_count: 0,
+                typed_context_request_count: commandCount ? 1 : 0,
+                input_units: 0,
+                output_units: 0,
+                estimated_cost_usd: 0,
+                actions: {proposed: commandCount ? 1 : 0, executed: 0, failed: 0},
+                recent: [],
+            };
         } else if (url.pathname === "/v1/channels") {
             data = [
                 {
@@ -213,6 +229,7 @@ let browser;
                     evidence: [],
                     context: {
                         selected_clip_ids: body.selected_clip_ids,
+                        resource_refs: body.resource_refs || [],
                     },
                     created_at: "2026-09-28T12:00:00Z",
                 },
@@ -282,6 +299,7 @@ let browser;
                     selected_clip_ids: inheritedFollowUp
                         ? ["44444444-4444-4444-8444-444444444444"]
                         : body.selected_clip_ids,
+                    resource_refs: body.resource_refs || [],
                     inherited_from_thread: inheritedFollowUp,
                     source_turn_id: inheritedFollowUp ? contextSourceTurnId : null,
                     resolution: inheritedFollowUp
@@ -337,7 +355,14 @@ let browser;
         await route.fulfill({ json: data });
     });
 
-    await page.goto("http://127.0.0.1:8770/ai.html");
+    await page.goto(
+        "http://127.0.0.1:8770/ai.html?channel=" +
+            channelId +
+            "&resource_kind=clip&resource_id=44444444-4444-4444-8444-444444444444" +
+            "&prompt=" +
+            encodeURIComponent("Explain why this clip is strong.") +
+            "&focus=chat",
+    );
     await page.waitForFunction(() => document.querySelector("#status").textContent.includes("Workspace token required"));
     assert.equal(await page.locator("#katcha-chat-shortcut").getAttribute("href"), "#prompt");
     await page.locator(".workspace-menu").waitFor();
@@ -364,6 +389,9 @@ let browser;
     assert.match(await page.locator("#ai-readiness").innerText(), /fixture mode/);
     assert.equal(await page.locator("#thread-history").inputValue(), "");
     assert.equal(await page.locator("#token").inputValue(), "");
+    assert.match(await page.locator("#selection-bar").innerText(), /clip 44444444/i);
+    assert.equal(await page.locator("#prompt").inputValue(), "Explain why this clip is strong.");
+    assert.equal(await page.locator("#obs-requests").innerText(), "0");
     assert.equal(await page.evaluate(() => localStorage.length), 0);
     await page.locator("#katcha-chat-shortcut").click();
     assert.equal(await page.evaluate(() => document.activeElement.id), "prompt");
@@ -392,6 +420,12 @@ let browser;
     const commandRequests = requests.filter((request) => request.path === "/v1/ai/command");
     assert.equal(commandRequests.length, 2);
     assert.equal(commandRequests[0].body.thread_id, null);
+    assert.deepEqual(commandRequests[0].body.resource_refs, [
+        {
+            kind: "clip",
+            id: "44444444-4444-4444-8444-444444444444",
+        },
+    ]);
     assert.equal(commandRequests[1].body.thread_id, threadId);
     assert.deepEqual(commandRequests[1].body.selected_clip_ids, [
         "44444444-4444-4444-8444-444444444444",
@@ -470,7 +504,7 @@ let browser;
 
     assert.deepEqual(errors, []);
     console.log(
-        "PASS: Katcha AI grounded conversation, durable history reopen, server-resolved follow-up context, live action status, evidence, two-step confirmed action, auth, and mobile width",
+        "PASS: Katcha AI typed deep-link context, observability, grounded conversation, durable history reopen, server-resolved follow-up context, live action status, evidence, two-step confirmed action, auth, and mobile width",
     );
 })()
     .catch((error) => {
