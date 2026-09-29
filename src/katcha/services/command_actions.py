@@ -41,6 +41,9 @@ def create_action_proposals(
     specs: list[ActionProposalSpec],
     thread_id: uuid.UUID | None = None,
     source_turn_id: uuid.UUID | None = None,
+    actor: str | None = None,
+    credential_id: str | None = None,
+    credential_fingerprint: str | None = None,
     ttl_minutes: int = 30,
 ) -> list[CommandActionProposal]:
     created: list[CommandActionProposal] = []
@@ -102,6 +105,9 @@ def create_action_proposals(
                         ),
                         "channel_profile_id": str(channel_profile_id),
                         "action_type": spec.action_type,
+                        "actor": actor,
+                        "credential_id": credential_id,
+                        "credential_fingerprint": credential_fingerprint,
                         "expires_at": expires_at.isoformat(),
                     },
                 )
