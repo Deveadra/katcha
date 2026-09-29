@@ -121,6 +121,43 @@ def test_named_principal_route_policy_fails_closed_for_unmapped_api() -> None:
     assert "restricted control principals" in str(exc.value.detail)
 
 
+def test_named_principal_ai_command_and_write_scopes_are_distinct() -> None:
+    read_only = _settings(scopes=["ai:read"])
+
+    command_request = _request("/v1/ai/command", method="POST")
+    _authenticate(
+        command_request,
+        _credentials("aerith-fixture-token-000001"),
+        read_only,
+    )
+    with pytest.raises(HTTPException) as exc:
+        _require_named_principal_route_access(command_request)
+    assert exc.value.status_code == 403
+    assert "ai:command" in str(exc.value.detail)
+
+    archive_request = _request(
+        "/v1/ai/threads/00000000-0000-0000-0000-000000000000/archive",
+        method="POST",
+    )
+    _authenticate(
+        archive_request,
+        _credentials("aerith-fixture-token-000001"),
+        read_only,
+    )
+    with pytest.raises(HTTPException) as exc:
+        _require_named_principal_route_access(archive_request)
+    assert exc.value.status_code == 403
+    assert "ai:write" in str(exc.value.detail)
+
+    command_settings = _settings(scopes=["ai:command"])
+    _authenticate(
+        command_request,
+        _credentials("aerith-fixture-token-000001"),
+        command_settings,
+    )
+    _require_named_principal_route_access(command_request)
+
+
 def test_named_principal_route_policy_requires_surface_scope() -> None:
     read_request = _request("/v1/channels")
     settings = _settings(scopes=["channels:read"])
