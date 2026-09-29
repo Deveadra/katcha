@@ -560,7 +560,16 @@ let browser;
     await page.locator("#command-form").evaluate((form) => form.requestSubmit());
     await page.waitForFunction(() => document.querySelector("#status").textContent.includes("could not interpret"));
     assert.equal(await page.locator("#prompt").inputValue(), "Please do something ambiguous");
-    assert(requests.filter((request) => request.path !== "/v1/channels" || request.auth).every((request) => request.auth === "Bearer fixture-token"));
+    const unauthenticatedRequests = requests.filter((request) => !request.auth);
+    assert.deepEqual(
+        unauthenticatedRequests.map((request) => request.path),
+        ["/v1/control/session"],
+    );
+    assert(
+        requests
+            .filter((request) => request.auth)
+            .every((request) => request.auth === "Bearer fixture-token"),
+    );
 
     fs.mkdirSync(path.join(__dirname, "test-results"), { recursive: true });
     await page.screenshot({
