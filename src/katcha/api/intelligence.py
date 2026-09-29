@@ -855,7 +855,10 @@ def acknowledge_control_event(
     if allowed is not None and request.channel_profile_id is None:
         raise HTTPException(
             status_code=403,
-            detail="channel-restricted principals must acknowledge within a channel stream",
+            detail=(
+                "channel-restricted principals must acknowledge within a "
+                "channel stream"
+            ),
         )
     if request.channel_profile_id is not None:
         require_control_channel(http_request, request.channel_profile_id)
