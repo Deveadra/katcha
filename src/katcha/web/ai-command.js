@@ -8,6 +8,7 @@ const state = {
     selectedClipIds: [],
     selectedProductionId: null,
     resourceRefs: [],
+    controlSession: null,
     busy: false,
     deepLinkApplied: false,
 };
@@ -59,6 +60,55 @@ function channelName(channel) {
     );
 }
 
+const ACTION_CAPABILITIES = {
+    refresh_channel_intelligence: "intelligence_write",
+    create_short_production: "production_create",
+    create_ranked_short_episode: "production_create",
+    recover_production_render: "render_recover",
+    start_source_scout: "discovery_write",
+};
+
+function capability(name) {
+    if (!state.controlSession) return false;
+    if ((state.controlSession.scopes || []).includes("*")) return true;
+    return Boolean(state.controlSession.capabilities?.[name]);
+}
+
+function actionAllowed(action) {
+    if (!state.controlSession) return false;
+    if ((state.controlSession.scopes || []).includes("*")) return true;
+    const capabilityName = ACTION_CAPABILITIES[action.type];
+    return capabilityName ? capability(capabilityName) : false;
+}
+
+function renderControlSession() {
+    const session = state.controlSession;
+    const host = $("principal-state");
+    if (!session || !host) return;
+    const identity =
+        session.principal_name ||
+        String(session.authentication_mode || "authenticated").replaceAll("_", " ");
+    const channelLabel = session.channel_access?.all_channels
+        ? "all channels"
+        : String((session.channel_access?.channel_profile_ids || []).length) +
+          " channel" +
+          ((session.channel_access?.channel_profile_ids || []).length === 1 ? "" : "s");
+    host.textContent = identity + " · " + channelLabel;
+    host.hidden = false;
+
+    const canCommand = capability("ai_command");
+    $("prompt").disabled = !canCommand;
+    $("send").disabled = !canCommand;
+    document.querySelectorAll(".starter").forEach((button) => {
+        button.disabled = !canCommand;
+    });
+    if (!canCommand) {
+        $("prompt").placeholder = "This control principal has read-only Command Center access.";
+    }
+    $("thread-history").disabled = !capability("ai_read");
+    $("archive-thread").disabled = !capability("ai_write") || !state.threadId;
+}
+
 function resetConversationView(message = "Start a new grounded conversation for this channel.") {
     $("thread").innerHTML =
         '<article class="message katcha-message welcome-message"><div class="message-avatar">K</div><div class="message-body"><span class="message-author">KATCHA AI</span><p>' +
@@ -82,6 +132,16 @@ function newConversation(message = "New conversation ready. Existing history is 
 
 async function loadThreads({ openLatest = true } = {}) {
     if (!state.channelId) return;
+    if (!capability("ai_read")) {
+        state.threads = [];
+        $("thread-history").innerHTML =
+            '<option value="">History unavailable for this principal</option>';
+        $("thread-history").disabled = true;
+        newConversation(
+            "This principal can use Katcha AI commands, but cannot read durable conversation history.",
+        );
+        return;
+    }
     const rows = await api(
         "/v1/ai/threads?channel_profile_id=" +
             encodeURIComponent(state.channelId) +
@@ -106,7 +166,7 @@ async function loadThreads({ openLatest = true } = {}) {
         rows.some((thread) => thread.thread_id === state.threadId);
     if (currentExists) {
         $("thread-history").value = state.threadId;
-        $("archive-thread").disabled = false;
+        $("archive-thread").disabled = !capability("ai_write");
         return;
     }
     if (openLatest && rows.length) {
@@ -130,7 +190,7 @@ async function openThread(threadId) {
     state.resourceRefs = [];
     renderSelection();
     $("thread-history").value = state.threadId;
-    $("archive-thread").disabled = false;
+    $("archive-thread").disabled = !capability("ai_write");
     $("thread").innerHTML = "";
 
     for (const turn of detail.turns || []) {
@@ -330,7 +390,10 @@ function evidenceSummary(record) {
 }
 
 async function refreshObservability() {
-    if (!state.channelId || !$("observability")) return;
+    if (!state.channelId || !$("observability") || !capability("ai_read")) {
+        if ($("observability")) $("observability").hidden = true;
+        return;
+    }
     try {
         const row = await api(
             "/v1/ai/observability?channel_profile_id=" +
@@ -506,9 +569,10 @@ function renderContext(result) {
 
     const actions = (result.actions || [])
         .map((action) => {
-            const canExecute = ["proposed", "failed"].includes(
-                action.status || "proposed",
-            );
+            const principalCanExecute = actionAllowed(action);
+            const canExecute =
+                principalCanExecute &&
+                ["proposed", "failed"].includes(action.status || "proposed");
             const buttonLabel =
                 action.status === "executed"
                     ? "✓ Executed"
@@ -516,7 +580,9 @@ function renderContext(result) {
                       ? "Executing…"
                       : action.status === "expired"
                         ? "Expired"
-                        : "Review & confirm";
+                        : !principalCanExecute
+                          ? "Not permitted"
+                          : "Review & confirm";
             return (
                 '<article class="action-card" data-action-card="' +
                 esc(action.proposal_id) +
@@ -676,6 +742,13 @@ function renderContext(result) {
 async function sendPrompt(text) {
     const prompt = text.trim();
     if (!prompt || !state.channelId || state.busy) return;
+    if (!capability("ai_command")) {
+        status(
+            "This control principal does not have ai:command permission.",
+            true,
+        );
+        return;
+    }
     state.busy = true;
     $("send").disabled = true;
     appendUser(prompt);
@@ -712,7 +785,7 @@ async function sendPrompt(text) {
         renderContext(result);
         await loadThreads({ openLatest: false });
         $("thread-history").value = state.threadId;
-        $("archive-thread").disabled = false;
+        $("archive-thread").disabled = !capability("ai_write");
         await refreshObservability();
         status("");
     } catch (error) {
@@ -734,9 +807,22 @@ async function connect(event) {
     if (state.token) sessionStorage.setItem("katcha.controlToken", state.token);
     status("Connecting to Katcha control plane…");
     try {
-        state.channels = (await api("/v1/channels")).filter(
+        state.controlSession = await api("/v1/control/session");
+        renderControlSession();
+        if (!capability("channels_read")) {
+            throw new Error(
+                "Connected successfully, but this principal lacks channels:read required by the Command Center.",
+            );
+        }
+
+        const allChannels = (await api("/v1/channels")).filter(
             (channel) => channel.status === "active",
         );
+        const access = state.controlSession.channel_access || {};
+        const allowedIds = new Set(access.channel_profile_ids || []);
+        state.channels = access.all_channels
+            ? allChannels
+            : allChannels.filter((channel) => allowedIds.has(channel.id));
         $("channel").innerHTML = state.channels
             .map(
                 (channel) =>
@@ -779,12 +865,17 @@ async function connect(event) {
         );
         await loadThreads({ openLatest: !hasTypedDeepLink });
         applyDeepLinkContext();
+        renderControlSession();
         await refreshObservability();
         const active = state.channels.find((row) => row.id === state.channelId);
+        const permissionLabel = capability("ai_command")
+            ? "Command access is enabled."
+            : "Read-only access: ai:command is not granted.";
         status(
-            "Katcha AI is ready. Conversation history is scoped to " +
+            "Katcha AI is ready for " +
                 channelName(active || state.channels[0]) +
-                ".",
+                ". " +
+                permissionLabel,
         );
         if (new URLSearchParams(location.search).get("focus") === "chat") $("prompt").focus();
     } catch (error) {
@@ -840,6 +931,13 @@ $("clear-thread").onclick = () => {
 };
 $("archive-thread").onclick = async () => {
     if (!state.threadId) return;
+    if (!capability("ai_write")) {
+        status(
+            "This control principal does not have ai:write permission.",
+            true,
+        );
+        return;
+    }
     const threadId = state.threadId;
     $("archive-thread").disabled = true;
     try {
