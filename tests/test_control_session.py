@@ -44,6 +44,16 @@ def test_control_session_reports_named_principal_capabilities_without_secrets() 
     assert response.capabilities.events_ack is True
     assert response.capabilities.production_create is True
     assert response.capabilities.ai_command is False
+    assert response.action_permissions["create_short_production"].allowed is True
+    assert (
+        response.action_permissions["create_short_production"].required_scope
+        == "production:create"
+    )
+    assert response.action_permissions["recover_production_render"].allowed is False
+    assert (
+        response.action_permissions["recover_production_render"].required_scope
+        == "render:recover"
+    )
     assert response.event_stream.channel_scope_required is True
     assert "token" not in str(payload).casefold()
     assert "secret" not in str(payload).casefold()
@@ -61,6 +71,10 @@ def test_control_session_reports_wildcard_legacy_and_local_modes() -> None:
     assert legacy_response.channel_access.all_channels is True
     assert legacy_response.capabilities.ai_command is True
     assert legacy_response.capabilities.trends_write is True
+    assert all(
+        permission.allowed
+        for permission in legacy_response.action_permissions.values()
+    )
     assert legacy_response.event_stream.channel_scope_required is False
 
     local = _request()
