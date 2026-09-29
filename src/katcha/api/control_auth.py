@@ -94,11 +94,12 @@ def _match_principal_credential(
     for principal in settings.control_principals:
         for credential in principal.resolved_credentials():
             token = credential.token.get_secret_value()
+            active = _credential_is_active(credential, now=current)
             same = secrets.compare_digest(
                 presented_token.encode(),
                 token.encode(),
             )
-            if same and _credential_is_active(credential, now=current):
+            if same and active:
                 matched = _PrincipalCredentialMatch(
                     principal=principal,
                     credential=credential,
