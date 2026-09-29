@@ -372,15 +372,33 @@ function renderProviders() {
     if (savedModel) modelSelect.value = savedModel;
     modelSelect.disabled = !configured || !models.length;
 
-    const actionable = configured && Boolean(voiceInput.value.trim()) && Boolean(modelSelect.value);
-    $("save-elevenlabs").disabled = !actionable;
-    $("preview-elevenlabs").disabled = !actionable;
-    $("refresh-elevenlabs").disabled = !configured;
+    updateProviderActionState();
 
     $("invideo-state").textContent = invideoProvider?.configured ? "BRIDGE READY" : "UNAVAILABLE";
     $("invideo-detail").textContent = invideoProvider?.detail
         || "Direct InVideo automation is waiting for a documented account API contract.";
     $("invideo-studio-link").href = "/studio?channel=" + encodeURIComponent(state.channelId);
+}
+
+function updateProviderActionState() {
+    const configured = Boolean(
+        state.providerStatus.find((row) => row.provider === "elevenlabs")?.configured,
+    );
+    const voiceId = $("elevenlabs-voice-id").value.trim();
+    const modelId = $("elevenlabs-model").value;
+    const actionable = configured && Boolean(voiceId) && Boolean(modelId);
+    $("save-elevenlabs").disabled = !actionable;
+    $("preview-elevenlabs").disabled = !actionable;
+    $("refresh-elevenlabs").disabled = !configured;
+
+    const selectedVoice = state.elevenlabsVoices.find(
+        (voice) => voice.voice_id === voiceId,
+    );
+    if (selectedVoice?.name) {
+        $("elevenlabs-voice-help").textContent =
+            selectedVoice.name +
+            (selectedVoice.category ? " · " + selectedVoice.category : "");
+    }
 }
 
 async function saveElevenLabsConfig() {
@@ -1329,8 +1347,8 @@ $("refresh-elevenlabs").addEventListener("click", async () => {
         renderProviders();
     }
 });
-$("elevenlabs-voice-id").addEventListener("input", renderProviders);
-$("elevenlabs-model").addEventListener("change", renderProviders);
+$("elevenlabs-voice-id").addEventListener("input", updateProviderActionState);
+$("elevenlabs-model").addEventListener("change", updateProviderActionState);
 window.addEventListener("beforeunload", revokeProviderPreview);
 $("growth-goals-form").addEventListener("submit", saveGrowthGoals);
 $("add-custom-goal").addEventListener("click", addCustomGoal);
