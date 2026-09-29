@@ -173,6 +173,14 @@ const detail = {
         await page.getByRole("button",{name:"Activate staged version"}).click();
         await page.locator("#message").getByText(/active for future short-form renders/).waitFor();
 
+        await page.getByRole("button",{name:"Clip"}).click();
+        await page.getByRole("button",{name:"Render edited generation"}).click();
+        await page.locator("#message").getByText(/Rendering has started/).waitFor();
+        const renderRequest=requests.find((row)=>row.path.includes("/studio/episodes/")&&row.path.endsWith("/render")&&row.method==="POST");
+        assert.equal(renderRequest.body.edits.length,3);
+        assert.equal(renderRequest.body.edits[0].duration_seconds,5.25);
+        assert.equal(renderRequest.body.adopt_active_brand,true);
+
         await page.getByRole("button",{name:"External"}).click();
         await page.locator("#elevenlabs-state").getByText("CONNECTED").waitFor();
         assert.match(await page.locator("#elevenlabs-voice").innerText(),/RankSnaxx/);
@@ -198,14 +206,6 @@ const detail = {
         await page.getByRole("button",{name:"Adopt InVideo edit for review"}).click();
         await page.locator("#message").getByText(/adopted into Katcha/).waitFor();
         assert.equal(invideoHandoff.status,"adopted");
-
-        await page.getByRole("button",{name:"Clip"}).click();
-        await page.getByRole("button",{name:"Render edited generation"}).click();
-        await page.locator("#message").getByText(/Rendering has started/).waitFor();
-        const renderRequest=requests.find((row)=>row.path.includes("/studio/episodes/")&&row.path.endsWith("/render")&&row.method==="POST");
-        assert.equal(renderRequest.body.edits.length,3);
-        assert.equal(renderRequest.body.edits[0].duration_seconds,5.25);
-        assert.equal(renderRequest.body.adopt_active_brand,true);
 
         await page.setViewportSize({width:900,height:900});
         assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
