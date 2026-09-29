@@ -75,6 +75,8 @@ if __name__ == "__main__":
         assert b'data-katcha-page="studio"' in request("/studio/assets/studio.html")
         assert b"#katcha-chat-shortcut" in request("/system/aerith-shell.css")
         assert b"Katcha AI" in request("/ai/assets/ai.html")
+        assert b"Run the system." in request("/operations/assets/operations.html")
+        assert b"--ae-" in request("/operations/assets/system/aerith-tokens.css")
         cold_started = time.monotonic()
         workspace_state = wait_for_workspace(1800)
         print(
