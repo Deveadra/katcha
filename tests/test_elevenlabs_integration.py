@@ -20,7 +20,7 @@ class _Client:
         self.responses = responses
         self.calls: list[tuple[str, dict[str, object] | None]] = []
 
-    def __enter__(self) -> "_Client":
+    def __enter__(self) -> _Client:
         return self
 
     def __exit__(self, *_: object) -> None:
