@@ -27,8 +27,8 @@ from katcha.command_center_models import (
     CommandThread,
     CommandTurn,
 )
-from katcha.control_contract import COMMANDCOMMAND_ACTION_SCOPES
 from katcha.config import get_settings
+from katcha.control_contract import COMMAND_ACTION_SCOPES
 from katcha.db import session_scope
 from katcha.domain import ProductionStatus
 from katcha.orchestration.client import (
