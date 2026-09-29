@@ -114,10 +114,21 @@ const channelProfileURL = () =>
     `/v1/channels/${encodeURIComponent(state.channel)}`;
 const channelURL = () => `${channelProfileURL()}/trends`;
 const explorerURL = () => `${channelURL()}/explorer`;
+function askKatchaHref(kind, id, prompt) {
+    const params = new URLSearchParams({
+        channel: state.channel,
+        resource_kind: kind,
+        resource_id: id,
+        prompt,
+        focus: "chat",
+    });
+    return "/ai?" + params.toString();
+}
 async function connect(event) {
     event?.preventDefault();
-    state.token = $("token").value.trim();
+    state.token = $("token").value.trim() || state.token;
     $("token").value = "";
+    if (state.token) sessionStorage.setItem("katcha.controlToken", state.token);
     status("Connecting…");
     try {
         const channels = await api("/v1/channels");
@@ -430,7 +441,10 @@ function renderDossier(d, episodes, tab = state.dossierTab) {
         <div class="dossier-shell">
             <div class="detail-top">
                 <span>OPPORTUNITY DOSSIER</span>
-                <button id="compare" class="icon-button">${state.compare.includes(o.id) ? "✓ Comparing" : "+ Compare"}</button>
+                <div class="dossier-top-actions">
+                    <a class="icon-button" href="${esc(askKatchaHref("trend_opportunity", o.id, "Explain why this opportunity matters now and what Katcha should do next."))}">Ask Katcha ✦</a>
+                    <button id="compare" class="icon-button">${state.compare.includes(o.id) ? "✓ Comparing" : "+ Compare"}</button>
+                </div>
             </div>
             <div class="dossier-title-row">
                 <div>
