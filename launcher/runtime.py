@@ -17,6 +17,7 @@ import os
 import queue
 import re
 import secrets
+import signal
 import subprocess
 import threading
 import time
@@ -681,6 +682,33 @@ class Runtime:
 
         threading.Thread(target=consume, daemon=True).start()
 
+    def stop_logs(self):
+        """Stop the launcher-owned log follower without touching Katcha services."""
+        process = self.follow
+        self.follow = None
+        if process is None:
+            return
+        try:
+            if process.poll() is None:
+                process.terminate()
+                try:
+                    process.wait(timeout=3)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    try:
+                        process.wait(timeout=3)
+                    except subprocess.TimeoutExpired:
+                        pass
+        except (OSError, ProcessLookupError):
+            pass
+        finally:
+            stream = getattr(process, "stdout", None)
+            if stream is not None:
+                try:
+                    stream.close()
+                except (OSError, ValueError):
+                    pass
+
     def reconcile_existing(self):
         """Adopt an existing Katcha Compose stack without rebuilding or relaunching it."""
         if not self.lock.acquire(blocking=False):
@@ -1045,6 +1073,71 @@ class Handler(BaseHTTPRequestHandler):
     do_DELETE = do_POST
 
 
+def _is_wsl():
+    path = Path("/proc/sys/kernel/osrelease")
+    try:
+        return path.exists() and "microsoft" in path.read_text().lower()
+    except OSError:
+        return False
+
+
+def _open_browser(url, runtime):
+    """Open the local launcher in the host browser, with WSL-safe fallbacks."""
+    errors = []
+    if _is_wsl():
+        attempts = [
+            (
+                "powershell",
+                [
+                    "powershell.exe",
+                    "-NoLogo",
+                    "-NoProfile",
+                    "-NonInteractive",
+                    "-Command",
+                    f"Start-Process '{url}'",
+                ],
+            ),
+            ("cmd", ["cmd.exe", "/d", "/c", "start", "", url]),
+            ("explorer", ["explorer.exe", url]),
+        ]
+        for method, command in attempts:
+            try:
+                result = subprocess.run(
+                    command,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    timeout=5,
+                    check=False,
+                )
+            except (OSError, subprocess.SubprocessError) as exc:
+                errors.append(f"{method}: {exc}")
+                continue
+            if result.returncode == 0:
+                runtime.event("info", "browser", "Opened Katcha in the host browser.", method=method)
+                return True
+            detail = (result.stderr or "").strip()
+            errors.append(f"{method}: exit {result.returncode}" + (f" ({detail})" if detail else ""))
+
+    try:
+        if webbrowser.open(url, new=2):
+            runtime.event("info", "browser", "Opened Katcha in the default browser.", method="python")
+            return True
+        errors.append("python: no runnable browser was reported")
+    except (OSError, webbrowser.Error) as exc:
+        errors.append(f"python: {exc}")
+
+    runtime.event(
+        "warning",
+        "browser",
+        "Katcha could not open a browser automatically.",
+        attempts=errors,
+        recovery="Open " + url,
+    )
+    print("Katcha could not open a browser automatically. Open " + url)
+    return False
+
+
 def main():
     parser = argparse.ArgumentParser(description="Launch the Katcha application")
     parser.add_argument("--no-browser", action="store_true")
@@ -1089,34 +1182,30 @@ def main():
                 "Launcher did not answer its local readiness probe before browser open.",
                 recovery="Open " + url,
             )
+            print("Katcha browser readiness timed out. Open " + url)
             return
 
-        try:
-            if (
-                Path("/proc/sys/kernel/osrelease").exists()
-                and "microsoft" in Path("/proc/sys/kernel/osrelease").read_text().lower()
-            ):
-                subprocess.Popen(
-                    ["cmd.exe", "/c", "start", "", url],
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                )
-            else:
-                webbrowser.open(url)
-        except OSError as exc:
-            runtime.event("warning", "browser", str(exc), recovery="Open " + url)
+        _open_browser(url, runtime)
 
     if not args.no_browser:
         threading.Thread(target=open_when_listening, daemon=True).start()
     print("Katcha: " + url + " — close with Ctrl+C; services remain running.")
+    interrupted = False
     try:
         server.serve_forever()
     except KeyboardInterrupt:
-        pass
+        interrupted = True
+        # Ignore repeated Ctrl+C while the launcher-owned log follower is being
+        # reaped. Katcha services intentionally remain running.
+        try:
+            signal.signal(signal.SIGINT, signal.SIG_IGN)
+        except (OSError, ValueError):
+            pass
     finally:
-        if runtime.follow:
-            runtime.follow.terminate()
+        runtime.stop_logs()
         server.server_close()
+    if interrupted:
+        print("Katcha launcher closed; services remain running.")
     return 0
 
 
