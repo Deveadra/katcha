@@ -19,6 +19,35 @@ function workspaceKeyFromPath(path = location.pathname) {
     return 'trends';
 }
 
+
+function currentWorkspace(path = location.pathname) {
+    const key = workspaceKeyFromPath(path);
+    return KATCHA_WORKSPACES.find((workspace) => workspace.key === key) || KATCHA_WORKSPACES[0];
+}
+
+/* Compatibility protection for routes that do not yet load the shared system directly. */
+function installAerithSystem() {
+    const styles = [
+        ['aerith-tokens', '/system/aerith-tokens.css'],
+        ['aerith-base', '/system/aerith-base.css'],
+        ['aerith-shell', '/system/aerith-shell.css'],
+        ['aerith-components', '/system/aerith-components.css'],
+        ['aerith-motion', '/system/aerith-motion.css'],
+    ];
+    for (const [id, href] of styles) {
+        if (document.getElementById(id)) continue;
+        const link = document.createElement('link');
+        link.id = id;
+        link.rel = 'stylesheet';
+        link.href = href;
+        document.head.append(link);
+    }
+
+    document.body.dataset.katchaPage = workspaceKeyFromPath();
+    const theme = document.querySelector('meta[name="theme-color"]');
+    if (theme) theme.content = '#090b12';
+}
+
 installAerithSystem();
 
 function installSkipLink() {
