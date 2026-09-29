@@ -7,7 +7,7 @@ from typing import Literal
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from katcha.api.control_auth import control_allowed_channel_ids, require_control_channel
 from katcha.db import session_scope
@@ -345,9 +345,11 @@ def operations_overview(
         publications_all = list(
             session.scalars(
                 select(Publication)
-                .where(Publication.youtube_connection_id.in_(list(youtube_to_channel)))
+                .where(
+                    Publication.youtube_connection_id.in_(list(youtube_to_channel)),
+                    ~Publication.status.in_(_DONE_PUBLICATION_STATUSES),
+                )
                 .order_by(Publication.updated_at.desc())
-                .limit(200)
             )
         )
         for row in publications_all:
@@ -382,19 +384,28 @@ def operations_overview(
         attention = [item for item in work_items if item.state == "attention"][:limit]
         active = [item for item in work_items if item.state == "active"][:limit]
 
+        opportunity_filter = (
+            TrendOpportunity.channel_profile_id.in_(channel_ids),
+            TrendOpportunity.expires_at > now,
+        )
+        fresh_opportunity_count = int(
+            session.scalar(
+                select(func.count())
+                .select_from(TrendOpportunity)
+                .where(*opportunity_filter)
+            )
+            or 0
+        )
         opportunity_rows = list(
             session.scalars(
                 select(TrendOpportunity)
-                .where(
-                    TrendOpportunity.channel_profile_id.in_(channel_ids),
-                    TrendOpportunity.expires_at > now,
-                )
+                .where(*opportunity_filter)
                 .order_by(
                     TrendOpportunity.opportunity_score.desc(),
                     TrendOpportunity.confidence.desc(),
                     TrendOpportunity.created_at.desc(),
                 )
-                .limit(max(limit * 3, 24))
+                .limit(limit)
             )
         )
         topic_ids = {row.trend_topic_id for row in opportunity_rows}
@@ -426,11 +437,17 @@ def operations_overview(
             for row in opportunity_rows[:limit]
         ]
 
-        recent_publications = [
-            row
-            for row in publications_all
-            if row.status in _DONE_PUBLICATION_STATUSES or row.youtube_video_id
-        ][: max(limit * 2, 12)]
+        recent_publications = list(
+            session.scalars(
+                select(Publication)
+                .where(
+                    Publication.youtube_connection_id.in_(list(youtube_to_channel)),
+                    Publication.status.in_(_DONE_PUBLICATION_STATUSES),
+                )
+                .order_by(Publication.updated_at.desc())
+                .limit(max(limit * 2, 12))
+            )
+        )
         publication_ids = [row.id for row in recent_publications]
         snapshot_by_publication: dict[uuid.UUID, PublicationAnalyticsSnapshot] = {}
         if publication_ids:
@@ -501,17 +518,29 @@ def operations_overview(
                 break
 
         published_cutoff = now - timedelta(days=7)
-        published_last_7d = [
-            row
-            for row in publications_all
-            if row.published_at is not None and row.published_at >= published_cutoff
-        ]
+        published_last_7d = list(
+            session.scalars(
+                select(Publication).where(
+                    Publication.youtube_connection_id.in_(list(youtube_to_channel)),
+                    Publication.published_at.is_not(None),
+                    Publication.published_at >= published_cutoff,
+                )
+            )
+        )
 
         attention_all = [item for item in work_items if item.state == "attention"]
         active_all = [item for item in work_items if item.state == "active"]
         opportunity_count_by_channel = {channel_id: 0 for channel_id in channel_ids}
-        for row in opportunity_rows:
-            opportunity_count_by_channel[row.channel_profile_id] += 1
+        opportunity_counts = session.execute(
+            select(
+                TrendOpportunity.channel_profile_id,
+                func.count(TrendOpportunity.id),
+            )
+            .where(*opportunity_filter)
+            .group_by(TrendOpportunity.channel_profile_id)
+        )
+        for channel_id, count in opportunity_counts:
+            opportunity_count_by_channel[channel_id] = int(count)
         published_count_by_channel = {channel_id: 0 for channel_id in channel_ids}
         for row in published_last_7d:
             channel_id = youtube_to_channel.get(row.youtube_connection_id)
@@ -544,7 +573,7 @@ def operations_overview(
                 active_channels=len(channel_ids),
                 active_work=len(active_all),
                 needs_attention=len(attention_all),
-                fresh_opportunities=len(opportunity_rows),
+                fresh_opportunities=fresh_opportunity_count,
                 published_last_7d=len(published_last_7d),
             ),
             channels=channel_summaries,
