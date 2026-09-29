@@ -45,3 +45,16 @@ For a changed flow, check its successful path and relevant empty/error/retry
 states, keyboard use and mobile layout. Verify the requests made by the UI match
 its promises. Use mocked providers for repeatable browser tests, label fixtures in
 test artifacts, and never represent them as live discovery or production proof.
+
+
+## Aerith shared-system contract
+
+Katcha's seven operator workspaces must behave like one product, not seven individually styled pages.
+
+- Canonical workspace labels are **Trends**, **Katcha AI**, **Sources**, **Clips**, **Channel Studio**, **Production**, and **Clip Studio**. The runtime workspace registry in `launcher-bridge.js` is the navigation source of truth.
+- Every primary page loads the shared Aerith token, base, shell, component, and motion styles in `<head>` before page-specific Aerith overrides. Runtime injection exists only as compatibility protection.
+- Shared workspace navigation, the Ask Katcha shortcut, skip navigation, focus behavior, and shell materials belong in the shared system. Do not reimplement them page-by-page.
+- Secondary explanation belongs in the reusable `.ae-help` disclosure. Keep failure state, destructive-action consequences, recovery controls, monetization/YPP authority notes, security warnings, and anything required to make a safe decision visible without expansion.
+- Workspace menus must close on Escape and outside interaction, expose one `aria-current="page"` item, and retain keyboard-visible focus.
+- New or materially changed pages must remain free of document-level horizontal overflow at 390px and preserve usable keyboard navigation.
+- `web-tests/system.cjs` is the cross-route contract test. Update it when intentionally changing canonical workspace names or shared-shell behavior.
