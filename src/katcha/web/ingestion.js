@@ -294,9 +294,9 @@ async function selectSource() {
     const channel = s.channel_profile_id ? channelName(sourceChannel(s) || {profile_metadata: {name: 'Assigned channel (not available)'}}) : 'Shared with all channels';
     $('source-info').innerHTML = `<strong>${esc(connectionName(s))}</strong><p>${esc(channel)} · ${esc(usage[s.usage_mode]?.[0] || 'Custom review preference')}</p>${s.query_template?.q ? `<p>Topic: ${esc(s.query_template.q)}</p>` : ''}`;
     $('operation-help').textContent = !usable ? 'This source is paused or blocked. Content checks cannot be started here.' : canImport ? 'Add links whenever you find something worth considering. No posting happens here.' : s.adapter_key === 'web_scout' ? `Search now uses live AI and public web search; provider charges may apply. This saved source does not run automatically. ${s.channel_profile_id ? 'Its discoveries stay scoped to the selected channel.' : 'Its discoveries are shared across all channels.'}` : 'Checks start when you press the button. Automatic scheduled checking is not enabled here.';
-    await history();
+    await loadHistory();
 }
-async function history() {
+async function loadHistory() {
     const s = source(), epoch = ++historyEpoch;
     if (!s) return;
     $('history').textContent = 'Loading recent activity…';
@@ -319,13 +319,13 @@ async function history() {
 async function start(run) {
     try { await api(`discovery/runs/${encodeURIComponent(run.id)}/execute`, {}); }
     catch {
-        await history();
+        await loadHistory();
         throw new Error('Your request is saved, but Katcha could not confirm that the content check started. Refresh activity; if it says “Ready to start,” choose “Start now” to retry without adding it again.');
     }
     for (const [key, id] of runIntents) {
         if (id === run.id) { intents.delete(key); runIntents.delete(key); }
     }
-    await history();
+    await loadHistory();
     message('Request sent. Refresh activity to see its progress. Nothing has been published.');
 }
 bind('connect', 'submit', connect);
@@ -337,7 +337,7 @@ bind('usage', 'change', () => { $('usage-help').textContent = usage[$('usage').v
 bind('retry-channels', 'click', async () => { await loadChannels(); if (source()) await selectSource(); });
 bind('source', 'change', selectSource);
 bind('refresh', 'click', refreshSources);
-bind('history-refresh', 'click', history);
+bind('history-refresh', 'click', loadHistory);
 bind('setup', 'submit', async () => {
     if (step !== 3) { if (step === 2) review(); return; }
     const d = details(), signature = JSON.stringify(d), source_key = intent(signature, 'source');
