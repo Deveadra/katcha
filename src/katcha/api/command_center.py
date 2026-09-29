@@ -12,6 +12,7 @@ from sqlalchemy import select
 from katcha.acquisition_models import TopicWatchVersion
 from katcha.ai.command_center import compose_grounded_answer
 from katcha.ai.command_planner import (
+    CommandPlanningUnavailable,
     deterministic_plan,
     plan_ambiguous_command,
 )
@@ -25,6 +26,7 @@ from katcha.command_center_models import (
     CommandThread,
     CommandTurn,
 )
+from katcha.config import get_settings
 from katcha.db import session_scope
 from katcha.domain import ProductionStatus
 from katcha.orchestration.client import (
@@ -148,6 +150,49 @@ class CommandResponse(BaseModel):
     )
     grounded: bool = True
     narrator: str
+    ai_notice: str | None = None
+
+
+class CommandReadinessResponse(BaseModel):
+    live: bool
+    message: str
+
+
+@router.get("/readiness", response_model=CommandReadinessResponse)
+def command_readiness(http_request: Request) -> CommandReadinessResponse:
+    require_control_scope(http_request, "ai:read")
+    settings = get_settings()
+    if settings.resolved_ai_execution_mode() != "live":
+        return CommandReadinessResponse(
+            live=False,
+            message=(
+                "Katcha is in fixture mode. Select Live AI in the launch console "
+                "and restart services to chat using your configured provider."
+            ),
+        )
+    if not settings.ai_enabled:
+        return CommandReadinessResponse(
+            live=False,
+            message=(
+                "Live mode is selected, but AI is disabled. Save Live AI in the "
+                "launch console and restart services."
+            ),
+        )
+    if not (settings.openai_api_key or settings.gemini_api_key):
+        return CommandReadinessResponse(
+            live=False,
+            message=(
+                "No AI provider is connected. Add an OpenAI or Gemini key in the "
+                "launch console, then restart services."
+            ),
+        )
+    return CommandReadinessResponse(
+        live=True,
+        message=(
+            "Live AI is configured. Each request checks the channel budget "
+            "and provider availability."
+        ),
+    )
 
 
 class ExecuteActionRequest(BaseModel):
@@ -522,15 +567,18 @@ def command(http_request: Request, request: CommandRequest) -> CommandResponse:
         )
         intent = "confirm_action"
     else:
-        planning = plan_ambiguous_command(
-            channel_profile_id=request.channel_profile_id,
-            request_id=request_id,
-            user_prompt=request.prompt,
-            effective_prompt=resolution.effective_prompt,
-            selected_clip_count=len(resolved_selected_clip_ids),
-            previous_intent=latest_assistant.intent if latest_assistant else None,
-            deterministic_intent=deterministic_intent,
-        )
+        try:
+            planning = plan_ambiguous_command(
+                channel_profile_id=request.channel_profile_id,
+                request_id=request_id,
+                user_prompt=request.prompt,
+                effective_prompt=resolution.effective_prompt,
+                selected_clip_count=len(resolved_selected_clip_ids),
+                previous_intent=latest_assistant.intent if latest_assistant else None,
+                deterministic_intent=deterministic_intent,
+            )
+        except CommandPlanningUnavailable as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
         intent = planning.value.intent
 
     reused_proposals: list[CommandActionProposal] = []
@@ -641,11 +689,13 @@ def command(http_request: Request, request: CommandRequest) -> CommandResponse:
             ]
         elif intent == "unsupported":
             deterministic = (
-                "That request does not map to a registered Katcha AI capability "
-                "yet. I did not execute anything. I can currently inspect clips, "
-                "failures, clip evidence, performance, source discovery, channel "
-                "status, or prepare a confirmed content-production proposal from "
-                "selected clips."
+                "I could not confidently tell what you want me to do. Could you "
+                "rephrase it or tell me which channel task you mean? I have not "
+                "started anything."
+                if planning.source == "ai_low_confidence_fallback"
+                else "I cannot do that action yet. I can inspect clips, failures, "
+                "performance, and source discovery, or prepare a confirmed "
+                "production proposal from selected clips. Nothing was started."
             )
             evidence = []
         else:
@@ -743,6 +793,7 @@ def command(http_request: Request, request: CommandRequest) -> CommandResponse:
         channel_profile_id=request.channel_profile_id,
         intent=intent,
         answer=narrative.value.answer,
+        ai_notice=narrative.degraded_reason,
         key_points=narrative.value.key_points,
         caveats=narrative.value.caveats,
         evidence=evidence,

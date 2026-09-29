@@ -93,6 +93,38 @@ function installWorkspaceMenu() {
 
 installWorkspaceMenu();
 
+function installChatShortcut() {
+    if (document.getElementById('katcha-chat-shortcut')) return;
+    const isChat = currentWorkspace()[1] === '/ai';
+    const shortcut = document.createElement('a');
+    shortcut.id = 'katcha-chat-shortcut';
+    shortcut.href = isChat ? '#prompt' : '/ai?focus=chat';
+    shortcut.setAttribute('aria-label', isChat ? 'Jump to Katcha chat' : 'Chat with Katcha');
+    shortcut.setAttribute('title', isChat ? 'Jump to chat' : 'Chat with Katcha');
+    shortcut.innerHTML = '<span aria-hidden="true">✦</span><span class="katcha-chat-label">Ask Katcha</span>';
+    if (isChat) shortcut.addEventListener('click', event => {
+        const prompt = document.getElementById('prompt');
+        if (!prompt || prompt.closest('[hidden]')) return;
+        event.preventDefault();
+        prompt.focus();
+    });
+    const style = document.createElement('style');
+    style.textContent = `
+        #katcha-chat-shortcut{position:fixed;right:24px;bottom:24px;z-index:1000;
+            display:flex;align-items:center;gap:9px;border:1px solid rgba(198,165,255,.55);
+            border-radius:999px;padding:12px 17px;background:#2d2147;color:#fff;
+            box-shadow:0 12px 38px #0009;text-decoration:none;font:700 13px/1.2 system-ui,sans-serif}
+        #katcha-chat-shortcut:hover{background:#443067}
+        #katcha-chat-shortcut:focus-visible{outline:3px solid #aee7fa;outline-offset:3px}
+        #katcha-chat-shortcut>span:first-child{font-size:18px;color:#c9b4ff}
+        @media(max-width:700px){#katcha-chat-shortcut{right:14px;bottom:14px;padding:11px 14px}
+            #katcha-chat-shortcut .katcha-chat-label{font-size:12px}}
+    `;
+    document.head.append(style);
+    document.body.append(shortcut);
+}
+installChatShortcut();
+
 /* The local gateway owns authentication; never expose its token to browser storage. */
 (async () => {
     if (location.port !== '8765') return;

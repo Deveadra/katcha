@@ -136,6 +136,9 @@ async function openThread(threadId) {
                 answer: turn.content,
                 intent: turn.intent || "grounded_answer",
                 evidence: turn.evidence || [],
+                ai_notice: (turn.narrator || "").startsWith("katcha/")
+                    ? "This saved answer used Katcha's stored-data summary because live AI was unavailable."
+                    : null,
             });
         }
     }
@@ -196,6 +199,7 @@ function appendKatcha(result) {
     article.className = "message katcha-message";
     article.innerHTML =
         '<div class="message-avatar">K</div><div class="message-body"><span class="message-author">KATCHA AI</span><p>' +
+        (result.ai_notice ? '<span class="ai-answer-notice">' + esc(result.ai_notice) + '</span>' : '') +
         esc(result.answer) +
         '</p><div class="message-meta">' +
         esc(String(result.intent || "grounded_answer").replaceAll("_", " ")) +
@@ -615,6 +619,8 @@ async function sendPrompt(text) {
         status("");
     } catch (error) {
         appendError(error.message);
+        if (!$('prompt').value.trim()) $('prompt').value = prompt;
+        autoResize();
         status(error.message, true);
     } finally {
         state.busy = false;
@@ -625,11 +631,13 @@ async function sendPrompt(text) {
 
 async function connect(event) {
     event?.preventDefault();
-    state.token = $("token").value.trim();
+    state.token = $("token").value.trim() || state.token;
     $("token").value = "";
     status("Connecting to Katcha control plane…");
     try {
-        state.channels = await api("/v1/channels");
+        state.channels = (await api("/v1/channels")).filter(
+            (channel) => channel.status === "active",
+        );
         $("channel").innerHTML = state.channels
             .map(
                 (channel) =>
@@ -643,21 +651,34 @@ async function connect(event) {
             )
             .join("");
         if (!state.channels.length) {
-            status("No channel workspace is configured yet.", true);
+            status("No active channel is available yet. Set up a channel to chat with Katcha.", true);
             return;
         }
         state.channelId = state.channels[0].id;
         $("channel").value = state.channelId;
         $("command-center").hidden = false;
+        $("connect-form").hidden = true;
         $("connection-state").textContent = "CONNECTED";
         $("connection-state").className = "simulation connected";
+        try {
+            const readiness = await api("/v1/ai/readiness");
+            $("ai-readiness").textContent = readiness.message;
+            $("ai-readiness").className = "ai-readiness" + (readiness.live ? " live" : " unavailable");
+            $("ai-readiness").hidden = false;
+        } catch {
+            $("ai-readiness").textContent = "AI readiness could not be checked. You can retry your request or inspect the launch console.";
+            $("ai-readiness").className = "ai-readiness unavailable";
+            $("ai-readiness").hidden = false;
+        }
         await loadThreads({ openLatest: true });
         status(
             "Katcha AI is ready. Conversation history is scoped to " +
                 channelName(state.channels[0]) +
                 ".",
         );
+        if (new URLSearchParams(location.search).get("focus") === "chat") $("prompt").focus();
     } catch (error) {
+        $("connect-form").hidden = false;
         $("connection-state").textContent = "CONNECTION FAILED";
         status(error.message, true);
     }
@@ -727,3 +748,4 @@ $("archive-thread").onclick = async () => {
 document.querySelectorAll("[data-prompt]").forEach((button) => {
     button.onclick = () => sendPrompt(button.dataset.prompt);
 });
+if (location.port !== "8765") connect();

@@ -28,6 +28,15 @@ For `KATCHA_ENV=development`, `KATCHA_AI_EXECUTION_MODE=auto` resolves to
 `KATCHA_AI_EXECUTION_MODE=live` enables external AI/TTS providers. For
 `KATCHA_ENV=production`, `auto` resolves to `live`.
 
+In the local launch console, selecting **Live — uses configured providers**
+also sets `KATCHA_AI_ENABLED=true` when the setting is saved. Restart services
+to apply it. The Katcha AI chat displays its effective mode and provider
+readiness; fixture mode and failed provider calls are labeled in the answer.
+When a natural-language request cannot be interpreted because live planning is
+unavailable, the chat keeps the draft for retry instead of silently answering
+an unrelated channel-status question. Actions still require their explicit
+confirmation step.
+
 The default live routing policy is `free_first`. Katcha prefers the configured
 Gemini route first, then falls back to the configured OpenAI route when an explicit
 safe rejection occurs. Existing legacy `balanced` channel strategies are treated

@@ -5,6 +5,7 @@ from pydantic import ValidationError
 
 from katcha.ai.command_planner import (
     CommandPlan,
+    CommandPlanningUnavailable,
     CommandPlanResult,
     _planner_prompt,
     plan_ambiguous_command,
@@ -89,7 +90,7 @@ def test_ambiguous_command_fails_closed_without_live_ai() -> None:
 
     assert result.value.intent == "channel_status"
     assert result.source == "deterministic"
-    assert "using channel status" in result.value.reason.casefold()
+    assert "live ai planning is not enabled" in result.value.reason.casefold()
 
 
 def test_command_planning_uses_low_cost_route() -> None:
@@ -150,12 +151,12 @@ def test_low_confidence_ai_plan_fails_closed(monkeypatch) -> None:
         settings=_LiveSettings(),  # type: ignore[arg-type]
     )
 
-    assert result.value.intent == "channel_status"
+    assert result.value.intent == "unsupported"
     assert result.source == "ai_low_confidence_fallback"
     assert result.value.confidence == 0.4
 
 
-def test_planner_exception_fails_closed_without_action_authority(monkeypatch) -> None:
+def test_planner_exception_reports_unavailability_without_action_authority(monkeypatch) -> None:
     target = ModelTarget("openai", "gpt-5.6-luna")
     decision = type(
         "Decision",
@@ -184,19 +185,17 @@ def test_planner_exception_fails_closed_without_action_authority(monkeypatch) ->
         lambda reservation_id, *, reason: released.append(reason),
     )
 
-    result = plan_ambiguous_command(
-        channel_profile_id=uuid.uuid4(),
-        request_id=uuid.uuid4(),
-        user_prompt="Do something clever.",
-        effective_prompt="Do something clever.",
-        selected_clip_count=0,
-        previous_intent=None,
-        deterministic_intent="channel_status",
-        settings=_LiveSettings(),  # type: ignore[arg-type]
-    )
-
-    assert result.value.intent == "channel_status"
-    assert result.source == "planner_unavailable_fallback"
+    with pytest.raises(CommandPlanningUnavailable, match="could not interpret"):
+        plan_ambiguous_command(
+            channel_profile_id=uuid.uuid4(),
+            request_id=uuid.uuid4(),
+            user_prompt="Do something clever.",
+            effective_prompt="Do something clever.",
+            selected_clip_count=0,
+            previous_intent=None,
+            deterministic_intent="channel_status",
+            settings=_LiveSettings(),  # type: ignore[arg-type]
+        )
     assert released and released[0].startswith("command_planner_fallback:")
 
 
@@ -211,3 +210,30 @@ def test_command_planner_registry_includes_source_discovery() -> None:
     )
 
     assert plan.intent == "source_discovery"
+
+
+def test_live_planner_can_correct_a_literal_route(monkeypatch) -> None:
+    target = ModelTarget("openai", "gpt-5.6-luna")
+    decision = type("Decision", (), {
+        "route": type("Route", (), {"primary": target, "fallback": None})(),
+        "reservation_id": None,
+    })()
+    monkeypatch.setattr(
+        "katcha.ai.command_planner.route_for_channel", lambda *args, **kwargs: decision,
+    )
+    monkeypatch.setattr(
+        "katcha.ai.command_planner._openai",
+        lambda *args, **kwargs: CommandPlanResult(
+            CommandPlan(intent="source_discovery", confidence=0.94, reason="Find new creators"),
+            "ai", target, 20, 5,
+        ),
+    )
+    result = plan_ambiguous_command(
+        channel_profile_id=uuid.uuid4(), request_id=uuid.uuid4(),
+        user_prompt="Find new creators; the old feed is broken.",
+        effective_prompt="Find new creators; the old feed is broken.",
+        selected_clip_count=0, previous_intent=None,
+        deterministic_intent="failures", settings=_LiveSettings(),  # type: ignore[arg-type]
+    )
+    assert result.value.intent == "source_discovery"
+    assert result.source == "ai"
