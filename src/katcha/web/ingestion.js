@@ -225,6 +225,8 @@ async function loadChannels(epoch = connectionEpoch) {
         const previous = $('channel').value;
         $('channel').innerHTML = '<option value="">Shared with all channels</option>' + channels.map(c => `<option value="${esc(c.id)}">${esc(channelName(c))}</option>`).join('');
         if (channels.some(c => c.id === previous)) $('channel').value = previous;
+        else if (channels.some(c => c.id === requestedChannel)) $('channel').value = requestedChannel;
+        if ($('channel').value) sessionStorage.setItem("katcha.channel", $('channel').value);
         $('channel-area').hidden = false;
         $('channel-help').textContent = channelHelp();
         $('retry-channels').hidden = false;
