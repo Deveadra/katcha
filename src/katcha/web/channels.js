@@ -11,6 +11,13 @@ const state = {
     selectedPublicationId: "",
     goalDraft: [],
     goalChannelId: "",
+    providerStatus: [],
+    elevenlabsStatus: null,
+    elevenlabsConfig: null,
+    elevenlabsVoices: [],
+    elevenlabsModels: [],
+    elevenlabsPreviewUrl: null,
+    providerError: "",
 };
 
 const $ = (id) => document.getElementById(id);
@@ -39,6 +46,35 @@ async function api(path, options = {}) {
     }
     if (response.status === 204) return null;
     return response.json();
+}
+
+async function audioBlob(path, options = {}) {
+    const response = await fetch(path, {
+        ...options,
+        headers: headers(options.headers || {}),
+    });
+    if (!response.ok) {
+        let message = response.status + " " + response.statusText;
+        try {
+            const payload = await response.json();
+            message = payload.detail || message;
+        } catch {}
+        throw new Error(message);
+    }
+    return response.blob();
+}
+
+function revokeProviderPreview() {
+    if (state.elevenlabsPreviewUrl) {
+        URL.revokeObjectURL(state.elevenlabsPreviewUrl);
+        state.elevenlabsPreviewUrl = null;
+    }
+    const audio = $("elevenlabs-preview");
+    if (audio) {
+        audio.removeAttribute("src");
+        audio.hidden = true;
+        audio.load();
+    }
 }
 
 function setStatus(message, kind = "") {
