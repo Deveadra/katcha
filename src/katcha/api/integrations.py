@@ -15,7 +15,7 @@ from fastapi import (
     UploadFile,
     status,
 )
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 
@@ -25,7 +25,15 @@ from katcha.external_edit_models import ExternalEditHandoff
 from katcha.services.elevenlabs_integration import (
     ElevenLabsIntegrationError,
     elevenlabs_status,
+    generate_elevenlabs_preview,
+    get_elevenlabs_voice,
+    list_elevenlabs_models,
+    resolve_elevenlabs_voice,
     search_elevenlabs_voices,
+)
+from katcha.services.provider_settings import (
+    get_channel_provider_setting,
+    upsert_channel_provider_setting,
 )
 from katcha.services.external_edit import (
     adopt_external_output,
