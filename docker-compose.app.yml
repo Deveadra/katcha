@@ -49,7 +49,7 @@ services:
           "-c",
           "import urllib.request; urllib.request.urlopen('http://localhost:8000/v1/health/workspace', timeout=2).read()",
         ]
-      interval: 5s
+      interval: 30s
       start_interval: 1s
       start_period: 20s
       timeout: 3s
@@ -77,34 +77,6 @@ services:
         max-file: "3"
     ports: !reset []
   production-worker:
-    restart: unless-stopped
-    logging:
-      driver: json-file
-      options:
-        max-size: "10m"
-        max-file: "3"
-  longform-worker:
-    restart: unless-stopped
-    logging:
-      driver: json-file
-      options:
-        max-size: "10m"
-        max-file: "3"
-  publishing-worker:
-    restart: unless-stopped
-    logging:
-      driver: json-file
-      options:
-        max-size: "10m"
-        max-file: "3"
-  discovery-worker:
-    restart: unless-stopped
-    logging:
-      driver: json-file
-      options:
-        max-size: "10m"
-        max-file: "3"
-  trends-worker:
     restart: unless-stopped
     logging:
       driver: json-file

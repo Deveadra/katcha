@@ -1,13 +1,2 @@
-services:
-  trends-worker:
-    image: katcha-control:local
-    build:
-      context: .
-      dockerfile: Dockerfile.control
-    env_file: ${KATCHA_ENV_FILE:-.env}
-    depends_on:
-      migrate:
-        condition: service_completed_successfully
-      temporal:
-        condition: service_started
-    command: ["python", "-m", "katcha.orchestration.trend_worker"]
+# Trend scoring now shares the always-on intelligence worker process.
+services: {}
