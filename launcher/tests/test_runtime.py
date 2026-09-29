@@ -609,7 +609,7 @@ def test_launcher_serves_workspace_shell_without_api(tmp_path):
         response = connection.getresponse()
         body = response.read()
         assert response.status == 200
-        assert b"Clip library" in body
+        assert b'data-katcha-page="clips"' in body
         connection.request("GET", "/channels")
         response = connection.getresponse()
         assert response.status == 302

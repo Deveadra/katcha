@@ -6,6 +6,11 @@
     <meta name="theme-color" content="#090b12">
     <title>Katcha · Production</title>
     <link rel="stylesheet" href="editing.css">
+    <link id="aerith-tokens" rel="stylesheet" href="/system/aerith-tokens.css">
+    <link id="aerith-base" rel="stylesheet" href="/system/aerith-base.css">
+    <link id="aerith-shell" rel="stylesheet" href="/system/aerith-shell.css">
+    <link id="aerith-components" rel="stylesheet" href="/system/aerith-components.css">
+    <link id="aerith-motion" rel="stylesheet" href="/system/aerith-motion.css">
     <link rel="stylesheet" href="pages/production-aerith.css">
     <script src="editing.js" defer></script>
 <script src="launcher-bridge.js" defer></script></head>
@@ -15,9 +20,9 @@
             <a class="logo" href="/explorer" aria-label="Katcha home"><span class="glyph">✦</span> katcha<span class="accent">.</span></a>
             <p class="sidebar-label">WORKSPACE</p>
             <nav aria-label="Workspace">
-                <a href="/explorer">◌ <span>Trend explorer</span></a>
-                <a href="/ingestion">↳ <span>Content sources</span></a>
-                <a href="/clips">▤ <span>Clip library</span></a>
+                <a href="/explorer">◌ <span>Trends</span></a>
+                <a href="/ingestion">↳ <span>Sources</span></a>
+                <a href="/clips">▤ <span>Clips</span></a>
                 <a href="/editing" aria-current="page">▣ <span>Production</span></a>
                 <a href="/studio">⌁ <span>Clip Studio</span></a>
             </nav>
@@ -51,7 +56,7 @@
                             <div><div class="eyebrow">CHANNEL RECIPE</div><h2>Editing recipes</h2></div>
                             <div class="panel-head-actions"><span class="tag">SAFE VERSIONING</span><button id="new-blueprint" class="mini" type="button" disabled>+ New recipe</button></div>
                         </div>
-                        <p class="section-copy">A recipe controls how this channel edits: layout, narration, captions, source audio, transitions, headers, and length. Open a recipe to see or change it. Saving creates a new version, so existing videos never change underneath you.</p>
+                        <details class="ae-help"><summary>How recipes work</summary><p>A recipe controls layout, narration, captions, source audio, transitions, headers, and length. Saving creates a new version, so existing videos never change underneath you.</p></details>
                         <div id="blueprints" class="recipe-list"><div class="empty">Connect to inspect editing recipes.</div></div>
                     </section>
                     <section class="panel card">
@@ -115,7 +120,7 @@
                 </section>
                 <section class="panel card brand-lab production-workspace" id="brand-acceptance" data-production-group="brand" hidden>
                     <div class="panel-head"><div><div class="eyebrow">BRAND ACCEPTANCE</div><h2>Preview before activation</h2></div><span class="tag">NON-PUBLISHING</span></div>
-                    <p class="section-copy">Stage a candidate without changing the live channel, render it against frozen production media, inspect the verified MP4, then activate explicitly.</p>
+                    <details class="ae-help"><summary>How brand staging works</summary><p>Stage a candidate without changing the live channel, render it against frozen production media, inspect the verified MP4, then activate explicitly.</p></details>
                     <div id="brand-lab"><div class="empty">Connect to inspect brand versions and preview sources.</div></div>
                 </section>
                 <section class="panel card episodes production-workspace" id="editorial-pipeline" data-production-group="queue"><div class="panel-head"><div><div class="eyebrow">EPISODE QUEUE</div><h2>Work moving through Katcha</h2></div><label class="filter">STATUS <select id="filter"><option value="all">All episodes</option><option value="attention">Needs attention</option><option value="active">In production</option></select></label></div><div id="episodes" class="list"><div class="empty">Connect to load episodes.</div></div></section>
@@ -128,7 +133,7 @@
             <div><div class="eyebrow">EXTERNAL EDIT PROVIDER</div><h2>InVideo handoff</h2></div>
             <button id="close-invideo-dialog" class="mini" type="button">Close</button>
         </div>
-        <p class="section-copy">Katcha remains the source of truth. Download the prepared package, edit it in InVideo, then return one MP4 here. Katcha verifies the media before it can enter normal review.</p>
+        <details class="ae-help"><summary>How external editing works</summary><p>Katcha remains the source of truth. Download the prepared package, edit it in InVideo, then return one MP4 here. Katcha verifies the media before it can enter normal review.</p></details>
         <div id="invideo-handoff-state" class="external-edit-state empty">Prepare an episode handoff to begin.</div>
         <div class="external-edit-actions">
             <button id="download-invideo-package" class="button secondary" type="button" disabled>Download InVideo package</button>

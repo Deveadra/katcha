@@ -4,9 +4,14 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="theme-color" content="#090b12">
-    <title>Katcha · Content sources</title>
+    <title>Katcha · Sources</title>
     <link rel="stylesheet" href="editing.css">
     <link rel="stylesheet" href="ingestion.css">
+    <link id="aerith-tokens" rel="stylesheet" href="/system/aerith-tokens.css">
+    <link id="aerith-base" rel="stylesheet" href="/system/aerith-base.css">
+    <link id="aerith-shell" rel="stylesheet" href="/system/aerith-shell.css">
+    <link id="aerith-components" rel="stylesheet" href="/system/aerith-components.css">
+    <link id="aerith-motion" rel="stylesheet" href="/system/aerith-motion.css">
     <link rel="stylesheet" href="pages/content-sources-aerith.css">
     <script src="ingestion.js" defer></script>
     <script src="launcher-bridge.js" defer></script>
@@ -17,9 +22,9 @@
         <a class="logo" href="/explorer" aria-label="Katcha home"><span class="glyph">✦</span> katcha<span class="accent">.</span></a>
         <p class="sidebar-label">WORKSPACE</p>
         <nav aria-label="Workspace">
-            <a href="/explorer">Trend explorer</a>
-            <a href="/ingestion" aria-current="page">Content sources</a>
-            <a href="/clips">Clip library</a>
+            <a href="/explorer">Trends</a>
+            <a href="/ingestion" aria-current="page">Sources</a>
+            <a href="/clips">Clips</a>
             <a href="/channels">Channel Studio</a>
             <a href="/editing">Production</a>
             <a href="/studio">Clip Studio</a>
@@ -28,7 +33,7 @@
         <div class="sidebar-bottom">YOUR CONTENT STARTS HERE<small>Find · Collect · Review</small></div>
     </aside>
     <main>
-        <header class="topbar"><span>Workspace / <strong>Content sources</strong></span><span id="connection" class="connection">Connecting…</span></header>
+        <header class="topbar"><span>Workspace / <strong>Sources</strong></span><span id="connection" class="connection">Connecting…</span></header>
         <div class="content source-content">
             <div class="source-head"><div><div class="eyebrow">CONTENT SOURCES</div><h1>Find better inputs.</h1><p>Manage where Katcha looks for clips, posts, discussions, and updates.</p></div></div>
             <section id="connection-panel" class="card panel" hidden>
@@ -50,7 +55,7 @@
                             <section id="step-1" aria-label="Choose a source">
                                 <p class="section-copy">Choose what you want to do. Katcha handles the connection type for you.</p>
                                 <div id="methods" class="methods"></div>
-                                <details class="advanced"><summary>Custom connections · advanced</summary><p>For an installed connector that does not have a guided setup yet. Most people can use one of the options above.</p><label for="custom-adapter">Installed connection</label><select id="custom-adapter"></select><button id="choose-custom" type="button" class="button secondary">Use custom connection</button></details>
+                                <details class="advanced ae-help"><summary>Custom connections · advanced</summary><p>For an installed connector that does not have a guided setup yet. Most people can use one of the options above.</p><label for="custom-adapter">Installed connection</label><select id="custom-adapter"></select><button id="choose-custom" type="button" class="button secondary">Use custom connection</button></details>
                             </section>
                             <section id="step-2" aria-label="Source details" hidden>
                                 <p id="method-help" class="callout"></p>

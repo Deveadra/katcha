@@ -103,3 +103,58 @@ textarea:disabled {
 details > summary {
     cursor: pointer;
 }
+
+
+/* Compact progressive disclosure for secondary explanations. */
+.ae-help {
+    margin: 8px 0;
+    border: 1px solid var(--ae-line);
+    border-radius: 10px;
+    background: rgba(255, 255, 255, 0.018);
+}
+
+.ae-help > summary {
+    list-style: none;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-height: 34px;
+    padding: 7px 10px;
+    color: var(--ae-text-secondary);
+    font-size: 10px;
+    font-weight: 760;
+    letter-spacing: 0.02em;
+}
+
+.ae-help > summary::-webkit-details-marker {
+    display: none;
+}
+
+.ae-help > summary::before {
+    content: "ⓘ";
+    color: var(--ae-cyan);
+    font-size: 12px;
+}
+
+.ae-help > summary::after {
+    content: "⌄";
+    margin-left: auto;
+    color: var(--ae-text-tertiary);
+    transition: transform var(--ae-motion-fast) var(--ae-ease-standard);
+}
+
+.ae-help[open] > summary::after {
+    transform: rotate(180deg);
+}
+
+.ae-help > :not(summary) {
+    margin: 0;
+    padding: 0 10px 10px;
+    color: var(--ae-text-tertiary);
+    font-size: 10px;
+    line-height: 1.55;
+}
+
+.rail-help {
+    margin-top: auto;
+}
