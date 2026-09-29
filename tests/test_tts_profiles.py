@@ -1,5 +1,6 @@
 import io
 import wave
+from decimal import Decimal
 from types import SimpleNamespace
 
 from katcha.ai.router import ModelTarget
@@ -80,3 +81,58 @@ def test_fixture_tts_writes_seekable_wav_file_for_reliable_duration(monkeypatch)
     assert commands
     assert "--stdout" not in commands[0]
     assert "-w" in commands[0]
+
+
+
+def test_elevenlabs_tts_uses_public_api_and_tracks_character_cost(monkeypatch) -> None:
+    calls: list[dict[str, object]] = []
+
+    class Response:
+        content = b"\x00\x00" * 24000
+        headers = {
+            "character-cost": "20",
+            "request-id": "request-123",
+            "x-trace-id": "trace-123",
+        }
+
+        def raise_for_status(self) -> None:
+            return None
+
+    def fake_post(url, *, params, headers, json, timeout):
+        calls.append(
+            {
+                "url": url,
+                "params": params,
+                "headers": headers,
+                "json": json,
+                "timeout": timeout,
+            }
+        )
+        return Response()
+
+    monkeypatch.setattr(tts.httpx, "post", fake_post)
+    settings = Settings(
+        elevenlabs_api_key="secret-key",
+        elevenlabs_voice_id="voice-123",
+        elevenlabs_model_id="eleven_multilingual_v2",
+        elevenlabs_output_format="pcm_24000",
+        elevenlabs_usd_per_1000_credits=0.2,
+    )
+    profile = tts._resolve_profile(
+        get_voice_profile("elevenlabs_rank_snaxx_v1"),
+        settings,
+    )
+
+    result = tts._elevenlabs_tts("Hello RankSnaxx", profile, settings)
+
+    assert result.profile.voice == "voice-123"
+    assert result.target.provider == "elevenlabs"
+    assert result.duration_seconds == 1.0
+    assert result.input_units == 20
+    assert result.estimated_cost_usd == Decimal("0.00400000")
+    assert result.cost_metadata["request_id"] == "request-123"
+    assert calls[0]["url"] == "https://api.elevenlabs.io/v1/text-to-speech/voice-123"
+    assert calls[0]["params"] == {"output_format": "pcm_24000"}
+    assert calls[0]["headers"]["xi-api-key"] == "secret-key"
+    assert calls[0]["json"]["model_id"] == "eleven_multilingual_v2"
+    assert calls[0]["json"]["voice_settings"]["speed"] == 1.03
