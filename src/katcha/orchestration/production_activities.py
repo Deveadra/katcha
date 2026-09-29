@@ -102,7 +102,8 @@ def _brand_voice_profiles(
         ):
             available.append(profile)
 
-    if settings.ai_live_routing_mode == "free_first":
+    routing_mode = str(voice_policy.get("routing_mode") or "inherit")
+    if routing_mode != "fixed" and settings.ai_live_routing_mode == "free_first":
         available.sort(key=lambda item: 0 if item.provider == "gemini" else 1)
 
     primary = available[0] if available else None
