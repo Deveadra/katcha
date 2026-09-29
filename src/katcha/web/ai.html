@@ -3,14 +3,15 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width,initial-scale=1">
-    <meta name="theme-color" content="#0b1018">
+    <meta name="theme-color" content="#090b12">
     <title>Katcha · AI Command Center</title>
     <link rel="stylesheet" href="styles.css">
     <link rel="stylesheet" href="ai-command.css">
+    <link rel="stylesheet" href="pages/ai-workspace-aerith.css">
     <script src="ai-command.js" defer></script>
     <script src="launcher-bridge.js" defer></script>
 </head>
-<body>
+<body data-katcha-page="ai">
     <div class="app-shell">
         <aside class="rail">
             <a class="brand" href="/explorer" aria-label="Katcha home">
@@ -22,7 +23,7 @@
                 <a class="nav-item" href="/explorer"><span class="nav-icon">◉</span> Trend explorer</a>
                 <a class="nav-item active" href="/ai"><span class="nav-icon">✦</span> Katcha AI</a>
                 <a class="nav-item" href="/channels"><span class="nav-icon">▦</span> Channel Studio</a>
-                <a class="nav-item" href="/editing"><span class="nav-icon">◇</span> Editing control center</a>
+                <a class="nav-item" href="/editing"><span class="nav-icon">◇</span> Production</a>
             </nav>
             <div class="rail-spacer"></div>
             <div class="rail-note">
@@ -42,15 +43,13 @@
             </header>
 
             <div class="ai-shell">
-                <section class="ai-intro">
+                <section class="ai-workspace-head">
                     <div>
-                        <div class="eyebrow">KATCHA AI / COMMAND CENTER</div>
-                        <h1>Ask Katcha what it knows.<br><em>Then decide what it does.</em></h1>
-                        <p>One human-facing interface over channel intelligence, autonomous discovery, clips, failures, production, performance learning and audited actions.</p>
+                        <div class="eyebrow">KATCHA AI</div>
+                        <h1>Ask. Inspect. Act.</h1>
+                        <p>Grounded answers and confirmed actions across the active channel.</p>
                     </div>
-                    <div class="architecture-chip">
-                        <span>YOU</span><b>→</b><strong>Katcha AI</strong><b>→</b><span>CONTROL PLANE</span>
-                    </div>
+                    <button id="context-toggle" class="icon-button context-toggle" type="button" aria-expanded="false" aria-controls="ai-context">Evidence</button>
                 </section>
 
                 <form id="connect-form" class="connect-card">
@@ -127,7 +126,7 @@
                         </form>
                     </div>
 
-                    <aside class="context-column">
+                    <aside class="context-column" id="ai-context">
                         <div class="context-head">
                             <div>
                                 <span class="micro-label">CURRENT RESPONSE</span>
