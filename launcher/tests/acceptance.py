@@ -68,6 +68,7 @@ if __name__ == "__main__":
                 if time.monotonic() >= deadline:
                     raise
                 time.sleep(0.5)
+        assert b"What needs you now." in request("/home/assets/home.html")
         assert b"Production" in request("/editing/assets/editing.html")
         assert b'data-katcha-page="clips"' in request("/editing/assets/clips.html")
         assert b"Channel Studio" in request("/channels/assets/channels.html")
