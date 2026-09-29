@@ -520,6 +520,11 @@ let browser;
             { cause: error },
         );
     }
+    assert.match(await page.locator(".ai-workspace-head").innerText(), /Ask\. Inspect\. Act\./);
+    assert.equal(
+        await page.evaluate(() => document.documentElement.scrollHeight <= innerHeight + 2),
+        true,
+    );
     assert.equal(await page.locator("#channel").inputValue(), channelId);
     assert.match(await page.locator("#principal-state").innerText(), /operator-ui/i);
     assert.match(await page.locator("#principal-state").innerText(), /all channels/i);
@@ -640,6 +645,12 @@ let browser;
         await page.evaluate(() => document.documentElement.scrollWidth > innerWidth),
         false,
     );
+    assert.equal(await page.locator("#ai-context").isHidden(), true);
+    await page.locator("#context-toggle").click();
+    await page.locator("#ai-context").waitFor({ state: "visible" });
+    assert.equal(await page.locator("#context-toggle").getAttribute("aria-expanded"), "true");
+    await page.keyboard.press("Escape");
+    await page.locator("#ai-context").waitFor({ state: "hidden" });
     await page.screenshot({
         path: path.join(__dirname, "test-results/ai-command-mobile.png"),
         fullPage: true,
@@ -677,7 +688,7 @@ let browser;
 
     assert.deepEqual(errors, []);
     console.log(
-        "PASS: Katcha AI control-session identity, capability-aware read-only mode, typed context, observability, grounded conversation, durable history, live action status, confirmation safety, auth, and mobile width",
+        "PASS: Aerith Katcha AI bounded workspace, mobile Evidence panel, control-session identity, capability-aware read-only mode, typed context, observability, grounded conversation, durable history, live action status, confirmation safety, auth, and mobile width",
     );
 })()
     .catch((error) => {
