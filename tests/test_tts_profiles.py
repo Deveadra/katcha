@@ -1,3 +1,4 @@
+import uuid
 import io
 import wave
 from types import SimpleNamespace
@@ -80,3 +81,49 @@ def test_fixture_tts_writes_seekable_wav_file_for_reliable_duration(monkeypatch)
     assert commands
     assert "--stdout" not in commands[0]
     assert "-w" in commands[0]
+
+
+
+def test_elevenlabs_profile_uses_channel_selected_voice(monkeypatch) -> None:
+    channel_id = uuid.uuid4()
+    settings = Settings(
+        elevenlabs_api_key="test-elevenlabs",
+        elevenlabs_voice_id="global-voice",
+        elevenlabs_model_id="eleven_multilingual_v2",
+        tts_profile="elevenlabs_rank_snaxx_v1",
+    )
+
+    monkeypatch.setattr(
+        tts,
+        "resolve_elevenlabs_voice",
+        lambda **kwargs: ("rank-snaxx-voice", "eleven_v4_turbo"),
+    )
+
+    profile = choose_voice_profile(
+        settings,
+        channel_profile_id=channel_id,
+    )
+
+    assert profile.provider == "elevenlabs"
+    assert profile.voice == "rank-snaxx-voice"
+    assert profile.model == "eleven_v4_turbo"
+
+
+def test_elevenlabs_channel_voice_is_required_when_selected(monkeypatch) -> None:
+    settings = Settings(
+        elevenlabs_api_key="test-elevenlabs",
+        elevenlabs_voice_id=None,
+        tts_profile="elevenlabs_rank_snaxx_v1",
+    )
+    monkeypatch.setattr(
+        tts,
+        "resolve_elevenlabs_voice",
+        lambda **kwargs: (None, "eleven_multilingual_v2"),
+    )
+
+    try:
+        choose_voice_profile(settings, channel_profile_id=uuid.uuid4())
+    except tts.TTSUnavailable as exc:
+        assert "voice is not configured for this channel" in str(exc)
+    else:
+        raise AssertionError("missing channel voice should fail closed")
