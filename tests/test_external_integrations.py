@@ -6,6 +6,8 @@ def test_external_provider_routes_are_registered() -> None:
     paths = app.openapi()["paths"]
     expected = {
         "/v1/integrations/providers",
+        "/v1/integrations/elevenlabs/status",
+        "/v1/integrations/elevenlabs/voices",
         "/v1/integrations/invideo/handoffs",
         "/v1/integrations/invideo/handoffs/{handoff_id}",
         "/v1/integrations/invideo/handoffs/{handoff_id}/manifest",
@@ -14,6 +16,8 @@ def test_external_provider_routes_are_registered() -> None:
         "/v1/integrations/invideo/handoffs/{handoff_id}/adopt",
     }
     assert expected <= set(paths)
+    assert "get" in paths["/v1/integrations/elevenlabs/status"]
+    assert "get" in paths["/v1/integrations/elevenlabs/voices"]
     assert "post" in paths["/v1/integrations/invideo/handoffs"]
     assert "post" in paths["/v1/integrations/invideo/handoffs/{handoff_id}/output"]
     assert "post" in paths["/v1/integrations/invideo/handoffs/{handoff_id}/adopt"]

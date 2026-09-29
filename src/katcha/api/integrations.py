@@ -22,6 +22,11 @@ from sqlalchemy import select
 from katcha.config import get_settings
 from katcha.db import session_scope
 from katcha.external_edit_models import ExternalEditHandoff
+from katcha.services.elevenlabs_integration import (
+    ElevenLabsIntegrationError,
+    elevenlabs_status,
+    search_elevenlabs_voices,
+)
 from katcha.services.external_edit import (
     adopt_external_output,
     build_handoff_zip,
@@ -39,6 +44,37 @@ class IntegrationProviderStatus(BaseModel):
     configured: bool
     mode: str
     detail: str
+
+
+class ElevenLabsStatusResponse(BaseModel):
+    configured: bool
+    connected: bool
+    voice_id: str | None
+    voice_name: str | None
+    voice_category: str | None = None
+    voice_labels: dict[str, object] = Field(default_factory=dict)
+    model_id: str
+    output_format: str
+    subscription: dict[str, object] | None
+    detail: str
+
+
+class ElevenLabsVoiceResponse(BaseModel):
+    voice_id: str | None
+    name: str | None
+    category: str | None
+    description: str | None
+    labels: dict[str, object] = Field(default_factory=dict)
+    preview_url: str | None
+    is_owner: bool | None
+    is_legacy: bool | None
+
+
+class ElevenLabsVoicePage(BaseModel):
+    voices: list[ElevenLabsVoiceResponse]
+    has_more: bool
+    total_count: int | None
+    next_page_token: str | None
 
 
 class InVideoHandoffCreate(BaseModel):
@@ -114,6 +150,38 @@ def integration_provider_status() -> list[IntegrationProviderStatus]:
             ),
         ),
     ]
+
+
+@router.get(
+    "/elevenlabs/status",
+    response_model=ElevenLabsStatusResponse,
+)
+def get_elevenlabs_status() -> ElevenLabsStatusResponse:
+    try:
+        return ElevenLabsStatusResponse.model_validate(elevenlabs_status())
+    except ElevenLabsIntegrationError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@router.get(
+    "/elevenlabs/voices",
+    response_model=ElevenLabsVoicePage,
+)
+def list_elevenlabs_voices(
+    search: str | None = Query(default=None, max_length=120),
+    page_size: int = Query(default=25, ge=1, le=100),
+    next_page_token: str | None = Query(default=None, max_length=500),
+) -> ElevenLabsVoicePage:
+    try:
+        return ElevenLabsVoicePage.model_validate(
+            search_elevenlabs_voices(
+                search=search,
+                page_size=page_size,
+                next_page_token=next_page_token,
+            )
+        )
+    except ElevenLabsIntegrationError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
 @router.post(
