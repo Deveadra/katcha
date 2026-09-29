@@ -13,6 +13,17 @@ from katcha.orchestration.brand_preview_activities import (
     render_brand_preview_activity,
 )
 from katcha.orchestration.brand_preview_workflows import StagedBrandPreviewWorkflow
+from katcha.orchestration.longform_activities import (
+    build_longform_manifest_activity,
+    critique_longform_plan_activity,
+    finalize_longform_plan_activity,
+    generate_longform_editor_plan_activity,
+    generate_longform_narration_activity,
+    mark_compilation_failed,
+    render_longform_activity,
+    select_compilation_candidates_activity,
+)
+from katcha.orchestration.longform_workflows import LongformCompilationWorkflow
 from katcha.orchestration.production_activities import (
     build_render_manifest_activity,
     generate_narration_assets,
@@ -39,6 +50,7 @@ from katcha.orchestration.short_episode_render_activities import (
     render_ranked_episode_activity,
 )
 from katcha.orchestration.short_episode_workflows import RankedShortEpisodeEditorialWorkflow
+from katcha.orchestration.worker_group import run_worker_group
 from katcha.services.brand_assets import seed_builtin_brand_assets
 
 
@@ -57,8 +69,8 @@ async def main() -> None:
         namespace=settings.temporal_namespace,
     )
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=4) as activity_executor:
-        worker = Worker(
+    with concurrent.futures.ThreadPoolExecutor(max_workers=6) as activity_executor:
+        production_worker = Worker(
             client,
             task_queue=settings.temporal_production_task_queue,
             workflows=[
@@ -88,7 +100,23 @@ async def main() -> None:
             ],
             activity_executor=activity_executor,
         )
-        await worker.run()
+        longform_worker = Worker(
+            client,
+            task_queue=settings.temporal_longform_task_queue,
+            workflows=[LongformCompilationWorkflow],
+            activities=[
+                select_compilation_candidates_activity,
+                generate_longform_editor_plan_activity,
+                critique_longform_plan_activity,
+                finalize_longform_plan_activity,
+                generate_longform_narration_activity,
+                build_longform_manifest_activity,
+                render_longform_activity,
+                mark_compilation_failed,
+            ],
+            activity_executor=activity_executor,
+        )
+        await run_worker_group([production_worker, longform_worker])
 
 
 if __name__ == "__main__":
