@@ -148,10 +148,15 @@ def _voice_policy_response(
     profiles = [str(value) for value in voice_policy.get("preferred_profiles") or []]
     providers = [_provider_for_profile(value) for value in profiles]
     primary = providers[0] if providers else "unknown"
+    routing_mode: Literal["inherit", "fixed"] = (
+        "fixed"
+        if str(voice_policy.get("routing_mode") or "inherit") == "fixed"
+        else "inherit"
+    )
     return ChannelVoicePolicyResponse(
         channel_profile_id=channel_profile_id,
         brand_version=brand_version,
-        routing_mode=str(voice_policy.get("routing_mode") or "inherit"),
+        routing_mode=routing_mode,
         preferred_profiles=profiles,
         primary_provider=primary,
         fallback_providers=[value for value in providers[1:] if value != "unknown"],
@@ -179,12 +184,12 @@ def _response(row: ExternalEditHandoff) -> InVideoHandoffResponse:
 )
 def verify_elevenlabs() -> ElevenLabsVerificationResponse:
     settings = get_settings()
-    configured = bool(settings.elevenlabs_api_key and settings.elevenlabs_voice_id)
+    api_key = settings.elevenlabs_api_key
+    voice_id = settings.elevenlabs_voice_id
     hint = None
-    if settings.elevenlabs_voice_id:
-        raw = settings.elevenlabs_voice_id
-        hint = f"{raw[:4]}…{raw[-4:]}" if len(raw) > 10 else "configured"
-    if not configured:
+    if voice_id:
+        hint = f"{voice_id[:4]}…{voice_id[-4:]}" if len(voice_id) > 10 else "configured"
+    if not api_key or not voice_id:
         return ElevenLabsVerificationResponse(
             configured=False,
             reachable=False,
@@ -196,11 +201,8 @@ def verify_elevenlabs() -> ElevenLabsVerificationResponse:
         )
     try:
         response = httpx.get(
-            (
-                "https://api.elevenlabs.io/v1/voices/"
-                f"{settings.elevenlabs_voice_id}/settings"
-            ),
-            headers={"xi-api-key": settings.elevenlabs_api_key},
+            f"https://api.elevenlabs.io/v1/voices/{voice_id}/settings",
+            headers={"xi-api-key": api_key},
             timeout=settings.elevenlabs_timeout_seconds,
         )
         response.raise_for_status()
@@ -212,7 +214,10 @@ def verify_elevenlabs() -> ElevenLabsVerificationResponse:
             model_id=settings.elevenlabs_model_id,
             output_format=settings.elevenlabs_output_format,
             live_execution=settings.resolved_ai_execution_mode() == "live",
-            detail=f"ElevenLabs rejected the configured voice check (HTTP {exc.response.status_code}).",
+            detail=(
+                "ElevenLabs rejected the configured voice check "
+                f"(HTTP {exc.response.status_code})."
+            ),
         )
     except httpx.HTTPError:
         return ElevenLabsVerificationResponse(
