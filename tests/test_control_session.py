@@ -81,12 +81,16 @@ def test_control_session_reports_wildcard_legacy_and_local_modes() -> None:
     legacy = _request()
     legacy.state.control_actor = "control-token:fixture"
     legacy.state.control_principal_name = None
+    legacy.state.control_credential_id = "legacy-control-api-token"
+    legacy.state.control_credential_fingerprint = "123456abcdef"
     legacy.state.control_scopes = {"*"}
     legacy.state.control_channel_profile_ids = {"*"}
 
     legacy_response = control_session(legacy)
     assert legacy_response.authentication_mode == "legacy_token"
-    assert legacy_response.credential is None
+    assert legacy_response.credential is not None
+    assert legacy_response.credential.id == "legacy-control-api-token"
+    assert legacy_response.credential.fingerprint == "123456abcdef"
     assert legacy_response.channel_access.all_channels is True
     assert legacy_response.capabilities.ai_command is True
     assert legacy_response.capabilities.trends_write is True
