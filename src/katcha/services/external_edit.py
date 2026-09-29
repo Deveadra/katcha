@@ -509,6 +509,36 @@ def import_external_output(
         return row
 
 
+def _next_production_render_generation(
+    session: Any,
+    production_id: uuid.UUID,
+) -> int:
+    return int(
+        session.scalar(
+            select(func.coalesce(func.max(ProductionAsset.generation), 0)).where(
+                ProductionAsset.production_id == production_id,
+                ProductionAsset.kind == "render",
+            )
+        )
+        or 0
+    ) + 1
+
+
+def _next_short_episode_render_generation(
+    session: Any,
+    short_episode_id: uuid.UUID,
+) -> int:
+    return int(
+        session.scalar(
+            select(func.coalesce(func.max(ShortEpisodeAsset.generation), 0)).where(
+                ShortEpisodeAsset.short_episode_id == short_episode_id,
+                ShortEpisodeAsset.kind == "render",
+            )
+        )
+        or 0
+    ) + 1
+
+
 def adopt_external_output(
     handoff_id: uuid.UUID,
     *,
@@ -528,17 +558,10 @@ def adopt_external_output(
             source = session.get(Production, row.source_id)
             if source is None:
                 raise ValueError("production not found")
-            render_generation = int(
-                session.scalar(
-                    select(
-                        func.coalesce(func.max(ProductionAsset.generation), 0)
-                    ).where(
-                        ProductionAsset.production_id == source.id,
-                        ProductionAsset.kind == "render",
-                    )
-                )
-                or 0
-            ) + 1
+            render_generation = _next_production_render_generation(
+                session,
+                source.id,
+            )
             session.add(
                 ProductionAsset(
                     production_id=source.id,
@@ -563,17 +586,10 @@ def adopt_external_output(
             source = session.get(ShortEpisode, row.source_id)
             if source is None:
                 raise ValueError("short episode not found")
-            render_generation = int(
-                session.scalar(
-                    select(
-                        func.coalesce(func.max(ShortEpisodeAsset.generation), 0)
-                    ).where(
-                        ShortEpisodeAsset.short_episode_id == source.id,
-                        ShortEpisodeAsset.kind == "render",
-                    )
-                )
-                or 0
-            ) + 1
+            render_generation = _next_short_episode_render_generation(
+                session,
+                source.id,
+            )
             session.add(
                 ShortEpisodeAsset(
                     short_episode_id=source.id,
