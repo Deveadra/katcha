@@ -60,6 +60,8 @@ const catalog = [
             return reply({detail: 'unexpected request'}, 404);
         });
         const choose = async method => {
+            await page.locator('[data-source-tab="add"]').click();
+            await page.locator('[data-source-view="add"]').waitFor({state: 'visible'});
             await page.locator(`[data-method="${method}"]`).click();
             assert.equal(await page.evaluate(() => document.activeElement.id), 'name');
             await page.locator('#name').fill(`${method} collection`);
@@ -82,6 +84,11 @@ const catalog = [
         await page.locator('#connect button').click();
         await page.waitForFunction(() => !document.querySelector('#workspace').disabled);
         assert.equal(await page.locator('#connection-panel').isVisible(), false);
+        assert.equal(await page.locator('[data-source-tab]').count(), 2);
+        assert.equal(await page.locator('[data-source-tab="add"]').getAttribute('aria-selected'), 'true');
+        assert.equal(await page.locator('[data-source-view="add"]').isHidden(), false);
+        assert.equal(await page.locator('[data-source-view="library"]').isHidden(), true);
+        assert.equal(await page.evaluate(() => document.documentElement.scrollHeight <= innerHeight + 2), true);
         assert.equal(await page.locator('#channel option').nth(1).textContent(), 'RankSnaxx');
         assert.equal(await page.locator('#custom-query').isVisible(), false);
         assert.equal(await page.locator('#key').count(), 0);
@@ -102,6 +109,8 @@ const catalog = [
         assert.equal(sources[0].usage_mode, 'candidate_review');
         assert.deepEqual(sources[0].query_template, {items: [], urls: []});
         assert.match(sources[0].source_key, /^source-/);
+        assert.equal(await page.locator('[data-source-tab="library"]').getAttribute('aria-selected'), 'true');
+        assert.equal(await page.locator('[data-source-view="library"]').isHidden(), false);
         await page.locator('#urls').fill('not a link');
         await page.locator('#import button').click();
         assert.equal(requests.filter(r => r.path.endsWith('/imports')).length, 0);
@@ -206,6 +215,6 @@ const catalog = [
         assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
         await page.screenshot({path: path.join(__dirname, 'test-results/ingestion-mobile.png'), fullPage: true});
         assert.deepEqual(errors, []);
-        console.log('PASS: guided source choices, shared all-channel web scouting, human channel names, empty/error channels, automatic IDs, lost-response recovery, activity retries, custom connectors and responsive layout');
+        console.log('PASS: Aerith Sources/Add source workspaces, guided source choices, shared all-channel web scouting, human channel names, empty/error channels, automatic IDs, lost-response recovery, activity retries, custom connectors and responsive layout');
     } finally { if (browser) await browser.close(); server.kill(); }
 })().catch(e => { console.error(e); process.exitCode = 1; });
