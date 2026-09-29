@@ -1,0 +1,248 @@
+body[data-katcha-page="production"] {
+    --purple: var(--ae-violet);
+    --cyan: var(--ae-cyan);
+    --pink: var(--ae-rose);
+    --danger: var(--ae-danger);
+}
+
+body[data-katcha-page="production"] .content {
+    width: 100%;
+    max-width: 1500px;
+    padding: 18px clamp(18px, 2.4vw, 34px) 48px;
+}
+
+.production-head {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 24px;
+    padding: 4px 0 16px;
+}
+
+.production-head h1 {
+    margin: 3px 0 5px;
+    color: var(--ae-text);
+    font-size: clamp(27px, 3vw, 36px);
+    line-height: 1.04;
+    letter-spacing: -0.045em;
+}
+
+.production-head p {
+    max-width: 720px;
+    margin: 0;
+    color: var(--ae-text-secondary);
+    font-size: 12px;
+    line-height: 1.5;
+}
+
+body[data-katcha-page="production"] .card {
+    border-color: var(--ae-line);
+    background: var(--ae-surface-soft);
+    box-shadow: inset 0 1px rgba(255, 255, 255, 0.025);
+}
+
+body[data-katcha-page="production"] .connect,
+body[data-katcha-page="production"] .channel-bar,
+body[data-katcha-page="production"] .provider-strip {
+    margin-bottom: 9px;
+}
+
+body[data-katcha-page="production"] .connect {
+    padding: 12px 14px;
+}
+
+body[data-katcha-page="production"] .channel-bar {
+    padding: 13px 14px;
+}
+
+body[data-katcha-page="production"] .provider-strip > div {
+    background: rgba(255, 255, 255, 0.022);
+}
+
+body[data-katcha-page="production"] .stats {
+    gap: 8px;
+    margin-bottom: 4px;
+}
+
+body[data-katcha-page="production"] .stat {
+    min-height: 92px;
+    padding: 13px 14px;
+    border-radius: 12px;
+}
+
+body[data-katcha-page="production"] .stat strong {
+    font-size: 26px;
+}
+
+body[data-katcha-page="production"] .stat-production,
+body[data-katcha-page="production"] .stat-attention {
+    background:
+        linear-gradient(125deg, rgba(183, 165, 255, 0.07), rgba(132, 231, 255, 0.025)),
+        var(--ae-surface-soft);
+}
+
+.production-workspace-tabs {
+    position: sticky;
+    z-index: 8;
+    top: 0;
+    display: flex;
+    gap: 4px;
+    margin: 0 0 4px;
+    padding: 8px 0;
+    overflow-x: auto;
+    background: linear-gradient(
+        to bottom,
+        rgba(9, 11, 18, 0.98) 72%,
+        rgba(9, 11, 18, 0)
+    );
+    scrollbar-width: none;
+}
+
+.production-workspace-tabs::-webkit-scrollbar {
+    display: none;
+}
+
+.production-workspace-tabs button {
+    flex: 0 0 auto;
+    min-height: 36px;
+    padding: 7px 14px;
+    border: 1px solid transparent !important;
+    border-radius: 9px;
+    background: transparent !important;
+    color: var(--ae-text-tertiary);
+    font-size: 11px;
+    font-weight: 760;
+    cursor: pointer;
+}
+
+.production-workspace-tabs button:hover {
+    border-color: var(--ae-line) !important;
+    background: rgba(255, 255, 255, 0.035) !important;
+    color: var(--ae-text-secondary);
+}
+
+.production-workspace-tabs button[aria-selected="true"] {
+    border-color: rgba(183, 165, 255, 0.24) !important;
+    background:
+        linear-gradient(120deg, rgba(183, 165, 255, 0.13), rgba(132, 231, 255, 0.055)) !important;
+    color: var(--ae-text);
+    box-shadow: inset 0 -2px rgba(183, 165, 255, 0.72);
+}
+
+.production-workspace[hidden] {
+    display: none !important;
+}
+
+body[data-katcha-page="production"] .production-workspace {
+    margin-top: 10px;
+}
+
+body[data-katcha-page="production"] .grid.production-workspace {
+    margin-bottom: 0;
+}
+
+body[data-katcha-page="production"] .panel {
+    padding: 19px;
+    border-radius: var(--ae-radius-panel);
+}
+
+body[data-katcha-page="production"] .section-copy {
+    max-width: 920px;
+    margin: 7px 0 14px;
+    color: var(--ae-text-secondary);
+    font-size: 11px;
+    line-height: 1.55;
+}
+
+body[data-katcha-page="production"] .recipe-card,
+body[data-katcha-page="production"] .item,
+body[data-katcha-page="production"] .brand-current,
+body[data-katcha-page="production"] .brand-candidate,
+body[data-katcha-page="production"] .preview-result,
+body[data-katcha-page="production"] .editor-group {
+    border-color: var(--ae-line);
+    background: rgba(255, 255, 255, 0.025);
+}
+
+body[data-katcha-page="production"] .recipe-card.is-default,
+body[data-katcha-page="production"] .episode-item.status-active {
+    border-color: rgba(183, 165, 255, 0.24);
+    background:
+        linear-gradient(115deg, rgba(183, 165, 255, 0.07), rgba(255, 255, 255, 0.02));
+}
+
+body[data-katcha-page="production"] .episode-item.status-attention {
+    border-color: rgba(255, 143, 156, 0.26);
+    background:
+        linear-gradient(115deg, rgba(255, 143, 156, 0.06), rgba(255, 255, 255, 0.02));
+}
+
+body[data-katcha-page="production"] .button.primary {
+    border-color: rgba(183, 165, 255, 0.38) !important;
+    background:
+        linear-gradient(120deg, rgba(183, 165, 255, 0.24), rgba(132, 231, 255, 0.13)),
+        rgba(30, 31, 47, 0.96) !important;
+    color: var(--ae-text) !important;
+}
+
+body[data-katcha-page="production"] .button.secondary,
+body[data-katcha-page="production"] .mini {
+    border-color: var(--ae-line) !important;
+    background: rgba(255, 255, 255, 0.035) !important;
+    color: var(--ae-text-secondary) !important;
+}
+
+body[data-katcha-page="production"] .button:hover:not(:disabled),
+body[data-katcha-page="production"] .mini:hover:not(:disabled) {
+    border-color: rgba(132, 231, 255, 0.48) !important;
+    color: var(--ae-text) !important;
+}
+
+body[data-katcha-page="production"] #editorial-pipeline .list {
+    max-height: min(58vh, 690px);
+    overflow: auto;
+    padding-right: 4px;
+}
+
+body[data-katcha-page="production"] .blueprint-editor-panel {
+    margin-bottom: 0;
+}
+
+body[data-katcha-page="production"] footer {
+    margin-top: 18px;
+    color: var(--ae-text-tertiary);
+}
+
+@media (max-width: 700px) {
+    body[data-katcha-page="production"] .content {
+        padding: 12px 14px 34px;
+    }
+
+    .production-head {
+        align-items: stretch;
+        flex-direction: column;
+        gap: 12px;
+    }
+
+    .production-head > .button {
+        align-self: flex-start;
+    }
+
+    .production-workspace-tabs {
+        margin-inline: -14px;
+        padding-inline: 14px;
+    }
+
+    body[data-katcha-page="production"] #editorial-pipeline .list {
+        max-height: none;
+        overflow: visible;
+    }
+}
+
+@media (max-width: 430px) {
+    body[data-katcha-page="production"] .connect > *,
+    body[data-katcha-page="production"] .channel-bar > * {
+        width: 100%;
+        min-width: 0;
+    }
+}
