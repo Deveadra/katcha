@@ -29,6 +29,7 @@ def test_command_center_routes_are_mounted() -> None:
     assert "/v1/ai/actions/{proposal_id}" in paths
     assert "/v1/ai/actions/{proposal_id}/activity" in paths
     assert "/v1/ai/actions/{proposal_id}/execute" in paths
+    assert "/v1/ai/observability" in paths
     assert "/v1/ai/threads" in paths
     assert "/v1/ai/threads/{thread_id}" in paths
     assert "/v1/ai/threads/{thread_id}/archive" in paths
@@ -367,3 +368,22 @@ def test_turn_into_short_is_create_content_intent() -> None:
     selected = [uuid.uuid4()]
 
     assert classify_intent("Turn that into a short.", selected) == "create_content"
+
+
+
+def test_command_center_accepts_typed_resource_context_schema() -> None:
+    from katcha.api.command_center import CommandRequest
+
+    clip_id = uuid.uuid4()
+    request = CommandRequest.model_validate(
+        {
+            "channel_profile_id": str(uuid.uuid4()),
+            "prompt": "Explain this.",
+            "resource_refs": [
+                {"kind": "clip", "id": str(clip_id)},
+            ],
+        }
+    )
+
+    assert request.resource_refs[0].kind == "clip"
+    assert request.resource_refs[0].id == clip_id
