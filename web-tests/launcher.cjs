@@ -33,6 +33,18 @@ const assert = require('node:assert/strict');
         assert.equal(await chatShortcut.evaluate(node=>getComputedStyle(node).position),'fixed');
         assert.equal(await chatShortcut.isVisible(),true);
         assert.match(await chatShortcut.innerText(),/Ask Katcha/);
+        const shortcutStyle=await chatShortcut.evaluate(node=>({
+            backgroundImage:getComputedStyle(node).backgroundImage,
+            backdropFilter:getComputedStyle(node).backdropFilter||getComputedStyle(node).webkitBackdropFilter
+        }));
+        assert.match(shortcutStyle.backgroundImage,/linear-gradient/);
+        assert.match(shortcutStyle.backdropFilter,/blur/);
+        const panelGlass=await workspace.locator('.home-panel').first().evaluate(node=>({
+            backgroundImage:getComputedStyle(node).backgroundImage,
+            backdropFilter:getComputedStyle(node).backdropFilter||getComputedStyle(node).webkitBackdropFilter
+        }));
+        assert.match(panelGlass.backgroundImage,/linear-gradient/);
+        assert.match(panelGlass.backdropFilter,/blur/);
         const skip=workspace.locator('.ae-skip-link');
         assert.equal(await skip.count(),1);
         assert.notEqual(await skip.evaluate(node=>getComputedStyle(node).position),'static');
