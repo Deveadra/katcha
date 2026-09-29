@@ -268,6 +268,172 @@ function renderChannelSelect() {
         .join("");
 }
 
+async function loadProviderData() {
+    revokeProviderPreview();
+    state.providerStatus = [];
+    state.elevenlabsStatus = null;
+    state.elevenlabsConfig = null;
+    state.elevenlabsVoices = [];
+    state.elevenlabsModels = [];
+    state.providerError = "";
+    if (!state.channelId) return;
+
+    try {
+        state.providerStatus = await api("/v1/integrations/providers");
+        const eleven = state.providerStatus.find((row) => row.provider === "elevenlabs");
+        const configResult = await Promise.allSettled([
+            api("/v1/integrations/elevenlabs/channels/" + encodeURIComponent(state.channelId)),
+            eleven?.configured
+                ? api("/v1/integrations/elevenlabs/status?channel_profile_id=" + encodeURIComponent(state.channelId))
+                : Promise.resolve(null),
+            eleven?.configured
+                ? api("/v1/integrations/elevenlabs/models")
+                : Promise.resolve([]),
+            eleven?.configured
+                ? api("/v1/integrations/elevenlabs/voices?page_size=100")
+                : Promise.resolve({ voices: [] }),
+        ]);
+        if (configResult[0].status === "fulfilled") {
+            state.elevenlabsConfig = configResult[0].value;
+        }
+        if (configResult[1].status === "fulfilled") {
+            state.elevenlabsStatus = configResult[1].value;
+        }
+        if (configResult[2].status === "fulfilled") {
+            state.elevenlabsModels = configResult[2].value || [];
+        }
+        if (configResult[3].status === "fulfilled") {
+            state.elevenlabsVoices = configResult[3].value?.voices || [];
+        }
+        const rejected = configResult.find((result) => result.status === "rejected");
+        if (rejected) state.providerError = rejected.reason?.message || "Provider discovery is partially unavailable.";
+    } catch (error) {
+        state.providerError = error.message;
+    }
+}
+
+function renderProviders() {
+    const elevenProvider = state.providerStatus.find((row) => row.provider === "elevenlabs");
+    const invideoProvider = state.providerStatus.find((row) => row.provider === "invideo");
+    const connected = Boolean(state.elevenlabsStatus?.connected);
+    const configured = Boolean(elevenProvider?.configured);
+    $("elevenlabs-state").textContent = connected
+        ? "CONNECTED"
+        : configured
+            ? "CONFIGURED"
+            : "NOT CONFIGURED";
+    $("elevenlabs-detail").textContent =
+        state.providerError
+        || state.elevenlabsStatus?.detail
+        || elevenProvider?.detail
+        || "ElevenLabs status unavailable.";
+    $("elevenlabs-plan").textContent = state.elevenlabsStatus?.subscription?.tier || "—";
+    const subscription = state.elevenlabsStatus?.subscription;
+    $("elevenlabs-usage").textContent = subscription
+        ? number(subscription.character_count || 0) + " / " + number(subscription.character_limit || 0) + " characters"
+        : "—";
+
+    const voiceInput = $("elevenlabs-voice-id");
+    const voiceList = $("elevenlabs-voices");
+    voiceList.innerHTML = state.elevenlabsVoices.map((voice) =>
+        '<option value="' + escapeHtml(voice.voice_id || "") + '">' +
+        escapeHtml(voice.name || voice.voice_id || "Voice") +
+        (voice.category ? " · " + escapeHtml(voice.category) : "") +
+        "</option>"
+    ).join("");
+    voiceInput.value = state.elevenlabsConfig?.voice_id || state.elevenlabsStatus?.voice_id || "";
+    voiceInput.disabled = !configured;
+
+    const selectedVoice = state.elevenlabsVoices.find(
+        (voice) => voice.voice_id === voiceInput.value,
+    );
+    const voiceName = selectedVoice?.name
+        || state.elevenlabsConfig?.voice_name
+        || state.elevenlabsStatus?.voice_name;
+    $("elevenlabs-voice-help").textContent = voiceName
+        ? voiceName + (selectedVoice?.category ? " · " + selectedVoice.category : "")
+        : configured
+            ? "Paste a known voice ID if voice discovery is unavailable on your plan."
+            : "Configure the ElevenLabs API key in Katcha first.";
+
+    const modelSelect = $("elevenlabs-model");
+    const savedModel = state.elevenlabsConfig?.model_id || state.elevenlabsStatus?.model_id || "";
+    const models = [...state.elevenlabsModels];
+    if (savedModel && !models.some((row) => row.model_id === savedModel)) {
+        models.unshift({ model_id: savedModel, name: savedModel });
+    }
+    modelSelect.innerHTML = models.length
+        ? models.map((model) =>
+            '<option value="' + escapeHtml(model.model_id || "") + '">' +
+            escapeHtml(model.name || model.model_id || "TTS model") +
+            "</option>"
+        ).join("")
+        : '<option value="">No TTS models discovered</option>';
+    if (savedModel) modelSelect.value = savedModel;
+    modelSelect.disabled = !configured || !models.length;
+
+    const actionable = configured && Boolean(voiceInput.value.trim()) && Boolean(modelSelect.value);
+    $("save-elevenlabs").disabled = !actionable;
+    $("preview-elevenlabs").disabled = !actionable;
+    $("refresh-elevenlabs").disabled = !configured;
+
+    $("invideo-state").textContent = invideoProvider?.configured ? "BRIDGE READY" : "UNAVAILABLE";
+    $("invideo-detail").textContent = invideoProvider?.detail
+        || "Direct InVideo automation is waiting for a documented account API contract.";
+    $("invideo-studio-link").href = "/studio?channel=" + encodeURIComponent(state.channelId);
+}
+
+async function saveElevenLabsConfig() {
+    const voiceId = $("elevenlabs-voice-id").value.trim();
+    const modelId = $("elevenlabs-model").value;
+    if (!voiceId || !modelId) throw new Error("Choose an ElevenLabs voice and TTS model.");
+    state.elevenlabsConfig = await api(
+        "/v1/integrations/elevenlabs/channels/" + encodeURIComponent(state.channelId),
+        {
+            method: "PUT",
+            body: JSON.stringify({
+                enabled: true,
+                voice_id: voiceId,
+                model_id: modelId,
+                actor: "channel-studio",
+            }),
+        },
+    );
+    state.elevenlabsStatus = await api(
+        "/v1/integrations/elevenlabs/status?channel_profile_id=" + encodeURIComponent(state.channelId),
+    );
+    renderProviders();
+    setStatus(
+        "ElevenLabs voice saved for " + channelName(activeChannel()) + ". Future narration will use this channel selection.",
+        "success",
+    );
+}
+
+async function previewElevenLabsVoice() {
+    const voiceId = $("elevenlabs-voice-id").value.trim();
+    const modelId = $("elevenlabs-model").value;
+    const text = $("elevenlabs-preview-text").value.trim();
+    if (!voiceId || !modelId || !text) throw new Error("Voice, model, and preview text are required.");
+    const blob = await audioBlob(
+        "/v1/integrations/elevenlabs/channels/" + encodeURIComponent(state.channelId) + "/preview",
+        {
+            method: "POST",
+            body: JSON.stringify({
+                text,
+                voice_id: voiceId,
+                model_id: modelId,
+            }),
+        },
+    );
+    revokeProviderPreview();
+    state.elevenlabsPreviewUrl = URL.createObjectURL(blob);
+    const audio = $("elevenlabs-preview");
+    audio.src = state.elevenlabsPreviewUrl;
+    audio.hidden = false;
+    await audio.play().catch(() => {});
+    setStatus("ElevenLabs preview generated. Listen before saving this voice to the channel.", "success");
+}
+
 async function loadChannel() {
     if (!state.channelId) return;
     setStatus("Loading channel operations…");
@@ -288,6 +454,7 @@ async function loadChannel() {
         state.publications = publications;
         state.productions = productions;
         state.brands = brands;
+        await loadProviderData();
 
         const measurable = state.publications
             .filter((item) => item.youtube_video_id)
@@ -327,6 +494,7 @@ function renderAll() {
     renderGrowth();
     renderProductions();
     renderControls();
+    renderProviders();
 }
 
 function renderChannelHeader() {
