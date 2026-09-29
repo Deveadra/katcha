@@ -188,7 +188,7 @@ async function connect() {
         $("studio").hidden = false;
         renderChannelSelect();
         const requested = new URLSearchParams(location.search).get("channel");
-        const candidate = state.channelId || requested;
+        const candidate = requested || state.channelId;
         const existing = candidate && channels.some((item) => item.id === candidate);
         state.channelId = existing ? candidate : channels[0].id;
         $("channel").value = state.channelId;
