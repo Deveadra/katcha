@@ -370,12 +370,20 @@ body[data-katcha-page="trends"] .explorer {
 
     body[data-katcha-page="trends"] .learning-drawer[open],
     body[data-katcha-page="trends"] .workspace-help[open] {
-        width: min(620px, calc(100% - 24px));
-        max-height: 55vh;
+        max-height: 45vh;
         overflow: auto;
         background: rgba(16, 18, 29, 0.98) !important;
         box-shadow: var(--ae-shadow-overlay);
         z-index: 60;
+    }
+
+    body[data-katcha-page="trends"] .learning-drawer[open] {
+        width: min(430px, calc(42% - 12px));
+        min-width: 320px;
+    }
+
+    body[data-katcha-page="trends"] .workspace-help[open] {
+        width: min(520px, calc(100% - 250px));
     }
 }
 
