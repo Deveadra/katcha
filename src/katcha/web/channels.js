@@ -1330,6 +1330,80 @@ async function refreshIntelligence() {
     }
 }
 
+const CHANNEL_STUDIO_HASH_GROUPS = {
+    overview: "overview",
+    content: "content",
+    production: "content",
+    monetization: "growth",
+    growth: "growth",
+    identity: "settings",
+    integrations: "settings",
+    settings: "settings",
+};
+
+function channelStudioTabFromHash() {
+    const hash = window.location.hash.replace(/^#/, "");
+    return CHANNEL_STUDIO_HASH_GROUPS[hash] || "overview";
+}
+
+function setChannelStudioTab(tab, { updateHash = true, focus = false } = {}) {
+    const selected = ["overview", "content", "growth", "settings"].includes(tab)
+        ? tab
+        : "overview";
+    document.querySelectorAll("[data-channel-tab]").forEach((button) => {
+        const active = button.dataset.channelTab === selected;
+        button.setAttribute("aria-selected", active ? "true" : "false");
+        button.tabIndex = active ? 0 : -1;
+        if (active && focus) button.focus();
+    });
+    document.querySelectorAll("[data-studio-group]").forEach((section) => {
+        section.hidden = section.dataset.studioGroup !== selected;
+    });
+
+    if (updateHash) {
+        const next = window.location.pathname + window.location.search + "#" + selected;
+        window.history.replaceState(null, "", next);
+    }
+}
+
+function installChannelStudioTabs() {
+    const tabs = [...document.querySelectorAll("[data-channel-tab]")];
+    if (!tabs.length) return;
+
+    tabs.forEach((button, index) => {
+        button.addEventListener("click", () => {
+            setChannelStudioTab(button.dataset.channelTab);
+        });
+        button.addEventListener("keydown", (event) => {
+            if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+            event.preventDefault();
+            let nextIndex = index;
+            if (event.key === "ArrowLeft") nextIndex = (index - 1 + tabs.length) % tabs.length;
+            if (event.key === "ArrowRight") nextIndex = (index + 1) % tabs.length;
+            if (event.key === "Home") nextIndex = 0;
+            if (event.key === "End") nextIndex = tabs.length - 1;
+            setChannelStudioTab(tabs[nextIndex].dataset.channelTab, {
+                focus: true,
+            });
+        });
+    });
+
+    window.addEventListener("hashchange", () => {
+        const rawHash = window.location.hash.replace(/^#/, "");
+        const tab = channelStudioTabFromHash();
+        setChannelStudioTab(tab, { updateHash: false });
+        if (rawHash && rawHash !== tab) {
+            window.requestAnimationFrame(() => {
+                document.getElementById(rawHash)?.scrollIntoView({ block: "start" });
+            });
+        }
+    });
+
+    setChannelStudioTab(channelStudioTabFromHash(), { updateHash: false });
+}
+
+installChannelStudioTabs();
+
 $("connect-form").addEventListener("submit", (event) => {
     event.preventDefault();
     connect();

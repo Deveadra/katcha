@@ -1,0 +1,261 @@
+body[data-katcha-page="channel"] .studio-content {
+    width: 100%;
+    max-width: 1500px;
+    padding: 18px clamp(18px, 2.4vw, 34px) 54px;
+}
+
+.channel-studio-head {
+    min-height: 0;
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 24px;
+    padding: 4px 0 16px;
+}
+
+.channel-studio-head h1 {
+    margin: 3px 0 5px;
+    color: var(--ae-text);
+    font-size: clamp(27px, 3vw, 36px);
+    line-height: 1.04;
+    letter-spacing: -0.045em;
+}
+
+.channel-studio-head p {
+    max-width: 650px;
+    margin: 0;
+    color: var(--ae-text-secondary);
+    font-size: 12px;
+    line-height: 1.5;
+}
+
+body[data-katcha-page="channel"] .studio-card {
+    border-color: var(--ae-line);
+    background: var(--ae-surface-soft);
+    box-shadow: inset 0 1px rgba(255, 255, 255, 0.025);
+}
+
+body[data-katcha-page="channel"] .connect {
+    margin: 0 0 7px;
+    padding: 11px 12px;
+    border-radius: 11px;
+}
+
+body[data-katcha-page="channel"] #status {
+    min-height: 21px;
+    padding: 2px;
+}
+
+body[data-katcha-page="channel"] .channel-command {
+    margin: 3px 0 8px;
+    padding: 13px 14px;
+    border-radius: var(--ae-radius-panel);
+}
+
+body[data-katcha-page="channel"] .channel-avatar {
+    color: #161321;
+    background: linear-gradient(145deg, var(--ae-violet), var(--ae-cyan));
+    box-shadow: inset 0 1px rgba(255, 255, 255, 0.35);
+}
+
+body[data-katcha-page="channel"] #channel {
+    color: var(--ae-text);
+}
+
+.channel-workspace-tabs {
+    position: sticky;
+    z-index: 8;
+    top: 0;
+    display: flex;
+    gap: 4px;
+    margin: 0 0 4px;
+    padding: 8px 0;
+    overflow-x: auto;
+    background: linear-gradient(
+        to bottom,
+        rgba(9, 11, 18, 0.98) 72%,
+        rgba(9, 11, 18, 0)
+    );
+    scrollbar-width: none;
+}
+
+.channel-workspace-tabs::-webkit-scrollbar {
+    display: none;
+}
+
+.channel-workspace-tabs button {
+    flex: 0 0 auto;
+    min-height: 36px;
+    padding: 7px 13px;
+    border: 1px solid transparent !important;
+    border-radius: 9px;
+    background: transparent !important;
+    color: var(--ae-text-tertiary);
+    font-size: 11px;
+    font-weight: 760;
+    cursor: pointer;
+}
+
+.channel-workspace-tabs button:hover {
+    border-color: var(--ae-line) !important;
+    background: rgba(255, 255, 255, 0.035) !important;
+    color: var(--ae-text-secondary);
+}
+
+.channel-workspace-tabs button[aria-selected="true"] {
+    border-color: rgba(183, 165, 255, 0.24) !important;
+    background:
+        linear-gradient(120deg, rgba(183, 165, 255, 0.13), rgba(132, 231, 255, 0.055)) !important;
+    color: var(--ae-text);
+    box-shadow: inset 0 -2px rgba(183, 165, 255, 0.72);
+}
+
+.channel-view-section[hidden] {
+    display: none !important;
+}
+
+body[data-katcha-page="channel"] .studio-section {
+    padding: 17px 0 4px;
+    scroll-margin-top: 62px;
+}
+
+body[data-katcha-page="channel"] .studio-section + .studio-section:not([hidden]) {
+    padding-top: 26px;
+}
+
+body[data-katcha-page="channel"] .section-title {
+    margin-bottom: 10px;
+}
+
+body[data-katcha-page="channel"] .section-title h2 {
+    margin-top: 3px;
+    font-size: 20px;
+}
+
+body[data-katcha-page="channel"] .eyebrow,
+body[data-katcha-page="channel"] .micro-label,
+body[data-katcha-page="channel"] .section-title > div > span {
+    color: var(--ae-text-tertiary);
+}
+
+body[data-katcha-page="channel"] .metric-card {
+    min-height: 98px;
+    padding: 14px;
+}
+
+body[data-katcha-page="channel"] .metric-card strong {
+    color: var(--ae-text);
+    font-size: 25px;
+}
+
+body[data-katcha-page="channel"] .badge,
+body[data-katcha-page="channel"] .status-pill.published {
+    border-color: rgba(155, 230, 194, 0.28);
+    background: rgba(155, 230, 194, 0.07);
+    color: var(--ae-mint);
+}
+
+body[data-katcha-page="channel"] .studio-button.primary {
+    border-color: rgba(183, 165, 255, 0.38) !important;
+    background:
+        linear-gradient(120deg, rgba(183, 165, 255, 0.24), rgba(132, 231, 255, 0.13)),
+        rgba(30, 31, 47, 0.96) !important;
+    color: var(--ae-text) !important;
+}
+
+body[data-katcha-page="channel"] .studio-button.secondary {
+    border-color: var(--ae-line) !important;
+    background: rgba(255, 255, 255, 0.035) !important;
+    color: var(--ae-text-secondary) !important;
+}
+
+body[data-katcha-page="channel"] .studio-button:hover {
+    border-color: rgba(132, 231, 255, 0.46) !important;
+    color: var(--ae-text) !important;
+}
+
+body[data-katcha-page="channel"] .focus-item,
+body[data-katcha-page="channel"] .money-cell,
+body[data-katcha-page="channel"] .milestone,
+body[data-katcha-page="channel"] .ai-growth-focus,
+body[data-katcha-page="channel"] .video-kpi,
+body[data-katcha-page="channel"] .insight,
+body[data-katcha-page="channel"] .schedule-slot,
+body[data-katcha-page="channel"] .provider-account > div,
+body[data-katcha-page="channel"] .edit-evidence-card {
+    border-color: var(--ae-line);
+    background: rgba(255, 255, 255, 0.025);
+}
+
+body[data-katcha-page="channel"] .publication-row:hover,
+body[data-katcha-page="channel"] .publication-row.active {
+    background:
+        linear-gradient(90deg, rgba(183, 165, 255, 0.085), rgba(132, 231, 255, 0.025));
+}
+
+body[data-katcha-page="channel"] .publication-row.active {
+    box-shadow: inset 2px 0 var(--ae-violet);
+}
+
+body[data-katcha-page="channel"] .video-detail {
+    top: 54px;
+}
+
+body[data-katcha-page="channel"] .studio-footer {
+    margin-top: 26px;
+    color: var(--ae-text-tertiary);
+}
+
+@media (max-width: 950px) {
+    .channel-studio-head {
+        align-items: flex-start;
+        flex-direction: column;
+        gap: 12px;
+    }
+
+    body[data-katcha-page="channel"] .studio-content {
+        padding: 15px 18px 42px;
+    }
+}
+
+@media (max-width: 720px) {
+    body[data-katcha-page="channel"] .studio-content {
+        padding: 12px 14px 34px;
+    }
+
+    .channel-studio-head {
+        padding-bottom: 12px;
+    }
+
+    .channel-studio-head .hero-actions {
+        width: 100%;
+    }
+
+    .channel-studio-head .hero-actions > * {
+        flex: 1 1 auto;
+    }
+
+    .channel-workspace-tabs {
+        margin-inline: -14px;
+        padding-inline: 14px;
+    }
+
+    body[data-katcha-page="channel"] .channel-command {
+        padding: 12px;
+    }
+}
+
+@media (max-width: 430px) {
+    .channel-workspace-tabs button {
+        padding-inline: 11px;
+    }
+
+    body[data-katcha-page="channel"] .connect {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    body[data-katcha-page="channel"] .connect > * {
+        min-width: 0;
+        width: 100%;
+    }
+}
