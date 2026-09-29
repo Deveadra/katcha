@@ -8,6 +8,9 @@ def test_external_provider_routes_are_registered() -> None:
         "/v1/integrations/providers",
         "/v1/integrations/elevenlabs/status",
         "/v1/integrations/elevenlabs/voices",
+        "/v1/integrations/elevenlabs/models",
+        "/v1/integrations/elevenlabs/channels/{channel_profile_id}",
+        "/v1/integrations/elevenlabs/channels/{channel_profile_id}/preview",
         "/v1/integrations/invideo/handoffs",
         "/v1/integrations/invideo/handoffs/{handoff_id}",
         "/v1/integrations/invideo/handoffs/{handoff_id}/manifest",
@@ -18,6 +21,11 @@ def test_external_provider_routes_are_registered() -> None:
     assert expected <= set(paths)
     assert "get" in paths["/v1/integrations/elevenlabs/status"]
     assert "get" in paths["/v1/integrations/elevenlabs/voices"]
+    assert "get" in paths["/v1/integrations/elevenlabs/models"]
+    assert "put" in paths["/v1/integrations/elevenlabs/channels/{channel_profile_id}"]
+    assert "post" in paths[
+        "/v1/integrations/elevenlabs/channels/{channel_profile_id}/preview"
+    ]
     assert "post" in paths["/v1/integrations/invideo/handoffs"]
     assert "post" in paths["/v1/integrations/invideo/handoffs/{handoff_id}/output"]
     assert "post" in paths["/v1/integrations/invideo/handoffs/{handoff_id}/adopt"]
