@@ -1,0 +1,54 @@
+:root {
+    color-scheme: dark;
+
+    --ae-bg: #090b12;
+    --ae-bg-elevated: #0f121c;
+    --ae-surface: #151925;
+    --ae-surface-soft: rgba(22, 26, 39, 0.82);
+    --ae-surface-raised: rgba(25, 29, 44, 0.94);
+
+    --ae-glass: rgba(255, 255, 255, 0.055);
+    --ae-glass-strong: rgba(255, 255, 255, 0.09);
+    --ae-line: rgba(255, 255, 255, 0.095);
+    --ae-line-hover: rgba(255, 255, 255, 0.17);
+
+    --ae-text: #f6f4fb;
+    --ae-text-secondary: #b4b6c5;
+    --ae-text-tertiary: #7c8192;
+
+    --ae-violet: #b7a5ff;
+    --ae-cyan: #84e7ff;
+    --ae-rose: #f1a7d6;
+    --ae-mint: #9be6c2;
+    --ae-warning: #ffc66d;
+    --ae-danger: #ff8f9c;
+    --ae-success: #9be6c2;
+
+    --ae-radius-control: 9px;
+    --ae-radius-panel: 13px;
+    --ae-radius-overlay: 16px;
+
+    --ae-shadow-panel: 0 18px 44px rgba(0, 0, 0, 0.24);
+    --ae-shadow-overlay: 0 24px 80px rgba(0, 0, 0, 0.52);
+
+    --ae-motion-instant: 90ms;
+    --ae-motion-fast: 140ms;
+    --ae-motion-base: 200ms;
+    --ae-motion-panel: 260ms;
+    --ae-ease: cubic-bezier(.2, .8, .2, 1);
+
+    /* Compatibility aliases while legacy routes migrate onto Aerith primitives. */
+    --bg: var(--ae-bg);
+    --panel: var(--ae-surface);
+    --panel2: var(--ae-bg-elevated);
+    --line: var(--ae-line);
+    --muted: var(--ae-text-tertiary);
+    --text: var(--ae-text);
+    --sub: var(--ae-text-secondary);
+    --lime: var(--ae-violet);
+    --cyan: var(--ae-cyan);
+    --orange: var(--ae-warning);
+    --purple: var(--ae-violet);
+    --pink: var(--ae-rose);
+    --shadow: var(--ae-shadow-panel);
+}
