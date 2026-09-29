@@ -99,7 +99,7 @@ function setSourceView(view, {focus = false, updateHash = true} = {}) {
     document.querySelectorAll('[data-source-view]').forEach(section => {
         section.hidden = section.dataset.sourceView !== selected;
     });
-    if (updateHash) history.replaceState(null, '', location.pathname + location.search + (selected === 'library' ? '#sources' : '#add'));
+    if (updateHash) window.history.replaceState(null, '', location.pathname + location.search + (selected === 'library' ? '#sources' : '#add'));
 }
 function installSourceWorkspaceTabs() {
     const tabs = [...document.querySelectorAll('[data-source-tab]')];
