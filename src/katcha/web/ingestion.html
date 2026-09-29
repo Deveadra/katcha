@@ -3,13 +3,15 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#090b12">
     <title>Katcha · Content sources</title>
     <link rel="stylesheet" href="editing.css">
     <link rel="stylesheet" href="ingestion.css">
+    <link rel="stylesheet" href="pages/content-sources-aerith.css">
     <script src="ingestion.js" defer></script>
     <script src="launcher-bridge.js" defer></script>
 </head>
-<body>
+<body data-katcha-page="sources">
 <div class="shell">
     <aside class="sidebar">
         <a class="logo" href="/explorer" aria-label="Katcha home"><span class="glyph">✦</span> katcha<span class="accent">.</span></a>
@@ -19,7 +21,7 @@
             <a href="/ingestion" aria-current="page">Content sources</a>
             <a href="/clips">Clip library</a>
             <a href="/channels">Channel Studio</a>
-            <a href="/editing">Editing control center</a>
+            <a href="/editing">Production</a>
             <a href="/studio">Clip Studio</a>
             <a href="/ai">Katcha AI</a>
         </nav>
@@ -27,8 +29,8 @@
     </aside>
     <main>
         <header class="topbar"><span>Workspace / <strong>Content sources</strong></span><span id="connection" class="connection">Connecting…</span></header>
-        <div class="content">
-            <div class="heading"><div><div class="eyebrow">BUILD YOUR CONTENT LIBRARY</div><h1>Good videos start<br>with <em>good sources.</em></h1><p>A source is a place to find content—a collection of links, a search, or a website’s news feed.</p></div></div>
+        <div class="content source-content">
+            <div class="source-head"><div><div class="eyebrow">CONTENT SOURCES</div><h1>Find better inputs.</h1><p>Manage where Katcha looks for clips, posts, discussions, and updates.</p></div></div>
             <section id="connection-panel" class="card panel" hidden>
                 <h2 id="connection-title">Connect to your workspace</h2>
                 <p id="connection-help">Enter your workspace access token if Katcha requires one. It is kept only in this tab.</p>
@@ -36,10 +38,14 @@
             </section>
             <p id="message" class="message" role="status" aria-live="polite"></p>
             <fieldset id="workspace" disabled>
+                <nav class="source-workspace-tabs" aria-label="Content source workspaces" role="tablist">
+                    <button type="button" role="tab" data-source-tab="library" aria-selected="false">Sources</button>
+                    <button type="button" role="tab" data-source-tab="add" aria-selected="true">Add source</button>
+                </nav>
                 <div class="workspace-grid">
-                    <section class="panel card builder" aria-labelledby="builder-title">
-                        <div class="panel-head"><div><div class="eyebrow">ADD A SOURCE</div><h2 id="builder-title">Where will the content come from?</h2></div><span id="step-label" class="tag">STEP 1 OF 3</span></div>
-                        <ol class="steps" aria-label="Setup progress"><li aria-current="step">1. Choose a source</li><li>2. Make it yours</li><li>3. Review & save</li></ol>
+                    <section class="panel card builder" data-source-view="add" aria-labelledby="builder-title">
+                        <div class="panel-head"><div><div class="eyebrow">ADD SOURCE</div><h2 id="builder-title">Choose a source</h2></div><span id="step-label" class="tag">1 OF 3</span></div>
+                        <ol class="steps" aria-label="Setup progress"><li aria-current="step">1. Source</li><li>2. Details</li><li>3. Review</li></ol>
                         <form id="setup">
                             <section id="step-1" aria-label="Choose a source">
                                 <p class="section-copy">Choose what you want to do. Katcha handles the connection type for you.</p>
@@ -62,10 +68,10 @@
                             <div id="wizard-actions" class="wizard-actions" hidden><button id="back" type="button" class="button secondary">Back</button><button id="next" type="button" class="button primary">Review source →</button><button id="save" class="button primary" hidden>Save source</button></div>
                         </form>
                     </section>
-                    <section class="panel card library" aria-labelledby="library-title">
-                        <div class="panel-head"><div><div class="eyebrow">YOUR COLLECTION</div><h2 id="library-title">Saved sources</h2></div><button id="refresh" type="button" class="text-button">Refresh</button></div>
-                        <div id="empty-sources" class="empty-state"><span aria-hidden="true">↗</span><h3>Your first source starts here</h3><p>Use the setup on this page to add links or a place to search. Your saved sources will appear here.</p></div>
-                        <div id="source-controls" hidden><label for="source">Choose a saved source</label><select id="source"></select><div id="source-info" class="source-summary"></div>
+                    <section class="panel card library" data-source-view="library" aria-labelledby="library-title" hidden>
+                        <div class="panel-head"><div><div class="eyebrow">SOURCE LIBRARY</div><h2 id="library-title">Sources</h2></div><button id="refresh" type="button" class="text-button">Refresh</button></div>
+                        <div id="empty-sources" class="empty-state"><span aria-hidden="true">↗</span><h3>No sources yet</h3><p>Add a search, feed, or collection of links to start discovering content.</p><button id="empty-add-source" type="button" class="button primary">Add a source</button></div>
+                        <div id="source-controls" hidden><label for="source">SOURCE</label><select id="source"></select><div id="source-info" class="source-summary"></div>
                             <form id="import" hidden><label for="urls">Paste content links</label><textarea id="urls" rows="5" placeholder="https://www.tiktok.com/@creator/video/…&#10;https://www.instagram.com/reel/…" aria-describedby="links-help"></textarea><p id="links-help" class="hint">One link per line, from any supported website. Katcha will collect them for review; this does not download or publish a video.</p><button class="button primary">Add links & find content</button></form>
                             <button id="run" type="button" class="button primary" hidden>Search now</button><p id="operation-help" class="hint"></p>
                             <div class="activity-heading"><h3>Recent activity</h3><button id="history-refresh" type="button" class="text-button">Refresh activity</button></div><div id="history" class="list" aria-live="polite"></div>
