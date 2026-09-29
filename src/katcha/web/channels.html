@@ -336,7 +336,7 @@
                                 </label>
                                 <button id="preview-elevenlabs" class="studio-button secondary" type="button" disabled>Generate voice preview</button>
                                 <audio id="elevenlabs-preview" class="provider-audio" controls hidden></audio>
-                                <details class="ae-help"><summary>How voice credentials are stored</summary><p>The ElevenLabs API key remains in Katcha's server environment. Only this channel's non-secret voice and model IDs are stored.</p></details>
+                                <details class="ae-help"><summary>How voice configuration is stored</summary><p>The ElevenLabs API key remains server-side. This channel's saved voice library, default voice, long-form Voice A/B assignments, and model are stored in Katcha, so changing voices does not require editing .env.</p></details>
                             </article>
 
                             <article class="studio-card provider-config-card">
