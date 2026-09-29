@@ -303,7 +303,10 @@ async function loadProviderStatus() {
         state.providerStatus=await api("/v1/integrations/providers");
         const eleven=state.providerStatus.find((row)=>row.provider==="elevenlabs");
         state.elevenlabsStatus=eleven?.configured
-            ? await api("/v1/integrations/elevenlabs/status")
+            ? await api(
+                "/v1/integrations/elevenlabs/status?channel_profile_id=" +
+                encodeURIComponent(state.channel)
+            )
             : null;
     } catch(error) {
         state.elevenlabsStatus={connected:false,detail:error.message};
