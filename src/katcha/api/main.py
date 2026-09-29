@@ -21,6 +21,7 @@ from katcha.api.edit_blueprints import router as edit_blueprints_router
 from katcha.api.explorer import router as explorer_router
 from katcha.api.integrations import router as integrations_router
 from katcha.api.intelligence import router as intelligence_router
+from katcha.api.operations import router as operations_router
 from katcha.api.packaging import router as packaging_router
 from katcha.api.reach import router as reach_router
 from katcha.api.schemas import (
@@ -145,6 +146,7 @@ app.include_router(control_router)
 app.include_router(edit_blueprints_router)
 app.include_router(intelligence_router)
 app.include_router(integrations_router)
+app.include_router(operations_router)
 app.include_router(packaging_router)
 app.include_router(reach_router)
 app.include_router(short_episodes_router)
@@ -160,6 +162,13 @@ app.mount("/channels/assets", StaticFiles(directory=Path(__file__).parents[1] / 
           name="channels-assets")
 app.mount("/ai/assets", StaticFiles(directory=Path(__file__).parents[1] / "web"),
           name="ai-assets")
+app.mount("/operations/assets", StaticFiles(directory=Path(__file__).parents[1] / "web"),
+          name="operations-assets")
+
+
+@app.get("/operations", include_in_schema=False)
+def operations_shell():
+    return RedirectResponse("/operations/assets/operations.html")
 
 
 @app.get("/explorer", include_in_schema=False)
