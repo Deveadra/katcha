@@ -7,6 +7,7 @@ from katcha.ai.router import ModelTarget
 from katcha.audio import tts
 from katcha.audio.tts import choose_voice_profile, get_voice_profile, voice_profile_for_target
 from katcha.config import Settings
+from katcha.orchestration.production_activities import _brand_voice_profiles
 
 
 def test_voice_profile_prefers_requested_legacy_openai_when_configured() -> None:
@@ -136,3 +137,58 @@ def test_elevenlabs_tts_uses_public_api_and_tracks_character_cost(monkeypatch) -
     assert calls[0]["headers"]["xi-api-key"] == "secret-key"
     assert calls[0]["json"]["model_id"] == "eleven_multilingual_v2"
     assert calls[0]["json"]["voice_settings"]["speed"] == 1.03
+
+
+
+def test_fixed_channel_voice_routing_preserves_elevenlabs_primary() -> None:
+    settings = Settings(
+        openai_api_key="test-openai",
+        gemini_api_key="test-gemini",
+        elevenlabs_api_key="test-elevenlabs",
+        elevenlabs_voice_id="voice-123",
+        ai_live_routing_mode="free_first",
+    )
+    primary, fallback = _brand_voice_profiles(
+        {
+            "voice_policy": {
+                "routing_mode": "fixed",
+                "preferred_profiles": [
+                    "elevenlabs_rank_snaxx_v1",
+                    "openai_youth_v2",
+                    "gemini_youth_v2",
+                ],
+            }
+        },
+        settings,
+    )
+
+    assert primary is not None
+    assert primary.provider == "elevenlabs"
+    assert fallback is not None
+    assert fallback.provider == "openai"
+
+
+def test_inherited_channel_voice_routing_still_honors_free_first() -> None:
+    settings = Settings(
+        openai_api_key="test-openai",
+        gemini_api_key="test-gemini",
+        elevenlabs_api_key="test-elevenlabs",
+        elevenlabs_voice_id="voice-123",
+        ai_live_routing_mode="free_first",
+    )
+    primary, _ = _brand_voice_profiles(
+        {
+            "voice_policy": {
+                "routing_mode": "inherit",
+                "preferred_profiles": [
+                    "elevenlabs_rank_snaxx_v1",
+                    "openai_youth_v2",
+                    "gemini_youth_v2",
+                ],
+            }
+        },
+        settings,
+    )
+
+    assert primary is not None
+    assert primary.provider == "gemini"
