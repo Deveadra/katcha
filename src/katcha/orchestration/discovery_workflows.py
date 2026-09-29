@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-from contextlib import suppress
 from datetime import timedelta
 
 from temporalio import workflow
@@ -19,6 +18,33 @@ _ACTIVITY_RETRY = RetryPolicy(
     maximum_attempts=4,
 )
 _PROVIDER_ACTIVITY_RETRY = RetryPolicy(maximum_attempts=1)
+_COMMAND_CYCLE_LIFECYCLE_RETRY = RetryPolicy(
+    initial_interval=timedelta(seconds=1),
+    backoff_coefficient=1.5,
+    maximum_interval=timedelta(seconds=5),
+    maximum_attempts=10,
+)
+
+
+def _cycle_lifecycle_detail(
+    result: dict[str, object],
+    *,
+    child_workflow_id: str,
+) -> dict[str, object]:
+    raw_queue = result.get("queue")
+    queue = raw_queue if isinstance(raw_queue, dict) else {}
+    return {
+        "cycle_workflow_id": child_workflow_id,
+        "successful_run_count": int(result.get("successful_run_count") or 0),
+        "failed_run_count": int(result.get("failed_run_count") or 0),
+        "skipped_run_count": int(result.get("skipped_run_count") or 0),
+        "reused_run_count": int(result.get("reused_run_count") or 0),
+        "queue_status": str(queue.get("status") or ""),
+        "queue_count": int(queue.get("queue_count") or 0),
+        "opportunity_refresh_error": (
+            str(result.get("opportunity_refresh_error") or "")[:1000] or None
+        ),
+    }
 
 
 @workflow.defn
@@ -203,13 +229,41 @@ class TopicWatchScheduleWorkflow:
             digest = hashlib.sha256(f"{workflow_id}:{cycle}".encode()).hexdigest()[:24]
             execution_key = f"sched-{digest}"
             child_id = f"topic-watch-{topic_watch_id}-{digest}"
-            with suppress(Exception):
-                await workflow.execute_child_workflow(
+            cycle_state = "completed"
+            detail: dict[str, object]
+            try:
+                result = await workflow.execute_child_workflow(
                     TopicWatchWorkflow.run,
                     args=[topic_watch_id, execution_key, top_n],
                     id=child_id,
                     task_queue=DISCOVERY_TASK_QUEUE,
                 )
+                detail = _cycle_lifecycle_detail(
+                    result,
+                    child_workflow_id=child_id,
+                )
+            except Exception as exc:
+                cycle_state = "failed"
+                detail = {
+                    "cycle_workflow_id": child_id,
+                    "error": str(exc)[:1000],
+                }
+            try:
+                await workflow.execute_activity(
+                    "record_topic_watch_command_cycle_activity",
+                    args=[
+                        topic_watch_id,
+                        workflow_id,
+                        execution_key,
+                        cycle_state,
+                        detail,
+                    ],
+                    start_to_close_timeout=timedelta(seconds=30),
+                    retry_policy=_COMMAND_CYCLE_LIFECYCLE_RETRY,
+                )
+            except Exception:
+                # Lifecycle telemetry must not stop a continuous source scout.
+                pass
             await workflow.sleep(timedelta(minutes=interval_minutes))
         workflow.continue_as_new(
             args=[
