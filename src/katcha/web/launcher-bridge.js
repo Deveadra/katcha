@@ -1,4 +1,37 @@
 /* Shared workspace navigation + local launcher bridge. */
+/* Load the shared Aerith product design system on every legacy route while pages migrate. */
+function installAerithSystem() {
+    const styles = [
+        ['aerith-tokens', '/system/aerith-tokens.css'],
+        ['aerith-base', '/system/aerith-base.css'],
+        ['aerith-shell', '/system/aerith-shell.css'],
+        ['aerith-components', '/system/aerith-components.css'],
+        ['aerith-motion', '/system/aerith-motion.css'],
+    ];
+    for (const [id, href] of styles) {
+        if (document.getElementById(id)) continue;
+        const link = document.createElement('link');
+        link.id = id;
+        link.rel = 'stylesheet';
+        link.href = href;
+        document.head.append(link);
+    }
+
+    const path = location.pathname;
+    const page =
+        path.startsWith('/ingestion') || path.endsWith('/ingestion.html') ? 'sources' :
+        path.startsWith('/clips') || path.endsWith('/clips.html') ? 'clips' :
+        path.startsWith('/channels') || path.endsWith('/channels.html') ? 'channel' :
+        path.startsWith('/ai') || path.endsWith('/ai.html') ? 'ai' :
+        path.startsWith('/editing') || path.endsWith('/editing.html') ? 'production' :
+        path.startsWith('/studio') || path.endsWith('/studio.html') ? 'studio' :
+        'trends';
+    document.body.dataset.katchaPage = page;
+
+    const theme = document.querySelector('meta[name="theme-color"]');
+    if (theme) theme.content = '#090b12';
+}
+
 function currentWorkspace() {
     const path = location.pathname;
     if (path.startsWith('/ingestion') || path.endsWith('/ingestion.html')) {
@@ -21,6 +54,8 @@ function currentWorkspace() {
     }
     return ['Trend explorer', '/explorer'];
 }
+
+installAerithSystem();
 
 function installWorkspaceMenu() {
     const brand = document.querySelector('aside .brand, aside .logo');
