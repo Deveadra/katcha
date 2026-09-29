@@ -136,13 +136,16 @@ const catalog = [
         await choose('scout');
         await page.locator('#search').fill('funny gaming clips');
         await page.locator('#scout-platforms').selectOption('social');
-        await page.locator('#channel').selectOption('channel-one');
+        await page.locator('#channel').selectOption('');
+        assert.equal(await page.locator('#channel option').first().textContent(), 'Shared with all channels');
         await page.locator('#next').click();
+        assert.match(await page.locator('#review').innerText(), /Shared with all channels/);
         assert.match(await page.locator('#save-explanation').textContent(), /provider charges/i);
         await page.locator('#save').click();
         await page.waitForFunction(() => !document.querySelector('#step-1').hidden);
         assert.equal(sources[2].adapter_key, 'web_scout');
         assert.equal(sources[2].platform, 'web');
+        assert.equal(sources[2].channel_profile_id, null);
         assert.deepEqual(sources[2].query_template.platforms, ['tiktok', 'instagram', 'x', 'bluesky']);
         assert.match(await page.locator('#operation-help').textContent(), /does not run automatically/);
         await page.locator('#run').click();
@@ -177,7 +180,9 @@ const catalog = [
         channelMode = 'empty';
         await page.locator('#retry-channels').click();
         await page.waitForFunction(() => !document.querySelector('#retry-channels').disabled);
-        assert.match(await page.locator('#channel-help').textContent(), /No active channels/);
+        assert.match(await page.locator('#channel-help').textContent(), /shared with all channels/i);
+        assert.equal(await page.locator('#channel-area').isVisible(), true);
+        assert.equal(await page.locator('#channel option').first().textContent(), 'Shared with all channels');
         await save();
         assert.equal(sources[5].channel_profile_id, null);
         // New connectors remain available behind an explicitly advanced path.
@@ -201,6 +206,6 @@ const catalog = [
         assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
         await page.screenshot({path: path.join(__dirname, 'test-results/ingestion-mobile.png'), fullPage: true});
         assert.deepEqual(errors, []);
-        console.log('PASS: guided source choices, human channel names, empty/error channels, automatic IDs, lost-response recovery, activity retries, custom connectors and responsive layout');
+        console.log('PASS: guided source choices, shared all-channel web scouting, human channel names, empty/error channels, automatic IDs, lost-response recovery, activity retries, custom connectors and responsive layout');
     } finally { if (browser) await browser.close(); server.kill(); }
 })().catch(e => { console.error(e); process.exitCode = 1; });

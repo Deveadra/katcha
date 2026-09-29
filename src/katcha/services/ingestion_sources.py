@@ -36,11 +36,13 @@ def _source_run_metadata(
     source: IngestionSource,
     metadata: dict[str, Any] | None,
 ) -> dict[str, Any]:
+    source_scope = "channel" if source.channel_profile_id is not None else "shared"
     default_candidate_metadata = {
         "ingestion_source_id": str(source.id),
         "ingestion_source_key": source.source_key,
         "source_platform": source.platform,
         "source_usage_mode": source.usage_mode,
+        "source_scope": source_scope,
         **(
             {"channel_profile_id": str(source.channel_profile_id)}
             if source.channel_profile_id is not None
@@ -54,6 +56,7 @@ def _source_run_metadata(
         "ingestion_source_key": source.source_key,
         "source_platform": source.platform,
         "source_usage_mode": source.usage_mode,
+        "source_scope": source_scope,
         "channel_profile_id": (
             str(source.channel_profile_id)
             if source.channel_profile_id is not None
