@@ -75,6 +75,9 @@ def test_ingestion_source_creates_discovery_run_with_source_metadata(
     assert run.run_metadata["ingestion_source_key"] == "rank-snaxx-tiktok-watch"
     assert run.run_metadata["source_platform"] == "tiktok"
     assert run.run_metadata["source_usage_mode"] == "operator_authorized"
+    assert run.run_metadata["source_scope"] == "shared"
+    assert run.run_metadata["channel_profile_id"] is None
+    assert run.run_metadata["default_candidate_metadata"]["source_scope"] == "shared"
     assert run.run_metadata["default_candidate_metadata"]["content_lane"] == "viral_clip"
 
 
@@ -109,6 +112,8 @@ def test_ingestion_source_metadata_flows_to_candidates(source_scope) -> None:
         assert candidate.candidate_metadata["ingestion_source_key"] == "rank-snaxx-ig-watch"
         assert candidate.candidate_metadata["source_platform"] == "instagram"
         assert candidate.candidate_metadata["source_usage_mode"] == "candidate_review"
+        assert candidate.candidate_metadata["source_scope"] == "shared"
+        assert "channel_profile_id" not in candidate.candidate_metadata
         assert candidate.candidate_metadata["content_lane"] == "reel_candidate"
         assert candidate.candidate_metadata["source_metrics"] == {"views": 50000}
 

@@ -75,12 +75,10 @@ function source() { return sources.find(s => s.id === $('source').value); }
 function connectionName(row) { return Object.values(methods).find(m => m.key === row.adapter_key)?.title || 'Custom connection'; }
 function sourceChannel(row) { return channels.find(c => c.id === row.channel_profile_id); }
 function channelHelp() {
-    if (selectedMethod === 'scout') return channels.length
-        ? 'Choose the channel whose topics this search should serve. Web scouting needs a channel.'
-        : 'Set up an active channel before adding a web scout. Katcha needs to know which channel the discoveries are for.';
-    return channels.length
-        ? 'Choose one of your channels, or keep this collection unassigned for now. This does not send content to every channel.'
-        : 'No active channels are set up in this workspace yet. You can still save a shared collection. Your YouTube account must also be set up as a channel in Katcha before it appears here.';
+    if (channels.length) {
+        return 'Choose a channel to keep this source channel-specific, or choose “Shared with all channels” so every channel can use discoveries from it.';
+    }
+    return 'No active channels are set up yet. This source will be shared with all channels you add now or later.';
 }
 function showStep(next) {
     step = next;
@@ -141,7 +139,6 @@ function details() {
             query = {q, limit: 40, freshness_horizon_hours: 72,
                 ...(choice === 'all' ? {} : {platforms: choice === 'social' ? ['tiktok', 'instagram', 'x', 'bluesky'] : [choice]})};
             platform = 'web';
-            if (!$('channel').value) throw new Error('Choose a channel for this web search. Set up a channel first if none appears.');
         } else {
             const subreddit = $('community').value.trim().replace(/^\/?r\//, '').replace(/\/$/, '');
             if (subreddit && !/^[A-Za-z0-9_]+$/.test(subreddit)) throw new Error('Enter a community name such as gaming or r/gaming, rather than a full web address.');
@@ -160,7 +157,7 @@ function review() {
     const d = details();
     const rows = [
         ['Name', d.name], ['Content source', methods[selectedMethod]?.title || chosenAdapter().label],
-        ['For', channels.find(c => c.id === d.channel_profile_id) ? channelName(channels.find(c => c.id === d.channel_profile_id)) : 'Shared collection · not assigned to a channel'],
+        ['For', channels.find(c => c.id === d.channel_profile_id) ? channelName(channels.find(c => c.id === d.channel_profile_id)) : 'Shared with all channels'],
         ['Review preference', usage[d.usage_mode][0]],
     ];
     if (d.query_template.q) rows.push(['Search topic', d.query_template.q]);
@@ -179,9 +176,9 @@ async function loadChannels(epoch = connectionEpoch) {
         channels = rows.filter(c => c.status === 'active');
         channelsReady = true;
         const previous = $('channel').value;
-        $('channel').innerHTML = '<option value="">Shared collection · no channel assigned</option>' + channels.map(c => `<option value="${esc(c.id)}">${esc(channelName(c))}</option>`).join('');
+        $('channel').innerHTML = '<option value="">Shared with all channels</option>' + channels.map(c => `<option value="${esc(c.id)}">${esc(channelName(c))}</option>`).join('');
         if (channels.some(c => c.id === previous)) $('channel').value = previous;
-        $('channel-area').hidden = !channels.length;
+        $('channel-area').hidden = false;
         $('channel-help').textContent = channelHelp();
         $('retry-channels').hidden = false;
         $('retry-channels').textContent = 'Refresh channels';
@@ -247,9 +244,9 @@ async function selectSource() {
     $('import').hidden = !canImport || !usable;
     $('run').hidden = canImport || !usable;
     $('run').textContent = s.adapter_key === 'rss_atom' ? 'Check for updates' : 'Search now';
-    const channel = s.channel_profile_id ? channelName(sourceChannel(s) || {profile_metadata: {name: 'Assigned channel (not available)'}}) : 'Shared collection';
+    const channel = s.channel_profile_id ? channelName(sourceChannel(s) || {profile_metadata: {name: 'Assigned channel (not available)'}}) : 'Shared with all channels';
     $('source-info').innerHTML = `<strong>${esc(connectionName(s))}</strong><p>${esc(channel)} · ${esc(usage[s.usage_mode]?.[0] || 'Custom review preference')}</p>${s.query_template?.q ? `<p>Topic: ${esc(s.query_template.q)}</p>` : ''}`;
-    $('operation-help').textContent = !usable ? 'This source is paused or blocked. Content checks cannot be started here.' : canImport ? 'Add links whenever you find something worth considering. No posting happens here.' : s.adapter_key === 'web_scout' ? 'Search now uses live AI and public web search; provider charges may apply. This saved source does not run automatically. For recurring scouting, ask Katcha AI to start a source scout for your channel.' : 'Checks start when you press the button. Automatic scheduled checking is not enabled here.';
+    $('operation-help').textContent = !usable ? 'This source is paused or blocked. Content checks cannot be started here.' : canImport ? 'Add links whenever you find something worth considering. No posting happens here.' : s.adapter_key === 'web_scout' ? `Search now uses live AI and public web search; provider charges may apply. This saved source does not run automatically. ${s.channel_profile_id ? 'Its discoveries stay scoped to the selected channel.' : 'Its discoveries are shared across all channels.'}` : 'Checks start when you press the button. Automatic scheduled checking is not enabled here.';
     await history();
 }
 async function history() {
