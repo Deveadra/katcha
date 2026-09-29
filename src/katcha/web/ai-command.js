@@ -892,6 +892,21 @@ function autoResize() {
     input.style.height = Math.min(130, input.scrollHeight) + "px";
 }
 
+function setContextPanel(open) {
+    document.body.classList.toggle("ai-context-open", open);
+    const toggle = $("context-toggle");
+    if (toggle) toggle.setAttribute("aria-expanded", open ? "true" : "false");
+}
+$("context-toggle")?.addEventListener("click", () => {
+    setContextPanel(!document.body.classList.contains("ai-context-open"));
+});
+window.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && document.body.classList.contains("ai-context-open")) {
+        setContextPanel(false);
+        $("context-toggle")?.focus();
+    }
+});
+
 $("connect-form").onsubmit = connect;
 $("command-form").onsubmit = (event) => {
     event.preventDefault();
