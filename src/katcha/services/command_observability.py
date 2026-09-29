@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import math
 import uuid
 from datetime import UTC, datetime, timedelta
@@ -9,6 +10,28 @@ from sqlalchemy import select
 
 from katcha.db import session_scope
 from katcha.models import DomainEvent, UsageEvent
+
+logger = logging.getLogger(__name__)
+
+
+def _record_event(event_type: str, request_id: uuid.UUID, payload: dict[str, object]) -> None:
+    try:
+        with session_scope() as session:
+            session.add(
+                DomainEvent(
+                    aggregate_type="command_request",
+                    aggregate_id=str(request_id),
+                    event_type=event_type,
+                    payload=payload,
+                )
+            )
+    except Exception as exc:
+        logger.warning(
+            "command observability write failed request_id=%s event_type=%s cause=%s",
+            request_id,
+            event_type,
+            type(exc).__name__,
+        )
 
 
 def record_command_observation(
@@ -50,15 +73,49 @@ def record_command_observation(
         "resource_context_count": len(resource_kinds),
         "resource_kinds": list(resource_kinds),
     }
-    with session_scope() as session:
-        session.add(
-            DomainEvent(
-                aggregate_type="command_request",
-                aggregate_id=str(request_id),
-                event_type="command_center.command_completed",
-                payload=payload,
-            )
-        )
+    payload["outcome"] = "completed"
+    _record_event("command_center.command_completed", request_id, payload)
+
+
+def record_command_failure(
+    *,
+    channel_profile_id: uuid.UUID,
+    request_id: uuid.UUID,
+    actor: str,
+    latency_ms: int,
+    stage: str,
+    status_code: int,
+    error_type: str,
+    resource_kinds: list[str],
+) -> None:
+    _record_event(
+        "command_center.command_failed",
+        request_id,
+        {
+            "channel_profile_id": str(channel_profile_id),
+            "request_id": str(request_id),
+            "thread_id": None,
+            "actor": actor,
+            "intent": None,
+            "planning_source": None,
+            "planning_provider": None,
+            "planning_model": None,
+            "planning_confidence": None,
+            "narrator_provider": None,
+            "narrator_model": None,
+            "narrator_degraded": False,
+            "narrator_degraded_reason": None,
+            "latency_ms": max(0, int(latency_ms)),
+            "evidence_count": 0,
+            "action_count": 0,
+            "resource_context_count": len(resource_kinds),
+            "resource_kinds": list(resource_kinds),
+            "outcome": "failed",
+            "failure_stage": stage,
+            "status_code": int(status_code),
+            "error_type": error_type,
+        },
+    )
 
 
 def _percentile(values: list[int], fraction: float) -> int:
@@ -83,7 +140,12 @@ def command_observability_summary(
             session.scalars(
                 select(DomainEvent)
                 .where(
-                    DomainEvent.event_type == "command_center.command_completed",
+                    DomainEvent.event_type.in_(
+                        (
+                            "command_center.command_completed",
+                            "command_center.command_failed",
+                        )
+                    ),
                     DomainEvent.created_at >= since,
                     DomainEvent.payload["channel_profile_id"].as_string()
                     == channel_value,
@@ -131,6 +193,14 @@ def command_observability_summary(
         int((row.payload or {}).get("latency_ms") or 0)
         for row in command_events
     ]
+    completed = sum(
+        row.event_type == "command_center.command_completed"
+        for row in command_events
+    )
+    failed = sum(
+        row.event_type == "command_center.command_failed"
+        for row in command_events
+    )
     degraded = sum(
         bool((row.payload or {}).get("narrator_degraded"))
         for row in command_events
@@ -171,6 +241,13 @@ def command_observability_summary(
                 "request_id": row.aggregate_id,
                 "thread_id": payload.get("thread_id"),
                 "intent": payload.get("intent"),
+                "outcome": payload.get("outcome") or (
+                    "failed"
+                    if row.event_type == "command_center.command_failed"
+                    else "completed"
+                ),
+                "failure_stage": payload.get("failure_stage"),
+                "status_code": payload.get("status_code"),
                 "latency_ms": int(payload.get("latency_ms") or 0),
                 "planning_source": payload.get("planning_source"),
                 "narrator": (
@@ -188,6 +265,8 @@ def command_observability_summary(
         "channel_profile_id": str(channel_profile_id),
         "window_hours": hours,
         "request_count": request_count,
+        "completed_request_count": completed,
+        "failed_request_count": failed,
         "average_latency_ms": (
             round(sum(latencies) / len(latencies)) if latencies else 0
         ),
