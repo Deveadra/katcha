@@ -601,7 +601,7 @@ def command(http_request: Request, request: CommandRequest) -> CommandResponse:
         except ValueError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
 
-    effective_resource_refs = list(effective_resource_refs)
+    effective_resource_refs = list(request.resource_refs)
     resource_inherited_from_thread = False
     if not effective_resource_refs and prior_turns:
         latest_user = next(
@@ -972,6 +972,7 @@ def command(http_request: Request, request: CommandRequest) -> CommandResponse:
         ),
         narrator=f"{narrative.target.provider}/{narrative.target.model}",
     )
+
 
 @router.get("/threads", response_model=list[ThreadSummaryResponse])
 def threads(
