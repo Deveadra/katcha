@@ -1,7 +1,8 @@
 /* All state comes from the authenticated, same-origin Katcha control plane. */
+const launchParams = new URLSearchParams(location.search);
 const state = {
-    token: "",
-    channel: "",
+    token: sessionStorage.getItem("katcha.controlToken") || "",
+    channel: launchParams.get("channel") || sessionStorage.getItem("katcha.channel") || "",
     episodes: [],
     blueprints: [],
     templates: [],
@@ -680,7 +681,15 @@ async function connect(event) {
         $("channel").innerHTML = '<option value="">Select a channel</option>' + channels.map((row) => `<option value="${escapeHTML(row.id)}">${escapeHTML(row.profile_metadata?.channel_title || row.profile_metadata?.name || row.id)} · ${escapeHTML(row.status)}</option>`).join("");
         $("channel").disabled = false; $("refresh").disabled = false;
         $("connection").textContent = "CONNECTED"; $("connection").classList.add("online");
-        if (channels.length) { $("channel").value = channels[0].id; await loadChannel(); }
+        if (channels.length) {
+            const preferred = state.channel && channels.some((row) => row.id === state.channel)
+                ? state.channel
+                : channels[0].id;
+            $("channel").value = preferred;
+            state.channel = preferred;
+            rememberWorkspace();
+            await loadChannel();
+        }
         else message("Connected. Create a channel through the control API to begin.");
     } catch (error) { $("connection").textContent = "OFFLINE"; $("connection").classList.remove("online"); message(error.message, true); }
 }
