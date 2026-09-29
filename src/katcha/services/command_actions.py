@@ -41,6 +41,9 @@ def create_action_proposals(
     specs: list[ActionProposalSpec],
     thread_id: uuid.UUID | None = None,
     source_turn_id: uuid.UUID | None = None,
+    actor: str | None = None,
+    credential_id: str | None = None,
+    credential_fingerprint: str | None = None,
     ttl_minutes: int = 30,
 ) -> list[CommandActionProposal]:
     created: list[CommandActionProposal] = []
@@ -102,6 +105,9 @@ def create_action_proposals(
                         ),
                         "channel_profile_id": str(channel_profile_id),
                         "action_type": spec.action_type,
+                        "actor": actor,
+                        "credential_id": credential_id,
+                        "credential_fingerprint": credential_fingerprint,
                         "expires_at": expires_at.isoformat(),
                     },
                 )
@@ -150,6 +156,8 @@ def claim_action_proposal(
     proposal_id: uuid.UUID,
     *,
     actor: str,
+    credential_id: str | None = None,
+    credential_fingerprint: str | None = None,
 ) -> ProposalClaim:
     with session_scope() as session:
         proposal = session.scalar(
@@ -193,6 +201,8 @@ def claim_action_proposal(
                         "channel_profile_id": str(proposal.channel_profile_id),
                         "action_type": proposal.action_type,
                         "actor": actor,
+                        "credential_id": credential_id,
+                        "credential_fingerprint": credential_fingerprint,
                         "previous_execution_started_at": (
                             proposal.execution_started_at.isoformat()
                             if proposal.execution_started_at
@@ -231,6 +241,8 @@ def claim_action_proposal(
                     "channel_profile_id": str(proposal.channel_profile_id),
                     "action_type": proposal.action_type,
                     "actor": actor,
+                    "credential_id": credential_id,
+                    "credential_fingerprint": credential_fingerprint,
                     "execution_attempt": proposal.execution_attempts,
                 },
             )
@@ -245,6 +257,8 @@ def complete_action_proposal(
     proposal_id: uuid.UUID,
     *,
     result: dict[str, object],
+    credential_id: str | None = None,
+    credential_fingerprint: str | None = None,
 ) -> CommandActionProposal:
     with session_scope() as session:
         proposal = session.scalar(
@@ -277,6 +291,8 @@ def complete_action_proposal(
                     "channel_profile_id": str(proposal.channel_profile_id),
                     "action_type": proposal.action_type,
                     "actor": proposal.confirmed_by,
+                    "credential_id": credential_id,
+                    "credential_fingerprint": credential_fingerprint,
                     "result": dict(result),
                 },
             )
@@ -304,6 +320,8 @@ def complete_action_proposal(
                         "channel_profile_id": str(proposal.channel_profile_id),
                         "action_type": proposal.action_type,
                         "actor": proposal.confirmed_by,
+                        "credential_id": credential_id,
+                        "credential_fingerprint": credential_fingerprint,
                         "workflow_id": str(workflow_id),
                         "result": dict(result),
                     },
@@ -319,6 +337,8 @@ def fail_action_proposal(
     proposal_id: uuid.UUID,
     *,
     error: str,
+    credential_id: str | None = None,
+    credential_fingerprint: str | None = None,
 ) -> CommandActionProposal:
     with session_scope() as session:
         proposal = session.scalar(
@@ -349,6 +369,8 @@ def fail_action_proposal(
                     "channel_profile_id": str(proposal.channel_profile_id),
                     "action_type": proposal.action_type,
                     "actor": proposal.confirmed_by,
+                    "credential_id": credential_id,
+                    "credential_fingerprint": credential_fingerprint,
                     "error": proposal.error,
                 },
             )

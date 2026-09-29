@@ -19,6 +19,8 @@ from katcha.ai.command_planner import (
 )
 from katcha.api.control_auth import (
     control_actor,
+    control_credential_fingerprint,
+    control_credential_id,
     require_control_channel,
     require_control_scope,
 )
@@ -28,6 +30,7 @@ from katcha.command_center_models import (
     CommandTurn,
 )
 from katcha.config import get_settings
+from katcha.control_contract import COMMAND_ACTION_SCOPES
 from katcha.db import session_scope
 from katcha.domain import ProductionStatus
 from katcha.orchestration.client import (
@@ -93,15 +96,6 @@ ActionType = Literal[
     "recover_production_render",
     "start_source_scout",
 ]
-
-_ACTION_SCOPES: dict[str, str] = {
-    "refresh_channel_intelligence": "intelligence:write",
-    "create_short_production": "production:create",
-    "create_ranked_short_episode": "production:create",
-    "recover_production_render": "render:recover",
-    "start_source_scout": "discovery:write",
-}
-
 
 ResourceKind = Literal[
     "clip",
@@ -577,6 +571,8 @@ def command(http_request: Request, request: CommandRequest) -> CommandResponse:
     require_control_scope(http_request, "ai:read")
     require_control_channel(http_request, request.channel_profile_id)
     actor = control_actor(http_request)
+    credential_id = control_credential_id(http_request)
+    credential_fingerprint = control_credential_fingerprint(http_request)
     request_id = uuid.uuid4()
     started_at = monotonic()
 
@@ -915,6 +911,9 @@ def command(http_request: Request, request: CommandRequest) -> CommandResponse:
                 specs=specs,
                 thread_id=thread.id,
                 source_turn_id=assistant_turn.id,
+                actor=actor,
+                credential_id=credential_id,
+                credential_fingerprint=credential_fingerprint,
             )
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
@@ -924,6 +923,8 @@ def command(http_request: Request, request: CommandRequest) -> CommandResponse:
         request_id=request_id,
         thread_id=thread.id,
         actor=actor,
+        credential_id=credential_id,
+        credential_fingerprint=credential_fingerprint,
         intent=intent,
         planning_source=planning.source,
         planning_provider=planning.target.provider,
@@ -1354,6 +1355,8 @@ async def execute_action(
             detail="explicit confirmation is required",
         )
     actor = control_actor(http_request)
+    credential_id = control_credential_id(http_request)
+    credential_fingerprint = control_credential_fingerprint(http_request)
 
     try:
         current = get_action_proposal(proposal_id)
@@ -1361,13 +1364,18 @@ async def execute_action(
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
-    required_scope = _ACTION_SCOPES.get(current.action_type)
+    required_scope = COMMAND_ACTION_SCOPES.get(current.action_type)
     if required_scope is None:
         raise HTTPException(status_code=409, detail="unsupported proposal action")
     require_control_scope(http_request, required_scope)
 
     try:
-        claim = claim_action_proposal(proposal_id, actor=actor)
+        claim = claim_action_proposal(
+            proposal_id,
+            actor=actor,
+            credential_id=credential_id,
+            credential_fingerprint=credential_fingerprint,
+        )
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
@@ -1384,7 +1392,12 @@ async def execute_action(
 
     try:
         result = await _execute_proposal(claim.proposal, actor=actor)
-        proposal = complete_action_proposal(proposal_id, result=result)
+        proposal = complete_action_proposal(
+            proposal_id,
+            result=result,
+            credential_id=credential_id,
+            credential_fingerprint=credential_fingerprint,
+        )
         return ExecuteActionResponse(
             proposal_id=proposal.id,
             action_type=proposal.action_type,
@@ -1393,12 +1406,19 @@ async def execute_action(
             result=dict(proposal.result or {}),
         )
     except (KeyError, TypeError, ValueError) as exc:
-        proposal = fail_action_proposal(proposal_id, error=str(exc))
+        proposal = fail_action_proposal(
+            proposal_id,
+            error=str(exc),
+            credential_id=credential_id,
+            credential_fingerprint=credential_fingerprint,
+        )
         raise HTTPException(status_code=409, detail=proposal.error) from exc
     except Exception as exc:
         proposal = fail_action_proposal(
             proposal_id,
             error=f"{type(exc).__name__}: {exc}",
+            credential_id=credential_id,
+            credential_fingerprint=credential_fingerprint,
         )
         raise HTTPException(
             status_code=503,

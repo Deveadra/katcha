@@ -1,6 +1,8 @@
 import uuid
 from decimal import Decimal
 
+from sqlalchemy import select
+
 from katcha.db import session_scope
 from katcha.models import DomainEvent, UsageEvent
 from katcha.services.command_observability import (
@@ -19,6 +21,8 @@ def test_command_observability_summarizes_latency_cost_and_actions() -> None:
         request_id=request_id,
         thread_id=thread_id,
         actor="control-principal:operator",
+        credential_id="operator-2026-q4",
+        credential_fingerprint="def456abc123",
         intent="resource_context",
         planning_source="deterministic",
         planning_provider="katcha",
@@ -34,6 +38,19 @@ def test_command_observability_summarizes_latency_cost_and_actions() -> None:
     )
 
     with session_scope() as session:
+        command_event = session.scalar(
+            select(DomainEvent).where(
+                DomainEvent.aggregate_id == str(request_id),
+                DomainEvent.event_type == "command_center.command_completed",
+            )
+        )
+        assert command_event is not None
+        assert command_event.payload["credential_id"] == "operator-2026-q4"
+        assert (
+            command_event.payload["credential_fingerprint"]
+            == "def456abc123"
+        )
+
         session.add(
             UsageEvent(
                 task="performance_analysis",

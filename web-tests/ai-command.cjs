@@ -25,6 +25,7 @@ const proposalId = "66666666-6666-4666-8666-666666666666";
 const storedTurns = [];
 let threadExists = false;
 let commandCount = 0;
+let restrictedSession = false;
 let browser;
 
 (async () => {
@@ -57,8 +58,14 @@ let browser;
             auth: req.headers().authorization,
         });
 
-        if (url.pathname === "/v1/channels" && req.headers().authorization !== "Bearer fixture-token") {
-            await route.fulfill({status: 401, json: {detail: "Workspace token required"}});
+        if (
+            ["/v1/control/session", "/v1/channels"].includes(url.pathname) &&
+            req.headers().authorization !== "Bearer fixture-token"
+        ) {
+            await route.fulfill({
+                status: 401,
+                json: { detail: "Workspace token required" },
+            });
             return;
         }
         if (url.pathname === "/v1/ai/command" && body?.prompt === "Please do something ambiguous") {
@@ -67,7 +74,135 @@ let browser;
         }
 
         let data;
-        if (url.pathname === "/v1/ai/readiness") {
+        if (url.pathname === "/v1/control/session") {
+            data = restrictedSession
+                ? {
+                      control_contract_version: "1",
+                      katcha_version: "0.0.0-fixture",
+                      actor: "control-principal:auditor",
+                      principal_name: "auditor",
+                      authentication_mode: "named_principal",
+                      scopes: ["channels:read", "ai:read"],
+                      channel_access: {
+                          all_channels: false,
+                          channel_profile_ids: [channelId],
+                      },
+                      capabilities: {
+                          ai_read: true,
+                          ai_command: false,
+                          ai_write: false,
+                          channels_read: true,
+                          channels_write: false,
+                          intelligence_write: false,
+                          production_create: false,
+                          render_recover: false,
+                          discovery_write: false,
+                          events_read: false,
+                          events_ack: false,
+                          trends_read: false,
+                          trends_write: false,
+                      },
+                      action_permissions: {
+                          refresh_channel_intelligence: {
+                              required_scope: "intelligence:write",
+                              allowed: false,
+                          },
+                          create_short_production: {
+                              required_scope: "production:create",
+                              allowed: false,
+                          },
+                          create_ranked_short_episode: {
+                              required_scope: "production:create",
+                              allowed: false,
+                          },
+                          recover_production_render: {
+                              required_scope: "render:recover",
+                              allowed: false,
+                          },
+                          start_source_scout: {
+                              required_scope: "discovery:write",
+                              allowed: false,
+                          },
+                      },
+                      event_stream: {
+                          read_endpoint: "/v1/control/events",
+                          acknowledge_endpoint_template:
+                              "/v1/control/events/{event_id}/ack",
+                          channel_scope_required: true,
+                          consumer_cursor_is_principal_bound: true,
+                      },
+                  }
+                : {
+                      control_contract_version: "1",
+                      katcha_version: "0.0.0-fixture",
+                      actor: "control-principal:operator-ui",
+                      principal_name: "operator-ui",
+                      authentication_mode: "named_principal",
+                      scopes: [
+                          "ai:read",
+                          "ai:command",
+                          "ai:write",
+                          "channels:read",
+                          "channels:write",
+                          "intelligence:write",
+                          "production:create",
+                          "render:recover",
+                          "discovery:write",
+                          "events:read",
+                          "events:ack",
+                          "trends:read",
+                          "trends:write",
+                      ],
+                      channel_access: {
+                          all_channels: true,
+                          channel_profile_ids: [],
+                      },
+                      capabilities: {
+                          ai_read: true,
+                          ai_command: true,
+                          ai_write: true,
+                          channels_read: true,
+                          channels_write: true,
+                          intelligence_write: true,
+                          production_create: true,
+                          render_recover: true,
+                          discovery_write: true,
+                          events_read: true,
+                          events_ack: true,
+                          trends_read: true,
+                          trends_write: true,
+                      },
+                      action_permissions: {
+                          refresh_channel_intelligence: {
+                              required_scope: "intelligence:write",
+                              allowed: true,
+                          },
+                          create_short_production: {
+                              required_scope: "production:create",
+                              allowed: true,
+                          },
+                          create_ranked_short_episode: {
+                              required_scope: "production:create",
+                              allowed: true,
+                          },
+                          recover_production_render: {
+                              required_scope: "render:recover",
+                              allowed: true,
+                          },
+                          start_source_scout: {
+                              required_scope: "discovery:write",
+                              allowed: true,
+                          },
+                      },
+                      event_stream: {
+                          read_endpoint: "/v1/control/events",
+                          acknowledge_endpoint_template:
+                              "/v1/control/events/{event_id}/ack",
+                          channel_scope_required: false,
+                          consumer_cursor_is_principal_bound: true,
+                      },
+                  };
+        } else if (url.pathname === "/v1/ai/readiness") {
             data = {live: false, message: "Katcha is in fixture mode. Select Live AI in the launch console."};
         } else if (url.pathname === "/v1/ai/observability") {
             data = {
@@ -386,6 +521,8 @@ let browser;
         );
     }
     assert.equal(await page.locator("#channel").inputValue(), channelId);
+    assert.match(await page.locator("#principal-state").innerText(), /operator-ui/i);
+    assert.match(await page.locator("#principal-state").innerText(), /all channels/i);
     assert.match(await page.locator("#ai-readiness").innerText(), /fixture mode/);
     assert.equal(await page.locator("#thread-history").inputValue(), "");
     assert.equal(await page.locator("#token").inputValue(), "");
@@ -481,7 +618,16 @@ let browser;
     await page.locator("#command-form").evaluate((form) => form.requestSubmit());
     await page.waitForFunction(() => document.querySelector("#status").textContent.includes("could not interpret"));
     assert.equal(await page.locator("#prompt").inputValue(), "Please do something ambiguous");
-    assert(requests.filter((request) => request.path !== "/v1/channels" || request.auth).every((request) => request.auth === "Bearer fixture-token"));
+    const unauthenticatedRequests = requests.filter((request) => !request.auth);
+    assert.deepEqual(
+        unauthenticatedRequests.map((request) => request.path),
+        ["/v1/control/session"],
+    );
+    assert(
+        requests
+            .filter((request) => request.auth)
+            .every((request) => request.auth === "Bearer fixture-token"),
+    );
 
     fs.mkdirSync(path.join(__dirname, "test-results"), { recursive: true });
     await page.screenshot({
@@ -500,11 +646,38 @@ let browser;
     });
 
     await page.goto("http://127.0.0.1:8770/index.html");
-    assert.equal(await page.locator("#katcha-chat-shortcut").getAttribute("href"), "/ai?focus=chat");
+    assert.equal(
+        await page.locator("#katcha-chat-shortcut").getAttribute("href"),
+        "/ai?focus=chat",
+    );
+
+    restrictedSession = true;
+    await page.goto("http://127.0.0.1:8770/ai.html");
+    await page.locator("#command-center:not([hidden])").waitFor();
+    await page.getByText(/stored hook and rewatch signals/i).waitFor();
+    assert.match(await page.locator("#principal-state").innerText(), /auditor/i);
+    assert.match(await page.locator("#principal-state").innerText(), /1 channel/i);
+    assert.equal(await page.locator("#prompt").isDisabled(), true);
+    assert.equal(await page.locator("#send").isDisabled(), true);
+    assert.equal(await page.locator(".starter").first().isDisabled(), true);
+    assert.equal(await page.locator("#archive-thread").isDisabled(), true);
+    assert.equal(
+        await page.locator("[data-action-id]").first().isDisabled(),
+        true,
+    );
+    assert.match(
+        await page.locator("[data-action-id]").first().innerText(),
+        /Not permitted/i,
+    );
+    assert.match(
+        await page.locator("[data-action-card]").first().getAttribute("title"),
+        /production:create/i,
+    );
+    assert.match(await page.locator("#status").innerText(), /Read-only access/i);
 
     assert.deepEqual(errors, []);
     console.log(
-        "PASS: Katcha AI typed deep-link context, observability, grounded conversation, durable history reopen, server-resolved follow-up context, live action status, evidence, two-step confirmed action, auth, and mobile width",
+        "PASS: Katcha AI control-session identity, capability-aware read-only mode, typed context, observability, grounded conversation, durable history, live action status, confirmation safety, auth, and mobile width",
     );
 })()
     .catch((error) => {

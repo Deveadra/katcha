@@ -7,10 +7,11 @@
     <title>Katcha · Channel Studio</title>
     <link rel="stylesheet" href="styles.css">
     <link rel="stylesheet" href="channels.css">
+    <link rel="stylesheet" href="pages/channel-studio-aerith.css">
     <script src="channels.js" defer></script>
     <script src="launcher-bridge.js" defer></script>
 </head>
-<body>
+<body data-katcha-page="channel">
     <div class="app-shell">
         <aside class="rail">
             <a class="brand" href="/explorer" aria-label="Katcha home">
@@ -38,15 +39,15 @@
                 <span id="connection-state" class="simulation">DISCONNECTED</span>
             </header>
             <div class="studio-content">
-                <section class="studio-hero">
+                <section class="channel-studio-head">
                     <div>
-                        <div class="eyebrow">YOUTUBE COMMAND CENTER</div>
-                        <h1>Run the channel, <em>not just the video.</em></h1>
-                        <p>See what is publishing, what is earning, what viewers are responding to, what Katcha is learning, and where human attention is needed.</p>
+                        <div class="eyebrow">CHANNEL STUDIO</div>
+                        <h1>Run the channel.</h1>
+                        <p>Performance, content, growth, and operating controls for the active YouTube channel.</p>
                     </div>
                     <div class="hero-actions">
                         <a class="studio-button secondary" href="/explorer">Find an opportunity</a>
-                        <a class="studio-button primary" href="/editing">Open editing studio ↗</a>
+                        <a class="studio-button primary" href="/editing">Open production ↗</a>
                     </div>
                 </section>
 
@@ -85,19 +86,16 @@
                         </div>
                     </div>
 
-                    <nav class="section-tabs" aria-label="Channel Studio sections">
-                        <a href="#overview">Overview</a>
-                        <a href="#monetization">Monetization</a>
-                        <a href="#content">Content</a>
-                        <a href="#growth">Growth & packaging</a>
-                        <a href="#production">Production</a>
-                        <a href="#identity">Identity & automation</a>
-                        <a href="#integrations">Integrations</a>
+                    <nav class="channel-workspace-tabs" id="channel-studio-tabs" aria-label="Channel Studio workspaces" role="tablist">
+                        <button type="button" role="tab" data-channel-tab="overview" aria-selected="true">Overview</button>
+                        <button type="button" role="tab" data-channel-tab="content" aria-selected="false">Content</button>
+                        <button type="button" role="tab" data-channel-tab="growth" aria-selected="false">Growth</button>
+                        <button type="button" role="tab" data-channel-tab="settings" aria-selected="false">Settings</button>
                     </nav>
 
-                    <section id="overview" class="studio-section">
+                    <section id="overview" class="studio-section channel-view-section" data-studio-group="overview">
                         <div class="section-title">
-                            <div><span>01 / CHANNEL PULSE</span><h2>What matters right now</h2></div>
+                            <div><span>CHANNEL PULSE</span><h2>What matters right now</h2></div>
                             <small id="overview-window">Stored Katcha + YouTube data</small>
                         </div>
                         <div class="metric-grid">
@@ -118,9 +116,9 @@
                         </div>
                     </section>
 
-                    <section id="monetization" class="studio-section">
+                    <section id="monetization" class="studio-section channel-view-section" data-studio-group="growth">
                         <div class="section-title">
-                            <div><span>02 / MONETIZATION JOURNEY</span><h2>Build toward revenue, deliberately</h2></div>
+                            <div><span>MONETIZATION</span><h2>Build toward revenue, deliberately</h2></div>
                             <small id="growth-sampled-at">YouTube eligibility progress</small>
                         </div>
                         <div class="monetization-layout">
@@ -201,9 +199,9 @@
                         </div>
                     </section>
 
-                    <section id="content" class="studio-section">
+                    <section id="content" class="studio-section channel-view-section" data-studio-group="content">
                         <div class="section-title">
-                            <div><span>03 / CONTENT LIBRARY</span><h2>Published & scheduled videos</h2></div>
+                            <div><span>LIBRARY</span><h2>Published & scheduled videos</h2></div>
                             <small>Open a video for its stored analytics and retention</small>
                         </div>
                         <div class="content-layout">
@@ -225,9 +223,9 @@
                         </div>
                     </section>
 
-                    <section id="growth" class="studio-section">
+                    <section id="growth" class="studio-section channel-view-section" data-studio-group="growth">
                         <div class="section-title">
-                            <div><span>04 / GROWTH LOOP</span><h2>What Katcha is learning</h2></div>
+                            <div><span>LEARNING LOOP</span><h2>What Katcha is learning</h2></div>
                             <small>Packaging, editing and release timing from measured outcomes</small>
                         </div>
                         <div class="growth-grid">
@@ -246,17 +244,17 @@
                         </div>
                     </section>
 
-                    <section id="production" class="studio-section">
+                    <section id="production" class="studio-section channel-view-section" data-studio-group="content">
                         <div class="section-title">
-                            <div><span>05 / PRODUCTION</span><h2>Work moving through Katcha</h2></div>
+                            <div><span>IN FLIGHT</span><h2>Work moving through Katcha</h2></div>
                             <a class="studio-button secondary small" href="/editing#editorial-pipeline">Open full editing queue ↗</a>
                         </div>
                         <div id="production-list" class="production-grid"><div class="studio-card empty-state">No productions loaded.</div></div>
                     </section>
 
-                    <section id="identity" class="studio-section">
+                    <section id="identity" class="studio-section channel-view-section" data-studio-group="settings">
                         <div class="section-title">
-                            <div><span>06 / IDENTITY & CONTROL</span><h2>How this channel operates</h2></div>
+                            <div><span>CHANNEL CONTROL</span><h2>How this channel operates</h2></div>
                             <small>Inspectable defaults instead of hidden AI behavior</small>
                         </div>
                         <div class="control-grid">
@@ -275,9 +273,9 @@
                         </div>
                     </section>
 
-                    <section id="integrations" class="studio-section">
+                    <section id="integrations" class="studio-section channel-view-section" data-studio-group="settings">
                         <div class="section-title">
-                            <div><span>07 / PROVIDERS</span><h2>External production tools</h2></div>
+                            <div><span>PROVIDERS</span><h2>External production tools</h2></div>
                             <small>Secrets stay server-side; selections are scoped to this channel</small>
                         </div>
                         <div class="provider-grid">

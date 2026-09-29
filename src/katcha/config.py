@@ -1,4 +1,5 @@
 import uuid
+from datetime import datetime
 from functools import lru_cache
 from pathlib import Path
 from typing import Literal
@@ -7,19 +8,71 @@ from pydantic import BaseModel, Field, SecretStr, field_validator, model_validat
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
+class ControlCredentialSettings(BaseModel):
+    id: str = Field(
+        min_length=1,
+        max_length=64,
+        pattern=r"^[A-Za-z0-9_.:-]+$",
+    )
+    token: SecretStr
+    not_before: datetime | None = None
+    expires_at: datetime | None = None
+    disabled: bool = False
+
+    @field_validator("token", mode="before")
+    @classmethod
+    def validate_token(cls, value):
+        raw = (
+            value.get_secret_value()
+            if isinstance(value, SecretStr)
+            else str(value or "")
+        )
+        if len(raw.strip()) < 16:
+            raise ValueError(
+                "control credential tokens must contain at least 16 characters"
+            )
+        return raw.strip()
+
+    @field_validator("not_before", "expires_at")
+    @classmethod
+    def validate_timestamp(cls, value: datetime | None):
+        if value is None:
+            return None
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError(
+                "control credential timestamps must include a timezone"
+            )
+        return value
+
+    @model_validator(mode="after")
+    def validate_window(self):
+        if (
+            self.not_before is not None
+            and self.expires_at is not None
+            and self.expires_at <= self.not_before
+        ):
+            raise ValueError(
+                "control credential expires_at must be after not_before"
+            )
+        return self
+
+
 class ControlPrincipalSettings(BaseModel):
     name: str = Field(
         min_length=1,
         max_length=64,
         pattern=r"^[A-Za-z0-9_.:-]+$",
     )
-    token: SecretStr
+    token: SecretStr | None = None
+    credentials: list[ControlCredentialSettings] = Field(default_factory=list)
     scopes: list[str] = Field(default_factory=lambda: ["*"])
     channel_profile_ids: list[str] = Field(default_factory=lambda: ["*"])
 
     @field_validator("token", mode="before")
     @classmethod
-    def validate_token(cls, value):
+    def validate_legacy_token(cls, value):
+        if value is None:
+            return None
         raw = (
             value.get_secret_value()
             if isinstance(value, SecretStr)
@@ -65,6 +118,44 @@ class ControlPrincipalSettings(BaseModel):
             uuid.UUID(value)
         return normalized
 
+    @model_validator(mode="after")
+    def validate_credentials(self):
+        if self.token is None and not self.credentials:
+            raise ValueError(
+                "control principal requires token or credentials"
+            )
+        ids: set[str] = set()
+        token_values: set[str] = set()
+        if self.token is not None:
+            ids.add("legacy")
+            token_values.add(self.token.get_secret_value())
+        for credential in self.credentials:
+            key = credential.id.casefold()
+            if key in ids:
+                raise ValueError(
+                    f"duplicate control credential id: {credential.id}"
+                )
+            ids.add(key)
+            token = credential.token.get_secret_value()
+            if token in token_values:
+                raise ValueError(
+                    "control credential tokens must be unique"
+                )
+            token_values.add(token)
+        return self
+
+    def resolved_credentials(self) -> list[ControlCredentialSettings]:
+        credentials = list(self.credentials)
+        if self.token is not None:
+            credentials.insert(
+                0,
+                ControlCredentialSettings(
+                    id="legacy",
+                    token=self.token,
+                ),
+            )
+        return credentials
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
@@ -105,10 +196,13 @@ class Settings(BaseSettings):
                     f"duplicate control principal name: {principal.name}"
                 )
             names.add(key)
-            token = principal.token.get_secret_value()
-            if token in token_values:
-                raise ValueError("control principal tokens must be unique")
-            token_values.add(token)
+            for credential in principal.resolved_credentials():
+                token = credential.token.get_secret_value()
+                if token in token_values:
+                    raise ValueError(
+                        "control principal credential tokens must be unique"
+                    )
+                token_values.add(token)
         return self
 
     database_url: str = "postgresql+psycopg://katcha:katcha@localhost:5432/katcha"

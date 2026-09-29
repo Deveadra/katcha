@@ -1,0 +1,105 @@
+button,
+.button,
+.primary,
+.icon-button,
+input,
+select,
+textarea {
+    border-radius: var(--ae-radius-control);
+}
+
+input,
+select,
+textarea {
+    border: 1px solid var(--ae-line) !important;
+    background: rgba(255, 255, 255, 0.035) !important;
+    color: var(--ae-text) !important;
+    box-shadow: inset 0 1px rgba(255, 255, 255, 0.025);
+}
+
+input::placeholder,
+textarea::placeholder {
+    color: var(--ae-text-tertiary);
+}
+
+input:hover,
+select:hover,
+textarea:hover {
+    border-color: var(--ae-line-hover) !important;
+}
+
+button,
+.button,
+.icon-button {
+    border-color: var(--ae-line) !important;
+}
+
+.primary {
+    border: 1px solid rgba(183, 165, 255, 0.38) !important;
+    background:
+        linear-gradient(120deg, rgba(183, 165, 255, 0.23), rgba(132, 231, 255, 0.13)),
+        rgba(30, 31, 47, 0.96) !important;
+    color: var(--ae-text) !important;
+    box-shadow:
+        inset 0 1px rgba(255, 255, 255, 0.08),
+        0 8px 24px rgba(46, 38, 83, 0.2);
+}
+
+.primary:hover:not(:disabled) {
+    border-color: rgba(132, 231, 255, 0.55) !important;
+    filter: brightness(1.06);
+}
+
+.icon-button,
+.text-button {
+    background: rgba(255, 255, 255, 0.035) !important;
+    color: var(--ae-text-secondary) !important;
+}
+
+.icon-button:hover:not(:disabled),
+.text-button:hover:not(:disabled) {
+    border-color: var(--ae-line-hover) !important;
+    background: rgba(255, 255, 255, 0.065) !important;
+    color: var(--ae-text) !important;
+}
+
+button:disabled,
+input:disabled,
+select:disabled,
+textarea:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.card,
+.panel,
+.list-panel,
+.detail-panel,
+.interest-panel,
+.learning-drawer,
+.connect {
+    border-color: var(--ae-line) !important;
+    background: var(--ae-surface-soft) !important;
+    box-shadow: inset 0 1px rgba(255, 255, 255, 0.025);
+}
+
+.demo-pill,
+.tag,
+.status,
+.badge {
+    border-color: var(--ae-line) !important;
+}
+
+.toast {
+    border: 1px solid var(--ae-line) !important;
+    border-radius: var(--ae-radius-overlay) !important;
+    background: rgba(18, 21, 32, 0.92) !important;
+    color: var(--ae-text) !important;
+    box-shadow: var(--ae-shadow-overlay) !important;
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+}
+
+details > summary {
+    cursor: pointer;
+}

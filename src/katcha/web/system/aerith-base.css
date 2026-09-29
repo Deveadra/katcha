@@ -1,0 +1,77 @@
+html {
+    background: var(--ae-bg);
+}
+
+body {
+    min-height: 100dvh;
+    background:
+        radial-gradient(circle at 15% -8%, rgba(183, 165, 255, 0.11), transparent 32%),
+        radial-gradient(circle at 91% 8%, rgba(132, 231, 255, 0.075), transparent 28%),
+        radial-gradient(circle at 62% 108%, rgba(241, 167, 214, 0.055), transparent 34%),
+        var(--ae-bg);
+    color: var(--ae-text);
+    font-family:
+        -apple-system,
+        BlinkMacSystemFont,
+        "Inter",
+        "Segoe UI",
+        sans-serif;
+    font-size: 14px;
+    text-rendering: optimizeLegibility;
+    -webkit-font-smoothing: antialiased;
+}
+
+::selection {
+    background: rgba(183, 165, 255, 0.26);
+    color: var(--ae-text);
+}
+
+* {
+    scrollbar-color: rgba(183, 165, 255, 0.28) transparent;
+    scrollbar-width: thin;
+}
+
+*::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+}
+
+*::-webkit-scrollbar-thumb {
+    border: 2px solid transparent;
+    border-radius: 999px;
+    background: rgba(183, 165, 255, 0.26);
+    background-clip: padding-box;
+}
+
+a {
+    color: inherit;
+}
+
+button,
+input,
+select,
+textarea {
+    font: inherit;
+}
+
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
+a:focus-visible,
+summary:focus-visible {
+    outline: 2px solid var(--ae-cyan);
+    outline-offset: 3px;
+}
+
+.ae-visually-hidden {
+    position: absolute !important;
+    width: 1px !important;
+    height: 1px !important;
+    padding: 0 !important;
+    margin: -1px !important;
+    overflow: hidden !important;
+    clip: rect(0, 0, 0, 0) !important;
+    white-space: nowrap !important;
+    border: 0 !important;
+}

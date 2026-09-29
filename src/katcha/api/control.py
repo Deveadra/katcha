@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import uuid
+from datetime import datetime
 from typing import Literal
 
 from fastapi import APIRouter, Request
@@ -10,13 +11,20 @@ from katcha import __version__
 from katcha.api.control_auth import (
     control_actor,
     control_allowed_channel_ids,
+    control_credential_expires_at,
+    control_credential_fingerprint,
+    control_credential_id,
+    control_credential_not_before,
     control_principal_name,
     control_scopes,
 )
+from katcha.control_contract import (
+    CONTROL_CONTRACT_VERSION,
+    capability_flags,
+    command_action_permissions,
+)
 
 router = APIRouter(prefix="/v1/control", tags=["control-plane"])
-
-CONTROL_CONTRACT_VERSION = "1"
 
 
 class ChannelAccessResponse(BaseModel):
@@ -29,6 +37,13 @@ class EventStreamCapabilityResponse(BaseModel):
     acknowledge_endpoint_template: str
     channel_scope_required: bool
     consumer_cursor_is_principal_bound: bool = True
+
+
+class ControlCredentialResponse(BaseModel):
+    id: str
+    fingerprint: str
+    not_before: datetime | None = None
+    expires_at: datetime | None = None
 
 
 class ControlCapabilitiesResponse(BaseModel):
@@ -47,11 +62,17 @@ class ControlCapabilitiesResponse(BaseModel):
     trends_write: bool
 
 
+class ActionPermissionResponse(BaseModel):
+    required_scope: str
+    allowed: bool
+
+
 class ControlSessionResponse(BaseModel):
     control_contract_version: str
     katcha_version: str
     actor: str
     principal_name: str | None
+    credential: ControlCredentialResponse | None = None
     authentication_mode: Literal[
         "named_principal",
         "legacy_token",
@@ -60,11 +81,8 @@ class ControlSessionResponse(BaseModel):
     scopes: list[str]
     channel_access: ChannelAccessResponse
     capabilities: ControlCapabilitiesResponse
+    action_permissions: dict[str, ActionPermissionResponse]
     event_stream: EventStreamCapabilityResponse
-
-
-def _allows(scopes: set[str], scope: str) -> bool:
-    return "*" in scopes or scope in scopes
 
 
 def _authentication_mode(
@@ -83,6 +101,18 @@ def _authentication_mode(
 def control_session(http_request: Request) -> ControlSessionResponse:
     actor = control_actor(http_request)
     principal_name = control_principal_name(http_request)
+    credential_id = control_credential_id(http_request)
+    credential_fingerprint = control_credential_fingerprint(http_request)
+    credential = (
+        ControlCredentialResponse(
+            id=credential_id,
+            fingerprint=credential_fingerprint,
+            not_before=control_credential_not_before(http_request),
+            expires_at=control_credential_expires_at(http_request),
+        )
+        if credential_id is not None and credential_fingerprint is not None
+        else None
+    )
     scopes = control_scopes(http_request)
     allowed_channels = control_allowed_channel_ids(http_request)
     all_channels = allowed_channels is None
@@ -97,6 +127,7 @@ def control_session(http_request: Request) -> ControlSessionResponse:
         katcha_version=__version__,
         actor=actor,
         principal_name=principal_name,
+        credential=credential,
         authentication_mode=_authentication_mode(
             actor=actor,
             principal_name=principal_name,
@@ -107,20 +138,12 @@ def control_session(http_request: Request) -> ControlSessionResponse:
             channel_profile_ids=channel_ids,
         ),
         capabilities=ControlCapabilitiesResponse(
-            ai_read=_allows(scopes, "ai:read"),
-            ai_command=_allows(scopes, "ai:command"),
-            ai_write=_allows(scopes, "ai:write"),
-            channels_read=_allows(scopes, "channels:read"),
-            channels_write=_allows(scopes, "channels:write"),
-            intelligence_write=_allows(scopes, "intelligence:write"),
-            production_create=_allows(scopes, "production:create"),
-            render_recover=_allows(scopes, "render:recover"),
-            discovery_write=_allows(scopes, "discovery:write"),
-            events_read=_allows(scopes, "events:read"),
-            events_ack=_allows(scopes, "events:ack"),
-            trends_read=_allows(scopes, "trends:read"),
-            trends_write=_allows(scopes, "trends:write"),
+            **capability_flags(scopes),
         ),
+        action_permissions={
+            action_type: ActionPermissionResponse.model_validate(value)
+            for action_type, value in command_action_permissions(scopes).items()
+        },
         event_stream=EventStreamCapabilityResponse(
             read_endpoint="/v1/control/events",
             acknowledge_endpoint_template="/v1/control/events/{event_id}/ack",
