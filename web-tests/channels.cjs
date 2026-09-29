@@ -20,6 +20,15 @@ const server = spawn(
 const now = "2026-09-28T10:00:00Z";
 const requests = [];
 let browser;
+let voicePolicy = {
+    channel_profile_id: "channel-1",
+    brand_version: 2,
+    routing_mode: "inherit",
+    preferred_profiles: ["openai_youth_v2", "gemini_youth_v2"],
+    primary_provider: "openai",
+    fallback_providers: ["gemini"],
+};
+let brandVersion = 2;
 let savedGrowthGoals = {
     objective: "ads_revenue",
     path: "fastest",
@@ -330,6 +339,87 @@ const analytics = [
         let data;
         if (url.pathname === "/v1/channels" && req.method() === "GET") {
             data = [channel];
+        } else if (url.pathname === "/v1/integrations/providers") {
+            data = [
+                {
+                    provider: "elevenlabs",
+                    capability: "text_to_speech",
+                    configured: true,
+                    mode: "api",
+                    detail: "Direct ElevenLabs TTS is ready.",
+                },
+                {
+                    provider: "openai",
+                    capability: "text_to_speech",
+                    configured: true,
+                    mode: "api",
+                    detail: "OpenAI TTS is available as a channel voice or fallback.",
+                },
+                {
+                    provider: "gemini",
+                    capability: "text_to_speech",
+                    configured: true,
+                    mode: "api",
+                    detail: "Gemini TTS is available as a channel voice or fallback.",
+                },
+                {
+                    provider: "invideo",
+                    capability: "external_edit",
+                    configured: true,
+                    mode: "manual_bridge",
+                    detail: "Katcha prepares a tracked edit package.",
+                },
+            ];
+        } else if (url.pathname === "/v1/integrations/elevenlabs/verify") {
+            data = {
+                configured: true,
+                reachable: true,
+                voice_id_hint: "voic…e123",
+                model_id: "eleven_multilingual_v2",
+                output_format: "pcm_24000",
+                live_execution: true,
+                detail: "Configured ElevenLabs credentials and voice are reachable.",
+            };
+        } else if (
+            url.pathname === "/v1/integrations/elevenlabs/preview" &&
+            req.method() === "POST"
+        ) {
+            await route.fulfill({
+                status: 200,
+                contentType: "audio/wav",
+                headers: {
+                    "X-Katcha-Estimated-Cost-USD": "0.004",
+                    "X-Katcha-TTS-Provider": "elevenlabs",
+                    "X-Katcha-Voice-Profile": "elevenlabs_rank_snaxx_v1",
+                },
+                body: Buffer.from("RIFFfixture"),
+            });
+            return;
+        } else if (
+            url.pathname === "/v1/integrations/channels/channel-1/voice-policy"
+        ) {
+            if (req.method() === "PUT") {
+                brandVersion += 1;
+                const profileByProvider = {
+                    elevenlabs: "elevenlabs_rank_snaxx_v1",
+                    openai: "openai_youth_v2",
+                    gemini: "gemini_youth_v2",
+                };
+                voicePolicy = {
+                    channel_profile_id: "channel-1",
+                    brand_version: brandVersion,
+                    routing_mode: body.routing_mode,
+                    preferred_profiles: [
+                        profileByProvider[body.primary_provider],
+                        ...(body.fallback_providers || []).map(
+                            (provider) => profileByProvider[provider],
+                        ),
+                    ],
+                    primary_provider: body.primary_provider,
+                    fallback_providers: body.fallback_providers || [],
+                };
+            }
+            data = voicePolicy;
         } else if (url.pathname === "/v1/integrations/youtube") {
             data = [
                 {
@@ -414,10 +504,16 @@ const analytics = [
                 {
                     id: "brand-1",
                     channel_profile_id: "channel-1",
-                    version: 2,
+                    version: brandVersion,
                     brand_key: "fixture_brand",
                     is_active: true,
-                    contract: { format: "host-led gaming" },
+                    contract: {
+                        format: "host-led gaming",
+                        voice_policy: {
+                            routing_mode: voicePolicy.routing_mode,
+                            preferred_profiles: voicePolicy.preferred_profiles,
+                        },
+                    },
                     brand_metadata: {},
                     created_at: now,
                 },
@@ -467,6 +563,32 @@ const analytics = [
     assert.match(await page.locator("#schedule").innerText(), /Fri · 18:00/);
     assert.match(await page.locator("#brand-panel").innerText(), /fixture_brand/);
     assert.match(await page.locator("#automation-panel").innerText(), /Review Required/);
+    assert.equal(await page.locator("#voice-provider").inputValue(), "openai");
+    assert.equal(await page.locator("#voice-routing").inputValue(), "inherit");
+    assert.match(await page.locator("#provider-panel").innerText(), /ElevenLabs TTS/);
+    assert.match(await page.locator("#provider-panel").innerText(), /InVideo edit bridge/);
+
+    await page.locator("#verify-elevenlabs").click();
+    await page.getByText(/credentials and voice are reachable/).waitFor();
+
+    await page.locator("#preview-elevenlabs").click();
+    await page.locator("#voice-preview-audio:not([hidden])").waitFor();
+    await page.getByText(/ElevenLabs preview ready/).waitFor();
+
+    await page.locator("#voice-provider").selectOption("elevenlabs");
+    await page.locator("#voice-routing").selectOption("fixed");
+    await page.locator("#save-voice-provider").click();
+    await page.getByText(/ElevenLabs is now the primary narration provider/).waitFor();
+    assert.equal(await page.locator("#voice-provider-badge").innerText(), "ELEVENLABS");
+
+    const voiceRequest = requests.find(
+        (request) =>
+            request.path === "/v1/integrations/channels/channel-1/voice-policy" &&
+            request.method === "PUT",
+    );
+    assert.equal(voiceRequest.body.primary_provider, "elevenlabs");
+    assert.equal(voiceRequest.body.routing_mode, "fixed");
+    assert.deepEqual(voiceRequest.body.fallback_providers, ["openai", "gemini"]);
 
     await page.locator("#custom-goal-metric").selectOption("subscribers");
     await page.locator("#custom-goal-target").fill("5000");
