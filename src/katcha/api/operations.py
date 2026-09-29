@@ -7,7 +7,7 @@ from typing import Literal
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field
-from sqlalchemy import func, select
+from sqlalchemy import and_, func, or_, select
 
 from katcha.api.control_auth import control_allowed_channel_ids, require_control_channel
 from katcha.db import session_scope
@@ -41,6 +41,7 @@ class OperationsChannelSummary(BaseModel):
     needs_attention: int
     fresh_opportunities: int
     published_last_7d: int
+    href: str
 
 
 class OperationsWorkItem(BaseModel):
@@ -102,9 +103,9 @@ class OperationsOverviewResponse(BaseModel):
     activity: list[OperationsActivity]
 
 
-_DONE_WORK_STATUSES = {"published", "completed", "approved", "rejected", "cancelled"}
+_DONE_WORK_STATUSES = {"published", "completed", "rejected", "cancelled"}
 _ATTENTION_STATUS_MARKERS = ("fail", "error", "dead_letter", "blocked")
-_DONE_PUBLICATION_STATUSES = {"published", "private", "unlisted", "scheduled"}
+_DONE_PUBLICATION_STATUSES = {"published", "private", "unlisted"}
 
 
 def _channel_title(profile: ChannelProfile) -> str:
@@ -165,6 +166,7 @@ def _event_channel_id(
     *,
     production_channels: dict[uuid.UUID, uuid.UUID],
     episode_channels: dict[uuid.UUID, uuid.UUID],
+    publication_channels: dict[uuid.UUID, uuid.UUID],
 ) -> uuid.UUID | None:
     payload = dict(event.payload or {})
     raw = payload.get("channel_profile_id")
@@ -186,6 +188,8 @@ def _event_channel_id(
         return production_channels.get(aggregate_id)
     if event.aggregate_type == "short_episode":
         return episode_channels.get(aggregate_id)
+    if event.aggregate_type == "publication":
+        return publication_channels.get(aggregate_id)
     return None
 
 
@@ -197,6 +201,8 @@ def _event_href(
         return None
     if event.aggregate_type in {"production", "short_episode", "render_attempt"}:
         return _item_href(channel_profile_id)
+    if event.aggregate_type == "publication":
+        return _publication_href(channel_profile_id)
     if event.aggregate_type == "channel_profile":
         return f"/channels?channel={channel_profile_id}"
     return None
@@ -214,7 +220,11 @@ def operations_overview(
         require_control_channel(http_request, channel_profile_id)
 
     with session_scope() as session:
-        profile_stmt = select(ChannelProfile).order_by(ChannelProfile.created_at.asc())
+        profile_stmt = (
+            select(ChannelProfile)
+            .where(ChannelProfile.status == "active")
+            .order_by(ChannelProfile.created_at.asc())
+        )
         if allowed is not None:
             profile_stmt = profile_stmt.where(ChannelProfile.id.in_(allowed))
         if channel_profile_id is not None:
@@ -251,17 +261,21 @@ def operations_overview(
         episodes = list(
             session.scalars(
                 select(ShortEpisode)
-                .where(ShortEpisode.channel_profile_id.in_(channel_ids))
+                .where(
+                    ShortEpisode.channel_profile_id.in_(channel_ids),
+                    ~ShortEpisode.status.in_(_DONE_WORK_STATUSES),
+                )
                 .order_by(ShortEpisode.updated_at.desc())
-                .limit(200)
             )
         )
         productions = list(
             session.scalars(
                 select(Production)
-                .where(Production.channel_profile_id.in_(channel_ids))
+                .where(
+                    Production.channel_profile_id.in_(channel_ids),
+                    ~Production.status.in_(_DONE_WORK_STATUSES),
+                )
                 .order_by(Production.updated_at.desc())
-                .limit(200)
             )
         )
         attempts = list(
@@ -269,7 +283,6 @@ def operations_overview(
                 select(RenderAttempt)
                 .where(RenderAttempt.channel_profile_id.in_(channel_ids))
                 .order_by(RenderAttempt.updated_at.desc())
-                .limit(400)
             )
         )
         latest_attempt = _latest_attempts(attempts)
@@ -433,6 +446,7 @@ def operations_overview(
                 confidence=row.confidence,
                 expires_at=row.expires_at,
                 reasons=list(row.reasons or [])[:3],
+                href=f"/explorer?channel={row.channel_profile_id}",
             )
             for row in opportunity_rows[:limit]
         ]
@@ -487,11 +501,50 @@ def operations_overview(
                 )
             )
 
+        publication_channels = {
+            row.id: youtube_to_channel[row.youtube_connection_id]
+            for row in publications_all + recent_publications
+            if row.youtube_connection_id in youtube_to_channel
+        }
+        event_filters = [
+            and_(
+                DomainEvent.aggregate_type == "channel_profile",
+                DomainEvent.aggregate_id.in_([str(value) for value in channel_ids]),
+            )
+        ]
+        if production_channels:
+            event_filters.append(
+                and_(
+                    DomainEvent.aggregate_type == "production",
+                    DomainEvent.aggregate_id.in_(
+                        [str(value) for value in production_channels]
+                    ),
+                )
+            )
+        if episode_channels:
+            event_filters.append(
+                and_(
+                    DomainEvent.aggregate_type == "short_episode",
+                    DomainEvent.aggregate_id.in_(
+                        [str(value) for value in episode_channels]
+                    ),
+                )
+            )
+        if publication_channels:
+            event_filters.append(
+                and_(
+                    DomainEvent.aggregate_type == "publication",
+                    DomainEvent.aggregate_id.in_(
+                        [str(value) for value in publication_channels]
+                    ),
+                )
+            )
         recent_events = list(
             session.scalars(
                 select(DomainEvent)
+                .where(or_(*event_filters))
                 .order_by(DomainEvent.created_at.desc())
-                .limit(max(limit * 8, 80))
+                .limit(limit)
             )
         )
         visible_ids = set(channel_ids)
@@ -501,6 +554,7 @@ def operations_overview(
                 event,
                 production_channels=production_channels,
                 episode_channels=episode_channels,
+                publication_channels=publication_channels,
             )
             if event_channel is None or event_channel not in visible_ids:
                 continue
@@ -563,6 +617,7 @@ def operations_overview(
                 needs_attention=attention_count_by_channel[channel_id],
                 fresh_opportunities=opportunity_count_by_channel[channel_id],
                 published_last_7d=published_count_by_channel[channel_id],
+                href=f"/channels?channel={channel_id}",
             )
             for channel_id in channel_ids
         ]
