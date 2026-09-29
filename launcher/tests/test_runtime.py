@@ -599,7 +599,7 @@ def test_launcher_serves_workspace_shell_without_api(tmp_path):
         response = connection.getresponse()
         body = response.read()
         assert response.status == 200
-        assert b"Editing control center" in body
+        assert b"Production" in body
         connection.request("GET", "/clips")
         response = connection.getresponse()
         assert response.status == 302
