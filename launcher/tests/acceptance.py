@@ -69,7 +69,7 @@ if __name__ == "__main__":
                     raise
                 time.sleep(0.5)
         assert b"Production" in request("/editing/assets/editing.html")
-        assert b"Clip library" in request("/editing/assets/clips.html")
+        assert b'data-katcha-page="clips"' in request("/editing/assets/clips.html")
         assert b"Channel Studio" in request("/channels/assets/channels.html")
         assert b"Katcha AI" in request("/ai/assets/ai.html")\n        assert b"Run the system." in request("/operations/assets/operations.html")\n        assert b"--ae-" in request("/operations/assets/system/aerith-tokens.css")
         cold_started = time.monotonic()

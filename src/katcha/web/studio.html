@@ -7,6 +7,11 @@
     <title>Katcha · Clip Studio</title>
     <link rel="stylesheet" href="editing.css">
     <link rel="stylesheet" href="studio.css">
+    <link id="aerith-tokens" rel="stylesheet" href="/system/aerith-tokens.css">
+    <link id="aerith-base" rel="stylesheet" href="/system/aerith-base.css">
+    <link id="aerith-shell" rel="stylesheet" href="/system/aerith-shell.css">
+    <link id="aerith-components" rel="stylesheet" href="/system/aerith-components.css">
+    <link id="aerith-motion" rel="stylesheet" href="/system/aerith-motion.css">
     <link rel="stylesheet" href="pages/clip-studio-aerith.css">
     <script src="studio.js" defer></script>
     <script src="launcher-bridge.js" defer></script>
@@ -17,9 +22,9 @@
         <a class="logo" href="/explorer" aria-label="Katcha home"><span class="glyph">✦</span> katcha<span class="accent">.</span></a>
         <p class="sidebar-label">WORKSPACE</p>
         <nav aria-label="Workspace">
-            <a href="/explorer">◌ <span>Trend explorer</span></a>
-            <a href="/ingestion">↳ <span>Content sources</span></a>
-            <a href="/clips">▤ <span>Clip library</span></a>
+            <a href="/explorer">◌ <span>Trends</span></a>
+            <a href="/ingestion">↳ <span>Sources</span></a>
+            <a href="/clips">▤ <span>Clips</span></a>
             <a href="/editing">▣ <span>Production</span></a>
             <a href="/studio" aria-current="page">⌁ <span>Clip Studio</span></a>
         </nav>
@@ -106,7 +111,7 @@
                     </section>
 
                     <section id="tab-ai" class="inspector-body" hidden>
-                        <div class="inspector-title"><span class="panel-kicker">REUSABLE AI BOUNDARIES</span><h2>Teach the editor</h2><p>These become versioned recipe rules for future videos. The episode already loaded here stays frozen.</p></div>
+                        <div class="inspector-title"><span class="panel-kicker">REUSABLE AI BOUNDARIES</span><h2>Teach the editor</h2><details class="ae-help"><summary>How AI rules apply</summary><p>These become versioned recipe rules for future videos. The episode already loaded here stays frozen.</p></details></div>
                         <div id="ai-recipe" class="inspector-badge">No active recipe</div>
                         <label>How strictly should AI follow these rules?<select id="ai-strength"><option value="strict">Strict</option><option value="balanced">Balanced</option><option value="flexible">Flexible</option></select></label>
                         <label class="check-row"><input id="ai-order" type="checkbox"> Preserve selected clip order</label>
@@ -148,7 +153,7 @@
                                 <button id="import-invideo" class="button secondary full" type="button" disabled>Import returned edit</button>
                                 <button id="adopt-invideo" class="button primary full" type="button" disabled>Adopt InVideo edit for review</button>
                             </div>
-                            <p class="field-note">Direct InVideo project automation remains disabled until your account exposes a documented API contract. This bridge is fully tracked and reversible.</p>
+                            <details class="ae-help"><summary>Why direct automation is disabled</summary><p>Direct InVideo project automation remains disabled until your account exposes a documented API contract. This bridge is fully tracked and reversible.</p></details>
                         </div>
                     </section>
 
@@ -164,7 +169,7 @@
                         <label>Opacity <output id="logo-opacity-out">90%</output><input id="logo-opacity" type="range" min="0.1" max="1" step="0.05"></label>
                         <button id="stage-logo" class="button secondary full" type="button">Stage new brand version</button>
                         <button id="activate-logo" class="button primary full" type="button" disabled>Activate staged version</button>
-                        <p class="field-note">Activation changes the default for new short-form renders. Existing frozen generations remain reproducible unless you explicitly render a new Studio generation with “Use active brand” enabled.</p>
+                        <details class="ae-help"><summary>What activation changes</summary><p>Activation changes the default for new short-form renders. Existing frozen generations remain reproducible unless you explicitly render a new Studio generation with “Use active brand” enabled.</p></details>
                     </section>
                 </aside>
             </section>

@@ -3,6 +3,7 @@
     "private": true,
     "scripts": {
         "test": "node explorer.cjs && node editing.cjs && node ingestion.cjs && node clips.cjs && node studio.cjs && node channels.cjs && node ai-command.cjs && node operations.cjs"
+        // "test": "node explorer.cjs && node editing.cjs && node ingestion.cjs && node clips.cjs && node studio.cjs && node channels.cjs && node ai-command.cjs && node system.cjs"
     },
     "devDependencies": {
         "playwright": "1.62.1"
