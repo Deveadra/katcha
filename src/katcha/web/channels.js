@@ -1040,6 +1040,15 @@ function providerStatus(name) {
     return state.providers.find((item) => item.provider === name) || null;
 }
 
+function providerName(name) {
+    return {
+        elevenlabs: "ElevenLabs",
+        openai: "OpenAI",
+        gemini: "Gemini",
+        invideo: "InVideo",
+    }[String(name || "").toLowerCase()] || friendly(name);
+}
+
 function renderProviderControls() {
     const voice = state.voicePolicy;
     const eleven = providerStatus("elevenlabs");
@@ -1180,7 +1189,7 @@ async function saveVoiceProvider() {
         state.brands = await api("/v1/channels/" + state.channelId + "/brands");
         renderControls();
         setStatus(
-            friendly(primary) +
+            providerName(primary) +
                 " is now the primary narration provider for new productions. Existing productions keep their frozen voice.",
             "success",
         );
