@@ -1,0 +1,389 @@
+body[data-katcha-page="clips"] {
+    --purple: var(--ae-violet);
+    --cyan: var(--ae-cyan);
+    --pink: var(--ae-rose);
+    --danger: var(--ae-danger);
+}
+
+body[data-katcha-page="clips"] .clip-content {
+    width: 100%;
+    max-width: none;
+    margin: 0;
+    padding: 18px clamp(18px, 2.4vw, 34px) 20px;
+}
+
+.clip-library-head {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 24px;
+    padding: 2px 0 14px;
+}
+
+.clip-library-head h1 {
+    margin: 3px 0 4px;
+    color: var(--ae-text);
+    font-size: clamp(27px, 3vw, 36px);
+    line-height: 1.04;
+    letter-spacing: -0.045em;
+}
+
+.clip-library-head p {
+    margin: 0;
+    color: var(--ae-text-secondary);
+    font-size: 12px;
+}
+
+body[data-katcha-page="clips"] .card {
+    border-color: var(--ae-line);
+    background: var(--ae-surface-soft);
+    box-shadow: inset 0 1px rgba(255,255,255,.025);
+}
+
+body[data-katcha-page="clips"] .connect {
+    margin-bottom: 7px;
+    padding: 11px 13px;
+}
+
+body[data-katcha-page="clips"] .message {
+    min-height: 19px;
+    margin-bottom: 2px;
+    font-size: 11px;
+}
+
+body[data-katcha-page="clips"] .library-scope {
+    min-height: 54px;
+    margin-bottom: 7px;
+    padding: 9px 12px;
+    border-radius: 11px;
+}
+
+body[data-katcha-page="clips"] .scope-channel label,
+body[data-katcha-page="clips"] .clip-toolbar label {
+    color: var(--ae-text-tertiary);
+    font-size: 9px;
+}
+
+body[data-katcha-page="clips"] .scope-health strong {
+    font-size: 12px;
+}
+
+body[data-katcha-page="clips"] .scope-health small {
+    font-size: 9px;
+}
+
+body[data-katcha-page="clips"] .clip-stats {
+    display: flex;
+    gap: 4px;
+    margin: 0 0 7px;
+    padding: 4px;
+    border: 1px solid var(--ae-line);
+    border-radius: 11px;
+    background: rgba(255,255,255,.018);
+    overflow-x: auto;
+    scrollbar-width: none;
+}
+
+body[data-katcha-page="clips"] .clip-stats::-webkit-scrollbar {
+    display: none;
+}
+
+body[data-katcha-page="clips"] .clip-stat {
+    display: flex;
+    flex: 1 0 auto;
+    min-width: 112px;
+    min-height: 42px;
+    align-items: center;
+    gap: 7px;
+    padding: 7px 10px;
+    border: 1px solid transparent;
+    border-radius: 8px;
+    background: transparent;
+    box-shadow: none;
+}
+
+body[data-katcha-page="clips"] .clip-stat:hover {
+    transform: none;
+    border-color: var(--ae-line);
+    background: rgba(255,255,255,.03);
+}
+
+body[data-katcha-page="clips"] .clip-stat.is-active {
+    border-color: rgba(183,165,255,.24);
+    background: linear-gradient(120deg, rgba(183,165,255,.12), rgba(132,231,255,.04));
+}
+
+body[data-katcha-page="clips"] .clip-stat span {
+    color: var(--ae-text-secondary);
+    font-size: 9px;
+}
+
+body[data-katcha-page="clips"] .clip-stat strong {
+    order: -1;
+    min-width: 24px;
+    font-size: 16px;
+    color: var(--ae-text);
+}
+
+body[data-katcha-page="clips"] .clip-stat small {
+    display: none;
+}
+
+body[data-katcha-page="clips"] .clip-toolbar {
+    min-height: 48px;
+    margin-bottom: 7px;
+    padding: 7px 10px;
+    border-radius: 11px;
+}
+
+body[data-katcha-page="clips"] .clip-toolbar input,
+body[data-katcha-page="clips"] .clip-toolbar select {
+    min-height: 34px;
+    padding-block: 6px;
+}
+
+body[data-katcha-page="clips"] .toolbar-copy {
+    font-size: 9px;
+}
+
+body[data-katcha-page="clips"] .toolbar-copy strong {
+    font-size: 11px;
+}
+
+body[data-katcha-page="clips"] .clip-workspace {
+    min-height: 0;
+    gap: 8px;
+    grid-template-columns: minmax(300px,.72fr) minmax(0,1.55fr);
+    align-items: stretch;
+}
+
+body[data-katcha-page="clips"] .clip-list,
+body[data-katcha-page="clips"] .clip-detail {
+    min-width: 0;
+    min-height: 0;
+    padding: 15px;
+    border-radius: var(--ae-radius-panel);
+}
+
+body[data-katcha-page="clips"] .clip-list {
+    position: static;
+    overflow: hidden;
+}
+
+body[data-katcha-page="clips"] .clip-list-body {
+    max-height: none;
+    min-height: 0;
+    overflow: auto;
+    margin-top: 10px;
+}
+
+body[data-katcha-page="clips"] .clip-detail {
+    overflow: auto;
+}
+
+body[data-katcha-page="clips"] .clip-row {
+    border-color: var(--ae-line);
+    background: rgba(255,255,255,.022);
+    border-radius: 9px;
+}
+
+body[data-katcha-page="clips"] .clip-row:hover,
+body[data-katcha-page="clips"] .clip-row.is-selected {
+    border-color: rgba(183,165,255,.28);
+    background: linear-gradient(90deg, rgba(183,165,255,.08), rgba(132,231,255,.02));
+}
+
+body[data-katcha-page="clips"] .clip-row.is-selected {
+    box-shadow: inset 2px 0 var(--ae-violet);
+}
+
+body[data-katcha-page="clips"] .clip-detail-head {
+    padding-bottom: 11px;
+    margin-bottom: 10px;
+}
+
+body[data-katcha-page="clips"] .clip-detail h2 {
+    font-size: 19px;
+}
+
+body[data-katcha-page="clips"] .lifecycle-banner {
+    margin-bottom: 9px;
+    padding: 9px 11px;
+    border-color: var(--ae-line);
+    background: rgba(255,255,255,.022);
+}
+
+body[data-katcha-page="clips"] .clip-preview {
+    margin: 9px 0;
+    padding: 8px;
+    border-color: var(--ae-line);
+    background: rgba(0,0,0,.22);
+}
+
+body[data-katcha-page="clips"] .clip-preview video {
+    max-height: 300px;
+}
+
+.clip-inspector-tabs {
+    position: sticky;
+    z-index: 3;
+    top: -15px;
+    display: flex;
+    gap: 3px;
+    margin: 0 -2px 8px;
+    padding: 7px 2px;
+    background: rgba(21,25,37,.95);
+    backdrop-filter: blur(14px);
+    -webkit-backdrop-filter: blur(14px);
+}
+
+.clip-inspector-tabs button {
+    min-height: 32px;
+    padding: 6px 10px;
+    border: 1px solid transparent;
+    border-radius: 8px;
+    background: transparent;
+    color: var(--ae-text-tertiary);
+    font-size: 10px;
+    font-weight: 750;
+    cursor: pointer;
+}
+
+.clip-inspector-tabs button:hover {
+    border-color: var(--ae-line);
+    color: var(--ae-text-secondary);
+}
+
+.clip-inspector-tabs button[aria-selected="true"] {
+    border-color: rgba(132,231,255,.24);
+    background: rgba(132,231,255,.06);
+    color: var(--ae-text);
+}
+
+[data-clip-detail-view][hidden] {
+    display: none !important;
+}
+
+body[data-katcha-page="clips"] .detail-grid {
+    grid-template-columns: minmax(0,1fr);
+    gap: 8px;
+    margin-top: 0;
+}
+
+body[data-katcha-page="clips"] .detail-block,
+body[data-katcha-page="clips"] .ai-score-grid div {
+    border-color: var(--ae-line);
+    background: rgba(255,255,255,.022);
+}
+
+body[data-katcha-page="clips"] .detail-block {
+    padding: 12px;
+}
+
+body[data-katcha-page="clips"] .detail-block.wide {
+    grid-column: auto;
+}
+
+body[data-katcha-page="clips"] .ai-score-grid {
+    grid-template-columns: repeat(5,minmax(0,1fr));
+}
+
+body[data-katcha-page="clips"] footer {
+    margin-top: 7px;
+    font-size: 9px;
+    color: var(--ae-text-tertiary);
+}
+
+@media (min-width: 1101px) {
+    body[data-katcha-page="clips"] {
+        overflow: hidden;
+    }
+
+    body[data-katcha-page="clips"] .shell,
+    body[data-katcha-page="clips"] main {
+        height: 100dvh;
+        min-height: 0;
+        overflow: hidden;
+    }
+
+    body[data-katcha-page="clips"] .clip-content {
+        height: calc(100dvh - 60px);
+        min-height: 0;
+        overflow: hidden;
+        display: grid;
+        grid-template-rows:
+            auto
+            auto
+            auto
+            auto
+            auto
+            auto
+            minmax(0,1fr)
+            auto;
+    }
+
+    body[data-katcha-page="clips"] .clip-workspace,
+    body[data-katcha-page="clips"] .clip-list,
+    body[data-katcha-page="clips"] .clip-detail {
+        height: 100%;
+    }
+}
+
+@media (max-width: 1100px) {
+    body[data-katcha-page="clips"] .clip-workspace {
+        grid-template-columns: 1fr;
+    }
+
+    body[data-katcha-page="clips"] .clip-list-body {
+        max-height: 420px;
+    }
+
+    body[data-katcha-page="clips"] .clip-detail {
+        overflow: visible;
+    }
+}
+
+@media (max-width: 760px) {
+    body[data-katcha-page="clips"] .clip-content {
+        padding: 12px 14px 34px;
+    }
+
+    .clip-library-head {
+        align-items: stretch;
+        flex-direction: column;
+        gap: 10px;
+    }
+
+    .clip-library-head > .button {
+        align-self: flex-start;
+    }
+
+    body[data-katcha-page="clips"] .clip-stats {
+        margin-inline: -2px;
+    }
+
+    body[data-katcha-page="clips"] .clip-toolbar {
+        padding: 9px;
+    }
+
+    .clip-inspector-tabs {
+        position: static;
+        overflow-x: auto;
+    }
+
+    body[data-katcha-page="clips"] .ai-score-grid {
+        grid-template-columns: repeat(2,minmax(0,1fr));
+    }
+}
+
+@media (max-width: 430px) {
+    body[data-katcha-page="clips"] .clip-stat {
+        min-width: 94px;
+    }
+
+    body[data-katcha-page="clips"] .connect > *,
+    body[data-katcha-page="clips"] .library-scope > * {
+        width: 100%;
+        min-width: 0;
+    }
+}

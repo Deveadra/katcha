@@ -3,14 +3,15 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <meta name="theme-color" content="#100e1b">
-    <title>Katcha · Clip library</title>
+    <meta name="theme-color" content="#090b12">
+    <title>Katcha · Clips</title>
     <link rel="stylesheet" href="editing.css">
     <link rel="stylesheet" href="clips.css">
+    <link rel="stylesheet" href="pages/clip-library-aerith.css">
     <script src="clips.js" defer></script>
     <script src="launcher-bridge.js" defer></script>
 </head>
-<body>
+<body data-katcha-page="clips">
     <div class="shell">
         <aside class="sidebar">
             <a class="logo" href="/explorer" aria-label="Katcha home"><span class="glyph">✦</span> katcha<span class="accent">.</span></a>
@@ -19,22 +20,22 @@
                 <a href="/ingestion">↳ <span>Content sources</span></a>
                 <a href="/clips" aria-current="page">▤ <span>Clip library</span></a>
                 <a href="/channels">▦ <span>Channel Studio</span></a>
-                <a href="/editing">▣ <span>Editing control center</span></a>
+                <a href="/editing">▣ <span>Production</span></a>
                 <a href="/studio">⌁ <span>Clip Studio</span></a>
             </nav>
             <div class="sidebar-bottom"><span class="live-dot"></span> MEDIA VAULT <small>Lifecycle · Search · Lineage</small></div>
         </aside>
         <main>
             <header class="topbar">
-                <span>Workspace <span class="slash">/</span> <strong>Clip library</strong></span>
+                <span>Workspace <span class="slash">/</span> <strong>Clips</strong></span>
                 <span id="connection" class="connection">OFFLINE</span>
             </header>
             <div class="content clip-content">
-                <div class="heading">
+                <div class="clip-library-head">
                     <div>
-                        <div class="eyebrow">MEDIA VAULT / CHANNEL STORAGE</div>
-                        <h1>Keep the library <em>lean.</em></h1>
-                        <p>Search, tag, archive, restore, and safely remove media without losing the metadata and lineage that make old clips retrievable.</p>
+                        <div class="eyebrow">CLIPS</div>
+                        <h1>Source media, in context.</h1>
+                        <p>Search, inspect, and manage the media Katcha can use.</p>
                     </div>
                     <button id="refresh" class="button secondary" type="button" disabled>↻ Refresh</button>
                 </div>
@@ -48,7 +49,7 @@
 
                 <section class="library-scope card">
                     <div class="scope-channel">
-                        <label for="channel">CHANNEL LIBRARY</label>
+                        <label for="channel">CHANNEL</label>
                         <select id="channel" disabled>
                             <option value="">Connect to load channels</option>
                         </select>
@@ -59,23 +60,23 @@
                         <small>Select a channel</small>
                     </div>
                     <div class="scope-actions">
-                        <button id="retention-settings" class="button secondary" type="button" disabled>Retention policy</button>
+                        <button id="retention-settings" class="button secondary" type="button" disabled>Storage policy</button>
                     </div>
                 </section>
 
                 <nav class="clip-stats" aria-label="Clip lifecycle filters">
                     <button class="clip-stat card is-active" type="button" data-bucket="all"><span>ALL</span><strong id="count-all">—</strong><small>Metadata + media</small></button>
-                    <button class="clip-stat card" type="button" data-bucket="hot"><span>HOT</span><strong id="count-hot">—</strong><small>Immediately available</small></button>
-                    <button class="clip-stat card" type="button" data-bucket="archived"><span>ARCHIVED</span><strong id="count-archived">—</strong><small>Cold-tier ready</small></button>
-                    <button class="clip-stat card attention" type="button" data-bucket="failed"><span>FAILED</span><strong id="count-failed">—</strong><small>Cleanup candidates</small></button>
-                    <button class="clip-stat card muted-stat" type="button" data-bucket="purged"><span>PURGED</span><strong id="count-purged">—</strong><small>Metadata retained</small></button>
+                    <button class="clip-stat card" type="button" data-bucket="hot"><span>READY</span><strong id="count-hot">—</strong><small>Available now</small></button>
+                    <button class="clip-stat card" type="button" data-bucket="archived"><span>ARCHIVED</span><strong id="count-archived">—</strong><small>Stored away</small></button>
+                    <button class="clip-stat card attention" type="button" data-bucket="failed"><span>FAILED</span><strong id="count-failed">—</strong><small>Needs review</small></button>
+                    <button class="clip-stat card muted-stat" type="button" data-bucket="purged"><span>PURGED</span><strong id="count-purged">—</strong><small>Record only</small></button>
                 </nav>
 
                 <section class="clip-toolbar card">
-                    <label class="search-field">SEARCH LIBRARY
-                        <input id="search" type="search" placeholder="Search titles, creators, tags, transcript, AI summary, topic…">
+                    <label class="search-field">SEARCH
+                        <input id="search" type="search" placeholder="Search clips, creators, tags, transcript…">
                     </label>
-                    <label>EDITORIAL STATUS
+                    <label>STATUS
                         <select id="status-filter">
                             <option value="all">All statuses</option>
                             <option value="ingested">Ingested</option>

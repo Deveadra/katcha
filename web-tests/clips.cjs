@@ -364,6 +364,17 @@ const clips = [
         assert.match(await page.locator("#channel-badge").innerText(), /RANKSNAXX/);
         assert.equal(await page.locator("#count-all").innerText(), "2");
         assert.equal(await page.locator("#count-hot").innerText(), "2");
+        assert.match(await page.locator(".clip-library-head").innerText(), /Source media, in context/);
+        assert.equal(await page.locator("[data-clip-detail-tab]").count(), 4);
+        assert.equal(
+            await page.locator('[data-clip-detail-tab="overview"]').getAttribute("aria-selected"),
+            "true",
+        );
+        assert.equal(await page.locator('[data-clip-detail-view="analysis"]').first().isHidden(), true);
+        assert.equal(
+            await page.evaluate(() => document.documentElement.scrollHeight <= innerHeight + 2),
+            true,
+        );
 
         await page.locator("#search").fill("boss-fight");
         await page.waitForTimeout(350);
@@ -376,9 +387,16 @@ const clips = [
         await page.waitForTimeout(350);
 
         await page.locator(`[data-clip-id="${clipA}"]`).click();
+        await page.locator('[data-clip-detail-tab="analysis"]').click();
         await page.getByText(/surprising gameplay moment/).waitFor();
         assert.match(await page.locator("#clip-detail").innerText(), /stored transcript/);
+        assert.equal(await page.locator('[data-clip-detail-view="overview"]').isHidden(), true);
 
+        await page.locator('[data-clip-detail-tab="lineage"]').click();
+        await page.locator('.source-link[href="https://example.com/scored"]').waitFor();
+
+        await page.locator('[data-clip-detail-tab="metadata"]').click();
+        await page.locator("#metadata-form").waitFor({ state: "visible" });
         await page.locator("#meta-tags").fill("xbox, launch-week, boss");
         await page.locator("#meta-topic").fill("Xbox launch");
         await page.locator("#metadata-form button").click();
@@ -441,7 +459,7 @@ const clips = [
         );
         assert.deepEqual(errors, []);
         console.log(
-            "Clip library channel scope, semantic search, metadata, archive, purge, retention confirmations and responsive layout passed",
+            "Aerith Clip Library bounded workspace, inspector tabs, channel scope, semantic search, metadata, archive, purge, retention confirmations and responsive layout passed",
         );
     } finally {
         if (browser) await browser.close();
