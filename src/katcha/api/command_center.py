@@ -911,6 +911,9 @@ def command(http_request: Request, request: CommandRequest) -> CommandResponse:
                 specs=specs,
                 thread_id=thread.id,
                 source_turn_id=assistant_turn.id,
+                actor=actor,
+                credential_id=credential_id,
+                credential_fingerprint=credential_fingerprint,
             )
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
