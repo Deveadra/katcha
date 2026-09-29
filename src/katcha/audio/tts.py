@@ -159,6 +159,7 @@ def _resolve_profile(
     settings: Settings,
     *,
     channel_profile_id: uuid.UUID | None = None,
+    voice_role: str | None = None,
 ) -> VoiceProfile:
     if profile.provider != "elevenlabs":
         return profile
@@ -167,6 +168,7 @@ def _resolve_profile(
     voice_id, model_id = resolve_elevenlabs_voice(
         channel_profile_id=channel_profile_id,
         settings=settings,
+        role=voice_role,
     )
     if not voice_id:
         raise TTSUnavailable("ElevenLabs voice is not configured for this channel")
@@ -199,6 +201,7 @@ def choose_voice_profile(
     *,
     target: ModelTarget | None = None,
     channel_profile_id: uuid.UUID | None = None,
+    voice_role: str | None = None,
 ) -> VoiceProfile:
     settings = settings or get_settings()
     if target is not None:
@@ -212,6 +215,7 @@ def choose_voice_profile(
                 profile,
                 settings,
                 channel_profile_id=channel_profile_id,
+                voice_role=voice_role,
             )
         return profile
 
@@ -225,6 +229,7 @@ def choose_voice_profile(
             requested,
             settings,
             channel_profile_id=channel_profile_id,
+            voice_role=voice_role,
         )
     if settings.openai_api_key:
         return VOICE_PROFILES["openai_youth_v2"]
@@ -235,6 +240,7 @@ def choose_voice_profile(
             VOICE_PROFILES["elevenlabs_rank_snaxx_v1"],
             settings,
             channel_profile_id=channel_profile_id,
+            voice_role=voice_role,
         )
     raise TTSUnavailable("no configured TTS provider is available")
 
@@ -484,6 +490,7 @@ def synthesize_speech(
     fallback_profile: VoiceProfile | None = None,
     settings: Settings | None = None,
     channel_profile_id: uuid.UUID | None = None,
+    voice_role: str | None = None,
     reference_type: str | None = None,
     reference_id: str | None = None,
     reservation_key: str | None = None,
@@ -502,6 +509,7 @@ def synthesize_speech(
             get_voice_profile(key),
             settings,
             channel_profile_id=channel_profile_id,
+            voice_role=voice_role,
         )
         fallback_profile = None
 
@@ -510,6 +518,7 @@ def synthesize_speech(
             profile,
             settings,
             channel_profile_id=channel_profile_id,
+            voice_role=voice_role,
         )
         if profile is not None
         else None
@@ -519,6 +528,7 @@ def synthesize_speech(
             fallback_profile,
             settings,
             channel_profile_id=channel_profile_id,
+            voice_role=voice_role,
         )
         if fallback_profile is not None
         else None
@@ -551,11 +561,13 @@ def synthesize_speech(
             settings,
             target=decision.route.primary,
             channel_profile_id=channel_profile_id,
+            voice_role=voice_role,
         )
     else:
         profile = profile or choose_voice_profile(
             settings,
             channel_profile_id=channel_profile_id,
+            voice_role=voice_role,
         )
 
     requested_profile = profile
