@@ -186,20 +186,6 @@ services:
         condition: service_healthy
     command: ["python", "-m", "katcha.orchestration.production_worker"]
 
-  longform-worker:
-    image: katcha-production:local
-    env_file: ${KATCHA_ENV_FILE:-.env}
-    depends_on:
-      migrate:
-        condition: service_completed_successfully
-      temporal:
-        condition: service_healthy
-      minio-init:
-        condition: service_completed_successfully
-      renderer:
-        condition: service_healthy
-    command: ["python", "-m", "katcha.orchestration.longform_worker"]
-
   telegram-worker:
     image: katcha-control:local
     build:
