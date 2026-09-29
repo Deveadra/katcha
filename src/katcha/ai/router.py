@@ -269,6 +269,17 @@ def route_for_channel(
     providers = _available_providers(channel_profile_id)
     if not providers:
         raise BudgetExceeded("no configured AI provider is available")
+    if task == AITask.TTS and preferred_target is None:
+        channel_tts = get_channel_provider_setting(
+            channel_profile_id,
+            "elevenlabs",
+        )
+        if (
+            channel_tts is not None
+            and channel_tts.enabled
+            and (channel_tts.config or {}).get("voice_id")
+        ):
+            preferred_target = _elevenlabs_target(channel_profile_id)
 
     now = datetime.now(UTC)
     key = reservation_key or f"{task.value}-{uuid.uuid4().hex}"
