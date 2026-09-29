@@ -24,6 +24,7 @@ from katcha.ai.router import (
 )
 from katcha.config import Settings, get_settings
 from katcha.domain import AITask
+from katcha.services.elevenlabs_integration import resolve_elevenlabs_voice
 
 
 class TTSUnavailable(RuntimeError):
@@ -156,17 +157,25 @@ def _target_for_profile(profile: VoiceProfile) -> ModelTarget:
 def _resolve_profile(
     profile: VoiceProfile,
     settings: Settings,
+    *,
+    channel_profile_id: uuid.UUID | None = None,
 ) -> VoiceProfile:
     if profile.provider != "elevenlabs":
         return profile
-    if not settings.elevenlabs_api_key or not settings.elevenlabs_voice_id:
-        raise TTSUnavailable("ElevenLabs TTS provider is not configured")
+    if not settings.elevenlabs_api_key:
+        raise TTSUnavailable("ElevenLabs API key is not configured")
+    voice_id, model_id = resolve_elevenlabs_voice(
+        channel_profile_id=channel_profile_id,
+        settings=settings,
+    )
+    if not voice_id:
+        raise TTSUnavailable("ElevenLabs voice is not configured for this channel")
     return VoiceProfile(
         key=profile.key,
         version=profile.version,
         provider=profile.provider,
-        model=settings.elevenlabs_model_id,
-        voice=settings.elevenlabs_voice_id,
+        model=model_id,
+        voice=voice_id,
         instructions=profile.instructions,
     )
 
@@ -189,6 +198,7 @@ def choose_voice_profile(
     settings: Settings | None = None,
     *,
     target: ModelTarget | None = None,
+    channel_profile_id: uuid.UUID | None = None,
 ) -> VoiceProfile:
     settings = settings or get_settings()
     if target is not None:
@@ -198,7 +208,11 @@ def choose_voice_profile(
         if profile.provider == "gemini" and not settings.gemini_api_key:
             raise TTSUnavailable("Gemini TTS provider is not configured")
         if profile.provider == "elevenlabs":
-            return _resolve_profile(profile, settings)
+            return _resolve_profile(
+                profile,
+                settings,
+                channel_profile_id=channel_profile_id,
+            )
         return profile
 
     requested = get_voice_profile(settings.tts_profile)
@@ -207,13 +221,21 @@ def choose_voice_profile(
     if requested.provider == "gemini" and settings.gemini_api_key:
         return requested
     if requested.provider == "elevenlabs":
-        return _resolve_profile(requested, settings)
+        return _resolve_profile(
+            requested,
+            settings,
+            channel_profile_id=channel_profile_id,
+        )
     if settings.openai_api_key:
         return VOICE_PROFILES["openai_youth_v2"]
     if settings.gemini_api_key:
         return VOICE_PROFILES["gemini_youth_v2"]
     if settings.elevenlabs_api_key and settings.elevenlabs_voice_id:
-        return _resolve_profile(VOICE_PROFILES["elevenlabs_rank_snaxx_v1"], settings)
+        return _resolve_profile(
+            VOICE_PROFILES["elevenlabs_rank_snaxx_v1"],
+            settings,
+            channel_profile_id=channel_profile_id,
+        )
     raise TTSUnavailable("no configured TTS provider is available")
 
 
@@ -382,8 +404,8 @@ def _elevenlabs_tts(
     profile: VoiceProfile,
     settings: Settings,
 ) -> TTSResult:
-    if not settings.elevenlabs_api_key or not settings.elevenlabs_voice_id:
-        raise TTSUnavailable("ElevenLabs API key and voice ID are required")
+    if not settings.elevenlabs_api_key or not profile.voice:
+        raise TTSUnavailable("ElevenLabs API key and channel voice are required")
     output_format = settings.elevenlabs_output_format
     if not output_format.startswith("pcm_"):
         raise TTSUnavailable(
@@ -397,7 +419,7 @@ def _elevenlabs_tts(
         ) from exc
 
     response = httpx.post(
-        f"https://api.elevenlabs.io/v1/text-to-speech/{profile.voice}",
+        f"{settings.elevenlabs_base_url.rstrip('/')}/v1/text-to-speech/{profile.voice}",
         params={"output_format": output_format},
         headers={
             "xi-api-key": settings.elevenlabs_api_key,
@@ -479,9 +501,21 @@ def synthesize_speech(
         profile = _resolve_profile(get_voice_profile(key), settings)
         fallback_profile = None
 
-    profile = _resolve_profile(profile, settings) if profile is not None else None
+    profile = (
+        _resolve_profile(
+            profile,
+            settings,
+            channel_profile_id=channel_profile_id,
+        )
+        if profile is not None
+        else None
+    )
     fallback_profile = (
-        _resolve_profile(fallback_profile, settings)
+        _resolve_profile(
+            fallback_profile,
+            settings,
+            channel_profile_id=channel_profile_id,
+        )
         if fallback_profile is not None
         else None
     )
@@ -512,9 +546,13 @@ def synthesize_speech(
         profile = profile or choose_voice_profile(
             settings,
             target=decision.route.primary,
+            channel_profile_id=channel_profile_id,
         )
     else:
-        profile = profile or choose_voice_profile(settings)
+        profile = profile or choose_voice_profile(
+            settings,
+            channel_profile_id=channel_profile_id,
+        )
 
     requested_profile = profile
 
