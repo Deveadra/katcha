@@ -170,9 +170,7 @@ def _response(row: ExternalEditHandoff) -> InVideoHandoffResponse:
 @router.get("/providers", response_model=list[IntegrationProviderStatus])
 def integration_provider_status() -> list[IntegrationProviderStatus]:
     settings = get_settings()
-    elevenlabs_configured = bool(
-        settings.elevenlabs_api_key and settings.elevenlabs_voice_id
-    )
+    elevenlabs_configured = bool(settings.elevenlabs_api_key)
     return [
         IntegrationProviderStatus(
             provider="elevenlabs",
@@ -180,9 +178,9 @@ def integration_provider_status() -> list[IntegrationProviderStatus]:
             configured=elevenlabs_configured,
             mode="api",
             detail=(
-                "Direct ElevenLabs TTS is ready."
+                "ElevenLabs API is configured. Select voices per channel in Channel Studio."
                 if elevenlabs_configured
-                else "Set KATCHA_ELEVENLABS_API_KEY and KATCHA_ELEVENLABS_VOICE_ID."
+                else "Set KATCHA_ELEVENLABS_API_KEY, then select a channel voice."
             ),
         ),
         IntegrationProviderStatus(
@@ -203,9 +201,13 @@ def integration_provider_status() -> list[IntegrationProviderStatus]:
     "/elevenlabs/status",
     response_model=ElevenLabsStatusResponse,
 )
-def get_elevenlabs_status() -> ElevenLabsStatusResponse:
+def get_elevenlabs_status(
+    channel_profile_id: uuid.UUID | None = Query(default=None),
+) -> ElevenLabsStatusResponse:
     try:
-        return ElevenLabsStatusResponse.model_validate(elevenlabs_status())
+        return ElevenLabsStatusResponse.model_validate(
+            elevenlabs_status(channel_profile_id=channel_profile_id)
+        )
     except ElevenLabsIntegrationError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
