@@ -1,5 +1,9 @@
 from katcha.api.main import app
-from katcha.services.external_edit import _invideo_instructions
+from katcha.services.external_edit import (
+    _invideo_instructions,
+    _next_production_render_generation,
+    _next_short_episode_render_generation,
+)
 
 
 def test_external_provider_routes_are_registered() -> None:
@@ -41,3 +45,30 @@ def test_invideo_brief_keeps_katcha_as_source_of_truth() -> None:
     assert "do not publish directly" in text
     assert "brand.json" in text
     assert "editing-recipe.json" in text
+
+
+
+class _GenerationSession:
+    def __init__(self, current: int | None) -> None:
+        self.current = current
+
+    def scalar(self, _statement: object) -> int | None:
+        return self.current
+
+
+def test_invideo_adoption_uses_next_render_generation() -> None:
+    production_id = __import__("uuid").uuid4()
+    episode_id = __import__("uuid").uuid4()
+
+    assert _next_production_render_generation(
+        _GenerationSession(None),
+        production_id,
+    ) == 1
+    assert _next_production_render_generation(
+        _GenerationSession(3),
+        production_id,
+    ) == 4
+    assert _next_short_episode_render_generation(
+        _GenerationSession(2),
+        episode_id,
+    ) == 3
