@@ -590,6 +590,16 @@ def test_launcher_serves_workspace_shell_without_api(tmp_path):
     threading.Thread(target=server.serve_forever, daemon=True).start()
     try:
         connection = http.client.HTTPConnection("127.0.0.1", server.server_port)
+        connection.request("GET", "/home")
+        response = connection.getresponse()
+        assert response.status == 302
+        assert response.getheader("Location") == "/home/assets/home.html"
+        response.read()
+        connection.request("GET", "/home/assets/home.html")
+        response = connection.getresponse()
+        body = response.read()
+        assert response.status == 200
+        assert b'What needs you now.' in body
         connection.request("GET", "/editing")
         response = connection.getresponse()
         assert response.status == 302
