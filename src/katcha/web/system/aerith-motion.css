@@ -1,0 +1,46 @@
+a,
+button,
+input,
+select,
+textarea,
+summary,
+.workspace-menu-popover,
+#katcha-chat-shortcut {
+    transition:
+        color var(--ae-motion-fast) var(--ae-ease),
+        background-color var(--ae-motion-fast) var(--ae-ease),
+        border-color var(--ae-motion-fast) var(--ae-ease),
+        opacity var(--ae-motion-fast) var(--ae-ease),
+        transform var(--ae-motion-fast) var(--ae-ease),
+        box-shadow var(--ae-motion-base) var(--ae-ease);
+}
+
+.workspace-menu-popover {
+    transform-origin: top left;
+}
+
+.workspace-menu[open] .workspace-menu-popover {
+    animation: ae-popover-in var(--ae-motion-base) var(--ae-ease);
+}
+
+@keyframes ae-popover-in {
+    from {
+        opacity: 0;
+        transform: translateY(-5px) scale(0.985);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+        scroll-behavior: auto !important;
+        animation-duration: 0.001ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.001ms !important;
+    }
+}
