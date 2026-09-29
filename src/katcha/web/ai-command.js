@@ -344,6 +344,8 @@ async function refreshObservability() {
             "$" + Number(row.estimated_cost_usd || 0).toFixed(4);
         $("obs-context").textContent =
             String(row.typed_context_request_count || 0);
+        $("obs-failures").textContent =
+            String(row.failed_request_count || 0);
         $("observability").hidden = false;
     } catch {
         $("observability").hidden = true;
