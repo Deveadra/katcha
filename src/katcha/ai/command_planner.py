@@ -27,6 +27,7 @@ CommandIntent = Literal[
     "performance_advice",
     "create_content",
     "source_discovery",
+    "resource_context",
     "channel_status",
     "unsupported",
 ]
@@ -80,6 +81,8 @@ def _planner_prompt(
         "- source_discovery: search for new public posts, videos, clips, media "
         "candidates, sources, creators, communities, or sites outside the "
         "already-stored clip pool.\n"
+        "- resource_context: explain or inspect typed Katcha resources already "
+        "attached by the operator interface.\n"
         "- channel_status: summarize general current channel/Katcha state.\n"
         "- unsupported: request needs a capability outside this registry.\n\n"
         f"Operator prompt: {user_prompt}\n"
@@ -211,6 +214,7 @@ def deterministic_plan(intent: str, reason: str) -> CommandPlanResult:
             "performance_advice",
             "create_content",
             "source_discovery",
+            "resource_context",
             "channel_status",
             "unsupported",
         }
