@@ -366,8 +366,7 @@ def test_reconcile_existing_runtime_without_relaunch(tmp_path):
         "analysis-worker",
         "renderer",
         "production-worker",
-        "longform-worker",
-        "telegram-worker",
+            "telegram-worker",
         "intelligence-worker",
     ]
     payload = json.dumps(
