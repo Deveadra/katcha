@@ -26,6 +26,8 @@ def test_bootstrap_preserves_keys_and_unrelated_settings(tmp_path):
     assert app.values["KATCHA_OPENAI_API_KEY"] == "private-key"
     assert len(app.values["KATCHA_TELEGRAM_PAIRING_CODE"]) >= 8
     assert "KATCHA_TELEGRAM_REVIEW_STORAGE_ENDPOINT_URL" in runtime.FIELDS
+    app.save({"KATCHA_TELEGRAM_BOT_TOKEN": "123456:fixture-bot-token"})
+    assert app.values["KATCHA_TELEGRAM_BOT_TOKEN"] == "123456:fixture-bot-token"
     assert app.env_path.stat().st_mode & 0o777 == 0o600
     assert "private-key" not in json.dumps(app.snapshot())
 
@@ -365,10 +367,7 @@ def test_reconcile_existing_runtime_without_relaunch(tmp_path):
         "renderer",
         "production-worker",
         "longform-worker",
-        "publishing-worker",
         "telegram-worker",
-        "discovery-worker",
-        "trends-worker",
         "intelligence-worker",
     ]
     payload = json.dumps(
@@ -552,7 +551,7 @@ def test_recovery_recreates_missing_worker_even_when_remaining_services_run(tmp_
     app.health_check_at = runtime.time.monotonic() + 100
     app.services = [
         {"Service": service, "State": "running"}
-        for service in runtime.REQUIRED_SERVICES - {"discovery-worker"}
+        for service in runtime.REQUIRED_SERVICES - {"intelligence-worker"}
     ]
     with patch.object(app, "probe_workspace"), patch.object(app, "operate") as operate:
         app.monitor_once()
@@ -825,3 +824,37 @@ def test_prebuilt_probe_is_bounded_before_workspace_fallback(tmp_path):
     commands = [call.args[0] for call in run.call_args_list]
     assert ["docker", "pull", remote] not in commands
     assert any("build" in command and command[-1:] == ["api"] for command in commands)
+
+
+def test_apply_telegram_recreates_only_api_and_telegram_worker(tmp_path):
+    app = instance(tmp_path)
+    app.desired_running = True
+    app.phase = "ready"
+    app.save(
+        {
+            "KATCHA_TELEGRAM_ENABLED": "true",
+            "KATCHA_TELEGRAM_BOT_TOKEN": "123456:fixture-bot-token",
+        }
+    )
+    with (
+        patch.object(app, "run") as run,
+        patch.object(app, "probe_workspace", return_value=True),
+        patch.object(app, "start_logs"),
+    ):
+        assert app.apply_telegram() is True
+
+    command = run.call_args.args[0]
+    assert "--force-recreate" in command
+    assert "api" in command
+    assert "telegram-worker" in command
+    assert "production-worker" not in command
+    assert "renderer" not in command
+
+
+def test_steady_state_monitor_does_not_probe_every_tick(tmp_path):
+    app = instance(tmp_path)
+    app.phase = "ready"
+    app.health_check_at = runtime.time.monotonic() + 100
+    with patch.object(app, "probe_workspace") as probe:
+        app.monitor_once()
+    probe.assert_not_called()
