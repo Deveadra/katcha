@@ -17,7 +17,11 @@ from katcha.production_models import Production
 from katcha.publishing_models import Publication, PublicationAnalyticsSnapshot
 from katcha.render_models import RenderAttempt
 from katcha.short_episode_models import ShortEpisode
-from katcha.trend_models import TrendOpportunity, TrendTopic
+from katcha.trend_models import (
+    ChannelTrendWatchVersion,
+    TrendOpportunity,
+    TrendTopic,
+)
 
 router = APIRouter(prefix="/v1/operations", tags=["operations"])
 
@@ -397,50 +401,65 @@ def operations_overview(
         attention = [item for item in work_items if item.state == "attention"][:limit]
         active = [item for item in work_items if item.state == "active"][:limit]
 
-        opportunity_filter = (
-            TrendOpportunity.channel_profile_id.in_(channel_ids),
-            TrendOpportunity.expires_at > now,
-        )
-        fresh_opportunity_count = int(
-            session.scalar(
-                select(func.count())
-                .select_from(TrendOpportunity)
-                .where(*opportunity_filter)
+        latest_watch = (
+            select(
+                ChannelTrendWatchVersion.channel_profile_id.label("channel_profile_id"),
+                func.max(ChannelTrendWatchVersion.version).label("version"),
             )
-            or 0
+            .where(ChannelTrendWatchVersion.channel_profile_id.in_(channel_ids))
+            .group_by(ChannelTrendWatchVersion.channel_profile_id)
+            .subquery()
         )
-        opportunity_rows = list(
-            session.scalars(
-                select(TrendOpportunity)
-                .where(*opportunity_filter)
-                .order_by(
-                    TrendOpportunity.opportunity_score.desc(),
-                    TrendOpportunity.confidence.desc(),
-                    TrendOpportunity.created_at.desc(),
+        ranked_opportunities = (
+            select(
+                TrendOpportunity.id.label("id"),
+                func.row_number()
+                .over(
+                    partition_by=(
+                        TrendOpportunity.channel_profile_id,
+                        TrendOpportunity.trend_topic_id,
+                    ),
+                    order_by=(
+                        TrendOpportunity.created_at.desc(),
+                        TrendOpportunity.id.desc(),
+                    ),
                 )
-                .limit(limit)
+                .label("position"),
             )
+            .join(
+                latest_watch,
+                and_(
+                    TrendOpportunity.channel_profile_id
+                    == latest_watch.c.channel_profile_id,
+                    TrendOpportunity.watch_version == latest_watch.c.version,
+                ),
+            )
+            .where(TrendOpportunity.expires_at > now)
+            .subquery()
         )
-        topic_ids = {row.trend_topic_id for row in opportunity_rows}
-        topics = (
-            {
-                topic.id: topic
-                for topic in session.scalars(
-                    select(TrendTopic).where(TrendTopic.id.in_(topic_ids))
-                )
-            }
-            if topic_ids
-            else {}
-        )
+        qualified_opportunity_rows = session.execute(
+            select(TrendOpportunity, TrendTopic)
+            .join(
+                ranked_opportunities,
+                ranked_opportunities.c.id == TrendOpportunity.id,
+            )
+            .join(TrendTopic, TrendTopic.id == TrendOpportunity.trend_topic_id)
+            .where(ranked_opportunities.c.position == 1)
+            .order_by(
+                func.coalesce(
+                    TrendOpportunity.calibrated_score,
+                    TrendOpportunity.opportunity_score,
+                ).desc(),
+                TrendOpportunity.confidence.desc(),
+                TrendOpportunity.id,
+            )
+        ).all()
+        fresh_opportunity_count = len(qualified_opportunity_rows)
         opportunities = [
             OperationsOpportunity(
                 id=row.id,
                 channel_profile_id=row.channel_profile_id,
-                topic=(
-                    topics[row.trend_topic_id].display_name
-                    if row.trend_topic_id in topics
-                    else str(row.trend_topic_id)
-                ),
+                topic=topic.display_name,
                 lifecycle=row.lifecycle,
                 opportunity_score=row.opportunity_score,
                 confidence=row.confidence,
@@ -448,7 +467,7 @@ def operations_overview(
                 reasons=list(row.reasons or [])[:3],
                 href=f"/explorer?channel={row.channel_profile_id}",
             )
-            for row in opportunity_rows[:limit]
+            for row, topic in qualified_opportunity_rows[:limit]
         ]
 
         recent_publications = list(
@@ -585,16 +604,8 @@ def operations_overview(
         attention_all = [item for item in work_items if item.state == "attention"]
         active_all = [item for item in work_items if item.state == "active"]
         opportunity_count_by_channel = {channel_id: 0 for channel_id in channel_ids}
-        opportunity_counts = session.execute(
-            select(
-                TrendOpportunity.channel_profile_id,
-                func.count(TrendOpportunity.id),
-            )
-            .where(*opportunity_filter)
-            .group_by(TrendOpportunity.channel_profile_id)
-        )
-        for channel_id, count in opportunity_counts:
-            opportunity_count_by_channel[channel_id] = int(count)
+        for row, _topic in qualified_opportunity_rows:
+            opportunity_count_by_channel[row.channel_profile_id] += 1
         published_count_by_channel = {channel_id: 0 for channel_id in channel_ids}
         for row in published_last_7d:
             channel_id = youtube_to_channel.get(row.youtube_connection_id)
