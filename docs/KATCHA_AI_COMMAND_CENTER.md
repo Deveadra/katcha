@@ -186,6 +186,27 @@ controller cannot reuse another controller's cursor key. The audit actor is serv
 for example `control-principal:aerith`; client-supplied actor strings are not authoritative.
 
 
+## Control-session handshake
+
+External orchestrators should verify their effective Katcha authority before doing work.
+
+`GET /v1/control/session` is available to every authenticated control principal without
+requiring an additional capability scope. It returns only server-derived, non-secret state:
+
+- the control contract version and Katcha version;
+- authenticated actor and optional named principal;
+- authentication mode;
+- effective scopes;
+- wildcard or explicit channel access;
+- boolean capability flags for the supported control scopes;
+- event-stream and acknowledgement endpoint contracts;
+- whether the principal must select a channel-scoped event stream.
+
+The response never contains bearer tokens or other credentials. Aerith can use this endpoint
+as its startup handshake and reject a deployment early if required scopes or channel access
+are missing, rather than discovering the problem after a workflow command has already been
+attempted.
+
 ## Durable conversation history
 
 Command Center conversations are now server-side records rather than browser-only state.

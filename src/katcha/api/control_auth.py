@@ -137,6 +137,9 @@ def _require_named_principal_route_access(request: Request) -> None:
         # action-specific scope before claiming or executing it.
         return
 
+    if path == "/v1/control/session":
+        return
+
     if path == "/v1/ai/command":
         require_control_scope(request, "ai:command")
         return
@@ -226,8 +229,18 @@ def control_principal_name(request: Request) -> str | None:
     return str(value) if value else None
 
 
-def require_control_scope(request: Request, scope: str) -> None:
+def control_scopes(request: Request) -> set[str]:
     scopes = set(getattr(request.state, "control_scopes", set()))
+    if not scopes:
+        raise HTTPException(
+            status_code=401,
+            detail="authenticated control scopes required",
+        )
+    return scopes
+
+
+def require_control_scope(request: Request, scope: str) -> None:
+    scopes = control_scopes(request)
     if "*" in scopes or scope in scopes:
         return
     raise HTTPException(
@@ -237,7 +250,7 @@ def require_control_scope(request: Request, scope: str) -> None:
 
 
 def require_control_scope_any(request: Request, *scopes: str) -> None:
-    granted = set(getattr(request.state, "control_scopes", set()))
+    granted = control_scopes(request)
     if "*" in granted or any(scope in granted for scope in scopes):
         return
     wanted = ", ".join(scopes)
