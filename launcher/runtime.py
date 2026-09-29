@@ -948,19 +948,36 @@ class Handler(BaseHTTPRequestHandler):
             "/clips": "/editing/assets/clips.html",
             "/channels": "/channels/assets/channels.html",
             "/ai": "/ai/assets/ai.html",
+            "/operations": "/operations/assets/operations.html",
         }
         if path in redirects:
             suffix = "?focus=chat" if path == "/ai" and self.path.endswith("?focus=chat") else ""
             self.redirect(redirects[path] + suffix)
             return True
-        prefixes = ("/editing/assets/", "/explorer/assets/", "/channels/assets/", "/ai/assets/")
+        prefixes = (
+            "/editing/assets/",
+            "/explorer/assets/",
+            "/channels/assets/",
+            "/ai/assets/",
+            "/operations/assets/",
+        )
         prefix = next((item for item in prefixes if path.startswith(item)), None)
         if prefix is None:
             return False
         name = path.removeprefix(prefix)
-        if not name or Path(name).name != name:
+        relative = Path(name)
+        if (
+            not name
+            or relative.is_absolute()
+            or any(part in {"", ".", ".."} for part in relative.parts)
+        ):
             return False
-        asset = ROOT / "src" / "katcha" / "web" / name
+        web_root = (ROOT / "src" / "katcha" / "web").resolve()
+        asset = (web_root / relative).resolve()
+        try:
+            asset.relative_to(web_root)
+        except ValueError:
+            return False
         if not asset.is_file():
             return False
         mime = mimetypes.guess_type(asset.name)[0] or "application/octet-stream"
@@ -1067,6 +1084,7 @@ class Handler(BaseHTTPRequestHandler):
             "/clips",
             "/channels",
             "/ai",
+            "/operations",
         )
         if not self.path.startswith(allowed_prefixes):
             return self.send(404, {"error": "Not found"})
