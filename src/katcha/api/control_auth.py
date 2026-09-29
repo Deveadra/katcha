@@ -56,9 +56,7 @@ def _credential_is_active(
         return False
     if credential.not_before is not None and now < credential.not_before:
         return False
-    if credential.expires_at is not None and now >= credential.expires_at:
-        return False
-    return True
+    return credential.expires_at is None or now < credential.expires_at
 
 
 def _set_identity(
