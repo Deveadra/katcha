@@ -555,6 +555,9 @@ const analytics = [
     await page.locator("#token").fill("fixture-token");
     await page.locator("#connect-form button").click();
     await page.locator("#studio:not([hidden])").waitFor();
+    await page.waitForFunction(
+        () => document.querySelector("#metric-videos")?.textContent === "2",
+    );
     assert.equal(await page.locator("#channel").inputValue(), "channel-1");
     assert.match(await page.locator("#channel").innerText(), /Fixture Gaming/);
 
