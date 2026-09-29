@@ -16,6 +16,7 @@ const state = {
     elevenlabsStatus: null,
     elevenlabsConfig: null,
     elevenlabsVoices: [],
+    elevenlabsVoiceLibrary: [],
     elevenlabsModels: [],
     elevenlabsPreviewUrl: null,
     providerError: "",
@@ -287,6 +288,7 @@ async function loadProviderData() {
     state.elevenlabsStatus = null;
     state.elevenlabsConfig = null;
     state.elevenlabsVoices = [];
+    state.elevenlabsVoiceLibrary = [];
     state.elevenlabsModels = [];
     state.providerError = "";
     if (!state.channelId) return;
@@ -308,6 +310,22 @@ async function loadProviderData() {
         ]);
         if (configResult[0].status === "fulfilled") {
             state.elevenlabsConfig = configResult[0].value;
+            state.elevenlabsVoiceLibrary = (state.elevenlabsConfig?.saved_voices || [])
+                .filter((voice) => voice?.voice_id)
+                .map((voice) => ({ ...voice }));
+            if (
+                state.elevenlabsConfig?.voice_id &&
+                !state.elevenlabsVoiceLibrary.some(
+                    (voice) => voice.voice_id === state.elevenlabsConfig.voice_id,
+                )
+            ) {
+                state.elevenlabsVoiceLibrary.unshift({
+                    voice_id: state.elevenlabsConfig.voice_id,
+                    name: state.elevenlabsConfig.voice_name || state.elevenlabsConfig.voice_id,
+                    category: null,
+                    labels: {},
+                });
+            }
         }
         if (configResult[1].status === "fulfilled") {
             state.elevenlabsStatus = configResult[1].value;
@@ -323,6 +341,99 @@ async function loadProviderData() {
     } catch (error) {
         state.providerError = error.message;
     }
+}
+
+function discoveredVoice(voiceId) {
+    return state.elevenlabsVoices.find((voice) => voice.voice_id === voiceId) || null;
+}
+
+function voiceLibraryOption(voice) {
+    const discovered = discoveredVoice(voice.voice_id);
+    const name = discovered?.name || voice.name || voice.voice_id;
+    return '<option value="' + escapeHtml(voice.voice_id) + '">' + escapeHtml(name) + "</option>";
+}
+
+function normalizedVoiceLibrary() {
+    const seen = new Set();
+    return state.elevenlabsVoiceLibrary
+        .filter((voice) => {
+            const id = String(voice?.voice_id || "").trim();
+            if (!id || seen.has(id)) return false;
+            seen.add(id);
+            return true;
+        })
+        .slice(0, 12)
+        .map((voice) => {
+            const discovered = discoveredVoice(voice.voice_id);
+            return {
+                voice_id: voice.voice_id,
+                name: discovered?.name || voice.name || voice.voice_id,
+                category: discovered?.category || voice.category || null,
+                labels: discovered?.labels || voice.labels || {},
+            };
+        });
+}
+
+function renderVoiceLibrary(configured) {
+    state.elevenlabsVoiceLibrary = normalizedVoiceLibrary();
+    const library = state.elevenlabsVoiceLibrary;
+    const host = $("elevenlabs-saved-voices");
+    host.innerHTML = library.length
+        ? library.map((voice) => {
+            const discovered = discoveredVoice(voice.voice_id);
+            const name = discovered?.name || voice.name || voice.voice_id;
+            const category = discovered?.category || voice.category || "";
+            return (
+                '<div class="voice-library-row">' +
+                    '<div><strong>' + escapeHtml(name) + '</strong>' +
+                    '<small>' + escapeHtml(voice.voice_id) +
+                    (category ? " · " + escapeHtml(category) : "") +
+                    '</small></div>' +
+                    '<button type="button" class="voice-remove" data-remove-elevenlabs-voice="' +
+                    escapeHtml(voice.voice_id) + '" aria-label="Remove ' +
+                    escapeHtml(name) + '">Remove</button>' +
+                '</div>'
+            );
+        }).join("")
+        : '<div class="provider-help">No voices saved for this channel yet.</div>';
+
+    const optionMarkup = library.map(voiceLibraryOption).join("");
+    const defaultSelect = $("elevenlabs-default-voice");
+    const primarySelect = $("elevenlabs-longform-primary");
+    const secondarySelect = $("elevenlabs-longform-secondary");
+    const previewSelect = $("elevenlabs-preview-voice");
+    const previous = {
+        defaultVoice: defaultSelect.value || state.elevenlabsConfig?.voice_id || "",
+        primary: primarySelect.value || state.elevenlabsConfig?.longform_primary_voice_id || "",
+        secondary: secondarySelect.value || state.elevenlabsConfig?.longform_secondary_voice_id || "",
+        preview: previewSelect.value || state.elevenlabsConfig?.voice_id || "",
+    };
+
+    defaultSelect.innerHTML = library.length
+        ? optionMarkup
+        : '<option value="">Add a voice first</option>';
+    primarySelect.innerHTML = library.length
+        ? optionMarkup
+        : '<option value="">Add a voice first</option>';
+    secondarySelect.innerHTML =
+        '<option value="">Not assigned</option>' + optionMarkup;
+    previewSelect.innerHTML = library.length
+        ? optionMarkup
+        : '<option value="">Add a voice first</option>';
+
+    const ids = new Set(library.map((voice) => voice.voice_id));
+    const fallback = library[0]?.voice_id || "";
+    defaultSelect.value = ids.has(previous.defaultVoice) ? previous.defaultVoice : fallback;
+    primarySelect.value = ids.has(previous.primary) ? previous.primary : defaultSelect.value;
+    secondarySelect.value = ids.has(previous.secondary) ? previous.secondary : "";
+    previewSelect.value = ids.has(previous.preview) ? previous.preview : defaultSelect.value;
+
+    for (const node of [defaultSelect, primarySelect, secondarySelect, previewSelect]) {
+        node.disabled = !configured || !library.length;
+    }
+    host.querySelectorAll("[data-remove-elevenlabs-voice]").forEach((button) => {
+        button.disabled = !configured;
+    });
 }
 
 function renderProviders() {
@@ -346,27 +457,27 @@ function renderProviders() {
         ? number(subscription.character_count || 0) + " / " + number(subscription.character_limit || 0) + " characters"
         : "—";
 
-    const voiceInput = $("elevenlabs-voice-id");
-    const voiceList = $("elevenlabs-voices");
-    voiceList.innerHTML = state.elevenlabsVoices.map((voice) =>
+    const discoveredList = $("elevenlabs-voices");
+    discoveredList.innerHTML = state.elevenlabsVoices.map((voice) =>
         '<option value="' + escapeHtml(voice.voice_id || "") + '">' +
         escapeHtml(voice.name || voice.voice_id || "Voice") +
         (voice.category ? " · " + escapeHtml(voice.category) : "") +
         "</option>"
     ).join("");
-    voiceInput.value = state.elevenlabsConfig?.voice_id || state.elevenlabsStatus?.voice_id || "";
-    voiceInput.disabled = !configured;
+    $("elevenlabs-new-voice-id").disabled = !configured;
+    $("add-elevenlabs-voice").disabled = !configured;
 
-    const selectedVoice = state.elevenlabsVoices.find(
-        (voice) => voice.voice_id === voiceInput.value,
-    );
-    const voiceName = selectedVoice?.name
-        || state.elevenlabsConfig?.voice_name
-        || state.elevenlabsStatus?.voice_name;
-    $("elevenlabs-voice-help").textContent = voiceName
-        ? voiceName + (selectedVoice?.category ? " · " + selectedVoice.category : "")
+    renderVoiceLibrary(configured);
+
+    const defaultVoice = $("elevenlabs-default-voice").value;
+    const selectedVoice = discoveredVoice(defaultVoice)
+        || state.elevenlabsVoiceLibrary.find((voice) => voice.voice_id === defaultVoice);
+    $("elevenlabs-voice-help").textContent = state.elevenlabsVoiceLibrary.length
+        ? "Default: " +
+            (selectedVoice?.name || defaultVoice) +
+            ". Long-form Voice A and Voice B are stored independently for multi-host narration."
         : configured
-            ? "Paste a known voice ID if voice discovery is unavailable on your plan."
+            ? "Add a voice ID from your ElevenLabs account. You can keep up to 12 per channel."
             : "Configure the ElevenLabs API key in Katcha first.";
 
     const modelSelect = $("elevenlabs-model");
@@ -397,27 +508,51 @@ function updateProviderActionState() {
     const configured = Boolean(
         state.providerStatus.find((row) => row.provider === "elevenlabs")?.configured,
     );
-    const voiceId = $("elevenlabs-voice-id").value.trim();
+    const defaultVoice = $("elevenlabs-default-voice").value;
+    const previewVoice = $("elevenlabs-preview-voice").value;
     const modelId = $("elevenlabs-model").value;
-    const actionable = configured && Boolean(voiceId) && Boolean(modelId);
+    const actionable = configured && state.elevenlabsVoiceLibrary.length > 0 && Boolean(defaultVoice) && Boolean(modelId);
     $("save-elevenlabs").disabled = !actionable;
-    $("preview-elevenlabs").disabled = !actionable;
+    $("preview-elevenlabs").disabled = !(configured && Boolean(previewVoice) && Boolean(modelId));
     $("refresh-elevenlabs").disabled = !configured;
+}
 
-    const selectedVoice = state.elevenlabsVoices.find(
-        (voice) => voice.voice_id === voiceId,
-    );
-    if (selectedVoice?.name) {
-        $("elevenlabs-voice-help").textContent =
-            selectedVoice.name +
-            (selectedVoice.category ? " · " + selectedVoice.category : "");
+function addElevenLabsVoice() {
+    const input = $("elevenlabs-new-voice-id");
+    const voiceId = input.value.trim();
+    if (!voiceId) throw new Error("Paste or choose an ElevenLabs voice ID first.");
+    if (state.elevenlabsVoiceLibrary.some((voice) => voice.voice_id === voiceId)) {
+        input.value = "";
+        setStatus("That voice is already in this channel's library.", "success");
+        return;
     }
+    if (state.elevenlabsVoiceLibrary.length >= 12) {
+        throw new Error("A channel can save at most 12 ElevenLabs voices.");
+    }
+    const discovered = discoveredVoice(voiceId);
+    state.elevenlabsVoiceLibrary.push({
+        voice_id: voiceId,
+        name: discovered?.name || voiceId,
+        category: discovered?.category || null,
+        labels: discovered?.labels || {},
+    });
+    input.value = "";
+    renderProviders();
+    setStatus("Voice added. Save the voice configuration to make it persistent.", "success");
+}
+
+function removeElevenLabsVoice(voiceId) {
+    state.elevenlabsVoiceLibrary = state.elevenlabsVoiceLibrary.filter(
+        (voice) => voice.voice_id !== voiceId,
+    );
+    renderProviders();
+    setStatus("Voice removed from the draft configuration. Save to persist the change.", "success");
 }
 
 async function saveElevenLabsConfig() {
-    const voiceId = $("elevenlabs-voice-id").value.trim();
+    const voiceId = $("elevenlabs-default-voice").value;
     const modelId = $("elevenlabs-model").value;
-    if (!voiceId || !modelId) throw new Error("Choose an ElevenLabs voice and TTS model.");
+    if (!voiceId || !modelId) throw new Error("Add a voice, then choose the default voice and TTS model.");
     state.elevenlabsConfig = await api(
         "/v1/integrations/elevenlabs/channels/" + encodeURIComponent(state.channelId),
         {
@@ -425,26 +560,32 @@ async function saveElevenLabsConfig() {
             body: JSON.stringify({
                 enabled: true,
                 voice_id: voiceId,
+                saved_voice_ids: state.elevenlabsVoiceLibrary.map((voice) => voice.voice_id),
+                longform_primary_voice_id: $("elevenlabs-longform-primary").value || voiceId,
+                longform_secondary_voice_id: $("elevenlabs-longform-secondary").value || null,
                 model_id: modelId,
                 actor: "channel-studio",
             }),
         },
+    );
+    state.elevenlabsVoiceLibrary = (state.elevenlabsConfig.saved_voices || []).map(
+        (voice) => ({ ...voice }),
     );
     state.elevenlabsStatus = await api(
         "/v1/integrations/elevenlabs/status?channel_profile_id=" + encodeURIComponent(state.channelId),
     );
     renderProviders();
     setStatus(
-        "ElevenLabs voice saved for " + channelName(activeChannel()) + ". Future narration will use this channel selection.",
+        "ElevenLabs voice library saved for " + channelName(activeChannel()) + ".",
         "success",
     );
 }
 
 async function previewElevenLabsVoice() {
-    const voiceId = $("elevenlabs-voice-id").value.trim();
+    const voiceId = $("elevenlabs-preview-voice").value;
     const modelId = $("elevenlabs-model").value;
     const text = $("elevenlabs-preview-text").value.trim();
-    if (!voiceId || !modelId || !text) throw new Error("Voice, model, and preview text are required.");
+    if (!voiceId || !modelId || !text) throw new Error("Preview voice, model, and preview text are required.");
     const blob = await audioBlob(
         "/v1/integrations/elevenlabs/channels/" + encodeURIComponent(state.channelId) + "/preview",
         {
@@ -462,7 +603,7 @@ async function previewElevenLabsVoice() {
     audio.src = state.elevenlabsPreviewUrl;
     audio.hidden = false;
     await audio.play().catch(() => {});
-    setStatus("ElevenLabs preview generated. Listen before saving this voice to the channel.", "success");
+    setStatus("ElevenLabs preview generated for " + (discoveredVoice(voiceId)?.name || voiceId) + ".", "success");
 }
 
 async function loadChannel() {
@@ -1452,8 +1593,36 @@ $("refresh-elevenlabs").addEventListener("click", async () => {
         renderProviders();
     }
 });
-$("elevenlabs-voice-id").addEventListener("input", updateProviderActionState);
-$("elevenlabs-model").addEventListener("change", updateProviderActionState);
+$("add-elevenlabs-voice").addEventListener("click", () => {
+    try {
+        addElevenLabsVoice();
+    } catch (error) {
+        setStatus(error.message, "error");
+    }
+});
+$("elevenlabs-saved-voices").addEventListener("click", (event) => {
+    const button = event.target.closest("[data-remove-elevenlabs-voice]");
+    if (!button) return;
+    removeElevenLabsVoice(button.dataset.removeElevenlabsVoice);
+});
+$("elevenlabs-new-voice-id").addEventListener("keydown", (event) => {
+    if (event.key !== "Enter") return;
+    event.preventDefault();
+    try {
+        addElevenLabsVoice();
+    } catch (error) {
+        setStatus(error.message, "error");
+    }
+});
+for (const id of [
+    "elevenlabs-default-voice",
+    "elevenlabs-longform-primary",
+    "elevenlabs-longform-secondary",
+    "elevenlabs-preview-voice",
+    "elevenlabs-model",
+]) {
+    $(id).addEventListener("change", updateProviderActionState);
+}
 window.addEventListener("beforeunload", revokeProviderPreview);
 $("growth-goals-form").addEventListener("submit", saveGrowthGoals);
 $("add-custom-goal").addEventListener("click", addCustomGoal);
