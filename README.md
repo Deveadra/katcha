@@ -115,8 +115,8 @@ leave it on `auto` so Katcha can route normally. Provider-reported credits and
 request IDs are stored with usage events; USD conversion is optional because the
 effective cost per credit depends on the account plan.
 
-InVideo is integrated as an external edit bridge. The Editing Control Center can
-prepare a self-contained package containing source media, narration assets,
+InVideo is integrated as an external edit bridge. Clip Studio can prepare a
+self-contained package containing source media, narration assets,
 `manifest.json`, `brand.json`, `editing-recipe.json`, and `script.json`.
 After editing in InVideo, import the finished MP4 into the same handoff. Katcha
 verifies the returned media before an explicit operator action can adopt it as
@@ -125,7 +125,9 @@ InVideo is never allowed to publish directly.
 
 Direct InVideo project automation is intentionally not implemented against
 undocumented/private endpoints. The handoff model provides a stable extension
-point for a documented account API later.
+point for a documented account API later. Clip Studio's External tab also shows
+the configured ElevenLabs voice/account usage and drives the complete InVideo
+prepare → download → returned-MP4 import → verified adoption workflow.
 
 ## Budget safety
 

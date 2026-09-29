@@ -11,6 +11,13 @@ const state = {
     selectedPublicationId: "",
     goalDraft: [],
     goalChannelId: "",
+    providerStatus: [],
+    elevenlabsStatus: null,
+    elevenlabsConfig: null,
+    elevenlabsVoices: [],
+    elevenlabsModels: [],
+    elevenlabsPreviewUrl: null,
+    providerError: "",
 };
 
 const $ = (id) => document.getElementById(id);
@@ -39,6 +46,35 @@ async function api(path, options = {}) {
     }
     if (response.status === 204) return null;
     return response.json();
+}
+
+async function audioBlob(path, options = {}) {
+    const response = await fetch(path, {
+        ...options,
+        headers: headers(options.headers || {}),
+    });
+    if (!response.ok) {
+        let message = response.status + " " + response.statusText;
+        try {
+            const payload = await response.json();
+            message = payload.detail || message;
+        } catch {}
+        throw new Error(message);
+    }
+    return response.blob();
+}
+
+function revokeProviderPreview() {
+    if (state.elevenlabsPreviewUrl) {
+        URL.revokeObjectURL(state.elevenlabsPreviewUrl);
+        state.elevenlabsPreviewUrl = null;
+    }
+    const audio = $("elevenlabs-preview");
+    if (audio) {
+        audio.removeAttribute("src");
+        audio.hidden = true;
+        audio.load();
+    }
 }
 
 function setStatus(message, kind = "") {
@@ -112,14 +148,26 @@ function activeConnection() {
     return state.connections.find((item) => item.id === channel.youtube_connection_id) || null;
 }
 
+function askKatchaHref(kind, id, prompt) {
+    const params = new URLSearchParams({
+        channel: state.channelId,
+        resource_kind: kind,
+        resource_id: id,
+        prompt,
+        focus: "chat",
+    });
+    return "/ai?" + params.toString();
+}
+
 function latestSnapshot(publicationId) {
     const detail = state.analytics.get(publicationId);
     return detail ? detail.snapshot : null;
 }
 
 async function connect() {
-    state.token = $("token").value.trim();
+    state.token = $("token").value.trim() || state.token;
     $("token").value = "";
+    if (state.token) sessionStorage.setItem("katcha.controlToken", state.token);
     $("connection-state").textContent = "CONNECTING";
     setStatus("Loading YouTube connections and channel workspaces…");
     try {
@@ -232,6 +280,190 @@ function renderChannelSelect() {
         .join("");
 }
 
+async function loadProviderData() {
+    revokeProviderPreview();
+    state.providerStatus = [];
+    state.elevenlabsStatus = null;
+    state.elevenlabsConfig = null;
+    state.elevenlabsVoices = [];
+    state.elevenlabsModels = [];
+    state.providerError = "";
+    if (!state.channelId) return;
+
+    try {
+        state.providerStatus = await api("/v1/integrations/providers");
+        const eleven = state.providerStatus.find((row) => row.provider === "elevenlabs");
+        const configResult = await Promise.allSettled([
+            api("/v1/integrations/elevenlabs/channels/" + encodeURIComponent(state.channelId)),
+            eleven?.configured
+                ? api("/v1/integrations/elevenlabs/status?channel_profile_id=" + encodeURIComponent(state.channelId))
+                : Promise.resolve(null),
+            eleven?.configured
+                ? api("/v1/integrations/elevenlabs/models")
+                : Promise.resolve([]),
+            eleven?.configured
+                ? api("/v1/integrations/elevenlabs/voices?page_size=100")
+                : Promise.resolve({ voices: [] }),
+        ]);
+        if (configResult[0].status === "fulfilled") {
+            state.elevenlabsConfig = configResult[0].value;
+        }
+        if (configResult[1].status === "fulfilled") {
+            state.elevenlabsStatus = configResult[1].value;
+        }
+        if (configResult[2].status === "fulfilled") {
+            state.elevenlabsModels = configResult[2].value || [];
+        }
+        if (configResult[3].status === "fulfilled") {
+            state.elevenlabsVoices = configResult[3].value?.voices || [];
+        }
+        const rejected = configResult.find((result) => result.status === "rejected");
+        if (rejected) state.providerError = rejected.reason?.message || "Provider discovery is partially unavailable.";
+    } catch (error) {
+        state.providerError = error.message;
+    }
+}
+
+function renderProviders() {
+    const elevenProvider = state.providerStatus.find((row) => row.provider === "elevenlabs");
+    const invideoProvider = state.providerStatus.find((row) => row.provider === "invideo");
+    const connected = Boolean(state.elevenlabsStatus?.connected);
+    const configured = Boolean(elevenProvider?.configured);
+    $("elevenlabs-state").textContent = connected
+        ? "CONNECTED"
+        : configured
+            ? "CONFIGURED"
+            : "NOT CONFIGURED";
+    $("elevenlabs-detail").textContent =
+        state.providerError
+        || state.elevenlabsStatus?.detail
+        || elevenProvider?.detail
+        || "ElevenLabs status unavailable.";
+    $("elevenlabs-plan").textContent = state.elevenlabsStatus?.subscription?.tier || "—";
+    const subscription = state.elevenlabsStatus?.subscription;
+    $("elevenlabs-usage").textContent = subscription
+        ? number(subscription.character_count || 0) + " / " + number(subscription.character_limit || 0) + " characters"
+        : "—";
+
+    const voiceInput = $("elevenlabs-voice-id");
+    const voiceList = $("elevenlabs-voices");
+    voiceList.innerHTML = state.elevenlabsVoices.map((voice) =>
+        '<option value="' + escapeHtml(voice.voice_id || "") + '">' +
+        escapeHtml(voice.name || voice.voice_id || "Voice") +
+        (voice.category ? " · " + escapeHtml(voice.category) : "") +
+        "</option>"
+    ).join("");
+    voiceInput.value = state.elevenlabsConfig?.voice_id || state.elevenlabsStatus?.voice_id || "";
+    voiceInput.disabled = !configured;
+
+    const selectedVoice = state.elevenlabsVoices.find(
+        (voice) => voice.voice_id === voiceInput.value,
+    );
+    const voiceName = selectedVoice?.name
+        || state.elevenlabsConfig?.voice_name
+        || state.elevenlabsStatus?.voice_name;
+    $("elevenlabs-voice-help").textContent = voiceName
+        ? voiceName + (selectedVoice?.category ? " · " + selectedVoice.category : "")
+        : configured
+            ? "Paste a known voice ID if voice discovery is unavailable on your plan."
+            : "Configure the ElevenLabs API key in Katcha first.";
+
+    const modelSelect = $("elevenlabs-model");
+    const savedModel = state.elevenlabsConfig?.model_id || state.elevenlabsStatus?.model_id || "";
+    const models = [...state.elevenlabsModels];
+    if (savedModel && !models.some((row) => row.model_id === savedModel)) {
+        models.unshift({ model_id: savedModel, name: savedModel });
+    }
+    modelSelect.innerHTML = models.length
+        ? models.map((model) =>
+            '<option value="' + escapeHtml(model.model_id || "") + '">' +
+            escapeHtml(model.name || model.model_id || "TTS model") +
+            "</option>"
+        ).join("")
+        : '<option value="">No TTS models discovered</option>';
+    if (savedModel) modelSelect.value = savedModel;
+    modelSelect.disabled = !configured || !models.length;
+
+    updateProviderActionState();
+
+    $("invideo-state").textContent = invideoProvider?.configured ? "BRIDGE READY" : "UNAVAILABLE";
+    $("invideo-detail").textContent = invideoProvider?.detail
+        || "Direct InVideo automation is waiting for a documented account API contract.";
+    $("invideo-studio-link").href = "/studio?channel=" + encodeURIComponent(state.channelId);
+}
+
+function updateProviderActionState() {
+    const configured = Boolean(
+        state.providerStatus.find((row) => row.provider === "elevenlabs")?.configured,
+    );
+    const voiceId = $("elevenlabs-voice-id").value.trim();
+    const modelId = $("elevenlabs-model").value;
+    const actionable = configured && Boolean(voiceId) && Boolean(modelId);
+    $("save-elevenlabs").disabled = !actionable;
+    $("preview-elevenlabs").disabled = !actionable;
+    $("refresh-elevenlabs").disabled = !configured;
+
+    const selectedVoice = state.elevenlabsVoices.find(
+        (voice) => voice.voice_id === voiceId,
+    );
+    if (selectedVoice?.name) {
+        $("elevenlabs-voice-help").textContent =
+            selectedVoice.name +
+            (selectedVoice.category ? " · " + selectedVoice.category : "");
+    }
+}
+
+async function saveElevenLabsConfig() {
+    const voiceId = $("elevenlabs-voice-id").value.trim();
+    const modelId = $("elevenlabs-model").value;
+    if (!voiceId || !modelId) throw new Error("Choose an ElevenLabs voice and TTS model.");
+    state.elevenlabsConfig = await api(
+        "/v1/integrations/elevenlabs/channels/" + encodeURIComponent(state.channelId),
+        {
+            method: "PUT",
+            body: JSON.stringify({
+                enabled: true,
+                voice_id: voiceId,
+                model_id: modelId,
+                actor: "channel-studio",
+            }),
+        },
+    );
+    state.elevenlabsStatus = await api(
+        "/v1/integrations/elevenlabs/status?channel_profile_id=" + encodeURIComponent(state.channelId),
+    );
+    renderProviders();
+    setStatus(
+        "ElevenLabs voice saved for " + channelName(activeChannel()) + ". Future narration will use this channel selection.",
+        "success",
+    );
+}
+
+async function previewElevenLabsVoice() {
+    const voiceId = $("elevenlabs-voice-id").value.trim();
+    const modelId = $("elevenlabs-model").value;
+    const text = $("elevenlabs-preview-text").value.trim();
+    if (!voiceId || !modelId || !text) throw new Error("Voice, model, and preview text are required.");
+    const blob = await audioBlob(
+        "/v1/integrations/elevenlabs/channels/" + encodeURIComponent(state.channelId) + "/preview",
+        {
+            method: "POST",
+            body: JSON.stringify({
+                text,
+                voice_id: voiceId,
+                model_id: modelId,
+            }),
+        },
+    );
+    revokeProviderPreview();
+    state.elevenlabsPreviewUrl = URL.createObjectURL(blob);
+    const audio = $("elevenlabs-preview");
+    audio.src = state.elevenlabsPreviewUrl;
+    audio.hidden = false;
+    await audio.play().catch(() => {});
+    setStatus("ElevenLabs preview generated. Listen before saving this voice to the channel.", "success");
+}
+
 async function loadChannel() {
     if (!state.channelId) return;
     setStatus("Loading channel operations…");
@@ -252,6 +484,7 @@ async function loadChannel() {
         state.publications = publications;
         state.productions = productions;
         state.brands = brands;
+        await loadProviderData();
 
         const measurable = state.publications
             .filter((item) => item.youtube_video_id)
@@ -291,6 +524,7 @@ function renderAll() {
     renderGrowth();
     renderProductions();
     renderControls();
+    renderProviders();
 }
 
 function renderChannelHeader() {
@@ -819,6 +1053,15 @@ function renderVideoDetail() {
         '</div><div class="detail-actions">' +
         youtube +
         refresh +
+        '<a class="studio-button secondary small" href="' +
+        escapeHtml(
+            askKatchaHref(
+                "publication",
+                item.id,
+                "Explain this video’s performance, current state, and the strongest evidence-backed change to test next.",
+            ),
+        ) +
+        '">Ask Katcha ✦</a>' +
         '</div><div class="video-kpis">' +
         videoKpi("Views", snapshot ? compact(snapshot.views) : "—") +
         videoKpi("Avg viewed", snapshot ? percent(Number(snapshot.average_view_percentage || 0) / 100, 1) : "—") +
@@ -989,7 +1232,15 @@ function renderProductions() {
                 escapeHtml(item.edit_blueprint_key || "default recipe") +
                 "</span><span>" +
                 escapeHtml(dateText(item.created_at)) +
-                "</span></div></article>"
+                '</span><a class="studio-button secondary small" href="' +
+                escapeHtml(
+                    askKatchaHref(
+                        "production",
+                        item.id,
+                        "Explain this production’s state, any failure evidence, and what should happen next.",
+                    ),
+                ) +
+                '">Ask Katcha ✦</a></div></article>'
             );
         })
         .join("");
@@ -1084,11 +1335,50 @@ $("connect-form").addEventListener("submit", (event) => {
     connect();
 });
 $("channel").addEventListener("change", async (event) => {
+    revokeProviderPreview();
     state.channelId = event.target.value;
     await loadChannel();
 });
 $("reload").addEventListener("click", loadChannel);
 $("refresh-intelligence").addEventListener("click", refreshIntelligence);
+$("save-elevenlabs").addEventListener("click", async () => {
+    const button = $("save-elevenlabs");
+    button.disabled = true;
+    try {
+        await saveElevenLabsConfig();
+    } catch (error) {
+        setStatus(error.message, "error");
+    } finally {
+        renderProviders();
+    }
+});
+$("preview-elevenlabs").addEventListener("click", async () => {
+    const button = $("preview-elevenlabs");
+    button.disabled = true;
+    try {
+        await previewElevenLabsVoice();
+    } catch (error) {
+        setStatus(error.message, "error");
+    } finally {
+        renderProviders();
+    }
+});
+$("refresh-elevenlabs").addEventListener("click", async () => {
+    const button = $("refresh-elevenlabs");
+    button.disabled = true;
+    try {
+        await loadProviderData();
+        renderProviders();
+        setStatus("Provider data refreshed.", "success");
+    } catch (error) {
+        setStatus(error.message, "error");
+    } finally {
+        renderProviders();
+    }
+});
+$("elevenlabs-voice-id").addEventListener("input", updateProviderActionState);
+$("elevenlabs-model").addEventListener("change", updateProviderActionState);
+window.addEventListener("beforeunload", revokeProviderPreview);
 $("growth-goals-form").addEventListener("submit", saveGrowthGoals);
 $("add-custom-goal").addEventListener("click", addCustomGoal);
 $("growth-pace").addEventListener("change", (event) => {

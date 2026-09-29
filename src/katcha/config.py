@@ -137,6 +137,7 @@ class Settings(BaseSettings):
     openai_api_key: str | None = None
     gemini_api_key: str | None = None
     elevenlabs_api_key: str | None = None
+    elevenlabs_base_url: str = "https://api.elevenlabs.io"
     elevenlabs_voice_id: str | None = None
     elevenlabs_model_id: str = "eleven_multilingual_v2"
     elevenlabs_output_format: str = "pcm_24000"

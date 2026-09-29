@@ -4,7 +4,7 @@ import json
 import sys
 import threading
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 SPEC = importlib.util.spec_from_file_location("runtime", Path(__file__).parents[1] / "runtime.py")
 runtime = importlib.util.module_from_spec(SPEC)
@@ -121,6 +121,71 @@ def test_launcher_live_choice_enables_ai(tmp_path):
         server.server_close()
 
 
+def test_wsl_browser_open_uses_host_fallbacks(tmp_path):
+    app = instance(tmp_path)
+    failed = MagicMock(returncode=1, stderr="failed")
+    succeeded = MagicMock(returncode=0, stderr="")
+    with (
+        patch.object(runtime, "_is_wsl", return_value=True),
+        patch.object(runtime.subprocess, "run", side_effect=[failed, succeeded]) as run,
+        patch.object(runtime.webbrowser, "open") as browser,
+    ):
+        assert runtime._open_browser("http://127.0.0.1:8765", app) is True
+
+    assert run.call_count == 2
+    assert run.call_args_list[0].args[0][0] == "powershell.exe"
+    assert run.call_args_list[1].args[0][0] == "cmd.exe"
+    browser.assert_not_called()
+
+
+def test_browser_open_reports_manual_recovery_when_all_methods_fail(tmp_path, capsys):
+    app = instance(tmp_path)
+    failed = MagicMock(returncode=1, stderr="failed")
+    with (
+        patch.object(runtime, "_is_wsl", return_value=True),
+        patch.object(runtime.subprocess, "run", return_value=failed),
+        patch.object(runtime.webbrowser, "open", return_value=False),
+    ):
+        assert runtime._open_browser("http://127.0.0.1:8765", app) is False
+
+    assert "Open http://127.0.0.1:8765" in capsys.readouterr().out
+    assert any(
+        event["component"] == "browser" and event.get("recovery")
+        for event in app.events
+    )
+
+
+def test_stop_logs_reaps_launcher_follower_without_stopping_services(tmp_path):
+    app = instance(tmp_path)
+    follower = MagicMock()
+    follower.poll.return_value = None
+    follower.stdout = MagicMock()
+    app.follow = follower
+
+    app.stop_logs()
+
+    follower.terminate.assert_called_once_with()
+    follower.wait.assert_called_once_with(timeout=3)
+    follower.kill.assert_not_called()
+    assert app.follow is None
+
+
+def test_stop_logs_kills_stuck_follower(tmp_path):
+    app = instance(tmp_path)
+    follower = MagicMock()
+    follower.poll.return_value = None
+    follower.wait.side_effect = [runtime.subprocess.TimeoutExpired("logs", 3), None]
+    follower.stdout = MagicMock()
+    app.follow = follower
+
+    app.stop_logs()
+
+    follower.terminate.assert_called_once_with()
+    follower.kill.assert_called_once_with()
+    assert follower.wait.call_count == 2
+    assert app.follow is None
+
+
 def test_launcher_chat_shortcut_keeps_focus_request(tmp_path):
     app = instance(tmp_path)
     server = runtime.ThreadingHTTPServer(("127.0.0.1", 0), runtime.Handler)
@@ -150,8 +215,6 @@ def test_restart_redacts_existing_credentials(tmp_path):
 
 def test_readiness_requires_all_workers(tmp_path):
     app = instance(tmp_path)
-    from unittest.mock import MagicMock
-
     connection = MagicMock()
     connection.getresponse.return_value.status = 200
     with (

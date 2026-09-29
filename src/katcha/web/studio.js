@@ -10,9 +10,13 @@ const state = {
     detail: null,
     brands: [],
     blueprints: [],
+    providerStatus: [],
+    elevenlabsStatus: null,
+    invideoHandoffs: [],
     selectedPosition: null,
     edits: new Map(),
     monitorMode: "render",
+    renderGeneration: null,
     renderUrl: null,
     mediaUrls: new Map(),
     stagedBrand: null,
@@ -126,6 +130,42 @@ function renderDirtyState() {
     $("save-state").textContent=dirty ? `${state.edits.size} CLIP EDIT${state.edits.size===1?"":"S"}` : "NO CLIP EDITS";
     $("save-state").classList.toggle("dirty",dirty); $("save-state").classList.toggle("clean",!dirty);
 }
+function renderAssets() {
+    return (state.detail?.assets || [])
+        .filter((asset) => asset.kind === "render")
+        .sort((left, right) => (
+            Number(right.generation) - Number(left.generation)
+            || String(right.created_at || "").localeCompare(String(left.created_at || ""))
+        ));
+}
+function renderVersionLabel(asset) {
+    const provider = asset.provider === "invideo"
+        ? "InVideo"
+        : asset.provider
+            ? String(asset.provider)
+            : "Katcha native";
+    return `g${asset.generation} · ${provider}`;
+}
+function renderRenderVersions() {
+    const assets = renderAssets();
+    const wrap = $("render-version-wrap");
+    const select = $("render-version");
+    if (!wrap || !select) return;
+    wrap.hidden = assets.length < 2;
+    if (!assets.length) {
+        select.innerHTML = "";
+        state.renderGeneration = null;
+        return;
+    }
+    const available = new Set(assets.map((asset) => Number(asset.generation)));
+    if (!state.renderGeneration || !available.has(Number(state.renderGeneration))) {
+        state.renderGeneration = Number(assets[0].generation);
+    }
+    select.innerHTML = assets.map((asset) => (
+        `<option value="${escapeHTML(asset.generation)}">${escapeHTML(renderVersionLabel(asset))}</option>`
+    )).join("");
+    select.value = String(state.renderGeneration);
+}
 function renderProject() {
     const row=episodeRow();
     $("episode-status").textContent=row ? String(row.status||"unknown").replaceAll("_"," ").toUpperCase() : "NO EPISODE";
@@ -221,8 +261,13 @@ async function showMonitor() {
 async function loadRenderedMedia() {
     state.renderUrl=null;
     if (!state.episodeId) return;
+    const generation = state.renderGeneration;
+    const suffix = generation ? `?generation=${encodeURIComponent(generation)}` : "";
     try {
-        state.renderUrl=await blobUrl(`/v1/studio/episodes/${encodeURIComponent(state.episodeId)}/media`,`render:${state.episodeId}`);
+        state.renderUrl=await blobUrl(
+            `/v1/studio/episodes/${encodeURIComponent(state.episodeId)}/media${suffix}`,
+            `render:${state.episodeId}:${generation || "latest"}`,
+        );
     } catch {}
 }
 function renderTimeline() {
@@ -257,6 +302,139 @@ function activeBlueprint() {
         || state.blueprints.find((row)=>row.is_default)
         || state.blueprints.find((row)=>row.is_active)
         || null;
+}
+function latestInVideoHandoff() {
+    return state.invideoHandoffs[0] || null;
+}
+function renderExternalPanel() {
+    const eleven = state.providerStatus.find((row)=>row.provider==="elevenlabs");
+    const invideo = state.providerStatus.find((row)=>row.provider==="invideo");
+    const elevenState=$("elevenlabs-state"), invideoState=$("invideo-state");
+    if (elevenState) {
+        const connected=Boolean(state.elevenlabsStatus?.connected);
+        elevenState.textContent=connected ? "CONNECTED" : eleven?.configured ? "CONFIGURED" : "NOT CONFIGURED";
+        elevenState.classList.toggle("ready",connected);
+        elevenState.classList.toggle("warning",!connected);
+        $("elevenlabs-detail").textContent=state.elevenlabsStatus?.detail || eleven?.detail || "ElevenLabs status unavailable.";
+        $("elevenlabs-voice").textContent=state.elevenlabsStatus?.voice_name
+            ? `${state.elevenlabsStatus.voice_name} · ${state.elevenlabsStatus.model_id}`
+            : state.elevenlabsStatus?.voice_id || "—";
+        $("elevenlabs-plan").textContent=state.elevenlabsStatus?.subscription?.tier || "—";
+        const sub=state.elevenlabsStatus?.subscription;
+        $("elevenlabs-usage").textContent=sub
+            ? `${Number(sub.character_count||0).toLocaleString()} / ${Number(sub.character_limit||0).toLocaleString()} characters`
+            : "—";
+    }
+    if (invideoState) {
+        invideoState.textContent=invideo?.mode==="manual_bridge" ? "BRIDGE READY" : "UNAVAILABLE";
+        invideoState.classList.toggle("ready",Boolean(invideo?.configured));
+        invideoState.classList.toggle("warning",!invideo?.configured);
+    }
+    const handoff=latestInVideoHandoff();
+    $("prepare-invideo").disabled=!state.episodeId;
+    $("download-invideo").disabled=!handoff;
+    $("import-invideo").disabled=!handoff || !$("invideo-output").files?.[0]
+        || ["adopted","cancelled"].includes(handoff.status);
+    $("adopt-invideo").disabled=!handoff || handoff.status!=="output_imported";
+    $("invideo-handoff").innerHTML=handoff
+        ? `<strong>Generation ${escapeHTML(handoff.generation)} · ${escapeHTML(String(handoff.status).replaceAll("_"," ").toUpperCase())}</strong><br><span>Handoff ${escapeHTML(String(handoff.id).slice(0,8))}${handoff.external_project_id ? ` · project ${escapeHTML(handoff.external_project_id)}` : ""}</span>`
+        : "No handoff prepared for this episode.";
+}
+async function loadProviderStatus() {
+    try {
+        state.providerStatus=await api("/v1/integrations/providers");
+        const eleven=state.providerStatus.find((row)=>row.provider==="elevenlabs");
+        state.elevenlabsStatus=eleven?.configured
+            ? await api(
+                "/v1/integrations/elevenlabs/status?channel_profile_id=" +
+                encodeURIComponent(state.channel)
+            )
+            : null;
+    } catch(error) {
+        state.elevenlabsStatus={connected:false,detail:error.message};
+    }
+    renderExternalPanel();
+}
+async function loadInVideoHandoffs() {
+    state.invideoHandoffs=[];
+    if (!state.episodeId) { renderExternalPanel(); return; }
+    try {
+        state.invideoHandoffs=await api(
+            `/v1/integrations/invideo/handoffs?source_type=short_episode&source_id=${encodeURIComponent(state.episodeId)}&limit=20`
+        );
+    } catch(error) {
+        message(error.message,true);
+    }
+    renderExternalPanel();
+}
+async function prepareInVideo() {
+    if (!state.episodeId) throw new Error("Select an episode first.");
+    const row=await api("/v1/integrations/invideo/handoffs",{
+        method:"POST",
+        body:JSON.stringify({
+            source_type:"short_episode",
+            source_id:state.episodeId,
+            actor:"clip-studio",
+            note:$("invideo-note").value.trim()||null,
+        }),
+    });
+    state.invideoHandoffs=[row,...state.invideoHandoffs];
+    renderExternalPanel();
+    message("InVideo handoff prepared. Download the package and open it in InVideo.");
+}
+async function downloadInVideoPackage() {
+    const row=latestInVideoHandoff();
+    if (!row) throw new Error("Prepare an InVideo handoff first.");
+    const response=await request(`/v1/integrations/invideo/handoffs/${encodeURIComponent(row.id)}/package`);
+    if (!response.ok) {
+        let body; try { body=await response.json(); } catch {}
+        throw new Error(typeof body?.detail==="string" ? body.detail : `Package download failed (${response.status})`);
+    }
+    const url=URL.createObjectURL(await response.blob());
+    const link=document.createElement("a");
+    link.href=url;
+    link.download=`katcha-invideo-${row.id}.zip`;
+    document.body.append(link); link.click(); link.remove();
+    setTimeout(()=>URL.revokeObjectURL(url),1000);
+    message("InVideo handoff package downloaded.");
+}
+async function importInVideoOutput() {
+    const row=latestInVideoHandoff(), file=$("invideo-output").files?.[0];
+    if (!row) throw new Error("Prepare an InVideo handoff first.");
+    if (!file) throw new Error("Choose the MP4 returned by InVideo.");
+    const form=new FormData();
+    form.append("file",file,file.name);
+    const projectId=$("invideo-project-id").value.trim();
+    if (projectId) form.append("external_project_id",projectId);
+    form.append("actor","clip-studio");
+    const response=await fetch(
+        `/v1/integrations/invideo/handoffs/${encodeURIComponent(row.id)}/output`,
+        {
+            method:"POST",
+            headers:state.token ? {Authorization:`Bearer ${state.token}`} : {},
+            body:form,
+        },
+    );
+    if (!response.ok) {
+        let body; try { body=await response.json(); } catch {}
+        throw new Error(typeof body?.detail==="string" ? body.detail : `InVideo output import failed (${response.status})`);
+    }
+    const updated=await response.json();
+    state.invideoHandoffs=[updated,...state.invideoHandoffs.filter((item)=>item.id!==updated.id)];
+    renderExternalPanel();
+    message("InVideo MP4 imported and verified. Review it, then adopt it when ready.");
+}
+async function adoptInVideoOutput() {
+    const row=latestInVideoHandoff();
+    if (!row) throw new Error("No InVideo handoff is available.");
+    const updated=await api(
+        `/v1/integrations/invideo/handoffs/${encodeURIComponent(row.id)}/adopt`,
+        {method:"POST",body:JSON.stringify({actor:"clip-studio"})},
+    );
+    state.invideoHandoffs=[updated,...state.invideoHandoffs.filter((item)=>item.id!==updated.id)];
+    await loadEpisode();
+    renderExternalPanel();
+    message("InVideo edit adopted into Katcha. It is now the episode render under review.");
 }
 function renderAiPanel() {
     const row=activeBlueprint(), guidance=row?.contract?.ai_guidance || {};
@@ -361,12 +539,13 @@ async function renderEditedGeneration() {
     message(`Edited generation created (${String(state.episodeId).slice(0,8)}). Rendering has started.`);
 }
 async function loadEpisode() {
-    revokeMedia(); state.edits.clear(); state.selectedPosition=null; renderDirtyState();
+    revokeMedia(); state.edits.clear(); state.selectedPosition=null; state.renderGeneration=null; renderDirtyState();
     if (!state.episodeId) { state.detail=null; renderAll(); return; }
     message("Loading edit session…");
     try {
         state.detail=await api(`/v1/short-episodes/${encodeURIComponent(state.episodeId)}`);
-        renderAll(); await loadRenderedMedia();
+        renderRenderVersions();
+        renderAll(); await loadRenderedMedia(); await loadInVideoHandoffs();
         const first=clipRows()[0]; if (first) state.selectedPosition=Number(first.position);
         renderAll(); await hydrateBrandPanel();
         if (state.renderUrl) state.monitorMode="render"; else state.monitorMode="source";
@@ -402,13 +581,13 @@ async function connect(token=state.token) {
         $("channel").innerHTML='<option value="">Select a channel</option>'+state.channels.map((row)=>`<option value="${escapeHTML(row.id)}">${escapeHTML(row.profile_metadata?.channel_title||row.profile_metadata?.name||row.id)} · ${escapeHTML(row.status)}</option>`).join("");
         $("channel").disabled=false; $("refresh").disabled=false; $("connection").textContent="CONNECTED"; $("connection").classList.add("online"); $("connect-form").classList.add("connected");
         if (!state.channel || !state.channels.some((row)=>String(row.id)===String(state.channel))) state.channel=state.channels[0]?.id||"";
-        $("channel").value=state.channel; await loadChannel();
+        $("channel").value=state.channel; await Promise.all([loadProviderStatus(),loadChannel()]);
     } catch(error){ $("connection").textContent="OFFLINE"; $("connection").classList.remove("online"); $("connect-form").classList.remove("connected"); message(error.message,true); }
 }
-function renderAll() { renderProject(); renderClipList(); renderClipInspector(); renderTimeline(); renderAiPanel(); renderDirtyState(); }
+function renderAll() { renderProject(); renderClipList(); renderClipInspector(); renderTimeline(); renderAiPanel(); renderExternalPanel(); renderDirtyState(); }
 function switchTab(name) {
     document.querySelectorAll(".inspector-tab").forEach((button)=>button.classList.toggle("active",button.dataset.tab===name));
-    ["clip","ai","brand"].forEach((key)=>$(`tab-${key}`).hidden=key!==name);
+    ["clip","ai","brand","external"].forEach((key)=>$(`tab-${key}`).hidden=key!==name);
     if (name==="brand") { state.monitorMode="source"; showMonitor(); }
 }
 document.addEventListener("click",async(event)=>{
@@ -421,6 +600,12 @@ $("episode").addEventListener("change",()=>{state.episodeId=$("episode").value;q
 $("refresh").addEventListener("click",()=>loadChannel(state.episodeId));
 $("show-render").addEventListener("click",()=>{state.monitorMode="render";showMonitor();});
 $("show-source").addEventListener("click",()=>{state.monitorMode="source";showMonitor();});
+$("render-version").addEventListener("change",async()=>{
+    state.renderGeneration=Number($("render-version").value)||null;
+    await loadRenderedMedia();
+    state.monitorMode="render";
+    await showMonitor();
+});
 ["clip-start","clip-duration","clip-transition","clip-audio-policy","clip-volume","clip-duck"].forEach((id)=>$(id).addEventListener(id.startsWith("clip-")&&["clip-volume","clip-duck","clip-start","clip-duration"].includes(id)?"input":"change",readClipEdit));
 $("reset-clip").addEventListener("click",()=>{if(state.selectedPosition!==null){state.edits.delete(Number(state.selectedPosition));renderAll();showMonitor();}});
 ["logo-enabled","logo-x","logo-y","logo-width","logo-opacity"].forEach((id)=>$(id).addEventListener(id==="logo-enabled"?"change":"input",readLogoInputs));
@@ -429,6 +614,12 @@ $("save-ai").addEventListener("click",async()=>{const b=$("save-ai");b.disabled=
 $("stage-logo").addEventListener("click",async()=>{const b=$("stage-logo");b.disabled=true;try{readLogoInputs();await stageLogo();}catch(e){message(e.message,true);}finally{b.disabled=false;}});
 $("activate-logo").addEventListener("click",async()=>{const b=$("activate-logo");b.disabled=true;try{await activateLogo();}catch(e){message(e.message,true);}finally{b.disabled=!state.stagedBrand;}});
 $("render-edits").addEventListener("click",async()=>{const b=$("render-edits");b.disabled=true;try{await renderEditedGeneration();}catch(e){message(e.message,true);}finally{b.disabled=!manifest();}});
+$("refresh-providers").addEventListener("click",async()=>{const b=$("refresh-providers");b.disabled=true;try{await loadProviderStatus();message("Provider status refreshed.");}catch(e){message(e.message,true);}finally{b.disabled=false;}});
+$("prepare-invideo").addEventListener("click",async()=>{const b=$("prepare-invideo");b.disabled=true;try{await prepareInVideo();}catch(e){message(e.message,true);}finally{renderExternalPanel();}});
+$("download-invideo").addEventListener("click",async()=>{const b=$("download-invideo");b.disabled=true;try{await downloadInVideoPackage();}catch(e){message(e.message,true);}finally{renderExternalPanel();}});
+$("invideo-output").addEventListener("change",renderExternalPanel);
+$("import-invideo").addEventListener("click",async()=>{const b=$("import-invideo");b.disabled=true;try{await importInVideoOutput();}catch(e){message(e.message,true);}finally{renderExternalPanel();}});
+$("adopt-invideo").addEventListener("click",async()=>{const b=$("adopt-invideo");b.disabled=true;try{await adoptInVideoOutput();}catch(e){message(e.message,true);}finally{renderExternalPanel();}});
 $("monitor-video").addEventListener("timeupdate",updatePlayhead);
 document.addEventListener("keydown",(event)=>{
     if (["INPUT","TEXTAREA","SELECT"].includes(document.activeElement?.tagName)) return;

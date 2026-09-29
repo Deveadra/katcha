@@ -42,6 +42,7 @@ def load_model_metadata() -> None:
         packaging_intelligence_models,
         packaging_models,
         production_models,
+        provider_setting_models,
         publishing_models,
         short_episode_models,
         telegram_models,

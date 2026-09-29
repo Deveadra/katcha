@@ -286,6 +286,7 @@ The planner is schema-constrained to this registry:
 - `performance_advice`
 - `create_content`
 - `source_discovery`
+- `resource_context`
 - `channel_status`
 - `unsupported`
 
@@ -302,3 +303,53 @@ inspect why Katcha interpreted a request the way it did.
 The planner does not weaken the mutation boundary. A `create_content` or
 `source_discovery` plan can only produce the same frozen server-issued proposal used
 elsewhere; execution still requires the separate authenticated confirmation endpoint.
+
+
+## Typed “Ask Katcha” resource context
+
+The Command Center accepts typed `resource_refs` rather than relying on copied IDs or
+free-form references. The initial registry supports:
+
+- clips;
+- productions;
+- ranked short episodes;
+- publications;
+- trend opportunities.
+
+Each reference is reloaded from Katcha storage and verified against the selected channel
+before it becomes evidence. Cross-channel references fail closed. The browser cannot attach
+arbitrary evidence or override the stored record.
+
+Workspace surfaces now expose **Ask Katcha ✦** handoffs for clip detail, trend dossiers,
+Channel Studio publications/productions, and Editing Control Center episodes. The handoff
+opens a new Command Center conversation with a typed resource reference and an editable
+starter question. The control token remains in same-tab session storage rather than being
+placed in the URL.
+
+Typed references are stored in durable user-turn context. Follow-up turns inherit those
+references server-side until the operator starts a new conversation, so reopening a thread
+does not depend on browser state to reconstruct what “this video” or “this opportunity”
+means.
+
+## Command Center observability
+
+Successful grounded commands emit a channel-scoped
+`command_center.command_completed` domain event containing request/thread correlation,
+the server-derived actor, resolved intent, planner route and confidence, narrator/degraded
+state, latency, evidence/action counts, and typed-resource kinds. It intentionally excludes
+prompt text and bearer credentials.
+
+`GET /v1/ai/observability?channel_profile_id=...&hours=24` summarizes:
+
+- request volume;
+- average and p95 command latency;
+- degraded saved-data answers;
+- AI-planned request count;
+- typed-context usage;
+- planner/narrator token usage and estimated cost;
+- proposed/executed/failed action counts;
+- a bounded recent request timeline.
+
+The Command Center shows a compact 24-hour health panel so operator-facing AI cost and
+latency are visible without opening database or container diagnostics. The endpoint remains
+subject to the authenticated principal’s `ai:read` scope and channel allowlist.

@@ -55,6 +55,16 @@ async function apiBlob(path) {
     return response.blob();
 }
 function channelPath(suffix) { return `/v1/channels/${encodeURIComponent(state.channel)}${suffix}`; }
+function askKatchaHref(kind, id, prompt) {
+    const params = new URLSearchParams({
+        channel: state.channel,
+        resource_kind: kind,
+        resource_id: id,
+        prompt,
+        focus: "chat",
+    });
+    return "/ai?" + params.toString();
+}
 function renderProviderStatus() {
     const eleven = state.providers.find((row) => row.provider === "elevenlabs");
     const invideo = state.providers.find((row) => row.provider === "invideo");
@@ -477,7 +487,7 @@ function renderEpisodes() {
         const stateLabel = type === "attention"
             ? (recoverable ? "RENDER FAILED" : "NEEDS ATTENTION")
             : type === "done" ? "COMPLETE" : "IN PRODUCTION";
-        return `<article class="item episode-item status-${type}" data-episode-status="${type}"><div><div class="episode-state"><span class="state-dot" aria-hidden="true"></span>${escapeHTML(stateLabel)}</div><h3>${escapeHTML(row.premise)}</h3><p>Stage: ${escapeHTML(row.stage)} · ${escapeHTML(row.status)} · Updated ${escapeHTML(date(row.updated_at))}</p><p class="meta">${escapeHTML(row.edit_blueprint_key || "Channel default blueprint")}${row.edit_blueprint_version ? ` · v${escapeHTML(row.edit_blueprint_version)}` : ""} · Generation ${escapeHTML(row.generation)}</p>${row.error || attempt?.error ? `<p class="error-text">${escapeHTML(attempt?.error || row.error)}</p>` : ""}</div><div class="item-actions"><span class="pill state-pill ${type}">${escapeHTML(stateLabel)}</span><span class="pill">${escapeHTML(String(row.status || "unknown").replaceAll("_", " ").toUpperCase())}</span>${recoverable ? `<button class="mini" data-recover="${escapeHTML(row.id)}">Recover render</button>` : ""}${invideoEligible(row) ? `<button class="mini invideo-action" data-invideo="${escapeHTML(row.id)}">Send to InVideo</button>` : ""}<a class="mini studio-launch" data-studio="${escapeHTML(row.id)}" href="/studio?episode=${encodeURIComponent(row.id)}&channel=${encodeURIComponent(state.channel)}">Open Clip Studio</a></div></article>`;
+        return `<article class="item episode-item status-${type}" data-episode-status="${type}"><div><div class="episode-state"><span class="state-dot" aria-hidden="true"></span>${escapeHTML(stateLabel)}</div><h3>${escapeHTML(row.premise)}</h3><p>Stage: ${escapeHTML(row.stage)} · ${escapeHTML(row.status)} · Updated ${escapeHTML(date(row.updated_at))}</p><p class="meta">${escapeHTML(row.edit_blueprint_key || "Channel default blueprint")}${row.edit_blueprint_version ? ` · v${escapeHTML(row.edit_blueprint_version)}` : ""} · Generation ${escapeHTML(row.generation)}</p>${row.error || attempt?.error ? `<p class="error-text">${escapeHTML(attempt?.error || row.error)}</p>` : ""}</div><div class="item-actions"><span class="pill state-pill ${type}">${escapeHTML(stateLabel)}</span><span class="pill">${escapeHTML(String(row.status || "unknown").replaceAll("_", " ").toUpperCase())}</span>${recoverable ? `<button class="mini" data-recover="${escapeHTML(row.id)}">Recover render</button>` : ""}${invideoEligible(row) ? `<button class="mini invideo-action" data-invideo="${escapeHTML(row.id)}">Send to InVideo</button>` : ""}<a class="mini" href="${escapeHTML(askKatchaHref("short_episode", row.id, "Explain this episode’s current state, evidence, and what needs attention."))}">Ask Katcha ✦</a><a class="mini studio-launch" data-studio="${escapeHTML(row.id)}" href="/studio?episode=${encodeURIComponent(row.id)}&channel=${encodeURIComponent(state.channel)}">Open Clip Studio</a></div></article>`;
     }).join("") : `<div class="empty">${filter === "all" ? "No episodes in this channel yet." : "No episodes match this filter."}</div>`;
 }
 function previewableSources() {

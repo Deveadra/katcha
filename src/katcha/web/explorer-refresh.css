@@ -259,6 +259,15 @@
 .dossier-shell .detail-top {
     padding: 15px 18px 0;
 }
+.dossier-top-actions {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    flex-wrap: wrap;
+}
+.dossier-top-actions .icon-button {
+    text-decoration: none;
+}
 .dossier-title-row {
     display: flex;
     justify-content: space-between;

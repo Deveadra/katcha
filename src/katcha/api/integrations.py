@@ -15,19 +15,32 @@ from fastapi import (
     UploadFile,
     status,
 )
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 
 from katcha.config import get_settings
 from katcha.db import session_scope
 from katcha.external_edit_models import ExternalEditHandoff
+from katcha.services.elevenlabs_integration import (
+    ElevenLabsIntegrationError,
+    elevenlabs_status,
+    generate_elevenlabs_preview,
+    get_elevenlabs_voice,
+    list_elevenlabs_models,
+    resolve_elevenlabs_voice,
+    search_elevenlabs_voices,
+)
 from katcha.services.external_edit import (
     adopt_external_output,
     build_handoff_zip,
     handoff_manifest,
     import_external_output,
     prepare_invideo_handoff,
+)
+from katcha.services.provider_settings import (
+    get_channel_provider_setting,
+    upsert_channel_provider_setting,
 )
 
 router = APIRouter(prefix="/v1/integrations", tags=["integrations"])
@@ -39,6 +52,76 @@ class IntegrationProviderStatus(BaseModel):
     configured: bool
     mode: str
     detail: str
+
+
+class ElevenLabsStatusResponse(BaseModel):
+    configured: bool
+    connected: bool
+    voice_id: str | None
+    voice_name: str | None
+    voice_category: str | None = None
+    voice_labels: dict[str, object] = Field(default_factory=dict)
+    model_id: str
+    output_format: str
+    subscription: dict[str, object] | None
+    detail: str
+
+
+class ElevenLabsVoiceResponse(BaseModel):
+    voice_id: str | None
+    name: str | None
+    category: str | None
+    description: str | None
+    labels: dict[str, object] = Field(default_factory=dict)
+    preview_url: str | None
+    is_owner: bool | None
+    is_legacy: bool | None
+
+
+class ElevenLabsVoicePage(BaseModel):
+    voices: list[ElevenLabsVoiceResponse]
+    has_more: bool
+    total_count: int | None
+    next_page_token: str | None
+
+
+class ElevenLabsModelResponse(BaseModel):
+    model_id: str | None
+    name: str | None
+    description: str | None
+    maximum_text_length_per_request: int | None = None
+    token_cost_factor: float | None = None
+
+
+class ElevenLabsChannelConfigResponse(BaseModel):
+    channel_profile_id: uuid.UUID
+    enabled: bool
+    voice_id: str | None
+    voice_name: str | None
+    model_id: str
+    model_name: str | None
+    source: Literal["channel", "global", "unset"]
+
+
+class ElevenLabsChannelConfigUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = True
+    voice_id: str = Field(min_length=1, max_length=255)
+    model_id: str = Field(min_length=1, max_length=255)
+    actor: str = Field(default="operator", min_length=1, max_length=128)
+
+
+class ElevenLabsPreviewRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    text: str = Field(min_length=1, max_length=600)
+    voice_id: str | None = Field(default=None, min_length=1, max_length=255)
+    model_id: str | None = Field(default=None, min_length=1, max_length=255)
+    stability: float = Field(default=0.42, ge=0, le=1)
+    similarity_boost: float = Field(default=0.75, ge=0, le=1)
+    style: float = Field(default=0.0, ge=0, le=1)
+    speed: float = Field(default=1.03, ge=0.7, le=1.2)
 
 
 class InVideoHandoffCreate(BaseModel):
@@ -87,9 +170,7 @@ def _response(row: ExternalEditHandoff) -> InVideoHandoffResponse:
 @router.get("/providers", response_model=list[IntegrationProviderStatus])
 def integration_provider_status() -> list[IntegrationProviderStatus]:
     settings = get_settings()
-    elevenlabs_configured = bool(
-        settings.elevenlabs_api_key and settings.elevenlabs_voice_id
-    )
+    elevenlabs_configured = bool(settings.elevenlabs_api_key)
     return [
         IntegrationProviderStatus(
             provider="elevenlabs",
@@ -97,9 +178,9 @@ def integration_provider_status() -> list[IntegrationProviderStatus]:
             configured=elevenlabs_configured,
             mode="api",
             detail=(
-                "Direct ElevenLabs TTS is ready."
+                "ElevenLabs API is configured. Select voices per channel in Channel Studio."
                 if elevenlabs_configured
-                else "Set KATCHA_ELEVENLABS_API_KEY and KATCHA_ELEVENLABS_VOICE_ID."
+                else "Set KATCHA_ELEVENLABS_API_KEY, then select a channel voice."
             ),
         ),
         IntegrationProviderStatus(
@@ -114,6 +195,179 @@ def integration_provider_status() -> list[IntegrationProviderStatus]:
             ),
         ),
     ]
+
+
+@router.get(
+    "/elevenlabs/status",
+    response_model=ElevenLabsStatusResponse,
+)
+def get_elevenlabs_status(
+    channel_profile_id: uuid.UUID | None = Query(default=None),
+) -> ElevenLabsStatusResponse:
+    try:
+        return ElevenLabsStatusResponse.model_validate(
+            elevenlabs_status(channel_profile_id=channel_profile_id)
+        )
+    except ElevenLabsIntegrationError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@router.get(
+    "/elevenlabs/voices",
+    response_model=ElevenLabsVoicePage,
+)
+def list_elevenlabs_voices(
+    search: str | None = Query(default=None, max_length=120),
+    page_size: int = Query(default=25, ge=1, le=100),
+    next_page_token: str | None = Query(default=None, max_length=500),
+) -> ElevenLabsVoicePage:
+    try:
+        return ElevenLabsVoicePage.model_validate(
+            search_elevenlabs_voices(
+                search=search,
+                page_size=page_size,
+                next_page_token=next_page_token,
+            )
+        )
+    except ElevenLabsIntegrationError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@router.get(
+    "/elevenlabs/models",
+    response_model=list[ElevenLabsModelResponse],
+)
+def get_elevenlabs_models() -> list[ElevenLabsModelResponse]:
+    try:
+        return [
+            ElevenLabsModelResponse.model_validate(row)
+            for row in list_elevenlabs_models()
+        ]
+    except ElevenLabsIntegrationError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+def _channel_elevenlabs_response(
+    channel_profile_id: uuid.UUID,
+    *,
+    voice_name: str | None = None,
+    model_name: str | None = None,
+) -> ElevenLabsChannelConfigResponse:
+    row = get_channel_provider_setting(channel_profile_id, "elevenlabs")
+    voice_id, model_id = resolve_elevenlabs_voice(
+        channel_profile_id=channel_profile_id,
+    )
+    if row is not None and row.enabled:
+        source: Literal["channel", "global", "unset"] = "channel"
+        config = dict(row.config or {})
+        voice_name = voice_name or str(config.get("voice_name") or "") or None
+        model_name = model_name or str(config.get("model_name") or "") or None
+    elif voice_id:
+        source = "global"
+    else:
+        source = "unset"
+    return ElevenLabsChannelConfigResponse(
+        channel_profile_id=channel_profile_id,
+        enabled=bool(row.enabled) if row is not None else bool(voice_id),
+        voice_id=voice_id,
+        voice_name=voice_name,
+        model_id=model_id,
+        model_name=model_name,
+        source=source,
+    )
+
+
+@router.get(
+    "/elevenlabs/channels/{channel_profile_id}",
+    response_model=ElevenLabsChannelConfigResponse,
+)
+def get_channel_elevenlabs_config(
+    channel_profile_id: uuid.UUID,
+) -> ElevenLabsChannelConfigResponse:
+    return _channel_elevenlabs_response(channel_profile_id)
+
+
+@router.put(
+    "/elevenlabs/channels/{channel_profile_id}",
+    response_model=ElevenLabsChannelConfigResponse,
+)
+def update_channel_elevenlabs_config(
+    channel_profile_id: uuid.UUID,
+    request: ElevenLabsChannelConfigUpdate,
+) -> ElevenLabsChannelConfigResponse:
+    try:
+        voice = get_elevenlabs_voice(request.voice_id)
+        models = list_elevenlabs_models()
+        model = next(
+            (row for row in models if row.get("model_id") == request.model_id),
+            None,
+        )
+        if model is None:
+            raise ValueError(
+                f"ElevenLabs model is not available for TTS: {request.model_id}"
+            )
+        upsert_channel_provider_setting(
+            channel_profile_id,
+            provider="elevenlabs",
+            enabled=request.enabled,
+            config={
+                "voice_id": request.voice_id,
+                "model_id": request.model_id,
+                "voice_name": voice.get("name"),
+                "model_name": model.get("name"),
+            },
+            actor=request.actor,
+        )
+        return _channel_elevenlabs_response(
+            channel_profile_id,
+            voice_name=str(voice.get("name") or "") or None,
+            model_name=str(model.get("name") or "") or None,
+        )
+    except ElevenLabsIntegrationError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    except ValueError as exc:
+        code = 404 if "channel profile not found" in str(exc) else 400
+        raise HTTPException(status_code=code, detail=str(exc)) from exc
+
+
+@router.post("/elevenlabs/channels/{channel_profile_id}/preview")
+def preview_channel_elevenlabs_voice(
+    channel_profile_id: uuid.UUID,
+    request: ElevenLabsPreviewRequest,
+) -> Response:
+    saved_voice_id, saved_model_id = resolve_elevenlabs_voice(
+        channel_profile_id=channel_profile_id,
+    )
+    voice_id = request.voice_id or saved_voice_id
+    model_id = request.model_id or saved_model_id
+    if not voice_id:
+        raise HTTPException(
+            status_code=400,
+            detail="Select an ElevenLabs voice before generating a preview.",
+        )
+    try:
+        audio, metadata = generate_elevenlabs_preview(
+            request.text,
+            voice_id=voice_id,
+            model_id=model_id,
+            stability=request.stability,
+            similarity_boost=request.similarity_boost,
+            style=request.style,
+            speed=request.speed,
+        )
+    except ElevenLabsIntegrationError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    headers = {
+        "Cache-Control": "no-store",
+        "X-Katcha-Voice-Id": voice_id,
+        "X-Katcha-Model-Id": model_id,
+    }
+    if metadata.get("character_cost"):
+        headers["X-Katcha-Character-Cost"] = str(metadata["character_cost"])
+    return Response(content=audio, media_type="audio/mpeg", headers=headers)
 
 
 @router.post(
