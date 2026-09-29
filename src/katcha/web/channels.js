@@ -1288,11 +1288,50 @@ $("connect-form").addEventListener("submit", (event) => {
     connect();
 });
 $("channel").addEventListener("change", async (event) => {
+    revokeProviderPreview();
     state.channelId = event.target.value;
     await loadChannel();
 });
 $("reload").addEventListener("click", loadChannel);
 $("refresh-intelligence").addEventListener("click", refreshIntelligence);
+$("save-elevenlabs").addEventListener("click", async () => {
+    const button = $("save-elevenlabs");
+    button.disabled = true;
+    try {
+        await saveElevenLabsConfig();
+    } catch (error) {
+        setStatus(error.message, "error");
+    } finally {
+        renderProviders();
+    }
+});
+$("preview-elevenlabs").addEventListener("click", async () => {
+    const button = $("preview-elevenlabs");
+    button.disabled = true;
+    try {
+        await previewElevenLabsVoice();
+    } catch (error) {
+        setStatus(error.message, "error");
+    } finally {
+        renderProviders();
+    }
+});
+$("refresh-elevenlabs").addEventListener("click", async () => {
+    const button = $("refresh-elevenlabs");
+    button.disabled = true;
+    try {
+        await loadProviderData();
+        renderProviders();
+        setStatus("Provider data refreshed.", "success");
+    } catch (error) {
+        setStatus(error.message, "error");
+    } finally {
+        renderProviders();
+    }
+});
+$("elevenlabs-voice-id").addEventListener("input", renderProviders);
+$("elevenlabs-model").addEventListener("change", renderProviders);
+window.addEventListener("beforeunload", revokeProviderPreview);
 $("growth-goals-form").addEventListener("submit", saveGrowthGoals);
 $("add-custom-goal").addEventListener("click", addCustomGoal);
 $("growth-pace").addEventListener("change", (event) => {
