@@ -145,13 +145,19 @@ def stream_episode_render(episode_id: uuid.UUID, request: Request) -> StreamingR
                 ShortEpisodeAsset.short_episode_id == episode_id,
                 ShortEpisodeAsset.kind == "render",
             )
-            .order_by(ShortEpisodeAsset.created_at.desc())
+            .order_by(
+                ShortEpisodeAsset.generation.desc(),
+                ShortEpisodeAsset.created_at.desc(),
+            )
+            .limit(1)
         )
         if asset is None:
             raise HTTPException(status_code=409, detail="episode has no rendered preview yet")
         key = asset.storage_key
+        metadata = dict(asset.asset_metadata or {})
+        external_handoff_id = str(metadata.get("external_edit_handoff_id") or "").strip()
         expected_key = str((episode.render_manifest or {}).get("output_key") or "")
-        if expected_key and key != expected_key:
+        if expected_key and key != expected_key and not external_handoff_id:
             raise HTTPException(
                 status_code=409,
                 detail="render asset does not match frozen manifest",
