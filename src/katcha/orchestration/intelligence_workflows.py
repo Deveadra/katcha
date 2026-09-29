@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import suppress
 from datetime import timedelta
 
 from temporalio import workflow
@@ -177,7 +178,7 @@ class ChannelIntelligenceRefreshWorkflow:
         try:
             result = await _run_refresh(channel_profile_id, run_key)
         except Exception as exc:
-            try:
+            with suppress(Exception):
                 await _record_command_refresh_lifecycle(
                     channel_profile_id,
                     run_key,
@@ -185,8 +186,6 @@ class ChannelIntelligenceRefreshWorkflow:
                     "failed",
                     str(exc)[:2000],
                 )
-            except Exception:
-                pass
             raise
         await _record_command_refresh_lifecycle(
             channel_profile_id,
