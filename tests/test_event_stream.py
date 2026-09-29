@@ -60,7 +60,6 @@ def test_unscoped_event_cursor_stays_unscoped() -> None:
     _require_cursor_scope(cursor, None)
 
 
-
 def test_render_events_remain_visible_in_channel_scoped_streams() -> None:
     channel_id = uuid.uuid4()
     production_id = uuid.uuid4()
@@ -74,7 +73,6 @@ def test_render_events_remain_visible_in_channel_scoped_streams() -> None:
 
     assert _belongs_to_channel(event, channel_id) is True
     assert event.payload["channel_profile_id"] == str(channel_id)
-
 
 
 def test_event_cursor_cannot_cross_control_principal() -> None:
