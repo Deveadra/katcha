@@ -15,8 +15,7 @@ from katcha.clip_lifecycle_models import ClipLifecycle
 from katcha.db import session_scope
 from katcha.external_edit_models import ExternalEditHandoff
 from katcha.integrations.storage import ObjectStore
-from katcha.models import Clip, DomainEvent
-from katcha.models import UsageEvent
+from katcha.models import Clip, DomainEvent, UsageEvent
 from katcha.production_models import Production, ProductionAsset, ProductionScript
 from katcha.short_episode_models import (
     ShortEpisode,
