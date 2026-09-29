@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <meta name="theme-color" content="#090b12">
+    <title>Katcha · Home</title>
+    <link id="aerith-tokens" rel="stylesheet" href="/system/aerith-tokens.css">
+    <link id="aerith-base" rel="stylesheet" href="/system/aerith-base.css">
+    <link id="aerith-shell" rel="stylesheet" href="/system/aerith-shell.css">
+    <link id="aerith-components" rel="stylesheet" href="/system/aerith-components.css">
+    <link id="aerith-motion" rel="stylesheet" href="/system/aerith-motion.css">
+    <link rel="stylesheet" href="home.css">
+    <script src="home.js" defer></script>
+    <script src="launcher-bridge.js" defer></script>
+</head>
+<body data-katcha-page="home">
+<div class="app-shell">
+    <aside class="rail">
+        <a class="brand" href="/home" aria-label="Katcha home">
+            <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
+            katcha<span class="brand-dot">.</span>
+        </a>
+        <div class="rail-spacer"></div>
+        <div class="rail-footer">Operator workspace</div>
+    </aside>
+
+    <main class="home-main">
+        <header class="topbar">
+            <div class="breadcrumbs">Workspace / <strong>Home</strong></div>
+            <span id="connection-state" class="simulation">DISCONNECTED</span>
+        </header>
+
+        <div class="home-content">
+            <section class="home-hero">
+                <div>
+                    <div class="eyebrow">OPERATIONS</div>
+                    <h1>What needs you now.</h1>
+                    <p>Katcha's current work, growth pressure, failures, and best next move for the active channel.</p>
+                </div>
+                <div class="home-hero-actions">
+                    <label>
+                        <span>Channel</span>
+                        <select id="channel" disabled>
+                            <option value="">Connect to load channels</option>
+                        </select>
+                    </label>
+                    <button id="refresh" class="primary" type="button" disabled>Refresh</button>
+                </div>
+            </section>
+
+            <form id="connect-form" class="connect compact-connect">
+                <label>
+                    Workspace access token
+                    <input id="token" type="password" autocomplete="off" placeholder="Only needed when authentication is enabled">
+                </label>
+                <button class="primary" type="submit">Connect</button>
+                <small>The local launcher connects automatically. This value stays in the current tab.</small>
+            </form>
+
+            <div id="status" class="home-status" role="status" aria-live="polite"></div>
+
+            <section class="home-grid attention-grid">
+                <article class="home-panel attention-panel">
+                    <header class="home-panel-head">
+                        <div>
+                            <span class="panel-kicker">ATTENTION</span>
+                            <h2>Needs you</h2>
+                        </div>
+                        <span id="attention-count" class="home-count">0</span>
+                    </header>
+                    <div id="attention-list" class="attention-list">
+                        <div class="home-empty">Connect to see work that needs operator attention.</div>
+                    </div>
+                </article>
+
+                <article class="home-panel next-panel">
+                    <header class="home-panel-head">
+                        <div>
+                            <span class="panel-kicker">NEXT MOVE</span>
+                            <h2>Katcha's priority</h2>
+                        </div>
+                    </header>
+                    <div id="next-move" class="next-move home-empty">Waiting for channel evidence.</div>
+                </article>
+            </section>
+
+            <section class="pulse-grid" aria-label="Operational pulse">
+                <a class="pulse-card" id="pulse-production" href="/editing">
+                    <span>In production</span><strong id="metric-production">—</strong><small id="metric-production-note">Current episode and production work</small>
+                </a>
+                <a class="pulse-card" id="pulse-failures" href="/editing#editorial-pipeline">
+                    <span>Needs attention</span><strong id="metric-failures">—</strong><small id="metric-failures-note">Failures across production and publishing</small>
+                </a>
+                <a class="pulse-card" id="pulse-clips" href="/clips">
+                    <span>Hot clips</span><strong id="metric-clips">—</strong><small id="metric-clips-note">Ready in the active channel library</small>
+                </a>
+                <a class="pulse-card" id="pulse-margin" href="/channels#monetization">
+                    <span>Contribution margin</span><strong id="metric-margin">—</strong><small id="metric-margin-note">Tracked channel economics</small>
+                </a>
+            </section>
+
+            <section class="home-grid lower-grid">
+                <article class="home-panel work-panel">
+                    <header class="home-panel-head">
+                        <div>
+                            <span class="panel-kicker">CURRENT WORK</span>
+                            <h2>Moving through Katcha</h2>
+                        </div>
+                        <a id="open-production" href="/editing">Production ↗</a>
+                    </header>
+                    <div id="work-list" class="work-list"><div class="home-empty">No channel loaded.</div></div>
+                </article>
+
+                <article class="home-panel growth-panel">
+                    <header class="home-panel-head">
+                        <div>
+                            <span class="panel-kicker">GROWTH & MONEY</span>
+                            <h2>What the channel is optimizing for</h2>
+                        </div>
+                        <a id="open-growth" href="/channels#growth">Channel Studio ↗</a>
+                    </header>
+                    <div id="growth" class="growth-body"><div class="home-empty">No growth snapshot loaded.</div></div>
+                </article>
+
+                <article class="home-panel opportunity-panel">
+                    <header class="home-panel-head">
+                        <div>
+                            <span class="panel-kicker">OPPORTUNITY</span>
+                            <h2>Strongest current trend</h2>
+                        </div>
+                        <a id="open-trends" href="/explorer">Trends ↗</a>
+                    </header>
+                    <div id="opportunity" class="opportunity-body"><div class="home-empty">No opportunity loaded.</div></div>
+                </article>
+
+                <article class="home-panel ai-panel">
+                    <header class="home-panel-head">
+                        <div>
+                            <span class="panel-kicker">KATCHA AI</span>
+                            <h2>Control activity</h2>
+                        </div>
+                        <a id="open-ai" href="/ai?focus=chat">Ask Katcha ↗</a>
+                    </header>
+                    <div id="ai-observability" class="ai-observability"><div class="home-empty">No AI activity snapshot loaded.</div></div>
+                </article>
+            </section>
+        </div>
+    </main>
+</div>
+</body>
+</html>
