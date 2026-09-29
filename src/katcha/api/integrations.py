@@ -368,6 +368,28 @@ def integration_provider_status() -> list[IntegrationProviderStatus]:
             ),
         ),
         IntegrationProviderStatus(
+            provider="openai",
+            capability="text_to_speech",
+            configured=bool(settings.openai_api_key),
+            mode="api",
+            detail=(
+                "OpenAI TTS is available as a channel voice or fallback."
+                if settings.openai_api_key
+                else "OpenAI TTS is not configured."
+            ),
+        ),
+        IntegrationProviderStatus(
+            provider="gemini",
+            capability="text_to_speech",
+            configured=bool(settings.gemini_api_key),
+            mode="api",
+            detail=(
+                "Gemini TTS is available as a channel voice or fallback."
+                if settings.gemini_api_key
+                else "Gemini TTS is not configured."
+            ),
+        ),
+        IntegrationProviderStatus(
             provider="invideo",
             capability="external_edit",
             configured=True,
