@@ -7,6 +7,9 @@ const state = {
     publications: [],
     productions: [],
     brands: [],
+    providers: [],
+    voicePolicy: null,
+    voicePreviewUrl: null,
     analytics: new Map(),
     selectedPublicationId: "",
     goalDraft: [],
@@ -40,6 +43,26 @@ async function api(path, options = {}) {
     if (response.status === 204) return null;
     return response.json();
 }
+
+async function apiBlob(path, options = {}) {
+    const response = await fetch(path, {
+        ...options,
+        headers: headers(options.headers || {}),
+    });
+    if (!response.ok) {
+        let message = response.status + " " + response.statusText;
+        try {
+            const payload = await response.json();
+            message = payload.detail || message;
+        } catch {}
+        throw new Error(message);
+    }
+    return {
+        blob: await response.blob(),
+        headers: response.headers,
+    };
+}
+
 
 function setStatus(message, kind = "") {
     $("status").textContent = message || "";
@@ -123,12 +146,14 @@ async function connect() {
     $("connection-state").textContent = "CONNECTING";
     setStatus("Loading YouTube connections and channel workspaces…");
     try {
-        const [channels, connections] = await Promise.all([
+        const [channels, connections, providers] = await Promise.all([
             api("/v1/channels"),
             api("/v1/integrations/youtube"),
+            api("/v1/integrations/providers"),
         ]);
         state.channels = channels;
         state.connections = connections;
+        state.providers = providers;
         $("connection-state").textContent = "CONNECTED";
         $("connection-state").className = "simulation connected";
         if (!channels.length) {
@@ -239,7 +264,7 @@ async function loadChannel() {
     state.selectedPublicationId = "";
     const channel = activeChannel();
     try {
-        const [summary, publications, productions, brands] = await Promise.all([
+        const [summary, publications, productions, brands, voicePolicy] = await Promise.all([
             api("/v1/channels/" + state.channelId),
             api(
                 "/v1/publications?limit=250&youtube_connection_id=" +
@@ -247,11 +272,17 @@ async function loadChannel() {
             ),
             api("/v1/productions?limit=100&channel_profile_id=" + encodeURIComponent(state.channelId)),
             api("/v1/channels/" + state.channelId + "/brands"),
+            api(
+                "/v1/integrations/channels/" +
+                    encodeURIComponent(state.channelId) +
+                    "/voice-policy",
+            ),
         ]);
         state.summary = summary;
         state.publications = publications;
         state.productions = productions;
         state.brands = brands;
+        state.voicePolicy = voicePolicy;
 
         const measurable = state.publications
             .filter((item) => item.youtube_video_id)
@@ -1005,6 +1036,161 @@ function kv(label, value) {
     );
 }
 
+function providerStatus(name) {
+    return state.providers.find((item) => item.provider === name) || null;
+}
+
+function renderProviderControls() {
+    const voice = state.voicePolicy;
+    const eleven = providerStatus("elevenlabs");
+    const invideo = providerStatus("invideo");
+    const provider = voice?.primary_provider || "unknown";
+
+    $("voice-provider-badge").textContent = provider === "unknown"
+        ? "—"
+        : provider.toUpperCase();
+
+    $("provider-panel").className = "provider-panel";
+    $("provider-panel").innerHTML =
+        '<div class="provider-grid">' +
+        '<div class="provider-row"><span>ElevenLabs TTS</span><strong class="' +
+        (eleven?.configured ? "ready" : "waiting") +
+        '">' +
+        escapeHtml(eleven?.configured ? "Configured" : "Needs credentials") +
+        "</strong></div>" +
+        '<div class="provider-row"><span>InVideo edit bridge</span><strong class="' +
+        (invideo?.configured ? "ready" : "waiting") +
+        '">' +
+        escapeHtml(invideo?.mode === "manual_bridge" ? "Handoff ready" : friendly(invideo?.mode || "unavailable")) +
+        "</strong></div>" +
+        '<div class="provider-row"><span>Voice policy</span><strong>' +
+        escapeHtml(voice ? friendly(voice.routing_mode) : "Not loaded") +
+        "</strong></div>" +
+        '<div class="provider-row"><span>Frozen brand version</span><strong>' +
+        escapeHtml(voice ? "v" + voice.brand_version : "—") +
+        "</strong></div>" +
+        "</div>";
+
+    $("voice-provider").disabled = !voice;
+    $("voice-routing").disabled = !voice;
+    $("save-voice-provider").disabled = !voice;
+    $("verify-elevenlabs").disabled = !eleven?.configured;
+    $("preview-elevenlabs").disabled = !eleven?.configured || !state.channelId;
+
+    if (voice) {
+        $("voice-provider").value = ["elevenlabs", "openai", "gemini"].includes(provider)
+            ? provider
+            : "openai";
+        $("voice-routing").value = voice.routing_mode || "inherit";
+    }
+
+    const note = [];
+    if (eleven?.detail) note.push(eleven.detail);
+    if (invideo?.detail) note.push(invideo.detail);
+    $("voice-provider-note").textContent = note.join(" ");
+}
+
+function revokeVoicePreview() {
+    if (state.voicePreviewUrl) URL.revokeObjectURL(state.voicePreviewUrl);
+    state.voicePreviewUrl = null;
+    const audio = $("voice-preview-audio");
+    audio.pause();
+    audio.removeAttribute("src");
+    audio.hidden = true;
+}
+
+async function verifyElevenLabs() {
+    const button = $("verify-elevenlabs");
+    button.disabled = true;
+    try {
+        const result = await api("/v1/integrations/elevenlabs/verify");
+        setStatus(result.detail, result.reachable ? "success" : "error");
+        const eleven = providerStatus("elevenlabs");
+        if (eleven) {
+            eleven.configured = result.configured;
+            eleven.detail = result.detail;
+        }
+        renderProviderControls();
+    } catch (error) {
+        setStatus(error.message, "error");
+    } finally {
+        button.disabled = !providerStatus("elevenlabs")?.configured;
+    }
+}
+
+async function previewElevenLabs() {
+    const text = $("voice-preview-text").value.trim();
+    if (!text) {
+        setStatus("Enter a short voice-preview line first.", "error");
+        return;
+    }
+    const button = $("preview-elevenlabs");
+    button.disabled = true;
+    revokeVoicePreview();
+    try {
+        setStatus("Generating a paid ElevenLabs preview through Katcha…");
+        const result = await apiBlob("/v1/integrations/elevenlabs/preview", {
+            method: "POST",
+            body: JSON.stringify({
+                channel_profile_id: state.channelId,
+                text,
+            }),
+        });
+        state.voicePreviewUrl = URL.createObjectURL(result.blob);
+        const audio = $("voice-preview-audio");
+        audio.src = state.voicePreviewUrl;
+        audio.hidden = false;
+        const cost = result.headers.get("X-Katcha-Estimated-Cost-USD");
+        setStatus(
+            "ElevenLabs preview ready" + (cost ? " · estimated cost $" + cost : "") + ".",
+            "success",
+        );
+    } catch (error) {
+        setStatus(error.message, "error");
+    } finally {
+        button.disabled = !providerStatus("elevenlabs")?.configured || !state.channelId;
+    }
+}
+
+async function saveVoiceProvider() {
+    if (!state.channelId) return;
+    const primary = $("voice-provider").value;
+    const routing = $("voice-routing").value;
+    const button = $("save-voice-provider");
+    button.disabled = true;
+    try {
+        const fallback = ["elevenlabs", "openai", "gemini"].filter(
+            (provider) => provider !== primary && providerStatus(provider)?.configured,
+        );
+        const updated = await api(
+            "/v1/integrations/channels/" +
+                encodeURIComponent(state.channelId) +
+                "/voice-policy",
+            {
+                method: "PUT",
+                body: JSON.stringify({
+                    primary_provider: primary,
+                    fallback_providers: fallback.slice(0, 2),
+                    routing_mode: routing,
+                    actor: "channel-studio",
+                }),
+            },
+        );
+        state.voicePolicy = updated;
+        state.brands = await api("/v1/channels/" + state.channelId + "/brands");
+        renderControls();
+        setStatus(
+            friendly(primary) +
+                " is now the primary narration provider for new productions. Existing productions keep their frozen voice.",
+            "success",
+        );
+    } catch (error) {
+        setStatus(error.message, "error");
+    } finally {
+        button.disabled = !state.voicePolicy;
+    }
+}
+
 function renderControls() {
     const activeBrand = state.brands.find((item) => item.is_active);
     if (activeBrand) {
@@ -1059,6 +1245,7 @@ function renderControls() {
             kv("AI routing", friendly(strategy.routing_policy?.mode || "default")) +
             kv("Quality floor", friendly(strategy.routing_policy?.quality_floor || "task default"));
     }
+    renderProviderControls();
 }
 
 async function refreshIntelligence() {
@@ -1089,6 +1276,9 @@ $("channel").addEventListener("change", async (event) => {
 });
 $("reload").addEventListener("click", loadChannel);
 $("refresh-intelligence").addEventListener("click", refreshIntelligence);
+$("verify-elevenlabs").addEventListener("click", verifyElevenLabs);
+$("preview-elevenlabs").addEventListener("click", previewElevenLabs);
+$("save-voice-provider").addEventListener("click", saveVoiceProvider);
 $("growth-goals-form").addEventListener("submit", saveGrowthGoals);
 $("add-custom-goal").addEventListener("click", addCustomGoal);
 $("growth-pace").addEventListener("change", (event) => {
@@ -1102,3 +1292,5 @@ $("setup-actions").addEventListener("click", (event) => {
     if (button.dataset.action === "connect-youtube") beginYouTubeOAuth();
     if (button.dataset.action === "create-channel") createChannel(button.dataset.connection);
 });
+
+window.addEventListener("beforeunload", revokeVoicePreview);
