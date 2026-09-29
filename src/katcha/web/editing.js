@@ -680,8 +680,13 @@ async function connect(event) {
         $("channel").innerHTML = '<option value="">Select a channel</option>' + channels.map((row) => `<option value="${escapeHTML(row.id)}">${escapeHTML(row.profile_metadata?.channel_title || row.profile_metadata?.name || row.id)} · ${escapeHTML(row.status)}</option>`).join("");
         $("channel").disabled = false; $("refresh").disabled = false;
         $("connection").textContent = "CONNECTED"; $("connection").classList.add("online");
-        if (channels.length) { $("channel").value = channels[0].id; await loadChannel(); }
-        else message("Connected. Create a channel through the control API to begin.");
+        if (channels.length) {
+            const requested = new URLSearchParams(location.search).get("channel");
+            $("channel").value = channels.some((row) => row.id === requested)
+                ? requested
+                : channels[0].id;
+            await loadChannel();
+        } else message("Connected. Create a channel through the control API to begin.");
     } catch (error) { $("connection").textContent = "OFFLINE"; $("connection").classList.remove("online"); message(error.message, true); }
 }
 async function action(event) {
