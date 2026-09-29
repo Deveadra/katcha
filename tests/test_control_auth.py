@@ -220,7 +220,6 @@ def test_control_principal_configuration_rejects_short_tokens() -> None:
         )
 
 
-
 def _restricted_request(
     channel_id: uuid.UUID,
     *,
@@ -274,7 +273,6 @@ def test_command_action_lookup_cannot_escape_principal_allowlist(
 
     assert exc.value.status_code == 403
     assert "not authorized for this channel" in str(exc.value.detail)
-
 
 
 def test_control_principals_parse_from_environment_json(monkeypatch) -> None:
