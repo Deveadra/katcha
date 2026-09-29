@@ -569,16 +569,16 @@ const analytics = [
     assert.match(await page.locator("#provider-panel").innerText(), /InVideo edit bridge/);
 
     await page.locator("#verify-elevenlabs").click();
-    await page.getByText(/credentials and voice are reachable/).waitFor();
+    await page.locator("#status").getByText(/credentials and voice are reachable/).waitFor();
 
     await page.locator("#preview-elevenlabs").click();
     await page.locator("#voice-preview-audio:not([hidden])").waitFor();
-    await page.getByText(/ElevenLabs preview ready/).waitFor();
+    await page.locator("#status").getByText(/ElevenLabs preview ready/).waitFor();
 
     await page.locator("#voice-provider").selectOption("elevenlabs");
     await page.locator("#voice-routing").selectOption("fixed");
     await page.locator("#save-voice-provider").click();
-    await page.getByText(/ElevenLabs is now the primary narration provider/).waitFor();
+    await page.locator("#status").getByText(/ElevenLabs is now the primary narration provider/).waitFor();
     assert.equal(await page.locator("#voice-provider-badge").innerText(), "ELEVENLABS");
 
     const voiceRequest = requests.find(
