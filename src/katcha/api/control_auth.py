@@ -137,7 +137,13 @@ def _require_named_principal_route_access(request: Request) -> None:
         # action-specific scope before claiming or executing it.
         return
 
-    if path == "/v1/ai/command" or path.startswith("/v1/ai/"):
+    if path == "/v1/ai/command":
+        require_control_scope(request, "ai:command")
+        return
+    if path.startswith("/v1/ai/threads/") and path.endswith("/archive"):
+        require_control_scope(request, "ai:write")
+        return
+    if path.startswith("/v1/ai/"):
         require_control_scope(request, "ai:read")
         return
 
