@@ -940,7 +940,7 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
 
     def workspace_asset(self):
-        path = self.path.split("?", 1)[0]
+        path, _, query = self.path.partition("?")
         redirects = {
             "/home": "/home/assets/home.html",
             "/editing": "/editing/assets/editing.html",
@@ -948,13 +948,41 @@ class Handler(BaseHTTPRequestHandler):
             "/ingestion": "/editing/assets/ingestion.html",
             "/clips": "/editing/assets/clips.html",
             "/channels": "/channels/assets/channels.html",
+            "/studio": "/studio/assets/studio.html",
             "/ai": "/ai/assets/ai.html",
         }
         if path in redirects:
-            suffix = "?focus=chat" if path == "/ai" and self.path.endswith("?focus=chat") else ""
-            self.redirect(redirects[path] + suffix)
+            location = redirects[path]
+            if query:
+                location += "?" + query
+            self.redirect(location)
             return True
-        prefixes = ("/home/assets/", "/editing/assets/", "/explorer/assets/", "/channels/assets/", "/ai/assets/")
+
+        shared_roots = {
+            "/system/": ROOT / "src" / "katcha" / "web" / "system",
+            "/pages/": ROOT / "src" / "katcha" / "web" / "pages",
+        }
+        for prefix, root in shared_roots.items():
+            if not path.startswith(prefix):
+                continue
+            name = path.removeprefix(prefix)
+            if not name or Path(name).name != name:
+                return False
+            asset = root / name
+            if not asset.is_file():
+                return False
+            mime = mimetypes.guess_type(asset.name)[0] or "application/octet-stream"
+            self.send(200, asset.read_bytes(), mime)
+            return True
+
+        prefixes = (
+            "/home/assets/",
+            "/editing/assets/",
+            "/explorer/assets/",
+            "/channels/assets/",
+            "/studio/assets/",
+            "/ai/assets/",
+        )
         prefix = next((item for item in prefixes if path.startswith(item)), None)
         if prefix is None:
             return False
@@ -1068,6 +1096,7 @@ class Handler(BaseHTTPRequestHandler):
             "/ingestion",
             "/clips",
             "/channels",
+            "/studio",
             "/ai",
         )
         if not self.path.startswith(allowed_prefixes):
