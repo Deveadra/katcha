@@ -341,10 +341,10 @@ const verifiedPreview = {
         await page.locator("#close-invideo-dialog").click();
         assert.equal(await page.locator("#count-blueprints").innerText(), "1");
         await page.locator('a[href="#blueprints-panel"]').click();
-        assert.equal(
-            await page.locator('[data-production-tab="recipes"]').getAttribute("aria-selected"),
-            "true",
-        );
+        await page
+            .locator('[data-production-tab="recipes"][aria-selected="true"]')
+            .waitFor();
+        await page.locator("#blueprints-panel").waitFor({ state: "visible" });
         assert.equal(await page.locator("#blueprints-panel").isHidden(), false);
         assert.equal(await page.evaluate(() => location.hash), "#blueprints-panel");
         assert.match(await page.locator(".recipe-card").innerText(), /RankSnaxx commentary/);
@@ -398,10 +398,10 @@ const verifiedPreview = {
         );
 
         await page.locator('[data-summary-filter="active"]').click();
-        assert.equal(
-            await page.locator('[data-production-tab="queue"]').getAttribute("aria-selected"),
-            "true",
-        );
+        await page
+            .locator('[data-production-tab="queue"][aria-selected="true"]')
+            .waitFor();
+        await page.locator("#editorial-pipeline").waitFor({ state: "visible" });
         assert.equal(await page.locator("#editorial-pipeline").isHidden(), false);
         assert.equal(await page.locator("#filter").inputValue(), "active");
         assert.equal(await page.locator(".episode-item").count(), 1);
