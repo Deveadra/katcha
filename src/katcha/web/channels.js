@@ -148,14 +148,26 @@ function activeConnection() {
     return state.connections.find((item) => item.id === channel.youtube_connection_id) || null;
 }
 
+function askKatchaHref(kind, id, prompt) {
+    const params = new URLSearchParams({
+        channel: state.channelId,
+        resource_kind: kind,
+        resource_id: id,
+        prompt,
+        focus: "chat",
+    });
+    return "/ai?" + params.toString();
+}
+
 function latestSnapshot(publicationId) {
     const detail = state.analytics.get(publicationId);
     return detail ? detail.snapshot : null;
 }
 
 async function connect() {
-    state.token = $("token").value.trim();
+    state.token = $("token").value.trim() || state.token;
     $("token").value = "";
+    if (state.token) sessionStorage.setItem("katcha.controlToken", state.token);
     $("connection-state").textContent = "CONNECTING";
     setStatus("Loading YouTube connections and channel workspaces…");
     try {
@@ -1041,6 +1053,15 @@ function renderVideoDetail() {
         '</div><div class="detail-actions">' +
         youtube +
         refresh +
+        '<a class="studio-button secondary small" href="' +
+        escapeHtml(
+            askKatchaHref(
+                "publication",
+                item.id,
+                "Explain this video’s performance, current state, and the strongest evidence-backed change to test next.",
+            ),
+        ) +
+        '">Ask Katcha ✦</a>' +
         '</div><div class="video-kpis">' +
         videoKpi("Views", snapshot ? compact(snapshot.views) : "—") +
         videoKpi("Avg viewed", snapshot ? percent(Number(snapshot.average_view_percentage || 0) / 100, 1) : "—") +
@@ -1211,7 +1232,15 @@ function renderProductions() {
                 escapeHtml(item.edit_blueprint_key || "default recipe") +
                 "</span><span>" +
                 escapeHtml(dateText(item.created_at)) +
-                "</span></div></article>"
+                '</span><a class="studio-button secondary small" href="' +
+                escapeHtml(
+                    askKatchaHref(
+                        "production",
+                        item.id,
+                        "Explain this production’s state, any failure evidence, and what should happen next.",
+                    ),
+                ) +
+                '">Ask Katcha ✦</a></div></article>'
             );
         })
         .join("");
