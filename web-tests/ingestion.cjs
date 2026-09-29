@@ -74,9 +74,9 @@ const catalog = [
         await page.goto('http://127.0.0.1:8767/ingestion.html');
         await page.locator('.workspace-menu').waitFor();
         await page.locator('.workspace-menu > summary').click();
-        assert.match(await page.locator('.workspace-menu-popover').innerText(), /Clip library/);
+        assert.match(await page.locator('.workspace-menu-popover').innerText(), /Clips/);
         assert.match(await page.locator('.workspace-menu-popover').innerText(), /Clip Studio/);
-        assert.match(await page.locator('.workspace-menu-popover').innerText(), /Content sources/);
+        assert.match(await page.locator('.workspace-menu-popover').innerText(), /Sources/);
         await page.locator('.workspace-menu > summary').click();
         await page.locator('#connection-panel').waitFor({state: 'visible'});
         assert(await page.locator('[data-method]').count() === 0);
