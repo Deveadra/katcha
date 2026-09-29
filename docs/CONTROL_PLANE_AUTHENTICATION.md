@@ -85,3 +85,14 @@ its configured validity window. It never returns raw token material.
 
 No database migration is required for credential rotation; the registry remains a
 deployment secret/configuration concern.
+
+## Operational acceptance
+
+After named principals are configured, run the controlled operator/Aerith
+acceptance in [CONTROL_PLANE_LIVE_ACCEPTANCE.md](CONTROL_PLANE_LIVE_ACCEPTANCE.md).
+
+The acceptance verifies session negotiation, least-privilege channel access,
+principal-bound event consumption, a real Katcha AI command, explicit proposal
+confirmation, Temporal workflow completion, audit attribution, and event-cursor
+acknowledgement without creating or publishing media.
+
