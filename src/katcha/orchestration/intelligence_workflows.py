@@ -5,6 +5,31 @@ from datetime import timedelta
 from temporalio import workflow
 from temporalio.common import RetryPolicy
 
+_COMMAND_PROPOSAL_RUN_PREFIX = "command-proposal-"
+_COMMAND_LIFECYCLE_RETRY = RetryPolicy(
+    initial_interval=timedelta(seconds=1),
+    backoff_coefficient=1.5,
+    maximum_interval=timedelta(seconds=5),
+    maximum_attempts=20,
+)
+
+
+async def _record_command_refresh_lifecycle(
+    channel_profile_id: str,
+    run_key: str,
+    workflow_id: str,
+    state: str,
+    error: str | None = None,
+) -> None:
+    if not run_key.startswith(_COMMAND_PROPOSAL_RUN_PREFIX):
+        return
+    await workflow.execute_activity(
+        "record_command_intelligence_workflow_lifecycle_activity",
+        args=[channel_profile_id, run_key, workflow_id, state, error],
+        start_to_close_timeout=timedelta(seconds=30),
+        retry_policy=_COMMAND_LIFECYCLE_RETRY,
+    )
+
 
 async def _run_refresh(channel_profile_id: str, run_key: str) -> dict[str, object]:
     retry = RetryPolicy(
@@ -148,7 +173,28 @@ class ChannelIntelligenceRefreshWorkflow:
         channel_profile_id: str,
         run_key: str,
     ) -> dict[str, object]:
-        return await _run_refresh(channel_profile_id, run_key)
+        workflow_id = workflow.info().workflow_id
+        try:
+            result = await _run_refresh(channel_profile_id, run_key)
+        except Exception as exc:
+            try:
+                await _record_command_refresh_lifecycle(
+                    channel_profile_id,
+                    run_key,
+                    workflow_id,
+                    "failed",
+                    str(exc)[:2000],
+                )
+            except Exception:
+                pass
+            raise
+        await _record_command_refresh_lifecycle(
+            channel_profile_id,
+            run_key,
+            workflow_id,
+            "completed",
+        )
+        return result
 
 
 @workflow.defn
