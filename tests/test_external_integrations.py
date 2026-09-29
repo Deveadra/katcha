@@ -23,6 +23,7 @@ def test_external_provider_routes_are_registered() -> None:
         "/v1/integrations/invideo/handoffs/{handoff_id}/package",
         "/v1/integrations/invideo/handoffs/{handoff_id}/output",
         "/v1/integrations/invideo/handoffs/{handoff_id}/adopt",
+        "/v1/integrations/invideo/handoffs/{handoff_id}/metrics",
     }
     assert expected <= set(paths)
     assert "get" in paths["/v1/integrations/elevenlabs/status"]
@@ -35,6 +36,7 @@ def test_external_provider_routes_are_registered() -> None:
     assert "post" in paths["/v1/integrations/invideo/handoffs"]
     assert "post" in paths["/v1/integrations/invideo/handoffs/{handoff_id}/output"]
     assert "post" in paths["/v1/integrations/invideo/handoffs/{handoff_id}/adopt"]
+    assert "post" in paths["/v1/integrations/invideo/handoffs/{handoff_id}/metrics"]
 
 
 def test_invideo_brief_keeps_katcha_as_source_of_truth() -> None:

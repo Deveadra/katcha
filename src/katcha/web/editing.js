@@ -87,7 +87,7 @@ function renderInVideoHandoff() {
     if (!row) {
         $("invideo-handoff-state").className = "external-edit-state empty";
         $("invideo-handoff-state").textContent = "Prepare an episode handoff to begin.";
-        for (const id of ["download-invideo-package", "invideo-output-file", "invideo-project-id", "upload-invideo-output", "adopt-invideo-output"]) {
+        for (const id of ["download-invideo-package", "invideo-output-file", "invideo-project-id", "upload-invideo-output", "adopt-invideo-output", "record-invideo-metrics"]) {
             $(id).disabled = true;
         }
         return;
@@ -104,6 +104,7 @@ function renderInVideoHandoff() {
     $("invideo-project-id").disabled = adopted;
     $("upload-invideo-output").disabled = adopted;
     $("adopt-invideo-output").disabled = !imported;
+    $("record-invideo-metrics").disabled = false;
 }
 async function prepareInVideo(episodeId) {
     const row = await api("/v1/integrations/invideo/handoffs", {
@@ -164,6 +165,26 @@ async function adoptInVideoOutput() {
     renderInVideoHandoff();
     await loadChannel();
     message("InVideo output adopted as the Katcha render. It is waiting for normal review.");
+}
+async function recordInVideoMetrics() {
+    const row = state.invideoHandoff;
+    if (!row) throw new Error("Prepare an InVideo handoff first.");
+    const number = (id) => {
+        const value = $(id).value.trim();
+        return value === "" ? null : Number(value);
+    };
+    state.invideoHandoff = await api("/v1/integrations/invideo/handoffs/" + encodeURIComponent(row.id) + "/metrics", {
+        method: "POST",
+        body: JSON.stringify({
+            actor: "editing-control-center",
+            credits_used: number("invideo-credits"),
+            cost_usd: number("invideo-cost"),
+            production_minutes: number("invideo-minutes"),
+            manual_interventions: number("invideo-interventions"),
+        }),
+    });
+    renderInVideoHandoff();
+    message("Provider results recorded in Katcha's cost and comparison ledger.");
 }
 function clearPreviewUrl() {
     if (state.previewUrl) URL.revokeObjectURL(state.previewUrl);
@@ -877,4 +898,7 @@ $("upload-invideo-output").addEventListener("click", () => {
 });
 $("adopt-invideo-output").addEventListener("click", () => {
     void adoptInVideoOutput().catch((error) => message(error.message, true));
+});
+$("record-invideo-metrics").addEventListener("click", () => {
+    void recordInVideoMetrics().catch((error) => message(error.message, true));
 });
