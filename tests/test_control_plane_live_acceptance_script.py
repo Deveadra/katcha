@@ -1,13 +1,17 @@
+import importlib
+import sys
 import uuid
+from pathlib import Path
 
 import pytest
 
-from scripts.control_plane_live_acceptance import (
-    AcceptanceError,
-    _correlated_events,
-    _validate_distinct_sessions,
-    _validate_session,
-)
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+_acceptance = importlib.import_module("scripts.control_plane_live_acceptance")
+
+AcceptanceError = _acceptance.AcceptanceError
+_correlated_events = _acceptance._correlated_events
+_validate_distinct_sessions = _acceptance._validate_distinct_sessions
+_validate_session = _acceptance._validate_session
 
 
 def _session(
