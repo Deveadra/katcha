@@ -142,8 +142,8 @@ installChatShortcut();
 (async () => {
     if (location.port !== '8765') return;
     const form = document.getElementById('connect-form') || document.getElementById('connect');
-    const connection = document.getElementById('connection');
-    const status = document.getElementById('message');
+    const connection = document.getElementById('connection') || document.getElementById('connection-state');
+    const status = document.getElementById('message') || document.getElementById('status');
     for (;;) {
         try {
             const response = await fetch('/runtime/status', {cache: 'no-store'});
