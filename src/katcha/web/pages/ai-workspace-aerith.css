@@ -1,0 +1,307 @@
+body[data-katcha-page="ai"] .ai-shell {
+    width: 100%;
+    max-width: none;
+    margin: 0;
+    padding: 16px clamp(18px, 2.4vw, 34px) 18px;
+}
+
+.ai-workspace-head {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 20px;
+    padding: 2px 0 13px;
+}
+
+.ai-workspace-head h1 {
+    margin: 3px 0 4px;
+    color: var(--ae-text);
+    font-size: clamp(27px, 3vw, 36px);
+    line-height: 1.04;
+    letter-spacing: -0.045em;
+}
+
+.ai-workspace-head p {
+    margin: 0;
+    color: var(--ae-text-secondary);
+    font-size: 12px;
+}
+
+.context-toggle {
+    display: none;
+}
+
+body[data-katcha-page="ai"] .connect-card {
+    margin: 0 0 5px;
+    padding: 10px 12px;
+    border-color: var(--ae-line);
+    border-radius: 11px;
+    background: var(--ae-surface-soft);
+}
+
+body[data-katcha-page="ai"] .ai-status {
+    min-height: 19px;
+    padding: 2px;
+}
+
+body[data-katcha-page="ai"] .ai-readiness {
+    margin: 5px 0 7px;
+    padding: 8px 11px;
+    font-size: 10px;
+}
+
+body[data-katcha-page="ai"] .command-layout {
+    min-height: 0;
+    gap: 8px;
+    grid-template-columns: minmax(520px, 1.45fr) minmax(330px, .55fr);
+    align-items: stretch;
+}
+
+body[data-katcha-page="ai"] .conversation-column,
+body[data-katcha-page="ai"] .context-column {
+    min-height: 0;
+    border-color: var(--ae-line);
+    border-radius: var(--ae-radius-panel);
+    background: var(--ae-surface-soft);
+    box-shadow: inset 0 1px rgba(255,255,255,.025);
+}
+
+body[data-katcha-page="ai"] .conversation-column {
+    height: 100%;
+}
+
+body[data-katcha-page="ai"] .conversation-bar,
+body[data-katcha-page="ai"] .context-head {
+    min-height: 54px;
+    padding: 8px 12px;
+    border-color: var(--ae-line);
+    background: rgba(255,255,255,.018);
+}
+
+body[data-katcha-page="ai"] #channel,
+body[data-katcha-page="ai"] #thread-history {
+    color: var(--ae-text);
+}
+
+body[data-katcha-page="ai"] .thread {
+    min-height: 0;
+    max-height: none;
+    flex: 1 1 auto;
+    padding: 14px;
+}
+
+body[data-katcha-page="ai"] .message {
+    margin-bottom: 12px;
+}
+
+body[data-katcha-page="ai"] .message-avatar {
+    background: linear-gradient(145deg, rgba(183,165,255,.18), rgba(132,231,255,.09));
+    color: var(--ae-violet);
+}
+
+body[data-katcha-page="ai"] .message-body,
+body[data-katcha-page="ai"] .evidence-card {
+    border-color: var(--ae-line);
+    background: rgba(255,255,255,.025);
+}
+
+body[data-katcha-page="ai"] .user-message .message-body {
+    border-color: rgba(132,231,255,.18);
+    background: rgba(132,231,255,.055);
+}
+
+body[data-katcha-page="ai"] .starter-wrap {
+    display: flex;
+    gap: 5px;
+    padding: 7px 11px;
+    overflow-x: auto;
+    border-color: var(--ae-line);
+    background: rgba(255,255,255,.012);
+    scrollbar-width: none;
+}
+
+body[data-katcha-page="ai"] .starter-wrap::-webkit-scrollbar {
+    display: none;
+}
+
+body[data-katcha-page="ai"] .starter {
+    flex: 0 0 auto;
+    width: auto;
+    max-width: 190px;
+    min-height: 32px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 9px;
+    border-color: var(--ae-line);
+    background: rgba(255,255,255,.022);
+}
+
+body[data-katcha-page="ai"] .starter:hover {
+    border-color: rgba(183,165,255,.28);
+    background: rgba(183,165,255,.055);
+}
+
+body[data-katcha-page="ai"] .starter > span {
+    grid-row: auto;
+    color: var(--ae-cyan);
+}
+
+body[data-katcha-page="ai"] .starter strong {
+    font-size: 9px;
+}
+
+body[data-katcha-page="ai"] .starter small {
+    display: none;
+}
+
+body[data-katcha-page="ai"] .composer {
+    padding: 9px 11px 8px;
+    border-color: var(--ae-line);
+    background: rgba(9,11,18,.72);
+}
+
+body[data-katcha-page="ai"] #prompt {
+    min-height: 42px;
+    border-color: var(--ae-line);
+    background: rgba(255,255,255,.025);
+    color: var(--ae-text);
+}
+
+body[data-katcha-page="ai"] #prompt:focus {
+    border-color: rgba(132,231,255,.46);
+    box-shadow: 0 0 0 2px rgba(132,231,255,.08);
+}
+
+body[data-katcha-page="ai"] .send-button {
+    background: linear-gradient(145deg, var(--ae-violet), var(--ae-cyan));
+    color: #151321;
+}
+
+body[data-katcha-page="ai"] .context-column {
+    position: static;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+}
+
+body[data-katcha-page="ai"] .context-panel {
+    min-height: 0;
+    max-height: none;
+    flex: 1 1 auto;
+    overflow-y: auto;
+    padding: 11px;
+}
+
+body[data-katcha-page="ai"] .context-empty {
+    min-height: 210px;
+}
+
+body[data-katcha-page="ai"] .action-card,
+body[data-katcha-page="ai"] .planner-card,
+body[data-katcha-page="ai"] .observability-grid > div {
+    border-color: var(--ae-line);
+    background: rgba(255,255,255,.025);
+}
+
+body[data-katcha-page="ai"] .action-card {
+    background: linear-gradient(120deg, rgba(155,230,194,.045), rgba(255,255,255,.02));
+}
+
+body[data-katcha-page="ai"] .observability-card,
+body[data-katcha-page="ai"] .control-plane-note {
+    padding: 10px 12px;
+    border-color: var(--ae-line);
+    background: rgba(255,255,255,.012);
+}
+
+@media (min-width: 951px) {
+    body[data-katcha-page="ai"] {
+        overflow: hidden;
+    }
+
+    body[data-katcha-page="ai"] .app-shell,
+    body[data-katcha-page="ai"] .ai-main {
+        height: 100dvh;
+        min-height: 0;
+        overflow: hidden;
+    }
+
+    body[data-katcha-page="ai"] .ai-shell {
+        height: calc(100dvh - 60px);
+        min-height: 0;
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+    }
+
+    body[data-katcha-page="ai"] .command-layout {
+        flex: 1 1 auto;
+        overflow: hidden;
+    }
+}
+
+@media (max-width: 950px) {
+    body[data-katcha-page="ai"] .ai-shell {
+        padding: 12px 14px 28px;
+    }
+
+    .ai-workspace-head {
+        align-items: center;
+    }
+
+    .context-toggle {
+        display: inline-flex;
+    }
+
+    body[data-katcha-page="ai"] .command-layout {
+        display: block;
+    }
+
+    body[data-katcha-page="ai"] .conversation-column {
+        min-height: calc(100dvh - 180px);
+    }
+
+    body[data-katcha-page="ai"] .context-column {
+        display: none;
+        position: fixed;
+        z-index: 120;
+        inset: 64px 10px 10px;
+        height: auto;
+        max-height: none;
+        box-shadow: var(--ae-shadow-overlay);
+        background: rgba(16,18,29,.98);
+        backdrop-filter: blur(22px);
+        -webkit-backdrop-filter: blur(22px);
+    }
+
+    body[data-katcha-page="ai"].ai-context-open .context-column {
+        display: flex;
+    }
+}
+
+@media (max-width: 650px) {
+    .ai-workspace-head h1 {
+        font-size: 28px;
+    }
+
+    body[data-katcha-page="ai"] .connect-card {
+        grid-template-columns: 1fr;
+    }
+
+    body[data-katcha-page="ai"] .conversation-column {
+        min-height: calc(100dvh - 155px);
+    }
+
+    body[data-katcha-page="ai"] .conversation-bar {
+        align-items: stretch;
+    }
+
+    body[data-katcha-page="ai"] .starter {
+        max-width: none;
+    }
+
+    body[data-katcha-page="ai"] .composer-foot span:first-child {
+        display: none;
+    }
+}
