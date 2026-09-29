@@ -33,8 +33,6 @@ WORKSPACE_IMAGE = "katcha-control:local"
 PREBUILT_REGISTRY = "ghcr.io/deveadra"
 EARLY_AUTOMATION_SERVICES = (
     "temporal",
-    "discovery-worker",
-    "trends-worker",
     "intelligence-worker",
 )
 BACKGROUND_BUILD_SERVICES = (
@@ -61,10 +59,7 @@ REQUIRED_SERVICES = {
     "renderer",
     "production-worker",
     "longform-worker",
-    "publishing-worker",
     "telegram-worker",
-    "discovery-worker",
-    "trends-worker",
     "intelligence-worker",
 }
 
@@ -655,6 +650,46 @@ class Runtime:
                         startup_seconds=final_seconds,
                     )
 
+    def apply_telegram(self):
+        """Reload only the services that cache Telegram settings."""
+        self.values = read_env(self.env_path)
+        self.known_secrets.update(
+            v for k, v in self.values.items() if v and SENSITIVE.search(k)
+        )
+        if not self.desired_running or self.phase in ("idle", "stopped", "failed"):
+            self.event(
+                "info",
+                "telegram",
+                "Telegram settings saved; Start Katcha will apply them.",
+            )
+            return False
+        self.event(
+            "info",
+            "telegram",
+            "Applying Telegram settings without restarting the media pipeline.",
+        )
+        self.run(
+            self.command()
+            + [
+                "up",
+                "-d",
+                "--no-build",
+                "--no-deps",
+                "--force-recreate",
+                "--wait",
+                "--wait-timeout",
+                "90",
+                "api",
+                "telegram-worker",
+            ],
+            timeout=150,
+        )
+        if not self.probe_workspace():
+            raise RuntimeError("Telegram settings were saved, but the Katcha API did not recover.")
+        self.start_logs()
+        self.event("info", "telegram", "Telegram settings applied.")
+        return True
+
     def start_logs(self):
         if self.follow and self.follow.poll() is None:
             return
@@ -817,12 +852,18 @@ class Runtime:
         return self.workspace_ready
 
     def monitor_once(self):
-        # Probe independently of the startup lock: workers must not gate GUI access.
-        self.probe_workspace()
-        if (self.phase in ("ready", "degraded")
-                and time.monotonic() >= self.health_check_at
-                and self.health_lock.acquire(blocking=False)):
-            self.health_check_at = time.monotonic() + 10
+        # Startup/recovery stays responsive. A healthy steady-state runtime is
+        # intentionally quiet so the supervisor itself does not create idle load.
+        now = time.monotonic()
+        steady = self.phase in ("ready", "degraded")
+        if not steady:
+            self.probe_workspace()
+        if (
+            steady
+            and now >= self.health_check_at
+            and self.health_lock.acquire(blocking=False)
+        ):
+            self.health_check_at = now + (30 if self.phase == "ready" else 10)
             try:
                 self.check()
                 self.start_logs()
@@ -846,7 +887,8 @@ class Runtime:
 
     def monitor(self):
         while True:
-            time.sleep(2)
+            delay = 10 if self.phase in ("ready", "idle", "stopped") else 2
+            time.sleep(delay)
             try:
                 self.monitor_once()
             except Exception as exc:
@@ -1001,6 +1043,14 @@ class Handler(BaseHTTPRequestHandler):
                 finally:
                     runtime.lock.release()
                 return self.send(200, {"ok": True})
+            if self.path == "/runtime/telegram/apply":
+                if not runtime.lock.acquire(blocking=False):
+                    return self.send(409, {"error": "Wait for the active operation"})
+                try:
+                    applied = runtime.apply_telegram()
+                finally:
+                    runtime.lock.release()
+                return self.send(200, {"ok": True, "applied": applied})
             action = self.path.removeprefix("/runtime/")
             if action not in ("start", "stop"):
                 return self.send(404, {"error": "Unknown action"})
