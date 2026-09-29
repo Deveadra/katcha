@@ -25,7 +25,7 @@ const assert = require('node:assert/strict');
         assert.equal(await page.locator('#open').getAttribute('aria-disabled'),'false');
         const workspace=await browser.newPage({viewport:{width:1440,height:1100}});
         await workspace.goto('http://localhost:8765/editing');
-        await workspace.getByRole('heading',{name:/Every edit/}).waitFor();
+        await workspace.getByRole('heading',{name:/Make, review, recover/}).waitFor();
         await workspace.waitForFunction(()=>document.getElementById('connection').textContent==='WARMING');
         assert.match(await workspace.locator('#message').textContent(),/Start services/);
         await workspace.close();

@@ -310,6 +310,14 @@ const verifiedPreview = {
         await page.locator("#connect-form button").click();
         await page.getByText("Ranking clips").waitFor();
         assert.equal(await page.locator(".logo").getAttribute("href"), "/explorer");
+        assert.equal(await page.locator("[data-production-tab]").count(), 3);
+        assert.equal(
+            await page.locator('[data-production-tab="queue"]').getAttribute("aria-selected"),
+            "true",
+        );
+        assert.equal(await page.locator("#editorial-pipeline").isHidden(), false);
+        assert.equal(await page.locator("#blueprints-panel").isHidden(), true);
+        assert.equal(await page.locator("#brand-acceptance").isHidden(), true);
         assert.equal(await page.locator(".stat-link").count(), 4);
         assert.equal(await page.locator("#count-total").innerText(), "2");
         assert.equal(await page.locator("#count-active").innerText(), "1");
@@ -332,6 +340,13 @@ const verifiedPreview = {
         );
         await page.locator("#close-invideo-dialog").click();
         assert.equal(await page.locator("#count-blueprints").innerText(), "1");
+        await page.locator('a[href="#blueprints-panel"]').click();
+        await page
+            .locator('[data-production-tab="recipes"][aria-selected="true"]')
+            .waitFor();
+        await page.locator("#blueprints-panel").waitFor({ state: "visible" });
+        assert.equal(await page.locator("#blueprints-panel").isHidden(), false);
+        assert.equal(await page.evaluate(() => location.hash), "#blueprints-panel");
         assert.match(await page.locator(".recipe-card").innerText(), /RankSnaxx commentary/);
         assert.match(await page.locator(".recipe-card").innerText(), /DEFAULT RECIPE/);
         assert(await page.getByText("ranksnaxx v1").count());
@@ -383,6 +398,11 @@ const verifiedPreview = {
         );
 
         await page.locator('[data-summary-filter="active"]').click();
+        await page
+            .locator('[data-production-tab="queue"][aria-selected="true"]')
+            .waitFor();
+        await page.locator("#editorial-pipeline").waitFor({ state: "visible" });
+        assert.equal(await page.locator("#editorial-pipeline").isHidden(), false);
         assert.equal(await page.locator("#filter").inputValue(), "active");
         assert.equal(await page.locator(".episode-item").count(), 1);
         assert.match(await page.locator(".episode-item").innerText(), /Active editorial fixture/);
@@ -392,13 +412,17 @@ const verifiedPreview = {
         assert.match(await page.locator(".episode-item").innerText(), /Ranking clips/);
         await page.locator('[data-summary-filter="all"]').click();
 
+        await page.locator('[data-production-tab="brand"]').click();
+        assert.equal(await page.locator("#brand-acceptance").isHidden(), false);
+        assert.equal(await page.locator("#editorial-pipeline").isHidden(), true);
         await page.getByRole("button", { name: "Stage candidate" }).click();
         await page.getByText(/Brand v2 staged/).waitFor();
-        await page.setViewportSize({ width: 900, height: 900 });
+        await page.setViewportSize({ width: 390, height: 844 });
         assert.equal(
             await page.evaluate(() => document.documentElement.scrollWidth > innerWidth),
             false,
         );
+        assert.equal(await page.locator("[data-production-tab]").count(), 3);
         await page.getByRole("button", { name: /Render preview/ }).click();
         await page.getByText(/Brand preview verified/).waitFor();
         await page.locator("#brand-preview-video").waitFor();
@@ -406,6 +430,8 @@ const verifiedPreview = {
         await page.getByRole("button", { name: "Activate accepted brand v2" }).click();
         await page.getByText(/Brand v2 activated/).waitFor();
 
+        await page.locator('[data-production-tab="queue"]').click();
+        assert.equal(await page.locator("#editorial-pipeline").isHidden(), false);
         await page.getByRole("button", { name: "Recover render" }).click();
         await page.getByText(/Render recovery started/).waitFor();
         await page.locator("#channel").selectOption("two");
@@ -421,6 +447,6 @@ const verifiedPreview = {
         assert(requests.some((request) => request.path.endsWith("/brands/2/activate") && request.auth === "Bearer fixture-token"));
         assert(requests.some((request) => request.path.endsWith("/render/recover") && request.auth === "Bearer fixture-token"));
         assert.deepEqual(errors, []);
-        console.log("Editing control center browser test passed");
+        console.log("Production browser test passed");
     } finally { await browser.close(); }
 })().catch((error) => { console.error(error); process.exitCode = 1; }).finally(() => server.kill());

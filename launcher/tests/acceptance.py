@@ -68,7 +68,7 @@ if __name__ == "__main__":
                 if time.monotonic() >= deadline:
                     raise
                 time.sleep(0.5)
-        assert b"Editing control center" in request("/editing/assets/editing.html")
+        assert b"Production" in request("/editing/assets/editing.html")
         assert b"Clip library" in request("/editing/assets/clips.html")
         assert b"Channel Studio" in request("/channels/assets/channels.html")
         assert b"Katcha AI" in request("/ai/assets/ai.html")

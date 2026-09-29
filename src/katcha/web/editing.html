@@ -3,12 +3,13 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <meta name="theme-color" content="#100e1b">
-    <title>Katcha · Editing control center</title>
+    <meta name="theme-color" content="#090b12">
+    <title>Katcha · Production</title>
     <link rel="stylesheet" href="editing.css">
+    <link rel="stylesheet" href="pages/production-aerith.css">
     <script src="editing.js" defer></script>
 <script src="launcher-bridge.js" defer></script></head>
-<body>
+<body data-katcha-page="production">
     <div class="shell">
         <aside class="sidebar">
             <a class="logo" href="/explorer" aria-label="Katcha home"><span class="glyph">✦</span> katcha<span class="accent">.</span></a>
@@ -17,18 +18,18 @@
                 <a href="/explorer">◌ <span>Trend explorer</span></a>
                 <a href="/ingestion">↳ <span>Content sources</span></a>
                 <a href="/clips">▤ <span>Clip library</span></a>
-                <a href="/editing" aria-current="page">▣ <span>Editing control center</span></a>
+                <a href="/editing" aria-current="page">▣ <span>Production</span></a>
                 <a href="/studio">⌁ <span>Clip Studio</span></a>
             </nav>
             <div class="sidebar-bottom"><span class="live-dot"></span> CHANNEL OPERATIONS <small>Identity · Production · Recovery</small></div>
         </aside>
         <main>
-            <header class="topbar"><span>Workspace <span class="slash">/</span> <strong>Editing control center</strong></span><span id="connection" class="connection">OFFLINE</span></header>
+            <header class="topbar"><span>Workspace <span class="slash">/</span> <strong>Production</strong></span><span id="connection" class="connection">OFFLINE</span></header>
             <div class="content">
-                <div class="heading"><div><div class="eyebrow">PRODUCTION STUDIO / CHANNEL OPERATIONS</div><h1>Every edit, <em>in focus.</em></h1><p>Keep each channel’s identity intact, follow its episodes, and resolve render failures from one place.</p></div><button id="refresh" class="button secondary" disabled>↻ Refresh</button></div>
+                <div class="production-head"><div><div class="eyebrow">PRODUCTION</div><h1>Make, review, recover.</h1><p>Move episodes through production, tune editing recipes, and validate brand changes without mixing the workflows together.</p></div><button id="refresh" class="button secondary" disabled>↻ Refresh</button></div>
                 <form id="connect-form" class="connect card"><div><label for="token">Control-plane token</label><p>Kept in this browser tab only. Leave blank for local development.</p></div><input id="token" type="password" autocomplete="off" placeholder="Token if required"><button class="button primary">Connect ↗</button></form>
                 <div id="message" class="message" role="status" aria-live="polite"></div>
-                <section class="channel-bar card"><div><label for="channel">ACTIVE CHANNEL</label><select id="channel" disabled><option value="">Connect to load channels</option></select></div><div class="channel-hint">All editing data below belongs to the selected channel.</div></section>
+                <section class="channel-bar card"><div><label for="channel">ACTIVE CHANNEL</label><select id="channel" disabled><option value="">Connect to load channels</option></select></div><div class="channel-hint">All production data below belongs to the selected channel.</div></section>
                 <section id="provider-status" class="provider-strip card" aria-label="Editing providers">
                     <div><span>ELEVENLABS</span><strong>Not checked</strong><small>Premium narration provider</small></div>
                     <div><span>INVIDEO</span><strong>Not checked</strong><small>External edit bridge</small></div>
@@ -39,21 +40,26 @@
                     <a class="stat card stat-link stat-attention" href="#editorial-pipeline" data-summary-filter="attention"><span>NEEDS ATTENTION</span><strong id="count-attention">—</strong><small>Errors & dead letters</small><b aria-hidden="true">↘</b></a>
                     <a class="stat card stat-link" href="#blueprints-panel"><span>EDITING RECIPES</span><strong id="count-blueprints">—</strong><small>Editable per channel</small><b aria-hidden="true">↘</b></a>
                 </nav>
-                <div class="grid">
+                <nav class="production-workspace-tabs" id="production-tabs" aria-label="Production workspaces" role="tablist">
+                    <button type="button" role="tab" data-production-tab="queue" aria-selected="true">Queue</button>
+                    <button type="button" role="tab" data-production-tab="recipes" aria-selected="false">Recipes</button>
+                    <button type="button" role="tab" data-production-tab="brand" aria-selected="false">Brand</button>
+                </nav>
+                <div class="grid production-workspace" data-production-group="recipes" hidden>
                     <section class="panel card" id="blueprints-panel">
                         <div class="panel-head">
-                            <div><div class="eyebrow">01 / CHANNEL IDENTITY</div><h2>Editing recipes</h2></div>
+                            <div><div class="eyebrow">CHANNEL RECIPE</div><h2>Editing recipes</h2></div>
                             <div class="panel-head-actions"><span class="tag">SAFE VERSIONING</span><button id="new-blueprint" class="mini" type="button" disabled>+ New recipe</button></div>
                         </div>
                         <p class="section-copy">A recipe controls how this channel edits: layout, narration, captions, source audio, transitions, headers, and length. Open a recipe to see or change it. Saving creates a new version, so existing videos never change underneath you.</p>
                         <div id="blueprints" class="recipe-list"><div class="empty">Connect to inspect editing recipes.</div></div>
                     </section>
                     <section class="panel card">
-                        <div class="panel-head"><div><div class="eyebrow">02 / LEARNING LOOP</div><h2>Recipe performance</h2></div><span class="tag">REAL DATA</span></div>
+                        <div class="panel-head"><div><div class="eyebrow">MEASURED RESULTS</div><h2>Recipe performance</h2></div><span class="tag">REAL DATA</span></div>
                         <div id="performance" class="performance empty">Select a channel to see measured results.</div>
                     </section>
                 </div>
-                <section class="panel card blueprint-editor-panel" id="blueprint-editor-panel" hidden>
+                <section class="panel card blueprint-editor-panel production-workspace" id="blueprint-editor-panel" data-production-group="recipes" hidden>
                     <div class="panel-head">
                         <div><div class="eyebrow">RECIPE EDITOR</div><h2 id="blueprint-editor-title">Edit recipe</h2></div>
                         <button id="close-blueprint-editor" class="mini" type="button">Close</button>
@@ -107,12 +113,12 @@
                         </div>
                     </form>
                 </section>
-                <section class="panel card brand-lab" id="brand-acceptance">
-                    <div class="panel-head"><div><div class="eyebrow">03 / BRAND ACCEPTANCE</div><h2>Staged brand preview lab</h2></div><span class="tag">NON-PUBLISHING</span></div>
+                <section class="panel card brand-lab production-workspace" id="brand-acceptance" data-production-group="brand" hidden>
+                    <div class="panel-head"><div><div class="eyebrow">BRAND ACCEPTANCE</div><h2>Preview before activation</h2></div><span class="tag">NON-PUBLISHING</span></div>
                     <p class="section-copy">Stage a candidate without changing the live channel, render it against frozen production media, inspect the verified MP4, then activate explicitly.</p>
                     <div id="brand-lab"><div class="empty">Connect to inspect brand versions and preview sources.</div></div>
                 </section>
-                <section class="panel card episodes" id="editorial-pipeline"><div class="panel-head"><div><div class="eyebrow">04 / EDITORIAL PIPELINE</div><h2>Ranked episode queue</h2></div><label class="filter">STATUS <select id="filter"><option value="all">All episodes</option><option value="attention">Needs attention</option><option value="active">In production</option></select></label></div><div id="episodes" class="list"><div class="empty">Connect to load episodes.</div></div></section>
+                <section class="panel card episodes production-workspace" id="editorial-pipeline" data-production-group="queue"><div class="panel-head"><div><div class="eyebrow">EPISODE QUEUE</div><h2>Work moving through Katcha</h2></div><label class="filter">STATUS <select id="filter"><option value="all">All episodes</option><option value="attention">Needs attention</option><option value="active">In production</option></select></label></div><div id="episodes" class="list"><div class="empty">Connect to load episodes.</div></div></section>
                 <footer>The brand preview lab prioritizes channel-scoped ranked episodes and also supports standalone Shorts with frozen render manifests. Preview renders never mutate production/publication lineage. Brand activation is a separate explicit action. Render recovery creates a new generation only from dead-letter attempts.</footer>
             </div>
         </main>
