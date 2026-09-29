@@ -91,6 +91,37 @@ def test_named_principal_auth_derives_identity_scopes_and_channels() -> None:
     assert exc.value.status_code == 403
 
 
+def test_legacy_single_token_auth_remains_backward_compatible() -> None:
+    request = _request()
+    settings = Settings(
+        _env_file=None,
+        control_api_token="legacy-fixture-token-00001",
+        control_api_scopes="ai:read,production:create",
+    )
+
+    _authenticate(
+        request,
+        _credentials("legacy-fixture-token-00001"),
+        settings,
+    )
+
+    assert control_actor(request).startswith("control-token:")
+    assert control_principal_name(request) is None
+    assert request.state.control_scopes == {"ai:read", "production:create"}
+    assert control_allowed_channel_ids(request) is None
+
+
+def test_production_without_control_auth_fails_closed() -> None:
+    request = _request()
+    settings = Settings(_env_file=None, env="production")
+
+    with pytest.raises(HTTPException) as exc:
+        _authenticate(request, None, settings)
+
+    assert exc.value.status_code == 503
+    assert "not configured" in str(exc.value.detail)
+
+
 def test_named_principal_rejects_unknown_bearer_token() -> None:
     request = _request()
 
