@@ -1,0 +1,296 @@
+import uuid
+from datetime import UTC, datetime, timedelta
+
+from sqlalchemy import select
+
+from katcha.db import session_scope
+from katcha.domain import ChannelStatus
+from katcha.intelligence_models import ChannelProfile
+from katcha.models import DomainEvent
+from katcha.publishing_models import YouTubeConnection
+from katcha.services.command_actions import (
+    ActionProposalSpec,
+    claim_action_proposal,
+    complete_action_proposal,
+    create_action_proposals,
+)
+from katcha.services.command_activity import get_action_activity
+from katcha.services.command_workflow_lifecycle import (
+    proposal_id_from_command_run_key,
+    record_intelligence_command_workflow_lifecycle,
+    record_topic_watch_command_cycle,
+)
+from katcha.services.discovery_trends import create_topic_watch_version
+
+
+def _profile() -> uuid.UUID:
+    connection_id = uuid.uuid4()
+    profile_id = uuid.uuid4()
+    now = datetime.now(UTC)
+    with session_scope() as session:
+        session.add(
+            YouTubeConnection(
+                id=connection_id,
+                channel_id=f"workflow-lifecycle-{connection_id}",
+                channel_title="Workflow lifecycle fixture",
+                status="active",
+                scopes=[],
+                encrypted_access_token="fixture",
+                encrypted_refresh_token="fixture",
+                token_expires_at=now + timedelta(hours=1),
+                connection_metadata={},
+            )
+        )
+        session.flush()
+        session.add(
+            ChannelProfile(
+                id=profile_id,
+                youtube_connection_id=connection_id,
+                status=ChannelStatus.ACTIVE.value,
+                timezone="UTC",
+                active_strategy_version=1,
+                active_automation_version=1,
+                profile_metadata={"channel_title": "Workflow lifecycle"},
+            )
+        )
+    return profile_id
+
+
+def _executed_proposal(
+    profile_id: uuid.UUID,
+    *,
+    action_type: str,
+    result: dict[str, object],
+) -> object:
+    proposal = create_action_proposals(
+        request_id=uuid.uuid4(),
+        channel_profile_id=profile_id,
+        specs=[
+            ActionProposalSpec(
+                action_type=action_type,
+                label="Fixture action",
+                description="Workflow lifecycle fixture",
+                payload={},
+            )
+        ],
+    )[0]
+    claim_action_proposal(
+        proposal.id,
+        actor="control-principal:aerith",
+        credential_id="2026-q4",
+        credential_fingerprint="abc123def456",
+    )
+    return complete_action_proposal(
+        proposal.id,
+        result=result,
+        credential_id="2026-q4",
+        credential_fingerprint="abc123def456",
+    )
+
+
+def test_intelligence_command_workflow_completion_is_idempotent() -> None:
+    profile_id = _profile()
+    proposal_id = uuid.uuid4()
+    workflow_id = f"intelligence-fixture-{proposal_id}"
+    proposal = create_action_proposals(
+        request_id=uuid.uuid4(),
+        channel_profile_id=profile_id,
+        specs=[
+            ActionProposalSpec(
+                action_type="refresh_channel_intelligence",
+                label="Refresh",
+                description="Refresh fixture",
+                payload={},
+            )
+        ],
+    )[0]
+    proposal_id = proposal.id
+    claim_action_proposal(proposal.id, actor="control-principal:aerith")
+    complete_action_proposal(
+        proposal.id,
+        result={
+            "workflow_id": workflow_id,
+            "run_key": f"command-proposal-{proposal.id}",
+        },
+    )
+
+    run_key = f"command-proposal-{proposal.id}"
+    assert proposal_id_from_command_run_key(run_key) == proposal.id
+    assert (
+        record_intelligence_command_workflow_lifecycle(
+            channel_profile_id=profile_id,
+            run_key=run_key,
+            workflow_id=workflow_id,
+            state="completed",
+        )
+        is True
+    )
+    assert (
+        record_intelligence_command_workflow_lifecycle(
+            channel_profile_id=profile_id,
+            run_key=run_key,
+            workflow_id=workflow_id,
+            state="completed",
+        )
+        is False
+    )
+
+    activity = get_action_activity(proposal.id)
+    assert activity.state == "completed"
+    assert activity.settled is True
+    assert activity.resource is None
+
+    with session_scope() as session:
+        events = list(
+            session.scalars(
+                select(DomainEvent).where(
+                    DomainEvent.aggregate_id == str(proposal.id),
+                    DomainEvent.event_type
+                    == "command_center.workflow_completed",
+                )
+            )
+        )
+    assert len(events) == 1
+    payload = dict(events[0].payload or {})
+    assert payload["request_id"] == str(proposal.request_id)
+    assert payload["channel_profile_id"] == str(profile_id)
+    assert payload["action_type"] == "refresh_channel_intelligence"
+    assert payload["workflow_id"] == workflow_id
+
+
+def test_non_command_intelligence_run_does_not_emit_lifecycle() -> None:
+    assert proposal_id_from_command_run_key("scheduled-20260929T120000Z") is None
+    assert (
+        record_intelligence_command_workflow_lifecycle(
+            channel_profile_id=uuid.uuid4(),
+            run_key="scheduled-20260929T120000Z",
+            workflow_id="scheduled-fixture",
+            state="completed",
+        )
+        is False
+    )
+
+
+def test_source_scout_cycles_report_active_degraded_then_recovered() -> None:
+    profile_id = _profile()
+    proposal = create_action_proposals(
+        request_id=uuid.uuid4(),
+        channel_profile_id=profile_id,
+        specs=[
+            ActionProposalSpec(
+                action_type="start_source_scout",
+                label="Scout",
+                description="Source scout fixture",
+                payload={},
+            )
+        ],
+    )[0]
+    watch = create_topic_watch_version(
+        watch_key=f"fixture-{proposal.id}",
+        name="Command source scout fixture",
+        include_terms=["xbox"],
+        adapter_configs=[],
+        metadata={"command_proposal_id": str(proposal.id)},
+        channel_profile_id=profile_id,
+    )
+    workflow_id = f"topic-watch-schedule-{watch.id}"
+    claim_action_proposal(proposal.id, actor="control-principal:aerith")
+    complete_action_proposal(
+        proposal.id,
+        result={
+            "topic_watch_id": str(watch.id),
+            "workflow_id": workflow_id,
+            "continuous": True,
+        },
+    )
+
+    assert record_topic_watch_command_cycle(
+        topic_watch_id=watch.id,
+        workflow_id=workflow_id,
+        cycle_key="cycle-1",
+        state="failed",
+        detail={
+            "cycle_workflow_id": "child-1",
+            "error": "provider fixture failure",
+        },
+    )
+    degraded = get_action_activity(proposal.id)
+    assert degraded.state == "active_degraded"
+    assert degraded.settled is False
+    assert degraded.resource is not None
+    assert degraded.resource.kind == "topic_watch"
+    assert degraded.resource.stage == "cycle_failed"
+    assert degraded.resource.error == "provider fixture failure"
+
+    assert record_topic_watch_command_cycle(
+        topic_watch_id=watch.id,
+        workflow_id=workflow_id,
+        cycle_key="cycle-2",
+        state="completed",
+        detail={
+            "cycle_workflow_id": "child-2",
+            "queue_status": "completed",
+            "queue_count": 7,
+        },
+    )
+    recovered = get_action_activity(proposal.id)
+    assert recovered.state == "active"
+    assert recovered.settled is False
+    assert recovered.resource is not None
+    assert recovered.resource.stage == "completed"
+    assert recovered.resource.error is None
+
+    duplicate = record_topic_watch_command_cycle(
+        topic_watch_id=watch.id,
+        workflow_id=workflow_id,
+        cycle_key="cycle-2",
+        state="completed",
+        detail={"queue_status": "completed"},
+    )
+    assert duplicate is False
+
+    with session_scope() as session:
+        row = session.get(type(watch), watch.id)
+        assert row is not None
+        row.enabled = False
+
+    disabled = get_action_activity(proposal.id)
+    assert disabled.state == "disabled"
+    assert disabled.settled is True
+
+
+def test_intelligence_workflow_failure_is_terminal() -> None:
+    profile_id = _profile()
+    workflow_id = f"intelligence-failure-{uuid.uuid4()}"
+    proposal = create_action_proposals(
+        request_id=uuid.uuid4(),
+        channel_profile_id=profile_id,
+        specs=[
+            ActionProposalSpec(
+                action_type="refresh_channel_intelligence",
+                label="Refresh",
+                description="Failure fixture",
+                payload={},
+            )
+        ],
+    )[0]
+    claim_action_proposal(proposal.id, actor="control-principal:aerith")
+    complete_action_proposal(
+        proposal.id,
+        result={
+            "workflow_id": workflow_id,
+            "run_key": f"command-proposal-{proposal.id}",
+        },
+    )
+
+    record_intelligence_command_workflow_lifecycle(
+        channel_profile_id=profile_id,
+        run_key=f"command-proposal-{proposal.id}",
+        workflow_id=workflow_id,
+        state="failed",
+        error="fixture refresh failed",
+    )
+
+    activity = get_action_activity(proposal.id)
+    assert activity.state == "failed"
+    assert activity.settled is True
