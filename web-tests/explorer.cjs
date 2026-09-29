@@ -314,12 +314,31 @@ let browser;
         fullPage: true,
     });
     await page.setViewportSize({ width: 390, height: 844 });
-    assert.equal(
-        await page.evaluate(
-            () => document.documentElement.scrollWidth > innerWidth,
-        ),
-        false,
-    );
+    const mobileOverflow = await page.evaluate(() => {
+        const viewportWidth = document.documentElement.clientWidth;
+        return [...document.querySelectorAll("body *")]
+            .map((element) => {
+                const rect = element.getBoundingClientRect();
+                return {
+                    tag: element.tagName.toLowerCase(),
+                    id: element.id,
+                    className:
+                        typeof element.className === "string"
+                            ? element.className
+                            : "",
+                    left: Math.round(rect.left),
+                    right: Math.round(rect.right),
+                    width: Math.round(rect.width),
+                };
+            })
+            .filter(
+                (rect) =>
+                    rect.width > 0 &&
+                    (rect.left < -1 || rect.right > viewportWidth + 1),
+            )
+            .slice(0, 12);
+    });
+    assert.deepEqual(mobileOverflow, []);
     await page.screenshot({
         path: path.join(__dirname, "test-results/mobile.png"),
         fullPage: true,
