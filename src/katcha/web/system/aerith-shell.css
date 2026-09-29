@@ -135,3 +135,169 @@
         height: 56px !important;
     }
 }
+
+
+/* Shared shell primitives live here rather than being injected by JavaScript. */
+.ae-skip-link {
+    position: fixed;
+    z-index: 5000;
+    top: 10px;
+    left: 10px;
+    padding: 9px 12px;
+    border: 1px solid var(--ae-line-hover);
+    border-radius: 9px;
+    background: rgba(16, 18, 29, 0.98);
+    color: var(--ae-text);
+    box-shadow: var(--ae-shadow-overlay);
+    transform: translateY(-160%);
+    transition: transform var(--ae-motion-fast) var(--ae-ease-standard);
+}
+
+.ae-skip-link:focus {
+    transform: translateY(0);
+}
+
+.workspace-nav-cluster {
+    display: grid;
+    width: 100%;
+    position: relative;
+    z-index: 30;
+}
+
+.workspace-menu {
+    position: relative;
+    margin: 0 !important;
+    padding: 0 !important;
+    border: 0 !important;
+    font-size: inherit !important;
+}
+
+.workspace-menu > summary {
+    list-style: none;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    width: 100%;
+    padding: 11px 12px;
+    cursor: pointer;
+}
+
+.workspace-menu > summary::-webkit-details-marker {
+    display: none;
+}
+
+.workspace-menu-copy {
+    display: grid;
+    gap: 2px;
+    min-width: 0;
+    text-align: left;
+}
+
+.workspace-menu-copy small {
+    font-size: 8px;
+    font-weight: 850;
+    letter-spacing: 0.15em;
+}
+
+.workspace-menu-copy strong {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 12px;
+    font-weight: 750;
+}
+
+.workspace-menu-chevron {
+    color: var(--ae-text-tertiary);
+    font-size: 15px;
+    transition: transform var(--ae-motion-fast) var(--ae-ease-standard);
+}
+
+.workspace-menu[open] .workspace-menu-chevron {
+    transform: rotate(180deg);
+}
+
+.workspace-menu-popover {
+    position: absolute;
+    top: calc(100% + 7px);
+    left: 0;
+    right: 0;
+    display: grid;
+    gap: 4px;
+    min-width: 210px;
+    padding: 7px;
+}
+
+.workspace-menu-popover a {
+    display: grid;
+    grid-template-columns: 22px minmax(0, 1fr);
+    align-items: center;
+    gap: 9px;
+    padding: 10px;
+    text-decoration: none;
+    font-size: 12px;
+}
+
+.workspace-menu-popover a[aria-current="page"] b::after {
+    content: "Current";
+    margin-left: 7px;
+    color: var(--ae-text-tertiary);
+    font-size: 8px;
+    font-weight: 800;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+
+.workspace-menu-popover span {
+    text-align: center;
+}
+
+.workspace-menu-popover b {
+    min-width: 0;
+    font-weight: 700;
+}
+
+#katcha-chat-shortcut {
+    position: fixed;
+    right: 24px;
+    bottom: 24px;
+    z-index: 1000;
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    padding: 12px 17px;
+    border-radius: 999px;
+    color: var(--ae-text) !important;
+    text-decoration: none;
+    font: 700 13px/1.2 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+#katcha-chat-shortcut > span:first-child {
+    color: var(--ae-violet);
+    font-size: 18px;
+}
+
+@media (max-width: 950px) {
+    .rail .workspace-nav-cluster {
+        width: min(255px, 100%);
+        gap: 9px !important;
+    }
+}
+
+@media (max-width: 700px) {
+    .sidebar .workspace-nav-cluster {
+        width: min(280px, 100%);
+        gap: 9px !important;
+    }
+
+    #katcha-chat-shortcut {
+        right: 14px;
+        bottom: 14px;
+        padding: 11px 14px;
+    }
+
+    #katcha-chat-shortcut .katcha-chat-label {
+        font-size: 12px;
+    }
+}
