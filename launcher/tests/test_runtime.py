@@ -630,6 +630,29 @@ def test_launcher_serves_workspace_shell_without_api(tmp_path):
         body = response.read()
         assert response.status == 200
         assert b"Channel Studio" in body
+        connection.request("GET", "/studio?channel=channel-1&episode=episode-1")
+        response = connection.getresponse()
+        assert response.status == 302
+        assert (
+            response.getheader("Location")
+            == "/studio/assets/studio.html?channel=channel-1&episode=episode-1"
+        )
+        response.read()
+        connection.request("GET", "/studio/assets/studio.html")
+        response = connection.getresponse()
+        body = response.read()
+        assert response.status == 200
+        assert b'data-katcha-page="studio"' in body
+        connection.request("GET", "/system/aerith-shell.css")
+        response = connection.getresponse()
+        body = response.read()
+        assert response.status == 200
+        assert b"#katcha-chat-shortcut" in body
+        connection.request("GET", "/pages/production-aerith.css")
+        response = connection.getresponse()
+        body = response.read()
+        assert response.status == 200
+        assert b'data-katcha-page="production"' in body
         connection.request("GET", "/ai")
         response = connection.getresponse()
         assert response.status == 302
