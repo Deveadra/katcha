@@ -1,5 +1,6 @@
 /* Shared workspace navigation + local launcher bridge. */
 const KATCHA_WORKSPACES = [
+    { key: 'home', label: 'Home', href: '/home', icon: '⌂' },
     { key: 'trends', label: 'Trends', href: '/explorer', icon: '◉' },
     { key: 'ai', label: 'Katcha AI', href: '/ai', icon: '✦' },
     { key: 'sources', label: 'Sources', href: '/ingestion', icon: '↳' },
@@ -10,6 +11,7 @@ const KATCHA_WORKSPACES = [
 ];
 
 function workspaceKeyFromPath(path = location.pathname) {
+    if (path.startsWith('/home') || path.endsWith('/home.html')) return 'home';
     if (path.startsWith('/ingestion') || path.endsWith('/ingestion.html')) return 'sources';
     if (path.startsWith('/clips') || path.endsWith('/clips.html')) return 'clips';
     if (path.startsWith('/channels') || path.endsWith('/channels.html')) return 'channel';
