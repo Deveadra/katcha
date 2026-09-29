@@ -22,6 +22,9 @@ from katcha.services.channel_learning import (
 )
 from katcha.services.channel_scheduling import compute_schedule_recommendations
 from katcha.services.clip_lifecycle import run_channel_maintenance
+from katcha.services.command_workflow_lifecycle import (
+    record_intelligence_command_workflow_lifecycle,
+)
 from katcha.services.edit_blueprint_performance import (
     refresh_edit_blueprint_performance,
 )
@@ -34,6 +37,28 @@ from katcha.services.packaging_seed import seed_channel_packaging
 from katcha.services.reach_cadence import eligible_reach_connection, reach_sync_identity
 from katcha.services.trend_activation_performance import refresh_activation_performance
 from katcha.services.trend_auto_activation import run_autonomous_trend_activation
+
+
+@activity.defn
+def record_command_intelligence_workflow_lifecycle_activity(
+    channel_profile_id: str,
+    run_key: str,
+    workflow_id: str,
+    state: str,
+    error: str | None = None,
+) -> dict[str, object]:
+    recorded = record_intelligence_command_workflow_lifecycle(
+        channel_profile_id=uuid.UUID(channel_profile_id),
+        run_key=run_key,
+        workflow_id=workflow_id,
+        state=state,
+        error=error,
+    )
+    return {
+        "recorded": recorded,
+        "workflow_id": workflow_id,
+        "state": state,
+    }
 
 
 @activity.defn

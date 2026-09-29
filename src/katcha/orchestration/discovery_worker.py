@@ -14,6 +14,7 @@ from katcha.orchestration.discovery_activities import (
     finalize_topic_watch_execution_activity,
     mark_discovery_run_failed,
     prepare_topic_watch_execution_activity,
+    record_topic_watch_command_cycle_activity,
 )
 from katcha.orchestration.discovery_workflows import (
     DiscoveryRunWorkflow,
@@ -46,6 +47,7 @@ async def main() -> None:
                 mark_discovery_run_failed,
                 prepare_topic_watch_execution_activity,
                 finalize_topic_watch_execution_activity,
+                record_topic_watch_command_cycle_activity,
             ],
             activity_executor=activity_executor,
         )

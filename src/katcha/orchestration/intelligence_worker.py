@@ -26,6 +26,7 @@ from katcha.orchestration.intelligence_activities import (
     compute_channel_economics_activity,
     compute_channel_schedule_activity,
     derive_channel_observations_activity,
+    record_command_intelligence_workflow_lifecycle_activity,
     refresh_channel_growth_activity,
     refresh_edit_blueprint_performance_activity,
     refresh_packaging_intelligence_activity,
@@ -109,6 +110,7 @@ async def main() -> None:
             ],
             activities=[
                 derive_channel_observations_activity,
+                record_command_intelligence_workflow_lifecycle_activity,
                 refresh_channel_growth_activity,
                 refresh_edit_blueprint_performance_activity,
                 refresh_packaging_intelligence_activity,
