@@ -274,7 +274,7 @@ async function loadOverview(channelId = "", { preserveStatus = false } = {}) {
     } catch (error) {
         setStatus(error.message, "error");
         if (error.status === 401 || error.status === 403) $("connect-form").hidden = false;
-        throw error;
+        return null;
     } finally {
         state.loading = false;
         $("refresh").disabled = false;
@@ -287,6 +287,7 @@ async function connect(event) {
     $("token").value = "";
     try {
         const all = await loadOverview("");
+        if (!all) return;
         const requested = new URLSearchParams(location.search).get("channel") || "";
         const valid = requested && all.channels.some((row) => row.id === requested);
         if (valid) {
@@ -308,8 +309,8 @@ async function launcherConnect() {
             const runtime = await response.json();
             if (runtime.workspace_ready) {
                 state.token = "";
-                await loadOverview("");
-                return;
+                const loaded = await loadOverview("");
+                if (loaded) return;
             }
             setStatus(
                 runtime.desired_running
