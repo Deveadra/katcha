@@ -13,10 +13,13 @@ from katcha.api.control_auth import (
     control_principal_name,
     control_scopes,
 )
+from katcha.control_contract import (
+    CONTROL_CONTRACT_VERSION,
+    capability_flags,
+    command_action_permissions,
+)
 
 router = APIRouter(prefix="/v1/control", tags=["control-plane"])
-
-CONTROL_CONTRACT_VERSION = "1"
 
 
 class ChannelAccessResponse(BaseModel):
@@ -47,6 +50,11 @@ class ControlCapabilitiesResponse(BaseModel):
     trends_write: bool
 
 
+class ActionPermissionResponse(BaseModel):
+    required_scope: str
+    allowed: bool
+
+
 class ControlSessionResponse(BaseModel):
     control_contract_version: str
     katcha_version: str
@@ -60,11 +68,8 @@ class ControlSessionResponse(BaseModel):
     scopes: list[str]
     channel_access: ChannelAccessResponse
     capabilities: ControlCapabilitiesResponse
+    action_permissions: dict[str, ActionPermissionResponse]
     event_stream: EventStreamCapabilityResponse
-
-
-def _allows(scopes: set[str], scope: str) -> bool:
-    return "*" in scopes or scope in scopes
 
 
 def _authentication_mode(
@@ -107,20 +112,12 @@ def control_session(http_request: Request) -> ControlSessionResponse:
             channel_profile_ids=channel_ids,
         ),
         capabilities=ControlCapabilitiesResponse(
-            ai_read=_allows(scopes, "ai:read"),
-            ai_command=_allows(scopes, "ai:command"),
-            ai_write=_allows(scopes, "ai:write"),
-            channels_read=_allows(scopes, "channels:read"),
-            channels_write=_allows(scopes, "channels:write"),
-            intelligence_write=_allows(scopes, "intelligence:write"),
-            production_create=_allows(scopes, "production:create"),
-            render_recover=_allows(scopes, "render:recover"),
-            discovery_write=_allows(scopes, "discovery:write"),
-            events_read=_allows(scopes, "events:read"),
-            events_ack=_allows(scopes, "events:ack"),
-            trends_read=_allows(scopes, "trends:read"),
-            trends_write=_allows(scopes, "trends:write"),
+            **capability_flags(scopes),
         ),
+        action_permissions={
+            action_type: ActionPermissionResponse.model_validate(value)
+            for action_type, value in command_action_permissions(scopes).items()
+        },
         event_stream=EventStreamCapabilityResponse(
             read_endpoint="/v1/control/events",
             acknowledge_endpoint_template="/v1/control/events/{event_id}/ack",

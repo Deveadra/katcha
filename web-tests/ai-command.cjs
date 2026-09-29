@@ -102,6 +102,28 @@ let browser;
                           trends_read: false,
                           trends_write: false,
                       },
+                      action_permissions: {
+                          refresh_channel_intelligence: {
+                              required_scope: "intelligence:write",
+                              allowed: false,
+                          },
+                          create_short_production: {
+                              required_scope: "production:create",
+                              allowed: false,
+                          },
+                          create_ranked_short_episode: {
+                              required_scope: "production:create",
+                              allowed: false,
+                          },
+                          recover_production_render: {
+                              required_scope: "render:recover",
+                              allowed: false,
+                          },
+                          start_source_scout: {
+                              required_scope: "discovery:write",
+                              allowed: false,
+                          },
+                      },
                       event_stream: {
                           read_endpoint: "/v1/control/events",
                           acknowledge_endpoint_template:
@@ -116,7 +138,21 @@ let browser;
                       actor: "control-principal:operator-ui",
                       principal_name: "operator-ui",
                       authentication_mode: "named_principal",
-                      scopes: ["*"],
+                      scopes: [
+                          "ai:read",
+                          "ai:command",
+                          "ai:write",
+                          "channels:read",
+                          "channels:write",
+                          "intelligence:write",
+                          "production:create",
+                          "render:recover",
+                          "discovery:write",
+                          "events:read",
+                          "events:ack",
+                          "trends:read",
+                          "trends:write",
+                      ],
                       channel_access: {
                           all_channels: true,
                           channel_profile_ids: [],
@@ -135,6 +171,28 @@ let browser;
                           events_ack: true,
                           trends_read: true,
                           trends_write: true,
+                      },
+                      action_permissions: {
+                          refresh_channel_intelligence: {
+                              required_scope: "intelligence:write",
+                              allowed: true,
+                          },
+                          create_short_production: {
+                              required_scope: "production:create",
+                              allowed: true,
+                          },
+                          create_ranked_short_episode: {
+                              required_scope: "production:create",
+                              allowed: true,
+                          },
+                          recover_production_render: {
+                              required_scope: "render:recover",
+                              allowed: true,
+                          },
+                          start_source_scout: {
+                              required_scope: "discovery:write",
+                              allowed: true,
+                          },
                       },
                       event_stream: {
                           read_endpoint: "/v1/control/events",
@@ -610,6 +668,10 @@ let browser;
     assert.match(
         await page.locator("[data-action-id]").first().innerText(),
         /Not permitted/i,
+    );
+    assert.match(
+        await page.locator("[data-action-card]").first().getAttribute("title"),
+        /production:create/i,
     );
     assert.match(await page.locator("#status").innerText(), /Read-only access/i);
 

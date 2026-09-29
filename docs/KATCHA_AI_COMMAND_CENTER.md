@@ -226,6 +226,19 @@ This is defense in depth only; the server remains authoritative and re-checks th
 channel when the request is received. Unknown future action types fail closed in the browser
 for restricted principals, while wildcard operator principals retain full compatibility.
 
+
+
+### Server-driven action permissions
+
+The control contract owns the action-to-scope mapping. `GET /v1/control/session` returns an
+`action_permissions` record for every registered Command Center action, including the
+required scope and whether the authenticated principal may execute it.
+
+The Command Center browser consumes that record directly; it no longer carries its own copy
+of the action permission table. This prevents client/server drift when new action types are
+added. Restricted principals see the proposal and required scope, but the confirmation
+control stays disabled. Unknown action types fail closed unless the principal is wildcard.
+
 ## Durable conversation history
 
 Command Center conversations are now server-side records rather than browser-only state.

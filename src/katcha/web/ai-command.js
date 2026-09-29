@@ -60,25 +60,20 @@ function channelName(channel) {
     );
 }
 
-const ACTION_CAPABILITIES = {
-    refresh_channel_intelligence: "intelligence_write",
-    create_short_production: "production_create",
-    create_ranked_short_episode: "production_create",
-    recover_production_render: "render_recover",
-    start_source_scout: "discovery_write",
-};
-
 function capability(name) {
     if (!state.controlSession) return false;
     if ((state.controlSession.scopes || []).includes("*")) return true;
     return Boolean(state.controlSession.capabilities?.[name]);
 }
 
+function actionPermission(action) {
+    return state.controlSession?.action_permissions?.[action.type] || null;
+}
+
 function actionAllowed(action) {
     if (!state.controlSession) return false;
     if ((state.controlSession.scopes || []).includes("*")) return true;
-    const capabilityName = ACTION_CAPABILITIES[action.type];
-    return capabilityName ? capability(capabilityName) : false;
+    return Boolean(actionPermission(action)?.allowed);
 }
 
 function renderControlSession() {
@@ -586,7 +581,13 @@ function renderContext(result) {
             return (
                 '<article class="action-card" data-action-card="' +
                 esc(action.proposal_id) +
-                '"><strong>' +
+                '"' +
+                (!principalCanExecute && actionPermission(action)?.required_scope
+                    ? ' title="Requires ' +
+                      esc(actionPermission(action).required_scope) +
+                      '"'
+                    : "") +
+                '><strong>' +
                 esc(action.label) +
                 "</strong><p>" +
                 esc(action.description) +
