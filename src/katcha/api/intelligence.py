@@ -6,10 +6,17 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Literal
 
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, HTTPException, Query, Request, status
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 
+from katcha.api.control_auth import (
+    control_actor,
+    control_allowed_channel_ids,
+    control_principal_name,
+    require_control_channel,
+    require_control_scope,
+)
 from katcha.db import session_scope
 from katcha.domain import AutomationLevel, CompilationStatus, ProductionStatus
 from katcha.edit_performance_models import EditBlueprintPerformanceSnapshot
@@ -334,6 +341,7 @@ class EventEnvelope(BaseModel):
 
 class AckEventRequest(BaseModel):
     consumer_key: str = Field(min_length=1, max_length=128)
+    channel_profile_id: uuid.UUID | None = None
     metadata: dict[str, object] | None = None
 
 
@@ -367,7 +375,16 @@ def _refresh_identity(
     response_model=ChannelProfileResponse,
     status_code=status.HTTP_202_ACCEPTED,
 )
-async def create_channel(request: CreateChannelRequest) -> ChannelProfile:
+async def create_channel(
+    http_request: Request,
+    request: CreateChannelRequest,
+) -> ChannelProfile:
+    require_control_scope(http_request, "channels:write")
+    if control_allowed_channel_ids(http_request) is not None:
+        raise HTTPException(
+            status_code=403,
+            detail="channel-restricted principals cannot create channel profiles",
+        )
     try:
         profile = ensure_channel_profile(
             request.youtube_connection_id,
@@ -385,13 +402,22 @@ async def create_channel(request: CreateChannelRequest) -> ChannelProfile:
 
 
 @router.get("/channels", response_model=list[ChannelProfileResponse])
-def list_channels() -> list[ChannelProfile]:
+def list_channels(http_request: Request) -> list[ChannelProfile]:
+    require_control_scope(http_request, "channels:read")
+    allowed = control_allowed_channel_ids(http_request)
     with session_scope() as session:
-        return list(session.scalars(select(ChannelProfile).order_by(ChannelProfile.created_at)))
+        stmt = select(ChannelProfile).order_by(ChannelProfile.created_at)
+        if allowed is not None:
+            stmt = stmt.where(ChannelProfile.id.in_(sorted(allowed, key=str)))
+        return list(session.scalars(stmt))
 
 
 @router.get("/channels/{channel_profile_id}")
-def get_channel_summary(channel_profile_id: uuid.UUID) -> dict[str, object]:
+def get_channel_summary(
+    channel_profile_id: uuid.UUID,
+    http_request: Request,
+) -> dict[str, object]:
+    require_control_scope(http_request, "channels:read")
     try:
         with session_scope() as session:
             profile = ensure_active_profile(session, channel_profile_id)
@@ -449,8 +475,10 @@ def get_channel_summary(channel_profile_id: uuid.UUID) -> dict[str, object]:
 )
 def update_channel_strategy(
     channel_profile_id: uuid.UUID,
+    http_request: Request,
     request: UpdateStrategyRequest,
 ) -> ChannelStrategyVersion:
+    require_control_scope(http_request, "intelligence:write")
     try:
         return create_strategy_version(
             channel_profile_id,
@@ -461,14 +489,18 @@ def update_channel_strategy(
             fallback_schedule=_slots(request.fallback_schedule),
             blackout_windows=_slots(request.blackout_windows),
             routing_policy=request.routing_policy,
-            actor=request.actor,
+            actor=control_actor(http_request),
         )
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 @router.get("/channels/{channel_profile_id}/growth")
-def get_channel_growth(channel_profile_id: uuid.UUID) -> dict[str, object]:
+def get_channel_growth(
+    channel_profile_id: uuid.UUID,
+    http_request: Request,
+) -> dict[str, object]:
+    require_control_scope(http_request, "channels:read")
     try:
         return channel_growth_context(channel_profile_id)
     except ValueError as exc:
@@ -481,14 +513,16 @@ def get_channel_growth(channel_profile_id: uuid.UUID) -> dict[str, object]:
 )
 def update_channel_growth_goals(
     channel_profile_id: uuid.UUID,
+    http_request: Request,
     request: GrowthGoalsRequest,
 ) -> ChannelStrategyVersion:
+    require_control_scope(http_request, "intelligence:write")
     try:
         growth_strategy = request.model_dump(mode="json", exclude={"actor"})
         return create_strategy_version(
             channel_profile_id,
             growth_strategy=growth_strategy,
-            actor=request.actor,
+            actor=control_actor(http_request),
         )
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
@@ -501,8 +535,10 @@ def update_channel_growth_goals(
 )
 async def refresh_channel_intelligence(
     channel_profile_id: uuid.UUID,
+    http_request: Request,
     request: RefreshIntelligenceRequest,
 ) -> RefreshIntelligenceResponse:
+    require_control_scope(http_request, "intelligence:write")
     try:
         with session_scope() as session:
             ensure_active_profile(session, channel_profile_id)
@@ -528,7 +564,11 @@ async def refresh_channel_intelligence(
     "/channels/{channel_profile_id}/ranking",
     response_model=RankingResponse | None,
 )
-def get_channel_ranking(channel_profile_id: uuid.UUID) -> RankingSnapshot | None:
+def get_channel_ranking(
+    channel_profile_id: uuid.UUID,
+    http_request: Request,
+) -> RankingSnapshot | None:
+    require_control_scope(http_request, "channels:read")
     with session_scope() as session:
         try:
             profile = ensure_active_profile(session, channel_profile_id)
@@ -541,7 +581,11 @@ def get_channel_ranking(channel_profile_id: uuid.UUID) -> RankingSnapshot | None
     "/channels/{channel_profile_id}/economics",
     response_model=EconomicsResponse | None,
 )
-def get_channel_economics(channel_profile_id: uuid.UUID) -> ChannelEconomicsSnapshot | None:
+def get_channel_economics(
+    channel_profile_id: uuid.UUID,
+    http_request: Request,
+) -> ChannelEconomicsSnapshot | None:
+    require_control_scope(http_request, "channels:read")
     with session_scope() as session:
         try:
             profile = ensure_active_profile(session, channel_profile_id)
@@ -556,8 +600,10 @@ def get_channel_economics(channel_profile_id: uuid.UUID) -> ChannelEconomicsSnap
 )
 def get_channel_editing_performance(
     channel_profile_id: uuid.UUID,
+    http_request: Request,
     age_bucket_hours: int | None = Query(default=None),
 ) -> EditBlueprintPerformanceSnapshot | None:
+    require_control_scope(http_request, "channels:read")
     with session_scope() as session:
         try:
             ensure_active_profile(session, channel_profile_id)
@@ -575,9 +621,11 @@ def get_channel_editing_performance(
 )
 def get_channel_editing_performance_history(
     channel_profile_id: uuid.UUID,
+    http_request: Request,
     limit: int = Query(default=50, ge=1, le=250),
     age_bucket_hours: int | None = Query(default=None),
 ) -> list[EditBlueprintPerformanceSnapshot]:
+    require_control_scope(http_request, "channels:read")
     with session_scope() as session:
         try:
             ensure_active_profile(session, channel_profile_id)
@@ -596,8 +644,10 @@ def get_channel_editing_performance_history(
 )
 def get_channel_packaging_intelligence(
     channel_profile_id: uuid.UUID,
+    http_request: Request,
     maturity_days: int | None = Query(default=None),
 ) -> PackagingIntelligenceSnapshot | None:
+    require_control_scope(http_request, "channels:read")
     with session_scope() as session:
         try:
             ensure_active_profile(session, channel_profile_id)
@@ -615,9 +665,11 @@ def get_channel_packaging_intelligence(
 )
 def get_channel_packaging_intelligence_history(
     channel_profile_id: uuid.UUID,
+    http_request: Request,
     limit: int = Query(default=50, ge=1, le=250),
     maturity_days: int | None = Query(default=None),
 ) -> list[PackagingIntelligenceSnapshot]:
+    require_control_scope(http_request, "channels:read")
     with session_scope() as session:
         try:
             ensure_active_profile(session, channel_profile_id)
@@ -636,8 +688,10 @@ def get_channel_packaging_intelligence_history(
 )
 def get_channel_schedule(
     channel_profile_id: uuid.UUID,
+    http_request: Request,
     limit: int = Query(default=5, ge=1, le=20),
 ) -> list[ScheduleRecommendation]:
+    require_control_scope(http_request, "channels:read")
     try:
         return latest_schedule_recommendations(channel_profile_id, limit=limit)
     except ValueError as exc:
@@ -645,7 +699,11 @@ def get_channel_schedule(
 
 
 @router.get("/channels/{channel_profile_id}/automation")
-def get_channel_automation(channel_profile_id: uuid.UUID) -> dict[str, object]:
+def get_channel_automation(
+    channel_profile_id: uuid.UUID,
+    http_request: Request,
+) -> dict[str, object]:
+    require_control_scope(http_request, "channels:read")
     try:
         return automation_summary(channel_profile_id)
     except ValueError as exc:
@@ -658,13 +716,15 @@ def get_channel_automation(channel_profile_id: uuid.UUID) -> dict[str, object]:
 )
 def promote_channel_automation(
     channel_profile_id: uuid.UUID,
+    http_request: Request,
     request: PromoteAutomationRequest,
 ) -> AutomationPolicyVersion:
+    require_control_scope(http_request, "intelligence:write")
     try:
         return promote_automation(
             channel_profile_id,
             target_level=AutomationLevel(request.target_level),
-            actor=request.actor,
+            actor=control_actor(http_request),
         )
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
@@ -677,7 +737,9 @@ def promote_channel_automation(
 def get_clip_channel_score(
     channel_profile_id: uuid.UUID,
     clip_id: uuid.UUID,
+    http_request: Request,
 ) -> ClipChannelScoreResponse:
+    require_control_scope(http_request, "channels:read")
     try:
         payload = score_clip_for_channel(channel_profile_id, clip_id)
         return ClipChannelScoreResponse.model_validate(payload)
@@ -693,8 +755,10 @@ def get_clip_channel_score(
 async def create_channel_production(
     channel_profile_id: uuid.UUID,
     clip_id: uuid.UUID,
+    http_request: Request,
     request: CreateChannelProductionRequest,
 ) -> Production:
+    require_control_scope(http_request, "production:create")
     try:
         production = register_short_production(
             clip_id,
@@ -720,8 +784,10 @@ async def create_channel_production(
 )
 async def create_channel_compilation(
     channel_profile_id: uuid.UUID,
+    http_request: Request,
     request: CreateChannelCompilationRequest,
 ) -> Compilation:
+    require_control_scope(http_request, "production:create")
     try:
         compilation = register_compilation(
             theme=request.theme,
@@ -745,14 +811,30 @@ async def create_channel_compilation(
 
 @router.get("/control/events", response_model=list[EventEnvelope])
 def control_events(
+    http_request: Request,
     consumer_key: str = Query(min_length=1, max_length=128),
     channel_profile_id: uuid.UUID | None = Query(default=None),
     limit: int = Query(default=100, ge=1, le=500),
 ) -> list[dict[str, object]]:
+    require_control_scope(http_request, "events:read")
+    allowed = control_allowed_channel_ids(http_request)
+    if allowed is not None and channel_profile_id is None:
+        raise HTTPException(
+            status_code=403,
+            detail="channel-restricted principals must select a channel event stream",
+        )
+    if channel_profile_id is not None:
+        require_control_channel(http_request, channel_profile_id)
+    actor = (
+        control_actor(http_request)
+        if control_principal_name(http_request) is not None
+        else None
+    )
     try:
         return list_consumer_events(
             consumer_key,
             channel_profile_id=channel_profile_id,
+            consumer_actor=actor,
             limit=limit,
         )
     except ValueError as exc:
@@ -765,12 +847,32 @@ def control_events(
 )
 def acknowledge_control_event(
     event_id: uuid.UUID,
+    http_request: Request,
     request: AckEventRequest,
 ):
+    require_control_scope(http_request, "events:ack")
+    allowed = control_allowed_channel_ids(http_request)
+    if allowed is not None and request.channel_profile_id is None:
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                "channel-restricted principals must acknowledge within a "
+                "channel stream"
+            ),
+        )
+    if request.channel_profile_id is not None:
+        require_control_channel(http_request, request.channel_profile_id)
+    actor = (
+        control_actor(http_request)
+        if control_principal_name(http_request) is not None
+        else None
+    )
     try:
         return acknowledge_consumer_event(
             request.consumer_key,
             event_id,
+            channel_profile_id=request.channel_profile_id,
+            consumer_actor=actor,
             metadata=request.metadata,
         )
     except ValueError as exc:

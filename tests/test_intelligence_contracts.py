@@ -1,7 +1,7 @@
 from sqlalchemy import CheckConstraint, UniqueConstraint
 
 from katcha.ai.router import ROUTES
-from katcha.api.intelligence import EconomicsResponse, StrategyResponse
+from katcha.api.intelligence import AckEventRequest, EconomicsResponse, StrategyResponse
 from katcha.api.main import app
 from katcha.domain import AITask
 from katcha.intelligence_models import (
@@ -84,3 +84,7 @@ def test_intelligence_control_routes_are_mounted() -> None:
     assert "/v1/channels/{channel_profile_id}/clips/{clip_id}/score" in paths
     assert "/v1/control/events" in paths
     assert "/v1/control/events/{event_id}/ack" in paths
+
+
+def test_event_ack_contract_can_pin_channel_scope() -> None:
+    assert "channel_profile_id" in AckEventRequest.model_fields

@@ -5,6 +5,7 @@ import pytest
 from katcha.intelligence_models import EventConsumerCursor
 from katcha.services.event_stream import (
     _belongs_to_channel,
+    _require_cursor_principal,
     _require_cursor_scope,
     _safe_payload,
 )
@@ -59,7 +60,6 @@ def test_unscoped_event_cursor_stays_unscoped() -> None:
     _require_cursor_scope(cursor, None)
 
 
-
 def test_render_events_remain_visible_in_channel_scoped_streams() -> None:
     channel_id = uuid.uuid4()
     production_id = uuid.uuid4()
@@ -73,3 +73,17 @@ def test_render_events_remain_visible_in_channel_scoped_streams() -> None:
 
     assert _belongs_to_channel(event, channel_id) is True
     assert event.payload["channel_profile_id"] == str(channel_id)
+
+
+def test_event_cursor_cannot_cross_control_principal() -> None:
+    cursor = EventConsumerCursor(
+        consumer_key="aerith-channel-a",
+        cursor_metadata={
+            "_channel_profile_id": None,
+            "_control_actor": "control-principal:aerith",
+        },
+    )
+
+    _require_cursor_principal(cursor, "control-principal:aerith")
+    with pytest.raises(ValueError, match="different control principal"):
+        _require_cursor_principal(cursor, "control-principal:operator")

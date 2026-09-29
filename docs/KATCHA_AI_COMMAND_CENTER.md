@@ -114,22 +114,76 @@ underlying production/workflow records as non-chat control calls and adds a high
 event for external consumers such as Aerith.
 
 
-## Control identity and scopes
+## Control identity, principals and scopes
 
-The current control plane still uses one configured bearer token, but Katcha no longer trusts a
-client-supplied `actor` for Command Center mutations. Authentication derives a non-secret token
-fingerprint for the audit actor and binds scopes from `KATCHA_CONTROL_API_SCOPES`.
+Katcha supports named control-plane principals so a human operator and Aerith do not need to
+share one bearer credential. Configure `KATCHA_CONTROL_PRINCIPALS` as a JSON list. Each
+principal freezes:
 
-Command Center scope checks currently use:
+- a stable principal name used in audit events;
+- its own bearer token;
+- allowed scopes;
+- either `["*"]` channel access or an explicit list of channel profile IDs.
+
+Example:
+
+```json
+[
+  {
+    "name": "operator-ui",
+    "token": "<strong random operator token>",
+    "scopes": ["*"],
+    "channel_profile_ids": ["*"]
+  },
+  {
+    "name": "aerith",
+    "token": "<different strong Aerith token>",
+    "scopes": [
+      "channels:read",
+      "events:read",
+      "events:ack",
+      "intelligence:write",
+      "production:create",
+      "render:recover"
+    ],
+    "channel_profile_ids": ["<channel-profile-uuid>"]
+  }
+]
+```
+
+When this registry is configured, the legacy `KATCHA_CONTROL_API_TOKEN` is not accepted.
+Without a registry, the existing single-token setup remains backward compatible through
+`KATCHA_CONTROL_API_TOKEN` and `KATCHA_CONTROL_API_SCOPES`.
+
+Named principals are fail-closed. A restricted principal can use only explicitly scoped
+control-plane surfaces. Unmapped `/v1` routes return 403 instead of silently inheriting
+bearer access. Channel-restricted principals are also checked against channel IDs in URL
+paths, Command Center request bodies, durable threads, action proposals and event streams.
+
+Command Center/action scopes currently include:
 
 - `ai:read`
+- `ai:command`
+- `ai:write`
+- `channels:read`
+- `channels:write`
 - `intelligence:write`
 - `production:create`
 - `render:recover`
 - `discovery:write`
+- `events:read`
+- `events:ack`
+- `trends:read`
+- `trends:write`
 
-`*` preserves the existing single-operator setup. A later multi-principal credential layer can
-assign different tokens/scopes to Aerith and human operators without changing the action API.
+For named principals, `ai:read` is intentionally read-only history/status access,
+`ai:command` permits natural-language Command Center requests (which may consume AI
+budget and create frozen proposals), and `ai:write` permits thread-state mutations such as
+archiving. Legacy single-token installations keep their existing endpoint behavior.
+
+Event cursors are bound to both their channel scope and authenticated named principal so one
+controller cannot reuse another controller's cursor key. The audit actor is server-derived,
+for example `control-principal:aerith`; client-supplied actor strings are not authoritative.
 
 
 ## Durable conversation history
