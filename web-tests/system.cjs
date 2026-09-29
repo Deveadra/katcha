@@ -49,8 +49,14 @@ const labels = workspaces.map((row) => row.label);
                 labels,
                 workspace.label + ": shared workspace order drifted",
             );
+            const currentWorkspace = menu.locator('[aria-current="page"]');
             assert.equal(
-                await menu.locator('[aria-current="page"] b').innerText(),
+                await currentWorkspace.count(),
+                1,
+                workspace.label + ": expected exactly one current workspace",
+            );
+            assert.equal(
+                (await currentWorkspace.locator("b").textContent()).trim(),
                 workspace.label,
                 workspace.label + ": current workspace state missing",
             );
