@@ -528,22 +528,22 @@ def adopt_external_output(
             source = session.get(Production, row.source_id)
             if source is None:
                 raise ValueError("production not found")
-            existing = session.scalar(
-                select(ProductionAsset).where(
-                    ProductionAsset.production_id == source.id,
-                    ProductionAsset.kind == "render",
-                    ProductionAsset.generation == 1,
+            render_generation = int(
+                session.scalar(
+                    select(
+                        func.coalesce(func.max(ProductionAsset.generation), 0)
+                    ).where(
+                        ProductionAsset.production_id == source.id,
+                        ProductionAsset.kind == "render",
+                    )
                 )
-            )
-            if existing is not None:
-                raise ValueError(
-                    "production already has a canonical render; create a new generation instead"
-                )
+                or 0
+            ) + 1
             session.add(
                 ProductionAsset(
                     production_id=source.id,
                     kind="render",
-                    generation=1,
+                    generation=render_generation,
                     storage_key=row.output_key,
                     content_type="video/mp4",
                     provider="invideo",
@@ -551,6 +551,7 @@ def adopt_external_output(
                     asset_metadata={
                         "verified": True,
                         "external_edit_handoff_id": str(row.id),
+                        "external_edit_generation": row.generation,
                         **verification,
                     },
                 )
@@ -562,22 +563,22 @@ def adopt_external_output(
             source = session.get(ShortEpisode, row.source_id)
             if source is None:
                 raise ValueError("short episode not found")
-            existing = session.scalar(
-                select(ShortEpisodeAsset).where(
-                    ShortEpisodeAsset.short_episode_id == source.id,
-                    ShortEpisodeAsset.kind == "render",
-                    ShortEpisodeAsset.generation == 1,
+            render_generation = int(
+                session.scalar(
+                    select(
+                        func.coalesce(func.max(ShortEpisodeAsset.generation), 0)
+                    ).where(
+                        ShortEpisodeAsset.short_episode_id == source.id,
+                        ShortEpisodeAsset.kind == "render",
+                    )
                 )
-            )
-            if existing is not None:
-                raise ValueError(
-                    "short episode already has a canonical render; create a new generation instead"
-                )
+                or 0
+            ) + 1
             session.add(
                 ShortEpisodeAsset(
                     short_episode_id=source.id,
                     kind="render",
-                    generation=1,
+                    generation=render_generation,
                     storage_key=row.output_key,
                     content_type="video/mp4",
                     provider="invideo",
@@ -585,6 +586,7 @@ def adopt_external_output(
                     asset_metadata={
                         "verified": True,
                         "external_edit_handoff_id": str(row.id),
+                        "external_edit_generation": row.generation,
                         **verification,
                     },
                 )
@@ -598,6 +600,7 @@ def adopt_external_output(
             **dict(row.handoff_metadata or {}),
             "adopted_by": actor,
             "adopted_at": datetime.now(UTC).isoformat(),
+            "adopted_render_generation": render_generation,
         }
         session.add(
             DomainEvent(
@@ -608,6 +611,7 @@ def adopt_external_output(
                     "handoff_id": str(row.id),
                     "provider": "invideo",
                     "output_key": row.output_key,
+                    "render_generation": render_generation,
                     "actor": actor,
                 },
             )
