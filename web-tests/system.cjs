@@ -63,7 +63,19 @@ const labels = workspaces.map((row) => row.label);
             );
             assert.equal(await page.locator(".ae-skip-link").count(), 1);
             assert.equal(await page.locator("main#main-content").count(), 1);
-            assert.equal((await page.locator("#katcha-chat-shortcut").innerText()).includes("Ask Katcha"), true);
+            const chatShortcut = page.locator("#katcha-chat-shortcut");
+            assert.equal((await chatShortcut.innerText()).includes("Ask Katcha"), true);
+            assert.equal(await chatShortcut.evaluate((node) => getComputedStyle(node).position), "fixed");
+            const chatStyle = await chatShortcut.evaluate((node) => ({
+                backgroundImage: getComputedStyle(node).backgroundImage,
+                backdropFilter: getComputedStyle(node).backdropFilter || getComputedStyle(node).webkitBackdropFilter,
+            }));
+            assert.match(chatStyle.backgroundImage, /linear-gradient/);
+            assert.match(chatStyle.backdropFilter, /blur/);
+            assert.equal(
+                await page.locator(".ae-skip-link").evaluate((node) => getComputedStyle(node).position),
+                "fixed",
+            );
 
             await menu.locator("summary").click();
             assert.equal(await menu.evaluate((node) => node.open), true);
