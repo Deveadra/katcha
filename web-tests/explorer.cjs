@@ -329,6 +329,21 @@ let browser;
                     left: Math.round(rect.left),
                     right: Math.round(rect.right),
                     width: Math.round(rect.width),
+                    text: (element.textContent || "").trim().slice(0, 90),
+                    parent: element.parentElement
+                        ? `${element.parentElement.tagName.toLowerCase()}${
+                              element.parentElement.id
+                                  ? `#${element.parentElement.id}`
+                                  : ""
+                          }${
+                              typeof element.parentElement.className === "string" &&
+                              element.parentElement.className
+                                  ? `.${element.parentElement.className
+                                        .trim()
+                                        .replaceAll(/\\s+/g, ".")}`
+                                  : ""
+                          }`
+                        : "",
                 };
             })
             .filter(
