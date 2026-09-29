@@ -201,6 +201,10 @@ def _require_named_principal_route_access(request: Request) -> None:
     if path == "/v1/control/session":
         return
 
+    if path == "/v1/operations/overview":
+        require_control_scope(request, "channels:read")
+        return
+
     if path == "/v1/ai/command":
         require_control_scope(request, "ai:command")
         return

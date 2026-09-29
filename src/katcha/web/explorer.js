@@ -143,7 +143,11 @@ async function connect(event) {
         $("channel").disabled = false;
         $("connection-state").textContent = "CONNECTED";
         if (channels.length) {
-            $("channel").value = channels[0].id;
+            const requested = new URLSearchParams(location.search).get("channel");
+            const selected = channels.some((row) => row.id === requested)
+                ? requested
+                : channels[0].id;
+            $("channel").value = selected;
             await loadChannel();
         } else
             status(
