@@ -6,6 +6,7 @@ import argparse
 import base64
 import collections
 import concurrent.futures
+import contextlib
 import datetime as dt
 import hashlib
 import http.client
@@ -695,19 +696,15 @@ class Runtime:
                     process.wait(timeout=3)
                 except subprocess.TimeoutExpired:
                     process.kill()
-                    try:
+                    with contextlib.suppress(subprocess.TimeoutExpired):
                         process.wait(timeout=3)
-                    except subprocess.TimeoutExpired:
-                        pass
         except (OSError, ProcessLookupError):
             pass
         finally:
             stream = getattr(process, "stdout", None)
             if stream is not None:
-                try:
+                with contextlib.suppress(OSError, ValueError):
                     stream.close()
-                except (OSError, ValueError):
-                    pass
 
     def reconcile_existing(self):
         """Adopt an existing Katcha Compose stack without rebuilding or relaunching it."""
@@ -1114,14 +1111,27 @@ def _open_browser(url, runtime):
                 errors.append(f"{method}: {exc}")
                 continue
             if result.returncode == 0:
-                runtime.event("info", "browser", "Opened Katcha in the host browser.", method=method)
+                runtime.event(
+                    "info",
+                    "browser",
+                    "Opened Katcha in the host browser.",
+                    method=method,
+                )
                 return True
             detail = (result.stderr or "").strip()
-            errors.append(f"{method}: exit {result.returncode}" + (f" ({detail})" if detail else ""))
+            errors.append(
+                f"{method}: exit {result.returncode}"
+                + (f" ({detail})" if detail else "")
+            )
 
     try:
         if webbrowser.open(url, new=2):
-            runtime.event("info", "browser", "Opened Katcha in the default browser.", method="python")
+            runtime.event(
+                "info",
+                "browser",
+                "Opened Katcha in the default browser.",
+                method="python",
+            )
             return True
         errors.append("python: no runnable browser was reported")
     except (OSError, webbrowser.Error) as exc:
@@ -1197,10 +1207,8 @@ def main():
         interrupted = True
         # Ignore repeated Ctrl+C while the launcher-owned log follower is being
         # reaped. Katcha services intentionally remain running.
-        try:
+        with contextlib.suppress(OSError, ValueError):
             signal.signal(signal.SIGINT, signal.SIG_IGN)
-        except (OSError, ValueError):
-            pass
     finally:
         runtime.stop_logs()
         server.server_close()
