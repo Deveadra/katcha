@@ -208,6 +208,13 @@ let browser;
         false,
     );
     await page.setViewportSize({ width: 1440, height: 1000 });
+    assert.equal(await page.locator(".intro").count(), 0);
+    assert.match(await page.locator(".trends-title").innerText(), /Trends/);
+    assert.equal(await page.locator(".watchlist-popover").getAttribute("open"), null);
+    assert.equal(
+        await page.evaluate(() => document.documentElement.scrollHeight <= innerHeight + 2),
+        true,
+    );
     await page.locator("#token").fill("fixture-token");
     await page.locator("#connect-form button").click();
     await page.locator("#detail-panel h3").waitFor();
@@ -237,6 +244,7 @@ let browser;
     await page.locator("#search").fill("");
     await page.locator("#sort").selectOption("confidence");
     assert.match(await page.locator(".topic-row").first().innerText(), /beta/);
+    await page.locator(".watchlist-popover > summary").click();
     assert.equal(await page.locator("#interest-chips .chip").count(), 2);
     assert.match(await page.locator("#interest-chips").innerText(), /gaming/i);
     assert.match(await page.locator("#interest-chips").innerText(), /xbox/i);
@@ -318,7 +326,7 @@ let browser;
     });
     assert.deepEqual(errors, []);
     console.log(
-        "PASS: live API UI flows, preview-parity interests, dossier tabs, source records, interactive graph, edit evidence, auth handling, search/sort, comparison, editorial handoff, mobile width",
+        "PASS: Aerith bounded Trends workspace, progressive watchlist disclosure, live API flows, dossier tabs, source records, interactive graph, edit evidence, auth handling, search/sort, comparison, editorial handoff, mobile width",
     );
 })()
     .catch((error) => {
