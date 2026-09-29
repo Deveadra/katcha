@@ -136,6 +136,18 @@ def test_named_principal_rejects_unknown_bearer_token() -> None:
     assert "authentication required" in str(exc.value.detail)
 
 
+def test_named_principal_can_inspect_own_control_session_without_extra_scope() -> None:
+    request = _request("/v1/control/session")
+    settings = _settings(scopes=["events:read"])
+    _authenticate(
+        request,
+        _credentials("aerith-fixture-token-000001"),
+        settings,
+    )
+
+    _require_named_principal_route_access(request)
+
+
 def test_named_principal_route_policy_fails_closed_for_unmapped_api() -> None:
     request = _request("/v1/clips")
     settings = _settings(scopes=["events:read"])
