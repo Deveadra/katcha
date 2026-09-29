@@ -23,7 +23,11 @@ from katcha.models import DomainEvent
 from katcha.production_models import Production
 from katcha.publishing_models import Publication, PublicationAnalyticsSnapshot
 from katcha.render_models import RenderAttempt
-from katcha.trend_models import TrendOpportunity, TrendTopic
+from katcha.trend_models import (
+    ChannelTrendWatchVersion,
+    TrendOpportunity,
+    TrendTopic,
+)
 
 
 @pytest.fixture
@@ -70,6 +74,25 @@ def data(monkeypatch):
                     status="active",
                     timezone="UTC",
                     profile_metadata={"channel_title": "Other Channel"},
+                ),
+            ]
+        )
+        session.add_all(
+            [
+                ChannelTrendWatchVersion(
+                    channel_profile_id=channel,
+                    version=1,
+                    interests=["old gaming"],
+                ),
+                ChannelTrendWatchVersion(
+                    channel_profile_id=channel,
+                    version=2,
+                    interests=["xbox"],
+                ),
+                ChannelTrendWatchVersion(
+                    channel_profile_id=other,
+                    version=1,
+                    interests=["movies"],
                 ),
             ]
         )
@@ -190,7 +213,7 @@ def data(monkeypatch):
                 TrendOpportunity(
                     channel_profile_id=channel,
                     trend_topic_id=topic_id,
-                    watch_version=1,
+                    watch_version=2,
                     run_key="ops-fixture",
                     lifecycle="accelerating",
                     opportunity_score=Decimal("0.91"),
@@ -201,6 +224,22 @@ def data(monkeypatch):
                     components={"acceleration": 0.9},
                     reasons=["Fast growth", "Multiple independent sources"],
                     evidence_summary={},
+                ),
+                TrendOpportunity(
+                    channel_profile_id=channel,
+                    trend_topic_id=topic_id,
+                    watch_version=1,
+                    run_key="ops-stale-watch",
+                    lifecycle="accelerating",
+                    opportunity_score=Decimal("0.999"),
+                    confidence=Decimal("0.99"),
+                    rank=1,
+                    prediction_horizon_hours=24,
+                    expires_at=now + timedelta(hours=12),
+                    components={"acceleration": 1.0},
+                    reasons=["Stale watch version must stay hidden"],
+                    evidence_summary={},
+                    created_at=now + timedelta(minutes=1),
                 ),
                 TrendOpportunity(
                     channel_profile_id=other,
@@ -287,6 +326,8 @@ def test_operations_overview_returns_actionable_channel_state(data) -> None:
     assert [row["id"] for row in payload["active"]] == [str(data.active)]
     assert payload["opportunities"][0]["topic"] == "Xbox showcase surprise"
     assert payload["opportunities"][0]["opportunity_score"] == "0.910000"
+    assert payload["summary"]["fresh_opportunities"] == 1
+    assert "Stale watch version" not in str(payload["opportunities"])
 
     publication = payload["publications"][0]
     assert publication["id"] == str(data.published)
