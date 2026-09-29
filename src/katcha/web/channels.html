@@ -271,6 +271,39 @@
                                 <div class="panel-heading"><div><span class="eyebrow">AI BUDGET</span><h3>Spend guardrails</h3></div><span id="routing-badge" class="badge">—</span></div>
                                 <div id="strategy-panel" class="key-value empty-state">No channel strategy loaded.</div>
                             </article>
+                            <article class="studio-card provider-card">
+                                <div class="panel-heading">
+                                    <div><span class="eyebrow">VOICE & EDIT PROVIDERS</span><h3>External production tools</h3></div>
+                                    <span id="voice-provider-badge" class="badge">—</span>
+                                </div>
+                                <div id="provider-panel" class="provider-panel empty-state">Provider status has not loaded yet.</div>
+                                <div class="provider-controls">
+                                    <label>NARRATION PROVIDER
+                                        <select id="voice-provider" disabled>
+                                            <option value="elevenlabs">ElevenLabs</option>
+                                            <option value="openai">OpenAI</option>
+                                            <option value="gemini">Gemini</option>
+                                        </select>
+                                    </label>
+                                    <label>ROUTING
+                                        <select id="voice-routing" disabled>
+                                            <option value="fixed">Fixed to this channel</option>
+                                            <option value="inherit">Follow Katcha cost routing</option>
+                                        </select>
+                                    </label>
+                                    <label class="provider-preview-copy">VOICE PREVIEW TEXT
+                                        <input id="voice-preview-text" maxlength="400" value="Okay, this one absolutely did not go according to plan.">
+                                    </label>
+                                    <div class="provider-actions">
+                                        <button id="verify-elevenlabs" class="studio-button secondary small" type="button" disabled>Verify ElevenLabs</button>
+                                        <button id="preview-elevenlabs" class="studio-button secondary small" type="button" disabled>Preview voice</button>
+                                        <button id="save-voice-provider" class="studio-button primary small" type="button" disabled>Save voice routing</button>
+                                    </div>
+                                    <audio id="voice-preview-audio" controls hidden></audio>
+                                    <p id="voice-provider-note" class="provider-note"></p>
+                                    <a class="provider-handoff-link" href="/editing#editorial-pipeline">InVideo handoffs live in Editing Studio ↗</a>
+                                </div>
+                            </article>
                         </div>
                     </section>
                 </section>
