@@ -143,6 +143,7 @@ class ResolvedContextResponse(BaseModel):
     selected_clip_ids: list[uuid.UUID] = Field(default_factory=list)
     resource_refs: list[CommandResourceRef] = Field(default_factory=list)
     inherited_from_thread: bool = False
+    resource_inherited_from_thread: bool = False
     source_turn_id: uuid.UUID | None = None
     resolution: str | None = None
     action_source_turn_id: uuid.UUID | None = None
@@ -579,34 +580,6 @@ def command(http_request: Request, request: CommandRequest) -> CommandResponse:
     request_id = uuid.uuid4()
     started_at = monotonic()
 
-    resource_pairs = [(item.kind, item.id) for item in request.resource_refs]
-    try:
-        resource_evidence = resolve_command_resources(
-            request.channel_profile_id,
-            resource_pairs,
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-
-    resource_clip_ids = [
-        uuid.UUID(str(item["id"]))
-        for item in resource_evidence
-        if item.get("kind") == "clip" and item.get("id")
-    ]
-    explicit_clip_ids = list(dict.fromkeys([
-        *request.selected_clip_ids,
-        *resource_clip_ids,
-    ]))
-    resource_production_ids = [
-        uuid.UUID(str(item["id"]))
-        for item in resource_evidence
-        if item.get("kind") == "production" and item.get("id")
-    ]
-    selected_production_id = (
-        request.selected_production_id
-        or (resource_production_ids[0] if resource_production_ids else None)
-    )
-
     thread: CommandThread | None = None
     prior_turns: list[CommandTurn] = []
     prior_proposals: list[CommandActionProposal] = []
@@ -627,6 +600,50 @@ def command(http_request: Request, request: CommandRequest) -> CommandResponse:
             ]
         except ValueError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    effective_resource_refs = list(effective_resource_refs)
+    resource_inherited_from_thread = False
+    if not effective_resource_refs and prior_turns:
+        latest_user = next(
+            (turn for turn in reversed(prior_turns) if turn.role == "user"),
+            None,
+        )
+        if latest_user is not None:
+            for raw in list((latest_user.turn_context or {}).get("resource_refs") or []):
+                try:
+                    effective_resource_refs.append(
+                        CommandResourceRef.model_validate(raw)
+                    )
+                except (TypeError, ValueError):
+                    continue
+            resource_inherited_from_thread = bool(effective_resource_refs)
+
+    resource_pairs = [(item.kind, item.id) for item in effective_resource_refs]
+    try:
+        resource_evidence = resolve_command_resources(
+            request.channel_profile_id,
+            resource_pairs,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    resource_clip_ids = [
+        uuid.UUID(str(item["id"]))
+        for item in resource_evidence
+        if item.get("kind") == "clip" and item.get("id")
+    ]
+    explicit_clip_ids = list(
+        dict.fromkeys([*request.selected_clip_ids, *resource_clip_ids])
+    )
+    resource_production_ids = [
+        uuid.UUID(str(item["id"]))
+        for item in resource_evidence
+        if item.get("kind") == "production" and item.get("id")
+    ]
+    selected_production_id = (
+        request.selected_production_id
+        or (resource_production_ids[0] if resource_production_ids else None)
+    )
 
     latest_assistant = next(
         (turn for turn in reversed(prior_turns) if turn.role == "assistant"),
@@ -657,7 +674,7 @@ def command(http_request: Request, request: CommandRequest) -> CommandResponse:
         request.prompt,
         resolved_selected_clip_ids,
     )
-    if request.resource_refs and deterministic_intent == "channel_status":
+    if effective_resource_refs and deterministic_intent == "channel_status":
         deterministic_intent = "resource_context"
     if deterministic_intent == "confirm_action":
         planning = deterministic_plan(
@@ -790,7 +807,7 @@ def command(http_request: Request, request: CommandRequest) -> CommandResponse:
                     ),
                     "resource_refs": [
                         {"kind": item.kind, "id": str(item.id)}
-                        for item in request.resource_refs
+                        for item in effective_resource_refs
                     ],
                     "requested_edit_blueprint_key": blueprint_key,
                     "conversation_source_turn_id": (
@@ -875,7 +892,7 @@ def command(http_request: Request, request: CommandRequest) -> CommandResponse:
                 ),
                 "resource_refs": [
                     {"kind": item.kind, "id": str(item.id)}
-                    for item in request.resource_refs
+                    for item in effective_resource_refs
                 ],
                 "inherited_from_thread": resolution.inherited_from_thread,
                 "context_source_turn_id": (
@@ -918,7 +935,7 @@ def command(http_request: Request, request: CommandRequest) -> CommandResponse:
         latency_ms=round((monotonic() - started_at) * 1000),
         evidence_count=len(evidence),
         action_count=len(proposals),
-        resource_kinds=[item.kind for item in request.resource_refs],
+        resource_kinds=[item.kind for item in effective_resource_refs],
     )
 
     return CommandResponse(
@@ -944,8 +961,11 @@ def command(http_request: Request, request: CommandRequest) -> CommandResponse:
         ),
         resolved_context=ResolvedContextResponse(
             selected_clip_ids=resolved_selected_clip_ids,
-            resource_refs=request.resource_refs,
-            inherited_from_thread=resolution.inherited_from_thread,
+            resource_refs=effective_resource_refs,
+            inherited_from_thread=(
+                resolution.inherited_from_thread or resource_inherited_from_thread
+            ),
+            resource_inherited_from_thread=resource_inherited_from_thread,
             source_turn_id=resolution.source_turn_id,
             resolution=resolution.resolution,
             action_source_turn_id=resolution.action_source_turn_id,
