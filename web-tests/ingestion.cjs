@@ -195,6 +195,8 @@ const catalog = [
         await save();
         assert.equal(sources[5].channel_profile_id, null);
         // New connectors remain available behind an explicitly advanced path.
+        await page.locator('[data-source-tab="add"]').click();
+        await page.locator('[data-source-view="add"]').waitFor({state: 'visible'});
         await page.locator('#step-1 summary').click();
         await page.locator('#custom-adapter').selectOption('future@v1');
         await page.locator('#choose-custom').click();
