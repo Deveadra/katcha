@@ -70,6 +70,7 @@ from katcha.services.command_history import (
 )
 from katcha.services.command_observability import (
     command_observability_summary,
+    record_command_failure,
     record_command_observation,
 )
 from katcha.services.command_resources import (
@@ -183,6 +184,9 @@ class CommandObservabilityRecent(BaseModel):
     request_id: str
     thread_id: str | None = None
     intent: str | None = None
+    outcome: str
+    failure_stage: str | None = None
+    status_code: int | None = None
     latency_ms: int
     planning_source: str | None = None
     narrator: str
@@ -195,6 +199,8 @@ class CommandObservabilityResponse(BaseModel):
     channel_profile_id: str
     window_hours: int
     request_count: int
+    completed_request_count: int
+    failed_request_count: int
     average_latency_ms: int
     p95_latency_ms: int
     degraded_answer_count: int
@@ -579,6 +585,24 @@ def command(http_request: Request, request: CommandRequest) -> CommandResponse:
     actor = control_actor(http_request)
     request_id = uuid.uuid4()
     started_at = monotonic()
+    observed_resource_kinds = [item.kind for item in request.resource_refs]
+
+    def command_error(
+        status_code: int,
+        stage: str,
+        exc: Exception,
+    ) -> HTTPException:
+        record_command_failure(
+            channel_profile_id=request.channel_profile_id,
+            request_id=request_id,
+            actor=actor,
+            latency_ms=round((monotonic() - started_at) * 1000),
+            stage=stage,
+            status_code=status_code,
+            error_type=type(exc).__name__,
+            resource_kinds=observed_resource_kinds,
+        )
+        return HTTPException(status_code=status_code, detail=str(exc))
 
     thread: CommandThread | None = None
     prior_turns: list[CommandTurn] = []
@@ -599,7 +623,7 @@ def command(http_request: Request, request: CommandRequest) -> CommandResponse:
                 for row in list_thread_proposals(thread.id)
             ]
         except ValueError as exc:
-            raise HTTPException(status_code=409, detail=str(exc)) from exc
+            raise command_error(409, "thread_context", exc) from exc
 
     effective_resource_refs = list(request.resource_refs)
     resource_inherited_from_thread = False
@@ -618,6 +642,7 @@ def command(http_request: Request, request: CommandRequest) -> CommandResponse:
                     continue
             resource_inherited_from_thread = bool(effective_resource_refs)
 
+    observed_resource_kinds = [item.kind for item in effective_resource_refs]
     resource_pairs = [(item.kind, item.id) for item in effective_resource_refs]
     try:
         resource_evidence = resolve_command_resources(
@@ -625,7 +650,7 @@ def command(http_request: Request, request: CommandRequest) -> CommandResponse:
             resource_pairs,
         )
     except ValueError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
+        raise command_error(404, "resource_context", exc) from exc
 
     resource_clip_ids = [
         uuid.UUID(str(item["id"]))
@@ -695,7 +720,7 @@ def command(http_request: Request, request: CommandRequest) -> CommandResponse:
                 deterministic_intent=deterministic_intent,
             )
         except CommandPlanningUnavailable as exc:
-            raise HTTPException(status_code=503, detail=str(exc)) from exc
+            raise command_error(503, "planning", exc) from exc
         intent = planning.value.intent
 
     reused_proposals: list[CommandActionProposal] = []
@@ -831,7 +856,7 @@ def command(http_request: Request, request: CommandRequest) -> CommandResponse:
         else:
             deterministic, evidence = channel_status(request.channel_profile_id)
     except ValueError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
+        raise command_error(404, "grounding", exc) from exc
 
     if resolution.inherited_from_thread and resolution.resolution:
         deterministic = f"{deterministic} Context: {resolution.resolution}"
@@ -917,7 +942,7 @@ def command(http_request: Request, request: CommandRequest) -> CommandResponse:
                 source_turn_id=assistant_turn.id,
             )
     except ValueError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
+        raise command_error(409, "persistence", exc) from exc
 
     record_command_observation(
         channel_profile_id=request.channel_profile_id,
