@@ -137,6 +137,17 @@
             <button id="upload-invideo-output" class="button secondary" type="button" disabled>Import finished MP4</button>
             <button id="adopt-invideo-output" class="button primary" type="button" disabled>Use as Katcha render</button>
         </div>
+        <div class="external-edit-metrics">
+            <strong>Record provider results</strong>
+            <p class="field-note">Capture the real external cost and effort so Katcha can decide when the premium edit is worth it.</p>
+            <div class="metrics-grid">
+                <label>Credits used<input id="invideo-credits" type="number" min="0" step="0.01" placeholder="e.g. 42"></label>
+                <label>Cost (USD)<input id="invideo-cost" type="number" min="0" step="0.01" placeholder="e.g. 2.80"></label>
+                <label>Production minutes<input id="invideo-minutes" type="number" min="0" step="1" placeholder="e.g. 18"></label>
+                <label>Manual interventions<input id="invideo-interventions" type="number" min="0" step="1" placeholder="e.g. 3"></label>
+            </div>
+            <button id="record-invideo-metrics" class="button secondary" type="button" disabled>Save provider results</button>
+        </div>
     </dialog>
 </body>
 </html>
