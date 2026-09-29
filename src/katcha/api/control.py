@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import uuid
+from datetime import datetime
 from typing import Literal
 
 from fastapi import APIRouter, Request
@@ -10,6 +11,10 @@ from katcha import __version__
 from katcha.api.control_auth import (
     control_actor,
     control_allowed_channel_ids,
+    control_credential_expires_at,
+    control_credential_fingerprint,
+    control_credential_id,
+    control_credential_not_before,
     control_principal_name,
     control_scopes,
 )
@@ -32,6 +37,13 @@ class EventStreamCapabilityResponse(BaseModel):
     acknowledge_endpoint_template: str
     channel_scope_required: bool
     consumer_cursor_is_principal_bound: bool = True
+
+
+class ControlCredentialResponse(BaseModel):
+    id: str
+    fingerprint: str
+    not_before: datetime | None = None
+    expires_at: datetime | None = None
 
 
 class ControlCapabilitiesResponse(BaseModel):
@@ -60,6 +72,7 @@ class ControlSessionResponse(BaseModel):
     katcha_version: str
     actor: str
     principal_name: str | None
+    credential: ControlCredentialResponse | None = None
     authentication_mode: Literal[
         "named_principal",
         "legacy_token",
@@ -88,6 +101,18 @@ def _authentication_mode(
 def control_session(http_request: Request) -> ControlSessionResponse:
     actor = control_actor(http_request)
     principal_name = control_principal_name(http_request)
+    credential_id = control_credential_id(http_request)
+    credential_fingerprint = control_credential_fingerprint(http_request)
+    credential = (
+        ControlCredentialResponse(
+            id=credential_id,
+            fingerprint=credential_fingerprint,
+            not_before=control_credential_not_before(http_request),
+            expires_at=control_credential_expires_at(http_request),
+        )
+        if credential_id is not None and credential_fingerprint is not None
+        else None
+    )
     scopes = control_scopes(http_request)
     allowed_channels = control_allowed_channel_ids(http_request)
     all_channels = allowed_channels is None
@@ -102,6 +127,7 @@ def control_session(http_request: Request) -> ControlSessionResponse:
         katcha_version=__version__,
         actor=actor,
         principal_name=principal_name,
+        credential=credential,
         authentication_mode=_authentication_mode(
             actor=actor,
             principal_name=principal_name,

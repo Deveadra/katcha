@@ -2,12 +2,14 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 from fastapi import HTTPException
+from sqlalchemy import select
 from starlette.requests import Request
 
 from katcha.api.control_auth import control_actor, require_control_scope
 from katcha.db import session_scope
 from katcha.domain import ChannelStatus
 from katcha.intelligence_models import ChannelProfile
+from katcha.models import DomainEvent
 from katcha.publishing_models import YouTubeConnection
 from katcha.services.command_actions import (
     ActionProposalSpec,
@@ -93,13 +95,23 @@ def test_action_proposal_claim_is_idempotent() -> None:
     assert proposal.status == "proposed"
     assert proposal.idempotency_key == f"command-proposal:{proposal.id}"
 
-    first = claim_action_proposal(proposal.id, actor="control-token:fixture")
+    first = claim_action_proposal(
+        proposal.id,
+        actor="control-principal:aerith",
+        credential_id="2026-q4",
+        credential_fingerprint="abc123def456",
+    )
     assert first.should_execute is True
     assert first.proposal.status == "executing"
     assert first.proposal.execution_attempts == 1
-    assert first.proposal.confirmed_by == "control-token:fixture"
+    assert first.proposal.confirmed_by == "control-principal:aerith"
 
-    duplicate = claim_action_proposal(proposal.id, actor="control-token:fixture")
+    duplicate = claim_action_proposal(
+        proposal.id,
+        actor="control-principal:aerith",
+        credential_id="2026-q4",
+        credential_fingerprint="abc123def456",
+    )
     assert duplicate.should_execute is False
     assert duplicate.proposal.status == "executing"
     assert duplicate.proposal.execution_attempts == 1
@@ -107,8 +119,15 @@ def test_action_proposal_claim_is_idempotent() -> None:
     complete_action_proposal(
         proposal.id,
         result={"workflow_id": "fixture-workflow"},
+        credential_id="2026-q4",
+        credential_fingerprint="abc123def456",
     )
-    replay = claim_action_proposal(proposal.id, actor="control-token:fixture")
+    replay = claim_action_proposal(
+        proposal.id,
+        actor="control-principal:aerith",
+        credential_id="2026-q4",
+        credential_fingerprint="abc123def456",
+    )
     assert replay.should_execute is False
     assert replay.proposal.status == "executed"
     assert replay.proposal.result == {"workflow_id": "fixture-workflow"}
@@ -116,3 +135,33 @@ def test_action_proposal_claim_is_idempotent() -> None:
     loaded = get_action_proposal(proposal.id)
     assert loaded.status == "executed"
     assert loaded.execution_attempts == 1
+
+    with session_scope() as session:
+        events = list(
+            session.scalars(
+                select(DomainEvent)
+                .where(DomainEvent.aggregate_id == str(proposal.id))
+                .order_by(DomainEvent.created_at, DomainEvent.id)
+            )
+        )
+
+    audited = [
+        event
+        for event in events
+        if event.event_type
+        in {
+            "command_center.action_confirmed",
+            "command_center.action_executed",
+            "command_center.workflow_started",
+        }
+    ]
+    assert audited
+    assert all(
+        (event.payload or {}).get("credential_id") == "2026-q4"
+        for event in audited
+    )
+    assert all(
+        (event.payload or {}).get("credential_fingerprint")
+        == "abc123def456"
+        for event in audited
+    )

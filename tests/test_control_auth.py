@@ -1,5 +1,6 @@
 import json
 import uuid
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from fastapi import HTTPException
@@ -13,6 +14,8 @@ from katcha.api.control_auth import (
     _require_named_principal_route_access,
     control_actor,
     control_allowed_channel_ids,
+    control_credential_fingerprint,
+    control_credential_id,
     control_principal_name,
     require_control_channel,
     require_control_token,
@@ -67,6 +70,127 @@ def _settings(
             }
         ],
     )
+
+
+def test_named_principal_rotation_accepts_overlapping_credentials() -> None:
+    now = datetime.now(UTC)
+    settings = Settings(
+        _env_file=None,
+        control_principals=[
+            {
+                "name": "aerith",
+                "credentials": [
+                    {
+                        "id": "2026-q3",
+                        "token": "aerith-rotation-token-old-0001",
+                        "not_before": (now - timedelta(days=30)).isoformat(),
+                        "expires_at": (now + timedelta(hours=2)).isoformat(),
+                    },
+                    {
+                        "id": "2026-q4",
+                        "token": "aerith-rotation-token-new-0002",
+                        "not_before": (now - timedelta(minutes=5)).isoformat(),
+                        "expires_at": (now + timedelta(days=90)).isoformat(),
+                    },
+                ],
+                "scopes": ["events:read"],
+                "channel_profile_ids": ["*"],
+            }
+        ],
+    )
+
+    old_request = _request()
+    _authenticate(
+        old_request,
+        _credentials("aerith-rotation-token-old-0001"),
+        settings,
+    )
+    new_request = _request()
+    _authenticate(
+        new_request,
+        _credentials("aerith-rotation-token-new-0002"),
+        settings,
+    )
+
+    assert control_actor(old_request) == "control-principal:aerith"
+    assert control_actor(new_request) == "control-principal:aerith"
+    assert control_credential_id(old_request) == "2026-q3"
+    assert control_credential_id(new_request) == "2026-q4"
+    assert (
+        control_credential_fingerprint(old_request)
+        != control_credential_fingerprint(new_request)
+    )
+
+
+@pytest.mark.parametrize(
+    ("credential", "token"),
+    [
+        (
+            {
+                "id": "expired",
+                "token": "aerith-expired-token-000001",
+                "expires_at": (
+                    datetime.now(UTC) - timedelta(minutes=1)
+                ).isoformat(),
+            },
+            "aerith-expired-token-000001",
+        ),
+        (
+            {
+                "id": "future",
+                "token": "aerith-future-token-0000002",
+                "not_before": (
+                    datetime.now(UTC) + timedelta(hours=1)
+                ).isoformat(),
+            },
+            "aerith-future-token-0000002",
+        ),
+        (
+            {
+                "id": "disabled",
+                "token": "aerith-disabled-token-00003",
+                "disabled": True,
+            },
+            "aerith-disabled-token-00003",
+        ),
+    ],
+)
+def test_inactive_named_principal_credentials_fail_closed(
+    credential: dict[str, object],
+    token: str,
+) -> None:
+    settings = Settings(
+        _env_file=None,
+        control_principals=[
+            {
+                "name": "aerith",
+                "credentials": [credential],
+                "scopes": ["events:read"],
+                "channel_profile_ids": ["*"],
+            }
+        ],
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        _authenticate(_request(), _credentials(token), settings)
+
+    assert exc.value.status_code == 401
+    assert "authentication required" in str(exc.value.detail)
+
+
+def test_legacy_named_principal_token_gets_stable_credential_identity() -> None:
+    request = _request()
+    settings = _settings()
+
+    _authenticate(
+        request,
+        _credentials("aerith-fixture-token-000001"),
+        settings,
+    )
+
+    assert control_actor(request) == "control-principal:aerith"
+    assert control_credential_id(request) == "legacy"
+    assert len(control_credential_fingerprint(request) or "") == 12
 
 
 def test_named_principal_auth_derives_identity_scopes_and_channels() -> None:
@@ -285,6 +409,93 @@ def test_control_principal_configuration_rejects_duplicates() -> None:
         )
 
 
+def test_control_principal_configuration_rejects_duplicate_rotated_credentials() -> None:
+    with pytest.raises(ValidationError, match="duplicate control credential id"):
+        Settings(
+            _env_file=None,
+            control_principals=[
+                {
+                    "name": "aerith",
+                    "credentials": [
+                        {
+                            "id": "current",
+                            "token": "rotation-fixture-token-00001",
+                        },
+                        {
+                            "id": "CURRENT",
+                            "token": "rotation-fixture-token-00002",
+                        },
+                    ],
+                    "scopes": ["events:read"],
+                    "channel_profile_ids": ["*"],
+                }
+            ],
+        )
+
+    with pytest.raises(ValidationError, match="credential tokens must be unique"):
+        Settings(
+            _env_file=None,
+            control_principals=[
+                {
+                    "name": "aerith",
+                    "credentials": [
+                        {
+                            "id": "current",
+                            "token": "rotation-shared-token-00001",
+                        },
+                        {
+                            "id": "next",
+                            "token": "rotation-shared-token-00001",
+                        },
+                    ],
+                    "scopes": ["events:read"],
+                    "channel_profile_ids": ["*"],
+                }
+            ],
+        )
+
+
+def test_control_credential_window_requires_timezone_and_valid_order() -> None:
+    with pytest.raises(ValidationError, match="must include a timezone"):
+        Settings(
+            _env_file=None,
+            control_principals=[
+                {
+                    "name": "aerith",
+                    "credentials": [
+                        {
+                            "id": "naive",
+                            "token": "rotation-time-token-000001",
+                            "not_before": "2026-09-29T10:00:00",
+                        }
+                    ],
+                    "scopes": ["events:read"],
+                    "channel_profile_ids": ["*"],
+                }
+            ],
+        )
+
+    with pytest.raises(ValidationError, match="must be after not_before"):
+        Settings(
+            _env_file=None,
+            control_principals=[
+                {
+                    "name": "aerith",
+                    "credentials": [
+                        {
+                            "id": "bad-window",
+                            "token": "rotation-time-token-000002",
+                            "not_before": "2026-09-29T10:00:00Z",
+                            "expires_at": "2026-09-29T09:00:00Z",
+                        }
+                    ],
+                    "scopes": ["events:read"],
+                    "channel_profile_ids": ["*"],
+                }
+            ],
+        )
+
+
 def test_control_principal_configuration_rejects_short_tokens() -> None:
     with pytest.raises(ValidationError, match="at least 16 characters"):
         Settings(
@@ -376,6 +587,46 @@ def test_control_principals_parse_from_environment_json(monkeypatch) -> None:
     assert settings.control_principals[0].name == "operator-ui"
     assert settings.control_principals[0].token.get_secret_value() == raw_token
     assert raw_token not in repr(settings.control_principals[0])
+
+
+def test_rotated_control_credentials_parse_from_environment_json(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv(
+        "KATCHA_CONTROL_PRINCIPALS",
+        json.dumps(
+            [
+                {
+                    "name": "aerith",
+                    "credentials": [
+                        {
+                            "id": "current",
+                            "token": "environment-rotation-token-0001",
+                            "expires_at": "2026-12-31T23:59:59Z",
+                        },
+                        {
+                            "id": "next",
+                            "token": "environment-rotation-token-0002",
+                            "not_before": "2026-12-01T00:00:00Z",
+                        },
+                    ],
+                    "scopes": ["events:read"],
+                    "channel_profile_ids": ["*"],
+                }
+            ]
+        ),
+    )
+
+    settings = Settings(_env_file=None)
+
+    principal = settings.control_principals[0]
+    assert principal.token is None
+    assert [item.id for item in principal.credentials] == ["current", "next"]
+    assert (
+        principal.credentials[0].token.get_secret_value()
+        == "environment-rotation-token-0001"
+    )
+    assert "environment-rotation-token-0001" not in repr(principal)
 
 
 def test_global_control_dependency_enforces_channel_allowlist(
