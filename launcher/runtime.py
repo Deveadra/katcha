@@ -58,7 +58,6 @@ REQUIRED_SERVICES = {
     "analysis-worker",
     "renderer",
     "production-worker",
-    "longform-worker",
     "telegram-worker",
     "intelligence-worker",
 }
