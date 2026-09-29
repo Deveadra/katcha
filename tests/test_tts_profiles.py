@@ -1,5 +1,5 @@
-import uuid
 import io
+import uuid
 import wave
 from types import SimpleNamespace
 
