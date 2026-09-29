@@ -187,8 +187,10 @@ async function connect() {
         $("channel-setup").hidden = true;
         $("studio").hidden = false;
         renderChannelSelect();
-        const existing = state.channelId && channels.some((item) => item.id === state.channelId);
-        state.channelId = existing ? state.channelId : channels[0].id;
+        const requested = new URLSearchParams(location.search).get("channel");
+        const candidate = state.channelId || requested;
+        const existing = candidate && channels.some((item) => item.id === candidate);
+        state.channelId = existing ? candidate : channels[0].id;
         $("channel").value = state.channelId;
         await loadChannel();
     } catch (error) {
