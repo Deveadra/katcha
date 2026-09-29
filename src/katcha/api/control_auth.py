@@ -70,6 +70,8 @@ def _set_identity(
     principal_name: str | None,
     credential_id: str | None = None,
     credential_fingerprint: str | None = None,
+    credential_not_before: datetime | None = None,
+    credential_expires_at: datetime | None = None,
 ) -> None:
     request.state.control_actor = actor
     request.state.control_scopes = set(scopes)
@@ -77,6 +79,8 @@ def _set_identity(
     request.state.control_principal_name = principal_name
     request.state.control_credential_id = credential_id
     request.state.control_credential_fingerprint = credential_fingerprint
+    request.state.control_credential_not_before = credential_not_before
+    request.state.control_credential_expires_at = credential_expires_at
 
 
 def _match_principal_credential(
@@ -134,6 +138,8 @@ def _authenticate(
             credential_fingerprint=_credential_fingerprint(
                 credentials.credentials
             ),
+            credential_not_before=match.credential.not_before,
+            credential_expires_at=match.credential.expires_at,
         )
         return
 
@@ -293,6 +299,16 @@ def control_credential_id(request: Request) -> str | None:
 def control_credential_fingerprint(request: Request) -> str | None:
     value = getattr(request.state, "control_credential_fingerprint", None)
     return str(value) if value else None
+
+
+def control_credential_not_before(request: Request) -> datetime | None:
+    value = getattr(request.state, "control_credential_not_before", None)
+    return value if isinstance(value, datetime) else None
+
+
+def control_credential_expires_at(request: Request) -> datetime | None:
+    value = getattr(request.state, "control_credential_expires_at", None)
+    return value if isinstance(value, datetime) else None
 
 
 def control_scopes(request: Request) -> set[str]:
