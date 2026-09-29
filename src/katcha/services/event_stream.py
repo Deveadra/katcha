@@ -210,7 +210,9 @@ def acknowledge_consumer_event(
             event,
             channel_profile_id,
         ):
-            raise ValueError("domain event does not belong to the consumer channel scope")
+            raise ValueError(
+                "domain event does not belong to the consumer channel scope"
+            )
 
         scope = _scope_value(channel_profile_id)
         safe_metadata = dict(metadata or {})
