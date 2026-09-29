@@ -651,3 +651,96 @@
 @media (max-width: 950px) {
     .provider-grid { grid-template-columns: 1fr; }
 }
+
+
+.voice-library {
+    display: grid;
+    gap: 10px;
+    margin-top: 10px;
+}
+
+.voice-add-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: end;
+    gap: 8px;
+}
+
+.voice-add-row .provider-field {
+    margin-top: 0;
+}
+
+.provider-mini-label {
+    display: block;
+    margin-bottom: 6px;
+    color: var(--muted);
+    font-size: 8px;
+    font-weight: 800;
+    letter-spacing: .08em;
+}
+
+.voice-library-list {
+    display: grid;
+    gap: 6px;
+}
+
+.voice-library-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 10px;
+    padding: 9px 10px;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: rgba(255, 255, 255, .025);
+}
+
+.voice-library-row strong,
+.voice-library-row small {
+    display: block;
+}
+
+.voice-library-row strong {
+    font-size: 10px;
+}
+
+.voice-library-row small {
+    margin-top: 2px;
+    overflow-wrap: anywhere;
+    color: var(--muted);
+    font-size: 8px;
+}
+
+.voice-remove {
+    min-height: 28px;
+    padding: 5px 8px;
+    border: 1px solid var(--line);
+    border-radius: 7px;
+    background: rgba(255, 255, 255, .035);
+    color: var(--muted);
+    font-size: 8px;
+    font-weight: 800;
+    cursor: pointer;
+}
+
+.voice-remove:hover:not(:disabled) {
+    border-color: rgba(255, 143, 156, .35);
+    color: var(--ae-danger, #ff8f9c);
+}
+
+.provider-role-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+}
+
+@media (max-width: 620px) {
+    .voice-add-row,
+    .provider-role-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .voice-add-row .studio-button {
+        width: 100%;
+    }
+}
