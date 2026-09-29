@@ -14,6 +14,7 @@ const state = {
     limit: 80,
     searchTimer: null,
     purgeId: null,
+    detailView: "overview",
 };
 
 const $ = (id) => document.getElementById(id);
@@ -305,8 +306,15 @@ function renderDetail(clip, features, sources) {
             <div class="empty">${clip.lifecycle_state === "purged" ? "This clip’s source media was purged. Metadata and analysis remain below." : "Video is loaded only when requested so browsing stays fast."}</div>
         </div>
 
+        <nav class="clip-inspector-tabs" aria-label="Clip detail views" role="tablist">
+            <button type="button" role="tab" data-clip-detail-tab="overview" aria-selected="true">Overview</button>
+            <button type="button" role="tab" data-clip-detail-tab="analysis" aria-selected="false">Analysis</button>
+            <button type="button" role="tab" data-clip-detail-tab="lineage" aria-selected="false">Lineage</button>
+            <button type="button" role="tab" data-clip-detail-tab="metadata" aria-selected="false">Metadata</button>
+        </nav>
+
         <div class="detail-grid">
-            <section class="detail-block">
+            <section class="detail-block" data-clip-detail-view="overview">
                 <h3>STORED MEDIA</h3>
                 <dl class="detail-kv">
                     <dt>Clip ID</dt><dd>${escapeHTML(clip.id)}</dd>
@@ -319,12 +327,12 @@ function renderDetail(clip, features, sources) {
                 </dl>
             </section>
 
-            <section class="detail-block">
+            <section class="detail-block" data-clip-detail-view="lineage">
                 <h3>SOURCE LINEAGE</h3>
                 <div class="source-stack">${sourceLinks}</div>
             </section>
 
-            <section class="detail-block wide">
+            <section class="detail-block wide" data-clip-detail-view="metadata">
                 <h3>LIBRARY METADATA</h3>
                 <form id="metadata-form" class="metadata-form">
                     <label class="wide">TAGS
@@ -346,7 +354,7 @@ function renderDetail(clip, features, sources) {
                 </form>
             </section>
 
-            <section class="detail-block wide">
+            <section class="detail-block wide" data-clip-detail-view="analysis">
                 <h3>AI & SCORE</h3>
                 ${features ? `
                     <p class="ai-summary">${escapeHTML(ai?.event_summary || "Local analysis exists; no AI event summary is stored.")}</p>
@@ -358,12 +366,30 @@ function renderDetail(clip, features, sources) {
                 ` : '<div class="empty">No stored analysis features yet.</div>'}
             </section>
 
-            <section class="detail-block wide">
+            <section class="detail-block wide" data-clip-detail-view="analysis">
                 <h3>TRANSCRIPT</h3>
                 ${features?.transcript ? `<div class="transcript">${escapeHTML(features.transcript)}</div>` : '<div class="empty">No transcript stored for this clip.</div>'}
             </section>
         </div>
     `;
+    setClipDetailView(state.detailView, { updateFocus: false });
+}
+
+function setClipDetailView(view, { updateFocus = false } = {}) {
+    const selected = ["overview", "analysis", "lineage", "metadata"].includes(view)
+        ? view
+        : "overview";
+    state.detailView = selected;
+
+    document.querySelectorAll("[data-clip-detail-tab]").forEach((button) => {
+        const active = button.dataset.clipDetailTab === selected;
+        button.setAttribute("aria-selected", active ? "true" : "false");
+        button.tabIndex = active ? 0 : -1;
+        if (active && updateFocus) button.focus();
+    });
+    document.querySelectorAll("[data-clip-detail-view]").forEach((section) => {
+        section.hidden = section.dataset.clipDetailView !== selected;
+    });
 }
 
 async function loadChannels() {
@@ -445,6 +471,7 @@ async function refreshLibrary() {
 }
 
 async function selectClip(id) {
+    if (state.selectedId !== id) state.detailView = "overview";
     state.selectedId = id;
     renderList();
     const clip = state.clips.find((row) => row.id === id);
@@ -795,6 +822,11 @@ $("clip-list").addEventListener("click", (event) => {
     if (row) void selectClip(row.dataset.clipId);
 });
 $("clip-detail").addEventListener("click", (event) => {
+    const detailTab = event.target.closest("[data-clip-detail-tab]");
+    if (detailTab) {
+        setClipDetailView(detailTab.dataset.clipDetailTab);
+        return;
+    }
     const preview = event.target.closest("[data-load-preview]");
     if (preview) void loadPreview(preview.dataset.loadPreview, preview);
     const analyzeButton = event.target.closest("[data-analyze]");
@@ -808,6 +840,20 @@ $("clip-detail").addEventListener("click", (event) => {
 });
 $("clip-detail").addEventListener("submit", (event) => {
     if (event.target.id === "metadata-form") void saveMetadata(event);
+});
+$("clip-detail").addEventListener("keydown", (event) => {
+    const current = event.target.closest("[data-clip-detail-tab]");
+    if (!current || !["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+    const tabs = [...document.querySelectorAll("[data-clip-detail-tab]")];
+    const index = tabs.indexOf(current);
+    if (index < 0) return;
+    event.preventDefault();
+    let nextIndex = index;
+    if (event.key === "ArrowLeft") nextIndex = (index - 1 + tabs.length) % tabs.length;
+    if (event.key === "ArrowRight") nextIndex = (index + 1) % tabs.length;
+    if (event.key === "Home") nextIndex = 0;
+    if (event.key === "End") nextIndex = tabs.length - 1;
+    setClipDetailView(tabs[nextIndex].dataset.clipDetailTab, { updateFocus: true });
 });
 
 $("retention-settings").addEventListener("click", openRetention);

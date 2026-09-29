@@ -16,6 +16,7 @@ from katcha.db import session_scope
 from katcha.external_edit_models import ExternalEditHandoff
 from katcha.integrations.storage import ObjectStore
 from katcha.models import Clip, DomainEvent
+from katcha.models import UsageEvent
 from katcha.production_models import Production, ProductionAsset, ProductionScript
 from katcha.short_episode_models import (
     ShortEpisode,
@@ -501,6 +502,83 @@ def import_external_output(
                     "verification": verification,
                     "actor": actor,
                 },
+            )
+        )
+        session.flush()
+        session.refresh(row)
+        session.expunge(row)
+        return row
+
+
+def record_external_edit_metrics(
+    handoff_id: uuid.UUID,
+    *,
+    actor: str = "operator",
+    credits_used: float | None = None,
+    cost_usd: float | None = None,
+    production_minutes: float | None = None,
+    manual_interventions: int | None = None,
+    notes: str | None = None,
+) -> ExternalEditHandoff:
+    """Record provider spend and production-efficiency evidence for a handoff.
+
+    Metrics are deliberately attached to the immutable handoff rather than the
+    current episode. That keeps provider comparisons version-specific and lets
+    later analytics correlate them with the resulting YouTube performance.
+    """
+    values = {
+        "credits_used": credits_used,
+        "cost_usd": cost_usd,
+        "production_minutes": production_minutes,
+        "manual_interventions": manual_interventions,
+        "notes": notes,
+    }
+    if credits_used is not None and credits_used < 0:
+        raise ValueError("credits_used must be non-negative")
+    if cost_usd is not None and cost_usd < 0:
+        raise ValueError("cost_usd must be non-negative")
+    if production_minutes is not None and production_minutes < 0:
+        raise ValueError("production_minutes must be non-negative")
+    if manual_interventions is not None and manual_interventions < 0:
+        raise ValueError("manual_interventions must be non-negative")
+
+    with session_scope() as session:
+        row = session.get(ExternalEditHandoff, handoff_id)
+        if row is None:
+            raise ValueError("external edit handoff not found")
+        if row.status == "cancelled":
+            raise ValueError("cannot record metrics for a cancelled handoff")
+        metadata = dict(row.handoff_metadata or {})
+        existing = dict(metadata.get("provider_metrics") or {})
+        existing.update({key: value for key, value in values.items() if value is not None})
+        existing["recorded_by"] = actor
+        existing["recorded_at"] = datetime.now(UTC).isoformat()
+        metadata["provider_metrics"] = existing
+        row.handoff_metadata = metadata
+
+        if cost_usd is not None:
+            session.add(
+                UsageEvent(
+                    task="external_edit",
+                    provider=row.provider,
+                    model="manual_bridge",
+                    cost_usd=cost_usd,
+                    reference_type=row.source_type,
+                    reference_id=str(row.source_id),
+                    usage_metadata={
+                        "handoff_id": str(row.id),
+                        "credits_used": credits_used,
+                        "production_minutes": production_minutes,
+                        "manual_interventions": manual_interventions,
+                    },
+                )
+            )
+        session.add(
+            DomainEvent(
+                aggregate_type=row.source_type,
+                aggregate_id=str(row.source_id),
+                event_type="external_edit.invideo_metrics_recorded",
+                payload={"handoff_id": str(row.id), "provider_metrics": existing},
             )
         )
         session.flush()

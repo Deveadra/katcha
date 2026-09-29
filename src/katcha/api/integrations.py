@@ -37,6 +37,7 @@ from katcha.services.external_edit import (
     handoff_manifest,
     import_external_output,
     prepare_invideo_handoff,
+    record_external_edit_metrics,
 )
 from katcha.services.provider_settings import (
     get_channel_provider_setting,
@@ -137,6 +138,17 @@ class InVideoHandoffAction(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     actor: str = Field(default="operator", min_length=1, max_length=128)
+
+
+class InVideoMetricsUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    actor: str = Field(default="operator", min_length=1, max_length=128)
+    credits_used: float | None = Field(default=None, ge=0)
+    cost_usd: float | None = Field(default=None, ge=0)
+    production_minutes: float | None = Field(default=None, ge=0)
+    manual_interventions: int | None = Field(default=None, ge=0)
+    notes: str | None = Field(default=None, max_length=2000)
 
 
 class InVideoHandoffResponse(BaseModel):
@@ -514,6 +526,32 @@ def adopt_invideo_output(
             adopt_external_output(
                 handoff_id,
                 actor=request.actor,
+            )
+        )
+    except ValueError as exc:
+        message = str(exc)
+        code = 404 if "not found" in message else 409
+        raise HTTPException(status_code=code, detail=message) from exc
+
+
+@router.post(
+    "/invideo/handoffs/{handoff_id}/metrics",
+    response_model=InVideoHandoffResponse,
+)
+def update_invideo_metrics(
+    handoff_id: uuid.UUID,
+    request: InVideoMetricsUpdate,
+) -> InVideoHandoffResponse:
+    try:
+        return _response(
+            record_external_edit_metrics(
+                handoff_id,
+                actor=request.actor,
+                credits_used=request.credits_used,
+                cost_usd=request.cost_usd,
+                production_minutes=request.production_minutes,
+                manual_interventions=request.manual_interventions,
+                notes=request.notes,
             )
         )
     except ValueError as exc:
