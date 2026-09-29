@@ -55,9 +55,14 @@
                 <section class="monitor studio-panel">
                     <div class="monitor-head">
                         <div><span class="panel-kicker">PROGRAM MONITOR</span><strong id="monitor-title">No episode loaded</strong></div>
-                        <div class="monitor-switch" role="group" aria-label="Monitor source">
-                            <button id="show-render" class="monitor-mode active" type="button">Rendered</button>
-                            <button id="show-source" class="monitor-mode" type="button">Source</button>
+                        <div class="monitor-tools">
+                            <label id="render-version-wrap" class="render-version" hidden>VERSION
+                                <select id="render-version" aria-label="Rendered version"></select>
+                            </label>
+                            <div class="monitor-switch" role="group" aria-label="Monitor source">
+                                <button id="show-render" class="monitor-mode active" type="button">Rendered</button>
+                                <button id="show-source" class="monitor-mode" type="button">Source</button>
+                            </div>
                         </div>
                     </div>
                     <div class="viewer-wrap">

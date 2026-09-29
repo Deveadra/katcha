@@ -16,6 +16,7 @@ const state = {
     selectedPosition: null,
     edits: new Map(),
     monitorMode: "render",
+    renderGeneration: null,
     renderUrl: null,
     mediaUrls: new Map(),
     stagedBrand: null,
@@ -129,6 +130,42 @@ function renderDirtyState() {
     $("save-state").textContent=dirty ? `${state.edits.size} CLIP EDIT${state.edits.size===1?"":"S"}` : "NO CLIP EDITS";
     $("save-state").classList.toggle("dirty",dirty); $("save-state").classList.toggle("clean",!dirty);
 }
+function renderAssets() {
+    return (state.detail?.assets || [])
+        .filter((asset) => asset.kind === "render")
+        .sort((left, right) => (
+            Number(right.generation) - Number(left.generation)
+            || String(right.created_at || "").localeCompare(String(left.created_at || ""))
+        ));
+}
+function renderVersionLabel(asset) {
+    const provider = asset.provider === "invideo"
+        ? "InVideo"
+        : asset.provider
+            ? String(asset.provider)
+            : "Katcha native";
+    return `g${asset.generation} · ${provider}`;
+}
+function renderRenderVersions() {
+    const assets = renderAssets();
+    const wrap = $("render-version-wrap");
+    const select = $("render-version");
+    if (!wrap || !select) return;
+    wrap.hidden = assets.length < 2;
+    if (!assets.length) {
+        select.innerHTML = "";
+        state.renderGeneration = null;
+        return;
+    }
+    const available = new Set(assets.map((asset) => Number(asset.generation)));
+    if (!state.renderGeneration || !available.has(Number(state.renderGeneration))) {
+        state.renderGeneration = Number(assets[0].generation);
+    }
+    select.innerHTML = assets.map((asset) => (
+        `<option value="${escapeHTML(asset.generation)}">${escapeHTML(renderVersionLabel(asset))}</option>`
+    )).join("");
+    select.value = String(state.renderGeneration);
+}
 function renderProject() {
     const row=episodeRow();
     $("episode-status").textContent=row ? String(row.status||"unknown").replaceAll("_"," ").toUpperCase() : "NO EPISODE";
@@ -224,8 +261,13 @@ async function showMonitor() {
 async function loadRenderedMedia() {
     state.renderUrl=null;
     if (!state.episodeId) return;
+    const generation = state.renderGeneration;
+    const suffix = generation ? `?generation=${encodeURIComponent(generation)}` : "";
     try {
-        state.renderUrl=await blobUrl(`/v1/studio/episodes/${encodeURIComponent(state.episodeId)}/media`,`render:${state.episodeId}`);
+        state.renderUrl=await blobUrl(
+            `/v1/studio/episodes/${encodeURIComponent(state.episodeId)}/media${suffix}`,
+            `render:${state.episodeId}:${generation || "latest"}`,
+        );
     } catch {}
 }
 function renderTimeline() {
@@ -497,11 +539,12 @@ async function renderEditedGeneration() {
     message(`Edited generation created (${String(state.episodeId).slice(0,8)}). Rendering has started.`);
 }
 async function loadEpisode() {
-    revokeMedia(); state.edits.clear(); state.selectedPosition=null; renderDirtyState();
+    revokeMedia(); state.edits.clear(); state.selectedPosition=null; state.renderGeneration=null; renderDirtyState();
     if (!state.episodeId) { state.detail=null; renderAll(); return; }
     message("Loading edit session…");
     try {
         state.detail=await api(`/v1/short-episodes/${encodeURIComponent(state.episodeId)}`);
+        renderRenderVersions();
         renderAll(); await loadRenderedMedia(); await loadInVideoHandoffs();
         const first=clipRows()[0]; if (first) state.selectedPosition=Number(first.position);
         renderAll(); await hydrateBrandPanel();
@@ -557,6 +600,12 @@ $("episode").addEventListener("change",()=>{state.episodeId=$("episode").value;q
 $("refresh").addEventListener("click",()=>loadChannel(state.episodeId));
 $("show-render").addEventListener("click",()=>{state.monitorMode="render";showMonitor();});
 $("show-source").addEventListener("click",()=>{state.monitorMode="source";showMonitor();});
+$("render-version").addEventListener("change",async()=>{
+    state.renderGeneration=Number($("render-version").value)||null;
+    await loadRenderedMedia();
+    state.monitorMode="render";
+    await showMonitor();
+});
 ["clip-start","clip-duration","clip-transition","clip-audio-policy","clip-volume","clip-duck"].forEach((id)=>$(id).addEventListener(id.startsWith("clip-")&&["clip-volume","clip-duck","clip-start","clip-duration"].includes(id)?"input":"change",readClipEdit));
 $("reset-clip").addEventListener("click",()=>{if(state.selectedPosition!==null){state.edits.delete(Number(state.selectedPosition));renderAll();showMonitor();}});
 ["logo-enabled","logo-x","logo-y","logo-width","logo-opacity"].forEach((id)=>$(id).addEventListener(id==="logo-enabled"?"change":"input",readLogoInputs));

@@ -6,7 +6,7 @@ import re
 import uuid
 from typing import Literal
 
-from fastapi import APIRouter, HTTPException, Request, status
+from fastapi import APIRouter, HTTPException, Query, Request, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
@@ -134,24 +134,39 @@ def stream_source_clip(clip_id: uuid.UUID, request: Request) -> StreamingRespons
 
 
 @router.get("/episodes/{episode_id}/media")
-def stream_episode_render(episode_id: uuid.UUID, request: Request) -> StreamingResponse:
+def stream_episode_render(
+    episode_id: uuid.UUID,
+    request: Request,
+    generation: int | None = Query(default=None, ge=1),
+) -> StreamingResponse:
     with session_scope() as session:
         episode = session.get(ShortEpisode, episode_id)
         if episode is None:
             raise HTTPException(status_code=404, detail="short episode not found")
+        stmt = select(ShortEpisodeAsset).where(
+            ShortEpisodeAsset.short_episode_id == episode_id,
+            ShortEpisodeAsset.kind == "render",
+        )
+        if generation is not None:
+            stmt = stmt.where(ShortEpisodeAsset.generation == generation)
         asset = session.scalar(
-            select(ShortEpisodeAsset)
-            .where(
-                ShortEpisodeAsset.short_episode_id == episode_id,
-                ShortEpisodeAsset.kind == "render",
-            )
-            .order_by(ShortEpisodeAsset.created_at.desc())
+            stmt.order_by(
+                ShortEpisodeAsset.generation.desc(),
+                ShortEpisodeAsset.created_at.desc(),
+            ).limit(1)
         )
         if asset is None:
-            raise HTTPException(status_code=409, detail="episode has no rendered preview yet")
+            detail = (
+                f"episode has no render generation {generation}"
+                if generation is not None
+                else "episode has no rendered preview yet"
+            )
+            raise HTTPException(status_code=409, detail=detail)
         key = asset.storage_key
+        metadata = dict(asset.asset_metadata or {})
+        external_handoff_id = str(metadata.get("external_edit_handoff_id") or "").strip()
         expected_key = str((episode.render_manifest or {}).get("output_key") or "")
-        if expected_key and key != expected_key:
+        if expected_key and key != expected_key and not external_handoff_id:
             raise HTTPException(
                 status_code=409,
                 detail="render asset does not match frozen manifest",
