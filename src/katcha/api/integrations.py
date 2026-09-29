@@ -233,6 +233,103 @@ def list_elevenlabs_voices(
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
+@router.get(
+    "/elevenlabs/models",
+    response_model=list[ElevenLabsModelResponse],
+)
+def get_elevenlabs_models() -> list[ElevenLabsModelResponse]:
+    try:
+        return [
+            ElevenLabsModelResponse.model_validate(row)
+            for row in list_elevenlabs_models()
+        ]
+    except ElevenLabsIntegrationError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+def _channel_elevenlabs_response(
+    channel_profile_id: uuid.UUID,
+    *,
+    voice_name: str | None = None,
+    model_name: str | None = None,
+) -> ElevenLabsChannelConfigResponse:
+    row = get_channel_provider_setting(channel_profile_id, "elevenlabs")
+    voice_id, model_id = resolve_elevenlabs_voice(
+        channel_profile_id=channel_profile_id,
+    )
+    if row is not None and row.enabled:
+        source: Literal["channel", "global", "unset"] = "channel"
+        config = dict(row.config or {})
+        voice_name = voice_name or str(config.get("voice_name") or "") or None
+        model_name = model_name or str(config.get("model_name") or "") or None
+    elif voice_id:
+        source = "global"
+    else:
+        source = "unset"
+    return ElevenLabsChannelConfigResponse(
+        channel_profile_id=channel_profile_id,
+        enabled=bool(row.enabled) if row is not None else bool(voice_id),
+        voice_id=voice_id,
+        voice_name=voice_name,
+        model_id=model_id,
+        model_name=model_name,
+        source=source,
+    )
+
+
+@router.get(
+    "/elevenlabs/channels/{channel_profile_id}",
+    response_model=ElevenLabsChannelConfigResponse,
+)
+def get_channel_elevenlabs_config(
+    channel_profile_id: uuid.UUID,
+) -> ElevenLabsChannelConfigResponse:
+    return _channel_elevenlabs_response(channel_profile_id)
+
+
+@router.put(
+    "/elevenlabs/channels/{channel_profile_id}",
+    response_model=ElevenLabsChannelConfigResponse,
+)
+def update_channel_elevenlabs_config(
+    channel_profile_id: uuid.UUID,
+    request: ElevenLabsChannelConfigUpdate,
+) -> ElevenLabsChannelConfigResponse:
+    try:
+        voice = get_elevenlabs_voice(request.voice_id)
+        models = list_elevenlabs_models()
+        model = next(
+            (row for row in models if row.get("model_id") == request.model_id),
+            None,
+        )
+        if model is None:
+            raise ValueError(
+                f"ElevenLabs model is not available for TTS: {request.model_id}"
+            )
+        upsert_channel_provider_setting(
+            channel_profile_id,
+            provider="elevenlabs",
+            enabled=request.enabled,
+            config={
+                "voice_id": request.voice_id,
+                "model_id": request.model_id,
+                "voice_name": voice.get("name"),
+                "model_name": model.get("name"),
+            },
+            actor=request.actor,
+        )
+        return _channel_elevenlabs_response(
+            channel_profile_id,
+            voice_name=str(voice.get("name") or "") or None,
+            model_name=str(model.get("name") or "") or None,
+        )
+    except ElevenLabsIntegrationError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    except ValueError as exc:
+        code = 404 if "channel profile not found" in str(exc) else 400
+        raise HTTPException(status_code=code, detail=str(exc)) from exc
+
+
 @router.post(
     "/invideo/handoffs",
     response_model=InVideoHandoffResponse,
