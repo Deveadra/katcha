@@ -207,6 +207,25 @@ as its startup handshake and reject a deployment early if required scopes or cha
 are missing, rather than discovering the problem after a workflow command has already been
 attempted.
 
+
+
+### Capability-aware Command Center
+
+The human Command Center performs the same `GET /v1/control/session` handshake before it
+loads channel data. The browser uses only the returned non-secret capability metadata.
+
+- the connected principal and effective channel scope are visible in the UI;
+- explicit channel allowlists are enforced again client-side before a channel is offered;
+- `ai:command` controls whether the composer and starter commands are enabled;
+- `ai:read` controls durable history and observability access;
+- `ai:write` controls thread archival;
+- action confirmation buttons are enabled only when the principal has the action's required
+  capability (production, recovery, intelligence refresh, or discovery).
+
+This is defense in depth only; the server remains authoritative and re-checks the scope and
+channel when the request is received. Unknown future action types fail closed in the browser
+for restricted principals, while wildcard operator principals retain full compatibility.
+
 ## Durable conversation history
 
 Command Center conversations are now server-side records rather than browser-only state.
