@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+from contextlib import suppress
 from datetime import timedelta
 
 from temporalio import workflow
@@ -248,7 +249,8 @@ class TopicWatchScheduleWorkflow:
                     "cycle_workflow_id": child_id,
                     "error": str(exc)[:1000],
                 }
-            try:
+            # Lifecycle telemetry must not stop a continuous source scout.
+            with suppress(Exception):
                 await workflow.execute_activity(
                     "record_topic_watch_command_cycle_activity",
                     args=[
@@ -261,9 +263,6 @@ class TopicWatchScheduleWorkflow:
                     start_to_close_timeout=timedelta(seconds=30),
                     retry_policy=_COMMAND_CYCLE_LIFECYCLE_RETRY,
                 )
-            except Exception:
-                # Lifecycle telemetry must not stop a continuous source scout.
-                pass
             await workflow.sleep(timedelta(minutes=interval_minutes))
         workflow.continue_as_new(
             args=[
