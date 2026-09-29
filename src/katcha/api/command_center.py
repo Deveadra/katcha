@@ -73,7 +73,6 @@ from katcha.services.command_observability import (
     record_command_observation,
 )
 from katcha.services.command_resources import (
-    SUPPORTED_RESOURCE_KINDS,
     resolve_command_resources,
     resource_context_summary,
 )
