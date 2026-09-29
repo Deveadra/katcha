@@ -451,9 +451,23 @@ body[data-katcha-page="trends"] .explorer {
         width: 100%;
     }
 
-    .compact-connect {
+    body[data-katcha-page="trends"] .compact-connect {
+        display: flex;
+        width: 100%;
+        min-width: 0;
         align-items: stretch;
         flex-direction: column;
+        flex-wrap: nowrap;
+    }
+
+    body[data-katcha-page="trends"] .compact-connect > * {
+        width: 100%;
+        min-width: 0;
+        flex: 0 0 auto;
+    }
+
+    body[data-katcha-page="trends"] .compact-connect small {
+        flex-basis: auto;
     }
 
     .workspace-grid {
