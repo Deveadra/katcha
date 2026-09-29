@@ -8,6 +8,7 @@ const requests = [];
 let blueprintVersion = 1;
 let brandVersion = 1;
 let childCreated = false;
+let invideoHandoff = null;
 
 const blueprintContract = {
     key: "persona_commentary",
@@ -92,6 +93,30 @@ const detail = {
             try { body=request.postDataJSON(); } catch {}
             requests.push({path:url.pathname,method:request.method(),body});
             const json=(data,status=200)=>route.fulfill({status,contentType:"application/json",body:JSON.stringify(data)});
+            if (url.pathname==="/v1/integrations/providers") return json([
+                {provider:"elevenlabs",capability:"text_to_speech",configured:true,mode:"api",detail:"Direct ElevenLabs TTS is ready."},
+                {provider:"invideo",capability:"external_edit",configured:true,mode:"manual_bridge",detail:"Tracked handoff bridge is ready."},
+            ]);
+            if (url.pathname==="/v1/integrations/elevenlabs/status") return json({
+                configured:true,connected:true,voice_id:"voice-ranksnaxx",voice_name:"RankSnaxx",
+                voice_category:"generated",voice_labels:{accent:"american"},model_id:"eleven_multilingual_v2",
+                output_format:"pcm_24000",subscription:{tier:"starter",status:"active",character_count:1200,character_limit:10000,remaining_characters:8800},
+                detail:"ElevenLabs API and configured voice are reachable.",
+            });
+            if (url.pathname==="/v1/integrations/invideo/handoffs" && request.method()==="GET") return json(invideoHandoff?[invideoHandoff]:[]);
+            if (url.pathname==="/v1/integrations/invideo/handoffs" && request.method()==="POST") {
+                invideoHandoff={id:"30000000-0000-0000-0000-000000000001",provider:"invideo",source_type:"short_episode",source_id:episode.id,generation:1,status:"prepared",package_manifest_key:"external-edit/invideo/manifest.json",output_key:null,external_project_id:null,handoff_metadata:{transport:"manual_bridge"}};
+                return json(invideoHandoff,201);
+            }
+            if (url.pathname==="/v1/integrations/invideo/handoffs/30000000-0000-0000-0000-000000000001/package") return route.fulfill({status:200,contentType:"application/zip",body:Buffer.from("fixture-invideo-package")});
+            if (url.pathname==="/v1/integrations/invideo/handoffs/30000000-0000-0000-0000-000000000001/output" && request.method()==="POST") {
+                invideoHandoff={...invideoHandoff,status:"output_imported",output_key:"external-edit/invideo/output.mp4",external_project_id:"invideo-project-123"};
+                return json(invideoHandoff);
+            }
+            if (url.pathname==="/v1/integrations/invideo/handoffs/30000000-0000-0000-0000-000000000001/adopt" && request.method()==="POST") {
+                invideoHandoff={...invideoHandoff,status:"adopted"};
+                return json(invideoHandoff);
+            }
             if (url.pathname==="/v1/channels") return json([{id:"20000000-0000-0000-0000-000000000001",status:"active",profile_metadata:{channel_title:"RankSnaxx"}}]);
             if (url.pathname==="/v1/short-episodes") {
                 const rows=[episode];
@@ -147,6 +172,32 @@ const detail = {
         assert.equal(brandRequest.body.contract.visual.logo.enabled,true);
         await page.getByRole("button",{name:"Activate staged version"}).click();
         await page.locator("#message").getByText(/active for future short-form renders/).waitFor();
+
+        await page.getByRole("button",{name:"External"}).click();
+        await page.locator("#elevenlabs-state").getByText("CONNECTED").waitFor();
+        assert.match(await page.locator("#elevenlabs-voice").innerText(),/RankSnaxx/);
+        assert.match(await page.locator("#elevenlabs-usage").innerText(),/1,200.*10,000/);
+
+        await page.locator("#invideo-note").fill("Benchmark complex external edit");
+        await page.getByRole("button",{name:"Prepare InVideo handoff"}).click();
+        await page.locator("#message").getByText(/handoff prepared/).waitFor();
+        assert.equal(invideoHandoff.status,"prepared");
+        assert(requests.some((row)=>row.path==="/v1/integrations/invideo/handoffs"&&row.method==="POST"&&row.body.source_type==="short_episode"));
+
+        const downloadPromise=page.waitForEvent("download");
+        await page.getByRole("button",{name:"Download handoff package"}).click();
+        const download=await downloadPromise;
+        assert.match(download.suggestedFilename(),/katcha-invideo-/);
+
+        await page.locator("#invideo-project-id").fill("invideo-project-123");
+        await page.locator("#invideo-output").setInputFiles({name:"invideo-output.mp4",mimeType:"video/mp4",buffer:Buffer.from("fixture-mp4-output")});
+        await page.getByRole("button",{name:"Import returned edit"}).click();
+        await page.locator("#message").getByText(/imported and verified/).waitFor();
+        assert.equal(invideoHandoff.status,"output_imported");
+
+        await page.getByRole("button",{name:"Adopt InVideo edit for review"}).click();
+        await page.locator("#message").getByText(/adopted into Katcha/).waitFor();
+        assert.equal(invideoHandoff.status,"adopted");
 
         await page.getByRole("button",{name:"Clip"}).click();
         await page.getByRole("button",{name:"Render edited generation"}).click();
