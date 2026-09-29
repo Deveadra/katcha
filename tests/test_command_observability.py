@@ -1,6 +1,8 @@
 import uuid
 from decimal import Decimal
 
+from sqlalchemy import select
+
 from katcha.db import session_scope
 from katcha.models import DomainEvent, UsageEvent
 from katcha.services.command_observability import (
@@ -37,7 +39,7 @@ def test_command_observability_summarizes_latency_cost_and_actions() -> None:
 
     with session_scope() as session:
         command_event = session.scalar(
-            __import__("sqlalchemy").select(DomainEvent).where(
+            select(DomainEvent).where(
                 DomainEvent.aggregate_id == str(request_id),
                 DomainEvent.event_type == "command_center.command_completed",
             )
