@@ -447,6 +447,6 @@ const verifiedPreview = {
         assert(requests.some((request) => request.path.endsWith("/brands/2/activate") && request.auth === "Bearer fixture-token"));
         assert(requests.some((request) => request.path.endsWith("/render/recover") && request.auth === "Bearer fixture-token"));
         assert.deepEqual(errors, []);
-        console.log("Editing control center browser test passed");
+        console.log("Production browser test passed");
     } finally { await browser.close(); }
 })().catch((error) => { console.error(error); process.exitCode = 1; }).finally(() => server.kill());
