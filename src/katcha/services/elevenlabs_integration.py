@@ -119,6 +119,36 @@ def elevenlabs_status(
     }
 
 
+def get_elevenlabs_voice(
+    voice_id: str,
+    settings: Settings | None = None,
+) -> dict[str, object]:
+    settings = settings or get_settings()
+    voice_id = voice_id.strip()
+    if not voice_id:
+        raise ValueError("voice_id is required")
+    try:
+        with _client(settings) as client:
+            response = client.get(f"/v1/voices/{voice_id}")
+            response.raise_for_status()
+    except httpx.HTTPError as exc:
+        raise ElevenLabsIntegrationError(
+            f"ElevenLabs voice lookup failed: {exc}"
+        ) from exc
+
+    voice = dict(response.json() or {})
+    return {
+        "voice_id": voice.get("voice_id") or voice_id,
+        "name": voice.get("name"),
+        "category": voice.get("category"),
+        "description": voice.get("description"),
+        "labels": dict(voice.get("labels") or {}),
+        "preview_url": voice.get("preview_url"),
+        "is_owner": voice.get("is_owner"),
+        "is_legacy": voice.get("is_legacy"),
+    }
+
+
 def search_elevenlabs_voices(
     *,
     search: str | None = None,
