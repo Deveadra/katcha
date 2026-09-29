@@ -1,1 +1,96 @@
-const { chromium } = require("playwright");\nconst assert = require("node:assert/strict");\nconst { spawn } = require("node:child_process");\nconst path = require("node:path");\n\nconst port = 8776;\nconst server = spawn(\n    "python3",\n    ["-m", "http.server", String(port), "--bind", "127.0.0.1", "--directory", path.resolve(__dirname, "../src/katcha/web")],\n    { stdio: "ignore" },\n);\n\nconst workspaces = [\n    { file: "index.html", label: "Trends" },\n    { file: "ai.html", label: "Katcha AI", help: 1 },\n    { file: "ingestion.html", label: "Sources", help: 1 },\n    { file: "clips.html", label: "Clips" },\n    { file: "channels.html", label: "Channel Studio", help: 2 },\n    { file: "editing.html", label: "Production", help: 3 },\n    { file: "studio.html", label: "Clip Studio", help: 3 },\n];\nconst labels = workspaces.map((row) => row.label);\n\n(async () => {\n    for (let i = 0; i < 50; i++) {\n        try {\n            await fetch("http://127.0.0.1:" + port + "/index.html");\n            break;\n        } catch {\n            await new Promise((resolve) => setTimeout(resolve, 100));\n        }\n    }\n\n    const browser = await chromium.launch({ headless: true });\n    const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });\n\n    try {\n        for (const workspace of workspaces) {\n            await page.goto("http://127.0.0.1:" + port + "/" + workspace.file, { waitUntil: "domcontentloaded" });\n            const menu = page.locator(".workspace-menu");\n            await menu.locator("summary").waitFor();\n\n            assert.deepEqual(\n                await menu.locator(".workspace-menu-popover a b").allTextContents(),\n                labels,\n                workspace.label + ": shared workspace order drifted",\n            );\n            assert.equal(\n                await menu.locator('[aria-current="page"] b').innerText(),\n                workspace.label,\n                workspace.label + ": current workspace state missing",\n            );\n            assert.equal(await page.locator(".ae-skip-link").count(), 1);\n            assert.equal(await page.locator("main#main-content").count(), 1);\n            assert.equal((await page.locator("#katcha-chat-shortcut").innerText()).includes("Ask Katcha"), true);\n\n            await menu.locator("summary").click();\n            assert.equal(await menu.evaluate((node) => node.open), true);\n            await page.keyboard.press("Escape");\n            assert.equal(await menu.evaluate((node) => node.open), false);\n            assert.equal(await menu.locator("summary").evaluate((node) => document.activeElement === node), true);\n\n            await menu.locator("summary").click();\n            await page.locator("main").click({ position: { x: 5, y: 5 } });\n            assert.equal(await menu.evaluate((node) => node.open), false);\n\n            if (workspace.help) {\n                assert.ok(\n                    await page.locator(".ae-help").count() >= workspace.help,\n                    workspace.label + ": expected progressive disclosure help",\n                );\n            }\n\n            await page.setViewportSize({ width: 390, height: 844 });\n            assert.equal(\n                await page.evaluate(() => document.documentElement.scrollWidth > innerWidth),\n                false,\n                workspace.label + ": horizontal overflow at 390px",\n            );\n            await page.setViewportSize({ width: 1440, height: 900 });\n        }\n\n        console.log("PASS: shared Aerith navigation, terminology, keyboard behavior, progressive disclosure, skip navigation and mobile width");\n    } finally {\n        await browser.close();\n    }\n})()\n    .catch((error) => {\n        console.error(error);\n        process.exitCode = 1;\n    })\n    .finally(() => server.kill());\n
+const { chromium } = require("playwright");
+const assert = require("node:assert/strict");
+const { spawn } = require("node:child_process");
+const path = require("node:path");
+
+const port = 8776;
+const server = spawn(
+    "python3",
+    ["-m", "http.server", String(port), "--bind", "127.0.0.1", "--directory", path.resolve(__dirname, "../src/katcha/web")],
+    { stdio: "ignore" },
+);
+
+const workspaces = [
+    { file: "index.html", label: "Trends" },
+    { file: "ai.html", label: "Katcha AI", help: 1 },
+    { file: "ingestion.html", label: "Sources", help: 1 },
+    { file: "clips.html", label: "Clips" },
+    { file: "channels.html", label: "Channel Studio", help: 2 },
+    { file: "editing.html", label: "Production", help: 3 },
+    { file: "studio.html", label: "Clip Studio", help: 3 },
+];
+const labels = workspaces.map((row) => row.label);
+
+(async () => {
+    for (let i = 0; i < 50; i++) {
+        try {
+            await fetch("http://127.0.0.1:" + port + "/index.html");
+            break;
+        } catch {
+            await new Promise((resolve) => setTimeout(resolve, 100));
+        }
+    }
+
+    const browser = await chromium.launch({
+        headless: true,
+        executablePath: process.env.CHROMIUM_PATH || undefined,
+        args: process.env.CHROMIUM_PATH ? ["--no-sandbox"] : [],
+    });
+    const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+
+    try {
+        for (const workspace of workspaces) {
+            await page.goto("http://127.0.0.1:" + port + "/" + workspace.file, { waitUntil: "domcontentloaded" });
+            const menu = page.locator(".workspace-menu");
+            await menu.locator("summary").waitFor();
+
+            assert.deepEqual(
+                await menu.locator(".workspace-menu-popover a b").allTextContents(),
+                labels,
+                workspace.label + ": shared workspace order drifted",
+            );
+            assert.equal(
+                await menu.locator('[aria-current="page"] b').innerText(),
+                workspace.label,
+                workspace.label + ": current workspace state missing",
+            );
+            assert.equal(await page.locator(".ae-skip-link").count(), 1);
+            assert.equal(await page.locator("main#main-content").count(), 1);
+            assert.equal((await page.locator("#katcha-chat-shortcut").innerText()).includes("Ask Katcha"), true);
+
+            await menu.locator("summary").click();
+            assert.equal(await menu.evaluate((node) => node.open), true);
+            await page.keyboard.press("Escape");
+            assert.equal(await menu.evaluate((node) => node.open), false);
+            assert.equal(await menu.locator("summary").evaluate((node) => document.activeElement === node), true);
+
+            await menu.locator("summary").click();
+            await page.locator("main").click({ position: { x: 5, y: 5 } });
+            assert.equal(await menu.evaluate((node) => node.open), false);
+
+            if (workspace.help) {
+                assert.ok(
+                    await page.locator(".ae-help").count() >= workspace.help,
+                    workspace.label + ": expected progressive disclosure help",
+                );
+            }
+
+            await page.setViewportSize({ width: 390, height: 844 });
+            assert.equal(
+                await page.evaluate(() => document.documentElement.scrollWidth > innerWidth),
+                false,
+                workspace.label + ": horizontal overflow at 390px",
+            );
+            await page.setViewportSize({ width: 1440, height: 900 });
+        }
+
+        console.log("PASS: shared Aerith navigation, terminology, keyboard behavior, progressive disclosure, skip navigation and mobile width");
+    } finally {
+        await browser.close();
+    }
+})()
+    .catch((error) => {
+        console.error(error);
+        process.exitCode = 1;
+    })
+    .finally(() => server.kill());
