@@ -82,7 +82,11 @@ class Settings(BaseSettings):
     control_principals: list[ControlPrincipalSettings] = Field(default_factory=list)
 
     def resolved_control_scopes(self) -> set[str]:
-        values = {item.strip() for item in self.control_api_scopes.split(",") if item.strip()}
+        values = {
+            item.strip()
+            for item in self.control_api_scopes.split(",")
+            if item.strip()
+        }
         return values or {"*"}
 
     @field_validator("control_api_token", mode="before")
