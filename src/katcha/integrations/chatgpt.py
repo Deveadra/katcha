@@ -203,6 +203,24 @@ def begin_chatgpt_oauth(
     return _authorization_url(**params)
 
 
+def consume_failed_oauth(state: str) -> None:
+    """Validate and consume an OAuth attempt that returned an authorization error."""
+    now = datetime.now(UTC)
+    with session_scope() as session:
+        row = session.scalar(
+            select(ChatGPTOAuthState)
+            .where(ChatGPTOAuthState.state_hash == _state_hash(state))
+            .with_for_update()
+        )
+        if row is None:
+            raise ChatGPTConnectionError("ChatGPT OAuth state is unknown")
+        if row.consumed_at is not None:
+            raise ChatGPTConnectionError("ChatGPT OAuth state has already been consumed")
+        if row.expires_at <= now:
+            raise ChatGPTConnectionError("ChatGPT OAuth state has expired")
+        row.consumed_at = now
+
+
 def _token_exchange(
     *,
     client_id: str,
