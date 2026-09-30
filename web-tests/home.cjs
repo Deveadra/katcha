@@ -129,6 +129,49 @@ const observability = { request_count: 16, p95_latency_ms: 720, estimated_cost_u
         }));
         assert.equal(brandStyle.display, "flex");
         assert.equal(brandStyle.alignItems, "center");
+        const stylesheetHrefs = await page.locator('link[rel="stylesheet"]').evaluateAll(
+            (nodes) => nodes.map((node) => node.getAttribute("href")),
+        );
+        assert(
+            stylesheetHrefs.includes("/pages/home-aerith.css"),
+            "home must load the Aerith page layer",
+        );
+        assert.equal(stylesheetHrefs.includes("home.css"), false);
+        assert.equal(stylesheetHrefs.includes("styles.css"), false);
+
+        const heroStyle = await page.locator(".home-hero").evaluate((node) => ({
+            display: getComputedStyle(node).display,
+            backgroundImage: getComputedStyle(node).backgroundImage,
+            borderRadius: parseFloat(getComputedStyle(node).borderRadius),
+            backdropFilter: getComputedStyle(node).backdropFilter || getComputedStyle(node).webkitBackdropFilter,
+        }));
+        assert.equal(heroStyle.display, "grid");
+        assert.match(heroStyle.backgroundImage, /gradient/);
+        assert(heroStyle.borderRadius >= 20);
+        assert.match(heroStyle.backdropFilter, /blur/);
+
+        const attentionStyle = await page.locator(".attention-grid").evaluate((node) => ({
+            display: getComputedStyle(node).display,
+            columns: getComputedStyle(node).gridTemplateColumns.split(/\s+/).filter(Boolean).length,
+        }));
+        assert.equal(attentionStyle.display, "grid");
+        assert.equal(attentionStyle.columns, 2);
+
+        const pulseStyle = await page.locator(".pulse-grid").evaluate((node) => ({
+            display: getComputedStyle(node).display,
+            columns: getComputedStyle(node).gridTemplateColumns.split(/\s+/).filter(Boolean).length,
+        }));
+        assert.equal(pulseStyle.display, "grid");
+        assert.equal(pulseStyle.columns, 4);
+
+        const panelStyle = await page.locator(".home-panel").first().evaluate((node) => ({
+            backgroundImage: getComputedStyle(node).backgroundImage,
+            borderRadius: parseFloat(getComputedStyle(node).borderRadius),
+            backdropFilter: getComputedStyle(node).backdropFilter || getComputedStyle(node).webkitBackdropFilter,
+        }));
+        assert.match(panelStyle.backgroundImage, /gradient/);
+        assert(panelStyle.borderRadius >= 18);
+        assert.match(panelStyle.backdropFilter, /blur/);
         assert.equal(await page.locator("#metric-production").innerText(), "2");
         assert.equal(await page.locator("#metric-failures").innerText(), "3");
         assert.equal(await page.locator("#metric-clips").innerText(), "42");

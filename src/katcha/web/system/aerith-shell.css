@@ -1,5 +1,207 @@
-.app-shell {
+.app-shell,
+.shell {
+    display: grid;
+    grid-template-columns: 252px minmax(0, 1fr);
+    min-height: 100dvh;
     background: transparent;
+}
+
+.app-shell > main,
+.shell > main {
+    width: 100%;
+    min-width: 0;
+}
+
+.app-shell > .rail,
+.shell > .sidebar {
+    position: sticky;
+    z-index: 40;
+    top: 0;
+    display: flex;
+    flex-direction: column;
+    height: 100dvh;
+    padding: 28px 20px 20px !important;
+    border-right: 1px solid var(--ae-line) !important;
+}
+
+.app-shell .brand,
+.app-shell .logo,
+.shell .brand,
+.shell .logo {
+    display: flex;
+    align-items: center;
+    gap: 11px;
+    min-height: 36px;
+    padding: 0 12px;
+    color: var(--ae-text) !important;
+    font-size: 24px;
+    font-weight: 800;
+    letter-spacing: -0.045em;
+    line-height: 1;
+    text-decoration: none;
+}
+
+.app-shell .brand-mark,
+.shell .brand-mark {
+    display: flex;
+    align-items: flex-end;
+    justify-content: center;
+    gap: 3px;
+    width: 29px;
+    height: 29px;
+    padding: 7px;
+    border-radius: 9px;
+    transform: rotate(-7deg);
+}
+
+.app-shell .brand-mark i,
+.shell .brand-mark i {
+    width: 3px;
+    border-radius: 999px;
+}
+
+.app-shell .brand-mark i:nth-child(1),
+.shell .brand-mark i:nth-child(1) {
+    height: 7px;
+}
+
+.app-shell .brand-mark i:nth-child(2),
+.shell .brand-mark i:nth-child(2) {
+    height: 13px;
+}
+
+.app-shell .brand-mark i:nth-child(3),
+.shell .brand-mark i:nth-child(3) {
+    height: 10px;
+}
+
+.rail-spacer {
+    flex: 1;
+}
+
+.rail-footer,
+.sidebar-footer {
+    margin-top: auto;
+    padding: 16px 4px 0;
+    border-top: 1px solid var(--ae-line);
+    font-size: 10px;
+    line-height: 1.45;
+}
+
+.app-shell > main > .topbar,
+.shell > main > .topbar {
+    position: sticky;
+    z-index: 24;
+    top: 0;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    min-height: 64px;
+    height: 64px !important;
+    padding: 0 clamp(22px, 3vw, 42px);
+    border-bottom: 1px solid var(--ae-line);
+}
+
+.breadcrumbs {
+    font-size: 11px;
+}
+
+.simulation,
+.connection {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 28px;
+    padding: 0 10px;
+    border: 1px solid var(--ae-line);
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.025);
+    color: var(--ae-text-tertiary);
+    font-size: 9px;
+    font-weight: 800;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+
+.simulation.connected,
+.connection.online {
+    border-color: rgba(155, 230, 194, 0.28);
+    background: rgba(155, 230, 194, 0.07);
+    color: var(--ae-success);
+}
+
+.simulation.warning {
+    border-color: rgba(255, 204, 126, 0.28);
+    background: rgba(255, 204, 126, 0.06);
+    color: #ffd59a;
+}
+
+@media (max-width: 1100px) {
+    .app-shell,
+    .shell {
+        grid-template-columns: 218px minmax(0, 1fr);
+    }
+}
+
+@media (max-width: 950px) {
+    .app-shell,
+    .shell {
+        display: block;
+    }
+
+    .app-shell > .rail,
+    .shell > .sidebar {
+        position: relative;
+        top: auto;
+        flex-direction: row;
+        align-items: center;
+        height: auto;
+        min-height: 68px;
+        padding: 12px 16px !important;
+        border-right: 0 !important;
+        border-bottom: 1px solid var(--ae-line) !important;
+    }
+
+    .app-shell .workspace-nav-cluster,
+    .shell .workspace-nav-cluster {
+        grid-template-columns: auto minmax(170px, 240px);
+        align-items: center;
+        gap: 10px !important;
+        width: min(100%, 470px);
+    }
+
+    .rail-spacer,
+    .rail-footer,
+    .sidebar-footer {
+        display: none;
+    }
+
+    .app-shell > main > .topbar,
+    .shell > main > .topbar {
+        position: relative;
+        min-height: 56px;
+        height: 56px !important;
+        padding: 0 18px;
+    }
+}
+
+@media (max-width: 560px) {
+    .app-shell > .rail,
+    .shell > .sidebar {
+        align-items: stretch;
+    }
+
+    .app-shell .workspace-nav-cluster,
+    .shell .workspace-nav-cluster {
+        grid-template-columns: 1fr;
+        width: 100%;
+    }
+
+    .app-shell .brand,
+    .shell .logo {
+        padding-inline: 4px;
+        font-size: 21px;
+    }
 }
 
 .rail,

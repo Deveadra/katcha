@@ -976,6 +976,21 @@ class Handler(BaseHTTPRequestHandler):
             self.send(200, asset.read_bytes(), mime)
             return True
 
+        top_level_suffixes = {".css", ".js"}
+        if path.count("/") == 1 and Path(path).suffix in top_level_suffixes:
+            name = path.removeprefix("/")
+            web_root = (ROOT / "src" / "katcha" / "web").resolve()
+            asset = (web_root / name).resolve()
+            try:
+                asset.relative_to(web_root)
+            except ValueError:
+                return False
+            if not asset.is_file():
+                return False
+            mime = mimetypes.guess_type(asset.name)[0] or "application/octet-stream"
+            self.send(200, asset.read_bytes(), mime)
+            return True
+
         prefixes = (
             "/home/assets/",
             "/editing/assets/",
