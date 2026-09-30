@@ -44,6 +44,27 @@ Provider order for the Command Center is:
 Specialist background workloads can continue to use API providers when their native
 capabilities are required.
 
+## ChatGPT plan connection
+
+For normal operator conversation and command interpretation, Katcha can use **Sign in
+with ChatGPT** instead of requiring an OpenAI API key. Open **Settings** from the
+persistent gear icon and choose **Continue with ChatGPT**. Katcha uses OpenAI's
+open-source OAuth flow, keeps the renewable credentials encrypted with Katcha's local
+credential key, and uses only models returned for that signed-in ChatGPT account.
+
+ChatGPT-plan inference uses the public Responses API with `store=false` and
+`stream=true`. Katcha records this usage as `chatgpt/<model>` with zero API-dollar
+cost in its own usage ledger. The user's ChatGPT plan still has its own usage limits.
+
+Provider order for the Command Center is:
+
+1. connected ChatGPT plan;
+2. configured API-key providers when the plan is unavailable or exhausted;
+3. deterministic stored-data fallback after live providers are exhausted.
+
+Specialist background workloads can continue to use API providers when their native
+capabilities are required.
+
 ## Live mode
 
 `KATCHA_AI_EXECUTION_MODE=live` enables external AI/TTS providers. For
