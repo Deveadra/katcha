@@ -738,7 +738,11 @@ def source_discovery_plan(
     adapter_keys = {str(row.get("key") or "") for row in catalog}
     web_scout_installed = "web_scout" in adapter_keys
     live_mode = settings.resolved_ai_execution_mode() == "live"
-    chatgpt = chatgpt_connection_status()
+    chatgpt = (
+        chatgpt_connection_status()
+        if getattr(settings, "chatgpt_host_id", None)
+        else {}
+    )
     chatgpt_plan_ready = bool(
         chatgpt.get("connected") and chatgpt.get("plan_usage_enabled")
     )
