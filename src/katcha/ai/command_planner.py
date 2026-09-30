@@ -8,7 +8,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-from katcha.ai.failover import safe_to_fail_over
+from katcha.ai.failover import safe_to_fail_over_generation
 from katcha.ai.pricing import estimate_token_cost
 from katcha.ai.router import (
     ModelTarget,
@@ -335,7 +335,7 @@ def plan_ambiguous_command(
                 return result
             except Exception as exc:
                 last_error = exc
-                if index == 0 and len(targets) > 1 and safe_to_fail_over(exc):
+                if index < len(targets) - 1 and safe_to_fail_over_generation(exc):
                     continue
                 break
 

@@ -8,7 +8,7 @@ from decimal import Decimal
 
 from pydantic import BaseModel, Field
 
-from katcha.ai.failover import safe_to_fail_over
+from katcha.ai.failover import safe_to_fail_over_generation
 from katcha.ai.pricing import estimate_token_cost
 from katcha.ai.router import (
     ModelTarget,
@@ -35,6 +35,50 @@ class CommandNarrativeResult:
     input_tokens: int
     output_tokens: int
     degraded_reason: str | None = None
+
+
+def _failure_status(exc: BaseException) -> int | None:
+    status = getattr(exc, "status_code", None)
+    if status is None:
+        response = getattr(exc, "response", None)
+        status = getattr(response, "status_code", None)
+    if status is None:
+        status = getattr(exc, "code", None)
+    try:
+        return int(status) if status is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _attempt_label(target: ModelTarget, exc: BaseException) -> str:
+    status = _failure_status(exc)
+    suffix = f"HTTP {status}" if status is not None else type(exc).__name__
+    return f"{target.provider}/{target.model} ({suffix})"
+
+
+def _degraded_notice(exc: BaseException, attempts: list[str]) -> str:
+    if attempts:
+        return (
+            "Live AI could not complete this answer after trying "
+            + " → ".join(attempts)
+            + ". Katcha used saved data instead. Check provider credentials, "
+            "model access, or provider quota in the launch console."
+        )
+    name = type(exc).__name__
+    if name == "ChannelBudgetExceeded":
+        return (
+            "Live AI is blocked by this channel's AI budget headroom. "
+            "Katcha used saved data instead."
+        )
+    if name == "BudgetExceeded":
+        return (
+            "No eligible live AI provider is available for this channel. "
+            "Katcha used saved data instead; check provider configuration and budget."
+        )
+    return (
+        f"Live AI routing failed ({name}). Katcha used saved data instead. "
+        "Check AI configuration and the launcher diagnostics."
+    )
 
 
 def _prompt(
@@ -69,7 +113,7 @@ def _record(
     reservation_id: uuid.UUID | None,
 ) -> None:
     record_usage(
-        task=AITask.PERFORMANCE_ANALYSIS,
+        task=AITask.COMMAND_PLANNING,
         target=target,
         input_units=input_tokens,
         output_units=output_tokens,
@@ -201,9 +245,9 @@ def compose_grounded_answer(
     reservation_id: uuid.UUID | None = None
     try:
         decision = route_for_channel(
-            AITask.PERFORMANCE_ANALYSIS,
+            AITask.COMMAND_PLANNING,
             channel_profile_id,
-            estimated_increment_usd=Decimal("0.03"),
+            estimated_increment_usd=Decimal("0.01"),
             expected_value=0.7,
             reference_type="command_center",
             reference_id=str(request_id),
@@ -220,6 +264,7 @@ def compose_grounded_answer(
         if decision.route.fallback is not None:
             targets.append(decision.route.fallback)
         last_error: Exception | None = None
+        attempts: list[str] = []
         for index, target in enumerate(targets):
             try:
                 if target.provider == "openai" and settings.openai_api_key:
@@ -240,7 +285,8 @@ def compose_grounded_answer(
                     )
             except Exception as exc:
                 last_error = exc
-                if index == 0 and len(targets) > 1 and safe_to_fail_over(exc):
+                attempts.append(_attempt_label(target, exc))
+                if index < len(targets) - 1 and safe_to_fail_over_generation(exc):
                     continue
                 break
         if last_error is not None:
@@ -248,9 +294,10 @@ def compose_grounded_answer(
         raise RuntimeError("no configured provider is available for command-center narration")
     except Exception as exc:
         logger.warning(
-            "Katcha AI answer unavailable request_id=%s cause=%s",
+            "Katcha AI answer unavailable request_id=%s cause=%s attempts=%s",
             request_id,
             type(exc).__name__,
+            attempts if "attempts" in locals() else [],
         )
         release_budget_reservation(
             reservation_id,
@@ -261,6 +308,8 @@ def compose_grounded_answer(
             fallback.target,
             0,
             0,
-            "The AI answer is unavailable right now. This is a saved-data summary; "
-            "check the AI connection and budget, then try again.",
+            _degraded_notice(
+                exc,
+                attempts if "attempts" in locals() else [],
+            ),
         )
