@@ -22,12 +22,12 @@ TOKEN_URL = "https://auth.openai.com/oauth/token"
 JWKS_URL = "https://auth.openai.com/.well-known/jwks.json"
 ISSUER = "https://auth.openai.com"
 CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann"
-REDIRECT_URI = "http://127.0.0.1:1457/auth/callback"
+REDIRECT_URI = "http://localhost:1457/auth/callback"
 CODEX_BASE_URL = "https://chatgpt.com/backend-api/codex"
 WHAM_USAGE_URL = "https://chatgpt.com/backend-api/wham/usage"
 MODEL_CATALOG_VERSION = "99.99.99"
 DEFAULT_MODEL = "gpt-5.5"
-SCOPES = "openid profile email offline_access api.connectors.read api.connectors.invoke"
+SCOPES = "openid profile email offline_access"
 
 _refresh_lock = threading.Lock()
 
@@ -160,6 +160,23 @@ def _validate_id_token(id_token: str) -> dict[str, object]:
     return {str(key): value for key, value in claims.items()}
 
 
+def _jwt_claims(token: str) -> dict[str, object]:
+    import base64
+
+    parts = token.split(".")
+    if len(parts) != 3:
+        return {}
+    try:
+        padding = "=" * (-len(parts[1]) % 4)
+        raw = base64.urlsafe_b64decode((parts[1] + padding).encode("ascii"))
+        payload = json.loads(raw.decode("utf-8"))
+    except (ValueError, UnicodeDecodeError):
+        return {}
+    if not isinstance(payload, dict):
+        return {}
+    return {str(key): value for key, value in payload.items()}
+
+
 def _account_id(claims: dict[str, object]) -> str | None:
     direct = claims.get("chatgpt_account_id")
     if direct:
@@ -231,12 +248,16 @@ def complete_codex_oauth(
     access_token = str(payload.get("access_token") or "")
     refresh_token = str(payload.get("refresh_token") or "")
     id_token = str(payload.get("id_token") or "")
-    if not access_token or not refresh_token or not id_token:
+    if not access_token or not refresh_token:
         raise CodexConnectionError("Codex login did not return renewable credentials")
 
-    claims = _validate_id_token(id_token)
-    subject = str(claims["sub"])
-    email = str(claims.get("email") or "").strip() or None
+    claims = _validate_id_token(id_token) if id_token else _jwt_claims(access_token)
+    subject = str(claims.get("sub") or _account_id(claims) or "").strip()
+    if not subject:
+        subject = hashlib.sha256(access_token.encode("utf-8")).hexdigest()
+    email = (
+        str(payload.get("email") or claims.get("email") or "").strip() or None
+    )
     account_id = _account_id(claims)
     plan_type = _plan_type(claims)
     expires_in = max(60, int(payload.get("expires_in") or 3600))
