@@ -437,9 +437,18 @@ def _refresh(connection_id: uuid.UUID, settings: Settings) -> ChatGPTConnection:
             connection = session.get(ChatGPTConnection, connection_id)
             if connection is None or not connection.active:
                 raise ChatGPTConnectionError("ChatGPT connection is no longer active")
-            if connection.access_token_expires_at > datetime.now(UTC) + timedelta(minutes=2):
+            if (
+                connection.access_token_expires_at is not None
+                and connection.encrypted_access_token
+                and connection.access_token_expires_at
+                > datetime.now(UTC) + timedelta(minutes=2)
+            ):
                 session.expunge(connection)
                 return connection
+            if not connection.encrypted_refresh_token:
+                raise ChatGPTConnectionError(
+                    "ChatGPT renewable credentials are missing; reconnect the saved account"
+                )
             client_id = connection.issued_client_id
             refresh_token = decrypt_secret(connection.encrypted_refresh_token, settings)
 
@@ -493,7 +502,12 @@ def active_session(settings: Settings | None = None) -> ChatGPTSession | None:
         return None
     if PLAN_SCOPE not in set(connection.scopes or []):
         return None
-    if connection.access_token_expires_at <= datetime.now(UTC) + timedelta(minutes=2):
+    if (
+        connection.access_token_expires_at is None
+        or not connection.encrypted_access_token
+        or connection.access_token_expires_at
+        <= datetime.now(UTC) + timedelta(minutes=2)
+    ):
         connection = _refresh(connection.id, settings)
     if not connection.selected_model:
         access = decrypt_secret(connection.encrypted_access_token, settings)
@@ -508,6 +522,10 @@ def active_session(settings: Settings | None = None) -> ChatGPTSession | None:
             db.refresh(row)
             db.expunge(row)
             connection = row
+    if not connection.encrypted_access_token:
+        raise ChatGPTConnectionError(
+            "ChatGPT access credentials are missing; reconnect the saved account"
+        )
     return ChatGPTSession(
         connection_id=connection.id,
         access_token=decrypt_secret(connection.encrypted_access_token, settings),
@@ -548,21 +566,41 @@ def set_selected_model(model: str, settings: Settings | None = None) -> ChatGPTC
 
 def connection_status() -> dict[str, object]:
     connection = active_connection()
-    if connection is None:
+    if connection is not None:
+        return {
+            "connected": True,
+            "plan_usage_enabled": PLAN_SCOPE in set(connection.scopes or []),
+            "provider": "chatgpt",
+            "connection_id": str(connection.id),
+            "saved_connection_id": str(connection.id),
+            "email": connection.email,
+            "display_name": connection.display_name,
+            "selected_model": connection.selected_model,
+            "access_token_expires_at": connection.access_token_expires_at,
+        }
+
+    with session_scope() as session:
+        saved = session.scalar(
+            select(ChatGPTConnection)
+            .order_by(ChatGPTConnection.updated_at.desc())
+            .limit(1)
+        )
+        if saved is not None:
+            session.expunge(saved)
+    if saved is None:
         return {
             "connected": False,
             "plan_usage_enabled": False,
             "provider": "chatgpt",
         }
     return {
-        "connected": True,
-        "plan_usage_enabled": PLAN_SCOPE in set(connection.scopes or []),
+        "connected": False,
+        "plan_usage_enabled": False,
         "provider": "chatgpt",
-        "connection_id": str(connection.id),
-        "email": connection.email,
-        "display_name": connection.display_name,
-        "selected_model": connection.selected_model,
-        "access_token_expires_at": connection.access_token_expires_at,
+        "saved_connection_id": str(saved.id),
+        "email": saved.email,
+        "display_name": saved.display_name,
+        "selected_model": saved.selected_model,
     }
 
 
@@ -585,12 +623,16 @@ def disconnect(settings: Settings | None = None) -> bool:
     connection = active_connection()
     if connection is None:
         return False
-    refresh_token = decrypt_secret(connection.encrypted_refresh_token, settings)
+    refresh_token = (
+        decrypt_secret(connection.encrypted_refresh_token, settings)
+        if connection.encrypted_refresh_token
+        else None
+    )
     try:
         discovery = httpx.get(OIDC_CONFIGURATION_URL, timeout=10.0)
         discovery.raise_for_status()
         revocation_endpoint = str(discovery.json().get("revocation_endpoint") or "")
-        if revocation_endpoint:
+        if revocation_endpoint and refresh_token:
             response = httpx.post(
                 revocation_endpoint,
                 data={
@@ -609,7 +651,11 @@ def disconnect(settings: Settings | None = None) -> bool:
     with session_scope() as session:
         row = session.get(ChatGPTConnection, connection.id)
         if row is not None:
-            session.delete(row)
+            row.active = False
+            row.encrypted_access_token = None
+            row.encrypted_refresh_token = None
+            row.encrypted_id_token = None
+            row.access_token_expires_at = None
     return True
 
 
