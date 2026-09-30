@@ -99,7 +99,9 @@ const observability = { request_count: 16, p95_latency_ms: 720, estimated_cost_u
 
         await page.getByText("Channel operations are current.").waitFor();
         assert.equal(await page.locator("#channel").inputValue(), "channel-two");
-        assert.equal(await page.locator(".workspace-menu [aria-current=page] b").innerText(), "Home");
+        const currentWorkspace = page.locator(".workspace-menu [aria-current=page]");
+        assert.equal(await currentWorkspace.count(), 1);
+        assert.equal((await currentWorkspace.locator("b").textContent()).trim(), "Home");
         assert.equal(await page.locator(".brand").getAttribute("href"), "/home");
         assert.equal(await page.locator("#metric-production").innerText(), "2");
         assert.equal(await page.locator("#metric-failures").innerText(), "3");
