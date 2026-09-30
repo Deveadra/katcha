@@ -61,3 +61,31 @@ body[data-katcha-page="settings"] .settings-shell{
     .settings-card{padding:16px}
     .account-panel{align-items:flex-start;flex-direction:column}
 }
+
+.codex-card{
+    border-color:rgba(155,230,194,.24);
+    background:
+        linear-gradient(140deg,rgba(155,230,194,.055),rgba(132,231,255,.025) 52%,rgba(185,168,255,.035)),
+        var(--ae-surface-soft);
+}
+.direct-chatgpt-card{border-color:rgba(185,168,255,.14)}
+.usage-panel{
+    display:grid;gap:12px;margin:14px 0;padding:13px;
+    border:1px solid var(--ae-line);border-radius:11px;background:rgba(7,10,17,.38)
+}
+.usage-head,.usage-copy,.usage-foot{
+    display:flex;align-items:center;justify-content:space-between;gap:12px
+}
+.usage-head span{color:var(--ae-text-tertiary);font-size:7px;font-weight:850;letter-spacing:.13em}
+.usage-head b{color:var(--ae-cyan);font-size:8px;letter-spacing:.08em}
+.usage-window{display:grid;gap:6px}
+.usage-copy strong{color:var(--ae-text);font-size:10px}
+.usage-copy span{color:var(--ae-text-secondary);font-size:9px}
+.usage-track{height:6px;overflow:hidden;border-radius:999px;background:rgba(255,255,255,.055)}
+.usage-track i{
+    display:block;width:0;height:100%;border-radius:inherit;
+    background:linear-gradient(90deg,var(--ae-cyan),var(--ae-violet));
+    transition:width .25s ease
+}
+.usage-window small,.usage-foot span{color:var(--ae-text-tertiary);font-size:8px}
+.usage-foot button{min-height:30px!important;padding:0 9px!important;font-size:8px!important}
