@@ -103,6 +103,32 @@ const observability = { request_count: 16, p95_latency_ms: 720, estimated_cost_u
         assert.equal(await currentWorkspace.count(), 1);
         assert.equal((await currentWorkspace.locator("b").textContent()).trim(), "Home");
         assert.equal(await page.locator(".brand").getAttribute("href"), "/home");
+        const shellDisplay = await page.locator(".app-shell").evaluate(
+            (node) => getComputedStyle(node).display,
+        );
+        assert.equal(shellDisplay, "grid");
+
+        const railBox = await page.locator(".rail").boundingBox();
+        const mainBox = await page.locator(".home-main").boundingBox();
+        const topbarBox = await page.locator(".topbar").boundingBox();
+        const heroBox = await page.locator(".home-hero").boundingBox();
+        assert(railBox && mainBox && topbarBox && heroBox);
+        assert(railBox.width >= 180 && railBox.width <= 280);
+        assert(Math.abs(railBox.x + railBox.width - mainBox.x) <= 2);
+        assert(topbarBox.y <= 2);
+        assert(topbarBox.x >= mainBox.x - 2);
+        assert(heroBox.y >= topbarBox.y + topbarBox.height);
+
+        const workspaceMenu = page.locator(".workspace-menu");
+        assert.equal(await workspaceMenu.evaluate((node) => node.open), false);
+        assert.equal(await page.locator(".workspace-menu-popover").isVisible(), false);
+
+        const brandStyle = await page.locator(".brand").evaluate((node) => ({
+            display: getComputedStyle(node).display,
+            alignItems: getComputedStyle(node).alignItems,
+        }));
+        assert.equal(brandStyle.display, "flex");
+        assert.equal(brandStyle.alignItems, "center");
         assert.equal(await page.locator("#metric-production").innerText(), "2");
         assert.equal(await page.locator("#metric-failures").innerText(), "3");
         assert.equal(await page.locator("#metric-clips").innerText(), "42");
