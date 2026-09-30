@@ -551,7 +551,7 @@ const analytics = [
     });
 
     await page.goto("http://127.0.0.1:8768/channels.html");
-    assert.equal(await page.locator(".brand").getAttribute("href"), "/explorer");
+    assert.equal(await page.locator(".brand").getAttribute("href"), "/home");
     await page.locator("#token").fill("fixture-token");
     await page.locator("#connect-form button").click();
     await page.locator("#studio:not([hidden])").waitFor();

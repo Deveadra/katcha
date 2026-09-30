@@ -1,5 +1,6 @@
 /* Shared workspace navigation + local launcher bridge. */
 const KATCHA_WORKSPACES = [
+    { key: 'home', label: 'Home', href: '/home', icon: '⌂' },
     { key: 'trends', label: 'Trends', href: '/explorer', icon: '◉' },
     { key: 'ai', label: 'Katcha AI', href: '/ai', icon: '✦' },
     { key: 'sources', label: 'Sources', href: '/ingestion', icon: '↳' },
@@ -10,12 +11,13 @@ const KATCHA_WORKSPACES = [
 ];
 
 function workspaceKeyFromPath(path = location.pathname) {
+    if (path.startsWith('/home') || path.startsWith('/operations') || path.endsWith('/operations.html')) return 'home';
     if (path.startsWith('/ingestion') || path.endsWith('/ingestion.html')) return 'sources';
     if (path.startsWith('/clips') || path.endsWith('/clips.html')) return 'clips';
     if (path.startsWith('/channels') || path.endsWith('/channels.html')) return 'channel';
     if (path.startsWith('/ai') || path.endsWith('/ai.html')) return 'ai';
+    if (path.endsWith('/studio.html') || path.startsWith('/studio')) return 'studio';
     if (path.startsWith('/editing') || path.endsWith('/editing.html')) return 'production';
-    if (path.startsWith('/studio') || path.endsWith('/studio.html')) return 'studio';
     return 'trends';
 }
 
@@ -63,10 +65,11 @@ function installSkipLink() {
 }
 
 function installWorkspaceMenu() {
-    const brand = document.querySelector('aside .brand, aside .logo');
-    const aside = brand?.closest('aside');
+    const brand = document.querySelector('aside .brand, aside .logo, header .ops-brand');
+    const aside = brand?.closest('aside') || brand?.closest('header');
     if (!brand || !aside || aside.querySelector('.workspace-menu')) return;
 
+    brand.href = "/home";
     const current = currentWorkspace();
     const cluster = document.createElement('div');
     cluster.className = 'workspace-nav-cluster';

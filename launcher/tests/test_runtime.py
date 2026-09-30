@@ -857,3 +857,33 @@ def test_steady_state_monitor_does_not_probe_every_tick(tmp_path):
     with patch.object(app, "probe_workspace") as probe:
         app.monitor_once()
     probe.assert_not_called()
+
+
+def test_launcher_studio_home_and_shared_styles_are_local_and_keep_context(tmp_path):
+    app = instance(tmp_path)
+    server = runtime.ThreadingHTTPServer(("127.0.0.1", 0), runtime.Handler)
+    server.runtime = app
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        connection = http.client.HTTPConnection("127.0.0.1", server.server_port)
+        for path, target in [
+            ("/studio?channel=one&episode=two", "/editing/assets/studio.html?channel=one&episode=two"),
+            ("/home", "/operations/assets/operations.html"),
+        ]:
+            connection.request("GET", path)
+            response = connection.getresponse()
+            assert response.status == 302
+            assert response.getheader("Location") == target
+            response.read()
+        for path in [
+            "/system/aerith-components.css", "/system/aerith-shell.css",
+            "/editing/assets/studio.html", "/operations/assets/operations.html",
+        ]:
+            connection.request("GET", path)
+            response = connection.getresponse()
+            assert response.status == 200
+            assert response.read()
+        connection.close()
+    finally:
+        server.shutdown()
+        server.server_close()

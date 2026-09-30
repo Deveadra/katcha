@@ -44,3 +44,16 @@ a{color:inherit}
 .activity-row{grid-template-columns:minmax(0,1fr);padding-block:10px}.event-name{font-size:11px;font-weight:700}.event-name span{color:var(--ae-text-tertiary,#747b8a);font-weight:500}
 @media(max-width:980px){.operations-nav{grid-template-columns:auto 1fr;padding-inline:18px}.ops-ai-link{display:none}.priority-grid,.signal-grid{grid-template-columns:1fr}.pulse-strip{grid-template-columns:repeat(2,1fr)}.pulse-strip a:nth-child(2){border-right:0}.pulse-strip a:nth-child(-n+2){border-bottom:1px solid var(--ae-line,rgba(255,255,255,.1))}}
 @media(max-width:700px){.operations-nav{display:flex;gap:12px;padding:8px 12px;min-height:54px}.ops-brand{flex:0 0 auto}.operations-nav nav{gap:2px}.operations-nav nav a{padding:7px 8px;font-size:10px}.operations-main{padding:20px 14px 46px}.ops-connect{grid-template-columns:1fr auto}.ops-connect label,.ops-connect small{grid-column:1/-1}.operations-heading{align-items:start;flex-direction:column}.operations-controls{width:100%}.operations-controls label{min-width:0;flex:1}.operations-controls select{width:100%;min-width:0}.pulse-strip{grid-template-columns:1fr 1fr}.pulse-strip a{min-height:76px;padding:12px}.pulse-strip span{display:none}.ops-row{grid-template-columns:1fr}.ops-actions{justify-self:start}.channel-list{grid-template-columns:1fr}.ops-list{max-height:none}}
+
+.briefing-panel { margin-bottom: 18px; }
+#briefing-list p, #home-ai-readiness { color: var(--ae-text-secondary); line-height: 1.6; }
+#home-ai-readiness.error { color: var(--ae-danger); }
+
+.operations-nav .workspace-nav-cluster { flex-direction: row; align-items: center; flex: 1; min-width: 0; }
+.operations-nav .workspace-menu { width: min(220px, 100%); }
+.operations-nav .workspace-menu-popover { z-index: 80; }
+@media (max-width: 600px) { .operations-nav .workspace-nav-cluster { flex-wrap: wrap; } }
+.operations-nav { display: flex; justify-content: space-between; }
+.operations-nav .workspace-nav-cluster { display: flex; width: auto; }
+.ops-ai-link { flex: 0 0 auto; }
+#home-ai-readiness { padding: 0 15px 12px; font-size: 12px; }

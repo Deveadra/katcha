@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import uuid
 from datetime import datetime
+from importlib.util import find_spec
 from time import monotonic
 from typing import Literal
 
@@ -232,6 +233,22 @@ def command_readiness(http_request: Request) -> CommandReadinessResponse:
             message=(
                 "No AI provider is connected. Add an OpenAI or Gemini key in the "
                 "launch console, then restart services."
+            ),
+        )
+    installed = (
+        (settings.openai_api_key and find_spec("openai") is not None)
+        or (
+            settings.gemini_api_key
+            and find_spec("google") is not None
+            and find_spec("google.genai") is not None
+        )
+    )
+    if not installed:
+        return CommandReadinessResponse(
+            live=False,
+            message=(
+                "The configured AI provider library is missing. Update Katcha "
+                "and rebuild its API image, then restart services."
             ),
         )
     return CommandReadinessResponse(
@@ -813,6 +830,13 @@ def command(http_request: Request, request: CommandRequest) -> CommandResponse:
                     ),
                 }
             ]
+        elif intent == "conversation":
+            _, evidence = channel_status(request.channel_profile_id)
+            deterministic = (
+                "Hi, I’m Katcha. I can find and explain clips, inspect failures, "
+                "review performance, discover sources, and prepare video proposals "
+                "for your approval. What would you like to work on?"
+            )
         elif intent == "unsupported":
             deterministic = (
                 "I could not confidently tell what you want me to do. Could you "

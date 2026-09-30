@@ -75,3 +75,8 @@ summary:focus-visible {
     white-space: nowrap !important;
     border: 0 !important;
 }
+
+/* Component layout rules must not override semantic visibility. */
+[hidden] {
+    display: none !important;
+}
