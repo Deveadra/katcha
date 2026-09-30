@@ -297,41 +297,42 @@ def plan_ambiguous_command(
     )
 
     try:
-        try:
-            plan_result = _chatgpt(prompt, request_id=request_id)
-            if plan_result.value.confidence < 0.65:
-                if deterministic_intent != "channel_status":
+        if getattr(settings, "chatgpt_host_id", None):
+            try:
+                plan_result = _chatgpt(prompt, request_id=request_id)
+                if plan_result.value.confidence < 0.65:
+                    if deterministic_intent != "channel_status":
+                        return CommandPlanResult(
+                            value=CommandPlan(
+                                intent=deterministic_intent,
+                                confidence=plan_result.value.confidence,
+                                reason=(
+                                    "The ChatGPT plan was uncertain; a registered "
+                                    "command route matched."
+                                ),
+                            ),
+                            source="chatgpt_uncertain_registered_route",
+                            target=plan_result.target,
+                            input_tokens=plan_result.input_tokens,
+                            output_tokens=plan_result.output_tokens,
+                        )
                     return CommandPlanResult(
                         value=CommandPlan(
-                            intent=deterministic_intent,
+                            intent="unsupported",
                             confidence=plan_result.value.confidence,
                             reason=(
-                                "The ChatGPT plan was uncertain; a registered "
-                                "command route matched."
+                                "Katcha could not confidently determine the request. "
+                                "Ask a clarifying question rather than changing the topic."
                             ),
                         ),
-                        source="chatgpt_uncertain_registered_route",
+                        source="chatgpt_low_confidence_fallback",
                         target=plan_result.target,
                         input_tokens=plan_result.input_tokens,
                         output_tokens=plan_result.output_tokens,
                     )
-                return CommandPlanResult(
-                    value=CommandPlan(
-                        intent="unsupported",
-                        confidence=plan_result.value.confidence,
-                        reason=(
-                            "Katcha could not confidently determine the request. "
-                            "Ask a clarifying question rather than changing the topic."
-                        ),
-                    ),
-                    source="chatgpt_low_confidence_fallback",
-                    target=plan_result.target,
-                    input_tokens=plan_result.input_tokens,
-                    output_tokens=plan_result.output_tokens,
-                )
-            return plan_result
-        except ChatGPTConnectionError:
-            pass
+                return plan_result
+            except ChatGPTConnectionError:
+                pass
 
         decision = route_for_channel(
             AITask.COMMAND_PLANNING,
