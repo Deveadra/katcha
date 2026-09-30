@@ -1,13 +1,22 @@
 from __future__ import annotations
 
+import hashlib
+import json
 import uuid
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy import select
 
 from katcha.acquisition.adapters import get_adapter
-from katcha.acquisition_models import DiscoveryRun, IngestionSource
+from katcha.acquisition_models import (
+    DiscoveryRun,
+    IngestionSource,
+    IntelligenceBatchRecord,
+    IntelligenceIngestBatch,
+    IntelligenceRecord,
+)
 from katcha.db import session_scope
 from katcha.domain import SourceUsageMode
 from katcha.intelligence_models import ChannelProfile
@@ -20,6 +29,15 @@ class SourceImportRun:
     discovery_run: DiscoveryRun
     batch_key: str | None
     item_count: int
+
+
+@dataclass(frozen=True, slots=True)
+class IntelligenceIngestResult:
+    batch: IntelligenceIngestBatch
+    records: list[IntelligenceRecord]
+    created_count: int
+    updated_count: int
+    replayed: bool
 
 
 def _clean_key(value: str, *, field: str) -> str:
@@ -333,3 +351,412 @@ def list_source_runs(source_id: uuid.UUID, *, limit: int = 50) -> list[Discovery
         for row in rows:
             session.expunge(row)
         return rows
+
+def _clean_intelligence_slug(value: str, *, field: str, max_length: int) -> str:
+    cleaned = value.strip().casefold()
+    if not cleaned:
+        raise ValueError(f"{field} must not be blank")
+    if len(cleaned) > max_length:
+        raise ValueError(f"{field} must be at most {max_length} characters")
+    if any(not (char.isalnum() or char in {"_", "-", "."}) for char in cleaned):
+        raise ValueError(
+            f"{field} may contain only letters, numbers, underscore, dash, or dot"
+        )
+    return cleaned
+
+
+def _clean_intelligence_key(value: str, *, field: str, max_length: int) -> str:
+    cleaned = value.strip()
+    if not cleaned:
+        raise ValueError(f"{field} must not be blank")
+    if len(cleaned) > max_length:
+        raise ValueError(f"{field} must be at most {max_length} characters")
+    return cleaned
+
+
+def _clean_intelligence_text(value: object | None) -> str | None:
+    if value is None:
+        return None
+    cleaned = str(value).strip()
+    return cleaned or None
+
+
+def _coerce_intelligence_time(value: object | None, *, field: str) -> datetime | None:
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        parsed = value
+    elif isinstance(value, str):
+        candidate = value.strip()
+        if not candidate:
+            return None
+        if candidate.endswith("Z"):
+            candidate = candidate[:-1] + "+00:00"
+        try:
+            parsed = datetime.fromisoformat(candidate)
+        except ValueError as exc:
+            raise ValueError(f"{field} must be an ISO-8601 datetime") from exc
+    else:
+        raise ValueError(f"{field} must be a datetime or ISO-8601 string")
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed
+
+
+def _normalize_intelligence_record(
+    item: dict[str, Any],
+    *,
+    index: int,
+) -> dict[str, Any]:
+    record_kind = _clean_intelligence_slug(
+        str(item.get("record_kind") or ""),
+        field=f"records[{index}].record_kind",
+        max_length=64,
+    )
+    record_key = _clean_intelligence_key(
+        str(item.get("record_key") or ""),
+        field=f"records[{index}].record_key",
+        max_length=255,
+    )
+    raw_tags = item.get("tags") or []
+    if not isinstance(raw_tags, list):
+        raise ValueError(f"records[{index}].tags must be a list")
+    tags = sorted(
+        {
+            _clean_intelligence_slug(
+                str(tag),
+                field=f"records[{index}].tags",
+                max_length=64,
+            )
+            for tag in raw_tags
+        }
+    )
+    payload = item.get("payload") or {}
+    provenance = item.get("provenance") or {}
+    if not isinstance(payload, dict):
+        raise ValueError(f"records[{index}].payload must be an object")
+    if not isinstance(provenance, dict):
+        raise ValueError(f"records[{index}].provenance must be an object")
+    platform_value = _clean_intelligence_text(item.get("platform"))
+    platform = (
+        _clean_intelligence_slug(
+            platform_value,
+            field=f"records[{index}].platform",
+            max_length=32,
+        )
+        if platform_value is not None
+        else None
+    )
+    status_value = _clean_intelligence_text(item.get("status")) or "active"
+    status = _clean_intelligence_slug(
+        status_value,
+        field=f"records[{index}].status",
+        max_length=32,
+    )
+    return {
+        "record_kind": record_kind,
+        "record_key": record_key,
+        "title": _clean_intelligence_text(item.get("title")),
+        "summary": _clean_intelligence_text(item.get("summary")),
+        "source_url": _clean_intelligence_text(item.get("source_url")),
+        "platform": platform,
+        "status": status,
+        "tags": tags,
+        "payload": dict(payload),
+        "provenance": dict(provenance),
+        "observed_at": _coerce_intelligence_time(
+            item.get("observed_at"),
+            field=f"records[{index}].observed_at",
+        ),
+        "event_time": _coerce_intelligence_time(
+            item.get("event_time"),
+            field=f"records[{index}].event_time",
+        ),
+    }
+
+
+def _json_fingerprint_value(value: object) -> object:
+    if isinstance(value, datetime):
+        return value.isoformat()
+    raise TypeError(f"unsupported fingerprint value: {type(value).__name__}")
+
+
+def _intelligence_batch_fingerprint(
+    *,
+    channel_profile_id: uuid.UUID,
+    batch_key: str,
+    producer: str,
+    source_type: str,
+    batch_metadata: dict[str, Any],
+    records: list[dict[str, Any]],
+) -> str:
+    payload = {
+        "channel_profile_id": str(channel_profile_id),
+        "batch_key": batch_key,
+        "producer": producer,
+        "source_type": source_type,
+        "batch_metadata": batch_metadata,
+        "records": records,
+    }
+    encoded = json.dumps(
+        payload,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+        default=_json_fingerprint_value,
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _detach_intelligence_records(session, rows: list[IntelligenceRecord]) -> None:
+    for row in rows:
+        session.expunge(row)
+
+
+def _replay_intelligence_batch(
+    session,
+    batch: IntelligenceIngestBatch,
+) -> IntelligenceIngestResult:
+    memberships = list(
+        session.scalars(
+            select(IntelligenceBatchRecord)
+            .where(IntelligenceBatchRecord.batch_id == batch.id)
+            .order_by(IntelligenceBatchRecord.ordinal.asc())
+        )
+    )
+    records: list[IntelligenceRecord] = []
+    for membership in memberships:
+        row = session.get(IntelligenceRecord, membership.record_id)
+        if row is not None:
+            records.append(row)
+    created_count = sum(1 for item in memberships if item.action == "created")
+    updated_count = sum(1 for item in memberships if item.action == "updated")
+    _detach_intelligence_records(session, records)
+    session.expunge(batch)
+    return IntelligenceIngestResult(
+        batch=batch,
+        records=records,
+        created_count=created_count,
+        updated_count=updated_count,
+        replayed=True,
+    )
+
+
+def ingest_intelligence_batch(
+    *,
+    channel_profile_id: uuid.UUID,
+    batch_key: str,
+    producer: str,
+    source_type: str,
+    records: list[dict[str, Any]],
+    batch_metadata: dict[str, Any] | None = None,
+) -> IntelligenceIngestResult:
+    if not records:
+        raise ValueError("intelligence batch must contain at least one record")
+    if len(records) > 500:
+        raise ValueError("intelligence batch may contain at most 500 records")
+    cleaned_batch_key = _clean_intelligence_key(
+        batch_key,
+        field="batch_key",
+        max_length=160,
+    )
+    cleaned_producer = _clean_intelligence_key(
+        producer,
+        field="producer",
+        max_length=128,
+    )
+    cleaned_source_type = _clean_intelligence_slug(
+        source_type,
+        field="source_type",
+        max_length=64,
+    )
+    cleaned_batch_metadata = dict(batch_metadata or {})
+    normalized_records = [
+        _normalize_intelligence_record(item, index=index)
+        for index, item in enumerate(records)
+    ]
+    identities = [
+        (item["record_kind"], item["record_key"]) for item in normalized_records
+    ]
+    if len(identities) != len(set(identities)):
+        raise ValueError("intelligence batch contains duplicate record identities")
+    fingerprint = _intelligence_batch_fingerprint(
+        channel_profile_id=channel_profile_id,
+        batch_key=cleaned_batch_key,
+        producer=cleaned_producer,
+        source_type=cleaned_source_type,
+        batch_metadata=cleaned_batch_metadata,
+        records=normalized_records,
+    )
+
+    with session_scope() as session:
+        if session.get(ChannelProfile, channel_profile_id) is None:
+            raise ValueError(f"channel profile not found: {channel_profile_id}")
+        existing_batch = session.scalar(
+            select(IntelligenceIngestBatch).where(
+                IntelligenceIngestBatch.channel_profile_id == channel_profile_id,
+                IntelligenceIngestBatch.batch_key == cleaned_batch_key,
+            )
+        )
+        if existing_batch is not None:
+            if existing_batch.content_sha256 != fingerprint:
+                raise ValueError(
+                    "batch_key already exists with different intelligence content"
+                )
+            return _replay_intelligence_batch(session, existing_batch)
+
+        batch = IntelligenceIngestBatch(
+            channel_profile_id=channel_profile_id,
+            batch_key=cleaned_batch_key,
+            producer=cleaned_producer,
+            source_type=cleaned_source_type,
+            content_sha256=fingerprint,
+            record_count=len(normalized_records),
+            batch_metadata=cleaned_batch_metadata,
+        )
+        session.add(batch)
+        session.flush()
+
+        stored_records: list[IntelligenceRecord] = []
+        created_count = 0
+        updated_count = 0
+        now = datetime.now(UTC)
+        for ordinal, item in enumerate(normalized_records):
+            row = session.scalar(
+                select(IntelligenceRecord).where(
+                    IntelligenceRecord.channel_profile_id == channel_profile_id,
+                    IntelligenceRecord.record_kind == item["record_kind"],
+                    IntelligenceRecord.record_key == item["record_key"],
+                )
+            )
+            observed_at = item["observed_at"] or now
+            if row is None:
+                row = IntelligenceRecord(
+                    channel_profile_id=channel_profile_id,
+                    first_batch_id=batch.id,
+                    last_batch_id=batch.id,
+                    record_kind=item["record_kind"],
+                    record_key=item["record_key"],
+                    title=item["title"],
+                    summary=item["summary"],
+                    source_url=item["source_url"],
+                    platform=item["platform"],
+                    status=item["status"],
+                    tags=item["tags"],
+                    payload=item["payload"],
+                    provenance=item["provenance"],
+                    observed_at=observed_at,
+                    event_time=item["event_time"],
+                )
+                session.add(row)
+                action = "created"
+                created_count += 1
+            else:
+                row.last_batch_id = batch.id
+                row.title = item["title"]
+                row.summary = item["summary"]
+                row.source_url = item["source_url"]
+                row.platform = item["platform"]
+                row.status = item["status"]
+                row.tags = item["tags"]
+                row.payload = item["payload"]
+                row.provenance = item["provenance"]
+                row.observed_at = observed_at
+                row.event_time = item["event_time"]
+                action = "updated"
+                updated_count += 1
+            session.flush()
+            session.add(
+                IntelligenceBatchRecord(
+                    batch_id=batch.id,
+                    record_id=row.id,
+                    ordinal=ordinal,
+                    action=action,
+                )
+            )
+            stored_records.append(row)
+
+        session.add(
+            DomainEvent(
+                aggregate_type="intelligence_ingest_batch",
+                aggregate_id=str(batch.id),
+                event_type="intelligence_ingest.batch_committed",
+                payload={
+                    "channel_profile_id": str(channel_profile_id),
+                    "batch_key": cleaned_batch_key,
+                    "producer": cleaned_producer,
+                    "source_type": cleaned_source_type,
+                    "record_count": len(stored_records),
+                    "created_count": created_count,
+                    "updated_count": updated_count,
+                    "content_sha256": fingerprint,
+                },
+            )
+        )
+        session.flush()
+        session.refresh(batch)
+        for row in stored_records:
+            session.refresh(row)
+        _detach_intelligence_records(session, stored_records)
+        session.expunge(batch)
+        return IntelligenceIngestResult(
+            batch=batch,
+            records=stored_records,
+            created_count=created_count,
+            updated_count=updated_count,
+            replayed=False,
+        )
+
+
+def list_intelligence_records(
+    channel_profile_id: uuid.UUID,
+    *,
+    record_kind: str | None = None,
+    record_status: str | None = None,
+    limit: int = 100,
+) -> list[IntelligenceRecord]:
+    if limit < 1 or limit > 500:
+        raise ValueError("limit must be between 1 and 500")
+    cleaned_kind = (
+        _clean_intelligence_slug(record_kind, field="record_kind", max_length=64)
+        if record_kind is not None
+        else None
+    )
+    cleaned_status = (
+        _clean_intelligence_slug(record_status, field="status", max_length=32)
+        if record_status is not None
+        else None
+    )
+    with session_scope() as session:
+        if session.get(ChannelProfile, channel_profile_id) is None:
+            raise ValueError(f"channel profile not found: {channel_profile_id}")
+        stmt = (
+            select(IntelligenceRecord)
+            .where(IntelligenceRecord.channel_profile_id == channel_profile_id)
+            .order_by(
+                IntelligenceRecord.observed_at.desc(),
+                IntelligenceRecord.updated_at.desc(),
+                IntelligenceRecord.id.desc(),
+            )
+            .limit(limit)
+        )
+        if cleaned_kind is not None:
+            stmt = stmt.where(IntelligenceRecord.record_kind == cleaned_kind)
+        if cleaned_status is not None:
+            stmt = stmt.where(IntelligenceRecord.status == cleaned_status)
+        rows = list(session.scalars(stmt))
+        _detach_intelligence_records(session, rows)
+        return rows
+
+
+def get_intelligence_record(
+    channel_profile_id: uuid.UUID,
+    record_id: uuid.UUID,
+) -> IntelligenceRecord:
+    with session_scope() as session:
+        row = session.get(IntelligenceRecord, record_id)
+        if row is None or row.channel_profile_id != channel_profile_id:
+            raise ValueError(f"intelligence record not found: {record_id}")
+        session.expunge(row)
+        return row
+

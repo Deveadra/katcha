@@ -328,3 +328,118 @@ class RightsEvidence(Base):
     captured_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), index=True
     )
+
+class IntelligenceIngestBatch(Base):
+    __tablename__ = "intelligence_ingest_batches"
+    __table_args__ = (
+        UniqueConstraint(
+            "channel_profile_id",
+            "batch_key",
+            name="uq_intelligence_ingest_batch_channel_key",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    channel_profile_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("channel_profiles.id"),
+        index=True,
+    )
+    batch_key: Mapped[str] = mapped_column(String(160), index=True)
+    producer: Mapped[str] = mapped_column(String(128), index=True)
+    source_type: Mapped[str] = mapped_column(String(64), index=True)
+    content_sha256: Mapped[str] = mapped_column(String(64), index=True)
+    record_count: Mapped[int] = mapped_column(Integer, default=0)
+    batch_metadata: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), index=True
+    )
+
+
+class IntelligenceRecord(Base):
+    __tablename__ = "intelligence_records"
+    __table_args__ = (
+        UniqueConstraint(
+            "channel_profile_id",
+            "record_kind",
+            "record_key",
+            name="uq_intelligence_record_channel_kind_key",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    channel_profile_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("channel_profiles.id"),
+        index=True,
+    )
+    first_batch_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("intelligence_ingest_batches.id"),
+        index=True,
+    )
+    last_batch_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("intelligence_ingest_batches.id"),
+        index=True,
+    )
+    record_kind: Mapped[str] = mapped_column(String(64), index=True)
+    record_key: Mapped[str] = mapped_column(String(255), index=True)
+    title: Mapped[str | None] = mapped_column(Text, nullable=True)
+    summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    source_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    platform: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
+    status: Mapped[str] = mapped_column(String(32), default="active", index=True)
+    tags: Mapped[list[str]] = mapped_column(JSON, default=list)
+    payload: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    provenance: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    event_time: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, index=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), index=True
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class IntelligenceBatchRecord(Base):
+    __tablename__ = "intelligence_batch_records"
+    __table_args__ = (
+        UniqueConstraint(
+            "batch_id",
+            "record_id",
+            name="uq_intelligence_batch_record_membership",
+        ),
+        UniqueConstraint(
+            "batch_id",
+            "ordinal",
+            name="uq_intelligence_batch_record_ordinal",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    batch_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("intelligence_ingest_batches.id"),
+        index=True,
+    )
+    record_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("intelligence_records.id"),
+        index=True,
+    )
+    ordinal: Mapped[int] = mapped_column(Integer)
+    action: Mapped[str] = mapped_column(String(32))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+

@@ -4,7 +4,10 @@ from alembic.script import ScriptDirectory
 
 def test_ranked_trend_editing_activation_and_render_revisions_share_one_history() -> None:
     script = ScriptDirectory.from_config(Config("alembic.ini"))
-    assert script.get_heads() == ["0043_chatgpt_plan_connections"]
+    assert script.get_heads() == ["0044_interim_intelligence_ingestion"]
+
+    interim_ingestion = script.get_revision("0044_interim_intelligence_ingestion")
+    assert interim_ingestion.down_revision == "0043_chatgpt_plan_connections"
 
     chatgpt_connections = script.get_revision("0043_chatgpt_plan_connections")
     assert chatgpt_connections.down_revision == "0042_channel_provider_settings"

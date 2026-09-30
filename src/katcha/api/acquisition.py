@@ -14,6 +14,8 @@ from katcha.acquisition_models import (
     DiscoveryObservation,
     DiscoveryRun,
     IngestionSource,
+    IntelligenceIngestBatch,
+    IntelligenceRecord,
     RightsAssessment,
     RightsEvidence,
 )
@@ -41,7 +43,10 @@ from katcha.services.discovery import observe_discovery_candidate
 from katcha.services.ingestion_sources import (
     create_discovery_run_from_source,
     create_source_import_run,
+    get_intelligence_record,
+    ingest_intelligence_batch,
     list_ingestion_sources,
+    list_intelligence_records,
     list_source_runs,
     upsert_ingestion_source,
 )
@@ -150,6 +155,67 @@ class SourceImportRunResponse(BaseModel):
     discovery_run: DiscoveryRunResponse
     batch_key: str | None
     item_count: int
+
+
+class IntelligenceRecordInputRequest(BaseModel):
+    record_kind: str = Field(min_length=1, max_length=64)
+    record_key: str = Field(min_length=1, max_length=255)
+    title: str | None = Field(default=None, max_length=2000)
+    summary: str | None = Field(default=None, max_length=8000)
+    source_url: str | None = Field(default=None, max_length=4000)
+    platform: str | None = Field(default=None, max_length=32)
+    status: str = Field(default="active", min_length=1, max_length=32)
+    tags: list[str] = Field(default_factory=list, max_length=50)
+    payload: dict[str, object] = Field(default_factory=dict)
+    provenance: dict[str, object] = Field(default_factory=dict)
+    observed_at: datetime | None = None
+    event_time: datetime | None = None
+
+
+class IngestIntelligenceBatchRequest(BaseModel):
+    channel_profile_id: uuid.UUID
+    batch_key: str = Field(min_length=1, max_length=160)
+    producer: str = Field(default="orion", min_length=1, max_length=128)
+    source_type: str = Field(default="assistant", min_length=1, max_length=64)
+    batch_metadata: dict[str, object] = Field(default_factory=dict)
+    records: list[IntelligenceRecordInputRequest] = Field(min_length=1, max_length=500)
+
+
+class IntelligenceRecordResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    channel_profile_id: uuid.UUID
+    first_batch_id: uuid.UUID
+    last_batch_id: uuid.UUID
+    record_kind: str
+    record_key: str
+    title: str | None
+    summary: str | None
+    source_url: str | None
+    platform: str | None
+    status: str
+    tags: list[str]
+    payload: dict[str, object]
+    provenance: dict[str, object]
+    observed_at: datetime
+    event_time: datetime | None
+    created_at: datetime
+    updated_at: datetime
+
+
+class IngestIntelligenceBatchResponse(BaseModel):
+    batch_id: uuid.UUID
+    channel_profile_id: uuid.UUID
+    batch_key: str
+    producer: str
+    source_type: str
+    content_sha256: str
+    record_count: int
+    created_count: int
+    updated_count: int
+    replayed: bool
+    records: list[IntelligenceRecordResponse]
 
 
 class ExecuteDiscoveryRunResponse(BaseModel):
@@ -386,6 +452,80 @@ def import_source_drop(
         batch_key=result.batch_key,
         item_count=result.item_count,
     )
+
+
+@router.post(
+    "/intelligence-ingest/batches",
+    response_model=IngestIntelligenceBatchResponse,
+)
+def create_intelligence_ingest_batch(
+    request: IngestIntelligenceBatchRequest,
+) -> IngestIntelligenceBatchResponse:
+    try:
+        result = ingest_intelligence_batch(
+            channel_profile_id=request.channel_profile_id,
+            batch_key=request.batch_key,
+            producer=request.producer,
+            source_type=request.source_type,
+            batch_metadata=request.batch_metadata,
+            records=[item.model_dump(mode="python") for item in request.records],
+        )
+    except ValueError as exc:
+        code = 404 if "channel profile not found" in str(exc) else 409
+        raise HTTPException(status_code=code, detail=str(exc)) from exc
+    batch: IntelligenceIngestBatch = result.batch
+    return IngestIntelligenceBatchResponse(
+        batch_id=batch.id,
+        channel_profile_id=batch.channel_profile_id,
+        batch_key=batch.batch_key,
+        producer=batch.producer,
+        source_type=batch.source_type,
+        content_sha256=batch.content_sha256,
+        record_count=batch.record_count,
+        created_count=result.created_count,
+        updated_count=result.updated_count,
+        replayed=result.replayed,
+        records=[
+            IntelligenceRecordResponse.model_validate(row)
+            for row in result.records
+        ],
+    )
+
+
+@router.get(
+    "/channels/{channel_profile_id}/intelligence-records",
+    response_model=list[IntelligenceRecordResponse],
+)
+def get_channel_intelligence_records(
+    channel_profile_id: uuid.UUID,
+    record_kind: str | None = Query(default=None, max_length=64),
+    record_status: str | None = Query(default=None, alias="status", max_length=32),
+    limit: int = Query(default=100, ge=1, le=500),
+) -> list[IntelligenceRecord]:
+    try:
+        return list_intelligence_records(
+            channel_profile_id,
+            record_kind=record_kind,
+            record_status=record_status,
+            limit=limit,
+        )
+    except ValueError as exc:
+        code = 404 if "channel profile not found" in str(exc) else 409
+        raise HTTPException(status_code=code, detail=str(exc)) from exc
+
+
+@router.get(
+    "/channels/{channel_profile_id}/intelligence-records/{record_id}",
+    response_model=IntelligenceRecordResponse,
+)
+def get_channel_intelligence_record(
+    channel_profile_id: uuid.UUID,
+    record_id: uuid.UUID,
+) -> IntelligenceRecord:
+    try:
+        return get_intelligence_record(channel_profile_id, record_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @router.post(

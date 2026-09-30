@@ -5,6 +5,7 @@ from decimal import Decimal
 
 from sqlalchemy import desc, select
 
+from katcha.acquisition_models import IntelligenceRecord
 from katcha.db import session_scope
 from katcha.intelligence_models import ChannelProfile
 from katcha.models import Clip, ClipFeature, SourceItem
@@ -20,6 +21,7 @@ SUPPORTED_RESOURCE_KINDS = {
     "short_episode",
     "publication",
     "trend_opportunity",
+    "intelligence_record",
 }
 
 
@@ -217,6 +219,36 @@ def _trend_evidence(
     }
 
 
+def _intelligence_record_evidence(
+    session,
+    channel_profile_id: uuid.UUID,
+    resource_id: uuid.UUID,
+) -> dict[str, object]:
+    row = session.get(IntelligenceRecord, resource_id)
+    if row is None:
+        raise ValueError(f"intelligence record not found: {resource_id}")
+    if row.channel_profile_id != channel_profile_id:
+        raise ValueError("intelligence record belongs to a different channel")
+    return {
+        "kind": "intelligence_record",
+        "id": str(row.id),
+        "record_kind": row.record_kind,
+        "record_key": row.record_key,
+        "title": row.title,
+        "summary": row.summary,
+        "source_url": row.source_url,
+        "platform": row.platform,
+        "status": row.status,
+        "tags": list(row.tags or []),
+        "payload": dict(row.payload or {}),
+        "provenance": dict(row.provenance or {}),
+        "observed_at": row.observed_at.isoformat(),
+        "event_time": row.event_time.isoformat() if row.event_time else None,
+        "updated_at": row.updated_at.isoformat(),
+        "context_source": "typed_resource",
+    }
+
+
 def resolve_command_resources(
     channel_profile_id: uuid.UUID,
     refs: list[tuple[str, uuid.UUID]],
@@ -241,8 +273,14 @@ def resolve_command_resources(
                 item = _episode_evidence(session, channel_profile_id, resource_id)
             elif kind == "publication":
                 item = _publication_evidence(session, channel_profile_id, resource_id)
-            else:
+            elif kind == "trend_opportunity":
                 item = _trend_evidence(session, channel_profile_id, resource_id)
+            else:
+                item = _intelligence_record_evidence(
+                    session,
+                    channel_profile_id,
+                    resource_id,
+                )
             evidence.append(item)
     return evidence
 
