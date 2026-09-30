@@ -363,7 +363,12 @@ def complete_chatgpt_oauth(
     access_token = str(token["access_token"])
     refresh_token = str(token["refresh_token"])
     expires_in = max(60, int(token.get("expires_in") or 3600))
-    models = _models_for_token(access_token)
+    try:
+        models = _models_for_token(access_token)
+    except ChatGPTConnectionError:
+        # Authentication succeeded. Model discovery is retried from Settings/readiness
+        # so a temporary catalog outage does not discard valid OAuth credentials.
+        models = []
 
     with session_scope() as session:
         locked_state = session.get(ChatGPTOAuthState, state_id)
@@ -398,7 +403,13 @@ def complete_chatgpt_oauth(
             row.active = False
 
         available = {model.slug for model in models}
-        selected = connection.selected_model if connection.selected_model in available else None
+        selected = (
+            connection.selected_model
+            if connection.selected_model and (
+                not available or connection.selected_model in available
+            )
+            else None
+        )
         connection.email = email
         connection.display_name = display_name
         connection.scopes = scopes
@@ -406,11 +417,12 @@ def complete_chatgpt_oauth(
         connection.encrypted_refresh_token = encrypt_secret(refresh_token, settings)
         connection.encrypted_id_token = encrypt_secret(id_token, settings)
         connection.access_token_expires_at = now + timedelta(seconds=expires_in)
-        connection.selected_model = selected or models[0].slug
+        connection.selected_model = selected or (models[0].slug if models else None)
         connection.active = True
         connection.connection_metadata = {
             "plan_usage": True,
             "model_count": len(models),
+            "model_catalog_pending": not bool(models),
         }
         session.flush()
         session.refresh(connection)
@@ -590,7 +602,7 @@ def disconnect(settings: Settings | None = None) -> bool:
     with session_scope() as session:
         row = session.get(ChatGPTConnection, connection.id)
         if row is not None:
-            row.active = False
+            session.delete(row)
     return True
 
 
