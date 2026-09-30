@@ -303,6 +303,57 @@ def test_source_import_run_rejects_empty_or_non_operator_sources(source_scope) -
         create_source_import_run(source.id, urls=["https://example.com/video"])
 
 
+def test_manual_discovery_failure_preserves_provider_reason(
+    source_scope,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from katcha.acquisition_models import DiscoveryRun
+    from katcha.orchestration import discovery_activities
+
+    class BrokenAdapter:
+        def discover(self, query, cursor):
+            del query, cursor
+            raise ValueError(
+                "YouTube discovery is not configured. Connect a YouTube channel "
+                "or add a YouTube Data API key, then try again."
+            )
+
+    source = upsert_ingestion_source(
+        source_key="broken-youtube-watch",
+        name="Broken YouTube Watch",
+        adapter_key="manifest",
+        adapter_version="v1",
+        platform="youtube",
+    )
+    run = create_discovery_run_from_source(source.id)
+    monkeypatch.setattr(
+        discovery_activities,
+        "get_adapter",
+        lambda *_args: BrokenAdapter(),
+    )
+    monkeypatch.setattr(
+        discovery_activities,
+        "record_discovery_run_failure",
+        lambda *_args: None,
+    )
+
+    with pytest.raises(Exception, match="YouTube discovery is not configured"):
+        discovery_activities.execute_discovery_page_activity(str(run.id))
+
+    discovery_activities.mark_discovery_run_failed(
+        str(run.id),
+        "Activity task failed",
+    )
+
+    with source_scope() as session:
+        failed = session.get(DiscoveryRun, run.id)
+        assert failed is not None
+        assert failed.status == "failed"
+        assert failed.error is not None
+        assert "Connect a YouTube channel" in failed.error
+        assert "Activity task failed" not in failed.error
+
+
 def test_ingestion_source_rejects_uninstalled_adapter(source_scope) -> None:
     with pytest.raises(ValueError, match="not installed"):
         upsert_ingestion_source(
