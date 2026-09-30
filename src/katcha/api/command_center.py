@@ -112,6 +112,7 @@ ResourceKind = Literal[
     "short_episode",
     "publication",
     "trend_opportunity",
+    "intelligence_record",
 ]
 
 

@@ -4,10 +4,19 @@ from alembic.script import ScriptDirectory
 
 def test_ranked_trend_editing_activation_and_render_revisions_share_one_history() -> None:
     script = ScriptDirectory.from_config(Config("alembic.ini"))
-    assert script.get_heads() == ["0044_codex_plan_connections"]
+    assert script.get_heads() == ["0045_merge_codex_interim_heads"]
+
+    merged_heads = script.get_revision("0045_merge_codex_interim_heads")
+    assert set(merged_heads.down_revision) == {
+        "0044_codex_plan_connections",
+        "0044_interim_intelligence_ingestion",
+    }
 
     codex_connections = script.get_revision("0044_codex_plan_connections")
     assert codex_connections.down_revision == "0043_chatgpt_plan_connections"
+
+    interim_ingestion = script.get_revision("0044_interim_intelligence_ingestion")
+    assert interim_ingestion.down_revision == "0043_chatgpt_plan_connections"
 
     chatgpt_connections = script.get_revision("0043_chatgpt_plan_connections")
     assert chatgpt_connections.down_revision == "0042_channel_provider_settings"
