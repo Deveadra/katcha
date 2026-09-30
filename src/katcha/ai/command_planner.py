@@ -199,7 +199,6 @@ def _chatgpt(
     )
 
 
-
 def _codex(
     prompt: str,
     *,
@@ -225,6 +224,7 @@ def _codex(
         input_tokens=response.input_tokens,
         output_tokens=response.output_tokens,
     )
+
 
 def _gemini(
     prompt: str,
