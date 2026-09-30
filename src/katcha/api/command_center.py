@@ -34,9 +34,11 @@ from katcha.config import get_settings
 from katcha.control_contract import COMMAND_ACTION_SCOPES
 from katcha.db import session_scope
 from katcha.domain import ProductionStatus
+from katcha.integrations.chatgpt import ChatGPTConnectionError
 from katcha.integrations.chatgpt import (
-    ChatGPTConnectionError,
     connection_status as chatgpt_connection_status,
+)
+from katcha.integrations.chatgpt import (
     test_connection as test_chatgpt_connection,
 )
 from katcha.orchestration.client import (
