@@ -50,6 +50,11 @@ const labels = workspaces.map((row) => row.label);
                 labels,
                 workspace.label + ": shared workspace order drifted",
             );
+            assert.equal(
+                await menu.locator(".workspace-menu-popover").isVisible(),
+                false,
+                workspace.label + ": workspace popover must be hidden while closed",
+            );
             const currentWorkspace = menu.locator('[aria-current="page"]');
             assert.equal(
                 await currentWorkspace.count(),
