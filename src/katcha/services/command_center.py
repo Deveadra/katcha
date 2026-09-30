@@ -15,6 +15,9 @@ from katcha.config import get_settings
 from katcha.db import session_scope
 from katcha.edit_performance_models import EditBlueprintPerformanceSnapshot
 from katcha.editorial.rankings import get_ranking_format
+from katcha.integrations.chatgpt import (
+    connection_status as chatgpt_connection_status,
+)
 from katcha.intelligence_models import ChannelProfile, PerformanceObservation
 from katcha.longform_models import Compilation
 from katcha.models import Clip, ClipAnalysisRun, ClipFeature, SourceItem
@@ -735,22 +738,33 @@ def source_discovery_plan(
     adapter_keys = {str(row.get("key") or "") for row in catalog}
     web_scout_installed = "web_scout" in adapter_keys
     live_mode = settings.resolved_ai_execution_mode() == "live"
+    chatgpt = chatgpt_connection_status()
+    chatgpt_plan_ready = bool(
+        chatgpt.get("connected") and chatgpt.get("plan_usage_enabled")
+    )
+    web_scout_provider = (
+        "chatgpt_plan"
+        if chatgpt_plan_ready
+        else ("openai_api" if settings.openai_api_key else None)
+    )
     web_scout_ready = bool(
         web_scout_installed
-        and settings.openai_api_key
+        and web_scout_provider
         and settings.ai_enabled
         and live_mode
     )
     if not web_scout_installed:
         readiness_reason = "web_scout adapter is not installed"
-    elif not settings.openai_api_key:
-        readiness_reason = "KATCHA_OPENAI_API_KEY is not configured"
     elif not settings.ai_enabled:
         readiness_reason = "KATCHA_AI_ENABLED is false"
     elif not live_mode:
         readiness_reason = "KATCHA_AI_EXECUTION_MODE is not live"
+    elif not web_scout_provider:
+        readiness_reason = (
+            "connect a ChatGPT plan in Settings or configure an OpenAI API fallback"
+        )
     else:
-        readiness_reason = "ready"
+        readiness_reason = f"ready via {web_scout_provider}"
 
     evidence = [
         {
@@ -782,6 +796,7 @@ def source_discovery_plan(
             ],
             "web_scout_installed": web_scout_installed,
             "web_scout_ready": web_scout_ready,
+            "web_scout_provider": web_scout_provider,
             "web_scout_readiness": readiness_reason,
         }
     ]
