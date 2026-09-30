@@ -18,7 +18,7 @@ from katcha.ai.router import (
 )
 from katcha.config import Settings, get_settings
 from katcha.domain import AITask
-from katcha.integrations.chatgpt import ChatGPTConnectionError, invoke_json
+from katcha.integrations.chatgpt import invoke_json
 
 CommandIntent = Literal[
     "best_clips",
