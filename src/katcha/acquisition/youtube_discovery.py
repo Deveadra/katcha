@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import re
+import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from urllib.parse import unquote, urlparse
 
 import httpx
+from sqlalchemy import select
 
 from katcha.acquisition.adapters import (
     DiscoveredCandidate,
@@ -18,6 +20,13 @@ from katcha.acquisition.http_errors import (
     provider_transport_error,
 )
 from katcha.config import get_settings
+from katcha.db import session_scope
+from katcha.domain import YouTubeConnectionStatus
+from katcha.integrations.youtube.tokens import (
+    YouTubeCredentialError,
+    get_valid_access_token,
+)
+from katcha.publishing_models import YouTubeConnection
 
 _SEARCH_URL = "https://www.googleapis.com/youtube/v3/search"
 _VIDEOS_URL = "https://www.googleapis.com/youtube/v3/videos"
@@ -38,10 +47,11 @@ def _provider_get_json(
     *,
     params: dict[str, object],
     operation: str,
+    headers: dict[str, str] | None = None,
     provider_usage: dict[str, int] | None = None,
 ) -> dict[str, Any]:
     try:
-        response = client.get(url, params=params)
+        response = client.get(url, params=params, headers=headers)
     except httpx.HTTPError as exc:
         raise provider_transport_error("YouTube", operation, provider_usage=provider_usage) from exc
     if response.status_code >= 400:
@@ -59,6 +69,56 @@ def _provider_get_json(
         raise provider_payload_error("YouTube", operation, provider_usage=provider_usage)
     return payload
 
+
+def _youtube_request_auth(
+    query: dict[str, Any],
+) -> tuple[dict[str, object], dict[str, str]]:
+    """Resolve a secret-safe credential for public YouTube Data API reads."""
+    settings = get_settings()
+    requested_connection = str(query.get("youtube_connection_id") or "").strip()
+    api_key = str(settings.youtube_data_api_key or "").strip()
+
+    connection_id: uuid.UUID | None = None
+    if requested_connection:
+        try:
+            connection_id = uuid.UUID(requested_connection)
+        except ValueError as exc:
+            raise ValueError("youtube_connection_id is not a valid UUID") from exc
+    elif api_key:
+        return {"key": api_key}, {}
+    else:
+        with session_scope() as session:
+            connection_id = session.scalar(
+                select(YouTubeConnection.id)
+                .where(
+                    YouTubeConnection.status
+                    == YouTubeConnectionStatus.ACTIVE.value
+                )
+                .order_by(
+                    YouTubeConnection.updated_at.desc(),
+                    YouTubeConnection.id.asc(),
+                )
+                .limit(1)
+            )
+
+    if connection_id is not None:
+        try:
+            access_token = get_valid_access_token(
+                connection_id,
+                settings=settings,
+            )
+        except YouTubeCredentialError:
+            access_token = ""
+        if access_token:
+            return {}, {"Authorization": f"Bearer {access_token}"}
+
+    if api_key:
+        return {"key": api_key}, {}
+
+    raise ValueError(
+        "YouTube discovery is not configured. Connect a YouTube channel "
+        "or add a YouTube Data API key, then try again."
+    )
 
 def parse_youtube_candidates(
     search_payload: dict[str, Any],
@@ -200,6 +260,7 @@ class YouTubeDiscoveryAdapter:
             "freshness_horizon_hours",
             "relevance_language",
             "region_code",
+            "youtube_connection_id",
             "limit",
         ),
         required_credentials=("YOUTUBE_DATA_API_KEY",),
@@ -217,10 +278,7 @@ class YouTubeDiscoveryAdapter:
         query: dict[str, Any],
         cursor: dict[str, Any],
     ) -> DiscoveryBatch:
-        settings = get_settings()
-        api_key = settings.youtube_data_api_key
-        if not api_key:
-            raise ValueError("YouTube discovery is not configured")
+        auth_params, auth_headers = _youtube_request_auth(query)
 
         requested_limit = min(max(int(query.get("limit", 25)), 1), 50)
         order = str(query.get("order") or "date").strip()
@@ -232,7 +290,7 @@ class YouTubeDiscoveryAdapter:
         )
         published_after = datetime.now(UTC) - timedelta(hours=freshness_hours)
         params: dict[str, object] = {
-            "key": api_key,
+            **auth_params,
             "part": "snippet",
             "type": "video",
             "order": order,
@@ -264,8 +322,9 @@ class YouTubeDiscoveryAdapter:
                     channel_payload = _provider_get_json(
                         client,
                         _CHANNELS_URL,
-                        params={"key": api_key, "part": "id", **selector},
+                        params={**auth_params, "part": "id", **selector},
                         operation="channel lookup",
+                        headers=auth_headers,
                         provider_usage={"youtube.core": 1},
                     )
                     channel_lookup_units = 1
@@ -289,6 +348,7 @@ class YouTubeDiscoveryAdapter:
                 _SEARCH_URL,
                 params=params,
                 operation="search",
+                headers=auth_headers,
                 provider_usage={"youtube.search.list": 1, "youtube.core": channel_lookup_units},
             )
             ids = [
@@ -304,11 +364,12 @@ class YouTubeDiscoveryAdapter:
                     client,
                     _VIDEOS_URL,
                     params={
-                        "key": api_key,
+                        **auth_params,
                         "part": "snippet,statistics",
                         "id": ",".join(ids),
                     },
                     operation="video details",
+                    headers=auth_headers,
                     provider_usage={
                         "youtube.search.list": 1,
                         "youtube.core": 1 + channel_lookup_units,

@@ -81,6 +81,52 @@ def test_ingestion_source_creates_discovery_run_with_source_metadata(
     assert run.run_metadata["default_candidate_metadata"]["content_lane"] == "viral_clip"
 
 
+def test_channel_youtube_source_freezes_profile_connection(source_scope) -> None:
+    import uuid
+    from datetime import UTC, datetime, timedelta
+
+    from katcha.intelligence_models import ChannelProfile
+    from katcha.publishing_models import YouTubeConnection
+
+    connection_id = uuid.uuid4()
+    profile_id = uuid.uuid4()
+    with source_scope() as session:
+        session.add(
+            YouTubeConnection(
+                id=connection_id,
+                channel_id="UC" + "a" * 22,
+                channel_title="RankSnaxx",
+                status="active",
+                scopes=["https://www.googleapis.com/auth/youtube"],
+                encrypted_access_token="encrypted-access",
+                encrypted_refresh_token="encrypted-refresh",
+                token_expires_at=datetime.now(UTC) + timedelta(hours=1),
+            )
+        )
+        session.add(
+            ChannelProfile(
+                id=profile_id,
+                youtube_connection_id=connection_id,
+                status="active",
+                timezone="UTC",
+            )
+        )
+
+    source = upsert_ingestion_source(
+        source_key="youtube-channel-watch",
+        name="Creator Watch",
+        adapter_key="youtube",
+        adapter_version="v1",
+        platform="youtube",
+        channel_profile_id=profile_id,
+        query_template={"channel_reference": "@creator", "limit": 25},
+    )
+
+    run = create_discovery_run_from_source(source.id)
+
+    assert run.query["youtube_connection_id"] == str(connection_id)
+
+
 def test_ingestion_source_metadata_flows_to_candidates(source_scope) -> None:
     source = upsert_ingestion_source(
         source_key="rank-snaxx-ig-watch",
@@ -255,6 +301,57 @@ def test_source_import_run_rejects_empty_or_non_operator_sources(source_scope) -
 
     with pytest.raises(ValueError, match="require operator_feed"):
         create_source_import_run(source.id, urls=["https://example.com/video"])
+
+
+def test_manual_discovery_failure_preserves_provider_reason(
+    source_scope,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from katcha.acquisition_models import DiscoveryRun
+    from katcha.orchestration import discovery_activities
+
+    class BrokenAdapter:
+        def discover(self, query, cursor):
+            del query, cursor
+            raise ValueError(
+                "YouTube discovery is not configured. Connect a YouTube channel "
+                "or add a YouTube Data API key, then try again."
+            )
+
+    source = upsert_ingestion_source(
+        source_key="broken-youtube-watch",
+        name="Broken YouTube Watch",
+        adapter_key="manifest",
+        adapter_version="v1",
+        platform="youtube",
+    )
+    run = create_discovery_run_from_source(source.id)
+    monkeypatch.setattr(
+        discovery_activities,
+        "get_adapter",
+        lambda *_args: BrokenAdapter(),
+    )
+    monkeypatch.setattr(
+        discovery_activities,
+        "record_discovery_run_failure",
+        lambda *_args: None,
+    )
+
+    with pytest.raises(Exception, match="YouTube discovery is not configured"):
+        discovery_activities.execute_discovery_page_activity(str(run.id))
+
+    discovery_activities.mark_discovery_run_failed(
+        str(run.id),
+        "Activity task failed",
+    )
+
+    with source_scope() as session:
+        failed = session.get(DiscoveryRun, run.id)
+        assert failed is not None
+        assert failed.status == "failed"
+        assert failed.error is not None
+        assert "Connect a YouTube channel" in failed.error
+        assert "Activity task failed" not in failed.error
 
 
 def test_ingestion_source_rejects_uninstalled_adapter(source_scope) -> None:

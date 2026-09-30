@@ -231,6 +231,23 @@ const catalog = [
         assert.equal(sources.at(-1).query_template.channel_reference, 'https://www.youtube.com/@creator');
         assert.equal(sources.at(-1).usage_mode, 'discovery_only');
         assert.equal(await page.locator('#run').innerText(), 'Check channel videos');
+        assert.match(await page.locator('#source-info').innerText(), /Watch a YouTube channel/);
+
+        const watchedSource = sources.at(-1);
+        runs.push({
+            id: 'run-youtube-failed',
+            sourceId: watchedSource.id,
+            run_key: 'failed-youtube-check',
+            status: 'failed',
+            created_at: '2026-09-30T12:00:00Z',
+            error: 'YouTube search request failed (status 403)',
+        });
+        await page.locator('#history-refresh').click();
+        const diagnostics = page.locator('#history details.run-diagnostics').first();
+        await diagnostics.locator('summary').click();
+        assert.equal(await diagnostics.evaluate(element => element.open), true);
+        assert.match(await diagnostics.locator('pre').innerText(), /run-youtube-failed/);
+        assert.match(await diagnostics.locator('pre').innerText(), /status 403/);
         assert.deepEqual(errors, []);
         console.log('PASS: Aerith Sources/Add source workspaces, guided source choices, shared all-channel web scouting, human channel names, empty/error channels, automatic IDs, lost-response recovery, activity retries, custom connectors and responsive layout');
     } finally { if (browser) await browser.close(); server.kill(); }

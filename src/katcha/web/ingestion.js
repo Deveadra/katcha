@@ -76,7 +76,36 @@ function chosenAdapter() {
 }
 function channelName(row) { return row.profile_metadata?.channel_title || row.profile_metadata?.name || 'Unnamed channel'; }
 function source() { return sources.find(s => s.id === $('source').value); }
-function connectionName(row) { return Object.values(methods).find(m => m.key === row.adapter_key)?.title || 'Custom connection'; }
+function runDiagnostics(run, selectedSource) {
+    return [
+        `Run ID: ${run.id}`,
+        `Source: ${selectedSource?.name || 'Unknown'}`,
+        `Adapter: ${selectedSource ? `${selectedSource.adapter_key}@${selectedSource.adapter_version}` : 'Unknown'}`,
+        `Status: ${run.status || 'unknown'}`,
+        `Created: ${run.created_at || 'unknown'}`,
+        '',
+        run.error || 'No technical error was recorded.',
+    ].join('\n');
+}
+function copyText(text) {
+    if (navigator.clipboard?.writeText) return navigator.clipboard.writeText(text);
+    const field = document.createElement('textarea');
+    field.value = text;
+    field.setAttribute('readonly', '');
+    field.style.position = 'fixed';
+    field.style.opacity = '0';
+    document.body.appendChild(field);
+    field.select();
+    const copied = document.execCommand('copy');
+    field.remove();
+    return copied ? Promise.resolve() : Promise.reject(new Error('Copy failed'));
+}
+function connectionName(row) {
+    if (row.adapter_key === 'youtube' && row.query_template?.channel_reference) {
+        return methods.youtube_channel.title;
+    }
+    return Object.values(methods).find(m => m.key === row.adapter_key)?.title || 'Custom connection';
+}
 function sourceChannel(row) { return channels.find(c => c.id === row.channel_profile_id); }
 function channelHelp() {
     if (channels.length) {
@@ -327,7 +356,10 @@ async function loadHistory() {
             }
         }
         const labels = {queued: 'Ready to start', running: 'Finding content…', completed: 'Finished checking content', failed: 'Could not finish'};
-        $('history').innerHTML = rows.length ? rows.map(r => `<article class="item"><strong>${esc(labels[r.status] || 'Status unavailable')}</strong><p>${esc(new Date(r.created_at).toLocaleString())}</p>${r.status === 'failed' ? '<p>The search could not finish. Check Katcha’s connections, then start a new search or add the links again.</p>' : ''}${r.status === 'completed' ? `<button type="button" class="text-button" data-results="${esc(r.id)}">See what was found</button><div class="run-results" role="status"></div>` : ''}${r.status === 'queued' && s.enabled && s.usage_mode !== 'blocked' ? `<p>This request is saved, but has not started yet.</p><button class="button secondary" data-execute="${esc(r.id)}">Start now</button>` : ''}${r.error ? `<details><summary>Technical details for troubleshooting</summary><pre>${esc(r.error)}</pre></details>` : ''}</article>`).join('') : '<p class="hint">Nothing checked yet. Add links or start a search to begin.</p>';
+        $('history').innerHTML = rows.length ? rows.map(r => {
+            const diagnostics = runDiagnostics(r, s);
+            return `<article class="item"><strong>${esc(labels[r.status] || 'Status unavailable')}</strong><p>${esc(new Date(r.created_at).toLocaleString())}</p>${r.status === 'failed' ? '<p>The search could not finish. Open the technical details below for the exact cause, then try again after the connection is corrected.</p>' : ''}${r.status === 'completed' ? `<button type="button" class="text-button" data-results="${esc(r.id)}">See what was found</button><div class="run-results" role="status"></div>` : ''}${r.status === 'queued' && s.enabled && s.usage_mode !== 'blocked' ? `<p>This request is saved, but has not started yet.</p><button class="button secondary" data-execute="${esc(r.id)}">Start now</button>` : ''}${r.error ? `<details class="run-diagnostics"><summary>Technical details for troubleshooting</summary><pre>${esc(diagnostics)}</pre><button type="button" class="text-button diagnostics-copy" data-copy-diagnostics>Copy diagnostics</button><span class="diagnostics-copy-status" role="status"></span></details>` : ''}</article>`;
+        }).join('') : '<p class="hint">Nothing checked yet. Add links or start a search to begin.</p>';
     } catch (error) {
         if (epoch !== historyEpoch) return;
         $('history').textContent = 'Recent activity could not be loaded. Use “Refresh activity” to try again.';
@@ -390,11 +422,39 @@ bind('import', 'submit', async () => {
     if (displayedSourceId === s.id) $('urls').value = '';
     intents.delete(key);
 });
-bind('history', 'click', async e => {
+$('history').addEventListener('click', async e => {
+    const summary = e.target.closest('summary');
+    if (summary) return;
+
+    const copy = e.target.closest('[data-copy-diagnostics]');
+    if (copy) {
+        e.preventDefault();
+        const details = copy.closest('details');
+        const status = details?.querySelector('.diagnostics-copy-status');
+        const diagnosticText = details?.querySelector('pre')?.textContent || '';
+        try {
+            await copyText(diagnosticText);
+            if (status) status.textContent = 'Copied.';
+        } catch {
+            if (status) status.textContent = 'Copy failed. Select the text above manually.';
+        }
+        return;
+    }
+
     const button = e.target.closest('[data-execute]');
-    if (button) { await start({id: button.dataset.execute}); return; }
+    if (button) {
+        e.preventDefault();
+        if (button.disabled) return;
+        button.disabled = true;
+        try { await start({id: button.dataset.execute}); }
+        catch (error) { message(error.message, true); }
+        finally { if (button.isConnected) button.disabled = false; }
+        return;
+    }
+
     const results = e.target.closest('[data-results]');
     if (!results) return;
+    e.preventDefault();
     const output = results.nextElementSibling;
     const selected = source();
     if (!selected || !output) return;

@@ -10,6 +10,7 @@ from katcha.acquisition.adapters import get_adapter
 from katcha.acquisition_models import DiscoveryRun, IngestionSource
 from katcha.db import session_scope
 from katcha.domain import SourceUsageMode
+from katcha.intelligence_models import ChannelProfile
 from katcha.models import DomainEvent
 from katcha.services.acquisition import register_discovery_run
 
@@ -192,6 +193,14 @@ def create_discovery_run_from_source(
             **dict(source.query_template or {}),
             **dict(query_overrides or {}),
         }
+        if (
+            source.adapter_key == "youtube"
+            and source.channel_profile_id is not None
+            and not query.get("youtube_connection_id")
+        ):
+            profile = session.get(ChannelProfile, source.channel_profile_id)
+            if profile is not None:
+                query["youtube_connection_id"] = str(profile.youtube_connection_id)
         run_metadata = _source_run_metadata(source, metadata)
         adapter_key = source.adapter_key
         adapter_version = source.adapter_version

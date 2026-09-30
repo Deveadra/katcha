@@ -1,11 +1,16 @@
 from __future__ import annotations
 
+import uuid
+from contextlib import contextmanager
+from types import SimpleNamespace
+
 import httpx
 import pytest
 
 from katcha.acquisition.adapters import available_adapters, get_adapter
 from katcha.acquisition.youtube_discovery import (
     _provider_get_json,
+    _youtube_request_auth,
     parse_youtube_candidates,
 )
 
@@ -71,6 +76,82 @@ def test_parse_youtube_candidates_preserves_metrics_and_provenance() -> None:
     }
 
 
+def test_youtube_auth_uses_configured_api_key_without_database(monkeypatch) -> None:
+    from katcha.acquisition import youtube_discovery as module
+
+    monkeypatch.setattr(
+        module,
+        "get_settings",
+        lambda: SimpleNamespace(youtube_data_api_key="public-data-key"),
+    )
+
+    params, headers = _youtube_request_auth({})
+
+    assert params == {"key": "public-data-key"}
+    assert headers == {}
+
+
+def test_youtube_auth_uses_explicit_channel_oauth(monkeypatch) -> None:
+    from katcha.acquisition import youtube_discovery as module
+
+    connection_id = uuid.uuid4()
+    settings = SimpleNamespace(youtube_data_api_key=None)
+    monkeypatch.setattr(module, "get_settings", lambda: settings)
+    monkeypatch.setattr(
+        module,
+        "get_valid_access_token",
+        lambda value, settings=None: (
+            "oauth-access-token"
+            if value == connection_id
+            else (_ for _ in ()).throw(AssertionError("wrong connection"))
+        ),
+    )
+
+    params, headers = _youtube_request_auth(
+        {"youtube_connection_id": str(connection_id)}
+    )
+
+    assert params == {}
+    assert headers == {"Authorization": "Bearer oauth-access-token"}
+
+
+def test_youtube_auth_falls_back_to_active_oauth_for_shared_source(
+    monkeypatch,
+) -> None:
+    from katcha.acquisition import youtube_discovery as module
+
+    connection_id = uuid.uuid4()
+
+    class FakeSession:
+        def scalar(self, _statement):
+            return connection_id
+
+    @contextmanager
+    def fake_scope():
+        yield FakeSession()
+
+    monkeypatch.setattr(
+        module,
+        "get_settings",
+        lambda: SimpleNamespace(youtube_data_api_key=None),
+    )
+    monkeypatch.setattr(module, "session_scope", fake_scope)
+    monkeypatch.setattr(
+        module,
+        "get_valid_access_token",
+        lambda value, settings=None: (
+            "shared-oauth-token"
+            if value == connection_id
+            else (_ for _ in ()).throw(AssertionError("wrong connection"))
+        ),
+    )
+
+    params, headers = _youtube_request_auth({})
+
+    assert params == {}
+    assert headers == {"Authorization": "Bearer shared-oauth-token"}
+
+
 def test_youtube_provider_error_does_not_expose_api_key() -> None:
     api_key = "secret-youtube-key"
 
@@ -96,8 +177,6 @@ def test_youtube_provider_error_does_not_expose_api_key() -> None:
     "@creator", "https://www.youtube.com/@creator/videos",
 ])
 def test_channel_watch_resolves_handle_and_scopes_video_search(monkeypatch, reference):
-    from types import SimpleNamespace
-
     from katcha.acquisition import youtube_discovery as module
 
     channel_id = "UC" + "a" * 22
