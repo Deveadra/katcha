@@ -25,7 +25,10 @@ class ChatGPTConnection(Base):
     encrypted_access_token: Mapped[str | None] = mapped_column(Text, nullable=True)
     encrypted_refresh_token: Mapped[str | None] = mapped_column(Text, nullable=True)
     encrypted_id_token: Mapped[str | None] = mapped_column(Text, nullable=True)
-    access_token_expires_at: Mapped[datetime | None] = mapped_column(\n        DateTime(timezone=True), nullable=True\n    )\n    selected_model: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    access_token_expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    selected_model: Mapped[str | None] = mapped_column(String(255), nullable=True)
     active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
     connection_metadata: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     created_at: Mapped[datetime] = mapped_column(
