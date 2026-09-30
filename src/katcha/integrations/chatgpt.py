@@ -65,6 +65,14 @@ class ChatGPTInference:
     output_tokens: int
 
 
+@dataclass(frozen=True, slots=True)
+class ChatGPTWebSearchInference:
+    payload: dict[str, object]
+    model: str
+    input_tokens: int
+    output_tokens: int
+
+
 def _state_hash(state: str) -> str:
     return hashlib.sha256(state.encode("utf-8")).hexdigest()
 
@@ -733,6 +741,93 @@ def invoke_json(
         raise ChatGPTConnectionError("ChatGPT plan response contained no text")
     return ChatGPTInference(
         text=text,
+        model=session.model,
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+    )
+
+
+def invoke_web_search_json(
+    *,
+    prompt: str,
+    schema_name: str,
+    schema: dict[str, object],
+    tool: dict[str, object],
+    settings: Settings | None = None,
+) -> ChatGPTWebSearchInference:
+    """Run one grounded web-search turn against the connected ChatGPT plan."""
+    session = active_session(settings)
+    if session is None:
+        raise ChatGPTConnectionError("No ChatGPT plan connection is available")
+
+    from openai import OpenAI
+
+    client = OpenAI(
+        api_key=session.access_token,
+        base_url="https://api.openai.com/v1",
+        timeout=90.0,
+        max_retries=0,
+    )
+    completed_payload: dict[str, object] | None = None
+    input_tokens = 0
+    output_tokens = 0
+    try:
+        with client.responses.create(
+            model=session.model,
+            input=[{"role": "user", "content": prompt}],
+            store=False,
+            stream=True,
+            reasoning={"effort": "low"},
+            tools=[tool],
+            tool_choice="required",
+            include=["web_search_call.action.sources"],
+            text={
+                "format": {
+                    "type": "json_schema",
+                    "name": schema_name,
+                    "schema": schema,
+                    "strict": False,
+                }
+            },
+        ) as stream:
+            for event in stream:
+                event_type = str(getattr(event, "type", ""))
+                if event_type == "response.failed":
+                    response = getattr(event, "response", None)
+                    error = getattr(response, "error", None)
+                    code = getattr(error, "code", None) or "unknown_error"
+                    raise ChatGPTConnectionError(
+                        f"ChatGPT plan web search failed: {code}"
+                    )
+                if event_type == "response.incomplete":
+                    raise ChatGPTConnectionError(
+                        "ChatGPT plan web search ended incomplete"
+                    )
+                if event_type != "response.completed":
+                    continue
+                response = getattr(event, "response", None)
+                usage = getattr(response, "usage", None)
+                input_tokens = int(getattr(usage, "input_tokens", 0) or 0)
+                output_tokens = int(getattr(usage, "output_tokens", 0) or 0)
+                if response is not None and hasattr(response, "model_dump"):
+                    raw = response.model_dump(mode="json", exclude_none=True)
+                    if isinstance(raw, dict):
+                        completed_payload = {
+                            str(key): value for key, value in raw.items()
+                        }
+    except ChatGPTConnectionError:
+        raise
+    except Exception as exc:
+        raise ChatGPTConnectionError(
+            f"ChatGPT plan web search failed: {type(exc).__name__}: {exc}"
+        ) from exc
+
+    if completed_payload is None:
+        raise ChatGPTConnectionError(
+            "ChatGPT plan web search ended without a completed response payload"
+        )
+    return ChatGPTWebSearchInference(
+        payload=completed_payload,
         model=session.model,
         input_tokens=input_tokens,
         output_tokens=output_tokens,
