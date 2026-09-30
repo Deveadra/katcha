@@ -57,6 +57,7 @@ async function loadChatGPT() {
     $("chatgpt-badge").textContent = connected ? "CONNECTED" : "NOT CONNECTED";
     $("chatgpt-badge").className = "status-pill" + (connected ? "" : " muted");
     $("chatgpt-connect").hidden = connected;
+    $("chatgpt-connect").dataset.connectionId = status.saved_connection_id || "";
     $("chatgpt-reconnect").hidden = !connected;
     $("chatgpt-disconnect").hidden = !connected;
     $("chatgpt-account").hidden = !connected;
@@ -109,11 +110,17 @@ async function startChatGPT(connectionId = null) {
     location.href = result.authorization_url;
 }
 
-$("chatgpt-connect").onclick = () => startChatGPT();
+$("chatgpt-connect").onclick = async () => {
+    try {
+        await startChatGPT($("chatgpt-connect").dataset.connectionId || null);
+    } catch (error) {
+        message(error.message, "error");
+    }
+};
 $("chatgpt-reconnect").onclick = async () => {
     try {
         const status = await api("/v1/integrations/chatgpt/status");
-        await startChatGPT(status.connection_id || null);
+        await startChatGPT(status.saved_connection_id || status.connection_id || null);
     } catch (error) { message(error.message, "error"); }
 };
 $("chatgpt-test").onclick = async () => {
