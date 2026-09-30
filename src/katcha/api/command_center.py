@@ -34,6 +34,11 @@ from katcha.config import get_settings
 from katcha.control_contract import COMMAND_ACTION_SCOPES
 from katcha.db import session_scope
 from katcha.domain import ProductionStatus
+from katcha.integrations.chatgpt import (
+    ChatGPTConnectionError,
+    connection_status as chatgpt_connection_status,
+    test_connection as test_chatgpt_connection,
+)
 from katcha.orchestration.client import (
     start_channel_intelligence_refresh,
     start_production_workflow,
@@ -227,12 +232,35 @@ def command_readiness(http_request: Request) -> CommandReadinessResponse:
                 "launch console and restart services."
             ),
         )
+    chatgpt = chatgpt_connection_status()
+    if bool(chatgpt.get("connected")):
+        try:
+            healthy = test_chatgpt_connection()
+            identity = healthy.get("display_name") or healthy.get("email") or "ChatGPT"
+            return CommandReadinessResponse(
+                live=True,
+                message=(
+                    f"ChatGPT plan connected as {identity} · "
+                    f"{healthy.get('selected_model')}. "
+                    "Katcha will use your ChatGPT plan before API-key fallbacks."
+                ),
+            )
+        except ChatGPTConnectionError as exc:
+            if not (settings.openai_api_key or settings.gemini_api_key):
+                return CommandReadinessResponse(
+                    live=False,
+                    message=(
+                        f"ChatGPT is connected but the live handshake failed: {exc}. "
+                        "Open Settings to reconnect or test the account."
+                    ),
+                )
+
     if not (settings.openai_api_key or settings.gemini_api_key):
         return CommandReadinessResponse(
             live=False,
             message=(
-                "No AI provider is connected. Add an OpenAI or Gemini key in the "
-                "launch console, then restart services."
+                "No live AI provider is connected. Open Settings and choose "
+                "Continue with ChatGPT; API keys are optional fallbacks."
             ),
         )
     installed = (
@@ -247,15 +275,21 @@ def command_readiness(http_request: Request) -> CommandReadinessResponse:
         return CommandReadinessResponse(
             live=False,
             message=(
-                "The configured AI provider library is missing. Update Katcha "
-                "and rebuild its API image, then restart services."
+                "An API provider is configured but its client library is missing. "
+                "Rebuild Katcha or connect ChatGPT from Settings."
             ),
         )
+    prefix = (
+        "ChatGPT plan needs attention; "
+        if bool(chatgpt.get("connected"))
+        else ""
+    )
     return CommandReadinessResponse(
         live=True,
         message=(
-            "Live AI is configured. Each request checks the channel budget "
-            "and provider availability."
+            prefix
+            + "API-key fallback is configured. Open Settings to test providers "
+            "or connect ChatGPT to avoid API-key billing for normal Katcha chat."
         ),
     )
 
