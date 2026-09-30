@@ -218,6 +218,10 @@
     transform: rotate(180deg);
 }
 
+.workspace-menu:not([open]) > .workspace-menu-popover {
+    display: none !important;
+}
+
 .workspace-menu-popover {
     position: absolute;
     top: calc(100% + 7px);
