@@ -198,5 +198,6 @@ $("ai-settings-form").onsubmit = async (event) => {
     const query = new URLSearchParams(location.search);
     if (query.get("chatgpt") === "connected") message("ChatGPT account connected successfully.", "good");
     if (query.get("chatgpt") === "error") message("ChatGPT sign-in did not complete. Try again from this page.", "error");
+    if (query.get("chatgpt") === "state_error") message("ChatGPT sign-in returned an invalid or expired session. Start a fresh sign-in from this page.", "error");
     await Promise.allSettled([loadRuntime(), loadChatGPT()]);
 })();
