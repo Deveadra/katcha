@@ -10,7 +10,6 @@ from datetime import UTC, datetime, timedelta
 from urllib.parse import urlencode
 
 import httpx
-import jwt
 from sqlalchemy import select
 
 from katcha.chatgpt_models import ChatGPTConnection, ChatGPTOAuthState
@@ -234,6 +233,8 @@ def _validate_id_token(
     client_id: str,
     nonce: str,
 ) -> dict[str, object]:
+    import jwt
+
     try:
         header = jwt.get_unverified_header(id_token)
         algorithm = str(header.get("alg") or "")
