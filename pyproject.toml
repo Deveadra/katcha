@@ -69,5 +69,7 @@ katcha = [
   "web/*.html",
   "web/*.css",
   "web/*.js",
+  "web/system/*.css",
+  "web/pages/*.css",
   "assets/**/*.png",
 ]

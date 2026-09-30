@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <meta name="theme-color" content="#090b12">
+    <title>Katcha · Home</title>
+    <link id="aerith-tokens" rel="stylesheet" href="/system/aerith-tokens.css">
+    <link id="aerith-base" rel="stylesheet" href="/system/aerith-base.css">
+    <link id="aerith-shell" rel="stylesheet" href="/system/aerith-shell.css">
+    <link id="aerith-components" rel="stylesheet" href="/system/aerith-components.css">
+    <link id="aerith-motion" rel="stylesheet" href="/system/aerith-motion.css">
+    <link rel="stylesheet" href="operations-aerith.css">
+    <script src="operations.js" defer></script>
+    <script src="launcher-bridge.js" defer></script>
+</head>
+<body data-katcha-page="operations">
+    <a class="ops-skip" href="#main-content">Skip to operations</a>
+    <div class="operations-shell">
+        <header class="operations-nav">
+            <a class="ops-brand" href="/home" aria-label="Katcha Operations home">
+                <span aria-hidden="true">✦</span> katcha<span>.</span>
+            </a>
+            <nav aria-label="Primary workspace">
+                <a href="/home" aria-current="page">Home</a>
+                <a href="/explorer">Trends</a>
+                <a href="/ingestion">Sources</a>
+                <a href="/clips">Clips</a>
+                <a href="/editing">Production</a>
+                <a href="/channels">Channel Studio</a>
+            </nav>
+            <a class="ops-ai-link" href="/ai?focus=chat">Ask Katcha <span aria-hidden="true">✦</span></a>
+        </header>
+
+        <main id="main-content" class="operations-main">
+            <form id="connect-form" class="ops-connect">
+                <label for="token">Control-plane token</label>
+                <input id="token" type="password" autocomplete="off" placeholder="Token if required">
+                <button class="primary" type="submit">Connect</button>
+                <small>Kept only in this tab. The Katcha launcher supplies its own credential automatically.</small>
+            </form>
+
+            <header class="operations-heading">
+                <div>
+                    <div class="ops-kicker">YOUR CHANNELS</div>
+                    <h1>Your channel briefing.</h1>
+                    <p>What needs you, what Katcha is doing, and what is worth acting on.</p>
+                </div>
+                <div class="operations-controls">
+                    <label>
+                        <span>Channel</span>
+                        <select id="channel-filter" disabled>
+                            <option value="">All channels</option>
+                        </select>
+                    </label>
+                    <button id="refresh" class="ops-secondary" type="button" disabled>Refresh</button>
+                </div>
+            </header>
+
+            <div id="status" class="ops-status" role="status" aria-live="polite">Connect to load live operations.</div>
+
+            <section class="ops-panel briefing-panel" aria-labelledby="briefing-title">
+                <div class="panel-head"><div><span class="ops-kicker">KATCHA BRIEFING</span><h2 id="briefing-title">What you should know</h2></div><a class="panel-link" href="/ai?focus=chat">Discuss with Katcha</a></div>
+                <div id="briefing-list" class="ops-list"><p>Load your workspace for current insights.</p></div>
+                <p id="home-ai-readiness" role="status"></p>
+            </section>
+
+            <section class="pulse-strip" aria-label="Operations pulse">
+                <a href="#attention"><small>NEEDS ATTENTION</small><strong id="pulse-attention">—</strong><span>Operator decisions or recovery</span></a>
+                <a href="#active"><small>IN MOTION</small><strong id="pulse-active">—</strong><span>Work Katcha is advancing</span></a>
+                <a href="#opportunities"><small>OPPORTUNITIES</small><strong id="pulse-opportunities">—</strong><span>Fresh topics worth acting on</span></a>
+                <a href="#performance"><small>PUBLISHED · 7D</small><strong id="pulse-published">—</strong><span>Recent channel output</span></a>
+            </section>
+
+            <section class="operations-grid priority-grid">
+                <section id="attention" class="ops-panel attention-panel" aria-labelledby="attention-title">
+                    <div class="panel-head">
+                        <div><span class="ops-kicker">YOUR QUEUE</span><h2 id="attention-title">Needs attention</h2></div>
+                        <span id="attention-count" class="ops-count">0</span>
+                    </div>
+                    <div id="attention-list" class="ops-list"></div>
+                </section>
+
+                <section id="active" class="ops-panel" aria-labelledby="active-title">
+                    <div class="panel-head">
+                        <div><span class="ops-kicker">AUTOMATION</span><h2 id="active-title">In motion</h2></div>
+                        <span id="active-count" class="ops-count">0</span>
+                    </div>
+                    <div id="active-list" class="ops-list"></div>
+                </section>
+            </section>
+
+            <section class="operations-grid signal-grid">
+                <section id="opportunities" class="ops-panel" aria-labelledby="opportunity-title">
+                    <div class="panel-head">
+                        <div><span class="ops-kicker">DISCOVERY</span><h2 id="opportunity-title">Act while it matters</h2></div>
+                        <a class="panel-link" href="/explorer">Open Trends</a>
+                    </div>
+                    <div id="opportunity-list" class="ops-list compact-list"></div>
+                </section>
+
+                <section id="performance" class="ops-panel" aria-labelledby="performance-title">
+                    <div class="panel-head">
+                        <div><span class="ops-kicker">OUTCOMES</span><h2 id="performance-title">Recent performance</h2></div>
+                        <a class="panel-link" href="/channels#content">Open Channel Studio</a>
+                    </div>
+                    <div id="publication-list" class="ops-list compact-list"></div>
+                </section>
+            </section>
+
+            <section id="channel-pulse" class="ops-panel channel-panel" aria-labelledby="channel-title">
+                <div class="panel-head">
+                    <div><span class="ops-kicker">CHANNELS</span><h2 id="channel-title">Operating pulse</h2></div>
+                    <span id="generated-at" class="panel-meta"></span>
+                </div>
+                <div id="channel-list" class="channel-list"></div>
+            </section>
+
+            <details class="ops-panel activity-panel" open>
+                <summary>
+                    <span><span class="ops-kicker">AUDIT TRAIL</span><strong>Recent Katcha activity</strong></span>
+                    <span id="activity-count" class="ops-count">0</span>
+                </summary>
+                <div id="activity-list" class="ops-list activity-list"></div>
+            </details>
+        </main>
+    </div>
+</body>
+</html>

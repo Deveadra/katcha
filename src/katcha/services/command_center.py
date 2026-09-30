@@ -580,6 +580,10 @@ def _looks_like_source_discovery(
 
 def classify_intent(prompt: str, selected_clip_ids: list[uuid.UUID]) -> str:
     text = prompt.casefold()
+    if re.fullmatch(
+        r"\s*(hi|hello|hey|thanks|thank you|what can you do|how can you help)[.!?\s]*", text
+    ):
+        return "conversation"
     if any(word in text for word in ("failing", "failed", "failure", "broken", "error")):
         return "failures"
     if any(word in text for word in ("reject", "rejected", "rejection")):

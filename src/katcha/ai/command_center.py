@@ -50,7 +50,9 @@ def _prompt(
         "Answer only from the supplied Katcha evidence. Never imply that an action ran unless "
         "the evidence explicitly says it ran. Do not invent clips, metrics, failures, causes, "
         "or YouTube results. If evidence is incomplete, say what is missing. Keep the answer "
-        "direct and operational, then explain the strongest evidence.\n\n"
+        "direct and operational, then explain the strongest evidence. For conversation, "
+        "respond naturally to greetings and capability questions. Strategy suggestions "
+        "must be labeled as suggestions; never portray them as measured results.\n\n"
         f"Intent: {intent}\n"
         f"Operator request: {user_prompt}\n"
         f"Deterministic grounded summary: {deterministic_answer}\n"
@@ -93,7 +95,9 @@ def _openai(
 ) -> CommandNarrativeResult:
     from openai import OpenAI
 
-    response = OpenAI(api_key=settings.openai_api_key).responses.create(
+    response = OpenAI(
+        api_key=settings.openai_api_key, timeout=30.0, max_retries=1
+    ).responses.create(
         model=target.model,
         store=False,
         reasoning={"effort": "low"},
@@ -106,7 +110,7 @@ def _openai(
                 "strict": False,
             }
         },
-        max_output_tokens=1200,
+        max_output_tokens=2400,
     )
     usage = response.usage
     input_tokens = int(getattr(usage, "input_tokens", 0) or 0)
@@ -185,7 +189,10 @@ def compose_grounded_answer(
     )
     if settings.resolved_ai_execution_mode() == "fixture":
         return CommandNarrativeResult(
-            fallback.value, fallback.target, 0, 0,
+            fallback.value,
+            fallback.target,
+            0,
+            0,
             "Katcha is in fixture mode; this answer uses saved data only.",
         )
     if not settings.ai_enabled:
@@ -242,14 +249,18 @@ def compose_grounded_answer(
     except Exception as exc:
         logger.warning(
             "Katcha AI answer unavailable request_id=%s cause=%s",
-            request_id, type(exc).__name__,
+            request_id,
+            type(exc).__name__,
         )
         release_budget_reservation(
             reservation_id,
             reason=f"command_center_fallback:{type(exc).__name__}",
         )
         return CommandNarrativeResult(
-            fallback.value, fallback.target, 0, 0,
+            fallback.value,
+            fallback.target,
+            0,
+            0,
             "The AI answer is unavailable right now. This is a saved-data summary; "
             "check the AI connection and budget, then try again.",
         )

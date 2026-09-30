@@ -5,7 +5,7 @@ import mimetypes
 import uuid
 from pathlib import Path
 
-from fastapi import Depends, FastAPI, HTTPException, Query, status
+from fastapi import Depends, FastAPI, HTTPException, Query, Request, status
 from fastapi.responses import RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import select, text
@@ -21,6 +21,7 @@ from katcha.api.edit_blueprints import router as edit_blueprints_router
 from katcha.api.explorer import router as explorer_router
 from katcha.api.integrations import router as integrations_router
 from katcha.api.intelligence import router as intelligence_router
+from katcha.api.operations import router as operations_router
 from katcha.api.packaging import router as packaging_router
 from katcha.api.reach import router as reach_router
 from katcha.api.schemas import (
@@ -145,6 +146,7 @@ app.include_router(control_router)
 app.include_router(edit_blueprints_router)
 app.include_router(intelligence_router)
 app.include_router(integrations_router)
+app.include_router(operations_router)
 app.include_router(packaging_router)
 app.include_router(reach_router)
 app.include_router(short_episodes_router)
@@ -160,41 +162,61 @@ app.mount("/channels/assets", StaticFiles(directory=Path(__file__).parents[1] / 
           name="channels-assets")
 app.mount("/ai/assets", StaticFiles(directory=Path(__file__).parents[1] / "web"),
           name="ai-assets")
+app.mount("/operations/assets", StaticFiles(directory=Path(__file__).parents[1] / "web"),
+          name="operations-assets")
+
+
+app.mount("/system", StaticFiles(directory=Path(__file__).parents[1] / "web" / "system"),
+          name="shared-system")
+
+
+@app.get("/home", include_in_schema=False)
+@app.get("/operations", include_in_schema=False)
+def operations_shell(request: Request):
+    query = "?" + request.url.query if request.url.query else ""
+    return RedirectResponse("/operations/assets/operations.html" + query)
 
 
 @app.get("/explorer", include_in_schema=False)
-def explorer_shell():
-    return RedirectResponse("/explorer/assets/index.html")
+def explorer_shell(request: Request):
+    query = "?" + request.url.query if request.url.query else ""
+    return RedirectResponse("/explorer/assets/index.html" + query)
 
 
 @app.get("/editing", include_in_schema=False)
-def editing_shell():
-    return RedirectResponse("/editing/assets/editing.html")
+def editing_shell(request: Request):
+    query = "?" + request.url.query if request.url.query else ""
+    return RedirectResponse("/editing/assets/editing.html" + query)
 
 
 @app.get("/channels", include_in_schema=False)
-def channels_shell():
-    return RedirectResponse("/channels/assets/channels.html")
+def channels_shell(request: Request):
+    query = "?" + request.url.query if request.url.query else ""
+    return RedirectResponse("/channels/assets/channels.html" + query)
 
 
 @app.get("/ai", include_in_schema=False)
-def ai_shell():
-    return RedirectResponse("/ai/assets/ai.html")
+def ai_shell(request: Request):
+    query = "?" + request.url.query if request.url.query else ""
+    return RedirectResponse("/ai/assets/ai.html" + query)
 
 
 @app.get("/ingestion", include_in_schema=False)
-def ingestion_shell():
-    return RedirectResponse("/editing/assets/ingestion.html")
+def ingestion_shell(request: Request):
+    query = "?" + request.url.query if request.url.query else ""
+    return RedirectResponse("/editing/assets/ingestion.html" + query)
 
 
 @app.get("/clips", include_in_schema=False)
-def clips_shell():
-    return RedirectResponse("/editing/assets/clips.html")
+def clips_shell(request: Request):
+    query = "?" + request.url.query if request.url.query else ""
+    return RedirectResponse("/editing/assets/clips.html" + query)
 
 
 @app.get("/studio", include_in_schema=False)
-def studio_shell():
-    return RedirectResponse("/editing/assets/studio.html")
+def studio_shell(request: Request):
+    query = "?" + request.url.query if request.url.query else ""
+    return RedirectResponse("/editing/assets/studio.html" + query)
 
 
 def _require_ai_execution() -> None:

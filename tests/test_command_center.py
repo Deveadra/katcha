@@ -1,6 +1,8 @@
 import uuid
 from datetime import UTC, datetime
 
+import pytest
+
 from katcha.api.command_center import CommandRequest, _action_specs
 from katcha.api.main import app
 from katcha.command_center_models import (
@@ -387,3 +389,8 @@ def test_command_center_accepts_typed_resource_context_schema() -> None:
 
     assert request.resource_refs[0].kind == "clip"
     assert request.resource_refs[0].id == clip_id
+
+
+@pytest.mark.parametrize("prompt", ["Hi!", "Hello", "What can you do?", "How can you help?"])
+def test_basic_conversation_has_a_read_only_route(prompt):
+    assert classify_intent(prompt, []) == "conversation"

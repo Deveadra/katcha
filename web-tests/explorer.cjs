@@ -190,7 +190,7 @@ let browser;
         await route.fulfill({ json: data });
     });
     await page.goto("http://127.0.0.1:8765");
-    assert.equal(await page.locator(".brand").getAttribute("href"), "/explorer");
+    assert.equal(await page.locator(".brand").getAttribute("href"), "/home");
     await page.locator(".workspace-menu").waitFor();
     assert.equal(await page.locator(".workspace-menu").count(), 1);
     await page.locator(".workspace-menu > summary").click();

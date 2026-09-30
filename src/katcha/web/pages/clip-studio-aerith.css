@@ -339,3 +339,32 @@ body[data-katcha-page="studio"] .timeline-block.audio {
         min-width: 0;
     }
 }
+
+/* Compact desktop screens need a scrollable editor rather than clipped panels. */
+@media (min-width: 701px) and (max-width: 1200px) {
+    body[data-katcha-page="studio"] { overflow: auto; }
+    body[data-katcha-page="studio"] .studio-shell {
+        grid-template-columns: 218px minmax(0, 1fr);
+        height: auto;
+        overflow: visible;
+    }
+    body[data-katcha-page="studio"] .studio-main,
+    body[data-katcha-page="studio"] .studio-content {
+        height: auto;
+        overflow: visible;
+    }
+    body[data-katcha-page="studio"] .edit-suite {
+        height: auto;
+        grid-template-columns: minmax(0, 1fr);
+        overflow: visible;
+    }
+    body[data-katcha-page="studio"] .project-bar { grid-template-columns: 1fr 1fr; }
+    body[data-katcha-page="studio"] .media-bin { max-height: 250px; }
+    body[data-katcha-page="studio"] .clip-list { max-height: 190px; }
+    body[data-katcha-page="studio"] .media-bin,
+    body[data-katcha-page="studio"] .monitor,
+    body[data-katcha-page="studio"] .inspector { height: auto; }
+    body[data-katcha-page="studio"] .inspector-body { max-height: none; }
+    body[data-katcha-page="studio"] .video-frame { height: min(66vh, 510px); }
+    body[data-katcha-page="studio"] .timeline { min-height: 142px; }
+}
