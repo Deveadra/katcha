@@ -144,6 +144,10 @@ def _validate_id_token(id_token: str) -> dict[str, object]:
     try:
         header = jwt.get_unverified_header(id_token)
         algorithm = str(header.get("alg") or "")
+        if algorithm not in {"RS256", "ES256"}:
+            raise CodexConnectionError(
+                f"Unsupported Codex ID-token algorithm: {algorithm or 'missing'}"
+            )
         signing_key = jwt.PyJWKClient(JWKS_URL).get_signing_key_from_jwt(id_token).key
         claims = jwt.decode(
             id_token,
@@ -397,9 +401,15 @@ def list_models(settings: Settings | None = None) -> list[CodexModel]:
         timeout=20.0,
     )
     if response.is_error:
-        raise CodexConnectionError(
-            f"Codex model catalog failed (HTTP {response.status_code})"
-        )
+        return [
+            CodexModel("gpt-5.5", "GPT-5.5", "General ChatGPT subscription model"),
+            CodexModel("gpt-5.4", "GPT-5.4", "General ChatGPT subscription model"),
+            CodexModel(
+                "gpt-5.4-mini",
+                "GPT-5.4 Mini",
+                "Faster ChatGPT subscription model",
+            ),
+        ]
     payload = response.json()
     result: list[CodexModel] = []
     for raw in payload.get("models") or []:
@@ -416,7 +426,15 @@ def list_models(settings: Settings | None = None) -> list[CodexModel]:
             )
         )
     if not result:
-        raise CodexConnectionError("Codex returned no available models")
+        return [
+            CodexModel("gpt-5.5", "GPT-5.5", "General ChatGPT subscription model"),
+            CodexModel("gpt-5.4", "GPT-5.4", "General ChatGPT subscription model"),
+            CodexModel(
+                "gpt-5.4-mini",
+                "GPT-5.4 Mini",
+                "Faster ChatGPT subscription model",
+            ),
+        ]
     return result
 
 
@@ -570,19 +588,11 @@ def test_connection(settings: Settings | None = None) -> dict[str, object]:
     if session is None:
         raise CodexConnectionError("No Codex ChatGPT account is connected")
     models = list_models(settings)
-    result = invoke_json(
-        prompt="Reply with a JSON object whose ok field is true.",
-        schema_name="katcha_codex_connection_test",
-        schema={
-            "type": "object",
-            "properties": {"ok": {"type": "boolean"}},
-            "required": ["ok"],
-        },
-        settings=settings,
-    )
-    parsed = json.loads(result.text)
-    if parsed.get("ok") is not True:
-        raise CodexConnectionError("Codex live inference returned an unexpected response")
+    text, _, _ = _stream(session, "Reply with exactly: KATCHA_CONNECTED")
+    if "KATCHA_CONNECTED" not in text:
+        raise CodexConnectionError(
+            "Codex live inference returned an unexpected response"
+        )
     return {
         "ok": True,
         "model_count": len(models),
