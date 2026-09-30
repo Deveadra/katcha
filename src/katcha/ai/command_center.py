@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import uuid
 from dataclasses import dataclass
 from decimal import Decimal
@@ -54,6 +55,12 @@ def _failure_status(exc: BaseException) -> int | None:
 def _attempt_label(target: ModelTarget, exc: BaseException) -> str:
     status = _failure_status(exc)
     suffix = f"HTTP {status}" if status is not None else type(exc).__name__
+    detail = " ".join(str(exc).split())[:180]
+    if detail:
+        detail = re.sub(r"(?i)Bearer\\s+\\S+", "Bearer [REDACTED]", detail)
+        detail = re.sub(r"\\bsk-[A-Za-z0-9_-]{8,}\\b", "[REDACTED]", detail)
+        detail = re.sub(r"\\bAIza[A-Za-z0-9_-]{12,}\\b", "[REDACTED]", detail)
+        suffix += f": {detail}"
     return f"{target.provider}/{target.model} ({suffix})"
 
 
