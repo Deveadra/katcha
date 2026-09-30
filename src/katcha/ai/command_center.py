@@ -282,8 +282,11 @@ def compose_grounded_answer(
         if getattr(settings, "chatgpt_host_id", None):
             try:
                 return _chatgpt(prompt, request_id=request_id)
-            except ChatGPTConnectionError as exc:
-                if "No ChatGPT plan connection is available" not in str(exc):
+            except Exception as exc:
+                if not (
+                    isinstance(exc, ChatGPTConnectionError)
+                    and "No ChatGPT plan connection is available" in str(exc)
+                ):
                     attempts.append(f"chatgpt/plan ({type(exc).__name__})")
 
         decision = route_for_channel(
