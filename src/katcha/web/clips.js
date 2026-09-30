@@ -652,11 +652,9 @@ async function confirmPurge() {
 
 function setRetentionEnabled() {
     const managed = $("retention-mode").value === "managed";
+    $("retention-mode-help").textContent = managed ? "Select the cleanup options you want, then save the policy." : "Media is kept indefinitely. Selecting an archive or cleanup option switches to Managed lifecycle.";
     for (const id of [
-        "auto-archive",
         "archive-days",
-        "auto-duplicates",
-        "auto-purge",
         "purge-days",
         "failed-days",
     ]) {
@@ -672,6 +670,7 @@ async function openRetention() {
             api(`/v1/channels/${channel.id}/clip-retention`),
             api(`/v1/channels/${channel.id}/clip-retention/preview`),
         ]);
+        $("retention-feedback").textContent = "Choose your settings, then Save policy. Close does not save changes.";
         $("retention-title").textContent = `${channelName(channel)} retention`;
         $("retention-mode").value = policy.retention_mode;
         $("auto-archive").checked = policy.auto_archive;
@@ -733,6 +732,8 @@ function retentionPayload(confirmed = false, phrase = null) {
 async function persistRetention(confirmed = false, phrase = null) {
     const channel = currentChannel();
     if (!channel) return;
+    $("save-retention").disabled = true;
+    $("retention-feedback").textContent = "Saving policy…";
     try {
         await api(`/v1/channels/${channel.id}/clip-retention`, {
             method: "PUT",
@@ -741,8 +742,12 @@ async function persistRetention(confirmed = false, phrase = null) {
         $("retention-confirm").hidden = true;
         await previewMaintenance();
         message("Channel retention policy saved.");
+        $("retention-feedback").textContent = "Channel retention policy saved.";
     } catch (error) {
+        $("retention-feedback").textContent = error.message;
         message(error.message, true);
+    } finally {
+        $("save-retention").disabled = false;
     }
 }
 
@@ -857,7 +862,18 @@ $("clip-detail").addEventListener("keydown", (event) => {
 });
 
 $("retention-settings").addEventListener("click", openRetention);
-$("retention-mode").addEventListener("change", setRetentionEnabled);
+$("retention-mode").addEventListener("change", () => {
+    if ($("retention-mode").value === "indefinite") {
+        for (const id of ["auto-archive", "auto-duplicates", "auto-purge"]) $(id).checked = false;
+    }
+    setRetentionEnabled();
+});
+for (const id of ["auto-archive", "auto-duplicates", "auto-purge"]) {
+    $(id).addEventListener("change", () => {
+        if ($(id).checked) $("retention-mode").value = "managed";
+        setRetentionEnabled();
+    });
+}
 $("preview-maintenance").addEventListener("click", previewMaintenance);
 $("run-maintenance").addEventListener("click", runMaintenance);
 $("save-retention").addEventListener("click", saveRetention);

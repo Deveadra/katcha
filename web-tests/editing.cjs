@@ -309,7 +309,7 @@ const verifiedPreview = {
         await page.locator("#token").fill("fixture-token");
         await page.locator("#connect-form button").click();
         await page.getByText("Ranking clips").waitFor();
-        assert.equal(await page.locator(".logo").getAttribute("href"), "/explorer");
+        assert.equal(await page.locator(".logo").getAttribute("href"), "/home");
         assert.equal(await page.locator("[data-production-tab]").count(), 3);
         assert.equal(
             await page.locator('[data-production-tab="queue"]').getAttribute("aria-selected"),

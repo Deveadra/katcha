@@ -34,3 +34,33 @@ def test_live_narrative_failure_is_labeled_as_saved_data(monkeypatch):
     assert result.value.answer == "A stored render failed."
     assert result.target.provider == "katcha"
     assert "AI answer is unavailable" in result.degraded_reason
+
+
+def test_openai_answer_has_room_for_reasoning_and_structured_text(monkeypatch):
+    import json
+    import sys
+    from types import SimpleNamespace
+
+    captured = {}
+
+    def create(**kwargs):
+        captured.update(kwargs)
+        return SimpleNamespace(
+            output_text=json.dumps({"answer": "Hello. What would you like to work on?"}),
+            usage=SimpleNamespace(input_tokens=20, output_tokens=40),
+        )
+
+    def client(**kwargs):
+        assert kwargs["timeout"] == 30.0
+        assert kwargs["max_retries"] == 1
+        return SimpleNamespace(responses=SimpleNamespace(create=create))
+
+    monkeypatch.setitem(sys.modules, "openai", SimpleNamespace(OpenAI=client))
+    monkeypatch.setattr(command_center, "_record", lambda **kwargs: None)
+    result = command_center._openai(
+        "Hello", target=ModelTarget("openai", "test-model"),
+        settings=LiveSettings(), request_id=uuid.uuid4(), reservation_id=None,
+    )
+    assert result.value.answer.startswith("Hello")
+    assert captured["max_output_tokens"] >= 2000
+    assert captured["text"]["format"]["type"] == "json_schema"

@@ -222,7 +222,7 @@ def provider_page_demands(
             (
                 "youtube",
                 "youtube.core",
-                1,
+                2,
                 settings.trend_youtube_core_daily_limit,
                 "America/Los_Angeles",
             ),

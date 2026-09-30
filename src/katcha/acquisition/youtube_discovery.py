@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import re
 from datetime import UTC, datetime, timedelta
 from typing import Any
+from urllib.parse import unquote, urlparse
 
 import httpx
 
@@ -19,6 +21,7 @@ from katcha.config import get_settings
 
 _SEARCH_URL = "https://www.googleapis.com/youtube/v3/search"
 _VIDEOS_URL = "https://www.googleapis.com/youtube/v3/videos"
+_CHANNELS_URL = "https://www.googleapis.com/youtube/v3/channels"
 _ALLOWED_ORDERS = {"date", "rating", "relevance", "title", "viewCount"}
 
 
@@ -40,9 +43,7 @@ def _provider_get_json(
     try:
         response = client.get(url, params=params)
     except httpx.HTTPError as exc:
-        raise provider_transport_error(
-            "YouTube", operation, provider_usage=provider_usage
-        ) from exc
+        raise provider_transport_error("YouTube", operation, provider_usage=provider_usage) from exc
     if response.status_code >= 400:
         raise provider_response_error(
             "YouTube",
@@ -53,13 +54,9 @@ def _provider_get_json(
     try:
         payload = response.json()
     except ValueError as exc:
-        raise provider_payload_error(
-            "YouTube", operation, provider_usage=provider_usage
-        ) from exc
+        raise provider_payload_error("YouTube", operation, provider_usage=provider_usage) from exc
     if not isinstance(payload, dict):
-        raise provider_payload_error(
-            "YouTube", operation, provider_usage=provider_usage
-        )
+        raise provider_payload_error("YouTube", operation, provider_usage=provider_usage)
     return payload
 
 
@@ -124,9 +121,7 @@ def parse_youtube_candidates(
                 title=title,
                 creator=channel_title,
                 creator_url=(
-                    f"https://www.youtube.com/channel/{channel_id}"
-                    if channel_id
-                    else None
+                    f"https://www.youtube.com/channel/{channel_id}" if channel_id else None
                 ),
                 provenance_confidence=0.95,
                 provenance_claims={
@@ -144,14 +139,44 @@ def _search_query(query: dict[str, Any]) -> str:
     explicit = str(query.get("q") or "").strip()
     if explicit:
         return explicit
-    terms = [
-        str(value).strip()
-        for value in query.get("include_terms", [])
-        if str(value).strip()
-    ]
+    terms = [str(value).strip() for value in query.get("include_terms", []) if str(value).strip()]
     if not terms:
         raise ValueError("youtube discovery requires q or include_terms")
     return " ".join(terms)
+
+
+def youtube_channel_selector(reference: str) -> dict[str, str]:
+    value = reference.strip()
+    if "://" in value:
+        parsed = urlparse(value)
+        if (
+            parsed.scheme != "https"
+            or parsed.hostname
+            not in {
+                "youtube.com",
+                "www.youtube.com",
+                "m.youtube.com",
+            }
+            or parsed.username
+            or parsed.password
+        ):
+            raise ValueError("Use a YouTube channel link, @handle, or channel ID")
+        parts = unquote(parsed.path).strip("/").split("/")
+        if parts[0].startswith("@"):
+            value = parts[0]
+        elif len(parts) >= 2 and parts[0] == "channel":
+            value = parts[1]
+        else:
+            raise ValueError("Use the channel's @handle or /channel/ link, not a video link")
+    if re.fullmatch(r"UC[A-Za-z0-9_-]{22}", value):
+        return {"id": value}
+    if (
+        value.startswith("@")
+        and 1 <= len(value[1:]) <= 100
+        and not any(char.isspace() or char in "/?#" for char in value[1:])
+    ):
+        return {"forHandle": value}
+    raise ValueError("Use a YouTube @handle, channel link, or UC channel ID")
 
 
 class YouTubeDiscoveryAdapter:
@@ -169,6 +194,7 @@ class YouTubeDiscoveryAdapter:
         supported_platforms=("youtube",),
         query_fields=(
             "q",
+            "channel_reference",
             "include_terms",
             "order",
             "freshness_horizon_hours",
@@ -209,11 +235,15 @@ class YouTubeDiscoveryAdapter:
             "key": api_key,
             "part": "snippet",
             "type": "video",
-            "q": _search_query(query),
             "order": order,
             "maxResults": requested_limit,
             "publishedAfter": published_after.isoformat().replace("+00:00", "Z"),
         }
+        channel_reference = str(query.get("channel_reference") or "").strip()
+        if not channel_reference:
+            params["q"] = _search_query(query)
+        elif str(query.get("q") or "").strip():
+            params["q"] = str(query["q"]).strip()
         language = str(query.get("relevance_language") or "").strip()
         region = str(query.get("region_code") or "").strip().upper()
         page_token = str(cursor.get("page_token") or "").strip()
@@ -225,12 +255,41 @@ class YouTubeDiscoveryAdapter:
             params["pageToken"] = page_token
 
         with httpx.Client(timeout=15.0) as client:
+            channel_lookup_units = 0
+            channel_id = ""
+            if channel_reference:
+                selector = youtube_channel_selector(channel_reference)
+                channel_id = str(cursor.get("channel_id") or selector.get("id") or "")
+                if not channel_id:
+                    channel_payload = _provider_get_json(
+                        client,
+                        _CHANNELS_URL,
+                        params={"key": api_key, "part": "id", **selector},
+                        operation="channel lookup",
+                        provider_usage={"youtube.core": 1},
+                    )
+                    channel_lookup_units = 1
+                    channel_id = str(
+                        next(
+                            (
+                                row.get("id")
+                                for row in channel_payload.get("items", [])
+                                if isinstance(row, dict) and row.get("id")
+                            ),
+                            "",
+                        )
+                    )
+                    if not channel_id:
+                        raise ValueError(
+                            "YouTube channel was not found. Check its @handle or link."
+                        )
+                params["channelId"] = channel_id
             search_payload = _provider_get_json(
                 client,
                 _SEARCH_URL,
                 params=params,
                 operation="search",
-                provider_usage={"youtube.search.list": 1},
+                provider_usage={"youtube.search.list": 1, "youtube.core": channel_lookup_units},
             )
             ids = [
                 str(item.get("id", {}).get("videoId") or "")
@@ -252,18 +311,18 @@ class YouTubeDiscoveryAdapter:
                     operation="video details",
                     provider_usage={
                         "youtube.search.list": 1,
-                        "youtube.core": 1,
+                        "youtube.core": 1 + channel_lookup_units,
                     },
                 )
 
         candidates = parse_youtube_candidates(search_payload, videos_payload)
         next_page = str(search_payload.get("nextPageToken") or "").strip()
         usage = {"youtube.search.list": 1}
-        if ids:
-            usage["youtube.core"] = 1
+        if ids or channel_lookup_units:
+            usage["youtube.core"] = int(bool(ids)) + channel_lookup_units
         return DiscoveryBatch(
             items=candidates,
-            next_cursor={"page_token": next_page} if next_page else {},
+            next_cursor={"page_token": next_page, "channel_id": channel_id} if next_page else {},
             done=not bool(next_page),
             provider_usage=usage,
         )

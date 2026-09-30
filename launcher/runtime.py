@@ -942,6 +942,8 @@ class Handler(BaseHTTPRequestHandler):
     def workspace_asset(self):
         path = self.path.split("?", 1)[0]
         redirects = {
+            "/home": "/operations/assets/operations.html",
+            "/studio": "/editing/assets/studio.html",
             "/editing": "/editing/assets/editing.html",
             "/explorer": "/explorer/assets/index.html",
             "/ingestion": "/editing/assets/ingestion.html",
@@ -951,10 +953,11 @@ class Handler(BaseHTTPRequestHandler):
             "/operations": "/operations/assets/operations.html",
         }
         if path in redirects:
-            suffix = "?focus=chat" if path == "/ai" and self.path.endswith("?focus=chat") else ""
+            suffix = "?" + self.path.split("?", 1)[1] if "?" in self.path else ""
             self.redirect(redirects[path] + suffix)
             return True
         prefixes = (
+            "/system/",
             "/editing/assets/",
             "/explorer/assets/",
             "/channels/assets/",
@@ -965,6 +968,8 @@ class Handler(BaseHTTPRequestHandler):
         if prefix is None:
             return False
         name = path.removeprefix(prefix)
+        if prefix == "/system/":
+            name = "system/" + name
         relative = Path(name)
         if (
             not name
@@ -1078,6 +1083,8 @@ class Handler(BaseHTTPRequestHandler):
     def proxy(self):
         allowed_prefixes = (
             "/v1/",
+            "/home",
+            "/studio",
             "/editing",
             "/explorer",
             "/ingestion",

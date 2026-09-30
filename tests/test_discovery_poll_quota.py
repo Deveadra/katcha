@@ -77,7 +77,7 @@ def test_youtube_reserves_search_and_hydration_as_separate_buckets() -> None:
     assert set(by_bucket) == {"youtube.search.list", "youtube.core"}
     assert by_bucket["youtube.search.list"].units == 1
     assert by_bucket["youtube.search.list"].limit_units == 100
-    assert by_bucket["youtube.core"].units == 1
+    assert by_bucket["youtube.core"].units == 2
     assert by_bucket["youtube.core"].limit_units == 10000
     assert by_bucket["youtube.search.list"].window_key.endswith(
         ":America/Los_Angeles"

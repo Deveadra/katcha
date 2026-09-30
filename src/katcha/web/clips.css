@@ -136,3 +136,8 @@ code{overflow-wrap:anywhere}
     .dialog-actions{display:grid;grid-template-columns:1fr}
 }
 @media(max-width:430px){.clip-stats{grid-template-columns:1fr}}
+
+#retention-form .dialog-actions { position: sticky; bottom: -23px; padding: 14px 0; background: var(--ae-bg, #151321); z-index: 2; }
+.check-card { cursor: pointer; }
+.check-card:has(input:checked) { border-color: var(--cyan); }
+.check-card:has(input:disabled) { opacity: .6; cursor: not-allowed; }
