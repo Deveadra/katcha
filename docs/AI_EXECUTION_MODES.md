@@ -23,47 +23,36 @@ ducking, manifests, rendering, and recovery; it is not RankSnaxx's production vo
 For `KATCHA_ENV=development`, `KATCHA_AI_EXECUTION_MODE=auto` resolves to
 `fixture`. This keeps development zero-cost even when provider keys are present.
 
-## ChatGPT plan connection
+## ChatGPT subscription connections
 
-For normal operator conversation and command interpretation, Katcha can use **Sign in
-with ChatGPT** instead of requiring an OpenAI API key. Open **Settings** from the
-persistent gear icon and choose **Continue with ChatGPT**. Katcha uses OpenAI's
-open-source OAuth flow, keeps the renewable credentials encrypted with Katcha's local
-credential key, and uses only models returned for that signed-in ChatGPT account.
+Katcha has two distinct ChatGPT subscription paths because OpenAI meters them
+separately.
 
-ChatGPT-plan inference uses the public Responses API with `store=false` and
-`stream=true`. Katcha records this usage as `chatgpt/<model>` with zero API-dollar
-cost in its own usage ledger. The user's ChatGPT plan still has its own usage limits.
+The primary path is **ChatGPT · Codex**. It follows the same Codex OAuth/backend
+pattern used by OpenAI Codex and Roo Code: Katcha authenticates the operator's
+ChatGPT account, sends normal command reasoning to the Codex Responses backend, and
+reads the account's short-window and weekly Codex usage from the ChatGPT usage
+endpoint. The OAuth credentials stay encrypted in Katcha's local database.
 
-Provider order for the Command Center is:
+The secondary path is **Direct ChatGPT app sharing**. This is OpenAI's
+subscription-sharing flow for third-party/open-source apps. It has a separate
+allowance from Codex, so it may report a subscription-sharing limit even while Codex
+and Roo Code still have capacity.
 
-1. connected ChatGPT plan;
-2. configured API-key providers when the plan is unavailable or exhausted;
-3. deterministic stored-data fallback after live providers are exhausted.
+Command Center provider order is:
 
-Specialist background workloads can continue to use API providers when their native
-capabilities are required.
+1. connected ChatGPT Codex subscription;
+2. connected Direct ChatGPT app-sharing subscription;
+3. configured OpenAI/Gemini API-key providers;
+4. deterministic stored-data fallback.
 
-## ChatGPT plan connection
+Both subscription paths are recorded as zero API-dollar cost in Katcha's own usage
+ledger. Provider subscription limits still apply. Specialist workloads such as native
+video analysis, TTS, or provider-specific web search can continue to use API providers
+when their capabilities are required.
 
-For normal operator conversation and command interpretation, Katcha can use **Sign in
-with ChatGPT** instead of requiring an OpenAI API key. Open **Settings** from the
-persistent gear icon and choose **Continue with ChatGPT**. Katcha uses OpenAI's
-open-source OAuth flow, keeps the renewable credentials encrypted with Katcha's local
-credential key, and uses only models returned for that signed-in ChatGPT account.
-
-ChatGPT-plan inference uses the public Responses API with `store=false` and
-`stream=true`. Katcha records this usage as `chatgpt/<model>` with zero API-dollar
-cost in its own usage ledger. The user's ChatGPT plan still has its own usage limits.
-
-Provider order for the Command Center is:
-
-1. connected ChatGPT plan;
-2. configured API-key providers when the plan is unavailable or exhausted;
-3. deterministic stored-data fallback after live providers are exhausted.
-
-Specialist background workloads can continue to use API providers when their native
-capabilities are required.
+Settings displays Codex short-window/weekly usage and reset times so the operator can
+see the same subscription-limit signals before starting expensive agent work.
 
 ## Live mode
 
