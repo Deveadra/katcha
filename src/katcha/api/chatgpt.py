@@ -12,6 +12,7 @@ from katcha.integrations.chatgpt import (
     begin_chatgpt_oauth,
     complete_chatgpt_oauth,
     connection_status,
+    consume_failed_oauth,
     disconnect,
     list_models,
     set_selected_model,
@@ -62,6 +63,10 @@ def chatgpt_oauth_callback(
     client_id: str | None = None,
 ) -> RedirectResponse:
     if error:
+        try:
+            consume_failed_oauth(state)
+        except ChatGPTConnectionError:
+            return RedirectResponse("/settings?chatgpt=state_error")
         return RedirectResponse("/settings?chatgpt=error")
     if not code:
         return RedirectResponse("/settings?chatgpt=error")
