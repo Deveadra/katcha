@@ -133,6 +133,8 @@ class Runtime:
                 stream.write((self.root / ".env.example").read_text())
         values = read_env(self.env_path)
         additions = {}
+        if not values.get("KATCHA_CHATGPT_HOST_ID"):
+            additions["KATCHA_CHATGPT_HOST_ID"] = f"urn:uuid:{uuid.uuid4()}"
         if not values.get("KATCHA_CREDENTIAL_ENCRYPTION_KEY"):
             additions["KATCHA_CREDENTIAL_ENCRYPTION_KEY"] = base64.urlsafe_b64encode(
                 secrets.token_bytes(32)
