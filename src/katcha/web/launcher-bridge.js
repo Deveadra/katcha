@@ -8,6 +8,7 @@ const KATCHA_WORKSPACES = [
     { key: 'channel', label: 'Channel Studio', href: '/channels', icon: '▦' },
     { key: 'production', label: 'Production', href: '/editing', icon: '◇' },
     { key: 'studio', label: 'Clip Studio', href: '/studio', icon: '⌁' },
+    { key: 'settings', label: 'Settings', href: '/settings', icon: '⚙' },
 ];
 
 function workspaceKeyFromPath(path = location.pathname) {
@@ -18,6 +19,7 @@ function workspaceKeyFromPath(path = location.pathname) {
     if (path.startsWith('/ai') || path.endsWith('/ai.html')) return 'ai';
     if (path.endsWith('/studio.html') || path.startsWith('/studio')) return 'studio';
     if (path.startsWith('/editing') || path.endsWith('/editing.html')) return 'production';
+    if (path.startsWith('/settings') || path.endsWith('/settings.html')) return 'settings';
     return 'trends';
 }
 
@@ -138,6 +140,21 @@ function installChatShortcut() {
     document.body.append(shortcut);
 }
 installChatShortcut();
+
+function installSettingsShortcut() {
+    const aside = document.querySelector('.rail, .sidebar');
+    if (!aside || aside.querySelector('.rail-settings-shortcut')) return;
+    const shortcut = document.createElement('a');
+    shortcut.className = 'rail-settings-shortcut';
+    shortcut.href = '/settings';
+    shortcut.setAttribute('aria-label', 'Katcha settings');
+    shortcut.setAttribute('title', 'Settings');
+    shortcut.innerHTML = '<span aria-hidden="true">⚙</span><b>Settings</b>';
+    const footer = aside.querySelector('.rail-footer, .sidebar-footer');
+    if (footer) footer.before(shortcut);
+    else aside.append(shortcut);
+}
+installSettingsShortcut();
 
 /* The local gateway owns authentication; never expose its token to browser storage. */
 (async () => {
