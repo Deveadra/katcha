@@ -331,7 +331,10 @@ def plan_ambiguous_command(
                         output_tokens=plan_result.output_tokens,
                     )
                 return plan_result
-            except ChatGPTConnectionError:
+            except Exception:
+                # ChatGPT plan inference is read-only. A malformed response,
+                # expired session, or transport failure may safely fall through
+                # to the configured API-provider route.
                 pass
 
         decision = route_for_channel(
