@@ -133,7 +133,10 @@ def test_elevenlabs_voice_role_reaches_channel_resolver(monkeypatch) -> None:
 
     def resolve(*, channel_profile_id=None, settings=None, role=None):
         calls.append(role)
-        return ("longform-host-a" if role == "longform_primary" else "default-host", "eleven_multilingual_v2")
+        return (
+            "longform-host-a" if role == "longform_primary" else "default-host",
+            "eleven_multilingual_v2",
+        )
 
     monkeypatch.setattr(tts, "resolve_elevenlabs_voice", resolve)
     settings = Settings(
