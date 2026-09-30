@@ -1,5 +1,7 @@
-import sys
-from types import SimpleNamespace
+import json
+import uuid
+
+import httpx
 
 from katcha.config import Settings
 from katcha.integrations import chatgpt
@@ -45,50 +47,64 @@ def test_returning_authorization_reuses_issued_client_and_hints() -> None:
     assert params["login_hint"] == "person@example.com"
 
 
-def test_chatgpt_plan_inference_uses_preview_safe_responses_shape(monkeypatch) -> None:
+def _session() -> chatgpt.ChatGPTSession:
+    return chatgpt.ChatGPTSession(
+        connection_id=uuid.uuid4(),
+        access_token="oauth-access-token",
+        model="gpt-test",
+        email="person@example.com",
+        display_name="Person",
+    )
+
+
+class _StreamContext:
+    def __init__(self, response: httpx.Response) -> None:
+        self.response = response
+
+    def __enter__(self) -> httpx.Response:
+        return self.response
+
+    def __exit__(self, *_args) -> bool:
+        self.response.close()
+        return False
+
+
+def _sse_response(*events: dict[str, object], status_code: int = 200) -> httpx.Response:
+    body = "".join(
+        "data: " + json.dumps(event) + "\n\n"
+        for event in events
+    )
+    return httpx.Response(
+        status_code,
+        content=body.encode(),
+        request=httpx.Request("POST", "https://api.openai.com/v1/responses"),
+    )
+
+
+def test_chatgpt_plan_inference_uses_fresh_direct_stream(monkeypatch) -> None:
     captured = {}
 
-    class Stream:
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *_):
-            return False
-
-        def __iter__(self):
-            yield SimpleNamespace(
-                type="response.output_text.delta",
-                delta='{"answer":"hello"}',
-            )
-            yield SimpleNamespace(
-                type="response.completed",
-                response=SimpleNamespace(
-                    usage=SimpleNamespace(input_tokens=12, output_tokens=5)
-                ),
-            )
-
-    def create(**kwargs):
+    def stream(method, url, **kwargs):
+        captured["method"] = method
+        captured["url"] = url
         captured.update(kwargs)
-        return Stream()
+        return _StreamContext(
+            _sse_response(
+                {
+                    "type": "response.output_text.delta",
+                    "delta": '{"answer":"hello"}',
+                },
+                {
+                    "type": "response.completed",
+                    "response": {
+                        "usage": {"input_tokens": 12, "output_tokens": 5},
+                    },
+                },
+            )
+        )
 
-    def client(**kwargs):
-        assert kwargs["api_key"] == "oauth-access-token"
-        assert kwargs["base_url"] == "https://api.openai.com/v1"
-        assert kwargs["max_retries"] == 0
-        return SimpleNamespace(responses=SimpleNamespace(create=create))
-
-    monkeypatch.setattr(
-        chatgpt,
-        "active_session",
-        lambda settings=None: chatgpt.ChatGPTSession(
-            connection_id=__import__("uuid").uuid4(),
-            access_token="oauth-access-token",
-            model="gpt-test",
-            email="person@example.com",
-            display_name="Person",
-        ),
-    )
-    monkeypatch.setitem(sys.modules, "openai", SimpleNamespace(OpenAI=client))
+    monkeypatch.setattr(chatgpt, "active_session", lambda settings=None: _session())
+    monkeypatch.setattr(chatgpt.httpx, "stream", stream)
 
     result = chatgpt.invoke_json(
         prompt="hello",
@@ -98,10 +114,13 @@ def test_chatgpt_plan_inference_uses_preview_safe_responses_shape(monkeypatch) -
 
     assert result.text == '{"answer":"hello"}'
     assert result.model == "gpt-test"
-    assert captured["store"] is False
-    assert captured["stream"] is True
-    assert captured["model"] == "gpt-test"
-    assert captured["text"]["format"]["type"] == "json_schema"
+    assert captured["method"] == "POST"
+    assert captured["url"] == "https://api.openai.com/v1/responses"
+    assert captured["json"]["store"] is False
+    assert captured["json"]["stream"] is True
+    assert captured["json"]["model"] == "gpt-test"
+    assert captured["json"]["text"]["format"]["type"] == "json_schema"
+    assert captured["headers"]["Authorization"].startswith("Bearer ")
     for unsupported in (
         "background",
         "conversation",
@@ -112,4 +131,39 @@ def test_chatgpt_plan_inference_uses_preview_safe_responses_shape(monkeypatch) -
         "top_p",
         "user",
     ):
-        assert unsupported not in captured
+        assert unsupported not in captured["json"]
+
+
+def test_chatgpt_plan_stream_preserves_http_failure_detail(monkeypatch) -> None:
+    response = httpx.Response(
+        403,
+        json={
+            "error": {
+                "code": "subscription_sharing_user_not_eligible",
+                "message": "This account is not eligible for direct plan usage.",
+            }
+        },
+        headers={"x-request-id": "req_fixture"},
+        request=httpx.Request("POST", "https://api.openai.com/v1/responses"),
+    )
+    monkeypatch.setattr(chatgpt, "active_session", lambda settings=None: _session())
+    monkeypatch.setattr(
+        chatgpt.httpx,
+        "stream",
+        lambda *args, **kwargs: _StreamContext(response),
+    )
+
+    try:
+        chatgpt.invoke_json(
+            prompt="hello",
+            schema_name="test_schema",
+            schema={"type": "object", "properties": {"answer": {"type": "string"}}},
+        )
+    except chatgpt.ChatGPTConnectionError as exc:
+        detail = str(exc)
+    else:
+        raise AssertionError("expected ChatGPTConnectionError")
+
+    assert "HTTP 403" in detail
+    assert "subscription_sharing_user_not_eligible" in detail
+    assert "req_fixture" in detail
