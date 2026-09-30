@@ -157,6 +157,8 @@ def _validate_id_token(id_token: str) -> dict[str, object]:
             issuer=ISSUER,
             options={"require": ["exp", "iss", "sub", "aud"]},
         )
+    except CodexConnectionError:
+        raise
     except Exception as exc:
         raise CodexConnectionError(
             f"Codex identity validation failed: {type(exc).__name__}"
@@ -394,10 +396,12 @@ def list_models(settings: Settings | None = None) -> list[CodexModel]:
     session = active_session(settings)
     if session is None:
         raise CodexConnectionError("No Codex ChatGPT account is connected")
+    headers = _headers(session)
+    headers["Accept"] = "application/json"
     response = httpx.get(
         f"{CODEX_BASE_URL}/models",
         params={"client_version": MODEL_CATALOG_VERSION},
-        headers=_headers(session),
+        headers=headers,
         timeout=20.0,
     )
     if response.is_error:
