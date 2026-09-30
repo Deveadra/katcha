@@ -610,7 +610,9 @@ def test_launcher_serves_workspace_shell_without_api(tmp_path):
         response = connection.getresponse()
         body = response.read()
         assert response.status == 200
-        assert response.getheader("Content-Type").startswith(("text/javascript", "application/javascript"))
+        assert response.getheader("Content-Type").startswith(
+            ("text/javascript", "application/javascript")
+        )
         assert b'loadChannel' in body
         connection.request("GET", "/launcher-bridge.js")
         response = connection.getresponse()
