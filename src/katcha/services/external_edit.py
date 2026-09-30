@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import json
+import math
 import subprocess
 import tempfile
 import uuid
 import zipfile
 from datetime import UTC, datetime
+from decimal import Decimal
 from pathlib import Path
 from typing import Any, Literal
 
@@ -532,43 +534,53 @@ def record_external_edit_metrics(
         "manual_interventions": manual_interventions,
         "notes": notes,
     }
-    if credits_used is not None and credits_used < 0:
-        raise ValueError("credits_used must be non-negative")
-    if cost_usd is not None and cost_usd < 0:
-        raise ValueError("cost_usd must be non-negative")
-    if production_minutes is not None and production_minutes < 0:
-        raise ValueError("production_minutes must be non-negative")
-    if manual_interventions is not None and manual_interventions < 0:
-        raise ValueError("manual_interventions must be non-negative")
+    for key in ("credits_used", "cost_usd", "production_minutes", "manual_interventions"):
+        value = values[key]
+        if value is not None and (not math.isfinite(value) or value < 0):
+            raise ValueError(f"{key} must be finite and non-negative")
+    if manual_interventions is not None and (
+        isinstance(manual_interventions, bool) or int(manual_interventions) != manual_interventions
+    ):
+        raise ValueError("manual_interventions must be a whole number")
+    if cost_usd is not None and cost_usd >= 1_000_000:
+        raise ValueError("cost_usd must be less than 1000000")
+    updates = {key: value for key, value in values.items() if value is not None}
+    if not updates:
+        raise ValueError("provide at least one provider result")
 
     with session_scope() as session:
-        row = session.get(ExternalEditHandoff, handoff_id)
+        row = session.get(ExternalEditHandoff, handoff_id, with_for_update=True)
         if row is None:
             raise ValueError("external edit handoff not found")
         if row.status == "cancelled":
             raise ValueError("cannot record metrics for a cancelled handoff")
         metadata = dict(row.handoff_metadata or {})
         existing = dict(metadata.get("provider_metrics") or {})
-        existing.update({key: value for key, value in values.items() if value is not None})
+        if all(existing.get(key) == value for key, value in updates.items()):
+            session.expunge(row)
+            return row
+        previous_cost = Decimal(str(existing.get("cost_usd", 0)))
+        existing.update(updates)
         existing["recorded_by"] = actor
         existing["recorded_at"] = datetime.now(UTC).isoformat()
         metadata["provider_metrics"] = existing
         row.handoff_metadata = metadata
 
-        if cost_usd is not None:
+        # Append only the change in total spend, retaining the accounting history.
+        cost_delta = Decimal(str(existing.get("cost_usd", 0))) - previous_cost
+        if cost_usd is not None and cost_delta != 0:
             session.add(
                 UsageEvent(
                     task="external_edit",
                     provider=row.provider,
                     model="manual_bridge",
-                    cost_usd=cost_usd,
+                    cost_usd=cost_delta,
                     reference_type=row.source_type,
                     reference_id=str(row.source_id),
                     usage_metadata={
                         "handoff_id": str(row.id),
-                        "credits_used": credits_used,
-                        "production_minutes": production_minutes,
-                        "manual_interventions": manual_interventions,
+                        **existing,
+                        "previous_cost_usd": str(previous_cost),
                     },
                 )
             )

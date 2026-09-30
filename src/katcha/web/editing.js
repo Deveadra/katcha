@@ -104,7 +104,7 @@ function renderInVideoHandoff() {
     $("invideo-project-id").disabled = adopted;
     $("upload-invideo-output").disabled = adopted;
     $("adopt-invideo-output").disabled = !imported;
-    $("record-invideo-metrics").disabled = false;
+    $("record-invideo-metrics").disabled = row.status === "cancelled";
 }
 async function prepareInVideo(episodeId) {
     const row = await api("/v1/integrations/invideo/handoffs", {
@@ -117,6 +117,9 @@ async function prepareInVideo(episodeId) {
         }),
     });
     state.invideoHandoff = row;
+    for (const [id, key] of [["invideo-credits", "credits_used"], ["invideo-cost", "cost_usd"], ["invideo-minutes", "production_minutes"], ["invideo-interventions", "manual_interventions"]]) {
+        $(id).value = row.handoff_metadata?.provider_metrics?.[key] ?? "";
+    }
     renderInVideoHandoff();
     $("invideo-dialog").showModal();
     message("InVideo package prepared. Download it when ready.");
@@ -170,21 +173,38 @@ async function recordInVideoMetrics() {
     const row = state.invideoHandoff;
     if (!row) throw new Error("Prepare an InVideo handoff first.");
     const number = (id) => {
-        const value = $(id).value.trim();
-        return value === "" ? null : Number(value);
+        const input = $(id);
+        if (!input.checkValidity()) {
+            input.reportValidity();
+            throw new Error("Enter valid, non-negative provider results.");
+        }
+        const value = input.value.trim();
+        if (value === "") return null;
+        const parsed = Number(value);
+        if (!Number.isFinite(parsed)) throw new Error("Enter a valid number.");
+        return parsed;
     };
-    state.invideoHandoff = await api("/v1/integrations/invideo/handoffs/" + encodeURIComponent(row.id) + "/metrics", {
-        method: "POST",
-        body: JSON.stringify({
-            actor: "editing-control-center",
-            credits_used: number("invideo-credits"),
-            cost_usd: number("invideo-cost"),
-            production_minutes: number("invideo-minutes"),
-            manual_interventions: number("invideo-interventions"),
-        }),
-    });
-    renderInVideoHandoff();
-    message("Provider results recorded in Katcha's cost and comparison ledger.");
+    const values = {
+        credits_used: number("invideo-credits"),
+        cost_usd: number("invideo-cost"),
+        production_minutes: number("invideo-minutes"),
+        manual_interventions: number("invideo-interventions"),
+    };
+    if (Object.values(values).every((value) => value === null)) throw new Error("Enter at least one provider result.");
+    $("record-invideo-metrics").disabled = true;
+    try {
+        state.invideoHandoff = await api("/v1/integrations/invideo/handoffs/" + encodeURIComponent(row.id) + "/metrics", {
+            method: "POST",
+            body: JSON.stringify({
+                actor: "editing-control-center",
+                ...values,
+            }),
+        });
+        renderInVideoHandoff();
+        message("Provider results saved. Cost reflects the total for this handoff.");
+    } finally {
+        $("record-invideo-metrics").disabled = state.invideoHandoff?.status === "cancelled";
+    }
 }
 function clearPreviewUrl() {
     if (state.previewUrl) URL.revokeObjectURL(state.previewUrl);

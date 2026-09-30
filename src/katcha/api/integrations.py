@@ -144,9 +144,9 @@ class InVideoMetricsUpdate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     actor: str = Field(default="operator", min_length=1, max_length=128)
-    credits_used: float | None = Field(default=None, ge=0)
-    cost_usd: float | None = Field(default=None, ge=0)
-    production_minutes: float | None = Field(default=None, ge=0)
+    credits_used: float | None = Field(default=None, ge=0, allow_inf_nan=False)
+    cost_usd: float | None = Field(default=None, ge=0, lt=1_000_000, allow_inf_nan=False)
+    production_minutes: float | None = Field(default=None, ge=0, allow_inf_nan=False)
     manual_interventions: int | None = Field(default=None, ge=0)
     notes: str | None = Field(default=None, max_length=2000)
 
