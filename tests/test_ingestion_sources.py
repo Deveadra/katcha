@@ -81,6 +81,52 @@ def test_ingestion_source_creates_discovery_run_with_source_metadata(
     assert run.run_metadata["default_candidate_metadata"]["content_lane"] == "viral_clip"
 
 
+def test_channel_youtube_source_freezes_profile_connection(source_scope) -> None:
+    import uuid
+    from datetime import UTC, datetime, timedelta
+
+    from katcha.intelligence_models import ChannelProfile
+    from katcha.publishing_models import YouTubeConnection
+
+    connection_id = uuid.uuid4()
+    profile_id = uuid.uuid4()
+    with source_scope() as session:
+        session.add(
+            YouTubeConnection(
+                id=connection_id,
+                channel_id="UC" + "a" * 22,
+                channel_title="RankSnaxx",
+                status="active",
+                scopes=["https://www.googleapis.com/auth/youtube"],
+                encrypted_access_token="encrypted-access",
+                encrypted_refresh_token="encrypted-refresh",
+                token_expires_at=datetime.now(UTC) + timedelta(hours=1),
+            )
+        )
+        session.add(
+            ChannelProfile(
+                id=profile_id,
+                youtube_connection_id=connection_id,
+                status="active",
+                timezone="UTC",
+            )
+        )
+
+    source = upsert_ingestion_source(
+        source_key="youtube-channel-watch",
+        name="Creator Watch",
+        adapter_key="youtube",
+        adapter_version="v1",
+        platform="youtube",
+        channel_profile_id=profile_id,
+        query_template={"channel_reference": "@creator", "limit": 25},
+    )
+
+    run = create_discovery_run_from_source(source.id)
+
+    assert run.query["youtube_connection_id"] == str(connection_id)
+
+
 def test_ingestion_source_metadata_flows_to_candidates(source_scope) -> None:
     source = upsert_ingestion_source(
         source_key="rank-snaxx-ig-watch",
