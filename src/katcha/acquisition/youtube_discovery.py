@@ -72,10 +72,11 @@ def _provider_get_json(
 
 def _youtube_request_auth(
     query: dict[str, Any],
-) -> tuple[dict[str, object], dict[str, str], str]:
-    """Prefer Katcha's connected YouTube OAuth identity; fall back to an API key."""
+) -> tuple[dict[str, object], dict[str, str]]:
+    """Resolve a secret-safe credential for public YouTube Data API reads."""
     settings = get_settings()
     requested_connection = str(query.get("youtube_connection_id") or "").strip()
+    api_key = str(settings.youtube_data_api_key or "").strip()
 
     connection_id: uuid.UUID | None = None
     if requested_connection:
@@ -83,6 +84,8 @@ def _youtube_request_auth(
             connection_id = uuid.UUID(requested_connection)
         except ValueError as exc:
             raise ValueError("youtube_connection_id is not a valid UUID") from exc
+    elif api_key:
+        return {"key": api_key}, {}
     else:
         with session_scope() as session:
             connection_id = session.scalar(
@@ -107,17 +110,15 @@ def _youtube_request_auth(
         except YouTubeCredentialError:
             access_token = ""
         if access_token:
-            return {}, {"Authorization": f"Bearer {access_token}"}, "oauth"
+            return {}, {"Authorization": f"Bearer {access_token}"}
 
-    api_key = str(settings.youtube_data_api_key or "").strip()
     if api_key:
-        return {"key": api_key}, {}, "api_key"
+        return {"key": api_key}, {}
 
     raise ValueError(
         "YouTube discovery is not configured. Connect a YouTube channel "
         "or add a YouTube Data API key, then try again."
     )
-
 
 def parse_youtube_candidates(
     search_payload: dict[str, Any],
@@ -277,7 +278,7 @@ class YouTubeDiscoveryAdapter:
         query: dict[str, Any],
         cursor: dict[str, Any],
     ) -> DiscoveryBatch:
-        auth_params, auth_headers, _auth_mode = _youtube_request_auth(query)
+        auth_params, auth_headers = _youtube_request_auth(query)
 
         requested_limit = min(max(int(query.get("limit", 25)), 1), 50)
         order = str(query.get("order") or "date").strip()
