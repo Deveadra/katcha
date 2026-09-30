@@ -263,7 +263,7 @@ class YouTubeDiscoveryAdapter:
             "youtube_connection_id",
             "limit",
         ),
-        required_credentials=("YOUTUBE_OAUTH_OR_DATA_API_KEY",),
+        required_credentials=("YOUTUBE_DATA_API_KEY",),
         sample_query={
             "q": "new game trailer",
             "order": "date",
