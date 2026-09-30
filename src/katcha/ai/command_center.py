@@ -18,6 +18,7 @@ from katcha.ai.router import (
 )
 from katcha.config import Settings, get_settings
 from katcha.domain import AITask
+from katcha.integrations.chatgpt import ChatGPTConnectionError, invoke_json
 
 logger = logging.getLogger(__name__)
 
@@ -174,6 +175,32 @@ def _openai(
     )
 
 
+def _chatgpt(
+    prompt: str,
+    *,
+    request_id: uuid.UUID,
+) -> CommandNarrativeResult:
+    result = invoke_json(
+        prompt=prompt,
+        schema_name="katcha_command_narrative",
+        schema=CommandNarrative.model_json_schema(),
+    )
+    target = ModelTarget("chatgpt", result.model)
+    _record(
+        target=target,
+        input_tokens=result.input_tokens,
+        output_tokens=result.output_tokens,
+        request_id=request_id,
+        reservation_id=None,
+    )
+    return CommandNarrativeResult(
+        CommandNarrative.model_validate_json(result.text),
+        target,
+        result.input_tokens,
+        result.output_tokens,
+    )
+
+
 def _gemini(
     prompt: str,
     *,
@@ -243,7 +270,21 @@ def compose_grounded_answer(
         return fallback
 
     reservation_id: uuid.UUID | None = None
+    attempts: list[str] = []
+    prompt = _prompt(
+        user_prompt=user_prompt,
+        intent=intent,
+        deterministic_answer=deterministic_answer,
+        evidence=evidence,
+    )
+
     try:
+        try:
+            return _chatgpt(prompt, request_id=request_id)
+        except ChatGPTConnectionError as exc:
+            if "No ChatGPT plan connection is available" not in str(exc):
+                attempts.append(f"chatgpt/plan ({type(exc).__name__})")
+
         decision = route_for_channel(
             AITask.COMMAND_PLANNING,
             channel_profile_id,
@@ -254,17 +295,10 @@ def compose_grounded_answer(
             reservation_key=f"command-center:{request_id}",
         )
         reservation_id = decision.reservation_id
-        prompt = _prompt(
-            user_prompt=user_prompt,
-            intent=intent,
-            deterministic_answer=deterministic_answer,
-            evidence=evidence,
-        )
         targets = [decision.route.primary]
         if decision.route.fallback is not None:
             targets.append(decision.route.fallback)
         last_error: Exception | None = None
-        attempts: list[str] = []
         for index, target in enumerate(targets):
             try:
                 if target.provider == "openai" and settings.openai_api_key:
@@ -297,7 +331,7 @@ def compose_grounded_answer(
             "Katcha AI answer unavailable request_id=%s cause=%s attempts=%s",
             request_id,
             type(exc).__name__,
-            attempts if "attempts" in locals() else [],
+            attempts,
         )
         release_budget_reservation(
             reservation_id,
@@ -310,6 +344,6 @@ def compose_grounded_answer(
             0,
             _degraded_notice(
                 exc,
-                attempts if "attempts" in locals() else [],
+                attempts,
             ),
         )
