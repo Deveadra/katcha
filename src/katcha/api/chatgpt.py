@@ -7,12 +7,6 @@ from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, Field
 
 from katcha.config import get_settings
-from katcha.integrations.codex import (
-    CodexConnectionError,
-    complete_codex_oauth,
-    consume_failed_codex_oauth,
-    is_codex_oauth_state,
-)
 from katcha.integrations.chatgpt import (
     ChatGPTConnectionError,
     begin_chatgpt_oauth,
@@ -23,6 +17,12 @@ from katcha.integrations.chatgpt import (
     list_models,
     set_selected_model,
     test_connection,
+)
+from katcha.integrations.codex import (
+    CodexConnectionError,
+    complete_codex_oauth,
+    consume_failed_codex_oauth,
+    is_codex_oauth_state,
 )
 
 router = APIRouter(tags=["chatgpt"])
