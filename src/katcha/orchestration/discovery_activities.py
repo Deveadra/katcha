@@ -38,6 +38,16 @@ from katcha.services.trend_source_reliability import (
 )
 
 
+def _remember_unmanaged_run_error(
+    run_id: uuid.UUID,
+    message: str,
+) -> None:
+    with session_scope() as session:
+        run = session.get(DiscoveryRun, run_id)
+        if run is not None:
+            run.error = message[:8000]
+
+
 def _poll_attempt_id(metadata: dict[str, object]) -> uuid.UUID | None:
     raw = metadata.get("poll_attempt_id")
     if not raw:
@@ -156,7 +166,8 @@ def execute_discovery_page_activity(run_id: str) -> dict[str, object]:
                 ),
             )
             raise ApplicationError(str(exc), non_retryable=True) from exc
-        raise
+        _remember_unmanaged_run_error(run_uuid, str(exc))
+        raise ApplicationError(str(exc), non_retryable=True) from exc
     except ValueError as exc:
         if managed_attempt_id is not None:
             record_poll_failure(
@@ -169,7 +180,8 @@ def execute_discovery_page_activity(run_id: str) -> dict[str, object]:
                 consume_reserved=False,
             )
             raise ApplicationError(str(exc), non_retryable=True) from exc
-        raise
+        _remember_unmanaged_run_error(run_uuid, str(exc))
+        raise ApplicationError(str(exc), non_retryable=True) from exc
     except Exception as exc:
         if managed_attempt_id is not None:
             record_poll_failure(
@@ -185,7 +197,9 @@ def execute_discovery_page_activity(run_id: str) -> dict[str, object]:
                 "discovery provider failed unexpectedly",
                 non_retryable=True,
             ) from exc
-        raise
+        safe_message = "discovery provider failed unexpectedly"
+        _remember_unmanaged_run_error(run_uuid, safe_message)
+        raise ApplicationError(safe_message, non_retryable=True) from exc
 
     candidate_ids: list[str] = []
     default_candidate_metadata = dict(
@@ -300,8 +314,9 @@ def mark_discovery_run_failed(run_id: str, message: str) -> None:
         run = session.get(DiscoveryRun, run_uuid)
         if run is None:
             return
+        final_message = (run.error or message)[:8000]
         run.status = DiscoveryRunStatus.FAILED.value
-        run.error = message[:8000]
+        run.error = final_message
         run.completed_at = datetime.now(UTC)
         session.add(
             DomainEvent(
@@ -310,11 +325,11 @@ def mark_discovery_run_failed(run_id: str, message: str) -> None:
                 event_type="discovery_run.failed",
                 payload={
                     "discovery_run_id": run_id,
-                    "error": message[:2000],
+                    "error": final_message[:2000],
                 },
             )
         )
-    record_discovery_run_failure(run_uuid, message)
+    record_discovery_run_failure(run_uuid, final_message)
 
 
 @activity.defn
