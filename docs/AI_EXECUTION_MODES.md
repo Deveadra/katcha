@@ -35,9 +35,9 @@ reads the account's short-window and weekly Codex usage from the ChatGPT usage
 endpoint. The OAuth credentials stay encrypted in Katcha's local database.
 
 The secondary path is **Direct ChatGPT app sharing**. This is OpenAI's
-subscription-sharing flow for third-party/open-source apps. It has a separate
-allowance from Codex, so it may report a subscription-sharing limit even while Codex
-and Roo Code still have capacity.
+subscription-sharing flow for third-party/open-source apps. Its usage and policy checks are distinct from the Codex backend, and an app-specific
+subscription-sharing limit can block this path even while Codex and Roo Code still have
+capacity.
 
 Command Center provider order is:
 
