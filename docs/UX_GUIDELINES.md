@@ -58,3 +58,16 @@ Katcha's operator workspaces must behave like one product, not seven individuall
 - Workspace menus must close on Escape and outside interaction, expose one `aria-current="page"` item, and retain keyboard-visible focus.
 - New or materially changed pages must remain free of document-level horizontal overflow at 390px and preserve usable keyboard navigation.
 - `web-tests/system.cjs` is the cross-route contract test. Update it when intentionally changing canonical workspace names or shared-shell behavior.
+
+
+### Aerith asset and shell ownership
+
+The Aerith design system is the source of truth for primary Katcha workspace presentation.
+
+- `system/aerith-shell.css` owns primary shell geometry: desktop rail/sidebar, main canvas, topbar, responsive shell collapse, shared connection/status presentation, workspace menu, and Ask Katcha.
+- `system/aerith-components.css` owns reusable controls, panels, glass materials, focus treatment, and progressive disclosure.
+- Workspace-specific Aerith layout belongs in `web/pages/<workspace>-aerith.css`. It may arrange that workspace's content, but it must not recreate the global shell.
+- Primary workspace HTML must reference CSS and JavaScript with absolute web-root paths. Route-relative asset URLs are forbidden because launcher routes have different prefixes.
+- A new Aerith workspace must not depend on an unrelated legacy stylesheet merely to obtain shell geometry. Legacy CSS may remain temporarily for unmigrated feature internals only.
+- Visual acceptance must check computed layout/material properties, not only DOM presence. A page that renders all text but loses its grid, glass panels, spacing, or hierarchy is a regression.
+- Shared launcher tests must verify the real CSS/JS assets required by a workspace, not only its HTML document.
