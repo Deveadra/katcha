@@ -902,9 +902,9 @@ def test_launcher_studio_home_and_shared_styles_are_local_and_keep_context(tmp_p
         for path, target in [
             (
                 "/studio?channel=one&episode=two",
-                "/editing/assets/studio.html?channel=one&episode=two",
+                "/studio/assets/studio.html?channel=one&episode=two",
             ),
-            ("/home", "/operations/assets/operations.html"),
+            ("/home", "/home/assets/home.html"),
         ]:
             connection.request("GET", path)
             response = connection.getresponse()
@@ -913,7 +913,7 @@ def test_launcher_studio_home_and_shared_styles_are_local_and_keep_context(tmp_p
             response.read()
         for path in [
             "/system/aerith-components.css", "/system/aerith-shell.css",
-            "/editing/assets/studio.html", "/operations/assets/operations.html",
+            "/studio/assets/studio.html", "/home/assets/home.html",
         ]:
             connection.request("GET", path)
             response = connection.getresponse()
