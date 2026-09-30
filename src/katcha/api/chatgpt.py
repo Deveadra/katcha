@@ -6,6 +6,7 @@ from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, Field
 
+from katcha.config import get_settings
 from katcha.integrations.chatgpt import (
     ChatGPTConnectionError,
     begin_chatgpt_oauth,
@@ -116,3 +117,77 @@ def disconnect_chatgpt() -> dict[str, object]:
     except ChatGPTConnectionError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     return {"ok": True, "disconnected": disconnected}
+
+
+@router.get("/v1/integrations/ai/providers")
+def ai_provider_status() -> dict[str, object]:
+    settings = get_settings()
+    return {
+        "openai": {
+            "configured": bool(settings.openai_api_key),
+            "model": "gpt-5.6-luna",
+            "mode": "api_key",
+        },
+        "gemini": {
+            "configured": bool(settings.gemini_api_key),
+            "model": "gemini-3.5-flash-lite",
+            "mode": "api_key",
+        },
+        "chatgpt": connection_status(),
+    }
+
+
+@router.post("/v1/integrations/ai/providers/{provider}/test")
+def test_api_provider(provider: str) -> dict[str, object]:
+    settings = get_settings()
+    try:
+        if provider == "openai":
+            if not settings.openai_api_key:
+                raise ChatGPTConnectionError("OpenAI API key is not configured")
+            from openai import OpenAI
+
+            model = "gpt-5.6-luna"
+            OpenAI(
+                api_key=settings.openai_api_key,
+                timeout=20.0,
+                max_retries=0,
+            ).models.retrieve(model)
+            return {
+                "ok": True,
+                "provider": provider,
+                "model": model,
+                "detail": (
+                    "Credential and model access confirmed. Inference quota/billing "
+                    "is checked by the provider when a generation request runs."
+                ),
+            }
+
+        if provider == "gemini":
+            if not settings.gemini_api_key:
+                raise ChatGPTConnectionError("Gemini API key is not configured")
+            from google import genai
+
+            model = "gemini-3.5-flash-lite"
+            genai.Client(api_key=settings.gemini_api_key).models.get(model=model)
+            return {
+                "ok": True,
+                "provider": provider,
+                "model": model,
+                "detail": (
+                    "Credential and model access confirmed. Inference quota/billing "
+                    "is checked by the provider when a generation request runs."
+                ),
+            }
+
+        raise HTTPException(status_code=404, detail="Unknown AI provider")
+    except HTTPException:
+        raise
+    except Exception as exc:
+        detail = " ".join(str(exc).split())[:500]
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                f"{provider} provider check failed: {type(exc).__name__}"
+                + (f": {detail}" if detail else "")
+            ),
+        ) from exc
