@@ -219,14 +219,20 @@ def _gemini(
     from google import genai
     from google.genai import types
 
-    response = genai.Client(api_key=settings.gemini_api_key).models.generate_content(
-        model=target.model,
-        contents=prompt,
-        config=types.GenerateContentConfig(
-            response_mime_type="application/json",
-            response_schema=CommandNarrative,
-        ),
-    )
+    client = genai.Client(api_key=settings.gemini_api_key)
+    try:
+        response = client.models.generate_content(
+            model=target.model,
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                response_mime_type="application/json",
+                response_schema=CommandNarrative,
+            ),
+        )
+    finally:
+        close = getattr(client, "close", None)
+        if callable(close):
+            close()
     usage = response.usage_metadata
     input_tokens = int(getattr(usage, "prompt_token_count", 0) or 0)
     output_tokens = int(getattr(usage, "candidates_token_count", 0) or 0) + int(
@@ -294,7 +300,9 @@ def compose_grounded_answer(
                     isinstance(exc, ChatGPTConnectionError)
                     and "No ChatGPT plan connection is available" in str(exc)
                 ):
-                    attempts.append(f"chatgpt/plan ({type(exc).__name__})")
+                    attempts.append(
+                        _attempt_label(ModelTarget("chatgpt", "plan"), exc)
+                    )
 
         decision = route_for_channel(
             AITask.COMMAND_PLANNING,

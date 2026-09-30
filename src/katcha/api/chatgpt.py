@@ -173,7 +173,13 @@ def test_api_provider(provider: str) -> dict[str, object]:
             from google import genai
 
             model = "gemini-3.5-flash-lite"
-            genai.Client(api_key=settings.gemini_api_key).models.get(model=model)
+            client = genai.Client(api_key=settings.gemini_api_key)
+            try:
+                client.models.get(model=model)
+            finally:
+                close = getattr(client, "close", None)
+                if callable(close):
+                    close()
             return {
                 "ok": True,
                 "provider": provider,

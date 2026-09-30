@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import json
 import secrets
 import threading
 import uuid
@@ -630,17 +631,169 @@ def connection_status() -> dict[str, object]:
     }
 
 
+def _stream_plan_response(
+    session: ChatGPTSession,
+    *,
+    body: dict[str, object],
+    timeout: float,
+) -> tuple[str, dict[str, object] | None, int, int]:
+    payload = {
+        "model": session.model,
+        "store": False,
+        "stream": True,
+        **body,
+    }
+    chunks: list[str] = []
+    completed_payload: dict[str, object] | None = None
+    input_tokens = 0
+    output_tokens = 0
+    completed = False
+
+    try:
+        with httpx.stream(
+            "POST",
+            "https://api.openai.com/v1/responses",
+            headers={
+                "Authorization": "Bearer " + session.access_token,
+                "Content-Type": "application/json",
+                "Accept": "text/event-stream",
+            },
+            json=payload,
+            timeout=timeout,
+        ) as response:
+            if response.status_code >= 400:
+                raw = response.read().decode("utf-8", errors="replace")
+                request_id = response.headers.get("x-request-id") or response.headers.get(
+                    "openai-request-id"
+                )
+                try:
+                    parsed = json.loads(raw)
+                except ValueError:
+                    parsed = None
+                detail = ""
+                if isinstance(parsed, dict):
+                    error = parsed.get("error")
+                    if isinstance(error, dict):
+                        detail = ": ".join(
+                            value
+                            for value in (
+                                str(error.get("code") or "").strip(),
+                                str(error.get("message") or "").strip(),
+                            )
+                            if value
+                        )
+                    if not detail:
+                        detail = str(
+                            parsed.get("detail") or parsed.get("message") or ""
+                        ).strip()
+                if not detail:
+                    detail = " ".join(raw.split())[:700]
+                request_suffix = f"; request_id={request_id}" if request_id else ""
+                raise ChatGPTConnectionError(
+                    f"ChatGPT plan request rejected (HTTP {response.status_code}"
+                    f"{request_suffix})" + (f": {detail}" if detail else "")
+                )
+
+            data_lines: list[str] = []
+            for line in response.iter_lines():
+                if line == "":
+                    if not data_lines:
+                        continue
+                    raw_event = "\n".join(data_lines)
+                    data_lines.clear()
+                    if raw_event == "[DONE]":
+                        continue
+                    try:
+                        event = json.loads(raw_event)
+                    except ValueError as exc:
+                        raise ChatGPTConnectionError(
+                            "ChatGPT plan returned an invalid streaming event"
+                        ) from exc
+                    if not isinstance(event, dict):
+                        continue
+                    event_type = str(event.get("type") or "")
+                    if event_type == "response.output_text.delta":
+                        chunks.append(str(event.get("delta") or ""))
+                    elif event_type == "response.failed":
+                        response_payload = event.get("response")
+                        error = (
+                            response_payload.get("error")
+                            if isinstance(response_payload, dict)
+                            else None
+                        )
+                        code = (
+                            str(error.get("code") or "unknown_error")
+                            if isinstance(error, dict)
+                            else "unknown_error"
+                        )
+                        message = (
+                            str(error.get("message") or "").strip()
+                            if isinstance(error, dict)
+                            else ""
+                        )
+                        raise ChatGPTConnectionError(
+                            f"ChatGPT plan inference failed: {code}"
+                            + (f": {message}" if message else "")
+                        )
+                    elif event_type == "response.incomplete":
+                        raise ChatGPTConnectionError(
+                            "ChatGPT plan inference ended incomplete"
+                        )
+                    elif event_type == "response.completed":
+                        completed = True
+                        response_payload = event.get("response")
+                        if isinstance(response_payload, dict):
+                            completed_payload = dict(response_payload)
+                            usage = response_payload.get("usage")
+                            if isinstance(usage, dict):
+                                input_tokens = int(usage.get("input_tokens") or 0)
+                                output_tokens = int(usage.get("output_tokens") or 0)
+                    continue
+                if line.startswith("data:"):
+                    data_lines.append(line[5:].lstrip())
+    except ChatGPTConnectionError:
+        raise
+    except httpx.HTTPError as exc:
+        raise ChatGPTConnectionError(
+            f"ChatGPT plan transport failed: {type(exc).__name__}: {exc}"
+        ) from exc
+
+    if not completed:
+        raise ChatGPTConnectionError(
+            "ChatGPT plan stream ended before response.completed"
+        )
+    return "".join(chunks).strip(), completed_payload, input_tokens, output_tokens
+
+
 def test_connection(settings: Settings | None = None) -> dict[str, object]:
     session = active_session(settings)
     if session is None:
         raise ChatGPTConnectionError("No ChatGPT account is connected")
     models = _models_for_token(session.access_token)
+    text, _, _, _ = _stream_plan_response(
+        session,
+        body={
+            "input": [
+                {
+                    "role": "user",
+                    "content": "Reply with exactly: KATCHA_CONNECTED",
+                }
+            ]
+        },
+        timeout=30.0,
+    )
+    if "KATCHA_CONNECTED" not in text:
+        raise ChatGPTConnectionError(
+            "ChatGPT model catalog is reachable, but live inference returned "
+            "an unexpected response"
+        )
     return {
         "ok": True,
         "model_count": len(models),
         "selected_model": session.model,
         "display_name": session.display_name,
         "email": session.email,
+        "inference_verified": True,
     }
 
 
@@ -696,25 +849,11 @@ def invoke_json(
     if session is None:
         raise ChatGPTConnectionError("No ChatGPT plan connection is available")
 
-    from openai import OpenAI
-
-    client = OpenAI(
-        api_key=session.access_token,
-        base_url="https://api.openai.com/v1",
-        timeout=45.0,
-        max_retries=0,
-    )
-    chunks: list[str] = []
-    completed = False
-    input_tokens = 0
-    output_tokens = 0
-    try:
-        with client.responses.create(
-            model=session.model,
-            input=[{"role": "user", "content": prompt}],
-            store=False,
-            stream=True,
-            text={
+    text, _, input_tokens, output_tokens = _stream_plan_response(
+        session,
+        body={
+            "input": [{"role": "user", "content": prompt}],
+            "text": {
                 "format": {
                     "type": "json_schema",
                     "name": schema_name,
@@ -722,39 +861,9 @@ def invoke_json(
                     "strict": False,
                 }
             },
-        ) as stream:
-            for event in stream:
-                event_type = str(getattr(event, "type", ""))
-                if event_type == "response.output_text.delta":
-                    chunks.append(str(getattr(event, "delta", "")))
-                elif event_type == "response.failed":
-                    response = getattr(event, "response", None)
-                    error = getattr(response, "error", None)
-                    code = getattr(error, "code", None) or "unknown_error"
-                    raise ChatGPTConnectionError(
-                        f"ChatGPT plan inference failed: {code}"
-                    )
-                elif event_type == "response.incomplete":
-                    raise ChatGPTConnectionError(
-                        "ChatGPT plan inference ended incomplete"
-                    )
-                elif event_type == "response.completed":
-                    completed = True
-                    response = getattr(event, "response", None)
-                    usage = getattr(response, "usage", None)
-                    input_tokens = int(getattr(usage, "input_tokens", 0) or 0)
-                    output_tokens = int(getattr(usage, "output_tokens", 0) or 0)
-    except ChatGPTConnectionError:
-        raise
-    except Exception as exc:
-        raise ChatGPTConnectionError(
-            f"ChatGPT plan request failed: {type(exc).__name__}: {exc}"
-        ) from exc
-    if not completed:
-        raise ChatGPTConnectionError(
-            "ChatGPT plan stream ended before response.completed"
-        )
-    text = "".join(chunks).strip()
+        },
+        timeout=45.0,
+    )
     if not text:
         raise ChatGPTConnectionError("ChatGPT plan response contained no text")
     return ChatGPTInference(
@@ -778,28 +887,15 @@ def invoke_web_search_json(
     if session is None:
         raise ChatGPTConnectionError("No ChatGPT plan connection is available")
 
-    from openai import OpenAI
-
-    client = OpenAI(
-        api_key=session.access_token,
-        base_url="https://api.openai.com/v1",
-        timeout=90.0,
-        max_retries=0,
-    )
-    completed_payload: dict[str, object] | None = None
-    input_tokens = 0
-    output_tokens = 0
-    try:
-        with client.responses.create(
-            model=session.model,
-            input=[{"role": "user", "content": prompt}],
-            store=False,
-            stream=True,
-            reasoning={"effort": "low"},
-            tools=[tool],
-            tool_choice="required",
-            include=["web_search_call.action.sources"],
-            text={
+    _, completed_payload, input_tokens, output_tokens = _stream_plan_response(
+        session,
+        body={
+            "input": [{"role": "user", "content": prompt}],
+            "reasoning": {"effort": "low"},
+            "tools": [tool],
+            "tool_choice": "required",
+            "include": ["web_search_call.action.sources"],
+            "text": {
                 "format": {
                     "type": "json_schema",
                     "name": schema_name,
@@ -807,39 +903,9 @@ def invoke_web_search_json(
                     "strict": False,
                 }
             },
-        ) as stream:
-            for event in stream:
-                event_type = str(getattr(event, "type", ""))
-                if event_type == "response.failed":
-                    response = getattr(event, "response", None)
-                    error = getattr(response, "error", None)
-                    code = getattr(error, "code", None) or "unknown_error"
-                    raise ChatGPTConnectionError(
-                        f"ChatGPT plan web search failed: {code}"
-                    )
-                if event_type == "response.incomplete":
-                    raise ChatGPTConnectionError(
-                        "ChatGPT plan web search ended incomplete"
-                    )
-                if event_type != "response.completed":
-                    continue
-                response = getattr(event, "response", None)
-                usage = getattr(response, "usage", None)
-                input_tokens = int(getattr(usage, "input_tokens", 0) or 0)
-                output_tokens = int(getattr(usage, "output_tokens", 0) or 0)
-                if response is not None and hasattr(response, "model_dump"):
-                    raw = response.model_dump(mode="json", exclude_none=True)
-                    if isinstance(raw, dict):
-                        completed_payload = {
-                            str(key): value for key, value in raw.items()
-                        }
-    except ChatGPTConnectionError:
-        raise
-    except Exception as exc:
-        raise ChatGPTConnectionError(
-            f"ChatGPT plan web search failed: {type(exc).__name__}: {exc}"
-        ) from exc
-
+        },
+        timeout=90.0,
+    )
     if completed_payload is None:
         raise ChatGPTConnectionError(
             "ChatGPT plan web search ended without a completed response payload"
