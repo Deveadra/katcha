@@ -19,6 +19,7 @@ const workspaces = [
     { file: "channels.html", label: "Channel Studio", help: 2 },
     { file: "editing.html", label: "Production", help: 3 },
     { file: "studio.html", label: "Clip Studio", help: 3 },
+    { file: "settings.html", label: "Settings" },
 ];
 const labels = workspaces.map((row) => row.label);
 

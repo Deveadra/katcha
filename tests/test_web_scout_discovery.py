@@ -1,10 +1,12 @@
 from katcha.acquisition.adapters import available_adapters
 from katcha.acquisition.web_scout import (
+    WebScoutDiscoveryAdapter,
     _next_scout_cursor,
     _response_output_text,
     _web_search_tool,
     parse_web_scout_output,
 )
+from katcha.integrations.chatgpt import ChatGPTWebSearchInference
 
 
 def test_web_scout_adapter_is_registered() -> None:
@@ -94,3 +96,76 @@ def test_web_scout_extracts_responses_api_output_text() -> None:
     }
 
     assert _response_output_text(payload) == '{"items":[]}'
+
+
+
+def test_web_scout_uses_chatgpt_plan_without_api_key(monkeypatch) -> None:
+    class Settings:
+        ai_enabled = True
+        chatgpt_host_id = "urn:uuid:test-host"
+        openai_api_key = None
+
+        @staticmethod
+        def resolved_ai_execution_mode() -> str:
+            return "live"
+
+    payload = {
+        "id": "resp_plan",
+        "output": [
+            {
+                "type": "web_search_call",
+                "action": {
+                    "sources": [
+                        {"url": "https://bsky.app/profile/new/post/123"}
+                    ]
+                },
+            },
+            {
+                "type": "message",
+                "content": [
+                    {
+                        "type": "output_text",
+                        "text": (
+                            '{"items":[{"source_url":'
+                            '"https://bsky.app/profile/new/post/123",'
+                            '"title":"Fresh gaming post"}]}'
+                        ),
+                        "annotations": [],
+                    }
+                ],
+            },
+        ],
+    }
+    calls = []
+    monkeypatch.setattr(
+        "katcha.acquisition.web_scout.get_settings",
+        lambda: Settings(),
+    )
+    monkeypatch.setattr(
+        "katcha.acquisition.web_scout.invoke_web_search_json",
+        lambda **kwargs: ChatGPTWebSearchInference(
+            payload=payload,
+            model="gpt-plan",
+            input_tokens=120,
+            output_tokens=45,
+        ),
+    )
+    monkeypatch.setattr(
+        "katcha.acquisition.web_scout.record_usage",
+        lambda **kwargs: calls.append(kwargs),
+    )
+
+    batch = WebScoutDiscoveryAdapter().discover(
+        {
+            "operator_request": "Find new gaming sources",
+            "platforms": ["bluesky"],
+            "limit": 10,
+        },
+        {},
+    )
+
+    assert len(batch.items) == 1
+    assert batch.items[0].source_url == "https://bsky.app/profile/new/post/123"
+    assert batch.provider_usage == {"openai.web_search": 1}
+    assert calls[0]["target"].provider == "chatgpt"
+    assert calls[0]["cost_usd"] == 0

@@ -25,6 +25,7 @@ _PUBLIC_PATHS = {
     "/v1/health/workspace",
     "/v1/health/ready",
     "/v1/integrations/youtube/oauth/callback",
+    "/auth/callback",
 }
 
 

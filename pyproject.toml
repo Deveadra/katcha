@@ -28,6 +28,7 @@ dependencies = [
 ai = [
   "openai>=1.100,<2",
   "google-genai>=1.30,<2",
+  "PyJWT[crypto]>=2.10,<3",
 ]
 media = [
   "faster-whisper>=1.1,<2",

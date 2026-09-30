@@ -133,6 +133,8 @@ class Runtime:
                 stream.write((self.root / ".env.example").read_text())
         values = read_env(self.env_path)
         additions = {}
+        if not values.get("KATCHA_CHATGPT_HOST_ID"):
+            additions["KATCHA_CHATGPT_HOST_ID"] = f"urn:uuid:{uuid.uuid4()}"
         if not values.get("KATCHA_CREDENTIAL_ENCRYPTION_KEY"):
             additions["KATCHA_CREDENTIAL_ENCRYPTION_KEY"] = base64.urlsafe_b64encode(
                 secrets.token_bytes(32)
@@ -649,6 +651,49 @@ class Runtime:
                         startup_seconds=final_seconds,
                     )
 
+    def apply_ai(self):
+        """Reload only services that cache AI provider configuration."""
+        self.values = read_env(self.env_path)
+        self.known_secrets.update(
+            v for k, v in self.values.items() if v and SENSITIVE.search(k)
+        )
+        if not self.desired_running or self.phase in ("idle", "stopped", "failed"):
+            self.event(
+                "info",
+                "ai",
+                "AI settings saved; Start Katcha will apply them.",
+            )
+            return False
+        self.event(
+            "info",
+            "ai",
+            "Applying AI settings without restarting storage, Temporal, or renderer.",
+        )
+        self.run(
+            self.command()
+            + [
+                "up",
+                "-d",
+                "--no-build",
+                "--no-deps",
+                "--force-recreate",
+                "--wait",
+                "--wait-timeout",
+                "120",
+                "api",
+                "worker",
+                "analysis-worker",
+                "production-worker",
+                "intelligence-worker",
+            ],
+            timeout=180,
+        )
+        if not self.probe_workspace():
+            raise RuntimeError("AI settings were saved, but the Katcha API did not recover.")
+        self.start_logs()
+        self.event("info", "ai", "AI settings applied.")
+        return True
+
     def apply_telegram(self):
         """Reload only the services that cache Telegram settings."""
         self.values = read_env(self.env_path)
@@ -951,6 +996,7 @@ class Handler(BaseHTTPRequestHandler):
             "/studio": "/studio/assets/studio.html",
             "/ai": "/ai/assets/ai.html",
             "/operations": "/operations/assets/operations.html",
+            "/settings": "/settings/assets/settings.html",
         }
         if path in redirects:
             location = redirects[path]
@@ -999,6 +1045,7 @@ class Handler(BaseHTTPRequestHandler):
             "/studio/assets/",
             "/ai/assets/",
             "/operations/assets/",
+            "/settings/assets/",
         )
         prefix = next((item for item in prefixes if path.startswith(item)), None)
         if prefix is None:
@@ -1100,6 +1147,14 @@ class Handler(BaseHTTPRequestHandler):
                 finally:
                     runtime.lock.release()
                 return self.send(200, {"ok": True})
+            if self.path == "/runtime/ai/apply":
+                if not runtime.lock.acquire(blocking=False):
+                    return self.send(409, {"error": "Wait for the active operation"})
+                try:
+                    applied = runtime.apply_ai()
+                finally:
+                    runtime.lock.release()
+                return self.send(200, {"ok": True, "applied": applied})
             if self.path == "/runtime/telegram/apply":
                 if not runtime.lock.acquire(blocking=False):
                     return self.send(409, {"error": "Wait for the active operation"})
@@ -1128,6 +1183,8 @@ class Handler(BaseHTTPRequestHandler):
             "/studio",
             "/ai",
             "/operations",
+            "/settings",
+            "/auth/callback",
         )
         if not self.path.startswith(allowed_prefixes):
             return self.send(404, {"error": "Not found"})

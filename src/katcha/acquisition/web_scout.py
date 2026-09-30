@@ -17,6 +17,10 @@ from katcha.ai.pricing import estimate_token_cost
 from katcha.ai.router import ModelTarget, assert_ai_budget, record_usage
 from katcha.config import get_settings
 from katcha.domain import AITask
+from katcha.integrations.chatgpt import (
+    ChatGPTConnectionError,
+    invoke_web_search_json,
+)
 
 _PLATFORM_DOMAINS = {
     "tiktok": ("tiktok.com",),
@@ -353,7 +357,7 @@ class WebScoutDiscoveryAdapter:
             "freshness_horizon_hours",
             "limit",
         ),
-        required_credentials=("KATCHA_OPENAI_API_KEY",),
+        required_credentials=(),
         sample_query={
             "operator_request": "Find new gaming clip sources and communities.",
             "platforms": ["tiktok", "instagram", "x", "bluesky"],
@@ -369,17 +373,12 @@ class WebScoutDiscoveryAdapter:
         cursor: dict[str, Any],
     ) -> DiscoveryBatch:
         settings = get_settings()
-        if not settings.openai_api_key:
-            raise ValueError("Autonomous web scouting requires KATCHA_OPENAI_API_KEY")
         if not settings.ai_enabled:
             raise ValueError("Autonomous web scouting requires KATCHA_AI_ENABLED=true")
         if settings.resolved_ai_execution_mode() != "live":
             raise ValueError(
                 "Autonomous web scouting requires KATCHA_AI_EXECUTION_MODE=live"
             )
-        target = ModelTarget("openai", settings.web_scout_model)
-        estimated_cost = estimate_token_cost(target, 128000, 2200) + Decimal("0.01")
-        assert_ai_budget(max(estimated_cost, Decimal("0.02")))
         limit = min(max(int(query.get("limit", 40)), 1), 100)
 
         schema = {
@@ -406,6 +405,66 @@ class WebScoutDiscoveryAdapter:
             "required": ["items"],
             "additionalProperties": False,
         }
+        plan_error: ChatGPTConnectionError | None = None
+        if getattr(settings, "chatgpt_host_id", None):
+            try:
+                plan = invoke_web_search_json(
+                    prompt=_search_prompt(query, limit, cursor=cursor),
+                    schema_name="katcha_web_scout_results",
+                    schema=schema,
+                    tool=_web_search_tool(query),
+                    settings=settings,
+                )
+                response_payload = plan.payload
+                web_search_calls = _web_search_call_count(response_payload)
+                target = ModelTarget("chatgpt", plan.model)
+                record_usage(
+                    task=AITask.METADATA,
+                    target=target,
+                    input_units=plan.input_tokens,
+                    output_units=plan.output_tokens,
+                    cost_usd=Decimal("0"),
+                    reference_type="web_scout",
+                    reference_id=str(response_payload.get("id") or ""),
+                    metadata={
+                        "web_search_calls": web_search_calls,
+                        "chatgpt_plan": True,
+                        "api_cost_usd": "0",
+                    },
+                )
+                grounded_urls = _grounded_url_keys(response_payload)
+                items = parse_web_scout_output(
+                    _response_output_text(response_payload),
+                    grounded_urls=grounded_urls,
+                    limit=limit,
+                )
+                return DiscoveryBatch(
+                    items=items,
+                    next_cursor=_next_scout_cursor(cursor, items),
+                    done=True,
+                    provider_usage={"openai.web_search": web_search_calls},
+                )
+            except ChatGPTConnectionError as exc:
+                plan_error = exc
+
+        if not settings.openai_api_key:
+            if plan_error is not None:
+                raise DiscoveryProviderError(
+                    "ChatGPT plan web scouting was unavailable and no OpenAI API "
+                    "fallback is configured",
+                    kind="provider_unavailable",
+                    transient=False,
+                    provider_usage={"openai.web_search": 0},
+                ) from plan_error
+            raise ValueError(
+                "Autonomous web scouting needs a connected ChatGPT plan or "
+                "KATCHA_OPENAI_API_KEY fallback. Open Katcha Settings to connect one."
+            )
+
+        target = ModelTarget("openai", settings.web_scout_model)
+        estimated_cost = estimate_token_cost(target, 128000, 2200) + Decimal("0.01")
+        assert_ai_budget(max(estimated_cost, Decimal("0.02")))
+
         request_payload = {
             "model": settings.web_scout_model,
             "input": _search_prompt(query, limit, cursor=cursor),

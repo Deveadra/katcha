@@ -574,3 +574,42 @@
         0 0 14px rgba(185, 168, 255, 0.78),
         0 0 24px rgba(124, 232, 255, 0.30);
 }
+
+
+.rail-settings-shortcut {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    min-height: 38px;
+    margin: 10px 4px 2px;
+    padding: 9px 11px;
+    border: 1px solid var(--ae-line);
+    border-radius: 10px;
+    background: rgba(255,255,255,.022);
+    color: var(--ae-text-secondary) !important;
+    text-decoration: none;
+    font-size: 11px;
+}
+.rail-settings-shortcut:hover,
+.rail-settings-shortcut[aria-current="page"] {
+    border-color: rgba(183,165,255,.34);
+    background: linear-gradient(110deg, rgba(183,165,255,.10), rgba(132,231,255,.05));
+    color: var(--ae-text) !important;
+}
+.rail-settings-shortcut > span {
+    width: 18px;
+    text-align: center;
+    color: var(--ae-violet);
+    font-size: 16px;
+}
+.rail-settings-shortcut b { font-weight: 700; }
+@media (max-width: 950px) {
+    .rail-settings-shortcut {
+        margin-left: auto;
+        width: 42px;
+        min-width: 42px;
+        padding: 9px;
+        justify-content: center;
+    }
+    .rail-settings-shortcut b { display: none; }
+}

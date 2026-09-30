@@ -23,6 +23,10 @@ def test_bootstrap_preserves_keys_and_unrelated_settings(tmp_path):
     key = app.values["KATCHA_CREDENTIAL_ENCRYPTION_KEY"]
     app.bootstrap()
     assert app.values["KATCHA_CREDENTIAL_ENCRYPTION_KEY"] == key
+    assert app.values["KATCHA_CHATGPT_HOST_ID"].startswith("urn:uuid:")
+    host_id = app.values["KATCHA_CHATGPT_HOST_ID"]
+    app.bootstrap()
+    assert app.values["KATCHA_CHATGPT_HOST_ID"] == host_id
     assert app.values["KATCHA_OPENAI_API_KEY"] == "private-key"
     assert len(app.values["KATCHA_TELEGRAM_PAIRING_CODE"]) >= 8
     assert "KATCHA_TELEGRAM_REVIEW_STORAGE_ENDPOINT_URL" in runtime.FIELDS
@@ -682,6 +686,16 @@ def test_launcher_serves_workspace_shell_without_api(tmp_path):
         body = response.read()
         assert response.status == 200
         assert b"Katcha AI" in body
+        connection.request("GET", "/settings")
+        response = connection.getresponse()
+        assert response.status == 302
+        assert response.getheader("Location") == "/settings/assets/settings.html"
+        response.read()
+        connection.request("GET", "/settings/assets/settings.html")
+        response = connection.getresponse()
+        body = response.read()
+        assert response.status == 200
+        assert b"Continue with ChatGPT" in body
         connection.close()
     finally:
         server.shutdown()
@@ -875,6 +889,31 @@ def test_prebuilt_probe_is_bounded_before_workspace_fallback(tmp_path):
     commands = [call.args[0] for call in run.call_args_list]
     assert ["docker", "pull", remote] not in commands
     assert any("build" in command and command[-1:] == ["api"] for command in commands)
+
+
+def test_apply_ai_recreates_only_ai_consumers(tmp_path):
+    app = instance(tmp_path)
+    app.desired_running = True
+    app.phase = "ready"
+    with (
+        patch.object(app, "run") as run,
+        patch.object(app, "probe_workspace", return_value=True),
+        patch.object(app, "start_logs"),
+    ):
+        assert app.apply_ai() is True
+
+    command = run.call_args.args[0]
+    assert "--force-recreate" in command
+    for service in (
+        "api",
+        "worker",
+        "analysis-worker",
+        "production-worker",
+        "intelligence-worker",
+    ):
+        assert service in command
+    assert "renderer" not in command
+    assert "telegram-worker" not in command
 
 
 def test_apply_telegram_recreates_only_api_and_telegram_worker(tmp_path):
