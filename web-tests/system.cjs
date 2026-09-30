@@ -45,6 +45,19 @@ const labels = workspaces.map((row) => row.label);
             const menu = page.locator(".workspace-menu");
             await menu.locator("summary").waitFor();
 
+            const routeRelativeAssets = await page
+                .locator('link[rel="stylesheet"][href], script[src]')
+                .evaluateAll((nodes) =>
+                    nodes
+                        .map((node) => node.getAttribute("href") || node.getAttribute("src"))
+                        .filter((value) => value && !value.startsWith("/") && !/^https?:/.test(value)),
+                );
+            assert.deepEqual(
+                routeRelativeAssets,
+                [],
+                workspace.label + ": route-relative CSS/JS assets are not allowed",
+            );
+
             assert.deepEqual(
                 await menu.locator(".workspace-menu-popover a b").allTextContents(),
                 labels,
