@@ -521,8 +521,15 @@ let browser;
         );
     }
     assert.match(await page.locator(".ai-workspace-head").innerText(), /Ask\. Inspect\. Act\./);
+    assert.notEqual(
+        await page.evaluate(() => getComputedStyle(document.body).overflowY),
+        "hidden",
+    );
+    await page.locator("#command-form").scrollIntoViewIfNeeded();
     assert.equal(
-        await page.evaluate(() => document.documentElement.scrollHeight <= innerHeight + 2),
+        await page.locator("#command-form").evaluate(
+            (form) => form.getBoundingClientRect().bottom <= innerHeight + 2,
+        ),
         true,
     );
     assert.equal(await page.locator("#channel").inputValue(), channelId);
