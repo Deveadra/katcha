@@ -770,12 +770,30 @@ def test_connection(settings: Settings | None = None) -> dict[str, object]:
     if session is None:
         raise ChatGPTConnectionError("No ChatGPT account is connected")
     models = _models_for_token(session.access_token)
+    text, _, _, _ = _stream_plan_response(
+        session,
+        body={
+            "input": [
+                {
+                    "role": "user",
+                    "content": "Reply with exactly: KATCHA_CONNECTED",
+                }
+            ]
+        },
+        timeout=30.0,
+    )
+    if "KATCHA_CONNECTED" not in text:
+        raise ChatGPTConnectionError(
+            "ChatGPT model catalog is reachable, but live inference returned "
+            "an unexpected response"
+        )
     return {
         "ok": True,
         "model_count": len(models),
         "selected_model": session.model,
         "display_name": session.display_name,
         "email": session.email,
+        "inference_verified": True,
     }
 
 
