@@ -497,10 +497,16 @@ def active_session(settings: Settings | None = None) -> ChatGPTSession | None:
     if not connection.selected_model:
         access = decrypt_secret(connection.encrypted_access_token, settings)
         models = _models_for_token(access)
-        set_selected_model(models[0].slug)
-        connection = active_connection()
-        if connection is None:
-            return None
+        selected_model = models[0].slug
+        with session_scope() as db:
+            row = db.get(ChatGPTConnection, connection.id)
+            if row is None or not row.active:
+                return None
+            row.selected_model = selected_model
+            db.flush()
+            db.refresh(row)
+            db.expunge(row)
+            connection = row
     return ChatGPTSession(
         connection_id=connection.id,
         access_token=decrypt_secret(connection.encrypted_access_token, settings),
