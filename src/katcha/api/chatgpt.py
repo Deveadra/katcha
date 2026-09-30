@@ -7,6 +7,12 @@ from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, Field
 
 from katcha.config import get_settings
+from katcha.integrations.codex import (
+    CodexConnectionError,
+    complete_codex_oauth,
+    consume_failed_codex_oauth,
+    is_codex_oauth_state,
+)
 from katcha.integrations.chatgpt import (
     ChatGPTConnectionError,
     begin_chatgpt_oauth,
@@ -62,6 +68,23 @@ def chatgpt_oauth_callback(
     error: str | None = None,
     client_id: str | None = None,
 ) -> RedirectResponse:
+    if is_codex_oauth_state(state):
+        if error:
+            try:
+                consume_failed_codex_oauth(state)
+            except CodexConnectionError:
+                return RedirectResponse(
+                    "http://127.0.0.1:8765/settings?codex=state_error"
+                )
+            return RedirectResponse("http://127.0.0.1:8765/settings?codex=error")
+        if not code:
+            return RedirectResponse("http://127.0.0.1:8765/settings?codex=error")
+        try:
+            complete_codex_oauth(state=state, code=code)
+        except CodexConnectionError:
+            return RedirectResponse("http://127.0.0.1:8765/settings?codex=error")
+        return RedirectResponse("http://127.0.0.1:8765/settings?codex=connected")
+
     if error:
         try:
             consume_failed_oauth(state)
