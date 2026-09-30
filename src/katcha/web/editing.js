@@ -1,7 +1,8 @@
 /* All state comes from the authenticated, same-origin Katcha control plane. */
+const launchParams = new URLSearchParams(location.search);
 const state = {
-    token: "",
-    channel: "",
+    token: sessionStorage.getItem("katcha.controlToken") || "",
+    channel: launchParams.get("channel") || sessionStorage.getItem("katcha.channel") || "",
     episodes: [],
     blueprints: [],
     templates: [],
@@ -701,12 +702,15 @@ async function connect(event) {
         $("channel").disabled = false; $("refresh").disabled = false;
         $("connection").textContent = "CONNECTED"; $("connection").classList.add("online");
         if (channels.length) {
-            const requested = new URLSearchParams(location.search).get("channel");
-            $("channel").value = channels.some((row) => row.id === requested)
-                ? requested
+            const preferred = state.channel && channels.some((row) => row.id === state.channel)
+                ? state.channel
                 : channels[0].id;
+            $("channel").value = preferred;
+            state.channel = preferred;
+            rememberWorkspace();
             await loadChannel();
-        } else message("Connected. Create a channel through the control API to begin.");
+        }
+        else message("Connected. Create a channel through the control API to begin.");
     } catch (error) { $("connection").textContent = "OFFLINE"; $("connection").classList.remove("online"); message(error.message, true); }
 }
 async function action(event) {

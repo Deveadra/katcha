@@ -24,10 +24,33 @@ const assert = require('node:assert/strict');
         await page.waitForFunction(()=>document.getElementById('phase').textContent==='IDLE');
         assert.equal(await page.locator('#open').getAttribute('aria-disabled'),'false');
         const workspace=await browser.newPage({viewport:{width:1440,height:1100}});
-        await workspace.goto('http://localhost:8765/editing');
-        await workspace.getByRole('heading',{name:/Make, review, recover/}).waitFor();
-        await workspace.waitForFunction(()=>document.getElementById('connection').textContent==='WARMING');
-        assert.match(await workspace.locator('#message').textContent(),/Start services/);
+        await workspace.goto('http://localhost:8765/home');
+        await workspace.getByRole('heading',{name:/What needs you now/}).waitFor();
+        await workspace.waitForFunction(()=>document.getElementById('connection-state').textContent==='WARMING');
+        assert.match(await workspace.locator('#status').textContent(),/Start services/);
+        const chatShortcut=workspace.locator('#katcha-chat-shortcut');
+        await chatShortcut.waitFor();
+        assert.equal(await chatShortcut.evaluate(node=>getComputedStyle(node).position),'fixed');
+        assert.equal(await chatShortcut.isVisible(),true);
+        assert.match(await chatShortcut.innerText(),/Ask Katcha/);
+        const shortcutStyle=await chatShortcut.evaluate(node=>({
+            backgroundImage:getComputedStyle(node).backgroundImage,
+            backdropFilter:getComputedStyle(node).backdropFilter||getComputedStyle(node).webkitBackdropFilter
+        }));
+        assert.match(shortcutStyle.backgroundImage,/linear-gradient/);
+        assert.match(shortcutStyle.backdropFilter,/blur/);
+        const panelGlass=await workspace.locator('.home-panel').first().evaluate(node=>({
+            backgroundImage:getComputedStyle(node).backgroundImage,
+            backdropFilter:getComputedStyle(node).backdropFilter||getComputedStyle(node).webkitBackdropFilter
+        }));
+        assert.match(panelGlass.backgroundImage,/linear-gradient/);
+        assert.match(panelGlass.backdropFilter,/blur/);
+        const skip=workspace.locator('.ae-skip-link');
+        assert.equal(await skip.count(),1);
+        assert.notEqual(await skip.evaluate(node=>getComputedStyle(node).position),'static');
+        const studioResponse=await workspace.request.get('http://localhost:8765/studio?channel=fixture-channel');
+        assert.equal(studioResponse.status(),200);
+        assert.match(await studioResponse.text(),/Clip Studio/);
         await workspace.close();
         await page.locator('[name=KATCHA_OPENAI_API_KEY]').fill('test-secret-never-display');
         await page.getByRole('button',{name:'Save settings'}).click();

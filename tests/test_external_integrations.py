@@ -1,5 +1,6 @@
 import uuid
 
+from katcha.api import integrations
 from katcha.api.main import app
 from katcha.services.external_edit import (
     _invideo_instructions,
@@ -76,3 +77,87 @@ def test_invideo_adoption_uses_next_render_generation() -> None:
         _GenerationSession(2),
         episode_id,
     ) == 3
+
+
+
+def test_elevenlabs_channel_config_persists_voice_library(monkeypatch) -> None:
+    channel_id = uuid.uuid4()
+    captured: dict[str, object] = {}
+
+    monkeypatch.setattr(
+        integrations,
+        "get_elevenlabs_voice",
+        lambda voice_id: {
+            "voice_id": voice_id,
+            "name": {
+                "default-voice": "Default Host",
+                "host-a": "Long-form Host A",
+                "host-b": "Long-form Host B",
+            }[voice_id],
+            "category": "generated",
+            "labels": {"accent": "american"},
+        },
+    )
+    monkeypatch.setattr(
+        integrations,
+        "list_elevenlabs_models",
+        lambda: [{"model_id": "eleven_multilingual_v2", "name": "Multilingual v2"}],
+    )
+
+    def capture_setting(_channel_id, **kwargs):
+        captured.update(kwargs)
+        return object()
+
+    monkeypatch.setattr(integrations, "upsert_channel_provider_setting", capture_setting)
+    monkeypatch.setattr(
+        integrations,
+        "_channel_elevenlabs_response",
+        lambda _channel_id, **kwargs: integrations.ElevenLabsChannelConfigResponse(
+            channel_profile_id=channel_id,
+            enabled=True,
+            voice_id="default-voice",
+            voice_name=kwargs.get("voice_name"),
+            model_id="eleven_multilingual_v2",
+            model_name=kwargs.get("model_name"),
+            saved_voices=[
+                integrations.ElevenLabsSavedVoiceResponse(
+                    voice_id="default-voice",
+                    name="Default Host",
+                ),
+                integrations.ElevenLabsSavedVoiceResponse(
+                    voice_id="host-a",
+                    name="Long-form Host A",
+                ),
+                integrations.ElevenLabsSavedVoiceResponse(
+                    voice_id="host-b",
+                    name="Long-form Host B",
+                ),
+            ],
+            longform_primary_voice_id="host-a",
+            longform_secondary_voice_id="host-b",
+            source="channel",
+        ),
+    )
+
+    result = integrations.update_channel_elevenlabs_config(
+        channel_id,
+        integrations.ElevenLabsChannelConfigUpdate(
+            voice_id="default-voice",
+            saved_voice_ids=["default-voice", "host-a", "host-b"],
+            longform_primary_voice_id="host-a",
+            longform_secondary_voice_id="host-b",
+            model_id="eleven_multilingual_v2",
+        ),
+    )
+
+    config = captured["config"]
+    assert isinstance(config, dict)
+    assert config["voice_id"] == "default-voice"
+    assert config["longform_primary_voice_id"] == "host-a"
+    assert config["longform_secondary_voice_id"] == "host-b"
+    assert [voice["voice_id"] for voice in config["saved_voices"]] == [
+        "default-voice",
+        "host-a",
+        "host-b",
+    ]
+    assert result.longform_secondary_voice_id == "host-b"

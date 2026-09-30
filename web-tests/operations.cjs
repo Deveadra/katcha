@@ -240,7 +240,8 @@ function payload(selected = "") {
         await page.waitForFunction(
             (channel) =>
                 new URL(location.href).searchParams.get("channel") === channel &&
-                document.getElementById("channel-list").textContent.includes("RankSnaxx"),
+                document.getElementById("channel-list").textContent.includes("RankSnaxx") &&
+                document.querySelectorAll("#channel-list .channel-card").length === 1,
             channelOne,
         );
         assert(

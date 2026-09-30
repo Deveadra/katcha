@@ -1,7 +1,8 @@
+const launchParams = new URLSearchParams(location.search);
 const state = {
     token: sessionStorage.getItem("katcha.controlToken") || "",
     channels: [],
-    selectedChannel: "",
+    selectedChannel: launchParams.get("channel") || sessionStorage.getItem("katcha.channel") || "",
     clips: [],
     total: 0,
     selectedId: null,
@@ -403,7 +404,11 @@ async function loadChannels() {
     select.disabled = false;
 
     if (state.channels.length) {
-        state.selectedChannel = state.channels[0].id;
+        const preferred = state.selectedChannel && state.channels.some((row) => row.id === state.selectedChannel)
+            ? state.selectedChannel
+            : state.channels[0].id;
+        state.selectedChannel = preferred;
+        sessionStorage.setItem("katcha.channel", preferred);
     } else {
         state.selectedChannel = "all";
     }
@@ -413,6 +418,7 @@ async function loadChannels() {
 
 function updateChannelScope() {
     const channel = currentChannel();
+    if (channel?.id) sessionStorage.setItem("katcha.channel", channel.id);
     const selectedName = channel ? channelName(channel) : "All / shared";
     $("channel-badge").textContent = selectedName.toUpperCase();
     $("retention-settings").disabled = !channel;

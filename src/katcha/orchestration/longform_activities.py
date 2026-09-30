@@ -527,6 +527,7 @@ def generate_longform_narration_activity(compilation_id: str) -> dict[str, objec
             profile=profile,
             settings=settings,
             channel_profile_id=channel_profile_id,
+            voice_role="longform_primary",
             reference_type="compilation",
             reference_id=compilation_id,
             reservation_key=f"tts:compilation:{compilation_id}:{safe}",

@@ -1,28 +1,48 @@
 :root {
     color-scheme: dark;
 
-    --ae-bg: #090b12;
-    --ae-bg-elevated: #0f121c;
-    --ae-surface: #151925;
-    --ae-surface-soft: rgba(22, 26, 39, 0.82);
-    --ae-surface-raised: rgba(25, 29, 44, 0.94);
+    --ae-bg: #080913;
+    --ae-bg-elevated: #0d1020;
+    --ae-surface: rgba(18, 21, 36, 0.84);
+    --ae-surface-soft: rgba(18, 22, 38, 0.66);
+    --ae-surface-raised: rgba(24, 27, 45, 0.78);
 
-    --ae-glass: rgba(255, 255, 255, 0.055);
-    --ae-glass-strong: rgba(255, 255, 255, 0.09);
-    --ae-line: rgba(255, 255, 255, 0.095);
-    --ae-line-hover: rgba(255, 255, 255, 0.17);
+    --ae-glass: rgba(255, 255, 255, 0.065);
+    --ae-glass-strong: rgba(255, 255, 255, 0.115);
+    --ae-line: rgba(226, 231, 255, 0.13);
+    --ae-line-hover: rgba(228, 234, 255, 0.24);
 
     --ae-text: #f6f4fb;
     --ae-text-secondary: #b4b6c5;
     --ae-text-tertiary: #7c8192;
 
-    --ae-violet: #b7a5ff;
-    --ae-cyan: #84e7ff;
-    --ae-rose: #f1a7d6;
+    --ae-violet: #b9a8ff;
+    --ae-cyan: #7ce8ff;
+    --ae-rose: #f6a6d9;
     --ae-mint: #9be6c2;
     --ae-warning: #ffc66d;
     --ae-danger: #ff8f9c;
     --ae-success: #9be6c2;
+
+    --ae-prism:
+        linear-gradient(
+            118deg,
+            rgba(185, 168, 255, 0.22) 0%,
+            rgba(124, 232, 255, 0.13) 36%,
+            rgba(246, 166, 217, 0.16) 68%,
+            rgba(155, 230, 194, 0.10) 100%
+        );
+    --ae-prism-soft:
+        linear-gradient(
+            125deg,
+            rgba(185, 168, 255, 0.085),
+            rgba(124, 232, 255, 0.045) 42%,
+            rgba(246, 166, 217, 0.065) 76%,
+            rgba(255, 255, 255, 0.018)
+        );
+    --ae-glass-panel: rgba(12, 15, 29, 0.64);
+    --ae-glass-panel-strong: rgba(15, 18, 34, 0.78);
+    --ae-glass-highlight: rgba(255, 255, 255, 0.105);
 
     --ae-radius-control: 9px;
     --ae-radius-panel: 13px;
@@ -36,6 +56,7 @@
     --ae-motion-base: 200ms;
     --ae-motion-panel: 260ms;
     --ae-ease: cubic-bezier(.2, .8, .2, 1);
+    --ae-ease-standard: var(--ae-ease);
 
     /* Compatibility aliases while legacy routes migrate onto Aerith primitives. */
     --bg: var(--ae-bg);

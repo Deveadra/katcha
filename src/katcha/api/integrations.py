@@ -94,6 +94,13 @@ class ElevenLabsModelResponse(BaseModel):
     token_cost_factor: float | None = None
 
 
+class ElevenLabsSavedVoiceResponse(BaseModel):
+    voice_id: str
+    name: str | None = None
+    category: str | None = None
+    labels: dict[str, object] = Field(default_factory=dict)
+
+
 class ElevenLabsChannelConfigResponse(BaseModel):
     channel_profile_id: uuid.UUID
     enabled: bool
@@ -101,6 +108,9 @@ class ElevenLabsChannelConfigResponse(BaseModel):
     voice_name: str | None
     model_id: str
     model_name: str | None
+    saved_voices: list[ElevenLabsSavedVoiceResponse] = Field(default_factory=list)
+    longform_primary_voice_id: str | None = None
+    longform_secondary_voice_id: str | None = None
     source: Literal["channel", "global", "unset"]
 
 
@@ -109,6 +119,9 @@ class ElevenLabsChannelConfigUpdate(BaseModel):
 
     enabled: bool = True
     voice_id: str = Field(min_length=1, max_length=255)
+    saved_voice_ids: list[str] = Field(default_factory=list, max_length=12)
+    longform_primary_voice_id: str | None = Field(default=None, min_length=1, max_length=255)
+    longform_secondary_voice_id: str | None = Field(default=None, min_length=1, max_length=255)
     model_id: str = Field(min_length=1, max_length=255)
     actor: str = Field(default="operator", min_length=1, max_length=128)
 
@@ -269,6 +282,7 @@ def _channel_elevenlabs_response(
     voice_id, model_id = resolve_elevenlabs_voice(
         channel_profile_id=channel_profile_id,
     )
+    config: dict[str, object] = {}
     if row is not None and row.enabled:
         source: Literal["channel", "global", "unset"] = "channel"
         config = dict(row.config or {})
@@ -278,6 +292,33 @@ def _channel_elevenlabs_response(
         source = "global"
     else:
         source = "unset"
+
+    saved_voices: list[ElevenLabsSavedVoiceResponse] = []
+    raw_saved = config.get("saved_voices")
+    if isinstance(raw_saved, list):
+        for item in raw_saved:
+            if not isinstance(item, dict):
+                continue
+            saved_id = str(item.get("voice_id") or "").strip()
+            if not saved_id:
+                continue
+            saved_voices.append(
+                ElevenLabsSavedVoiceResponse(
+                    voice_id=saved_id,
+                    name=str(item.get("name") or "") or None,
+                    category=str(item.get("category") or "") or None,
+                    labels=dict(item.get("labels") or {}),
+                )
+            )
+    if voice_id and not any(item.voice_id == voice_id for item in saved_voices):
+        saved_voices.insert(
+            0,
+            ElevenLabsSavedVoiceResponse(
+                voice_id=voice_id,
+                name=voice_name,
+            ),
+        )
+
     return ElevenLabsChannelConfigResponse(
         channel_profile_id=channel_profile_id,
         enabled=bool(row.enabled) if row is not None else bool(voice_id),
@@ -285,6 +326,13 @@ def _channel_elevenlabs_response(
         voice_name=voice_name,
         model_id=model_id,
         model_name=model_name,
+        saved_voices=saved_voices,
+        longform_primary_voice_id=(
+            str(config.get("longform_primary_voice_id") or "").strip() or voice_id
+        ),
+        longform_secondary_voice_id=(
+            str(config.get("longform_secondary_voice_id") or "").strip() or None
+        ),
         source=source,
     )
 
@@ -308,25 +356,64 @@ def update_channel_elevenlabs_config(
     request: ElevenLabsChannelConfigUpdate,
 ) -> ElevenLabsChannelConfigResponse:
     try:
-        voice = get_elevenlabs_voice(request.voice_id)
+        default_voice_id = request.voice_id.strip()
+        primary_voice_id = (
+            request.longform_primary_voice_id.strip()
+            if request.longform_primary_voice_id
+            else default_voice_id
+        )
+        secondary_voice_id = (
+            request.longform_secondary_voice_id.strip()
+            if request.longform_secondary_voice_id
+            else None
+        )
+        model_id = request.model_id.strip()
+        requested_ids = [
+            default_voice_id,
+            *request.saved_voice_ids,
+            primary_voice_id,
+            secondary_voice_id,
+        ]
+        voice_ids: list[str] = []
+        for raw in requested_ids:
+            voice_id = str(raw or "").strip()
+            if voice_id and voice_id not in voice_ids:
+                voice_ids.append(voice_id)
+        if len(voice_ids) > 12:
+            raise ValueError("A channel can save at most 12 ElevenLabs voices.")
+
+        voices = {voice_id: get_elevenlabs_voice(voice_id) for voice_id in voice_ids}
+        voice = voices[default_voice_id]
         models = list_elevenlabs_models()
         model = next(
-            (row for row in models if row.get("model_id") == request.model_id),
+            (row for row in models if row.get("model_id") == model_id),
             None,
         )
         if model is None:
             raise ValueError(
-                f"ElevenLabs model is not available for TTS: {request.model_id}"
+                f"ElevenLabs model is not available for TTS: {model_id}"
             )
+        library = [
+            {
+                "voice_id": voice_id,
+                "name": voices[voice_id].get("name"),
+                "category": voices[voice_id].get("category"),
+                "labels": dict(voices[voice_id].get("labels") or {}),
+            }
+            for voice_id in voice_ids
+        ]
         upsert_channel_provider_setting(
             channel_profile_id,
             provider="elevenlabs",
             enabled=request.enabled,
             config={
-                "voice_id": request.voice_id,
-                "model_id": request.model_id,
+                "voice_id": default_voice_id,
+                "model_id": model_id,
                 "voice_name": voice.get("name"),
                 "model_name": model.get("name"),
+                "saved_voices": library,
+                "longform_primary_voice_id": primary_voice_id,
+                "longform_secondary_voice_id": secondary_voice_id,
             },
             actor=request.actor,
         )

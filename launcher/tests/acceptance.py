@@ -68,9 +68,12 @@ if __name__ == "__main__":
                 if time.monotonic() >= deadline:
                     raise
                 time.sleep(0.5)
+        assert b"What needs you now." in request("/home/assets/home.html")
         assert b"Production" in request("/editing/assets/editing.html")
         assert b'data-katcha-page="clips"' in request("/editing/assets/clips.html")
         assert b"Channel Studio" in request("/channels/assets/channels.html")
+        assert b'data-katcha-page="studio"' in request("/studio/assets/studio.html")
+        assert b"#katcha-chat-shortcut" in request("/system/aerith-shell.css")
         assert b"Katcha AI" in request("/ai/assets/ai.html")
         assert b"Your channel briefing." in request("/operations/assets/operations.html")
         assert b"--ae-" in request("/operations/assets/system/aerith-tokens.css")

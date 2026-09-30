@@ -372,6 +372,12 @@ const analytics = [
                 voice_name: "RankSnaxx Voice",
                 model_id: "eleven_multilingual_v2",
                 model_name: "Eleven Multilingual v2",
+                saved_voices: [
+                    { voice_id: "voice-ranksnaxx", name: "RankSnaxx Voice", category: "generated", labels: { accent: "american" } },
+                    { voice_id: "voice-cohost", name: "Cohost Voice", category: "generated", labels: { accent: "american" } },
+                ],
+                longform_primary_voice_id: "voice-ranksnaxx",
+                longform_secondary_voice_id: "voice-cohost",
                 source: "channel",
             };
         } else if (
@@ -382,11 +388,23 @@ const analytics = [
                 channel_profile_id: "channel-1",
                 enabled: true,
                 voice_id: body.voice_id,
-                voice_name: "RankSnaxx Voice",
+                voice_name: body.voice_id === "voice-alt" ? "Alternate Voice" : "RankSnaxx Voice",
                 model_id: body.model_id,
                 model_name: body.model_id === "eleven_v4_turbo"
                     ? "Eleven v4 Turbo"
                     : "Eleven Multilingual v2",
+                saved_voices: body.saved_voice_ids.map((voiceId) => ({
+                    voice_id: voiceId,
+                    name: {
+                        "voice-ranksnaxx": "RankSnaxx Voice",
+                        "voice-cohost": "Cohost Voice",
+                        "voice-alt": "Alternate Voice",
+                    }[voiceId] || voiceId,
+                    category: "generated",
+                    labels: { accent: "american" },
+                })),
+                longform_primary_voice_id: body.longform_primary_voice_id,
+                longform_secondary_voice_id: body.longform_secondary_voice_id,
                 source: "channel",
             };
         } else if (url.pathname === "/v1/integrations/elevenlabs/status") {
@@ -433,6 +451,26 @@ const analytics = [
                         name: "RankSnaxx Voice",
                         category: "generated",
                         description: "Fixture voice",
+                        labels: { accent: "american" },
+                        preview_url: null,
+                        is_owner: true,
+                        is_legacy: false,
+                    },
+                    {
+                        voice_id: "voice-cohost",
+                        name: "Cohost Voice",
+                        category: "generated",
+                        description: "Fixture cohost voice",
+                        labels: { accent: "american" },
+                        preview_url: null,
+                        is_owner: true,
+                        is_legacy: false,
+                    },
+                    {
+                        voice_id: "voice-alt",
+                        name: "Alternate Voice",
+                        category: "generated",
+                        description: "Fixture alternate voice",
                         labels: { accent: "american" },
                         preview_url: null,
                         is_owner: true,
@@ -588,7 +626,11 @@ const analytics = [
     assert.match(await page.locator("#brand-panel").innerText(), /fixture_brand/);
     assert.match(await page.locator("#automation-panel").innerText(), /Review Required/);
     assert.equal(await page.locator("#elevenlabs-state").innerText(), "CONNECTED");
-    assert.equal(await page.locator("#elevenlabs-voice-id").inputValue(), "voice-ranksnaxx");
+    assert.equal(await page.locator("#elevenlabs-default-voice").inputValue(), "voice-ranksnaxx");
+    assert.equal(await page.locator("#elevenlabs-longform-primary").inputValue(), "voice-ranksnaxx");
+    assert.equal(await page.locator("#elevenlabs-longform-secondary").inputValue(), "voice-cohost");
+    assert.match(await page.locator("#elevenlabs-saved-voices").innerText(), /RankSnaxx Voice/);
+    assert.match(await page.locator("#elevenlabs-saved-voices").innerText(), /Cohost Voice/);
     assert.equal(
         await page.locator("#elevenlabs-model").inputValue(),
         "eleven_multilingual_v2",
@@ -604,22 +646,41 @@ const analytics = [
     assert.equal(await page.locator("#integrations").isHidden(), false);
     assert.equal(await page.locator("#overview").isHidden(), true);
     assert.equal(await page.evaluate(() => location.hash), "#settings");
+    await page.locator("#elevenlabs-new-voice-id").fill("voice-alt");
+    await page.locator("#add-elevenlabs-voice").click();
+    assert.match(await page.locator("#elevenlabs-saved-voices").innerText(), /Alternate Voice/);
+    await page.locator("#elevenlabs-default-voice").selectOption("voice-alt");
+    await page.locator("#elevenlabs-longform-primary").selectOption("voice-ranksnaxx");
+    await page.locator("#elevenlabs-longform-secondary").selectOption("voice-cohost");
     await page.locator("#elevenlabs-model").selectOption("eleven_v4_turbo");
     await page.locator("#save-elevenlabs").click();
-    await page.getByText(/ElevenLabs voice saved/).waitFor();
+    await page.getByText(/ElevenLabs voice library saved/).waitFor();
     const voiceSave = requests.find(
         (request) =>
             request.path === "/v1/integrations/elevenlabs/channels/channel-1" &&
             request.method === "PUT",
     );
-    assert.equal(voiceSave.body.voice_id, "voice-ranksnaxx");
+    assert.equal(voiceSave.body.voice_id, "voice-alt");
+    assert.deepEqual(
+        [...voiceSave.body.saved_voice_ids].sort(),
+        ["voice-alt", "voice-cohost", "voice-ranksnaxx"].sort(),
+    );
+    assert.equal(voiceSave.body.longform_primary_voice_id, "voice-ranksnaxx");
+    assert.equal(voiceSave.body.longform_secondary_voice_id, "voice-cohost");
     assert.equal(voiceSave.body.model_id, "eleven_v4_turbo");
 
+    await page.locator("#elevenlabs-preview-voice").selectOption("voice-cohost");
     await page.locator("#preview-elevenlabs").click();
     await page.locator("#elevenlabs-preview:not([hidden])").waitFor();
     assert(
         (await page.locator("#elevenlabs-preview").getAttribute("src")).startsWith("blob:"),
     );
+    const previewRequest = requests.find(
+        (request) =>
+            request.path === "/v1/integrations/elevenlabs/channels/channel-1/preview" &&
+            request.method === "POST",
+    );
+    assert.equal(previewRequest.body.voice_id, "voice-cohost");
 
     await page.locator('[data-channel-tab="growth"]').click();
     assert.equal(await page.locator("#monetization").isHidden(), false);

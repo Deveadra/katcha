@@ -125,3 +125,31 @@ def test_elevenlabs_requires_pcm_for_deterministic_timing() -> None:
         assert "PCM output" in str(exc)
     else:
         raise AssertionError("expected non-PCM ElevenLabs output to be rejected")
+
+
+
+def test_elevenlabs_voice_role_reaches_channel_resolver(monkeypatch) -> None:
+    calls: list[str | None] = []
+
+    def resolve(*, channel_profile_id=None, settings=None, role=None):
+        calls.append(role)
+        return (
+            "longform-host-a" if role == "longform_primary" else "default-host",
+            "eleven_multilingual_v2",
+        )
+
+    monkeypatch.setattr(tts, "resolve_elevenlabs_voice", resolve)
+    settings = Settings(
+        elevenlabs_api_key="test-eleven",
+        elevenlabs_voice_id="global-fallback",
+        elevenlabs_model_id="eleven_multilingual_v2",
+    )
+
+    profile = choose_voice_profile(
+        settings,
+        target=ModelTarget("elevenlabs", "eleven_multilingual_v2"),
+        voice_role="longform_primary",
+    )
+
+    assert profile.voice == "longform-host-a"
+    assert calls == ["longform_primary"]

@@ -590,6 +590,16 @@ def test_launcher_serves_workspace_shell_without_api(tmp_path):
     threading.Thread(target=server.serve_forever, daemon=True).start()
     try:
         connection = http.client.HTTPConnection("127.0.0.1", server.server_port)
+        connection.request("GET", "/home")
+        response = connection.getresponse()
+        assert response.status == 302
+        assert response.getheader("Location") == "/home/assets/home.html"
+        response.read()
+        connection.request("GET", "/home/assets/home.html")
+        response = connection.getresponse()
+        body = response.read()
+        assert response.status == 200
+        assert b'What needs you now.' in body
         connection.request("GET", "/editing")
         response = connection.getresponse()
         assert response.status == 302
@@ -620,6 +630,29 @@ def test_launcher_serves_workspace_shell_without_api(tmp_path):
         body = response.read()
         assert response.status == 200
         assert b"Channel Studio" in body
+        connection.request("GET", "/studio?channel=channel-1&episode=episode-1")
+        response = connection.getresponse()
+        assert response.status == 302
+        assert (
+            response.getheader("Location")
+            == "/studio/assets/studio.html?channel=channel-1&episode=episode-1"
+        )
+        response.read()
+        connection.request("GET", "/studio/assets/studio.html")
+        response = connection.getresponse()
+        body = response.read()
+        assert response.status == 200
+        assert b'data-katcha-page="studio"' in body
+        connection.request("GET", "/system/aerith-shell.css")
+        response = connection.getresponse()
+        body = response.read()
+        assert response.status == 200
+        assert b"#katcha-chat-shortcut" in body
+        connection.request("GET", "/pages/production-aerith.css")
+        response = connection.getresponse()
+        body = response.read()
+        assert response.status == 200
+        assert b'data-katcha-page="production"' in body
         connection.request("GET", "/ai")
         response = connection.getresponse()
         assert response.status == 302
@@ -869,9 +902,9 @@ def test_launcher_studio_home_and_shared_styles_are_local_and_keep_context(tmp_p
         for path, target in [
             (
                 "/studio?channel=one&episode=two",
-                "/editing/assets/studio.html?channel=one&episode=two",
+                "/studio/assets/studio.html?channel=one&episode=two",
             ),
-            ("/home", "/operations/assets/operations.html"),
+            ("/home", "/home/assets/home.html"),
         ]:
             connection.request("GET", path)
             response = connection.getresponse()
@@ -880,7 +913,7 @@ def test_launcher_studio_home_and_shared_styles_are_local_and_keep_context(tmp_p
             response.read()
         for path in [
             "/system/aerith-components.css", "/system/aerith-shell.css",
-            "/editing/assets/studio.html", "/operations/assets/operations.html",
+            "/studio/assets/studio.html", "/home/assets/home.html",
         ]:
             connection.request("GET", path)
             response = connection.getresponse()

@@ -1,5 +1,7 @@
 /* Keep storage contracts behind task-focused forms. Never persist credentials. */
 const $ = (id) => document.getElementById(id);
+const launchParams = new URLSearchParams(location.search);
+const requestedChannel = launchParams.get("channel") || sessionStorage.getItem("katcha.channel") || "";
 const esc = (value) => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const methods = {
     links: {key: 'operator_feed', title: 'Paste links', icon: '↗', description: 'Add specific videos or posts from any supported site.', help: 'Give your collection a name. After saving, paste the links you want Katcha to consider. This option does not search social platforms for you.'},
@@ -16,7 +18,7 @@ const usage = {
     render_allowed: ['Intended for video production', 'Mark this source as intended video material. Existing production checks still apply.'],
     blocked: ['Blocked', 'This source is marked as blocked.'],
 };
-let token = '', adapters = [], channels = [], sources = [], selectedMethod = '', step = 1;
+let token = sessionStorage.getItem("katcha.controlToken") || '', adapters = [], channels = [], sources = [], selectedMethod = '', step = 1;
 let sourceView = 'add';
 let channelsReady = false, historyEpoch = 0, connectionEpoch = 0, busy = false;
 const intents = new Map();
@@ -236,6 +238,8 @@ async function loadChannels(epoch = connectionEpoch) {
         const previous = $('channel').value;
         $('channel').innerHTML = '<option value="">Shared with all channels</option>' + channels.map(c => `<option value="${esc(c.id)}">${esc(channelName(c))}</option>`).join('');
         if (channels.some(c => c.id === previous)) $('channel').value = previous;
+        else if (channels.some(c => c.id === requestedChannel)) $('channel').value = requestedChannel;
+        if ($('channel').value) sessionStorage.setItem("katcha.channel", $('channel').value);
         $('channel-area').hidden = false;
         $('channel-help').textContent = channelHelp();
         $('retry-channels').hidden = false;

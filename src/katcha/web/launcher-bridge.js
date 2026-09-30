@@ -11,7 +11,7 @@ const KATCHA_WORKSPACES = [
 ];
 
 function workspaceKeyFromPath(path = location.pathname) {
-    if (path.startsWith('/home') || path.startsWith('/operations') || path.endsWith('/operations.html')) return 'home';
+    if (path.startsWith('/home') || path.endsWith('/home.html') || path.startsWith('/operations') || path.endsWith('/operations.html')) return 'home';
     if (path.startsWith('/ingestion') || path.endsWith('/ingestion.html')) return 'sources';
     if (path.startsWith('/clips') || path.endsWith('/clips.html')) return 'clips';
     if (path.startsWith('/channels') || path.endsWith('/channels.html')) return 'channel';
@@ -143,8 +143,8 @@ installChatShortcut();
 (async () => {
     if (location.port !== '8765') return;
     const form = document.getElementById('connect-form') || document.getElementById('connect');
-    const connection = document.getElementById('connection');
-    const status = document.getElementById('message');
+    const connection = document.getElementById('connection') || document.getElementById('connection-state');
+    const status = document.getElementById('message') || document.getElementById('status');
     for (;;) {
         try {
             const response = await fetch('/runtime/status', {cache: 'no-store'});

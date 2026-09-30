@@ -19,7 +19,7 @@
 <body data-katcha-page="channel">
     <div class="app-shell">
         <aside class="rail">
-            <a class="brand" href="/explorer" aria-label="Katcha home">
+            <a class="brand" href="/home" aria-label="Katcha home">
                 <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
                 katcha<span class="brand-dot">.</span>
             </a>
@@ -294,24 +294,49 @@
                                     <div><span>PLAN</span><strong id="elevenlabs-plan">—</strong></div>
                                     <div><span>USAGE</span><strong id="elevenlabs-usage">—</strong></div>
                                 </div>
-                                <label class="provider-field">CHANNEL VOICE
-                                    <input id="elevenlabs-voice-id" list="elevenlabs-voices" placeholder="Voice ID or choose a discovered voice" disabled>
-                                    <datalist id="elevenlabs-voices"></datalist>
+                                <div class="voice-library">
+                                    <div class="voice-add-row">
+                                        <label class="provider-field">ADD VOICE ID
+                                            <input id="elevenlabs-new-voice-id" list="elevenlabs-voices" placeholder="Paste a voice ID or choose a discovered voice" disabled>
+                                            <datalist id="elevenlabs-voices"></datalist>
+                                        </label>
+                                        <button id="add-elevenlabs-voice" class="studio-button secondary" type="button" disabled>Add voice</button>
+                                    </div>
+                                    <div>
+                                        <span class="provider-mini-label">SAVED VOICES</span>
+                                        <div id="elevenlabs-saved-voices" class="voice-library-list">
+                                            <div class="provider-help">No voices saved for this channel yet.</div>
+                                        </div>
+                                    </div>
+                                </div>
+                                <label class="provider-field">DEFAULT NARRATION VOICE
+                                    <select id="elevenlabs-default-voice" disabled><option value="">Add a voice first</option></select>
                                 </label>
-                                <div id="elevenlabs-voice-help" class="provider-help">No channel voice selected.</div>
+                                <div class="provider-role-grid">
+                                    <label class="provider-field">LONG-FORM VOICE A
+                                        <select id="elevenlabs-longform-primary" disabled><option value="">Add a voice first</option></select>
+                                    </label>
+                                    <label class="provider-field">LONG-FORM VOICE B
+                                        <select id="elevenlabs-longform-secondary" disabled><option value="">Not assigned</option></select>
+                                    </label>
+                                </div>
+                                <div id="elevenlabs-voice-help" class="provider-help">Add one or more voice IDs, then choose the channel default and long-form roles.</div>
                                 <label class="provider-field">TTS MODEL
                                     <select id="elevenlabs-model" disabled><option value="">Connect ElevenLabs</option></select>
                                 </label>
                                 <div class="provider-actions">
-                                    <button id="save-elevenlabs" class="studio-button primary" type="button" disabled>Save channel voice</button>
+                                    <button id="save-elevenlabs" class="studio-button primary" type="button" disabled>Save voice configuration</button>
                                     <button id="refresh-elevenlabs" class="studio-button secondary" type="button" disabled>Refresh voices</button>
                                 </div>
+                                <label class="provider-field">PREVIEW VOICE
+                                    <select id="elevenlabs-preview-voice" disabled><option value="">Add a voice first</option></select>
+                                </label>
                                 <label class="provider-field">VOICE CHECK
                                     <textarea id="elevenlabs-preview-text" rows="3" maxlength="600">Okay, that was absolutely not supposed to happen. Number three just turned a normal match into pure chaos.</textarea>
                                 </label>
                                 <button id="preview-elevenlabs" class="studio-button secondary" type="button" disabled>Generate voice preview</button>
                                 <audio id="elevenlabs-preview" class="provider-audio" controls hidden></audio>
-                                <details class="ae-help"><summary>How voice credentials are stored</summary><p>The ElevenLabs API key remains in Katcha's server environment. Only this channel's non-secret voice and model IDs are stored.</p></details>
+                                <details class="ae-help"><summary>How voice configuration is stored</summary><p>The ElevenLabs API key remains server-side. This channel's saved voice library, default voice, long-form Voice A/B assignments, and model are stored in Katcha, so changing voices does not require editing .env.</p></details>
                             </article>
 
                             <article class="studio-card provider-config-card">

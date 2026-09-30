@@ -1,7 +1,8 @@
 /* Same-origin API client. Scores and histories are always supplied by Katcha. */
+const launchParams = new URLSearchParams(location.search);
 const state = {
-    token: "",
-    channel: "",
+    token: sessionStorage.getItem("katcha.controlToken") || "",
+    channel: launchParams.get("channel") || sessionStorage.getItem("katcha.channel") || "",
     watch: null,
     editPerformance: null,
     rows: [],
@@ -143,11 +144,10 @@ async function connect(event) {
         $("channel").disabled = false;
         $("connection-state").textContent = "CONNECTED";
         if (channels.length) {
-            const requested = new URLSearchParams(location.search).get("channel");
-            const selected = channels.some((row) => row.id === requested)
-                ? requested
+            const preferred = state.channel && channels.some((row) => row.id === state.channel)
+                ? state.channel
                 : channels[0].id;
-            $("channel").value = selected;
+            $("channel").value = preferred;
             await loadChannel();
         } else
             status(
@@ -162,6 +162,7 @@ async function loadChannel() {
     const epoch = ++state.epoch;
     ++state.detailEpoch;
     state.channel = $("channel").value;
+    if (state.channel) sessionStorage.setItem("katcha.channel", state.channel);
     state.selected = null;
     state.dossier = null;
     state.rows = [];

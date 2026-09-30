@@ -42,10 +42,20 @@ def resolve_elevenlabs_voice(
     *,
     channel_profile_id: uuid.UUID | None = None,
     settings: Settings | None = None,
+    role: str | None = None,
 ) -> tuple[str | None, str]:
     settings = settings or get_settings()
     config = _channel_config(channel_profile_id)
-    voice_id = str(config.get("voice_id") or settings.elevenlabs_voice_id or "").strip() or None
+    role_key = {
+        "longform_primary": "longform_primary_voice_id",
+        "longform_secondary": "longform_secondary_voice_id",
+    }.get(role or "")
+    voice_id = str(
+        (config.get(role_key) if role_key else None)
+        or config.get("voice_id")
+        or settings.elevenlabs_voice_id
+        or ""
+    ).strip() or None
     model_id = str(config.get("model_id") or settings.elevenlabs_model_id).strip()
     return voice_id, model_id
 
