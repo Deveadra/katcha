@@ -277,7 +277,7 @@ class YouTubeDiscoveryAdapter:
         query: dict[str, Any],
         cursor: dict[str, Any],
     ) -> DiscoveryBatch:
-        auth_params, auth_headers, auth_mode = _youtube_request_auth(query)
+        auth_params, auth_headers, _auth_mode = _youtube_request_auth(query)
 
         requested_limit = min(max(int(query.get("limit", 25)), 1), 50)
         order = str(query.get("order") or "date").strip()
@@ -377,10 +377,7 @@ class YouTubeDiscoveryAdapter:
 
         candidates = parse_youtube_candidates(search_payload, videos_payload)
         next_page = str(search_payload.get("nextPageToken") or "").strip()
-        usage = {
-            "youtube.search.list": 1,
-            f"youtube.auth.{auth_mode}": 1,
-        }
+        usage = {"youtube.search.list": 1}
         if ids or channel_lookup_units:
             usage["youtube.core"] = int(bool(ids)) + channel_lookup_units
         return DiscoveryBatch(
