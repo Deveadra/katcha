@@ -131,6 +131,24 @@ $("chatgpt-disconnect").onclick = async () => {
     } finally { button.disabled = false; }
 };
 
+async function testApiProvider(provider) {
+    const button = provider === "openai" ? $("test-openai") : $("test-gemini");
+    button.disabled = true;
+    try {
+        const result = await api("/v1/integrations/ai/providers/" + provider + "/test", {
+            method: "POST",
+            body: "{}",
+        });
+        message(provider.toUpperCase() + " · " + result.detail, "good");
+    } catch (error) {
+        message(error.message, "error");
+    } finally {
+        button.disabled = false;
+    }
+}
+$("test-openai").onclick = () => testApiProvider("openai");
+$("test-gemini").onclick = () => testApiProvider("gemini");
+
 $("ai-settings-form").onsubmit = async (event) => {
     event.preventDefault();
     const button = $("save-ai");
