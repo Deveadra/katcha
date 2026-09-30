@@ -19,10 +19,8 @@ from katcha.ai.router import (
 from katcha.config import Settings, get_settings
 from katcha.domain import AITask
 from katcha.integrations.chatgpt import invoke_json as invoke_chatgpt_json
-from katcha.integrations.codex import (
-    CodexConnectionError,
-    invoke_json as invoke_codex_json,
-)
+from katcha.integrations.codex import CodexConnectionError
+from katcha.integrations.codex import invoke_json as invoke_codex_json
 
 CommandIntent = Literal[
     "best_clips",
