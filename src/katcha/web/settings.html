@@ -44,15 +44,74 @@
                 <div id="settings-message" class="settings-message" role="status" aria-live="polite"></div>
 
                 <section class="settings-grid">
-                    <article class="settings-card hero-card">
+                    <article class="settings-card hero-card codex-card">
                         <div class="card-head">
                             <div>
-                                <span class="micro-label">PRIMARY AI</span>
-                                <h2>ChatGPT plan</h2>
+                                <span class="micro-label">PRIMARY AI · CHATGPT SUBSCRIPTION</span>
+                                <h2>Codex plan</h2>
                             </div>
-                            <span id="chatgpt-badge" class="status-pill">NOT CONNECTED</span>
+                            <span id="codex-badge" class="status-pill muted">NOT CONNECTED</span>
                         </div>
-                        <p class="card-copy">Use your eligible ChatGPT Plus or Pro plan for normal Katcha conversation and command reasoning. API keys stay optional fallbacks.</p>
+                        <p class="card-copy">Use the same ChatGPT subscription path used by Codex and Roo Code for Katcha conversation and agent reasoning. This has its own 5-hour / weekly usage windows and does not require an API key.</p>
+
+                        <div id="codex-account" class="account-panel" hidden>
+                            <div>
+                                <small>CONNECTED ACCOUNT</small>
+                                <strong id="codex-identity">ChatGPT</strong>
+                                <span id="codex-expiry"></span>
+                            </div>
+                            <button id="codex-test" type="button" class="secondary">Test inference</button>
+                        </div>
+
+                        <div id="codex-usage" class="usage-panel" hidden>
+                            <div class="usage-head">
+                                <span>SUBSCRIPTION USAGE</span>
+                                <b id="codex-plan">PLAN</b>
+                            </div>
+                            <div class="usage-window">
+                                <div class="usage-copy">
+                                    <strong id="codex-primary-label">5h limit</strong>
+                                    <span id="codex-primary-value">—</span>
+                                </div>
+                                <div class="usage-track"><i id="codex-primary-bar"></i></div>
+                                <small id="codex-primary-reset">Reset unavailable</small>
+                            </div>
+                            <div class="usage-window">
+                                <div class="usage-copy">
+                                    <strong id="codex-secondary-label">Weekly limit</strong>
+                                    <span id="codex-secondary-value">—</span>
+                                </div>
+                                <div class="usage-track"><i id="codex-secondary-bar"></i></div>
+                                <small id="codex-secondary-reset">Reset unavailable</small>
+                            </div>
+                            <div class="usage-foot">
+                                <span id="codex-credits">Credits: —</span>
+                                <button id="codex-refresh-usage" type="button" class="ghost">Refresh usage</button>
+                            </div>
+                        </div>
+
+                        <label class="field" id="codex-model-field" hidden>
+                            <span>Agent model</span>
+                            <select id="codex-model"></select>
+                            <small>Models are discovered from the Codex backend for this ChatGPT account.</small>
+                        </label>
+
+                        <div class="button-row">
+                            <button id="codex-connect" type="button" class="primary">Continue with ChatGPT · Codex</button>
+                            <button id="codex-reconnect" type="button" class="secondary" hidden>Reconnect</button>
+                            <button id="codex-disconnect" type="button" class="ghost danger" hidden>Disconnect</button>
+                        </div>
+                    </article>
+
+                    <article class="settings-card direct-chatgpt-card">
+                        <div class="card-head">
+                            <div>
+                                <span class="micro-label">SECONDARY · APP SHARING</span>
+                                <h2>Direct ChatGPT</h2>
+                            </div>
+                            <span id="chatgpt-badge" class="status-pill muted">NOT CONNECTED</span>
+                        </div>
+                        <p class="card-copy">OpenAI's direct app-sharing path is kept as a fallback. It has a separate subscription-sharing allowance from Codex, which is why this path can be limited while Roo Code still works.</p>
 
                         <div id="chatgpt-account" class="account-panel" hidden>
                             <div>
@@ -60,17 +119,17 @@
                                 <strong id="chatgpt-identity">ChatGPT</strong>
                                 <span id="chatgpt-expiry"></span>
                             </div>
-                            <button id="chatgpt-test" type="button" class="secondary">Test connection</button>
+                            <button id="chatgpt-test" type="button" class="secondary">Test direct sharing</button>
                         </div>
 
                         <label class="field" id="chatgpt-model-field" hidden>
-                            <span>Chat model</span>
+                            <span>Direct-sharing model</span>
                             <select id="chatgpt-model"></select>
-                            <small>Models come directly from the connected ChatGPT account.</small>
+                            <small>This model uses the separate app-sharing allowance.</small>
                         </label>
 
                         <div class="button-row">
-                            <button id="chatgpt-connect" type="button" class="primary">Continue with ChatGPT</button>
+                            <button id="chatgpt-connect" type="button" class="secondary">Connect direct sharing</button>
                             <button id="chatgpt-reconnect" type="button" class="secondary" hidden>Reconnect</button>
                             <button id="chatgpt-disconnect" type="button" class="ghost danger" hidden>Disconnect</button>
                         </div>
