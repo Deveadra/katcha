@@ -631,6 +631,140 @@ def connection_status() -> dict[str, object]:
     }
 
 
+def _stream_plan_response(
+    session: ChatGPTSession,
+    *,
+    body: dict[str, object],
+    timeout: float,
+) -> tuple[str, dict[str, object] | None, int, int]:
+    payload = {
+        "model": session.model,
+        "store": False,
+        "stream": True,
+        **body,
+    }
+    chunks: list[str] = []
+    completed_payload: dict[str, object] | None = None
+    input_tokens = 0
+    output_tokens = 0
+    completed = False
+
+    try:
+        with httpx.stream(
+            "POST",
+            "https://api.openai.com/v1/responses",
+            headers={
+                "Authorization": "Bearer " + session.access_token,
+                "Content-Type": "application/json",
+                "Accept": "text/event-stream",
+            },
+            json=payload,
+            timeout=timeout,
+        ) as response:
+            if response.status_code >= 400:
+                raw = response.read().decode("utf-8", errors="replace")
+                request_id = response.headers.get("x-request-id") or response.headers.get(
+                    "openai-request-id"
+                )
+                try:
+                    parsed = json.loads(raw)
+                except ValueError:
+                    parsed = None
+                detail = ""
+                if isinstance(parsed, dict):
+                    error = parsed.get("error")
+                    if isinstance(error, dict):
+                        detail = ": ".join(
+                            value
+                            for value in (
+                                str(error.get("code") or "").strip(),
+                                str(error.get("message") or "").strip(),
+                            )
+                            if value
+                        )
+                    if not detail:
+                        detail = str(
+                            parsed.get("detail") or parsed.get("message") or ""
+                        ).strip()
+                if not detail:
+                    detail = " ".join(raw.split())[:700]
+                request_suffix = f"; request_id={request_id}" if request_id else ""
+                raise ChatGPTConnectionError(
+                    f"ChatGPT plan request rejected (HTTP {response.status_code}"
+                    f"{request_suffix})" + (f": {detail}" if detail else "")
+                )
+
+            data_lines: list[str] = []
+            for line in response.iter_lines():
+                if line == "":
+                    if not data_lines:
+                        continue
+                    raw_event = "\n".join(data_lines)
+                    data_lines.clear()
+                    if raw_event == "[DONE]":
+                        continue
+                    try:
+                        event = json.loads(raw_event)
+                    except ValueError as exc:
+                        raise ChatGPTConnectionError(
+                            "ChatGPT plan returned an invalid streaming event"
+                        ) from exc
+                    if not isinstance(event, dict):
+                        continue
+                    event_type = str(event.get("type") or "")
+                    if event_type == "response.output_text.delta":
+                        chunks.append(str(event.get("delta") or ""))
+                    elif event_type == "response.failed":
+                        response_payload = event.get("response")
+                        error = (
+                            response_payload.get("error")
+                            if isinstance(response_payload, dict)
+                            else None
+                        )
+                        code = (
+                            str(error.get("code") or "unknown_error")
+                            if isinstance(error, dict)
+                            else "unknown_error"
+                        )
+                        message = (
+                            str(error.get("message") or "").strip()
+                            if isinstance(error, dict)
+                            else ""
+                        )
+                        raise ChatGPTConnectionError(
+                            f"ChatGPT plan inference failed: {code}"
+                            + (f": {message}" if message else "")
+                        )
+                    elif event_type == "response.incomplete":
+                        raise ChatGPTConnectionError(
+                            "ChatGPT plan inference ended incomplete"
+                        )
+                    elif event_type == "response.completed":
+                        completed = True
+                        response_payload = event.get("response")
+                        if isinstance(response_payload, dict):
+                            completed_payload = dict(response_payload)
+                            usage = response_payload.get("usage")
+                            if isinstance(usage, dict):
+                                input_tokens = int(usage.get("input_tokens") or 0)
+                                output_tokens = int(usage.get("output_tokens") or 0)
+                    continue
+                if line.startswith("data:"):
+                    data_lines.append(line[5:].lstrip())
+    except ChatGPTConnectionError:
+        raise
+    except httpx.HTTPError as exc:
+        raise ChatGPTConnectionError(
+            f"ChatGPT plan transport failed: {type(exc).__name__}: {exc}"
+        ) from exc
+
+    if not completed:
+        raise ChatGPTConnectionError(
+            "ChatGPT plan stream ended before response.completed"
+        )
+    return "".join(chunks).strip(), completed_payload, input_tokens, output_tokens
+
+
 def test_connection(settings: Settings | None = None) -> dict[str, object]:
     session = active_session(settings)
     if session is None:
