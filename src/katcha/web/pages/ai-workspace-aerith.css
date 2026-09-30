@@ -217,27 +217,52 @@ body[data-katcha-page="ai"] .control-plane-note {
 
 @media (min-width: 951px) {
     body[data-katcha-page="ai"] {
-        overflow: hidden;
+        overflow-x: hidden;
+        overflow-y: auto;
     }
 
     body[data-katcha-page="ai"] .app-shell,
     body[data-katcha-page="ai"] .ai-main {
-        height: 100dvh;
-        min-height: 0;
-        overflow: hidden;
+        min-height: 100dvh;
+        height: auto;
+        overflow: visible;
     }
 
     body[data-katcha-page="ai"] .ai-shell {
-        height: calc(100dvh - 60px);
-        min-height: 0;
+        min-height: calc(100dvh - 60px);
+        height: auto;
         display: flex;
         flex-direction: column;
-        overflow: hidden;
+        overflow: visible;
     }
 
     body[data-katcha-page="ai"] .command-layout {
         flex: 1 1 auto;
-        overflow: hidden;
+        min-height: 680px;
+        overflow: visible;
+    }
+
+    body[data-katcha-page="ai"] .conversation-column {
+        height: auto;
+        min-height: 680px;
+    }
+
+    body[data-katcha-page="ai"] .thread {
+        min-height: 370px;
+        max-height: min(58dvh, 670px);
+        overflow-y: auto;
+    }
+
+    body[data-katcha-page="ai"] .context-column {
+        position: sticky;
+        top: 72px;
+        height: auto;
+        max-height: calc(100dvh - 84px);
+        align-self: start;
+    }
+
+    body[data-katcha-page="ai"] .context-panel {
+        max-height: min(58dvh, 610px);
     }
 }
 
