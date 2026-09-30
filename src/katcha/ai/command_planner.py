@@ -206,14 +206,20 @@ def _gemini(
     from google import genai
     from google.genai import types
 
-    response = genai.Client(api_key=settings.gemini_api_key).models.generate_content(
-        model=target.model,
-        contents=prompt,
-        config=types.GenerateContentConfig(
-            response_mime_type="application/json",
-            response_schema=CommandPlan,
-        ),
-    )
+    client = genai.Client(api_key=settings.gemini_api_key)
+    try:
+        response = client.models.generate_content(
+            model=target.model,
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                response_mime_type="application/json",
+                response_schema=CommandPlan,
+            ),
+        )
+    finally:
+        close = getattr(client, "close", None)
+        if callable(close):
+            close()
     usage = response.usage_metadata
     input_tokens = int(getattr(usage, "prompt_token_count", 0) or 0)
     output_tokens = int(getattr(usage, "candidates_token_count", 0) or 0) + int(
