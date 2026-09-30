@@ -34,13 +34,14 @@ from katcha.config import get_settings
 from katcha.control_contract import COMMAND_ACTION_SCOPES
 from katcha.db import session_scope
 from katcha.domain import ProductionStatus
-from katcha.integrations.chatgpt import ChatGPTConnectionError
 from katcha.integrations.chatgpt import (
     connection_status as chatgpt_connection_status,
 )
-from katcha.integrations.chatgpt import (
-    test_connection as test_chatgpt_connection,
+from katcha.integrations.codex import CodexConnectionError
+from katcha.integrations.codex import (
+    connection_status as codex_connection_status,
 )
+from katcha.integrations.codex import usage as codex_usage
 from katcha.orchestration.client import (
     start_channel_intelligence_refresh,
     start_production_workflow,
@@ -223,47 +224,62 @@ def command_readiness(http_request: Request) -> CommandReadinessResponse:
         return CommandReadinessResponse(
             live=False,
             message=(
-                "Katcha is in fixture mode. Select Live AI in the launch console "
-                "and restart services to chat using your configured provider."
+                "Katcha is in fixture mode. Select Live AI in Settings to use "
+                "connected subscription or API providers."
             ),
         )
     if not settings.ai_enabled:
         return CommandReadinessResponse(
             live=False,
             message=(
-                "Live mode is selected, but AI is disabled. Save Live AI in the "
-                "launch console and restart services."
+                "Live mode is selected, but AI is disabled. Save Live AI in "
+                "Settings and apply the change."
             ),
         )
+
+    codex = codex_connection_status()
+    if getattr(settings, "codex_enabled", False) and bool(codex.get("connected")):
+        model = str(codex.get("selected_model") or "Codex")
+        suffix = ""
+        try:
+            limits = codex_usage()
+            primary = limits.get("primary")
+            secondary = limits.get("secondary")
+            parts: list[str] = []
+            if isinstance(primary, dict):
+                parts.append(f"{float(primary.get('used_percent') or 0):g}% short-window used")
+            if isinstance(secondary, dict):
+                parts.append(f"{float(secondary.get('used_percent') or 0):g}% weekly used")
+            if parts:
+                suffix = " · " + " · ".join(parts)
+        except CodexConnectionError:
+            suffix = ""
+        return CommandReadinessResponse(
+            live=True,
+            message=(
+                f"Codex ChatGPT plan connected · {model}{suffix}. "
+                "Katcha uses the Codex subscription path first for conversation "
+                "and command reasoning."
+            ),
+        )
+
     chatgpt = chatgpt_connection_status()
     if bool(chatgpt.get("connected")):
-        try:
-            healthy = test_chatgpt_connection()
-            identity = healthy.get("display_name") or healthy.get("email") or "ChatGPT"
-            return CommandReadinessResponse(
-                live=True,
-                message=(
-                    f"ChatGPT plan connected as {identity} · "
-                    f"{healthy.get('selected_model')}. "
-                    "Katcha will use your ChatGPT plan before API-key fallbacks."
-                ),
-            )
-        except ChatGPTConnectionError as exc:
-            if not (settings.openai_api_key or settings.gemini_api_key):
-                return CommandReadinessResponse(
-                    live=False,
-                    message=(
-                        f"ChatGPT is connected but the live handshake failed: {exc}. "
-                        "Open Settings to reconnect or test the account."
-                    ),
-                )
+        return CommandReadinessResponse(
+            live=True,
+            message=(
+                "Direct ChatGPT app sharing is connected. This path has a separate "
+                "subscription-sharing allowance from Codex. Open Settings to connect "
+                "Codex for Roo-style subscription usage."
+            ),
+        )
 
     if not (settings.openai_api_key or settings.gemini_api_key):
         return CommandReadinessResponse(
             live=False,
             message=(
                 "No live AI provider is connected. Open Settings and choose "
-                "Continue with ChatGPT; API keys are optional fallbacks."
+                "Continue with ChatGPT · Codex; API keys remain optional fallbacks."
             ),
         )
     installed = (
@@ -279,20 +295,14 @@ def command_readiness(http_request: Request) -> CommandReadinessResponse:
             live=False,
             message=(
                 "An API provider is configured but its client library is missing. "
-                "Rebuild Katcha or connect ChatGPT from Settings."
+                "Rebuild Katcha or connect the Codex ChatGPT plan from Settings."
             ),
         )
-    prefix = (
-        "ChatGPT plan needs attention; "
-        if bool(chatgpt.get("connected"))
-        else ""
-    )
     return CommandReadinessResponse(
         live=True,
         message=(
-            prefix
-            + "API-key fallback is configured. Open Settings to test providers "
-            "or connect ChatGPT to avoid API-key billing for normal Katcha chat."
+            "API-key fallback is configured. Connect ChatGPT · Codex in Settings "
+            "to use subscription-backed conversation and agent reasoning first."
         ),
     )
 

@@ -114,6 +114,9 @@ services:
         condition: service_completed_successfully
     ports:
       - "8000:8000"
+      # Codex ChatGPT-login callback. 1457 is OpenAI's registered fallback
+      # loopback port, leaving Roo/Codex's normal 1455 login path free.
+      - "127.0.0.1:1457:8000"
     command: ["uvicorn", "katcha.api.main:app", "--host", "0.0.0.0", "--port", "8000"]
 
   worker:

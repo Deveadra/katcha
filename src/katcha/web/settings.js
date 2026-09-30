@@ -51,6 +51,99 @@ async function loadRuntime() {
     }
 }
 
+function usageWindowLabel(minutes, fallback) {
+    const value = Number(minutes || 0);
+    if (!value) return fallback;
+    if (value % 10080 === 0) return (value / 10080) + "w limit";
+    if (value % 1440 === 0) return (value / 1440) + "d limit";
+    if (value % 60 === 0) return (value / 60) + "h limit";
+    return value + "m limit";
+}
+
+function resetLabel(epochSeconds) {
+    const epoch = Number(epochSeconds || 0);
+    if (!epoch) return "Reset unavailable";
+    const date = new Date(epoch * 1000);
+    if (Number.isNaN(date.getTime())) return "Reset unavailable";
+    return "Resets " + date.toLocaleString();
+}
+
+function renderCodexWindow(prefix, row, fallbackLabel) {
+    const window = row || {};
+    const percent = Math.max(0, Math.min(100, Number(window.used_percent || 0)));
+    $(prefix + "-label").textContent =
+        usageWindowLabel(window.window_minutes, fallbackLabel);
+    $(prefix + "-value").textContent = percent.toFixed(percent % 1 ? 1 : 0) + "% used";
+    $(prefix + "-bar").style.width = percent + "%";
+    $(prefix + "-reset").textContent = resetLabel(window.resets_at);
+}
+
+async function loadCodexUsage() {
+    const usage = await api("/v1/integrations/codex/usage");
+    $("codex-usage").hidden = false;
+    $("codex-plan").textContent = String(usage.plan_type || "ChatGPT").toUpperCase();
+    renderCodexWindow("codex-primary", usage.primary, "5h limit");
+    renderCodexWindow("codex-secondary", usage.secondary, "Weekly limit");
+    const credits = usage.credits;
+    if (credits && typeof credits === "object") {
+        const balance = credits.balance ?? credits.remaining ?? credits.amount;
+        $("codex-credits").textContent =
+            credits.unlimited
+                ? "Credits: unlimited"
+                : balance !== undefined
+                  ? "Credits: " + String(balance)
+                  : "Credits: available";
+    } else {
+        $("codex-credits").textContent = "Credits: not reported";
+    }
+}
+
+async function loadCodex() {
+    const status = await api("/v1/integrations/codex/status");
+    const connected = Boolean(status.connected);
+    $("codex-badge").textContent = connected ? "CONNECTED" : "NOT CONNECTED";
+    $("codex-badge").className = "status-pill" + (connected ? "" : " muted");
+    $("codex-connect").hidden = connected;
+    $("codex-reconnect").hidden = !connected;
+    $("codex-disconnect").hidden = !connected;
+    $("codex-account").hidden = !connected;
+    $("codex-model-field").hidden = !connected;
+    $("codex-usage").hidden = !connected;
+    if (!connected) return;
+
+    $("codex-identity").textContent = status.email || "Connected ChatGPT account";
+    $("codex-expiry").textContent =
+        (status.selected_model ? "Using " + status.selected_model : "Model pending") +
+        (status.plan_type ? " · " + status.plan_type : "");
+
+    const results = await Promise.allSettled([
+        api("/v1/integrations/codex/models"),
+        loadCodexUsage(),
+    ]);
+    if (results[0].status === "fulfilled") {
+        const models = results[0].value;
+        $("codex-model").replaceChildren(
+            ...models.map((model) => {
+                const option = document.createElement("option");
+                option.value = model.slug;
+                option.textContent = model.display_name + " · " + model.slug;
+                option.selected = model.slug === status.selected_model;
+                return option;
+            }),
+        );
+    }
+}
+
+async function startCodex() {
+    await ensureLiveMode();
+    message("Opening ChatGPT sign-in for the Codex subscription path…");
+    const result = await api("/v1/integrations/codex/oauth/start", {
+        method: "POST",
+        body: "{}",
+    });
+    location.href = result.authorization_url;
+}
+
 async function loadChatGPT() {
     const status = await api("/v1/integrations/chatgpt/status");
     const connected = Boolean(status.connected);
@@ -105,6 +198,82 @@ async function startChatGPT(connectionId = null) {
     });
     location.href = result.authorization_url;
 }
+
+$("codex-connect").onclick = async () => {
+    try {
+        await startCodex();
+    } catch (error) {
+        message(error.message, "error");
+    }
+};
+$("codex-reconnect").onclick = async () => {
+    try {
+        await api("/v1/integrations/codex/disconnect", { method: "POST", body: "{}" });
+        await startCodex();
+    } catch (error) {
+        message(error.message, "error");
+    }
+};
+$("codex-test").onclick = async () => {
+    const button = $("codex-test");
+    button.disabled = true;
+    try {
+        const result = await api("/v1/integrations/codex/test", {
+            method: "POST",
+            body: "{}",
+        });
+        message(
+            "Codex plan is live · " + result.selected_model +
+            " · real inference verified.",
+            "good",
+        );
+        await loadCodex();
+    } catch (error) {
+        message(error.message, "error");
+    } finally {
+        button.disabled = false;
+    }
+};
+$("codex-refresh-usage").onclick = async () => {
+    const button = $("codex-refresh-usage");
+    button.disabled = true;
+    try {
+        await loadCodexUsage();
+        message("ChatGPT subscription usage refreshed.", "good");
+    } catch (error) {
+        message(error.message, "error");
+    } finally {
+        button.disabled = false;
+    }
+};
+$("codex-model").onchange = async () => {
+    try {
+        const result = await api("/v1/integrations/codex/model", {
+            method: "POST",
+            body: JSON.stringify({ model: $("codex-model").value }),
+        });
+        message("Codex model changed to " + result.selected_model + ".", "good");
+        await loadCodex();
+    } catch (error) {
+        message(error.message, "error");
+    }
+};
+$("codex-disconnect").onclick = async () => {
+    const button = $("codex-disconnect");
+    button.disabled = true;
+    try {
+        await api("/v1/integrations/codex/disconnect", {
+            method: "POST",
+            body: "{}",
+        });
+        message("Codex ChatGPT connection disconnected from Katcha.", "good");
+        await loadCodex();
+    } catch (error) {
+        message(error.message, "error");
+    } finally {
+        button.disabled = false;
+    }
+};
 
 $("chatgpt-connect").onclick = async () => {
     try {
@@ -196,8 +365,17 @@ $("ai-settings-form").onsubmit = async (event) => {
 
 (async () => {
     const query = new URLSearchParams(location.search);
-    if (query.get("chatgpt") === "connected") message("ChatGPT account connected successfully.", "good");
-    if (query.get("chatgpt") === "error") message("ChatGPT sign-in did not complete. Try again from this page.", "error");
-    if (query.get("chatgpt") === "state_error") message("ChatGPT sign-in returned an invalid or expired session. Start a fresh sign-in from this page.", "error");
-    await Promise.allSettled([loadRuntime(), loadChatGPT()]);
+    if (query.get("codex") === "connected") {
+        message("ChatGPT Codex subscription connected successfully.", "good");
+    }
+    if (query.get("codex") === "error") {
+        message("Codex sign-in did not complete. Try again from this page.", "error");
+    }
+    if (query.get("codex") === "state_error") {
+        message("Codex sign-in returned an invalid or expired session. Start a fresh sign-in.", "error");
+    }
+    if (query.get("chatgpt") === "connected") message("Direct ChatGPT sharing connected successfully.", "good");
+    if (query.get("chatgpt") === "error") message("Direct ChatGPT sign-in did not complete. Try again from this page.", "error");
+    if (query.get("chatgpt") === "state_error") message("Direct ChatGPT sign-in returned an invalid or expired session. Start a fresh sign-in from this page.", "error");
+    await Promise.allSettled([loadRuntime(), loadCodex(), loadChatGPT()]);
 })();

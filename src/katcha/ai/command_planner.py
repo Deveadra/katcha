@@ -18,7 +18,9 @@ from katcha.ai.router import (
 )
 from katcha.config import Settings, get_settings
 from katcha.domain import AITask
-from katcha.integrations.chatgpt import invoke_json
+from katcha.integrations.chatgpt import invoke_json as invoke_chatgpt_json
+from katcha.integrations.codex import CodexConnectionError
+from katcha.integrations.codex import invoke_json as invoke_codex_json
 
 CommandIntent = Literal[
     "best_clips",
@@ -173,7 +175,7 @@ def _chatgpt(
     *,
     request_id: uuid.UUID,
 ) -> CommandPlanResult:
-    response = invoke_json(
+    response = invoke_chatgpt_json(
         prompt=prompt,
         schema_name="katcha_command_plan",
         schema=CommandPlan.model_json_schema(),
@@ -189,6 +191,33 @@ def _chatgpt(
     return CommandPlanResult(
         value=CommandPlan.model_validate_json(response.text),
         source="chatgpt_plan",
+        target=target,
+        input_tokens=response.input_tokens,
+        output_tokens=response.output_tokens,
+    )
+
+
+def _codex(
+    prompt: str,
+    *,
+    request_id: uuid.UUID,
+) -> CommandPlanResult:
+    response = invoke_codex_json(
+        prompt=prompt,
+        schema_name="katcha_command_plan",
+        schema=CommandPlan.model_json_schema(),
+    )
+    target = ModelTarget("codex", response.model)
+    _record(
+        target=target,
+        input_tokens=response.input_tokens,
+        output_tokens=response.output_tokens,
+        request_id=request_id,
+        reservation_id=None,
+    )
+    return CommandPlanResult(
+        value=CommandPlan.model_validate_json(response.text),
+        source="codex_plan",
         target=target,
         input_tokens=response.input_tokens,
         output_tokens=response.output_tokens,
@@ -303,6 +332,51 @@ def plan_ambiguous_command(
     )
 
     try:
+        if getattr(settings, "codex_enabled", False):
+            try:
+                plan_result = _codex(prompt, request_id=request_id)
+                if plan_result.value.confidence < 0.65:
+                    if deterministic_intent != "channel_status":
+                        return CommandPlanResult(
+                            value=CommandPlan(
+                                intent=deterministic_intent,
+                                confidence=plan_result.value.confidence,
+                                reason=(
+                                    "The Codex plan was uncertain; a registered "
+                                    "command route matched."
+                                ),
+                            ),
+                            source="codex_uncertain_registered_route",
+                            target=plan_result.target,
+                            input_tokens=plan_result.input_tokens,
+                            output_tokens=plan_result.output_tokens,
+                        )
+                    return CommandPlanResult(
+                        value=CommandPlan(
+                            intent="unsupported",
+                            confidence=plan_result.value.confidence,
+                            reason=(
+                                "Katcha could not confidently determine the request. "
+                                "Ask a clarifying question rather than changing the topic."
+                            ),
+                        ),
+                        source="codex_low_confidence_fallback",
+                        target=plan_result.target,
+                        input_tokens=plan_result.input_tokens,
+                        output_tokens=plan_result.output_tokens,
+                    )
+                return plan_result
+            except Exception as exc:
+                if not (
+                    isinstance(exc, CodexConnectionError)
+                    and "No Codex ChatGPT account is connected" in str(exc)
+                ):
+                    logger.info(
+                        "Codex command planning unavailable request_id=%s cause=%s",
+                        request_id,
+                        type(exc).__name__,
+                    )
+
         if getattr(settings, "chatgpt_host_id", None):
             try:
                 plan_result = _chatgpt(prompt, request_id=request_id)

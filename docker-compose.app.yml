@@ -40,7 +40,9 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
-    ports: !override ["127.0.0.1:8000:8000"]
+    ports: !override
+      - "127.0.0.1:8000:8000"
+      - "127.0.0.1:1457:8000"
     healthcheck:
       test:
         [

@@ -19,7 +19,10 @@ from katcha.ai.router import (
 )
 from katcha.config import Settings, get_settings
 from katcha.domain import AITask
-from katcha.integrations.chatgpt import ChatGPTConnectionError, invoke_json
+from katcha.integrations.chatgpt import ChatGPTConnectionError
+from katcha.integrations.chatgpt import invoke_json as invoke_chatgpt_json
+from katcha.integrations.codex import CodexConnectionError
+from katcha.integrations.codex import invoke_json as invoke_codex_json
 
 logger = logging.getLogger(__name__)
 
@@ -187,12 +190,38 @@ def _chatgpt(
     *,
     request_id: uuid.UUID,
 ) -> CommandNarrativeResult:
-    result = invoke_json(
+    result = invoke_chatgpt_json(
         prompt=prompt,
         schema_name="katcha_command_narrative",
         schema=CommandNarrative.model_json_schema(),
     )
     target = ModelTarget("chatgpt", result.model)
+    _record(
+        target=target,
+        input_tokens=result.input_tokens,
+        output_tokens=result.output_tokens,
+        request_id=request_id,
+        reservation_id=None,
+    )
+    return CommandNarrativeResult(
+        CommandNarrative.model_validate_json(result.text),
+        target,
+        result.input_tokens,
+        result.output_tokens,
+    )
+
+
+def _codex(
+    prompt: str,
+    *,
+    request_id: uuid.UUID,
+) -> CommandNarrativeResult:
+    result = invoke_codex_json(
+        prompt=prompt,
+        schema_name="katcha_command_narrative",
+        schema=CommandNarrative.model_json_schema(),
+    )
+    target = ModelTarget("codex", result.model)
     _record(
         target=target,
         input_tokens=result.input_tokens,
@@ -292,6 +321,18 @@ def compose_grounded_answer(
     )
 
     try:
+        if getattr(settings, "codex_enabled", False):
+            try:
+                return _codex(prompt, request_id=request_id)
+            except Exception as exc:
+                if not (
+                    isinstance(exc, CodexConnectionError)
+                    and "No Codex ChatGPT account is connected" in str(exc)
+                ):
+                    attempts.append(
+                        _attempt_label(ModelTarget("codex", "plan"), exc)
+                    )
+
         if getattr(settings, "chatgpt_host_id", None):
             try:
                 return _chatgpt(prompt, request_id=request_id)
