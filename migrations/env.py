@@ -7,6 +7,7 @@ from katcha import acquisition_models  # noqa: F401
 from katcha import brand_models  # noqa: F401
 from katcha import brand_preview_models  # noqa: F401
 from katcha import chatgpt_models  # noqa: F401
+from katcha import codex_models  # noqa: F401
 from katcha import command_center_models  # noqa: F401
 from katcha import discovery_poll_models  # noqa: F401
 from katcha import discovery_trend_models  # noqa: F401
