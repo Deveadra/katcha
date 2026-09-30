@@ -97,4 +97,9 @@ body::after {
     pointer-events: none;
     box-shadow: inset 0 1px rgba(255, 255, 255, 0.035);
 }
-\n\n/* Component layout rules must not override semantic visibility. */\n[hidden] {\n    display: none !important;\n}\n
+
+
+/* Component layout rules must not override semantic visibility. */
+[hidden] {
+    display: none !important;
+}
