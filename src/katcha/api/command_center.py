@@ -37,11 +37,11 @@ from katcha.domain import ProductionStatus
 from katcha.integrations.chatgpt import (
     connection_status as chatgpt_connection_status,
 )
+from katcha.integrations.codex import CodexConnectionError
 from katcha.integrations.codex import (
-    CodexConnectionError,
     connection_status as codex_connection_status,
-    usage as codex_usage,
 )
+from katcha.integrations.codex import usage as codex_usage
 from katcha.orchestration.client import (
     start_channel_intelligence_refresh,
     start_production_workflow,
