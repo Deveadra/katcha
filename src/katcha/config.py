@@ -232,6 +232,7 @@ class Settings(BaseSettings):
     gemini_api_key: str | None = None
     chatgpt_host_id: str | None = None
     chatgpt_oauth_redirect_uri: str = "http://127.0.0.1:8765/auth/callback"
+    codex_enabled: bool = True
     elevenlabs_api_key: str | None = None
     elevenlabs_base_url: str = "https://api.elevenlabs.io"
     elevenlabs_voice_id: str | None = None
