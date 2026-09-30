@@ -325,14 +325,17 @@ def compose_grounded_answer(
     )
 
     try:
-        try:
-            return _codex(prompt, request_id=request_id)
-        except Exception as exc:
-            if not (
-                isinstance(exc, CodexConnectionError)
-                and "No Codex ChatGPT account is connected" in str(exc)
-            ):
-                attempts.append(_attempt_label(ModelTarget("codex", "plan"), exc))
+        if getattr(settings, "codex_enabled", False):
+            try:
+                return _codex(prompt, request_id=request_id)
+            except Exception as exc:
+                if not (
+                    isinstance(exc, CodexConnectionError)
+                    and "No Codex ChatGPT account is connected" in str(exc)
+                ):
+                    attempts.append(
+                        _attempt_label(ModelTarget("codex", "plan"), exc)
+                    )
 
         if getattr(settings, "chatgpt_host_id", None):
             try:
