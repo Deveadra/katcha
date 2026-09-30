@@ -1,6 +1,6 @@
 const $ = (id) => document.getElementById(id);
 const state = {
-    token: "",
+    token: sessionStorage.getItem("katcha.controlToken") || "",
     allChannels: [],
     overview: null,
     loading: false,
@@ -221,8 +221,46 @@ function renderActivity(rows) {
     ).join("");
 }
 
+function renderBriefing(payload) {
+    const notes = [];
+    if (payload.summary.needs_attention) notes.push({
+        title: `${payload.summary.needs_attention} items need attention`,
+        detail: "Resolve blocked work before starting more production.", href: "#attention",
+    });
+    const best = [...payload.publications].filter(row => row.views != null)
+        .sort((a, b) => Number(b.views) - Number(a.views))[0];
+    if (best) notes.push({title: best.title,
+        detail: `${compactNumber(best.views)} views · ${percent(best.average_view_percentage)} average viewed · ${currency(best.estimated_revenue)} measured revenue. Review its packaging and pacing for repeatable wins.`,
+        href: best.href});
+    const opportunity = [...payload.opportunities].sort((a, b) => Number(b.opportunity_score) - Number(a.opportunity_score))[0];
+    if (opportunity) notes.push({title: opportunity.topic,
+        detail: `${Math.round(Number(opportunity.opportunity_score) * 100)} opportunity score · expires ${when(opportunity.expires_at)}. ${opportunity.reasons?.[0] || "Open the evidence before deciding."}`,
+        href: opportunity.href});
+    for (const channel of payload.channels.filter(row => !row.published_last_7d).slice(0, 3)) notes.push({
+        title: `${channel.title}: no published output in the last 7 days`,
+        detail: `${channel.active_work} work items in motion. Review its pipeline and publishing plan.`, href: channel.href,
+    });
+    $("briefing-list").innerHTML = notes.length ? notes.map(row =>
+        `<article class="ops-row"><div class="ops-row-main"><strong>${escapeHTML(row.title)}</strong><p>${escapeHTML(row.detail)}</p></div><a class="panel-link" href="${escapeHTML(row.href)}">Open →</a></article>`
+    ).join("") : empty("Your briefing is waiting for evidence", "Add sources and publish content to build a measured picture of your channels.");
+}
+
+async function loadAiReadiness() {
+    const host = $("home-ai-readiness");
+    try {
+        const readiness = await api("/v1/ai/readiness");
+        host.textContent = readiness.message;
+        host.className = readiness.live ? "success" : "error";
+    } catch {
+        host.textContent = "AI readiness is unavailable. Open Katcha AI to inspect the connection.";
+        host.className = "error";
+    }
+}
+
 function renderOverview(payload) {
     state.overview = payload;
+    renderBriefing(payload);
+
     const summary = payload.summary;
     $("pulse-attention").textContent = compactNumber(summary.needs_attention);
     $("pulse-active").textContent = compactNumber(summary.active_work);
@@ -263,6 +301,7 @@ async function loadOverview(channelId = "", { preserveStatus = false } = {}) {
         if (!channelId || !state.allChannels.length) syncChannelFilter(payload.channels, channelId);
         else syncChannelFilter([], channelId);
         renderOverview(payload);
+        void loadAiReadiness();
         setStatus(
             payload.summary.needs_attention
                 ? payload.summary.needs_attention + " item(s) need operator attention."
@@ -283,7 +322,8 @@ async function loadOverview(channelId = "", { preserveStatus = false } = {}) {
 
 async function connect(event) {
     if (event) event.preventDefault();
-    state.token = $("token").value.trim();
+    state.token = $("token").value.trim() || state.token;
+    if (state.token) sessionStorage.setItem("katcha.controlToken", state.token);
     $("token").value = "";
     try {
         const all = await loadOverview("");
@@ -339,5 +379,5 @@ $("channel-filter").addEventListener("change", async (event) => {
 if (location.port === "8765") {
     void launcherConnect();
 } else {
-    setStatus("Connect to load live operations.");
+    void connect();
 }

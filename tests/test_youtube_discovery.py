@@ -90,3 +90,61 @@ def test_youtube_provider_error_does_not_expose_api_key() -> None:
 
     assert api_key not in str(exc_info.value)
     assert "status 403" in str(exc_info.value)
+
+
+@pytest.mark.parametrize("reference", [
+    "@creator", "https://www.youtube.com/@creator/videos",
+])
+def test_channel_watch_resolves_handle_and_scopes_video_search(monkeypatch, reference):
+    from types import SimpleNamespace
+
+    from katcha.acquisition import youtube_discovery as module
+
+    channel_id = "UC" + "a" * 22
+    requests = []
+
+    def handler(request):
+        requests.append(request)
+        if request.url.path.endswith("/channels"):
+            assert request.url.params["forHandle"] == "@creator"
+            return httpx.Response(200, json={"items": [{"id": channel_id}]})
+        if request.url.path.endswith("/search"):
+            assert request.url.params["channelId"] == channel_id
+            assert "q" not in request.url.params
+            return httpx.Response(200, json={
+                "items": [{"id": {"videoId": "one"}}], "nextPageToken": "next",
+            })
+        return httpx.Response(200, json={"items": [{
+            "id": "one", "snippet": {"channelId": channel_id, "channelTitle": "Creator"},
+            "statistics": {"viewCount": "100"},
+        }]})
+
+    client_type = httpx.Client
+    monkeypatch.setattr(
+        module, "get_settings", lambda: SimpleNamespace(youtube_data_api_key="test")
+    )
+    monkeypatch.setattr(module.httpx, "Client", lambda **kwargs: client_type(
+        transport=httpx.MockTransport(handler), **kwargs,
+    ))
+    adapter = module.YouTubeDiscoveryAdapter()
+    batch = adapter.discover({"channel_reference": reference}, {})
+    assert len(batch.items) == 1
+    assert batch.items[0].creator == "Creator"
+    assert batch.items[0].metadata["source_metrics"]["views"] == 100
+    assert batch.provider_usage == {"youtube.search.list": 1, "youtube.core": 2}
+    assert batch.next_cursor["channel_id"] == channel_id
+    requests.clear()
+    next_batch = adapter.discover({"channel_reference": reference}, batch.next_cursor)
+    assert len(requests) == 2
+    assert next_batch.provider_usage["youtube.core"] == 1
+
+
+@pytest.mark.parametrize("reference", [
+    "https://evil.example/@creator", "https://www.youtube.com/watch?v=abc",
+    "http://127.0.0.1/@creator", "https://user:password@youtube.com/@creator", "creator",
+])
+def test_channel_watch_rejects_ambiguous_or_non_channel_references(reference):
+    from katcha.acquisition.youtube_discovery import youtube_channel_selector
+
+    with pytest.raises(ValueError):
+        youtube_channel_selector(reference)

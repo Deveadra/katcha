@@ -4,23 +4,25 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width,initial-scale=1">
     <meta name="theme-color" content="#090b12">
-    <title>Katcha · Operations</title>
-    <link rel="stylesheet" href="system/aerith-tokens.css">
-    <link rel="stylesheet" href="system/aerith-base.css">
-    <link rel="stylesheet" href="system/aerith-components.css">
-    <link rel="stylesheet" href="system/aerith-motion.css">
+    <title>Katcha · Home</title>
+    <link id="aerith-tokens" rel="stylesheet" href="/system/aerith-tokens.css">
+    <link id="aerith-base" rel="stylesheet" href="/system/aerith-base.css">
+    <link id="aerith-shell" rel="stylesheet" href="/system/aerith-shell.css">
+    <link id="aerith-components" rel="stylesheet" href="/system/aerith-components.css">
+    <link id="aerith-motion" rel="stylesheet" href="/system/aerith-motion.css">
     <link rel="stylesheet" href="operations-aerith.css">
     <script src="operations.js" defer></script>
+    <script src="launcher-bridge.js" defer></script>
 </head>
 <body data-katcha-page="operations">
-    <a class="ops-skip" href="#operations-main">Skip to operations</a>
+    <a class="ops-skip" href="#main-content">Skip to operations</a>
     <div class="operations-shell">
         <header class="operations-nav">
-            <a class="ops-brand" href="/operations" aria-label="Katcha Operations home">
+            <a class="ops-brand" href="/home" aria-label="Katcha Operations home">
                 <span aria-hidden="true">✦</span> katcha<span>.</span>
             </a>
             <nav aria-label="Primary workspace">
-                <a href="/operations" aria-current="page">Operations</a>
+                <a href="/home" aria-current="page">Home</a>
                 <a href="/explorer">Trends</a>
                 <a href="/ingestion">Sources</a>
                 <a href="/clips">Clips</a>
@@ -30,7 +32,7 @@
             <a class="ops-ai-link" href="/ai?focus=chat">Ask Katcha <span aria-hidden="true">✦</span></a>
         </header>
 
-        <main id="operations-main" class="operations-main">
+        <main id="main-content" class="operations-main">
             <form id="connect-form" class="ops-connect">
                 <label for="token">Control-plane token</label>
                 <input id="token" type="password" autocomplete="off" placeholder="Token if required">
@@ -40,8 +42,8 @@
 
             <header class="operations-heading">
                 <div>
-                    <div class="ops-kicker">OPERATIONS</div>
-                    <h1>Run the system.</h1>
+                    <div class="ops-kicker">YOUR CHANNELS</div>
+                    <h1>Your channel briefing.</h1>
                     <p>What needs you, what Katcha is doing, and what is worth acting on.</p>
                 </div>
                 <div class="operations-controls">
@@ -56,6 +58,12 @@
             </header>
 
             <div id="status" class="ops-status" role="status" aria-live="polite">Connect to load live operations.</div>
+
+            <section class="ops-panel briefing-panel" aria-labelledby="briefing-title">
+                <div class="panel-head"><div><span class="ops-kicker">KATCHA BRIEFING</span><h2 id="briefing-title">What you should know</h2></div><a class="panel-link" href="/ai?focus=chat">Discuss with Katcha</a></div>
+                <div id="briefing-list" class="ops-list"><p>Load your workspace for current insights.</p></div>
+                <p id="home-ai-readiness" role="status"></p>
+            </section>
 
             <section class="pulse-strip" aria-label="Operations pulse">
                 <a href="#attention"><small>NEEDS ATTENTION</small><strong id="pulse-attention">—</strong><span>Operator decisions or recovery</span></a>
@@ -108,7 +116,7 @@
                 <div id="channel-list" class="channel-list"></div>
             </section>
 
-            <details class="ops-panel activity-panel">
+            <details class="ops-panel activity-panel" open>
                 <summary>
                     <span><span class="ops-kicker">AUDIT TRAIL</span><strong>Recent Katcha activity</strong></span>
                     <span id="activity-count" class="ops-count">0</span>

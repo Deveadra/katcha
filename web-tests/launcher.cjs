@@ -17,7 +17,7 @@ const assert = require('node:assert/strict');
             try { if ((await fetch('http://localhost:8765/runtime/status')).ok) break; } catch {}
             await new Promise(r=>setTimeout(r,100));
         }
-        browser=await chromium.launch({headless:true});
+        browser=await chromium.launch({headless:true, executablePath:process.env.CHROMIUM_PATH || undefined, args:process.env.CHROMIUM_PATH ? ["--no-sandbox"] : []});
         const page=await browser.newPage({viewport:{width:1440,height:1100}});
         const errors=[];page.on('pageerror',e=>errors.push(e.message));
         await page.goto('http://localhost:8765');

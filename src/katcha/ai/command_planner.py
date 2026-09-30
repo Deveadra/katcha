@@ -29,6 +29,7 @@ CommandIntent = Literal[
     "source_discovery",
     "resource_context",
     "channel_status",
+    "conversation",
     "unsupported",
 ]
 logger = logging.getLogger(__name__)
@@ -83,6 +84,8 @@ def _planner_prompt(
         "already-stored clip pool.\n"
         "- resource_context: explain or inspect typed Katcha resources already "
         "attached by the operator interface.\n"
+        "- conversation: greetings, questions about Katcha capabilities, or discussion "
+        "of channel strategy without executing an action.\n"
         "- channel_status: summarize general current channel/Katcha state.\n"
         "- unsupported: request needs a capability outside this registry.\n\n"
         f"Operator prompt: {user_prompt}\n"
@@ -128,7 +131,9 @@ def _openai(
 ) -> CommandPlanResult:
     from openai import OpenAI
 
-    response = OpenAI(api_key=settings.openai_api_key).responses.create(
+    response = OpenAI(
+        api_key=settings.openai_api_key, timeout=30.0, max_retries=1
+    ).responses.create(
         model=target.model,
         store=False,
         reasoning={"effort": "low"},
@@ -141,7 +146,7 @@ def _openai(
                 "strict": False,
             }
         },
-        max_output_tokens=220,
+        max_output_tokens=1600,
     )
     usage = response.usage
     input_tokens = int(getattr(usage, "input_tokens", 0) or 0)
@@ -305,8 +310,7 @@ def plan_ambiguous_command(
                                 intent=deterministic_intent,
                                 confidence=result.value.confidence,
                                 reason=(
-                                    "The AI plan was uncertain; a registered "
-                                    "command route matched."
+                                    "The AI plan was uncertain; a registered command route matched."
                                 ),
                             ),
                             source="ai_uncertain_registered_route",
@@ -341,7 +345,8 @@ def plan_ambiguous_command(
     except Exception as exc:
         logger.warning(
             "Katcha AI planning unavailable request_id=%s cause=%s",
-            request_id, type(exc).__name__,
+            request_id,
+            type(exc).__name__,
         )
         release_budget_reservation(
             reservation_id,

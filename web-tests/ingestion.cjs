@@ -216,6 +216,21 @@ const catalog = [
         await page.setViewportSize({width: 390, height: 844});
         assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
         await page.screenshot({path: path.join(__dirname, 'test-results/ingestion-mobile.png'), fullPage: true});
+        await page.setViewportSize({width: 1366, height: 768});
+        await page.locator("#back").click();
+        await choose('youtube_channel');
+        await page.locator('#youtube-channel').fill('https://www.youtube.com/@creator');
+        await page.locator('.advanced').filter({has: page.locator('#usage')}).locator('summary').click();
+        assert.equal(await page.locator('#usage').inputValue(), 'discovery_only');
+        assert.equal(await page.locator('#next').isVisible(), true);
+        await page.locator('#next').click();
+        assert.match(await page.locator('#review').innerText(), /@creator/);
+        await page.locator('#save').click();
+        await page.waitForFunction(() => !document.querySelector('#step-1').hidden);
+        assert.equal(sources.at(-1).platform, 'youtube');
+        assert.equal(sources.at(-1).query_template.channel_reference, 'https://www.youtube.com/@creator');
+        assert.equal(sources.at(-1).usage_mode, 'discovery_only');
+        assert.equal(await page.locator('#run').innerText(), 'Check channel videos');
         assert.deepEqual(errors, []);
         console.log('PASS: Aerith Sources/Add source workspaces, guided source choices, shared all-channel web scouting, human channel names, empty/error channels, automatic IDs, lost-response recovery, activity retries, custom connectors and responsive layout');
     } finally { if (browser) await browser.close(); server.kill(); }

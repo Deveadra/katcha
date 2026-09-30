@@ -262,6 +262,8 @@ const detail = {
         await page.locator("#message").getByText(/adopted into Katcha/).waitFor();
         assert.equal(invideoHandoff.status,"adopted");
 
+        await page.setViewportSize({width:1024,height:768});
+        assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
         await page.setViewportSize({width:390,height:844});
         assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
         assert.equal(await page.locator(".inspector-tab").count(),4);

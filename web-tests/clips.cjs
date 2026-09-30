@@ -77,6 +77,7 @@ const clips = [
 
 (async () => {
     let browser;
+    let savedRetention = null;
     try {
         for (let i = 0; i < 50; i++) {
             try {
@@ -290,7 +291,7 @@ const clips = [
 
             if (url.pathname === `/v1/channels/${channelA}/clip-retention`) {
                 if (request.method() === "GET") {
-                    return json({
+                    return json(savedRetention || {
                         channel_profile_id: channelA,
                         retention_mode: "indefinite",
                         auto_archive: false,
@@ -304,6 +305,7 @@ const clips = [
                     });
                 }
                 if (request.method() === "PUT") {
+                    savedRetention = {...body, channel_profile_id: channelA};
                     return json({
                         channel_profile_id: channelA,
                         retention_mode: body.retention_mode,
@@ -429,8 +431,9 @@ const clips = [
 
         await page.locator("#retention-settings").click();
         await page.locator("#retention-dialog").waitFor({ state: "visible" });
-        await page.locator("#retention-mode").selectOption("managed");
+        assert.equal(await page.locator("#auto-archive").isEnabled(), true);
         await page.locator("#auto-archive").check();
+        assert.equal(await page.locator("#retention-mode").inputValue(), "managed");
         await page.locator("#auto-duplicates").check();
         await page.locator("#auto-purge").check();
         await page.locator("#save-retention").click();
@@ -452,6 +455,12 @@ const clips = [
         assert.equal(retentionUpdate.body.acknowledge_irreversible, true);
         assert.equal(retentionUpdate.body.confirmation_text, phrase);
 
+        assert.match(await page.locator("#retention-feedback").innerText(), /saved/);
+        await page.locator('[data-close-dialog="retention-dialog"]').click();
+        await page.locator("#retention-settings").click();
+        assert.equal(await page.locator("#retention-mode").inputValue(), "managed");
+        assert.equal(await page.locator("#auto-archive").isChecked(), true);
+        assert.equal(await page.locator("#auto-duplicates").isChecked(), true);
         await page.setViewportSize({ width: 390, height: 844 });
         assert.equal(
             await page.evaluate(() => document.documentElement.scrollWidth > innerWidth),

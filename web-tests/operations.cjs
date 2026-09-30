@@ -180,6 +180,9 @@ function payload(selected = "") {
     await page.route("**/v1/operations/overview**", async (route) => {
         const request = route.request();
         const url = new URL(request.url());
+        if (request.headers().authorization !== "Bearer fixture-token") {
+            return route.fulfill({status: 401, json: {detail: "Token required"}});
+        }
         requests.push({
             channel: url.searchParams.get("channel_profile_id") || "",
             auth: request.headers().authorization,
@@ -200,13 +203,16 @@ function payload(selected = "") {
 
     try {
         await page.goto("http://127.0.0.1:" + port + "/operations.html");
-        assert.equal(await page.getByRole("heading", { name: "Run the system." }).count(), 1);
+        assert.equal(await page.getByRole("heading", { name: "Your channel briefing." }).count(), 1);
         await page.locator("#token").fill("fixture-token");
         await page.locator("#connect-form button").click();
 
         await page.waitForFunction(
             () => document.getElementById("pulse-attention").textContent === "2",
         );
+        assert.match(await page.locator("#briefing-list").innerText(), /measured revenue/);
+        assert.equal(await page.locator("#briefing-list a").count(), 4);
+        assert.equal(await page.locator("#connect-form").isVisible(), false);
         assert.equal(await page.locator("#pulse-active").innerText(), "2");
         assert.equal(await page.locator("#pulse-opportunities").innerText(), "1");
         assert.equal(await page.locator("#pulse-published").innerText(), "1");
@@ -227,7 +233,7 @@ function payload(selected = "") {
             new RegExp("/explorer\\?channel=" + channelOne),
         );
 
-        await page.locator(".activity-panel > summary").click();
+        assert.equal(await page.locator(".activity-panel").evaluate(node => node.open), true);
         assert.match(await page.locator("#activity-list").innerText(), /Production\.Render Dead Lettered/i);
 
         await page.locator("#channel-filter").selectOption(channelOne);
@@ -255,6 +261,8 @@ function payload(selected = "") {
         assert.equal(await page.locator("#token").inputValue(), "");
         assert.equal(await page.evaluate(() => localStorage.length), 0);
 
+        require("node:fs").mkdirSync(path.join(__dirname, "test-results"), {recursive: true});
+        await page.screenshot({path: path.join(__dirname, "test-results/home-desktop.png"), fullPage: true});
         await page.setViewportSize({ width: 390, height: 844 });
         assert.equal(
             await page.evaluate(() => document.documentElement.scrollWidth > innerWidth),

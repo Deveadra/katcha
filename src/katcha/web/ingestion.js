@@ -7,6 +7,7 @@ const methods = {
     links: {key: 'operator_feed', title: 'Paste links', icon: '↗', description: 'Add specific videos or posts from any supported site.', help: 'Give your collection a name. After saving, paste the links you want Katcha to consider. This option does not search social platforms for you.'},
     scout: {key: 'web_scout', title: 'Discover new sources', icon: '✦', description: 'Discover public posts, creators, and communities around a topic.', help: 'Tell Katcha what to look for. Web scouting needs live AI, a configured OpenAI key, and available budget. Searches can incur provider charges. Saving alone does not start or schedule a search.'},
     youtube: {key: 'youtube', title: 'Search YouTube', icon: '▶', description: 'Find recent YouTube videos by topic.', help: 'Save a topic to search for recent YouTube videos. YouTube search access must be configured in Katcha before a search can run.'},
+    youtube_channel: {key: 'youtube', title: 'Watch a YouTube channel', icon: '▶', description: 'Study creators serving your audience and collect their recent videos.', help: 'Add a creator’s @handle, channel link, or channel ID. Katcha collects recent videos with public engagement metrics for research. Save the source, then check for new videos; automatic checking is not enabled here.'},
     reddit: {key: 'reddit', title: 'Search Reddit', icon: '◎', description: 'Find discussions and shared links on Reddit.', help: 'Save a topic and, optionally, a Reddit community. Reddit search access must be configured in Katcha before a search can run.'},
     feed: {key: 'rss_atom', title: 'Follow a website feed', icon: '≋', description: 'Follow a site’s RSS or Atom updates.', help: 'Save a website’s RSS or Atom feed. Use “Check for updates” whenever you want to collect new entries. Scheduled checking is not enabled here.'},
 };
@@ -152,6 +153,10 @@ function choose(method) {
     $('search').placeholder = method === 'scout' ? 'For example, funny gaming clips from new creators' : 'For example, Xbox game announcements';
     $('scout-fields').hidden = method !== 'scout';
     if (channelsReady) $('channel-help').textContent = channelHelp();
+    $('youtube-channel-fields').hidden = method !== 'youtube_channel';
+    if (method === 'youtube_channel') $('usage').value = 'discovery_only';
+    else $('usage').value = 'candidate_review';
+    $('usage-help').textContent = usage[$('usage').value][1];
     $('reddit-fields').hidden = method !== 'reddit';
     $('feed-fields').hidden = method !== 'feed';
     $('custom-fields').hidden = method !== 'custom';
@@ -192,6 +197,13 @@ function details() {
             query = {...query, subreddit, sort: 'new', time_filter: 'week'};
         }
     }
+    if (selectedMethod === 'youtube_channel') {
+        const reference = $('youtube-channel').value.trim();
+        if (!reference) throw new Error('Enter the YouTube channel’s @handle or channel link.');
+        if (!/^@[\S]+$/.test(reference) && !/^UC[A-Za-z0-9_-]{22}$/.test(reference) && !/^https:\/\/(www\.|m\.)?youtube\.com\/(@[^/?#]+|channel\/UC[A-Za-z0-9_-]{22})(\/[^?#]*)?(\?[^#]*)?$/.test(reference)) throw new Error('Use a YouTube @handle, /@handle link, or /channel/ link rather than a video link.');
+        platform = 'youtube';
+        query = {channel_reference: reference, order: 'date', limit: 25, freshness_horizon_hours: 720};
+    }
     if (selectedMethod === 'feed') { platform = 'web'; query = {feed_url: httpUrl($('feed').value.trim(), 'The website feed'), limit: 50}; }
     if (selectedMethod === 'custom') {
         try { query = JSON.parse($('custom-query').value); } catch { throw new Error('The custom connection settings are not valid JSON.'); }
@@ -207,6 +219,7 @@ function review() {
         ['For', channels.find(c => c.id === d.channel_profile_id) ? channelName(channels.find(c => c.id === d.channel_profile_id)) : 'Shared with all channels'],
         ['Review preference', usage[d.usage_mode][0]],
     ];
+    if (d.query_template.channel_reference) rows.push(['YouTube channel', d.query_template.channel_reference]);
     if (d.query_template.q) rows.push(['Search topic', d.query_template.q]);
     if (d.query_template.platforms) rows.push(['Search sites', d.query_template.platforms.join(', ')]);
     if (d.query_template.subreddit) rows.push(['Community', `r/${d.query_template.subreddit}`]);
@@ -294,7 +307,7 @@ async function selectSource() {
     const usable = s.enabled && s.usage_mode !== 'blocked';
     $('import').hidden = !canImport || !usable;
     $('run').hidden = canImport || !usable;
-    $('run').textContent = s.adapter_key === 'rss_atom' ? 'Check for updates' : 'Search now';
+    $('run').textContent = s.query_template?.channel_reference ? 'Check channel videos' : s.adapter_key === 'rss_atom' ? 'Check for updates' : 'Search now';
     const channel = s.channel_profile_id ? channelName(sourceChannel(s) || {profile_metadata: {name: 'Assigned channel (not available)'}}) : 'Shared with all channels';
     $('source-info').innerHTML = `<strong>${esc(connectionName(s))}</strong><p>${esc(channel)} · ${esc(usage[s.usage_mode]?.[0] || 'Custom review preference')}</p>${s.query_template?.q ? `<p>Topic: ${esc(s.query_template.q)}</p>` : ''}`;
     $('operation-help').textContent = !usable ? 'This source is paused or blocked. Content checks cannot be started here.' : canImport ? 'Add links whenever you find something worth considering. No posting happens here.' : s.adapter_key === 'web_scout' ? `Search now uses live AI and public web search; provider charges may apply. This saved source does not run automatically. ${s.channel_profile_id ? 'Its discoveries stay scoped to the selected channel.' : 'Its discoveries are shared across all channels.'}` : 'Checks start when you press the button. Automatic scheduled checking is not enabled here.';

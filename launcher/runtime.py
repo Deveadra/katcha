@@ -989,6 +989,8 @@ class Handler(BaseHTTPRequestHandler):
         if prefix is None:
             return False
         name = path.removeprefix(prefix)
+        if prefix == "/system/":
+            name = "system/" + name
         relative = Path(name)
         if (
             not name
