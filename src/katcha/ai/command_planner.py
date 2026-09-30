@@ -18,6 +18,7 @@ from katcha.ai.router import (
 )
 from katcha.config import Settings, get_settings
 from katcha.domain import AITask
+from katcha.integrations.chatgpt import ChatGPTConnectionError, invoke_json
 
 CommandIntent = Literal[
     "best_clips",
@@ -167,6 +168,33 @@ def _openai(
     )
 
 
+def _chatgpt(
+    prompt: str,
+    *,
+    request_id: uuid.UUID,
+) -> CommandPlanResult:
+    response = invoke_json(
+        prompt=prompt,
+        schema_name="katcha_command_plan",
+        schema=CommandPlan.model_json_schema(),
+    )
+    target = ModelTarget("chatgpt", response.model)
+    _record(
+        target=target,
+        input_tokens=response.input_tokens,
+        output_tokens=response.output_tokens,
+        request_id=request_id,
+        reservation_id=None,
+    )
+    return CommandPlanResult(
+        value=CommandPlan.model_validate_json(response.text),
+        source="chatgpt_plan",
+        target=target,
+        input_tokens=response.input_tokens,
+        output_tokens=response.output_tokens,
+    )
+
+
 def _gemini(
     prompt: str,
     *,
@@ -261,7 +289,50 @@ def plan_ambiguous_command(
             "Live AI planning is not enabled; using a registered command route.",
         )
     reservation_id: uuid.UUID | None = None
+    prompt = _planner_prompt(
+        user_prompt=user_prompt,
+        effective_prompt=effective_prompt,
+        selected_clip_count=selected_clip_count,
+        previous_intent=previous_intent,
+    )
+
     try:
+        try:
+            plan_result = _chatgpt(prompt, request_id=request_id)
+            if plan_result.value.confidence < 0.65:
+                if deterministic_intent != "channel_status":
+                    return CommandPlanResult(
+                        value=CommandPlan(
+                            intent=deterministic_intent,
+                            confidence=plan_result.value.confidence,
+                            reason=(
+                                "The ChatGPT plan was uncertain; a registered "
+                                "command route matched."
+                            ),
+                        ),
+                        source="chatgpt_uncertain_registered_route",
+                        target=plan_result.target,
+                        input_tokens=plan_result.input_tokens,
+                        output_tokens=plan_result.output_tokens,
+                    )
+                return CommandPlanResult(
+                    value=CommandPlan(
+                        intent="unsupported",
+                        confidence=plan_result.value.confidence,
+                        reason=(
+                            "Katcha could not confidently determine the request. "
+                            "Ask a clarifying question rather than changing the topic."
+                        ),
+                    ),
+                    source="chatgpt_low_confidence_fallback",
+                    target=plan_result.target,
+                    input_tokens=plan_result.input_tokens,
+                    output_tokens=plan_result.output_tokens,
+                )
+            return plan_result
+        except ChatGPTConnectionError:
+            pass
+
         decision = route_for_channel(
             AITask.COMMAND_PLANNING,
             channel_profile_id,
@@ -272,12 +343,6 @@ def plan_ambiguous_command(
             reservation_key=f"command-planner:{request_id}",
         )
         reservation_id = decision.reservation_id
-        prompt = _planner_prompt(
-            user_prompt=user_prompt,
-            effective_prompt=effective_prompt,
-            selected_clip_count=selected_clip_count,
-            previous_intent=previous_intent,
-        )
         targets = [decision.route.primary]
         if decision.route.fallback is not None:
             targets.append(decision.route.fallback)
