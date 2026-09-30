@@ -953,6 +953,7 @@ class Handler(BaseHTTPRequestHandler):
             "/studio": "/studio/assets/studio.html",
             "/ai": "/ai/assets/ai.html",
             "/operations": "/operations/assets/operations.html",
+            "/settings": "/settings/assets/settings.html",
         }
         if path in redirects:
             location = redirects[path]
@@ -1001,6 +1002,7 @@ class Handler(BaseHTTPRequestHandler):
             "/studio/assets/",
             "/ai/assets/",
             "/operations/assets/",
+            "/settings/assets/",
         )
         prefix = next((item for item in prefixes if path.startswith(item)), None)
         if prefix is None:
@@ -1130,6 +1132,8 @@ class Handler(BaseHTTPRequestHandler):
             "/studio",
             "/ai",
             "/operations",
+            "/settings",
+            "/auth/callback",
         )
         if not self.path.startswith(allowed_prefixes):
             return self.send(404, {"error": "Not found"})
