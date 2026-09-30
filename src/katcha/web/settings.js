@@ -83,20 +83,16 @@ async function loadChatGPT() {
 }
 
 async function ensureLiveMode() {
-    try {
-        const runtime = await runtimeStatus();
-        if ((runtime.settings || {}).KATCHA_AI_EXECUTION_MODE === "live") return;
-        message("Enabling Live AI before ChatGPT sign-in…");
-        await api("/runtime/settings", {
-            method: "POST",
-            body: JSON.stringify({ KATCHA_AI_EXECUTION_MODE: "live" }),
-        });
-        await api("/runtime/ai/apply", { method: "POST", body: "{}" });
-        $("ai-mode").value = "live";
-    } catch {
-        // Direct API access has no launcher settings endpoint. OAuth can still
-        // connect; readiness will explain if the runtime remains in fixture mode.
-    }
+    if (location.port !== "8765") return;
+    const runtime = await runtimeStatus();
+    if ((runtime.settings || {}).KATCHA_AI_EXECUTION_MODE === "live") return;
+    message("Enabling Live AI before ChatGPT sign-in…");
+    await api("/runtime/settings", {
+        method: "POST",
+        body: JSON.stringify({ KATCHA_AI_EXECUTION_MODE: "live" }),
+    });
+    await api("/runtime/ai/apply", { method: "POST", body: "{}" });
+    $("ai-mode").value = "live";
 }
 
 async function startChatGPT(connectionId = null) {
