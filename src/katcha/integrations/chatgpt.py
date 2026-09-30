@@ -849,25 +849,11 @@ def invoke_json(
     if session is None:
         raise ChatGPTConnectionError("No ChatGPT plan connection is available")
 
-    from openai import OpenAI
-
-    client = OpenAI(
-        api_key=session.access_token,
-        base_url="https://api.openai.com/v1",
-        timeout=45.0,
-        max_retries=0,
-    )
-    chunks: list[str] = []
-    completed = False
-    input_tokens = 0
-    output_tokens = 0
-    try:
-        with client.responses.create(
-            model=session.model,
-            input=[{"role": "user", "content": prompt}],
-            store=False,
-            stream=True,
-            text={
+    text, _, input_tokens, output_tokens = _stream_plan_response(
+        session,
+        body={
+            "input": [{"role": "user", "content": prompt}],
+            "text": {
                 "format": {
                     "type": "json_schema",
                     "name": schema_name,
@@ -875,39 +861,9 @@ def invoke_json(
                     "strict": False,
                 }
             },
-        ) as stream:
-            for event in stream:
-                event_type = str(getattr(event, "type", ""))
-                if event_type == "response.output_text.delta":
-                    chunks.append(str(getattr(event, "delta", "")))
-                elif event_type == "response.failed":
-                    response = getattr(event, "response", None)
-                    error = getattr(response, "error", None)
-                    code = getattr(error, "code", None) or "unknown_error"
-                    raise ChatGPTConnectionError(
-                        f"ChatGPT plan inference failed: {code}"
-                    )
-                elif event_type == "response.incomplete":
-                    raise ChatGPTConnectionError(
-                        "ChatGPT plan inference ended incomplete"
-                    )
-                elif event_type == "response.completed":
-                    completed = True
-                    response = getattr(event, "response", None)
-                    usage = getattr(response, "usage", None)
-                    input_tokens = int(getattr(usage, "input_tokens", 0) or 0)
-                    output_tokens = int(getattr(usage, "output_tokens", 0) or 0)
-    except ChatGPTConnectionError:
-        raise
-    except Exception as exc:
-        raise ChatGPTConnectionError(
-            f"ChatGPT plan request failed: {type(exc).__name__}: {exc}"
-        ) from exc
-    if not completed:
-        raise ChatGPTConnectionError(
-            "ChatGPT plan stream ended before response.completed"
-        )
-    text = "".join(chunks).strip()
+        },
+        timeout=45.0,
+    )
     if not text:
         raise ChatGPTConnectionError("ChatGPT plan response contained no text")
     return ChatGPTInference(
