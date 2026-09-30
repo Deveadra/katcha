@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <meta name="theme-color" content="#090b12">
+    <title>Katcha · Settings</title>
+    <link rel="stylesheet" href="/styles.css">
+    <link id="aerith-tokens" rel="stylesheet" href="/system/aerith-tokens.css">
+    <link id="aerith-base" rel="stylesheet" href="/system/aerith-base.css">
+    <link id="aerith-shell" rel="stylesheet" href="/system/aerith-shell.css">
+    <link id="aerith-components" rel="stylesheet" href="/system/aerith-components.css">
+    <link id="aerith-motion" rel="stylesheet" href="/system/aerith-motion.css">
+    <link rel="stylesheet" href="/pages/settings-aerith.css">
+    <script src="/settings/assets/settings.js" defer></script>
+    <script src="/launcher-bridge.js" defer></script>
+</head>
+<body data-katcha-page="settings">
+    <div class="app-shell">
+        <aside class="rail">
+            <a class="brand" href="/home" aria-label="Katcha home">
+                <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
+                katcha<span class="brand-dot">.</span>
+            </a>
+            <div class="rail-spacer"></div>
+            <div class="rail-footer">Configuration stays local.</div>
+        </aside>
+
+        <main class="settings-main">
+            <header class="topbar">
+                <div class="breadcrumbs">Workspace / <strong>Settings</strong></div>
+                <span id="settings-state" class="simulation">CHECKING</span>
+            </header>
+
+            <div class="settings-shell">
+                <section class="settings-head">
+                    <div>
+                        <div class="eyebrow">SETTINGS</div>
+                        <h1>Connections, models, and runtime.</h1>
+                        <p>Change Katcha without editing source files or hand-modifying <code>.env</code>.</p>
+                    </div>
+                </section>
+
+                <div id="settings-message" class="settings-message" role="status" aria-live="polite"></div>
+
+                <section class="settings-grid">
+                    <article class="settings-card hero-card">
+                        <div class="card-head">
+                            <div>
+                                <span class="micro-label">PRIMARY AI</span>
+                                <h2>ChatGPT plan</h2>
+                            </div>
+                            <span id="chatgpt-badge" class="status-pill">NOT CONNECTED</span>
+                        </div>
+                        <p class="card-copy">Use your eligible ChatGPT Plus or Pro plan for normal Katcha conversation and command reasoning. API keys stay optional fallbacks.</p>
+
+                        <div id="chatgpt-account" class="account-panel" hidden>
+                            <div>
+                                <small>CONNECTED ACCOUNT</small>
+                                <strong id="chatgpt-identity">ChatGPT</strong>
+                                <span id="chatgpt-expiry"></span>
+                            </div>
+                            <button id="chatgpt-test" type="button" class="secondary">Test connection</button>
+                        </div>
+
+                        <label class="field" id="chatgpt-model-field" hidden>
+                            <span>Chat model</span>
+                            <select id="chatgpt-model"></select>
+                            <small>Models come directly from the connected ChatGPT account.</small>
+                        </label>
+
+                        <div class="button-row">
+                            <button id="chatgpt-connect" type="button" class="primary">Continue with ChatGPT</button>
+                            <button id="chatgpt-reconnect" type="button" class="secondary" hidden>Reconnect</button>
+                            <button id="chatgpt-disconnect" type="button" class="ghost danger" hidden>Disconnect</button>
+                        </div>
+                    </article>
+
+                    <article class="settings-card">
+                        <div class="card-head">
+                            <div>
+                                <span class="micro-label">FALLBACKS</span>
+                                <h2>API providers</h2>
+                            </div>
+                            <span class="status-pill muted">OPTIONAL</span>
+                        </div>
+                        <p class="card-copy">Keep API providers for specialist workloads, plan-limit recovery, native video analysis, and background automation.</p>
+
+                        <form id="ai-settings-form">
+                            <label class="field">
+                                <span>AI execution</span>
+                                <select id="ai-mode" name="KATCHA_AI_EXECUTION_MODE">
+                                    <option value="live">Live AI</option>
+                                    <option value="fixture">Fixture · no external calls</option>
+                                    <option value="auto">Environment default</option>
+                                </select>
+                            </label>
+                            <label class="field">
+                                <span>OpenAI API key</span>
+                                <input id="openai-key" name="KATCHA_OPENAI_API_KEY" type="password" autocomplete="new-password" placeholder="Not configured">
+                                <small id="openai-state">Optional fallback.</small>
+                            </label>
+                            <label class="field">
+                                <span>Gemini API key</span>
+                                <input id="gemini-key" name="KATCHA_GEMINI_API_KEY" type="password" autocomplete="new-password" placeholder="Not configured">
+                                <small id="gemini-state">Used for Gemini-native workloads and fallback.</small>
+                            </label>
+                            <button id="save-ai" type="submit" class="primary">Save & apply AI settings</button>
+                        </form>
+                    </article>
+
+                    <article class="settings-card compact-card">
+                        <div class="card-head">
+                            <div>
+                                <span class="micro-label">VOICE & CHANNEL</span>
+                                <h2>Integrations</h2>
+                            </div>
+                        </div>
+                        <p class="card-copy">Per-channel ElevenLabs voices and editorial provider choices live in Channel Studio so each channel keeps its own identity.</p>
+                        <a class="settings-link" href="/channels">Open Channel Studio <span>↗</span></a>
+                    </article>
+
+                    <article class="settings-card compact-card">
+                        <div class="card-head">
+                            <div>
+                                <span class="micro-label">SYSTEM</span>
+                                <h2>Launcher & diagnostics</h2>
+                            </div>
+                        </div>
+                        <p class="card-copy">Rendering, AWS, Telegram, YouTube OAuth, service health, and diagnostic exports remain available from the local launcher while this Settings workspace expands.</p>
+                        <a class="settings-link" href="/">Open system settings <span>↗</span></a>
+                    </article>
+                </section>
+            </div>
+        </main>
+    </div>
+</body>
+</html>
