@@ -13,6 +13,7 @@ from sqlalchemy import select, text
 from katcha import __version__
 from katcha.api.acquisition import router as acquisition_router
 from katcha.api.brands import router as brands_router
+from katcha.api.chatgpt import router as chatgpt_router
 from katcha.api.clip_library import router as clip_library_router
 from katcha.api.command_center import router as command_center_router
 from katcha.api.control import router as control_router
@@ -140,6 +141,7 @@ app = FastAPI(
 )
 app.include_router(acquisition_router)
 app.include_router(brands_router)
+app.include_router(chatgpt_router)
 app.include_router(clip_library_router)
 app.include_router(command_center_router)
 app.include_router(control_router)
@@ -164,6 +166,8 @@ app.mount("/ai/assets", StaticFiles(directory=Path(__file__).parents[1] / "web")
           name="ai-assets")
 app.mount("/operations/assets", StaticFiles(directory=Path(__file__).parents[1] / "web"),
           name="operations-assets")
+app.mount("/settings/assets", StaticFiles(directory=Path(__file__).parents[1] / "web"),
+          name="settings-assets")
 
 
 app.mount("/system", StaticFiles(directory=Path(__file__).parents[1] / "web" / "system"),
@@ -199,6 +203,12 @@ def channels_shell(request: Request):
 def ai_shell(request: Request):
     query = "?" + request.url.query if request.url.query else ""
     return RedirectResponse("/ai/assets/ai.html" + query)
+
+
+@app.get("/settings", include_in_schema=False)
+def settings_shell(request: Request):
+    query = "?" + request.url.query if request.url.query else ""
+    return RedirectResponse("/settings/assets/settings.html" + query)
 
 
 @app.get("/ingestion", include_in_schema=False)
