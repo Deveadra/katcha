@@ -600,6 +600,23 @@ def test_launcher_serves_workspace_shell_without_api(tmp_path):
         body = response.read()
         assert response.status == 200
         assert b'What needs you now.' in body
+        connection.request("GET", "/pages/home-aerith.css")
+        response = connection.getresponse()
+        body = response.read()
+        assert response.status == 200
+        assert response.getheader("Content-Type").startswith("text/css")
+        assert b'.home-hero' in body
+        connection.request("GET", "/home.js")
+        response = connection.getresponse()
+        body = response.read()
+        assert response.status == 200
+        assert response.getheader("Content-Type").startswith(("text/javascript", "application/javascript"))
+        assert b'loadChannel' in body
+        connection.request("GET", "/launcher-bridge.js")
+        response = connection.getresponse()
+        body = response.read()
+        assert response.status == 200
+        assert b'installWorkspaceMenu' in body
         connection.request("GET", "/editing")
         response = connection.getresponse()
         assert response.status == 302
