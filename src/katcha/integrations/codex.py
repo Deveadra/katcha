@@ -428,13 +428,10 @@ def list_models(settings: Settings | None = None) -> list[CodexModel]:
         )
     if not result:
         return [
+            CodexModel("gpt-5.6-sol", "GPT-5.6 Sol", "High-capability Codex model"),
+            CodexModel("gpt-5.6-terra", "GPT-5.6 Terra", "Balanced Codex model"),
+            CodexModel("gpt-5.6-luna", "GPT-5.6 Luna", "Fast Codex model"),
             CodexModel("gpt-5.5", "GPT-5.5", "General ChatGPT subscription model"),
-            CodexModel("gpt-5.4", "GPT-5.4", "General ChatGPT subscription model"),
-            CodexModel(
-                "gpt-5.4-mini",
-                "GPT-5.4 Mini",
-                "Faster ChatGPT subscription model",
-            ),
         ]
     return result
 
