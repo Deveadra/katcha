@@ -12,7 +12,7 @@ from fastapi import APIRouter, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 
-from katcha.acquisition_models import TopicWatchVersion
+from katcha.acquisition_models import IngestionSource, TopicWatchVersion
 from katcha.ai.command_center import compose_grounded_answer
 from katcha.ai.command_planner import (
     CommandPlan,
@@ -46,6 +46,7 @@ from katcha.integrations.codex import (
 from katcha.integrations.codex import usage as codex_usage
 from katcha.orchestration.client import (
     start_channel_intelligence_refresh,
+    start_discovery_workflow,
     start_production_workflow,
     start_short_episode_editorial_workflow,
 )
@@ -73,6 +74,7 @@ from katcha.services.command_center import (
     resolve_command_follow_up,
     source_discovery_plan,
 )
+from katcha.services.ingestion_sources import create_discovery_run_from_source
 from katcha.services.command_history import (
     archive_command_thread,
     create_command_thread,
@@ -1131,7 +1133,12 @@ def command(http_request: Request, request: CommandRequest) -> CommandResponse:
         if intent == "confirm_action":
             proposals = reused_proposals
         else:
-            specs = _action_specs(resolved_request, intent, evidence)
+            specs = _action_specs(
+                resolved_request,
+                intent,
+                evidence,
+                plan=planning.value,
+            )
             proposals = create_action_proposals(
                 request_id=request_id,
                 channel_profile_id=request.channel_profile_id,
@@ -1346,6 +1353,72 @@ async def _execute_proposal(
         return {"workflow_id": workflow_id, "run_key": run_key}
 
     if proposal.action_type == "start_source_scout":
+        if payload.get("source_id"):
+            source_id = uuid.UUID(str(payload["source_id"]))
+            with session_scope() as session:
+                source = session.get(IngestionSource, source_id)
+                if source is None:
+                    raise ValueError(f"ingestion source not found: {source_id}")
+                if (
+                    source.channel_profile_id is not None
+                    and source.channel_profile_id != proposal.channel_profile_id
+                ):
+                    raise ValueError("ingestion source is outside the proposal channel")
+                source_name = source.name
+
+            raw_overrides = payload.get("query_overrides") or {}
+            if not isinstance(raw_overrides, dict):
+                raise ValueError("source search query_overrides must be an object")
+            query_overrides = {
+                str(key): value for key, value in raw_overrides.items()
+            }
+            search_query = str(
+                payload.get("search_query")
+                or query_overrides.get("q")
+                or ""
+            ).strip()
+            prepare_for_production = bool(payload.get("prepare_for_production"))
+            match_terms = [
+                term
+                for term in re.findall(r"[a-z0-9]+", search_query.casefold())
+                if len(term) >= 4
+                and term not in {
+                    "official",
+                    "trailer",
+                    "trailers",
+                    "teaser",
+                    "teasers",
+                    "video",
+                    "videos",
+                }
+            ][:8]
+            run = create_discovery_run_from_source(
+                source_id,
+                query_overrides=query_overrides,
+                idempotency_key=f"command-source:{proposal.id}",
+                metadata={
+                    "command_proposal_id": str(proposal.id),
+                    "command_request_id": str(proposal.request_id),
+                    "command_channel_profile_id": str(proposal.channel_profile_id),
+                    "command_operator_request": str(
+                        payload.get("operator_request") or ""
+                    )[:1000],
+                    "command_prepare_for_production": prepare_for_production,
+                    "command_prepare_max_candidates": 5,
+                    "command_match_terms": match_terms,
+                },
+            )
+            workflow_id = f"discovery-run-{run.id}"
+            await start_discovery_workflow(str(run.id), workflow_id)
+            return {
+                "discovery_run_id": str(run.id),
+                "workflow_id": workflow_id,
+                "source_id": str(source_id),
+                "source_name": source_name,
+                "search_query": search_query,
+                "prepare_for_production": prepare_for_production,
+            }
+
         raw_platforms = payload.get("platforms") or []
         if not isinstance(raw_platforms, list):
             raise ValueError("source scout platforms must be a list")
