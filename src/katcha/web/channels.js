@@ -20,6 +20,7 @@ const state = {
     elevenlabsModels: [],
     elevenlabsPreviewUrl: null,
     providerError: "",
+    managerRequested: launchParams.get("setup") === "1",
 };
 
 const $ = (id) => document.getElementById(id);
@@ -150,6 +151,68 @@ function activeConnection() {
     return state.connections.find((item) => item.id === channel.youtube_connection_id) || null;
 }
 
+function channelForConnection(connectionId) {
+    return state.channels.find((item) => item.youtube_connection_id === connectionId) || null;
+}
+
+function channelConnectionLabel(connection) {
+    const channel = channelForConnection(connection.id);
+    return (
+        channel?.profile_metadata?.channel_handle ||
+        connection.channel_id ||
+        friendly(connection.status || "connected")
+    );
+}
+
+function renderChannelManager() {
+    const container = $("channel-manager-connections");
+    if (!container) return;
+
+    if (!state.connections.length) {
+        container.innerHTML =
+            '<div class="channel-manager-empty">No YouTube channels are connected yet. Use “Connect another YouTube channel” to authorize one.</div>';
+        return;
+    }
+
+    container.innerHTML = state.connections
+        .map((connection) => {
+            const channel = channelForConnection(connection.id);
+            const action = channel
+                ? '<span class="channel-connection-state">IN KATCHA</span>'
+                : '<button class="studio-button primary small" type="button" data-action="create-channel" data-connection="' +
+                  escapeHtml(connection.id) +
+                  '">Add to Katcha</button>';
+            return (
+                '<article class="channel-connection-row' +
+                (channel ? " is-added" : "") +
+                '"><div class="channel-connection-copy"><strong>' +
+                escapeHtml(connection.channel_title || "YouTube channel") +
+                '</strong><small>' +
+                escapeHtml(channelConnectionLabel(connection)) +
+                '</small></div>' +
+                action +
+                "</article>"
+            );
+        })
+        .join("");
+}
+
+function openChannelManager() {
+    renderChannelManager();
+    $("channel-manager").hidden = false;
+    $("channel-manager").scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+function closeChannelManager() {
+    $("channel-manager").hidden = true;
+    state.managerRequested = false;
+    const url = new URL(location.href);
+    if (url.searchParams.has("setup")) {
+        url.searchParams.delete("setup");
+        history.replaceState({}, "", url.pathname + url.search + url.hash);
+    }
+}
+
 function askKatchaHref(kind, id, prompt) {
     const params = new URLSearchParams({
         channel: state.channelId,
@@ -181,9 +244,11 @@ async function connect() {
         state.connections = connections;
         $("connection-state").textContent = "CONNECTED";
         $("connection-state").className = "simulation connected";
+        renderChannelManager();
         if (!channels.length) {
             renderSetup();
-            setStatus("Connected. Create a channel workspace to begin.");
+            setStatus("Connected. Add your first channel to begin.");
+            if (state.managerRequested) openChannelManager();
             return;
         }
         $("channel-setup").hidden = true;
@@ -193,6 +258,7 @@ async function connect() {
         state.channelId = existing ? state.channelId : channels[0].id;
         $("channel").value = state.channelId;
         await loadChannel();
+        if (state.managerRequested) openChannelManager();
     } catch (error) {
         $("connection-state").textContent = "DISCONNECTED";
         $("connection-state").className = "simulation";
@@ -206,22 +272,25 @@ function renderSetup() {
     const container = $("setup-actions");
     if (!state.connections.length) {
         $("setup-copy").textContent =
-            "Connect YouTube once. Katcha will keep the resulting workspace channel-scoped.";
+            "Connect a YouTube channel once. Katcha will create an isolated workspace for its brand, learning, sources, production, and analytics.";
         container.innerHTML =
-            '<button class="studio-button primary" type="button" data-action="connect-youtube">Connect YouTube ↗</button>';
+            '<button class="studio-button primary" type="button" data-action="connect-youtube">Connect YouTube channel ↗</button>';
         return;
     }
     $("setup-copy").textContent =
-        "YouTube is connected. Choose which connection should become a Katcha channel workspace.";
-    container.innerHTML = state.connections
-        .map((connection) =>
-            '<button class="studio-button primary" type="button" data-action="create-channel" data-connection="' +
-            escapeHtml(connection.id) +
-            '">Create ' +
-            escapeHtml(connection.channel_title) +
-            " workspace</button>",
-        )
-        .join("");
+        "Choose a connected YouTube channel to add to Katcha.";
+    const available = state.connections.filter((connection) => !channelForConnection(connection.id));
+    container.innerHTML =
+        available
+            .map((connection) =>
+                '<button class="studio-button primary" type="button" data-action="create-channel" data-connection="' +
+                escapeHtml(connection.id) +
+                '">Add ' +
+                escapeHtml(connection.channel_title) +
+                "</button>",
+            )
+            .join("") +
+        '<button class="studio-button secondary" type="button" data-action="connect-youtube">Connect another YouTube channel ↗</button>';
 }
 
 async function beginYouTubeOAuth() {
@@ -239,7 +308,7 @@ async function createChannel(connectionId) {
         setStatus("Creating channel workspace…");
         const timezone =
             Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
-        await api("/v1/channels", {
+        const created = await api("/v1/channels", {
             method: "POST",
             body: JSON.stringify({
                 youtube_connection_id: connectionId,
@@ -251,9 +320,16 @@ async function createChannel(connectionId) {
         $("channel-setup").hidden = true;
         $("studio").hidden = false;
         renderChannelSelect();
-        state.channelId = state.channels[0]?.id || "";
+        const createdChannel =
+            (created?.id && state.channels.find((item) => item.id === created.id)) ||
+            state.channels.find((item) => item.youtube_connection_id === connectionId);
+        state.channelId = createdChannel?.id || state.channelId || state.channels[0]?.id || "";
         $("channel").value = state.channelId;
+        sessionStorage.setItem("katcha.channel", state.channelId);
+        renderChannelManager();
+        closeChannelManager();
         await loadChannel();
+        setStatus("Channel added to Katcha and selected.", "success");
     } catch (error) {
         setStatus(error.message, "error");
     }
@@ -1631,9 +1707,16 @@ $("growth-pace").addEventListener("change", (event) => {
 });
 $("content-search").addEventListener("input", renderPublications);
 $("content-filter").addEventListener("change", renderPublications);
-$("setup-actions").addEventListener("click", (event) => {
+function handleChannelAction(event) {
     const button = event.target.closest("button");
     if (!button) return;
     if (button.dataset.action === "connect-youtube") beginYouTubeOAuth();
     if (button.dataset.action === "create-channel") createChannel(button.dataset.connection);
-});
+}
+
+$("setup-actions").addEventListener("click", handleChannelAction);
+$("channel-manager-connections").addEventListener("click", handleChannelAction);
+$("open-channel-manager").addEventListener("click", openChannelManager);
+$("open-channel-manager-inline").addEventListener("click", openChannelManager);
+$("close-channel-manager").addEventListener("click", closeChannelManager);
+$("connect-another-youtube").addEventListener("click", beginYouTubeOAuth);
