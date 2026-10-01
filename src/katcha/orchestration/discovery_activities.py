@@ -206,6 +206,11 @@ def execute_discovery_page_activity(run_id: str) -> dict[str, object]:
         run_metadata.get("default_candidate_metadata") or {}
     )
     for item in batch.items:
+        candidate_metadata = {**dict(item.metadata or {}), **default_candidate_metadata}
+        # Shared collections remain unassigned even if provider/default metadata
+        # supplies a channel. Preserve the public contract: omit the channel key.
+        if default_candidate_metadata.get("source_scope") == "shared":
+            candidate_metadata.pop("channel_profile_id", None)
         candidate = observe_discovery_candidate(
             source_url=item.source_url,
             adapter_key=adapter_key,
@@ -216,7 +221,7 @@ def execute_discovery_page_activity(run_id: str) -> dict[str, object]:
             creator_url=item.creator_url,
             provenance_confidence=item.provenance_confidence,
             provenance_claims=item.provenance_claims,
-            metadata={**default_candidate_metadata, **dict(item.metadata or {})},
+            metadata=candidate_metadata,
         )
         candidate_ids.append(str(candidate.id))
         if topic_watch_id is not None:

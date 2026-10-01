@@ -344,6 +344,7 @@ class CandidateDetailResponse(BaseModel):
 
 
 class PromoteCandidateRequest(BaseModel):
+    for_review: bool = False
     actor: str = Field(default="operator", min_length=1, max_length=128)
 
 
@@ -756,7 +757,9 @@ async def promote_candidate(
     request: PromoteCandidateRequest,
 ) -> DiscoveryPromotionResponse:
     try:
-        source = promote_discovery_candidate(candidate_id, actor=request.actor)
+        source = promote_discovery_candidate(
+            candidate_id, actor=request.actor, for_review=request.for_review,
+        )
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     if source.status == SourceStatus.REGISTERED.value and source.workflow_id:

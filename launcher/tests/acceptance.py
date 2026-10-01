@@ -56,6 +56,22 @@ def wait_for_workspace(seconds):
     raise TimeoutError("Katcha workspace did not become ready")
 
 
+def wait_for_execution_systems(seconds=90):
+    """Containers being up does not prove that their workflow workers started."""
+    deadline = time.monotonic() + seconds
+    unavailable = []
+    while time.monotonic() < deadline:
+        snapshot = json.loads(request("/v1/operations/system-check"))
+        unavailable = [
+            row for row in snapshot["checks"] if row["key"] != "ai" and row["status"] != "ok"
+        ]
+        if not unavailable:
+            assert snapshot["live_inference_verified"] is False
+            return
+        time.sleep(3)
+    raise AssertionError(f"Execution systems unavailable: {unavailable}")
+
+
 if __name__ == "__main__":
     process = subprocess.Popen(["python3", "launcher/runtime.py", "--no-browser"])
     try:
@@ -88,6 +104,7 @@ if __name__ == "__main__":
         )
         assert workspace_state["workspace_ready"]
         state = wait_for("ready", 1800)
+        wait_for_execution_systems()
         print(f"Initial full readiness: {time.monotonic() - cold_started:.2f}s", flush=True)
         services = {row["Service"] for row in state["services"]}
         assert {
@@ -133,11 +150,13 @@ if __name__ == "__main__":
         )
         assert workspace_state["workspace_ready"]
         state = wait_for("ready", 420)
+        wait_for_execution_systems()
         assert state["desired_running"]
         # Status retains only 300 events; busy worker logs can evict the build event.
         journal = [json.loads(line) for line in request("/runtime/diagnostics").splitlines()]
         last_start = max(
-            index for index, event in enumerate(journal)
+            index
+            for index, event in enumerate(journal)
             if event["component"] == "launcher" and event["message"] == "start requested"
         )
         messages = [event["message"] for event in journal[last_start:]]

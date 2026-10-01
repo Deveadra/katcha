@@ -70,10 +70,11 @@ function resetLabel(epochSeconds) {
 
 function renderCodexWindow(prefix, row, fallbackLabel) {
     const window = row || {};
-    const percent = Math.max(0, Math.min(100, Number(window.used_percent || 0)));
+    const known = typeof window.used_percent === "number" && Number.isFinite(window.used_percent);
+    const percent = known ? Math.max(0, Math.min(100, window.used_percent)) : 0;
     $(prefix + "-label").textContent =
         usageWindowLabel(window.window_minutes, fallbackLabel);
-    $(prefix + "-value").textContent = percent.toFixed(percent % 1 ? 1 : 0) + "% used";
+    $(prefix + "-value").textContent = known ? percent.toFixed(percent % 1 ? 1 : 0) + "% used" : "Unavailable";
     $(prefix + "-bar").style.width = percent + "%";
     $(prefix + "-reset").textContent = resetLabel(window.resets_at);
 }
@@ -120,6 +121,11 @@ async function loadCodex() {
         api("/v1/integrations/codex/models"),
         loadCodexUsage(),
     ]);
+    if (results[1].status === "rejected") {
+        renderCodexWindow("codex-primary", null, "5h limit");
+        renderCodexWindow("codex-secondary", null, "Weekly limit");
+        $("codex-credits").textContent = "Usage unavailable. Test response can still verify AI.";
+    }
     if (results[0].status === "fulfilled") {
         const models = results[0].value;
         $("codex-model").replaceChildren(
@@ -379,3 +385,27 @@ $("ai-settings-form").onsubmit = async (event) => {
     if (query.get("chatgpt") === "state_error") message("Direct ChatGPT sign-in returned an invalid or expired session. Start a fresh sign-in from this page.", "error");
     await Promise.allSettled([loadRuntime(), loadCodex(), loadChatGPT()]);
 })();
+
+$("check-systems").onclick = async () => {
+    const button = $("check-systems"), output = $("system-check-results");
+    button.disabled = true;
+    output.textContent = "Checking Katcha's services…";
+    try {
+        const result = await api("/v1/operations/system-check");
+        output.replaceChildren();
+        for (const check of result.checks) {
+            const row = document.createElement("p");
+            row.textContent = check.label + " · " + check.status + " — " + (typeof check.detail === "string" ? check.detail : "Saved data is available");
+            output.append(row);
+        }
+        const copy = document.createElement("button");
+        copy.className = "button secondary";
+        copy.textContent = "Copy diagnostics";
+        copy.onclick = async () => {
+            try { await navigator.clipboard.writeText(JSON.stringify(result, null, 2)); copy.textContent = "Copied"; }
+            catch { message("Clipboard is unavailable. Select and copy the check results.", "error"); }
+        };
+        output.append(copy);
+    } catch (error) { output.textContent = error.message; }
+    finally { button.disabled = false; }
+};

@@ -21,6 +21,8 @@ from katcha.integrations.chatgpt import (
     ChatGPTConnectionError,
     invoke_web_search_json,
 )
+from katcha.integrations.codex import CodexConnectionError
+from katcha.integrations.codex import invoke_web_search_json as invoke_codex_web_search_json
 
 _PLATFORM_DOMAINS = {
     "tiktok": ("tiktok.com",),
@@ -92,7 +94,8 @@ def _same_grounded_page(url: str, grounded: set[str]) -> bool:
         except ValueError:
             continue
         source_path = source.path.rstrip("/") or "/"
-        if candidate.netloc == source.netloc and candidate_path == source_path:
+        if (candidate.netloc == source.netloc and candidate_path == source_path
+                and candidate.query == source.query):
             return True
     return False
 
@@ -405,10 +408,15 @@ class WebScoutDiscoveryAdapter:
             "required": ["items"],
             "additionalProperties": False,
         }
-        plan_error: ChatGPTConnectionError | None = None
+        plan_errors: list[str] = []
+        providers = []
+        if getattr(settings, "codex_enabled", False):
+            providers.append(("codex", invoke_codex_web_search_json))
         if getattr(settings, "chatgpt_host_id", None):
+            providers.append(("chatgpt", invoke_web_search_json))
+        for provider, invoke in providers:
             try:
-                plan = invoke_web_search_json(
+                plan = invoke(
                     prompt=_search_prompt(query, limit, cursor=cursor),
                     schema_name="katcha_web_scout_results",
                     schema=schema,
@@ -417,7 +425,7 @@ class WebScoutDiscoveryAdapter:
                 )
                 response_payload = plan.payload
                 web_search_calls = _web_search_call_count(response_payload)
-                target = ModelTarget("chatgpt", plan.model)
+                target = ModelTarget(provider, plan.model)
                 record_usage(
                     task=AITask.METADATA,
                     target=target,
@@ -434,7 +442,7 @@ class WebScoutDiscoveryAdapter:
                 )
                 grounded_urls = _grounded_url_keys(response_payload)
                 items = parse_web_scout_output(
-                    _response_output_text(response_payload),
+                    getattr(plan, "text", "") or _response_output_text(response_payload),
                     grounded_urls=grounded_urls,
                     limit=limit,
                 )
@@ -444,18 +452,18 @@ class WebScoutDiscoveryAdapter:
                     done=True,
                     provider_usage={"openai.web_search": web_search_calls},
                 )
-            except ChatGPTConnectionError as exc:
-                plan_error = exc
+            except (CodexConnectionError, ChatGPTConnectionError, httpx.HTTPError) as exc:
+                plan_errors.append(f"{provider}: {exc}")
 
         if not settings.openai_api_key:
-            if plan_error is not None:
+            if plan_errors:
                 raise DiscoveryProviderError(
-                    "ChatGPT plan web scouting was unavailable and no OpenAI API "
-                    "fallback is configured",
+                    "Subscription web research is unavailable and no API fallback is configured. "
+                    + " | ".join(plan_errors)[:1500],
                     kind="provider_unavailable",
                     transient=False,
                     provider_usage={"openai.web_search": 0},
-                ) from plan_error
+                )
             raise ValueError(
                 "Autonomous web scouting needs a connected ChatGPT plan or "
                 "KATCHA_OPENAI_API_KEY fallback. Open Katcha Settings to connect one."

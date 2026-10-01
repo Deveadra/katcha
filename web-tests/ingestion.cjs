@@ -30,11 +30,16 @@ const catalog = [
             requests.push({path: url.pathname, body, auth: req.headers().authorization});
             const reply = (data, status = 200) => route.fulfill({status, contentType: 'application/json', body: JSON.stringify(data)});
             if (req.headers().authorization !== 'Bearer test-token') return reply({detail: 'Unauthorized'}, 401);
+            if (url.pathname.endsWith('/promote')) return reply({status: 'queued'});
             if (url.pathname.endsWith('/adapters')) return reply(catalog);
             if (url.pathname === '/v1/channels') return channelMode === 'error' ? reply({}, 503) : reply(channelMode === 'empty' ? [] : [{id: 'channel-one', status: 'active', profile_metadata: {channel_title: 'RankSnaxx'}}]);
             if (url.pathname === '/v1/discovery/sources') {
                 if (!body) return reply(sources);
-                if (sources.some(s => s.source_key === body.source_key)) return reply({detail: 'Duplicate key'}, 409);
+                const existing = sources.find(s => s.source_key === body.source_key);
+                if (existing) {
+                    if (body.create_only) return reply({detail: "Duplicate key"}, 409);
+                    Object.assign(existing, body); return reply(existing);
+                }
                 const row = {...body, id: `source-${sources.length + 1}`, enabled: true}; sources.push(row);
                 if (loseSaveResponse) { loseSaveResponse = false; return route.abort(); }
                 return reply(row);
@@ -43,7 +48,7 @@ const catalog = [
             if (url.pathname.endsWith('/results')) {
                 const runId = url.pathname.match(/runs\/([^/]+)\/results/)?.[1];
                 const run = runs.find(r => r.id === runId && r.sourceId === sourceId);
-                return run ? reply({total: 1, candidates: [{source_url: 'https://example.com/post', title: '<New creator>', creator: 'Alice'}]}) : reply({}, 404);
+                return run ? reply({total: 1, candidates: [{id: 'candidate-one', source_url: 'https://example.com/post', title: '<New creator>', creator: 'Alice'}]}) : reply({}, 404);
             }
             if (url.pathname.endsWith('/imports') || (url.pathname.endsWith('/runs') && body)) {
                 const key = body.batch_key || body.idempotency_key;
@@ -146,9 +151,9 @@ const catalog = [
         await page.locator('#search').fill('funny gaming clips');
         await page.locator('#scout-platforms').selectOption('social');
         await page.locator('#channel').selectOption('');
-        assert.equal(await page.locator('#channel option').first().textContent(), 'Shared with all channels');
+        assert.equal(await page.locator('#channel option').first().textContent(), 'Shared collection (unassigned)');
         await page.locator('#next').click();
-        assert.match(await page.locator('#review').innerText(), /Shared with all channels/);
+        assert.match(await page.locator('#review').innerText(), /Shared collection/);
         assert.match(await page.locator('#save-explanation').textContent(), /provider charges/i);
         await page.locator('#save').click();
         await page.waitForFunction(() => !document.querySelector('#step-1').hidden);
@@ -156,7 +161,7 @@ const catalog = [
         assert.equal(sources[2].platform, 'web');
         assert.equal(sources[2].channel_profile_id, null);
         assert.deepEqual(sources[2].query_template.platforms, ['tiktok', 'instagram', 'x', 'bluesky']);
-        assert.match(await page.locator('#operation-help').textContent(), /does not run automatically/);
+        assert.match(await page.locator('#operation-help').textContent(), /checks this source every/);
         await page.locator('#run').click();
         await page.waitForFunction(() => document.querySelector('#history').textContent.includes('Finding content'));
         runs.at(-1).status = 'completed';
@@ -165,6 +170,16 @@ const catalog = [
         await page.waitForFunction(() => document.querySelector('.run-results').textContent.includes('item found'));
         assert.match(await page.locator('.run-results').textContent(), /<New creator>/);
         assert.equal(await page.locator('.run-results script').count(), 0);
+        await page.locator('[data-add-clip]').click();
+        await page.waitForFunction(() => document.querySelector('[data-add-clip]').disabled);
+        assert.equal(requests.find(r => r.path.endsWith('/promote')).body.for_review, true);
+        await page.locator('#pause-source').click();
+        await page.waitForFunction(() => document.querySelector('#pause-source').textContent === 'Resume source');
+        assert.equal(sources[2].enabled, false);
+        await page.locator('#pause-source').click();
+        await page.waitForFunction(() => document.querySelector('#pause-source').textContent === 'Pause source');
+        assert.equal(sources[2].enabled, true);
+
         await choose('reddit');
         await page.locator('#search').fill('indie games');
         await page.locator('#community').fill('r/gaming');
@@ -189,9 +204,9 @@ const catalog = [
         channelMode = 'empty';
         await page.locator('#retry-channels').click();
         await page.waitForFunction(() => !document.querySelector('#retry-channels').disabled);
-        assert.match(await page.locator('#channel-help').textContent(), /shared with all channels/i);
+        assert.match(await page.locator('#channel-help').textContent(), /unassigned shared collection/i);
         assert.equal(await page.locator('#channel-area').isVisible(), true);
-        assert.equal(await page.locator('#channel option').first().textContent(), 'Shared with all channels');
+        assert.equal(await page.locator('#channel option').first().textContent(), 'Shared collection (unassigned)');
         await save();
         assert.equal(sources[5].channel_profile_id, null);
         // New connectors remain available behind an explicitly advanced path.

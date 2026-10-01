@@ -25,6 +25,15 @@ from katcha.trend_models import (
 
 router = APIRouter(prefix="/v1/operations", tags=["operations"])
 
+
+@router.get("/system-check")
+async def check_systems(request: Request) -> dict[str, object]:
+    from katcha.api.control_auth import require_control_scope
+    from katcha.services.system_check import system_check
+
+    require_control_scope(request, "ai:read")
+    return await system_check()
+
 WorkState = Literal["attention", "active"]
 
 

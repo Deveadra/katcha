@@ -108,7 +108,9 @@ def test_candidate_validator_rejects_unsupported_grounding_fact() -> None:
         )
 
 
+@pytest.mark.parametrize("use_subscription", [False, True])
 def test_generation_key_replay_does_not_call_provider_twice(
+    use_subscription,
     generation_scope,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -144,9 +146,7 @@ def test_generation_key_replay_does_not_call_provider_twice(
 
     def fake_generate(*_args, **_kwargs):
         calls["count"] += 1
-        return PackagingCandidateSet(
-            candidates=[_candidate(1), _candidate(2), _candidate(3)]
-        )
+        return PackagingCandidateSet(candidates=[_candidate(1), _candidate(2), _candidate(3)])
 
     monkeypatch.setattr(packaging_generation, "_openai_generate", fake_generate)
 
@@ -155,6 +155,27 @@ def test_generation_key_replay_does_not_call_provider_twice(
         openai_api_key="test-key",
         gemini_api_key=None,
     )
+
+    if use_subscription:
+        from katcha.ai.subscription import SubscriptionResult
+
+        live_settings.credential_encryption_key = "fixture"
+        monkeypatch.setattr(packaging_generation, "subscription_connected", lambda settings: True)
+        monkeypatch.setattr(
+            packaging_generation,
+            "generate_subscription_json",
+            lambda **kwargs: SubscriptionResult(
+                fake_generate(),
+                ModelTarget("codex", "fixture"),
+                10,
+                20,
+            ),
+        )
+        monkeypatch.setattr(
+            packaging_generation,
+            "assert_ai_budget",
+            lambda *args: pytest.fail("subscription must not require paid API budget"),
+        )
 
     first = packaging_generation.generate_packaging_candidates(
         publication.id,

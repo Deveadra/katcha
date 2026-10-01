@@ -19,6 +19,7 @@ from katcha.ai.router import (
     route_for,
     route_for_channel,
 )
+from katcha.ai.subscription import generate_subscription_json
 from katcha.config import Settings, get_settings
 from katcha.db import session_scope
 from katcha.domain import AITask
@@ -297,6 +298,16 @@ def _run_structured(
     effort: str = "medium",
     settings: Settings,
 ) -> LongformAIResult:
+    subscription = generate_subscription_json(
+        prompt=prompt, schema=schema, task=task,
+        reference_type="compilation", reference_id=compilation_id, settings=settings,
+    )
+    if subscription is not None:
+        return LongformAIResult(
+            subscription.value, subscription.target,
+            subscription.input_tokens, subscription.output_tokens,
+        )
+    assert_ai_budget(estimated_increment)
     channel_profile_id, expected_value = _routing_context(compilation_id, candidates)
     reservation_id: uuid.UUID | None = None
     if channel_profile_id is not None:
@@ -397,7 +408,6 @@ def generate_editor_plan(
             0,
         )
     estimated_increment = Decimal("0.25")
-    assert_ai_budget(estimated_increment)
     result = _run_structured(
         prompt=_editor_prompt(
             theme=theme,
@@ -438,7 +448,6 @@ def critique_editor_plan(
             0,
         )
     estimated_increment = Decimal("0.15")
-    assert_ai_budget(estimated_increment)
     return _run_structured(
         prompt=_critic_prompt(theme=theme, candidates=candidates, plan=plan),
         schema=LongformCritique,
@@ -476,7 +485,6 @@ def finalize_editor_plan(
         _validate_plan(final, candidates, min_segments=min_segments)
         return final
     estimated_increment = Decimal("0.25")
-    assert_ai_budget(estimated_increment)
     result = _run_structured(
         prompt=_revision_prompt(
             theme=theme,

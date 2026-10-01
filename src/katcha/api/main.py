@@ -11,6 +11,7 @@ from fastapi.staticfiles import StaticFiles
 from sqlalchemy import select, text
 
 from katcha import __version__
+from katcha.ai.subscription import subscription_connected
 from katcha.api.acquisition import router as acquisition_router
 from katcha.api.brands import router as brands_router
 from katcha.api.chatgpt import router as chatgpt_router
@@ -237,7 +238,7 @@ def _require_ai_execution() -> None:
         raise HTTPException(status_code=503, detail="AI execution is disabled")
     if settings.resolved_ai_execution_mode() == "fixture":
         return
-    if not settings.openai_api_key and not settings.gemini_api_key:
+    if not (settings.openai_api_key or settings.gemini_api_key or subscription_connected(settings)):
         raise HTTPException(status_code=503, detail="no AI/TTS provider key is configured")
 
 

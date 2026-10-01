@@ -17,6 +17,7 @@ from katcha.ai.router import (
     release_budget_reservation,
     route_for_channel,
 )
+from katcha.ai.subscription import generate_subscription_json
 from katcha.config import Settings, get_settings
 from katcha.domain import AITask
 from katcha.editorial.episode_schemas import RankedEpisodeScriptSet
@@ -279,6 +280,20 @@ def generate_ranked_episode_scripts(
             ModelTarget("fixture", "deterministic-ranked-script-v1"),
             0,
             0,
+        )
+    prompt = build_ranked_episode_prompt(
+        persona, premise=premise, plan_snapshot=plan_snapshot, items=items,
+        prompt_version=prompt_version,
+    )
+    subscription = generate_subscription_json(
+        prompt=prompt, schema=RankedEpisodeScriptSet, task=AITask.SHORT_SCRIPT,
+        reference_type="short_episode", reference_id=episode_id, settings=settings,
+    )
+    if subscription is not None:
+        validate_episode_scripts_against_plan(subscription.value, plan_snapshot)
+        return EpisodeScriptGenerationResult(
+            subscription.value, subscription.target,
+            subscription.input_tokens, subscription.output_tokens,
         )
     estimated_increment = Decimal("0.08")
     assert_ai_budget(estimated_increment)
