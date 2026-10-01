@@ -594,7 +594,8 @@ def test_specific_discovery_failure_message_prefers_provider_cause() -> None:
     from katcha.orchestration.discovery_workflows import _specific_failure_message
 
     provider = ValueError(
-        "YouTube discovery is not configured. Connect a YouTube channel or add a YouTube Data API key."
+        "YouTube discovery is not configured. Connect a YouTube channel "
+        "or add a YouTube Data API key."
     )
     activity = RuntimeError("Activity task failed")
     activity.__cause__ = provider
