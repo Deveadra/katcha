@@ -183,6 +183,8 @@ class Runtime:
         return text
 
     def event(self, level, component, message, **details):
+        if self.shutdown_event.is_set():
+            return
         row = dict(
             schema="katcha.diagnostic.v1",
             time=dt.datetime.now(dt.UTC).isoformat(),
@@ -250,11 +252,20 @@ class Runtime:
         lines = queue.Queue()
 
         def read():
-            for line in process.stdout:
-                lines.put(line)
-            lines.put(None)
+            try:
+                for line in process.stdout:
+                    lines.put(line)
+            except (OSError, ValueError):
+                pass
+            finally:
+                lines.put(None)
 
-        threading.Thread(target=read, daemon=True).start()
+        reader = threading.Thread(
+            target=read,
+            daemon=True,
+            name="katcha-command-reader",
+        )
+        reader.start()
         output = []
         deadline = time.monotonic() + timeout
         try:
@@ -282,7 +293,14 @@ class Runtime:
             if process.poll() is None:
                 process.kill()
                 process.wait()
-            process.stdout.close()
+            reader.join(timeout=3)
+            if reader.is_alive():
+                with contextlib.suppress(OSError, ValueError):
+                    process.stdout.close()
+                reader.join(timeout=1)
+            if not reader.is_alive():
+                with contextlib.suppress(OSError, ValueError):
+                    process.stdout.close()
 
     def release_revision(self):
         """Return the publishable main-branch revision, or None for local/dev trees."""
