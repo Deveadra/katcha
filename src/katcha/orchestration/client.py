@@ -14,7 +14,10 @@ from katcha.intelligence.runtime import (
 )
 from katcha.orchestration.analysis_workflows import ClipAnalysisWorkflow
 from katcha.orchestration.brand_preview_workflows import StagedBrandPreviewWorkflow
-from katcha.orchestration.discovery_workflows import DiscoveryRunWorkflow
+from katcha.orchestration.discovery_workflows import (
+    CommandSourcePrepareWorkflow,
+    DiscoveryRunWorkflow,
+)
 from katcha.orchestration.intelligence_workflows import (
     ChannelIntelligenceRefreshWorkflow,
     ChannelIntelligenceScheduleWorkflow,
