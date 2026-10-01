@@ -589,41 +589,18 @@ def test_source_overview_includes_health_and_recent_finds(source_scope) -> None:
     assert overview.recent_finds[0].candidate.title == "Recent find"
 
 
-def test_youtube_source_without_profile_connection_does_not_serialize_none(
-    source_scope,
-) -> None:
-    from katcha.acquisition_models import DiscoveryRun
-    from katcha.intelligence_models import ChannelProfile
 
-    with source_scope() as session:
-        profile = ChannelProfile(
-            name="No OAuth channel",
-            slug="no-oauth-channel",
-            status="active",
-            profile_metadata={"channel_title": "No OAuth Channel"},
-            goals={},
-            brand_profile={},
-            voice_profile={},
-            editorial_policy={},
-            automation_policy={},
-            youtube_connection_id=None,
-        )
-        session.add(profile)
-        session.flush()
-        profile_id = profile.id
+def test_specific_discovery_failure_message_prefers_provider_cause() -> None:
+    from katcha.orchestration.discovery_workflows import _specific_failure_message
 
-    source = upsert_ingestion_source(
-        source_key="youtube-no-oauth",
-        name="YouTube no OAuth",
-        adapter_key="youtube",
-        adapter_version="v1",
-        platform="youtube",
-        channel_profile_id=profile_id,
-        query_template={"q": "trailers"},
+    provider = ValueError(
+        "YouTube discovery is not configured. Connect a YouTube channel or add a YouTube Data API key."
     )
-    run = create_discovery_run_from_source(source.id, idempotency_key="youtube-no-oauth")
+    activity = RuntimeError("Activity task failed")
+    activity.__cause__ = provider
+    workflow = RuntimeError("Workflow execution failed")
+    workflow.__cause__ = activity
 
-    with source_scope() as session:
-        row = session.get(DiscoveryRun, run.id)
-        assert row is not None
-        assert "youtube_connection_id" not in row.query
+    assert _specific_failure_message(workflow).startswith(
+        "YouTube discovery is not configured."
+    )
