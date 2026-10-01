@@ -52,28 +52,139 @@ async function api(path, body) {
     }
     return data;
 }
-async function apiFile(path, file) {
-    const form = new FormData();
-    form.append('file', file, file.name);
+function handoffProgress(title, detail = '', percent = null, state = '') {
+    const panel = $('handoff-progress');
+    panel.hidden = false;
+    panel.className = 'handoff-progress' + (state ? ' is-' + state : '');
+    $('handoff-progress-title').textContent = title;
+    $('handoff-progress-detail').textContent = detail;
+    const bar = $('handoff-progress-bar');
+    if (percent == null) {
+        bar.removeAttribute('value');
+        $('handoff-progress-percent').textContent = '';
+    } else {
+        const bounded = Math.max(0, Math.min(100, Math.round(percent)));
+        bar.value = bounded;
+        $('handoff-progress-percent').textContent = bounded + '%';
+    }
+}
+
+function handoffHttpError(status, data, fallback) {
+    const detail = typeof data?.detail === 'string'
+        ? data.detail
+        : typeof data?.error === 'string'
+            ? data.error
+            : fallback;
+    const error = new Error(status === 401 ? 'Your workspace needs an access token.' : detail);
+    error.status = status;
+    return error;
+}
+
+function handoffUpload(file) {
+    return new Promise((resolve, reject) => {
+        const request = new XMLHttpRequest();
+        const launcher = location.port === '8765';
+        const url = launcher
+            ? '/runtime/handoff/upload?filename=' + encodeURIComponent(file.name)
+            : '/v1/intelligence-ingest/inbox/files?process=true';
+
+        request.open('POST', url);
+        if (launcher) {
+            request.setRequestHeader('Content-Type', 'application/octet-stream');
+        } else if (token) {
+            request.setRequestHeader('Authorization', 'Bearer ' + token);
+        }
+
+        request.upload.onprogress = event => {
+            if (!event.lengthComputable) {
+                handoffProgress(
+                    'Uploading “' + file.name + '”…',
+                    'Sending the selected intelligence batch to Katcha.',
+                    null,
+                );
+                return;
+            }
+            const percent = event.total ? (event.loaded / event.total) * 100 : 0;
+            handoffProgress(
+                'Uploading “' + file.name + '”…',
+                event.loaded.toLocaleString() + ' of ' + event.total.toLocaleString() + ' bytes sent.',
+                percent,
+            );
+        };
+        request.upload.onload = () => {
+            handoffProgress(
+                'Reading and validating batch…',
+                'Upload complete. Katcha is validating records and committing the batch.',
+                null,
+            );
+        };
+        request.onerror = () => reject(
+            new Error(
+                'The handoff transport disconnected before Katcha replied. ' +
+                'The selected file is still available; check the launch console and retry.'
+            )
+        );
+        request.ontimeout = () => reject(
+            new Error('Katcha did not finish the handoff request before the connection timed out.')
+        );
+        request.onload = () => {
+            let data = {};
+            try { data = JSON.parse(request.responseText || '{}'); } catch {}
+            if (request.status < 200 || request.status >= 300) {
+                reject(handoffHttpError(
+                    request.status,
+                    data,
+                    'The handoff file could not be imported.',
+                ));
+                return;
+            }
+            resolve(data);
+        };
+
+        if (launcher) {
+            request.send(file);
+        } else {
+            const form = new FormData();
+            form.append('file', file, file.name);
+            request.send(form);
+        }
+    });
+}
+
+async function handoffProcessPending() {
+    handoffProgress(
+        'Reading pending files…',
+        'Katcha is scanning the handoff inbox and validating each pending batch.',
+        null,
+    );
+    if (location.port !== '8765') {
+        return api('intelligence-ingest/inbox/process', {});
+    }
+
     let response;
     try {
-        response = await fetch(`/v1/${path}`, {
+        response = await fetch('/runtime/handoff/process', {
             method: 'POST',
-            headers: token ? {Authorization: `Bearer ${token}`} : {},
-            body: form,
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({limit: 50}),
         });
     } catch {
-        throw new Error('Katcha could not be reached. The selected file has not been removed.');
+        throw new Error(
+            'The local handoff transport disconnected while processing the inbox. ' +
+            'The pending files have not been removed.'
+        );
     }
     const data = await response.json().catch(() => ({}));
     if (!response.ok) {
-        const detail = typeof data.detail === 'string' ? data.detail : typeof data.error === 'string' ? data.error : 'The handoff file could not be imported.';
-        const error = new Error(response.status === 401 ? 'Your workspace needs an access token.' : detail);
-        error.status = response.status;
-        throw error;
+        throw handoffHttpError(
+            response.status,
+            data,
+            'Katcha could not process the pending handoff files.',
+        );
     }
     return data;
 }
+
 function bind(id, event, fn, inline = false) {
     $(id).addEventListener(event, async e => {
         e.preventDefault();
@@ -395,7 +506,7 @@ async function connect() {
         setSourceView(requestedView || (sourcePage.total ? 'library' : 'add'), {updateHash: false});
         $('workspace').disabled = false;
         if (sourceView === 'handoff') await refreshHandoffInbox();
-        $('connection').textContent = 'Connected';
+        if (location.port !== '8765') $('connection').textContent = 'Connected';
         $('connection-panel').hidden = true;
         message('');
     } catch (error) {
@@ -844,32 +955,82 @@ bind('handoff-upload', 'submit', async () => {
     const file = $('handoff-file').files?.[0];
     if (!file) throw new Error('Choose a Katcha intelligence batch JSON file.');
     if (!file.name.toLowerCase().endsWith('.json')) throw new Error('Choose a .json handoff file.');
-    const result = await apiFile('intelligence-ingest/inbox/files?process=true', file);
-    $('handoff-file').value = '';
-    await refreshHandoffInbox();
-    if (result.status === 'failed') {
-        throw new Error(result.error || 'Katcha retained the file in the failed queue for review.');
+    if (file.size > 10 * 1024 * 1024) throw new Error('Handoff files must be 10 MiB or smaller.');
+
+    try {
+        const result = await handoffUpload(file);
+        await refreshHandoffInbox();
+        if (result.status === 'failed') {
+            handoffProgress(
+                'Batch failed validation',
+                result.error || 'Katcha retained the file in the failed queue for review.',
+                100,
+                'error',
+            );
+            throw new Error(result.error || 'Katcha retained the file in the failed queue for review.');
+        }
+        $('handoff-file').value = '';
+        handoffProgress(
+            'Batch imported',
+            (result.record_count || 0) + ' intelligence records are now available to Katcha.',
+            100,
+            'success',
+        );
+        message(
+            'Imported “' + result.filename + '”: ' +
+            (result.record_count || 0) + ' intelligence records are now available to Katcha.',
+        );
+    } catch (error) {
+        handoffProgress(
+            'Import failed',
+            error.message,
+            100,
+            'error',
+        );
+        throw error;
     }
-    message(
-        'Imported “' + result.filename + '”: ' +
-        (result.record_count || 0) + ' intelligence records are now available to Katcha.',
-    );
 });
 
 bind('handoff-process', 'click', async () => {
-    const results = await api('intelligence-ingest/inbox/process', {});
-    await refreshHandoffInbox();
-    const failed = results.filter(item => item.status === 'failed').length;
-    const processed = results.length - failed;
-    message(
-        results.length
-            ? processed + ' handoff' + (processed === 1 ? '' : 's') + ' processed' +
-                (failed ? '; ' + failed + ' failed and were retained for review.' : '.')
-            : 'No pending handoff files were found.',
-        failed > 0,
-    );
+    try {
+        const results = await handoffProcessPending();
+        await refreshHandoffInbox();
+        const failed = results.filter(item => item.status === 'failed').length;
+        const processed = results.length - failed;
+        const detail = results.length
+            ? processed + ' processed' + (failed ? '; ' + failed + ' failed and were retained.' : '.')
+            : 'No pending handoff files were found.';
+        handoffProgress(
+            failed ? 'Pending processing completed with failures' : 'Pending processing complete',
+            detail,
+            100,
+            failed ? 'error' : 'success',
+        );
+        message(
+            results.length
+                ? processed + ' handoff' + (processed === 1 ? '' : 's') + ' processed' +
+                    (failed ? '; ' + failed + ' failed and were retained for review.' : '.')
+                : 'No pending handoff files were found.',
+            failed > 0,
+        );
+    } catch (error) {
+        handoffProgress('Pending processing failed', error.message, 100, 'error');
+        throw error;
+    }
 });
 bind('handoff-refresh', 'click', refreshHandoffInbox);
+$('handoff-file').addEventListener('change', () => {
+    const file = $('handoff-file').files?.[0];
+    if (!file) {
+        $('handoff-progress').hidden = true;
+        return;
+    }
+    handoffProgress(
+        'Ready to import “' + file.name + '”',
+        file.size.toLocaleString() + ' bytes selected. Nothing has been sent yet.',
+        0,
+    );
+});
 
 bind('connect', 'submit', connect);
 bind('methods', 'click', e => {
