@@ -223,6 +223,7 @@ class Settings(BaseSettings):
     s3_force_path_style: bool = True
 
     work_dir: Path = Path("/tmp/katcha")
+    intelligence_handoff_dir: Path = Path("/handoff")
     analysis_frame_count: int = Field(default=6, ge=3, le=12)
     whisper_model: str = "base.en"
     whisper_device: str = "cpu"
