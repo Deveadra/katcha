@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import base64
+import binascii
 import hashlib
 import secrets
 from datetime import UTC, datetime, timedelta
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlsplit, urlunsplit
 
 import httpx
 from sqlalchemy import delete, select
@@ -25,6 +26,8 @@ BASE_YOUTUBE_SCOPES = (
     "https://www.googleapis.com/auth/yt-analytics.readonly",
 )
 MONETARY_SCOPE = "https://www.googleapis.com/auth/yt-analytics-monetary.readonly"
+DEFAULT_YOUTUBE_OAUTH_RETURN_TO = "http://127.0.0.1:8765/channels?setup=1"
+_ALLOWED_YOUTUBE_OAUTH_RETURN_HOSTS = {"127.0.0.1", "localhost", "::1"}
 
 
 class YouTubeOAuthError(RuntimeError):
@@ -50,6 +53,49 @@ def _require_oauth_settings(settings: Settings) -> None:
 
 def _state_hash(state: str) -> str:
     return hashlib.sha256(state.encode("utf-8")).hexdigest()
+
+
+def normalize_youtube_oauth_return_to(return_to: str | None) -> str:
+    if not return_to:
+        return DEFAULT_YOUTUBE_OAUTH_RETURN_TO
+    try:
+        parsed = urlsplit(return_to)
+        port = parsed.port
+    except ValueError:
+        return DEFAULT_YOUTUBE_OAUTH_RETURN_TO
+    if (
+        parsed.scheme not in {"http", "https"}
+        or parsed.hostname not in _ALLOWED_YOUTUBE_OAUTH_RETURN_HOSTS
+        or port != 8765
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.path not in {"", "/", "/channels"}
+    ):
+        return DEFAULT_YOUTUBE_OAUTH_RETURN_TO
+    path = "/channels"
+    return urlunsplit((parsed.scheme, parsed.netloc, path, parsed.query, ""))
+
+
+def _oauth_state(return_to: str | None = None) -> str:
+    safe_return_to = normalize_youtube_oauth_return_to(return_to)
+    encoded_return_to = (
+        base64.urlsafe_b64encode(safe_return_to.encode("utf-8"))
+        .rstrip(b"=")
+        .decode("ascii")
+    )
+    return f"{secrets.token_urlsafe(32)}.{encoded_return_to}"
+
+
+def youtube_oauth_return_to(state: str | None) -> str:
+    if not state or "." not in state:
+        return DEFAULT_YOUTUBE_OAUTH_RETURN_TO
+    encoded_return_to = state.rsplit(".", 1)[1]
+    try:
+        padding = "=" * (-len(encoded_return_to) % 4)
+        decoded = base64.urlsafe_b64decode(encoded_return_to + padding).decode("utf-8")
+    except (binascii.Error, UnicodeDecodeError, ValueError):
+        return DEFAULT_YOUTUBE_OAUTH_RETURN_TO
+    return normalize_youtube_oauth_return_to(decoded)
 
 
 def _pkce_challenge(verifier: str) -> str:
@@ -82,10 +128,14 @@ def build_authorization_url(
     return f"{GOOGLE_AUTH_URL}?{query}"
 
 
-def begin_youtube_oauth(settings: Settings | None = None) -> str:
+def begin_youtube_oauth(
+    settings: Settings | None = None,
+    *,
+    return_to: str | None = None,
+) -> str:
     settings = settings or get_settings()
     _require_oauth_settings(settings)
-    state = secrets.token_urlsafe(32)
+    state = _oauth_state(return_to)
     verifier = secrets.token_urlsafe(64)
     now = datetime.now(UTC)
     expires_at = now + timedelta(minutes=10)

@@ -4,6 +4,7 @@ import asyncio
 import mimetypes
 import uuid
 from pathlib import Path
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, status
 from fastapi.responses import RedirectResponse, StreamingResponse
@@ -85,6 +86,7 @@ from katcha.integrations.youtube.oauth import (
     YouTubeOAuthError,
     begin_youtube_oauth,
     complete_youtube_oauth,
+    youtube_oauth_return_to,
 )
 from katcha.longform_models import (
     Compilation,
@@ -292,30 +294,88 @@ async def ready() -> HealthResponse:
     "/v1/integrations/youtube/oauth/start",
     response_model=YouTubeOAuthStartResponse,
 )
-def youtube_oauth_start() -> YouTubeOAuthStartResponse:
+def youtube_oauth_start(
+    return_to: str | None = Query(default=None, max_length=2048),
+) -> YouTubeOAuthStartResponse:
     try:
-        return YouTubeOAuthStartResponse(authorization_url=begin_youtube_oauth())
+        return YouTubeOAuthStartResponse(
+            authorization_url=begin_youtube_oauth(return_to=return_to)
+        )
     except (YouTubeOAuthError, RuntimeError, ValueError) as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
+def _youtube_oauth_result_url(
+    state: str | None,
+    *,
+    result: str,
+    connection_id: uuid.UUID | None = None,
+    message: str | None = None,
+) -> str:
+    target = youtube_oauth_return_to(state)
+    parsed = urlsplit(target)
+    query = dict(parse_qsl(parsed.query, keep_blank_values=True))
+    query["setup"] = "1"
+    query["youtube"] = result
+    if connection_id is not None:
+        query["connection"] = str(connection_id)
+    if message:
+        query["message"] = message[:500]
+    return urlunsplit(
+        (parsed.scheme, parsed.netloc, parsed.path, urlencode(query), "")
+    )
+
+
 @app.get(
     "/v1/integrations/youtube/oauth/callback",
-    response_model=YouTubeConnectionResponse,
+    response_class=RedirectResponse,
 )
 async def youtube_oauth_callback(
-    state: str,
+    state: str | None = None,
     code: str | None = None,
     error: str | None = None,
-) -> YouTubeConnection:
+) -> RedirectResponse:
     if error:
-        raise HTTPException(status_code=400, detail=f"Google OAuth failed: {error}")
+        return RedirectResponse(
+            _youtube_oauth_result_url(
+                state,
+                result="error",
+                message=f"Google OAuth failed: {error}",
+            ),
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
     if not code:
-        raise HTTPException(status_code=400, detail="Google OAuth callback did not include a code")
+        return RedirectResponse(
+            _youtube_oauth_result_url(
+                state,
+                result="error",
+                message="Google OAuth callback did not include a code",
+            ),
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
     try:
-        return await asyncio.to_thread(complete_youtube_oauth, state=state, code=code)
+        connection = await asyncio.to_thread(
+            complete_youtube_oauth,
+            state=state or "",
+            code=code,
+        )
     except (YouTubeOAuthError, RuntimeError, ValueError) as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return RedirectResponse(
+            _youtube_oauth_result_url(
+                state,
+                result="error",
+                message=str(exc),
+            ),
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
+    return RedirectResponse(
+        _youtube_oauth_result_url(
+            state,
+            result="connected",
+            connection_id=connection.id,
+        ),
+        status_code=status.HTTP_303_SEE_OTHER,
+    )
 
 
 @app.get(
