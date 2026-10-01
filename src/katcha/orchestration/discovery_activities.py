@@ -18,6 +18,7 @@ from katcha.db import session_scope
 from katcha.domain import DiscoveryRunStatus
 from katcha.models import DomainEvent
 from katcha.services.command_workflow_lifecycle import (
+    record_command_source_prepare_lifecycle,
     record_topic_watch_command_cycle,
 )
 from katcha.services.acquisition import promote_discovery_candidate
@@ -61,6 +62,27 @@ def _poll_attempt_id(metadata: dict[str, object]) -> uuid.UUID | None:
         return uuid.UUID(str(raw))
     except ValueError as exc:
         raise ValueError("discovery run has an invalid poll_attempt_id") from exc
+
+
+@activity.defn
+def record_command_source_prepare_lifecycle_activity(
+    run_id: str,
+    workflow_id: str,
+    state: str,
+    detail: dict[str, object] | None = None,
+) -> dict[str, object]:
+    recorded = record_command_source_prepare_lifecycle(
+        discovery_run_id=uuid.UUID(run_id),
+        workflow_id=workflow_id,
+        state=state,
+        detail=detail,
+    )
+    return {
+        "recorded": recorded,
+        "run_id": run_id,
+        "workflow_id": workflow_id,
+        "state": state,
+    }
 
 
 @activity.defn
