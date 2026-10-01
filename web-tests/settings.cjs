@@ -17,6 +17,7 @@ const server = spawn('python3', ['-m', 'http.server', String(port), '--bind', '1
         const errors = [];
         let failCheck = false;
         page.on('pageerror', error => errors.push(error.message));
+        await page.route('**/settings/assets/settings.js', route => route.fulfill({path: path.resolve(__dirname, '../src/katcha/web/settings.js'), contentType: 'application/javascript'}));
         await page.route('**/runtime/status', route => route.fulfill({json: {settings: {KATCHA_AI_EXECUTION_MODE: 'live'}}}));
         await page.route('**/v1/**', route => {
             const url = new URL(route.request().url());

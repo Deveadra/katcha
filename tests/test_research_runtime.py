@@ -311,3 +311,38 @@ def test_review_download_preserves_lineage_and_production_gate(research_db, monk
         assert saved.source_metadata["discovery_candidate_id"] == str(candidate_id)
         assert saved.source_metadata["uploader"] == "fixture"
         assert saved.source_metadata["acquisition_purpose"] == "review"
+
+
+def test_shared_source_cannot_inherit_provider_or_default_channel(research_db, monkeypatch):
+    source = upsert_ingestion_source(
+        source_key="unassigned",
+        name="Shared",
+        adapter_key="rss_atom",
+        adapter_version="v1",
+        platform="web",
+        default_candidate_metadata={"channel_profile_id": str(uuid.uuid4())},
+    )
+    monkeypatch.setattr(
+        get_adapter("rss_atom", "v1"),
+        "discover",
+        lambda query, cursor: DiscoveryBatch(
+            items=(
+                DiscoveredCandidate(
+                    source_url="https://example.com/shared",
+                    title="Shared story",
+                    metadata={"channel_profile_id": str(uuid.uuid4())},
+                ),
+            )
+        ),
+    )
+    job = prepare_research_jobs()[0]
+    runs = prepare_topic_watch_execution(
+        uuid.UUID(job["topic_watch_id"]),
+        execution_key=job["execution_key"],
+    )
+    execute_discovery_page_activity(str(runs[0].run_id))
+    with db.session_scope() as session:
+        candidate = session.scalar(select(DiscoveryCandidate))
+        assert candidate.candidate_metadata["channel_profile_id"] is None
+        assert candidate.candidate_metadata["source_scope"] == "shared"
+        assert candidate.candidate_metadata["ingestion_source_id"] == str(source.id)

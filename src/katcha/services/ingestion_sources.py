@@ -63,10 +63,8 @@ def _source_run_metadata(
         "source_platform": source.platform,
         "source_usage_mode": source.usage_mode,
         "source_scope": source_scope,
-        **(
-            {"channel_profile_id": str(source.channel_profile_id)}
-            if source.channel_profile_id is not None
-            else {}
+        "channel_profile_id": (
+            str(source.channel_profile_id) if source.channel_profile_id is not None else None
         ),
     }
     return {
