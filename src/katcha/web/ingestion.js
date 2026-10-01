@@ -375,59 +375,276 @@ async function connect() {
         message(error.message, true);
     }
 }
-async function refreshSources() {
-    const selected = $('source').value;
-    const rows = await api('discovery/sources');
-    sources = rows;
-    $('source').innerHTML = sources.map(s => `<option value="${esc(s.id)}">${esc(s.name)}</option>`).join('');
-    if (sources.some(s => s.id === selected)) $('source').value = selected;
-    $('empty-sources').hidden = !!sources.length;
-    $('source-controls').hidden = !sources.length;
-    await selectSource();
+function renderLibraryFilters() {
+    const currentChannel = $('source-channel-filter').value || 'all';
+    $('source-channel-filter').innerHTML =
+        '<option value="all">All channels</option>' +
+        '<option value="shared">Shared / unassigned</option>' +
+        channels.map(row => '<option value="channel:' + esc(row.id) + '">' + esc(channelName(row)) + '</option>').join('');
+    if ([...$('source-channel-filter').options].some(option => option.value === currentChannel)) {
+        $('source-channel-filter').value = currentChannel;
+    }
+
+    const currentType = $('source-type-filter').value || 'all';
+    const typeRows = [...new Map(adapters.map(row => [row.key, row])).values()]
+        .sort((a, b) => String(a.label || a.key).localeCompare(String(b.label || b.key)));
+    $('source-type-filter').innerHTML =
+        '<option value="all">All types</option>' +
+        typeRows.map(row => '<option value="' + esc(row.key) + '">' + esc(row.label || row.key) + '</option>').join('');
+    if ([...$('source-type-filter').options].some(option => option.value === currentType)) {
+        $('source-type-filter').value = currentType;
+    }
 }
-async function selectSource() {
-    const s = source();
-    if (displayedSourceId !== s?.id) {
+
+function libraryQuery() {
+    const params = new URLSearchParams({
+        limit: String(sourcePage.limit),
+        offset: String(sourcePage.offset),
+        sort: $('source-sort').value || 'recent',
+    });
+    const q = $('source-search').value.trim();
+    if (q) params.set('q', q);
+
+    const channelFilter = $('source-channel-filter').value;
+    if (channelFilter === 'shared') params.set('shared_only', 'true');
+    else if (channelFilter?.startsWith('channel:')) {
+        params.set('channel_profile_id', channelFilter.slice('channel:'.length));
+    }
+
+    const type = $('source-type-filter').value;
+    if (type && type !== 'all') params.set('adapter_key', type);
+
+    const state = $('source-status-filter').value;
+    if (state === 'active') params.set('enabled', 'true');
+    if (state === 'paused') params.set('enabled', 'false');
+
+    const purpose = $('source-purpose-filter').value;
+    if (purpose && purpose !== 'all') params.set('usage_mode', purpose);
+    return params;
+}
+
+function sourceIcon(row) {
+    if (row.adapter_key === 'youtube') return '▶';
+    if (row.adapter_key === 'reddit') return '◎';
+    if (row.adapter_key === 'rss_atom') return '≋';
+    if (row.adapter_key === 'web_scout') return '✦';
+    if (row.adapter_key === 'operator_feed') return '↗';
+    return '◇';
+}
+
+function sourceScopeLabel(row) {
+    if (!row.channel_profile_id) return 'Shared';
+    return channelName(sourceChannel(row) || {profile_metadata: {name: 'Assigned channel'}});
+}
+
+function renderSourceList() {
+    const selectedId = $('source').value;
+    const start = sourcePage.total ? sourcePage.offset + 1 : 0;
+    const finish = Math.min(sourcePage.offset + sources.length, sourcePage.total);
+    $('source-count').textContent = sourcePage.total + ' source' + (sourcePage.total === 1 ? '' : 's');
+    $('source-page-label').textContent = start + '–' + finish;
+    $('source-prev').disabled = sourcePage.offset <= 0;
+    $('source-next').disabled = sourcePage.offset + sourcePage.limit >= sourcePage.total;
+
+    $('source-list').innerHTML = sources.map(row => {
+        const selected = row.id === selectedId;
+        const purpose = usage[row.usage_mode]?.[0] || row.usage_mode;
+        return '<button type="button" class="source-row" role="option" data-source-id="' + esc(row.id) + '" aria-selected="' + (selected ? 'true' : 'false') + '">' +
+            '<span class="source-row-icon" aria-hidden="true">' + esc(sourceIcon(row)) + '</span>' +
+            '<span class="source-row-copy"><strong>' + esc(row.name) + '</strong><small>' + esc(targetSummary(row)) + '</small><span>' +
+                '<em>' + esc(sourceScopeLabel(row)) + '</em><em>' + esc(purpose) + '</em>' +
+            '</span></span>' +
+            '<span class="source-row-state ' + (row.enabled ? 'is-active' : 'is-paused') + '">' + (row.enabled ? 'Active' : 'Paused') + '</span>' +
+        '</button>';
+    }).join('');
+
+    $('empty-sources').hidden = sourcePage.total > 0;
+    $('source-controls').hidden = sourcePage.total === 0;
+}
+
+function renderRecentFinds(overview, row) {
+    const findings = overview.recent_finds || [];
+    if (!findings.length) {
+        $('recent-finds').innerHTML = '<p class="source-empty-copy">Nothing found yet. Run a check to start building source history.</p>';
+        return;
+    }
+    const canPromote = !['discovery_only', 'blocked'].includes(row.usage_mode);
+    $('recent-finds').innerHTML = findings.map(item => {
+        const candidate = item.candidate || {};
+        const url = safeExternalUrl(candidate.source_url);
+        return '<article class="source-find">' +
+            '<div><strong>' + esc(candidate.title || candidate.source_url || 'Untitled find') + '</strong>' +
+            '<small>' + esc(candidate.creator || candidate.platform || 'Unknown creator') + ' · ' + esc(formatWhen(item.observed_at)) + '</small></div>' +
+            '<div class="source-find-actions">' +
+                (url ? '<a class="text-button" href="' + esc(url) + '" target="_blank" rel="noopener noreferrer">Open ↗</a>' : '') +
+                (canPromote && candidate.id ? '<button type="button" class="text-button" data-add-clip="' + esc(candidate.id) + '">Add to Clips</button>' : '') +
+            '</div>' +
+        '</article>';
+    }).join('');
+}
+
+function renderHistory(overview, row) {
+    const rows = overview.recent_runs || [];
+    const labels = {
+        queued: 'Ready to start',
+        running: 'Finding content…',
+        completed: 'Finished',
+        failed: 'Failed',
+    };
+    $('history').innerHTML = rows.length ? rows.map(run => {
+        const diagnostics = runDiagnostics(run, row);
+        return '<article class="source-run is-' + esc(run.status || 'unknown') + '">' +
+            '<div class="source-run-head"><div><strong>' + esc(labels[run.status] || 'Status unavailable') + '</strong><small>' + esc(formatWhen(run.created_at)) + '</small></div>' +
+            '<span>' + esc(run.status || 'unknown') + '</span></div>' +
+            (run.status === 'failed' && run.error ? '<p class="source-run-error">' + esc(run.error) + '</p>' : '') +
+            (run.status === 'completed' ? '<button type="button" class="text-button" data-results="' + esc(run.id) + '">Finds from this check</button><div class="run-results" role="status"></div>' : '') +
+            (run.status === 'queued' && row.enabled && row.usage_mode !== 'blocked' ? '<button type="button" class="button secondary" data-execute="' + esc(run.id) + '">Start now</button>' : '') +
+            (run.error ? '<details class="run-diagnostics"><summary>Technical details</summary><pre>' + esc(diagnostics) + '</pre><button type="button" class="text-button diagnostics-copy" data-copy-diagnostics>Copy diagnostics</button><span class="diagnostics-copy-status" role="status"></span></details>' : '') +
+        '</article>';
+    }).join('') : '<p class="source-empty-copy">No checks have run yet.</p>';
+}
+
+function renderSourceOverview() {
+    const overview = selectedOverview;
+    const row = overview?.source;
+    if (!row) return;
+
+    const canImport = adapterSupportsImports(row);
+    const usable = row.enabled && row.usage_mode !== 'blocked';
+    const latest = overview.recent_runs?.[0] || null;
+    const latestFailed = latest?.status === 'failed' ? latest : null;
+
+    $('source-inspector-empty').hidden = true;
+    $('source-inspector-content').hidden = false;
+    $('source-name').textContent = row.name;
+    $('source-subtitle').textContent = connectionName(row) + ' · ' + targetSummary(row);
+    $('source-platform-badge').textContent = String(row.platform || row.adapter_key || 'source').toUpperCase();
+    $('source-state-badge').textContent = row.enabled ? 'Active' : 'Paused';
+    $('source-state-badge').className = 'source-state-badge ' + (row.enabled ? 'is-active' : 'is-paused');
+
+    $('run').hidden = canImport || !usable;
+    $('run').textContent = row.query_template?.channel_reference
+        ? 'Check channel now'
+        : row.adapter_key === 'rss_atom'
+            ? 'Check for updates'
+            : 'Search now';
+    $('pause-source').hidden = row.usage_mode === 'blocked';
+    $('pause-source').textContent = row.enabled ? 'Pause' : 'Resume';
+    $('import').hidden = !canImport || !usable;
+
+    $('stat-finds').textContent = String(overview.unique_candidate_count || 0);
+    $('stat-finds-note').textContent = (overview.discovery_count || 0) + ' total observations';
+    $('stat-runs').textContent = String(overview.run_count || 0);
+    $('stat-runs-note').textContent = (overview.failed_runs || 0) + ' failed';
+    $('stat-success').textContent = overview.success_rate == null ? '—' : Math.round(overview.success_rate * 100) + '%';
+    $('stat-last').textContent = latest ? formatWhen(latest.created_at) : 'Never';
+    $('stat-last-note').textContent = latest ? (latest.status || 'unknown') : 'No checks yet';
+
+    $('source-alert').hidden = !latestFailed;
+    if (latestFailed) {
+        $('source-alert').innerHTML =
+            '<strong>Latest check failed</strong><p>' + esc(latestFailed.error || 'No provider detail was recorded.') + '</p>' +
+            '<small>Fix the connection or source configuration, then run the check again.</small>';
+    } else {
+        $('source-alert').textContent = '';
+    }
+
+    const usedBy = overview.channel_name || (row.channel_profile_id ? 'Assigned channel' : 'Shared collection (unassigned)');
+    const purpose = usage[row.usage_mode]?.[0] || row.usage_mode;
+    const purposeHelp = usage[row.usage_mode]?.[1] || '';
+    $('source-info').innerHTML =
+        '<dt>Used by</dt><dd>' + esc(usedBy) + '</dd>' +
+        '<dt>Purpose</dt><dd><strong>' + esc(purpose) + '</strong><small>' + esc(purposeHelp) + '</small></dd>' +
+        '<dt>Watches</dt><dd>' + esc(targetSummary(row)) + '</dd>' +
+        '<dt>Source type</dt><dd>' + esc(connectionName(row)) + '</dd>' +
+        '<dt>Checking</dt><dd>Manual checks<small>Saving a source does not create a recurring schedule.</small></dd>';
+
+    $('operation-help').textContent = !usable
+        ? 'This source is paused or blocked.'
+        : canImport
+            ? 'Paste known links below when you want Katcha to inspect them.'
+            : 'This source checks only when you choose the action above. Recurring source schedules are configured separately.';
+
+    renderRecentFinds(overview, row);
+    renderHistory(overview, row);
+}
+
+async function loadOverview() {
+    const row = source();
+    const epoch = ++detailEpoch;
+    if (!row) {
+        selectedOverview = null;
+        $('source-inspector-empty').hidden = false;
+        $('source-inspector-content').hidden = true;
+        return;
+    }
+    $('source-inspector-empty').hidden = false;
+    $('source-inspector-empty').querySelector('h3').textContent = 'Loading source…';
+    $('source-inspector-empty').querySelector('p').textContent = 'Fetching source health and recent finds.';
+    $('source-inspector-content').hidden = true;
+    try {
+        const overview = await api('discovery/sources/' + encodeURIComponent(row.id) + '/overview');
+        if (epoch !== detailEpoch || source()?.id !== row.id) return;
+        selectedOverview = overview;
+        const index = sources.findIndex(item => item.id === row.id);
+        if (index >= 0) sources[index] = overview.source;
+        $('source').value = overview.source.id;
+        renderSourceList();
+        renderSourceOverview();
+    } catch (error) {
+        if (epoch !== detailEpoch) return;
+        $('source-inspector-empty').hidden = false;
+        $('source-inspector-content').hidden = true;
+        $('source-inspector-empty').querySelector('h3').textContent = 'Source details unavailable';
+        $('source-inspector-empty').querySelector('p').textContent = error.message;
+    }
+}
+
+async function refreshSources({selectId = null, preserveSelection = true} = {}) {
+    const epoch = ++libraryEpoch;
+    const previous = selectId || (preserveSelection ? $('source').value : '');
+    const page = await api('discovery/source-library?' + libraryQuery().toString());
+    if (epoch !== libraryEpoch) return;
+
+    sourcePage = page;
+    sources = page.items || [];
+    $('source').innerHTML = sources.map(row => '<option value="' + esc(row.id) + '">' + esc(row.name) + '</option>').join('');
+
+    const selected = sources.some(row => row.id === previous)
+        ? previous
+        : (sources[0]?.id || '');
+    $('source').value = selected;
+    renderSourceList();
+
+    if (selected) {
+        await selectSource(selected);
+    } else {
+        selectedOverview = null;
+        ++detailEpoch;
+        $('source-inspector-empty').hidden = false;
+        $('source-inspector-content').hidden = true;
+        $('source-inspector-empty').querySelector('h3').textContent = 'No source selected';
+        $('source-inspector-empty').querySelector('p').textContent = sourcePage.total
+            ? 'Choose a source from this page.'
+            : 'Adjust the filters or add a source.';
+    }
+}
+
+async function selectSource(sourceId = $('source').value) {
+    const next = sourceId || '';
+    if (displayedSourceId !== next) {
         if (displayedSourceId) linkDrafts.set(displayedSourceId, $('urls').value);
-        displayedSourceId = s?.id || null;
+        displayedSourceId = next || null;
         $('urls').value = linkDrafts.get(displayedSourceId) || '';
     }
-    if (!s) { ++historyEpoch; return; }
-    const canImport = adapters.some(a => a.key === s.adapter_key && a.version === s.adapter_version && a.supports_imports);
-    const usable = s.enabled && s.usage_mode !== 'blocked';
-    $('import').hidden = !canImport || !usable;
-    $('run').hidden = canImport || !usable;
-    $('run').textContent = s.query_template?.channel_reference ? 'Check channel videos' : s.adapter_key === 'rss_atom' ? 'Check for updates' : 'Search now';
-    const channel = s.channel_profile_id ? channelName(sourceChannel(s) || {profile_metadata: {name: 'Assigned channel (not available)'}}) : 'Shared collection (unassigned)';
-    $('source-info').innerHTML = `<strong>${esc(connectionName(s))}</strong><p>${esc(channel)} · ${esc(usage[s.usage_mode]?.[0] || 'Custom review preference')}</p>${s.query_template?.q ? `<p>Topic: ${esc(s.query_template.q)}</p>` : ''}`;
-    const automatic = usable && ['youtube', 'reddit', 'rss_atom', 'web_scout'].includes(s.adapter_key) && s.source_metadata?.automatic_research !== false;
-    $('pause-source').textContent = s.enabled ? 'Pause source' : 'Resume source';
-    $('pause-source').hidden = s.usage_mode === 'blocked';
-    $('operation-help').textContent = !usable ? 'This source is paused or blocked.' : canImport ? 'Add links whenever you find something worth considering.' : automatic ? `Katcha checks this source every ${s.poll_interval_minutes || 60} minutes while running. Results and provider failures appear below. You can also search now.` : 'Automatic research is off. Press Search now to check for new content.';
-    await loadHistory();
+    if (next && $('source').value !== next) $('source').value = next;
+    if (next) sessionStorage.setItem('katcha.sourceId', next);
+    renderSourceList();
+    await loadOverview();
 }
+
 async function loadHistory() {
-    const s = source(), epoch = ++historyEpoch;
-    if (!s) return;
-    $('history').textContent = 'Loading recent activity…';
-    try {
-        const rows = await api(`discovery/sources/${encodeURIComponent(s.id)}/runs`);
-        if (epoch !== historyEpoch) return;
-        for (const row of rows) {
-            if (row.status === 'queued') continue;
-            for (const [key, id] of runIntents) {
-                if (id === row.id) { intents.delete(key); runIntents.delete(key); }
-            }
-        }
-        const labels = {queued: 'Ready to start', running: 'Finding content…', completed: 'Finished checking content', failed: 'Could not finish'};
-        $('history').innerHTML = rows.length ? rows.map(r => {
-            const diagnostics = runDiagnostics(r, s);
-            return `<article class="item"><strong>${esc(labels[r.status] || 'Status unavailable')}</strong><p>${esc(new Date(r.created_at).toLocaleString())}</p>${r.status === 'failed' ? '<p>The search could not finish. Open the technical details below for the exact cause, then try again after the connection is corrected.</p>' : ''}${r.status === 'completed' ? `<button type="button" class="text-button" data-results="${esc(r.id)}">See what was found</button><div class="run-results" role="status"></div>` : ''}${r.status === 'queued' && s.enabled && s.usage_mode !== 'blocked' ? `<p>This request is saved, but has not started yet.</p><button class="button secondary" data-execute="${esc(r.id)}">Start now</button>` : ''}${r.error ? `<details class="run-diagnostics"><summary>Technical details for troubleshooting</summary><pre>${esc(diagnostics)}</pre><button type="button" class="text-button diagnostics-copy" data-copy-diagnostics>Copy diagnostics</button><span class="diagnostics-copy-status" role="status"></span></details>` : ''}</article>`;
-        }).join('') : '<p class="hint">Nothing checked yet. Add links or start a search to begin.</p>';
-    } catch (error) {
-        if (epoch !== historyEpoch) return;
-        $('history').textContent = 'Recent activity could not be loaded. Use “Refresh activity” to try again.';
-    }
+    await loadOverview();
 }
 async function start(run) {
     try { await api(`discovery/runs/${encodeURIComponent(run.id)}/execute`, {}); }
