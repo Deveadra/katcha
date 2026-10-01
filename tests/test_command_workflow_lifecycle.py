@@ -8,6 +8,7 @@ from katcha.domain import ChannelStatus
 from katcha.intelligence_models import ChannelProfile
 from katcha.models import DomainEvent
 from katcha.publishing_models import YouTubeConnection
+from katcha.services.acquisition import register_discovery_run
 from katcha.services.command_actions import (
     ActionProposalSpec,
     claim_action_proposal,
@@ -21,7 +22,6 @@ from katcha.services.command_workflow_lifecycle import (
     record_intelligence_command_workflow_lifecycle,
     record_topic_watch_command_cycle,
 )
-from katcha.services.acquisition import register_discovery_run
 from katcha.services.discovery_trends import create_topic_watch_version
 
 
