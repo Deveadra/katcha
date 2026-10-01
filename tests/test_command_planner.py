@@ -18,6 +18,11 @@ class _FixtureSettings:
     ai_enabled = False
     openai_api_key = None
     gemini_api_key = None
+    conversation_provider = "gemini"
+    agent_provider = "codex"
+    allow_paid_openai_fallback = False
+    codex_enabled = False
+    chatgpt_host_id = None
 
     @staticmethod
     def resolved_ai_execution_mode() -> str:
@@ -28,6 +33,11 @@ class _LiveSettings:
     ai_enabled = True
     openai_api_key = "fixture-openai"
     gemini_api_key = None
+    conversation_provider = "auto"
+    agent_provider = "auto"
+    allow_paid_openai_fallback = True
+    codex_enabled = False
+    chatgpt_host_id = None
 
     @staticmethod
     def resolved_ai_execution_mode() -> str:
