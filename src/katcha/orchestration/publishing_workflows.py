@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 from temporalio import workflow
 from temporalio.common import RetryPolicy
@@ -14,7 +15,7 @@ class YouTubeAnalyticsWorkflow:
         publication_id: str,
         anchor_epoch: float,
         offsets_hours: list[int],
-    ) -> dict[str, object]:
+    ) -> dict[str, Any]:
         retry = RetryPolicy(
             initial_interval=timedelta(seconds=10),
             backoff_coefficient=2.0,
@@ -56,7 +57,7 @@ class YouTubeAnalyticsWorkflow:
 @workflow.defn
 class YouTubeAnalyticsRefreshWorkflow:
     @workflow.run
-    async def run(self, publication_id: str, sample_key: str) -> dict[str, object]:
+    async def run(self, publication_id: str, sample_key: str) -> dict[str, Any]:
         return await workflow.execute_activity(
             "collect_analytics_snapshot_activity",
             args=[publication_id, sample_key],
@@ -80,7 +81,7 @@ class YouTubePublicationWorkflow:
         poll_seconds: int,
         max_polls: int,
         analytics_offsets_hours: list[int],
-    ) -> dict[str, object]:
+    ) -> dict[str, Any]:
         local_retry = RetryPolicy(
             initial_interval=timedelta(seconds=5),
             backoff_coefficient=2.0,

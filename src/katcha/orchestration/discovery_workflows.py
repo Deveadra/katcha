@@ -4,6 +4,7 @@ import asyncio
 import hashlib
 from contextlib import suppress
 from datetime import timedelta
+from typing import Any
 
 from temporalio import workflow
 from temporalio.common import RetryPolicy
@@ -77,7 +78,7 @@ def _cycle_lifecycle_detail(
 @workflow.defn
 class DiscoveryRunWorkflow:
     @workflow.run
-    async def run(self, run_id: str) -> dict[str, object]:
+    async def run(self, run_id: str) -> dict[str, Any]:
         total_candidates = 0
         try:
             for page in range(MAX_DISCOVERY_PAGES):
@@ -116,7 +117,7 @@ class CommandSourcePrepareWorkflow:
         self,
         run_id: str,
         ingest_task_queue: str,
-    ) -> dict[str, object]:
+    ) -> dict[str, Any]:
         workflow_id = workflow.info().workflow_id
         try:
             discovery_workflow_id = f"discovery-run-{run_id}"
@@ -131,7 +132,6 @@ class CommandSourcePrepareWorkflow:
                 run_id,
                 start_to_close_timeout=timedelta(minutes=2),
                 retry_policy=_ACTIVITY_RETRY,
-                result_type=dict[str, object],
             )
             raw_items = prepared.get("prepared")
             items = raw_items if isinstance(raw_items, list) else []
@@ -247,7 +247,7 @@ class TopicWatchWorkflow:
         topic_watch_id: str,
         execution_key: str,
         top_n: int,
-    ) -> dict[str, object]:
+    ) -> dict[str, Any]:
         prepared = await workflow.execute_activity(
             "prepare_topic_watch_execution_activity",
             args=[topic_watch_id, execution_key],

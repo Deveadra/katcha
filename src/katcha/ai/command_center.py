@@ -258,7 +258,10 @@ def _gemini(
     from google import genai
     from google.genai import types
 
-    client = genai.Client(api_key=settings.gemini_api_key, http_options={"timeout": 30000})
+    client = genai.Client(
+        api_key=settings.gemini_api_key,
+        http_options={"timeout": 30000, "retry_options": {"attempts": 1}},
+    )
     try:
         response = client.models.generate_content(
             model=target.model,

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from contextlib import suppress
 from datetime import timedelta
+from typing import Any
 
 from temporalio import workflow
 from temporalio.common import RetryPolicy
@@ -173,7 +174,7 @@ class ChannelIntelligenceRefreshWorkflow:
         self,
         channel_profile_id: str,
         run_key: str,
-    ) -> dict[str, object]:
+    ) -> dict[str, Any]:
         workflow_id = workflow.info().workflow_id
         try:
             result = await _run_refresh(channel_profile_id, run_key)
@@ -245,7 +246,7 @@ class ChannelTrendActivationWorkflow:
         self,
         channel_profile_id: str,
         run_key: str,
-    ) -> dict[str, object]:
+    ) -> dict[str, Any]:
         return await _run_trend_activation(channel_profile_id, run_key)
 
 
@@ -279,7 +280,7 @@ class ChannelTrendActivationPerformanceWorkflow:
         self,
         channel_profile_id: str,
         run_key: str,
-    ) -> dict[str, object]:
+    ) -> dict[str, Any]:
         retry = RetryPolicy(
             initial_interval=timedelta(seconds=5),
             backoff_coefficient=2.0,

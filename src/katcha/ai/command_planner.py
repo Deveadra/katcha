@@ -64,6 +64,7 @@ class CommandPlan(BaseModel):
         "create_ranked_short_episode", "recover_production_render", "start_source_scout",
     ]] = Field(default_factory=list, max_length=5)
     execution: Literal["propose", "run"] = "propose"
+    recurring: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -137,6 +138,10 @@ def _planner_prompt(
         "recover_production_render (grounded failed render). These actions create "
         "server-validated proposals which can run when authorized. Publishing, deletion, "
         "and arbitrary settings changes are not registered actions.\n"
+        "For source scouting, recurring defaults to false: an ordinary search is "
+        "one bounded run, not an ongoing watch. Set recurring=true only for an "
+        "explicit request for continuous autonomous web scouting. Configured-source "
+        "searches are currently one-shot only.\n"
         "- confirm_action: the user authorizes existing frozen proposals. Set proposal_ids "
         "to the exact IDs from supplied action records, including an already-started "
         "action on a repeated request. You may select an older proposal or distinguish "
@@ -301,7 +306,10 @@ def _gemini(
     from google import genai
     from google.genai import types
 
-    client = genai.Client(api_key=settings.gemini_api_key, http_options={"timeout": 30000})
+    client = genai.Client(
+        api_key=settings.gemini_api_key,
+        http_options={"timeout": 30000, "retry_options": {"attempts": 1}},
+    )
     try:
         response = client.models.generate_content(
             model=target.model,

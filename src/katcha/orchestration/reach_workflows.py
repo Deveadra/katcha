@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import timedelta
+from typing import Any
 
 from temporalio import workflow
 from temporalio.common import RetryPolicy
@@ -9,7 +10,7 @@ from temporalio.common import RetryPolicy
 @workflow.defn
 class YouTubeReachSyncWorkflow:
     @workflow.run
-    async def run(self, connection_id: str) -> dict[str, object]:
+    async def run(self, connection_id: str) -> dict[str, Any]:
         local_retry = RetryPolicy(
             initial_interval=timedelta(seconds=5),
             backoff_coefficient=2.0,

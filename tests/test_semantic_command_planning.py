@@ -429,3 +429,143 @@ async def test_unavailable_secondary_inspection_keeps_other_evidence(command_har
     result = await state.send("Compare our failures and performance")
     assert {row["kind"] for row in result.evidence} == {"render_attempt", "capability_error"}
     state.execute.assert_not_awaited()
+
+
+async def test_one_time_scout_does_not_create_a_recurring_watch(monkeypatch):
+    channel, run_id = uuid.uuid4(), uuid.uuid4()
+    proposal = _proposal(channel)
+    proposal.payload = {
+        "recurring": False,
+        "platforms": ["youtube"],
+        "terms": ["funny fails"],
+        "operator_request": "Find new funny clips",
+        "prepare_for_production": True,
+    }
+    created = []
+
+    def register(**kwargs):
+        created.append(kwargs)
+        return SimpleNamespace(id=run_id)
+
+    starter = AsyncMock(return_value="fixture-workflow")
+    schedule = AsyncMock()
+    monkeypatch.setattr(api, "register_discovery_run", register)
+    monkeypatch.setattr(api, "start_command_source_prepare_workflow", starter)
+    monkeypatch.setattr(api, "start_topic_watch_schedule", schedule)
+    monkeypatch.setattr(api, "get_settings", lambda: SimpleNamespace(temporal_task_queue="media"))
+    result = await api._execute_proposal(proposal, actor="fixture-operator")
+    assert result["continuous"] is False
+    assert created[0]["idempotency_key"] == f"command-scout:{proposal.id}"
+    assert created[0]["metadata"]["command_prepare_for_production"] is True
+    starter.assert_awaited_once()
+    schedule.assert_not_awaited()
+
+
+def test_missing_requested_actions_has_no_execution_authority():
+    plan = CommandPlan(intent="best_clips", confidence=0.99, reason="Look at clips")
+    assert plan.requested_actions == []
+    assert plan.execution == "propose"
+    assert plan.recurring is False
+
+
+def test_low_confidence_does_not_replace_model_with_keyword_action_route():
+    from katcha.ai.command_planner import _finalize_plan_result
+
+    result = _finalize_plan_result(
+        CommandPlanResult(
+            CommandPlan(
+                intent="source_discovery",
+                confidence=0.4,
+                reason="Uncertain",
+                requested_actions=["start_source_scout"],
+                execution="run",
+            ),
+            "ai",
+            ModelTarget("gemini", "fixture-model"),
+            0,
+            0,
+        ),
+        deterministic_intent="create_content",
+    )
+    assert result.value.intent == "unsupported"
+    assert result.value.requested_actions == []
+    assert result.value.execution == "propose"
+
+
+async def test_missing_observed_clip_selection_never_substitutes_top_clip(
+    command_harness,
+    monkeypatch,
+):
+    state = command_harness
+    state.plan = CommandPlan(
+        intent="best_clips",
+        confidence=0.99,
+        reason="Unresolved production target",
+        requested_actions=["create_short_production"],
+        execution="run",
+    )
+    monkeypatch.setattr(
+        api,
+        "best_clips",
+        lambda *args: (
+            "Fixture clip options",
+            [{"kind": "clip", "id": str(uuid.uuid4())}],
+        ),
+    )
+    result = await state.send("Find the right clip and make a short")
+    assert result.actions == []
+    assert any(row["kind"] == "capability_gap" for row in result.evidence)
+    state.execute.assert_not_awaited()
+
+
+def test_action_schema_and_permission_registry_cannot_drift():
+    from typing import get_args
+
+    from katcha.control_contract import COMMAND_ACTION_SCOPES
+
+    action_literal = get_args(CommandPlan.model_fields["requested_actions"].annotation)[0]
+    assert set(get_args(action_literal)) == set(COMMAND_ACTION_SCOPES)
+    assert set(get_args(api.ActionType)) == set(COMMAND_ACTION_SCOPES)
+
+
+def test_planning_rounds_reserve_budget_independently(monkeypatch):
+    from katcha.ai import command_planner
+
+    reservations = []
+    settings = SimpleNamespace(
+        ai_enabled=True,
+        gemini_api_key="fixture-key",
+        resolved_ai_execution_mode=lambda: "live",
+    )
+    monkeypatch.setattr(command_planner, "planner_provider_order", lambda settings: ["gemini"])
+
+    def route(*args, **kwargs):
+        reservations.append(kwargs["reservation_key"])
+        return SimpleNamespace(reservation_id=None)
+
+    monkeypatch.setattr(command_planner, "route_for_channel", route)
+    monkeypatch.setattr(
+        command_planner,
+        "_gemini",
+        lambda *args, **kwargs: CommandPlanResult(
+            CommandPlan(intent="best_clips", confidence=0.99, reason="Fixture inspection"),
+            "ai",
+            ModelTarget("gemini", "fixture-model"),
+            0,
+            0,
+        ),
+    )
+    request_id, channel = uuid.uuid4(), uuid.uuid4()
+    for context in [{}, {"phase": "bind_actions_after_observation"}]:
+        command_planner.plan_ambiguous_command(
+            channel_profile_id=channel,
+            request_id=request_id,
+            user_prompt="Make a ranking",
+            effective_prompt="Make a ranking",
+            selected_clip_count=0,
+            previous_intent=None,
+            deterministic_intent="channel_status",
+            settings=settings,
+            context=context,
+        )
+    assert len(reservations) == len(set(reservations)) == 2

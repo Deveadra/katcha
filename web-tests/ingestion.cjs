@@ -396,12 +396,17 @@ function overview(source) {
         assert.match(await page.locator("#review").innerText(), /Find content for review/);
         assert.match(await page.locator("#review").innerText(), /Save the source and run one check/);
         assert.equal(await page.locator("#save").innerText(), "Save & check now");
+        const savedSourceCheck = page.waitForResponse((response) =>
+            response.url().includes("/v1/discovery/runs/") &&
+            response.url().endsWith("/execute") && response.status() === 202
+        );
         await page.locator("#save").click();
         await page.waitForFunction(() => document.querySelector('[data-source-view="library"]').hidden === false);
         const xbox = sources.find((row) => row.name === "Xbox Launch Watch");
         assert(xbox);
         assert.equal(xbox.usage_mode, "candidate_review");
         assert.equal(runs.filter((row) => row.sourceId === xbox.id).length, 1);
+        await savedSourceCheck;
         assert.equal(runs.find((row) => row.sourceId === xbox.id).status, "running");
         await page.waitForFunction(() => document.querySelector("#source-name")?.textContent === "Xbox Launch Watch");
         assert.match(await page.locator("#source-info").innerText(), /RankSnaxx/);

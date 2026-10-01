@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import timedelta
+from typing import Any
 
 from temporalio import workflow
 from temporalio.common import RetryPolicy
@@ -9,7 +10,7 @@ from temporalio.common import RetryPolicy
 @workflow.defn
 class LongformCompilationWorkflow:
     @workflow.run
-    async def run(self, compilation_id: str, start_stage: str = "select") -> dict[str, object]:
+    async def run(self, compilation_id: str, start_stage: str = "select") -> dict[str, Any]:
         paid_once = RetryPolicy(maximum_attempts=1)
         local_retry = RetryPolicy(
             initial_interval=timedelta(seconds=5),

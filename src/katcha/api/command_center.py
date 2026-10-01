@@ -55,6 +55,7 @@ from katcha.orchestration.client import (
 )
 from katcha.orchestration.trend_client import start_topic_watch_schedule
 from katcha.production_models import Production
+from katcha.services.acquisition import register_discovery_run
 from katcha.services.command_actions import (
     ActionProposalSpec,
     claim_action_proposal,
@@ -670,6 +671,8 @@ def _action_specs(
                             "order": "relevance",
                             "freshness_horizon_hours": 0,
                             "limit": 25,
+                            **({"channel_reference": matched_source["channel_reference"]}
+                               if matched_source.get("channel_reference") else {}),
                         },
                         "prepare_for_production": prepare_for_production,
                         **({"media_kind": plan.media_kind} if semantic and plan else {}),
@@ -696,12 +699,17 @@ def _action_specs(
                 platforms = list(plan.platforms) or platforms
                 if plan.search_query:
                     terms = [plan.search_query]
+            recurring = plan.recurring if semantic and plan else True
             specs.append(
                 ActionProposalSpec(
                     action_type="start_source_scout",
-                    label="Start autonomous source scout",
+                    label=(
+                        "Start autonomous source scout" if recurring else "Search for sources now"
+                    ),
                     description=(
-                        "Search beyond saved profiles once per hour for new "
+                        ("Search beyond saved profiles once per hour for new " if recurring
+                         else "Search beyond saved profiles once for new ")
+                        +
                         "public posts, creators, communities, and sites. "
                         "Results enter discovery and trend scoring, not publishing."
                     ),
@@ -711,6 +719,9 @@ def _action_specs(
                         "terms": terms,
                         "interval_minutes": 60,
                         "top_n": 50,
+                        "recurring": recurring,
+                        "prepare_for_production": prepare_for_production,
+                        **({"media_kind": plan.media_kind} if semantic and plan else {}),
                     },
                 )
             )
@@ -727,7 +738,7 @@ def _action_specs(
             )
         )
 
-    if intent == "best_clips" and evidence:
+    if intent == "best_clips" and evidence and not semantic:
         lead = evidence[0]
         payload: dict[str, object] = {"clip_id": str(lead["id"])}
         if blueprint_key:
@@ -1654,6 +1665,8 @@ async def _execute_proposal(
                 source = session.get(IngestionSource, source_id)
                 if source is None:
                     raise ValueError(f"ingestion source not found: {source_id}")
+                if not source.enabled:
+                    raise ValueError("The configured source is disabled; no search was started")
                 if (
                     source.channel_profile_id is not None
                     and source.channel_profile_id != proposal.channel_profile_id
@@ -1771,6 +1784,36 @@ async def _execute_proposal(
             payload.get("operator_request")
             or "Find new relevant public sources for this channel."
         )[:1000]
+
+        if payload.get("recurring") is False:
+            run = register_discovery_run(
+                adapter_key="web_scout", adapter_version="v1",
+                query={
+                    "operator_request": operator_request, "platforms": platforms,
+                    "include_terms": terms, "limit": min(top_n * 2, 100),
+                },
+                idempotency_key=f"command-scout:{proposal.id}",
+                metadata={
+                    "command_proposal_id": str(proposal.id),
+                    "command_channel_profile_id": str(proposal.channel_profile_id),
+                    "command_prepare_for_production": bool(payload.get("prepare_for_production")),
+                    "command_trailers_only": payload.get("media_kind") in {"trailer", "teaser"},
+                    "command_prepare_max_candidates": 5,
+                    "default_candidate_metadata": {
+                        "channel_profile_id": str(proposal.channel_profile_id),
+                        "source_scope": "channel",
+                    },
+                },
+            )
+            workflow_id = f"command-source-prepare-{run.id}"
+            await start_command_source_prepare_workflow(
+                str(run.id), workflow_id,
+                ingest_task_queue=get_settings().temporal_task_queue,
+            )
+            return {
+                "discovery_run_id": str(run.id), "workflow_id": workflow_id,
+                "continuous": False, "platforms": platforms, "terms": terms,
+            }
 
         watch_suffix = "-".join(platforms) if platforms else "wide-web"
         fingerprint_source = "|".join(platforms) + "::" + "|".join(terms)
