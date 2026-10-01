@@ -468,6 +468,12 @@ def preview_channel_elevenlabs_voice(
     channel_profile_id: uuid.UUID,
     request: ElevenLabsPreviewRequest,
 ) -> Response:
+    setting = get_channel_provider_setting(channel_profile_id, "elevenlabs")
+    if setting is not None and not setting.enabled:
+        raise HTTPException(
+            status_code=409,
+            detail="Voice is disabled for this channel.",
+        )
     saved_voice_id, saved_model_id = resolve_elevenlabs_voice(
         channel_profile_id=channel_profile_id,
     )
