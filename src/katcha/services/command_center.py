@@ -137,6 +137,17 @@ _STOP_WORDS = {
     "feeds",
     "community",
     "communities",
+    "get",
+    "fetch",
+    "retrieve",
+    "official",
+    "trailer",
+    "trailers",
+    "teaser",
+    "teasers",
+    "channel",
+    "prepare",
+    "production",
 }
 
 _PLATFORM_PATTERNS = {
@@ -390,8 +401,8 @@ def resolve_command_follow_up(
             inherited_from_thread=True,
             source_turn_id=assistant.id,
             resolution=(
-                "Chat text never confirms an executable proposal; the prior "
-                "server-issued proposal must be reviewed and confirmed explicitly."
+                "Resolved this explicit confirmation to the prior server-issued "
+                "proposal. Only that frozen action may execute."
             ),
             action_source_turn_id=assistant.id,
         )
@@ -578,7 +589,7 @@ def _looks_like_source_discovery(
 
     discovery_verb = any(
         re.search(rf"\b{re.escape(verb)}\b", text)
-        for verb in ("add", "expand", "find", "discover", "scout", "search")
+        for verb in _SOURCE_DISCOVERY_VERBS
     )
     if not discovery_verb:
         return False
