@@ -85,6 +85,25 @@ async def start_discovery_workflow(run_id: str, workflow_id: str) -> str:
     return handle.id
 
 
+async def start_command_source_prepare_workflow(
+    run_id: str,
+    workflow_id: str,
+    *,
+    ingest_task_queue: str,
+) -> str:
+    client = await get_temporal_client()
+    try:
+        handle = await client.start_workflow(
+            CommandSourcePrepareWorkflow.run,
+            args=[run_id, ingest_task_queue],
+            id=workflow_id,
+            task_queue=DISCOVERY_TASK_QUEUE,
+        )
+    except WorkflowAlreadyStartedError:
+        handle = client.get_workflow_handle(workflow_id)
+    return handle.id
+
+
 async def start_analysis_workflow(run_id: str, workflow_id: str) -> str:
     settings = get_settings()
     client = await get_temporal_client()
