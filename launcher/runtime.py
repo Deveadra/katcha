@@ -89,7 +89,7 @@ FIELDS = {
 }
 SENSITIVE = re.compile(r"KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL", re.I)
 HANDOFF_MAX_BYTES = 10 * 1024 * 1024
-HANDOFF_FILENAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,179}\\.json$")
+HANDOFF_FILENAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,179}\.json$")
 
 
 def read_env(path):
@@ -1479,9 +1479,14 @@ class Handler(BaseHTTPRequestHandler):
         )
         if not self.path.startswith(allowed_prefixes):
             return self.send(404, {"error": "Not found"})
-        connection = http.client.HTTPConnection("127.0.0.1", 8000, timeout=120)
+        connection = None
         headers_sent = False
         try:
+            connection = http.client.HTTPConnection(
+                "127.0.0.1",
+                8000,
+                timeout=120,
+            )
             length = int(self.headers.get("Content-Length", "0"))
             if not 0 <= length <= 11_000_000:
                 return self.send(413, {"error": "Request too large"})
@@ -1535,7 +1540,8 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 self.close_connection = True
         finally:
-            connection.close()
+            if connection is not None:
+                connection.close()
 
     do_PUT = do_POST
     do_PATCH = do_POST
