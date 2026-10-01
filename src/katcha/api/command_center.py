@@ -520,7 +520,6 @@ def _matched_configured_source(
                     ),
                 )
                 .order_by(IngestionSource.updated_at.desc(), IngestionSource.id.asc())
-                .limit(500)
             )
         )
         candidates = [
