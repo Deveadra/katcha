@@ -75,7 +75,6 @@ from katcha.services.command_center import (
     resolve_command_follow_up,
     source_discovery_plan,
 )
-from katcha.services.ingestion_sources import create_discovery_run_from_source
 from katcha.services.command_history import (
     archive_command_thread,
     create_command_thread,
@@ -94,6 +93,7 @@ from katcha.services.command_resources import (
     resource_context_summary,
 )
 from katcha.services.discovery_trends import create_topic_watch_version
+from katcha.services.ingestion_sources import create_discovery_run_from_source
 from katcha.services.productions import (
     register_regeneration,
     register_short_production,
