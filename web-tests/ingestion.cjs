@@ -412,7 +412,7 @@ function overview(source) {
                 platform: "youtube",
             },
         }]);
-        resetSourceSearch = page.locator("#source-search");
+        const resetSourceSearch = page.locator("#source-search");
         await resetSourceSearch.fill("Xbox Launch Watch");
         await page.waitForFunction(() => document.querySelectorAll(".source-row").length === 1);
         await page.locator(".source-row").click();
