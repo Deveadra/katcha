@@ -21,23 +21,27 @@ def _ordered(*providers: str) -> tuple[str, ...]:
 
 def command_provider_order(settings: Settings, intent: str) -> tuple[str, ...]:
     heavy = intent in HEAVY_COMMAND_INTENTS
-    configured = settings.agent_provider if heavy else settings.conversation_provider
+    configured = (
+        getattr(settings, "agent_provider", "codex")
+        if heavy
+        else getattr(settings, "conversation_provider", "gemini")
+    )
     preferred = configured
     if preferred == "auto":
         preferred = "codex" if heavy else "gemini"
     secondary = "gemini" if preferred == "codex" else "codex"
     providers = [preferred, secondary, "chatgpt"]
-    if settings.allow_paid_openai_fallback:
+    if getattr(settings, "allow_paid_openai_fallback", False):
         providers.append("openai")
     return _ordered(*providers)
 
 
 def planner_provider_order(settings: Settings) -> tuple[str, ...]:
-    preferred = settings.conversation_provider
+    preferred = getattr(settings, "conversation_provider", "gemini")
     if preferred == "auto":
         preferred = "gemini"
     secondary = "gemini" if preferred == "codex" else "codex"
     providers = [preferred, secondary, "chatgpt"]
-    if settings.allow_paid_openai_fallback:
+    if getattr(settings, "allow_paid_openai_fallback", False):
         providers.append("openai")
     return _ordered(*providers)
