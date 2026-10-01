@@ -5,7 +5,6 @@ from urllib.parse import parse_qs, urlparse
 
 from katcha.api import main as api_main
 from katcha.config import Settings
-from katcha.services.channel_profiles import _connection_profile_metadata
 from katcha.integrations.youtube.oauth import (
     DEFAULT_YOUTUBE_OAUTH_RETURN_TO,
     MONETARY_SCOPE,
@@ -15,6 +14,7 @@ from katcha.integrations.youtube.oauth import (
     requested_scopes,
     youtube_oauth_return_to,
 )
+from katcha.services.channel_profiles import _connection_profile_metadata
 
 
 def test_requested_scopes_make_monetary_access_opt_in() -> None:
