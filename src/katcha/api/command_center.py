@@ -657,6 +657,7 @@ def _action_specs(
                         "query_overrides": {
                             "q": search_query,
                             "order": "relevance",
+                            "freshness_horizon_hours": 0,
                             "limit": 25,
                         },
                         "prepare_for_production": prepare_for_production,
