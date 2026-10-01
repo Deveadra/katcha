@@ -117,71 +117,110 @@ class CommandSourcePrepareWorkflow:
         run_id: str,
         ingest_task_queue: str,
     ) -> dict[str, object]:
-        discovery_workflow_id = f"discovery-run-{run_id}"
-        discovery_result = await workflow.execute_child_workflow(
-            DiscoveryRunWorkflow.run,
-            run_id,
-            id=discovery_workflow_id,
-            task_queue=DISCOVERY_TASK_QUEUE,
-        )
-        prepared = await workflow.execute_activity(
-            "prepare_command_discovery_candidates_activity",
-            run_id,
-            start_to_close_timeout=timedelta(minutes=2),
-            retry_policy=_ACTIVITY_RETRY,
-            result_type=dict[str, object],
-        )
-        raw_items = prepared.get("prepared")
-        items = raw_items if isinstance(raw_items, list) else []
-        ingests: list[dict[str, object]] = []
-        for raw in items:
-            item = raw if isinstance(raw, dict) else {}
-            source_id = str(item.get("source_id") or "")
-            ingest_workflow_id = str(item.get("workflow_id") or "")
-            clip_id = str(item.get("clip_id") or "")
-            if clip_id:
-                ingests.append(
+        workflow_id = workflow.info().workflow_id
+        try:
+            discovery_workflow_id = f"discovery-run-{run_id}"
+            discovery_result = await workflow.execute_child_workflow(
+                DiscoveryRunWorkflow.run,
+                run_id,
+                id=discovery_workflow_id,
+                task_queue=DISCOVERY_TASK_QUEUE,
+            )
+            prepared = await workflow.execute_activity(
+                "prepare_command_discovery_candidates_activity",
+                run_id,
+                start_to_close_timeout=timedelta(minutes=2),
+                retry_policy=_ACTIVITY_RETRY,
+                result_type=dict[str, object],
+            )
+            raw_items = prepared.get("prepared")
+            items = raw_items if isinstance(raw_items, list) else []
+            ingests: list[dict[str, object]] = []
+            for raw in items:
+                item = raw if isinstance(raw, dict) else {}
+                source_id = str(item.get("source_id") or "")
+                ingest_workflow_id = str(item.get("workflow_id") or "")
+                clip_id = str(item.get("clip_id") or "")
+                if clip_id:
+                    ingests.append(
+                        {
+                            "source_id": source_id,
+                            "workflow_id": ingest_workflow_id,
+                            "success": True,
+                            "reused": True,
+                            "clip_id": clip_id,
+                        }
+                    )
+                    continue
+                if not source_id or not ingest_workflow_id:
+                    continue
+                try:
+                    result = await workflow.execute_child_workflow(
+                        ClipIngestWorkflow.run,
+                        source_id,
+                        id=ingest_workflow_id,
+                        task_queue=ingest_task_queue,
+                    )
+                    ingests.append(
+                        {
+                            "source_id": source_id,
+                            "workflow_id": ingest_workflow_id,
+                            "success": True,
+                            "result": result,
+                        }
+                    )
+                except Exception as exc:
+                    ingests.append(
+                        {
+                            "source_id": source_id,
+                            "workflow_id": ingest_workflow_id,
+                            "success": False,
+                            "error": str(exc)[:1000],
+                        }
+                    )
+
+            failed_ingests = sum(
+                1 for item in ingests if not bool(item.get("success"))
+            )
+            lifecycle_state = "failed" if failed_ingests else "completed"
+            await workflow.execute_activity(
+                "record_command_source_prepare_lifecycle_activity",
+                args=[
+                    run_id,
+                    workflow_id,
+                    lifecycle_state,
                     {
-                        "source_id": source_id,
-                        "workflow_id": ingest_workflow_id,
-                        "success": True,
-                        "reused": True,
-                        "clip_id": clip_id,
-                    }
+                        "candidate_count": int(
+                            discovery_result.get("candidate_count") or 0
+                        ),
+                        "prepared_count": len(items),
+                        "ingest_count": len(ingests),
+                        "failed_ingest_count": failed_ingests,
+                    },
+                ],
+                start_to_close_timeout=timedelta(seconds=30),
+                retry_policy=_ACTIVITY_RETRY,
+            )
+            return {
+                "run_id": run_id,
+                "discovery": discovery_result,
+                "preparation": prepared,
+                "ingests": ingests,
+            }
+        except Exception as exc:
+            with suppress(Exception):
+                await workflow.execute_activity(
+                    "record_command_source_prepare_lifecycle_activity",
+                    args=[
+                        run_id,
+                        workflow_id,
+                        "failed",
+                        {"error": _specific_failure_message(exc)[:2000]},
+                    ],
+                    start_to_close_timeout=timedelta(seconds=30),
+                    retry_policy=_ACTIVITY_RETRY,
                 )
-                continue
-            if not source_id or not ingest_workflow_id:
-                continue
-            try:
-                result = await workflow.execute_child_workflow(
-                    ClipIngestWorkflow.run,
-                    source_id,
-                    id=ingest_workflow_id,
-                    task_queue=ingest_task_queue,
-                )
-                ingests.append(
-                    {
-                        "source_id": source_id,
-                        "workflow_id": ingest_workflow_id,
-                        "success": True,
-                        "result": result,
-                    }
-                )
-            except Exception as exc:
-                ingests.append(
-                    {
-                        "source_id": source_id,
-                        "workflow_id": ingest_workflow_id,
-                        "success": False,
-                        "error": str(exc)[:1000],
-                    }
-                )
-        return {
-            "run_id": run_id,
-            "discovery": discovery_result,
-            "preparation": prepared,
-            "ingests": ingests,
-        }
+            raise
 
 
 @workflow.defn
