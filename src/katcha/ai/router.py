@@ -179,7 +179,7 @@ def _available_providers(
 ) -> set[str]:
     settings = get_settings()
     providers: set[str] = set()
-    if settings.openai_api_key:
+    if settings.openai_api_key and settings.allow_paid_openai_fallback:
         providers.add("openai")
     if settings.gemini_api_key:
         providers.add("gemini")
