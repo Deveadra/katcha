@@ -18,7 +18,6 @@ from katcha.editorial.rankings import (
     build_locked_ranking_episode_plan,
     rank_snaxx_countdown_v1,
 )
-from katcha.services.ingestion_sources import upsert_ingestion_source
 from katcha.services.command_center import (
     _search_terms,
     classify_intent,
@@ -26,6 +25,7 @@ from katcha.services.command_center import (
     resolve_command_follow_up,
     resolve_time_window,
 )
+from katcha.services.ingestion_sources import upsert_ingestion_source
 
 
 def test_command_center_routes_are_mounted() -> None:
