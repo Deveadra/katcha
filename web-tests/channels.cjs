@@ -56,6 +56,7 @@ const secondChannel = {
 };
 
 let channelRows = [channel];
+let voiceEnabled = true;
 
 const summary = {
     profile: channel,
@@ -402,7 +403,27 @@ const analytics = [
                 channel_profile_id: url.pathname.endsWith("channel-2")
                     ? "channel-2"
                     : "channel-1",
-                enabled: true,
+                enabled: voiceEnabled,
+                voice_id: "voice-ranksnaxx",
+                voice_name: "RankSnaxx Voice",
+                model_id: "eleven_multilingual_v2",
+                model_name: "Eleven Multilingual v2",
+                saved_voices: [
+                    { voice_id: "voice-ranksnaxx", name: "RankSnaxx Voice", category: "generated", labels: { accent: "american" } },
+                    { voice_id: "voice-cohost", name: "Cohost Voice", category: "generated", labels: { accent: "american" } },
+                ],
+                longform_primary_voice_id: "voice-ranksnaxx",
+                longform_secondary_voice_id: "voice-cohost",
+                source: "channel",
+            };
+        } else if (
+            url.pathname === "/v1/integrations/elevenlabs/channels/channel-1/enabled" &&
+            req.method() === "PATCH"
+        ) {
+            voiceEnabled = Boolean(body.enabled);
+            data = {
+                channel_profile_id: "channel-1",
+                enabled: voiceEnabled,
                 voice_id: "voice-ranksnaxx",
                 voice_name: "RankSnaxx Voice",
                 model_id: "eleven_multilingual_v2",
@@ -657,6 +678,9 @@ const analytics = [
         "true",
     );
     assert.equal(await page.locator("#overview").isHidden(), false);
+    assert.equal(await page.locator("#overview-channel-name").innerText(), "Fixture Gaming");
+    assert.equal(await page.locator("#overview-channel-handle").innerText(), "@fixturegaming");
+    assert.equal(await page.locator("#overview-channel-profile-id").innerText(), "channel-1");
     assert.equal(await page.locator("#content").isHidden(), true);
     assert.equal(await page.locator("#monetization").isHidden(), true);
     assert.equal(await page.locator("#identity").isHidden(), true);
@@ -699,6 +723,41 @@ const analytics = [
     assert.equal(await page.locator("#integrations").isHidden(), false);
     assert.equal(await page.locator("#overview").isHidden(), true);
     assert.equal(await page.evaluate(() => location.hash), "#settings");
+
+    assert.equal(await page.locator("#elevenlabs-enabled").isChecked(), true);
+    assert.equal(await page.locator("#elevenlabs-enabled-label").innerText(), "Enabled");
+    assert.equal(await page.locator("#elevenlabs-panel").getAttribute("aria-hidden"), "false");
+    assert.equal(await page.locator("#elevenlabs-panel").evaluate((node) => node.inert), false);
+
+    const statusCallsBeforeDisable = requests.filter(
+        (request) => request.path === "/v1/integrations/elevenlabs/status",
+    ).length;
+    await page.locator("#elevenlabs-enabled").uncheck();
+    await page.getByText(/Voice disabled for Fixture Gaming/).waitFor();
+    assert.equal(await page.locator("#elevenlabs-enabled-label").innerText(), "Disabled");
+    assert.equal(await page.locator("#elevenlabs-panel").getAttribute("aria-hidden"), "true");
+    assert.equal(await page.locator("#elevenlabs-panel").evaluate((node) => node.inert), true);
+    assert.equal(
+        requests.filter(
+            (request) => request.path === "/v1/integrations/elevenlabs/status",
+        ).length,
+        statusCallsBeforeDisable,
+    );
+    const disableRequest = requests.find(
+        (request) =>
+            request.path === "/v1/integrations/elevenlabs/channels/channel-1/enabled" &&
+            request.method === "PATCH" &&
+            request.body?.enabled === false,
+    );
+    assert(disableRequest);
+
+    await page.locator("#elevenlabs-enabled").check();
+    await page.getByText(/Voice enabled for Fixture Gaming/).waitFor();
+    assert.equal(await page.locator("#elevenlabs-enabled-label").innerText(), "Enabled");
+    assert.equal(await page.locator("#elevenlabs-panel").getAttribute("aria-hidden"), "false");
+    assert.equal(await page.locator("#elevenlabs-panel").evaluate((node) => node.inert), false);
+    assert.equal(await page.locator("#elevenlabs-default-voice").inputValue(), "voice-ranksnaxx");
+
     await page.locator("#elevenlabs-new-voice-id").fill("voice-alt");
     await page.locator("#add-elevenlabs-voice").click();
     assert.match(await page.locator("#elevenlabs-saved-voices").innerText(), /Alternate Voice/);
