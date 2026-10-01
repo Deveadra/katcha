@@ -30,6 +30,12 @@ async function loadRuntime() {
         const runtime = await runtimeStatus();
         const settings = runtime.settings || {};
         $("ai-mode").value = settings.KATCHA_AI_EXECUTION_MODE || "auto";
+        $("conversation-provider").value =
+            settings.KATCHA_CONVERSATION_PROVIDER || "gemini";
+        $("agent-provider").value =
+            settings.KATCHA_AGENT_PROVIDER || "codex";
+        $("paid-openai-fallback").value =
+            settings.KATCHA_ALLOW_PAID_OPENAI_FALLBACK || "false";
         $("openai-key").placeholder = settings.KATCHA_OPENAI_API_KEY
             ? "Saved credential — leave blank to keep"
             : "Not configured";
@@ -37,11 +43,15 @@ async function loadRuntime() {
             ? "Saved credential — leave blank to keep"
             : "Not configured";
         $("openai-state").textContent = settings.KATCHA_OPENAI_API_KEY
-            ? "Configured as an API fallback."
-            : "Optional fallback.";
+            ? (
+                settings.KATCHA_ALLOW_PAID_OPENAI_FALLBACK === "true"
+                    ? "Configured and allowed as a paid API fallback."
+                    : "Credential saved, but automatic paid fallback is disabled."
+            )
+            : "Optional paid fallback. Disabled unless explicitly allowed.";
         $("gemini-state").textContent = settings.KATCHA_GEMINI_API_KEY
-            ? "Configured as a Gemini fallback."
-            : "Used for Gemini-native workloads and fallback.";
+            ? "Configured as the preferred routine conversation provider."
+            : "Add a Gemini API key from a free-tier AI Studio project for routine chat.";
         $("settings-state").textContent = "LOCAL";
         $("settings-state").className = "simulation connected";
     } catch (error) {
@@ -350,7 +360,12 @@ $("ai-settings-form").onsubmit = async (event) => {
     const button = $("save-ai");
     button.disabled = true;
     try {
-        const changes = { KATCHA_AI_EXECUTION_MODE: $("ai-mode").value };
+        const changes = {
+            KATCHA_AI_EXECUTION_MODE: $("ai-mode").value,
+            KATCHA_CONVERSATION_PROVIDER: $("conversation-provider").value,
+            KATCHA_AGENT_PROVIDER: $("agent-provider").value,
+            KATCHA_ALLOW_PAID_OPENAI_FALLBACK: $("paid-openai-fallback").value,
+        };
         if ($("openai-key").value.trim()) changes.KATCHA_OPENAI_API_KEY = $("openai-key").value.trim();
         if ($("gemini-key").value.trim()) changes.KATCHA_GEMINI_API_KEY = $("gemini-key").value.trim();
         await api("/runtime/settings", { method: "POST", body: JSON.stringify(changes) });
