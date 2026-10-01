@@ -53,6 +53,7 @@ const sources = Array.from({ length: 52 }, (_, index) => ({
 const runs = [];
 const finds = new Map();
 const requests = [];
+let handoffItems = [];
 let loseSaveResponse = false;
 let executeFails = false;
 
@@ -149,7 +150,10 @@ function overview(source) {
     await page.route("**/v1/**", async (route) => {
         const req = route.request();
         const url = new URL(req.url());
-        const body = req.method() === "POST" ? req.postDataJSON() : null;
+        const contentType = req.headers()["content-type"] || "";
+        const body = req.method() === "POST" && contentType.includes("application/json")
+            ? req.postDataJSON()
+            : null;
         requests.push({ method: req.method(), path: url.pathname, search: url.search, body });
 
         const reply = (data, status = 200) =>
@@ -160,6 +164,41 @@ function overview(source) {
         }
         if (url.pathname === "/v1/discovery/adapters") return reply(catalog);
         if (url.pathname === "/v1/channels") return reply(channels);
+
+        if (url.pathname === "/v1/intelligence-ingest/inbox" && req.method() === "GET") {
+            const counts = { incoming: 0, processed: 0, failed: 0 };
+            for (const item of handoffItems) counts[item.status] += 1;
+            return reply({
+                incoming_path: "handoff/incoming",
+                max_file_bytes: 10485760,
+                counts,
+                items: clone(handoffItems),
+            });
+        }
+
+        if (url.pathname === "/v1/intelligence-ingest/inbox/files" && req.method() === "POST") {
+            const item = {
+                filename: "rank-snaxx-first-run.json",
+                status: "processed",
+                size_bytes: 512,
+                modified_at: now,
+                channel_profile_id: "channel-one",
+                batch_key: "orion-ranksnaxx-first-run",
+                record_count: 4,
+                error: null,
+                receipt: {
+                    created_count: 4,
+                    updated_count: 0,
+                    replayed: false,
+                },
+            };
+            handoffItems = [item, ...handoffItems];
+            return reply(clone(item), 201);
+        }
+
+        if (url.pathname === "/v1/intelligence-ingest/inbox/process" && req.method() === "POST") {
+            return reply([]);
+        }
 
         if (url.pathname === "/v1/discovery/source-library" && req.method() === "GET") {
             return reply(libraryPage(url));
@@ -286,6 +325,41 @@ function overview(source) {
         await page.waitForFunction(() => !document.querySelector("#workspace").disabled);
 
         assert.equal(await page.locator('[data-source-tab="library"]').getAttribute("aria-selected"), "true");
+
+        // Handoff inbox imports a portable intelligence batch through the normal Sources UI.
+        await page.locator('[data-source-tab="handoff"]').click();
+        await page.locator('[data-source-view="handoff"]').waitFor({ state: "visible" });
+        assert.match(await page.locator("#handoff-path").innerText(), /handoff\/incoming/);
+        assert.equal(await page.locator("#handoff-count-incoming").innerText(), "0");
+        await page.locator("#handoff-file").setInputFiles({
+            name: "rank-snaxx-first-run.json",
+            mimeType: "application/json",
+            buffer: Buffer.from(JSON.stringify({
+                channel_profile_id: "channel-one",
+                batch_key: "orion-ranksnaxx-first-run",
+                producer: "orion",
+                source_type: "assistant",
+                records: [{
+                    record_kind: "video",
+                    record_key: "youtube:video:test",
+                    title: "Test",
+                }],
+            })),
+        });
+        await page.locator("#handoff-upload button[type=submit]").click();
+        await page.waitForFunction(() =>
+            document.querySelector("#handoff-count-processed")?.textContent === "1"
+        );
+        assert.match(await page.locator("#handoff-list").innerText(), /rank-snaxx-first-run\.json/);
+        assert.match(await page.locator("#handoff-list").innerText(), /RankSnaxx/);
+        assert.match(await page.locator("#message").innerText(), /4 intelligence records/);
+        assert(requests.some((row) =>
+            row.path === "/v1/intelligence-ingest/inbox/files" &&
+            row.method === "POST"
+        ));
+        await page.locator('[data-source-tab="library"]').click();
+        await page.locator('[data-source-view="library"]').waitFor({ state: "visible" });
+
         assert.equal(await page.locator(".source-row").count(), 50);
         assert.match(await page.locator("#source-count").innerText(), /52 sources/);
         assert.equal(await page.locator("#source-next").isDisabled(), false);
@@ -441,7 +515,7 @@ function overview(source) {
 
         assert.deepEqual(pageErrors, []);
         console.log(
-            "PASS: scalable Source Library, explicit save/run semantics, source health inspector, research-only isolation, provider failure visibility and mobile width"
+            "PASS: scalable Source Library, intelligence handoff import, explicit save/run semantics, source health inspector, research-only isolation, provider failure visibility and mobile width"
         );
     } finally {
         await browser.close();
