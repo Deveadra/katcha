@@ -103,3 +103,59 @@ async def test_source_preparation_terminal_state(
     assert args[2] == expected_state
     assert args[3]["preparation_error_count"] == expected_error_count
     assert bool(args[3]["error"]) == (expected_state == "failed")
+
+
+def test_platform_alone_cannot_resolve_a_named_source(monkeypatch):
+    import uuid
+    from contextlib import contextmanager
+
+    from katcha.api import command_center
+
+    unrelated = SimpleNamespace(
+        id=uuid.uuid4(),
+        name="Other YouTube Channel",
+        source_key="other-youtube",
+        platform="youtube",
+        adapter_key="youtube",
+        adapter_version="v1",
+        query_template={"channel_reference": "@other"},
+    )
+
+    @contextmanager
+    def session():
+        yield SimpleNamespace(scalars=lambda query: [unrelated])
+
+    monkeypatch.setattr(command_center, "session_scope", session)
+    assert (
+        command_center._matched_configured_source(
+            channel_profile_id=uuid.uuid4(),
+            prompt="Get VisionQuest trailers from Marvel's YouTube channel",
+            source_hint="Marvel",
+        )
+        is None
+    )
+
+
+def test_unresolved_named_source_does_not_start_generic_scout(monkeypatch):
+    import uuid
+
+    from katcha.ai.command_planner import CommandPlan
+    from katcha.api import command_center
+
+    monkeypatch.setattr(command_center, "_matched_configured_source", lambda **kwargs: None)
+    specs = command_center._action_specs(
+        command_center.CommandRequest(
+            channel_profile_id=uuid.uuid4(),
+            prompt="Get VisionQuest trailers from Marvel",
+        ),
+        "source_discovery",
+        [{"kind": "source_discovery", "web_scout_ready": True}],
+        plan=CommandPlan(
+            intent="source_discovery",
+            confidence=0.99,
+            reason="Named source search",
+            source_hint="Marvel",
+            search_query="VisionQuest trailer",
+        ),
+    )
+    assert specs == []

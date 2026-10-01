@@ -543,7 +543,10 @@ def _matched_configured_source(
         source_key = str(candidate.get("source_key") or "")
         channel_reference = str(candidate.get("channel_reference") or "")
         haystack = " ".join([name, source_key, channel_reference]).casefold()
-        source_words = _normalized_words(haystack)
+        source_words = _normalized_words(haystack) - {
+            "youtube", "tiktok", "instagram", "bluesky", "reddit", "discord",
+            "channel", "official", "source", "video", "videos", "trailer", "trailers",
+        }
         score = 0
         if normalized_hint and normalized_hint in haystack:
             score += 100
@@ -552,7 +555,7 @@ def _matched_configured_source(
         overlap = source_words & (hint_words or prompt_words)
         score += 12 * len(overlap)
         platform = str(candidate.get("platform") or "").casefold()
-        if platform and platform in normalized_prompt:
+        if score and platform and platform in normalized_prompt:
             score += 8
         if score:
             ranked.append((score, candidate))
@@ -664,6 +667,9 @@ def _action_specs(
                     },
                 )
             )
+        elif plan is not None and plan.source_hint:
+            # A named-source request must not become an unrestricted web search.
+            return specs
         elif bool(overview.get("web_scout_ready")):
             platforms = [
                 str(value)
