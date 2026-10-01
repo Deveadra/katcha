@@ -41,14 +41,6 @@ from katcha.services.acquisition import (
     register_discovery_run,
 )
 from katcha.services.discovery import observe_discovery_candidate
-from katcha.services.intelligence_handoff import (
-    HandoffInboxItem,
-    handoff_inbox_summary,
-    list_handoff_inbox,
-    process_handoff_file,
-    process_handoff_inbox,
-    submit_handoff_file,
-)
 from katcha.services.ingestion_sources import (
     create_discovery_run_from_source,
     create_source_import_run,
@@ -60,6 +52,14 @@ from katcha.services.ingestion_sources import (
     list_intelligence_records,
     list_source_runs,
     upsert_ingestion_source,
+)
+from katcha.services.intelligence_handoff import (
+    HandoffInboxItem,
+    handoff_inbox_summary,
+    list_handoff_inbox,
+    process_handoff_file,
+    process_handoff_inbox,
+    submit_handoff_file,
 )
 
 router = APIRouter(prefix="/v1", tags=["discovery-rights"])
