@@ -12,6 +12,7 @@ from katcha.config import get_settings
 from katcha.orchestration.discovery_activities import (
     execute_discovery_page_activity,
     prepare_command_discovery_candidates_activity,
+    record_command_source_prepare_lifecycle_activity,
     finalize_topic_watch_execution_activity,
     mark_discovery_run_failed,
     prepare_topic_watch_execution_activity,
@@ -48,6 +49,7 @@ async def main() -> None:
             activities=[
                 execute_discovery_page_activity,
                 prepare_command_discovery_candidates_activity,
+                record_command_source_prepare_lifecycle_activity,
                 mark_discovery_run_failed,
                 prepare_topic_watch_execution_activity,
                 finalize_topic_watch_execution_activity,
