@@ -20,7 +20,11 @@ const state = {
     elevenlabsModels: [],
     elevenlabsPreviewUrl: null,
     providerError: "",
-    managerRequested: launchParams.get("setup") === "1",
+    oauthResult: launchParams.get("youtube") || "",
+    oauthConnectionId: launchParams.get("connection") || "",
+    oauthMessage: launchParams.get("message") || "",
+    managerRequested:
+        launchParams.get("setup") === "1" || Boolean(launchParams.get("youtube")),
 };
 
 const $ = (id) => document.getElementById(id);
@@ -203,6 +207,17 @@ function openChannelManager() {
     $("channel-manager").scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
+function clearOAuthResultParams() {
+    const url = new URL(location.href);
+    for (const key of ["youtube", "connection", "message"]) {
+        url.searchParams.delete(key);
+    }
+    history.replaceState({}, "", url.pathname + url.search + url.hash);
+    state.oauthResult = "";
+    state.oauthConnectionId = "";
+    state.oauthMessage = "";
+}
+
 function closeChannelManager() {
     $("channel-manager").hidden = true;
     state.managerRequested = false;
@@ -245,10 +260,56 @@ async function connect() {
         $("connection-state").textContent = "CONNECTED";
         $("connection-state").className = "simulation connected";
         renderChannelManager();
+
+        if (state.oauthResult === "connected" && state.oauthConnectionId) {
+            const connection = state.connections.find(
+                (item) => item.id === state.oauthConnectionId,
+            );
+            if (!connection) {
+                const missingConnection = state.oauthConnectionId;
+                clearOAuthResultParams();
+                throw new Error(
+                    "YouTube authorization completed, but Katcha could not find connection " +
+                        missingConnection +
+                        ". Refresh and try connecting the channel again.",
+                );
+            }
+            const existingChannel = channelForConnection(connection.id);
+            clearOAuthResultParams();
+            if (existingChannel) {
+                $("channel-setup").hidden = true;
+                $("studio").hidden = false;
+                renderChannelSelect();
+                state.channelId = existingChannel.id;
+                $("channel").value = state.channelId;
+                sessionStorage.setItem("katcha.channel", state.channelId);
+                closeChannelManager();
+                await loadChannel();
+                setStatus(
+                    "YouTube authorization refreshed for " +
+                        channelName(existingChannel) +
+                        ".",
+                    "success",
+                );
+                return;
+            }
+            await createChannel(connection.id);
+            return;
+        }
+
+        const oauthError =
+            state.oauthResult === "error"
+                ? state.oauthMessage || "YouTube authorization did not complete."
+                : "";
+
         if (!channels.length) {
             renderSetup();
             setStatus("Connected. Add your first channel to begin.");
             if (state.managerRequested) openChannelManager();
+            if (oauthError) {
+                clearOAuthResultParams();
+                setStatus(oauthError, "error");
+            }
             return;
         }
         $("channel-setup").hidden = true;
@@ -259,6 +320,10 @@ async function connect() {
         $("channel").value = state.channelId;
         await loadChannel();
         if (state.managerRequested) openChannelManager();
+        if (oauthError) {
+            clearOAuthResultParams();
+            setStatus(oauthError, "error");
+        }
     } catch (error) {
         $("connection-state").textContent = "DISCONNECTED";
         $("connection-state").className = "simulation";
@@ -296,7 +361,11 @@ function renderSetup() {
 async function beginYouTubeOAuth() {
     try {
         setStatus("Starting YouTube authorization…");
-        const result = await api("/v1/integrations/youtube/oauth/start");
+        const returnTo = new URL("/channels?setup=1", location.origin).toString();
+        const result = await api(
+            "/v1/integrations/youtube/oauth/start?return_to=" +
+                encodeURIComponent(returnTo),
+        );
         window.location.assign(result.authorization_url);
     } catch (error) {
         setStatus(error.message, "error");
@@ -1720,3 +1789,7 @@ $("open-channel-manager").addEventListener("click", openChannelManager);
 $("open-channel-manager-inline").addEventListener("click", openChannelManager);
 $("close-channel-manager").addEventListener("click", closeChannelManager);
 $("connect-another-youtube").addEventListener("click", beginYouTubeOAuth);
+
+if (state.oauthResult) {
+    connect();
+}

@@ -44,6 +44,19 @@ const channel = {
     updated_at: now,
 };
 
+const secondChannel = {
+    ...channel,
+    id: "channel-2",
+    youtube_connection_id: "youtube-2",
+    profile_metadata: {
+        channel_id: "yt-channel-2",
+        channel_title: "Fixture News",
+        channel_handle: "@fixturenews",
+    },
+};
+
+let channelRows = [channel];
+
 const summary = {
     profile: channel,
     strategy: {
@@ -329,7 +342,13 @@ const analytics = [
 
         let data;
         if (url.pathname === "/v1/channels" && req.method() === "GET") {
-            data = [channel];
+            data = channelRows;
+        } else if (url.pathname === "/v1/channels" && req.method() === "POST") {
+            assert.equal(body.youtube_connection_id, "youtube-2");
+            if (!channelRows.some((row) => row.id === secondChannel.id)) {
+                channelRows = [...channelRows, secondChannel];
+            }
+            data = secondChannel;
         } else if (url.pathname === "/v1/integrations/youtube") {
             data = [
                 {
@@ -373,11 +392,16 @@ const analytics = [
                 },
             ];
         } else if (
-            url.pathname === "/v1/integrations/elevenlabs/channels/channel-1" &&
+            (
+                url.pathname === "/v1/integrations/elevenlabs/channels/channel-1" ||
+                url.pathname === "/v1/integrations/elevenlabs/channels/channel-2"
+            ) &&
             req.method() === "GET"
         ) {
             data = {
-                channel_profile_id: "channel-1",
+                channel_profile_id: url.pathname.endsWith("channel-2")
+                    ? "channel-2"
+                    : "channel-1",
                 enabled: true,
                 voice_id: "voice-ranksnaxx",
                 voice_name: "RankSnaxx Voice",
@@ -503,6 +527,8 @@ const analytics = [
             });
         } else if (url.pathname === "/v1/channels/channel-1") {
             data = summary;
+        } else if (url.pathname === "/v1/channels/channel-2") {
+            data = { ...summary, profile: secondChannel };
         } else if (
             url.pathname === "/v1/channels/channel-1/growth-goals" &&
             req.method() === "POST"
@@ -566,7 +592,10 @@ const analytics = [
                     updated_at: now,
                 },
             ];
-        } else if (url.pathname === "/v1/channels/channel-1/brands") {
+        } else if (
+            url.pathname === "/v1/channels/channel-1/brands" ||
+            url.pathname === "/v1/channels/channel-2/brands"
+        ) {
             data = [
                 {
                     id: "brand-1",
@@ -735,6 +764,25 @@ const analytics = [
     await page.getByText(/Analytics refresh queued/).waitFor();
     await page.locator("#refresh-intelligence").click();
     await page.getByText(/Intelligence refresh queued/).waitFor();
+
+    await page.goto(
+        "http://127.0.0.1:8768/channels.html?setup=1&youtube=connected&connection=youtube-2",
+    );
+    await page.getByText(/Channel added to Katcha and selected/).waitFor();
+    assert.equal(await page.locator("#channel").inputValue(), "channel-2");
+    assert.match(await page.locator("#channel").innerText(), /Fixture News/);
+    assert(
+        requests.some(
+            (request) =>
+                request.path === "/v1/channels" &&
+                request.method === "POST" &&
+                request.body?.youtube_connection_id === "youtube-2",
+        ),
+    );
+    const resumedUrl = new URL(page.url());
+    assert.equal(resumedUrl.searchParams.has("youtube"), false);
+    assert.equal(resumedUrl.searchParams.has("connection"), false);
+    assert.equal(resumedUrl.searchParams.has("setup"), false);
 
     assert(
         requests.some(
