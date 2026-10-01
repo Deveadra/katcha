@@ -33,6 +33,11 @@ def test_bootstrap_preserves_keys_and_unrelated_settings(tmp_path):
     app.save({"KATCHA_TELEGRAM_BOT_TOKEN": "123456:fixture-bot-token"})
     assert app.values["KATCHA_TELEGRAM_BOT_TOKEN"] == "123456:fixture-bot-token"
     assert app.env_path.stat().st_mode & 0o777 == 0o600
+    for name in ("incoming", "processed", "failed", "receipts"):
+        directory = tmp_path / "handoff" / name
+        assert directory.is_dir()
+        assert directory.stat().st_mode & 0o777 == 0o770
+    assert app.environment()["KATCHA_HOST_GID"] == str(runtime.os.getgid())
     assert "private-key" not in json.dumps(app.snapshot())
 
 
