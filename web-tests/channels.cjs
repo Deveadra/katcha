@@ -343,6 +343,17 @@ const analytics = [
                     created_at: now,
                     updated_at: now,
                 },
+                {
+                    id: "youtube-2",
+                    channel_id: "yt-channel-2",
+                    channel_title: "Fixture News",
+                    status: "active",
+                    scopes: ["youtube", "yt-analytics.readonly"],
+                    token_expires_at: now,
+                    last_refreshed_at: now,
+                    created_at: now,
+                    updated_at: now,
+                },
             ];
         } else if (url.pathname === "/v1/integrations/providers") {
             data = [
@@ -598,6 +609,19 @@ const analytics = [
     );
     assert.equal(await page.locator("#channel").inputValue(), "channel-1");
     assert.match(await page.locator("#channel").innerText(), /Fixture Gaming/);
+    assert.equal(await page.locator("#open-channel-manager").isVisible(), true);
+    assert.equal(await page.locator("#open-channel-manager-inline").isVisible(), true);
+    await page.locator("#open-channel-manager").click();
+    assert.equal(await page.locator("#channel-manager").isHidden(), false);
+    assert.match(await page.locator("#channel-manager-connections").innerText(), /Fixture Gaming/);
+    assert.match(await page.locator("#channel-manager-connections").innerText(), /Fixture News/);
+    assert.match(await page.locator("#channel-manager-connections").innerText(), /IN KATCHA/);
+    assert.equal(
+        await page.locator('#channel-manager-connections [data-connection="youtube-2"]').innerText(),
+        "Add to Katcha",
+    );
+    await page.locator("#close-channel-manager").click();
+    assert.equal(await page.locator("#channel-manager").isHidden(), true);
     assert.equal(await page.locator("[data-channel-tab]").count(), 4);
     assert.equal(
         await page.locator('[data-channel-tab="overview"]').getAttribute("aria-selected"),

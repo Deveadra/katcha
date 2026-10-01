@@ -51,6 +51,7 @@
                         <p>Performance, content, growth, and operating controls for the active YouTube channel.</p>
                     </div>
                     <div class="hero-actions">
+                        <button id="open-channel-manager" class="studio-button secondary" type="button">+ Add channel</button>
                         <a class="studio-button secondary" href="/explorer">Find an opportunity</a>
                         <a class="studio-button primary" href="/editing">Open production ↗</a>
                     </div>
@@ -65,6 +66,29 @@
                     <button class="studio-button primary" type="submit">Connect</button>
                 </form>
                 <div id="status" role="status" aria-live="polite"></div>
+
+                <section id="channel-manager" class="channel-manager studio-card" hidden aria-labelledby="channel-manager-title">
+                    <div class="channel-manager-head">
+                        <div>
+                            <div class="eyebrow">CHANNELS</div>
+                            <h2 id="channel-manager-title">Add a channel</h2>
+                            <p>Choose a connected YouTube channel, or connect another one. Katcha keeps learning, sources, brand, editing, publishing, and analytics isolated per channel.</p>
+                        </div>
+                        <button id="close-channel-manager" class="studio-button secondary small" type="button">Close</button>
+                    </div>
+                    <div class="channel-manager-grid">
+                        <div>
+                            <div class="micro-label">YOUTUBE CONNECTIONS</div>
+                            <div id="channel-manager-connections" class="channel-manager-connections"></div>
+                        </div>
+                        <aside class="channel-manager-connect">
+                            <div class="micro-label">NEW CONNECTION</div>
+                            <h3>Another YouTube channel?</h3>
+                            <p>Authorize it once, then add it to Katcha as its own workspace.</p>
+                            <button id="connect-another-youtube" class="studio-button primary" type="button">Connect another YouTube channel ↗</button>
+                        </aside>
+                    </div>
+                </section>
 
                 <section id="channel-setup" class="setup-panel studio-card" hidden>
                     <div>
@@ -86,6 +110,7 @@
                             </div>
                         </div>
                         <div class="command-actions">
+                            <button id="open-channel-manager-inline" class="studio-button secondary small" type="button">+ Add channel</button>
                             <button id="refresh-intelligence" class="studio-button secondary" type="button">Refresh intelligence</button>
                             <button id="reload" class="studio-button primary" type="button">↻ Refresh view</button>
                         </div>

@@ -92,6 +92,104 @@
 }
 .setup-panel h2 { margin: 6px 0; font-size: 22px; }
 .setup-panel p { color: var(--muted); font-size: 12px; }
+
+.channel-manager {
+    margin: 10px 0 14px;
+    padding: 20px;
+}
+.channel-manager[hidden] { display: none; }
+.channel-manager-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 20px;
+    padding-bottom: 16px;
+    border-bottom: 1px solid var(--line);
+}
+.channel-manager-head h2 {
+    margin: 5px 0 7px;
+    font-size: 24px;
+    letter-spacing: -.03em;
+}
+.channel-manager-head p {
+    max-width: 780px;
+    margin: 0;
+    color: var(--muted);
+    font-size: 10px;
+    line-height: 1.6;
+}
+.channel-manager-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1.35fr) minmax(260px, .65fr);
+    gap: 12px;
+    margin-top: 16px;
+}
+.channel-manager-connections {
+    display: grid;
+    gap: 8px;
+    margin-top: 8px;
+}
+.channel-connection-row {
+    min-height: 64px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 14px;
+    padding: 11px 12px;
+    border: 1px solid #2c3b48;
+    border-radius: 9px;
+    background: #121d28;
+}
+.channel-connection-row.is-added { opacity: .78; }
+.channel-connection-copy {
+    min-width: 0;
+}
+.channel-connection-copy strong,
+.channel-connection-copy small {
+    display: block;
+}
+.channel-connection-copy strong {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 11px;
+}
+.channel-connection-copy small {
+    margin-top: 4px;
+    color: var(--muted);
+    font-size: 9px;
+    overflow-wrap: anywhere;
+}
+.channel-connection-state {
+    flex: 0 0 auto;
+    color: var(--lime);
+    font-size: 8px;
+    font-weight: 850;
+    letter-spacing: .08em;
+}
+.channel-manager-connect {
+    padding: 15px;
+    border: 1px solid #2c3b48;
+    border-radius: 9px;
+    background: #101923;
+}
+.channel-manager-connect h3 {
+    margin: 8px 0 6px;
+    font-size: 14px;
+}
+.channel-manager-connect p,
+.channel-manager-empty {
+    color: var(--muted);
+    font-size: 9px;
+    line-height: 1.55;
+}
+.channel-manager-connect .studio-button { margin-top: 11px; width: 100%; }
+.channel-manager-empty {
+    padding: 15px;
+    border: 1px dashed #344452;
+    border-radius: 9px;
+    background: #101923;
+}
 .channel-command {
     padding: 17px 18px;
     display: flex;
@@ -524,7 +622,7 @@
     .studio-hero { min-height: 220px; }
     .connect { grid-template-columns: 1fr; }
     .channel-command { align-items: flex-start; }
-    .content-layout, .overview-grid, .monetization-layout { grid-template-columns: 1fr; }
+    .content-layout, .overview-grid, .monetization-layout, .channel-manager-grid { grid-template-columns: 1fr; }
     .video-detail { position: static; }
     .control-grid { grid-template-columns: 1fr; }
 }
@@ -548,6 +646,10 @@
     .table-toolbar select { max-width: none; flex: 1; }
     .setup-panel { display: block; }
     .setup-actions { margin-top: 14px; }
+    .channel-manager-head { display: block; }
+    .channel-manager-head > .studio-button { margin-top: 12px; }
+    .channel-connection-row { align-items: flex-start; }
+    .channel-connection-row .studio-button { flex: 0 0 auto; }
 }
 @media (max-width: 430px) {
     .metric-grid { grid-template-columns: 1fr 1fr; }
