@@ -1,6 +1,6 @@
 const {chromium} = require('playwright');
 const {spawn} = require('node:child_process');
-const {mkdirSync,mkdtempSync,cpSync,rmSync} = require('node:fs');
+const {mkdirSync,mkdtempSync,cpSync,rmSync,existsSync,readFileSync} = require('node:fs');
 const {tmpdir}=require('node:os');
 const {join,resolve}=require('node:path');
 const assert = require('node:assert/strict');
@@ -26,7 +26,7 @@ const assert = require('node:assert/strict');
         const workspace=await browser.newPage({viewport:{width:1440,height:1100}});
         await workspace.goto('http://localhost:8765/home');
         await workspace.getByRole('heading',{name:/What needs you now/}).waitFor();
-        await workspace.waitForFunction(()=>document.getElementById('connection-state').textContent==='WARMING');
+        await workspace.waitForFunction(()=>document.getElementById('connection-state').textContent==='OFFLINE');
         assert.match(await workspace.locator('#status').textContent(),/Start services/);
 
         // The bridge must keep reporting runtime state after initial page load.
