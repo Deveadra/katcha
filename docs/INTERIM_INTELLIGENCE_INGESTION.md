@@ -145,3 +145,48 @@ This keeps the handoff path explicit:
 3. stable records accumulate updates over time;
 4. Katcha AI can consume those records as first-party channel context;
 5. later automation can build on the same records instead of starting over.
+
+## Handoff inbox
+
+The Handoff Inbox is a file transport into the same ingestion service described
+above. It exists for workflows that can create a Katcha batch but cannot reach
+the local Katcha API directly.
+
+Open **Sources → Handoff inbox** to import a JSON batch. Katcha uploads the file,
+validates it with the same `IngestIntelligenceBatchRequest` contract used by
+`POST /v1/intelligence-ingest/batches`, and immediately commits valid records
+through `ingest_intelligence_batch`.
+
+For local automation, place files directly in:
+
+```text
+handoff/incoming/
+```
+
+Then choose **Process pending** in the UI or call:
+
+```text
+POST /v1/intelligence-ingest/inbox/process
+```
+
+The launcher creates the host directories before Docker starts, and the API
+mounts `./handoff` at `/handoff`. The directory is ignored by Git.
+
+### File lifecycle
+
+- `incoming/`: files waiting to be validated and imported.
+- `processed/`: successfully imported files.
+- `failed/`: rejected files retained for diagnosis or correction.
+- `receipts/`: machine-readable outcomes containing the batch ID, counts,
+  record IDs, replay state, or validation error.
+
+Files are capped at 10 MiB. Filenames must be simple `.json` names; path
+components and symlinked local-drop files are rejected.
+
+Uploading the same filename with identical bytes is idempotent. Uploading the
+same filename with different bytes fails closed. The underlying
+`channel_profile_id + batch_key` hash guard still applies, so a differently
+named file cannot silently mutate a previously committed batch.
+
+A successful handoff only stores intelligence. It does **not** publish content,
+bypass rights review, start production, or authorize uploads.

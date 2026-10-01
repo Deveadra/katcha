@@ -67,6 +67,7 @@
                 <nav class="source-workspace-tabs" aria-label="Source workspace" role="tablist">
                     <button type="button" role="tab" data-source-tab="library" aria-selected="true">Source library</button>
                     <button type="button" role="tab" data-source-tab="add" aria-selected="false">Add source</button>
+                    <button type="button" role="tab" data-source-tab="handoff" aria-selected="false">Handoff inbox</button>
                 </nav>
 
                 <div class="workspace-grid">
@@ -365,6 +366,47 @@
                                 </div>
                             </section>
                         </div>
+                    </section>
+
+                    <section class="panel card handoff" data-source-view="handoff" aria-labelledby="handoff-title" hidden>
+                        <div class="panel-head handoff-head">
+                            <div>
+                                <div class="eyebrow">HANDOFF INBOX</div>
+                                <h2 id="handoff-title">Bring researched intelligence into Katcha</h2>
+                                <p class="section-copy">Import a Katcha intelligence batch from Orion or another trusted workflow. Katcha validates and stores it using the same channel-scoped ingestion path as the API.</p>
+                            </div>
+                            <div class="handoff-actions">
+                                <button id="handoff-process" type="button" class="button secondary">Process pending</button>
+                                <button id="handoff-refresh" type="button" class="text-button">Refresh</button>
+                            </div>
+                        </div>
+
+                        <div class="handoff-stats" aria-label="Handoff inbox status">
+                            <div><span>Pending</span><strong id="handoff-count-incoming">0</strong></div>
+                            <div><span>Processed</span><strong id="handoff-count-processed">0</strong></div>
+                            <div><span>Failed</span><strong id="handoff-count-failed">0</strong></div>
+                        </div>
+
+                        <form id="handoff-upload" class="handoff-upload">
+                            <label for="handoff-file">Intelligence batch JSON</label>
+                            <div class="handoff-upload-row">
+                                <input id="handoff-file" type="file" accept=".json,application/json" required>
+                                <button type="submit" class="button primary">Import batch</button>
+                            </div>
+                            <p class="hint">Files are imported immediately, then retained in the processed or failed queue with a receipt. Nothing is published by this action.</p>
+                        </form>
+
+                        <div class="callout handoff-folder">
+                            <strong>Local drop folder</strong>
+                            <p>You can also place batch files in <code id="handoff-path">handoff/incoming</code>, then choose <strong>Process pending</strong>. This folder is mounted into the Katcha API container and ignored by Git.</p>
+                        </div>
+
+                        <section class="handoff-history">
+                            <div class="source-section-head">
+                                <div><span class="section-kicker">RECENT HANDOFFS</span><h3>Import history</h3></div>
+                            </div>
+                            <div id="handoff-list" class="handoff-list"></div>
+                        </section>
                     </section>
                 </div>
             </fieldset>

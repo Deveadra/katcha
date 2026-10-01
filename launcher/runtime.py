@@ -134,6 +134,13 @@ class Runtime:
         self.bootstrap()
 
     def bootstrap(self):
+        handoff = self.root / "handoff"
+        handoff.mkdir(parents=True, exist_ok=True)
+        handoff.chmod(0o770)
+        for name in ("incoming", "processed", "failed", "receipts"):
+            path = handoff / name
+            path.mkdir(parents=True, exist_ok=True)
+            path.chmod(0o770)
         if not self.env_path.exists():
             with open(self.env_path, "x", opener=lambda p, f: os.open(p, f, 0o600)) as stream:
                 stream.write((self.root / ".env.example").read_text())
@@ -1268,7 +1275,7 @@ class Handler(BaseHTTPRequestHandler):
         headers_sent = False
         try:
             length = int(self.headers.get("Content-Length", "0"))
-            if not 0 <= length <= 10_000_000:
+            if not 0 <= length <= 11_000_000:
                 return self.send(413, {"error": "Request too large"})
             headers = {
                 k: v

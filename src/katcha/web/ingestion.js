@@ -20,6 +20,7 @@ const usage = {
 };
 let token = sessionStorage.getItem("katcha.controlToken") || '', adapters = [], channels = [], sources = [], selectedMethod = '', step = 1;
 let sourceView = 'library';
+let handoffInbox = {counts: {incoming: 0, processed: 0, failed: 0}, items: [], incoming_path: 'handoff/incoming'};
 let sourcePage = {total: 0, limit: 50, offset: 0, items: []};
 let selectedOverview = null;
 let channelsReady = false, historyEpoch = 0, connectionEpoch = 0, libraryEpoch = 0, detailEpoch = 0, busy = false;
@@ -46,6 +47,28 @@ async function api(path, body) {
     const data = await response.json().catch(() => ({}));
     if (!response.ok) {
         const error = new Error(response.status === 401 ? 'Your workspace needs an access token. Enter it below to connect.' : response.status >= 500 ? 'Katcha could not finish this request. Check the launch console for service problems, then try again.' : typeof data.detail === 'string' ? data.detail : 'Some details were not accepted. Check your entries and try again.');
+        error.status = response.status;
+        throw error;
+    }
+    return data;
+}
+async function apiFile(path, file) {
+    const form = new FormData();
+    form.append('file', file, file.name);
+    let response;
+    try {
+        response = await fetch(`/v1/${path}`, {
+            method: 'POST',
+            headers: token ? {Authorization: `Bearer ${token}`} : {},
+            body: form,
+        });
+    } catch {
+        throw new Error('Katcha could not be reached. The selected file has not been removed.');
+    }
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+        const detail = typeof data.detail === 'string' ? data.detail : typeof data.error === 'string' ? data.error : 'The handoff file could not be imported.';
+        const error = new Error(response.status === 401 ? 'Your workspace needs an access token.' : detail);
         error.status = response.status;
         throw error;
     }
@@ -154,10 +177,11 @@ function sourceViewFromHash() {
     const hash = location.hash.replace(/^#/, '');
     if (hash === 'sources') return 'library';
     if (hash === 'add') return 'add';
+    if (hash === 'handoff') return 'handoff';
     return null;
 }
 function setSourceView(view, {focus = false, updateHash = true} = {}) {
-    const selected = view === 'library' ? 'library' : 'add';
+    const selected = ['library', 'add', 'handoff'].includes(view) ? view : 'library';
     sourceView = selected;
     document.querySelectorAll('[data-source-tab]').forEach(button => {
         const active = button.dataset.sourceTab === selected;
@@ -168,7 +192,13 @@ function setSourceView(view, {focus = false, updateHash = true} = {}) {
     document.querySelectorAll('[data-source-view]').forEach(section => {
         section.hidden = section.dataset.sourceView !== selected;
     });
-    if (updateHash) window.history.replaceState(null, '', location.pathname + location.search + (selected === 'library' ? '#sources' : '#add'));
+    if (updateHash) {
+        const hash = selected === 'library' ? '#sources' : selected === 'add' ? '#add' : '#handoff';
+        window.history.replaceState(null, '', location.pathname + location.search + hash);
+    }
+    if (selected === 'handoff' && !$('workspace').disabled) {
+        refreshHandoffInbox().catch(error => message(error.message, true));
+    }
 }
 function installSourceWorkspaceTabs() {
     const tabs = [...document.querySelectorAll('[data-source-tab]')];
@@ -364,6 +394,7 @@ async function connect() {
         const requestedView = sourceViewFromHash();
         setSourceView(requestedView || (sourcePage.total ? 'library' : 'add'), {updateHash: false});
         $('workspace').disabled = false;
+        if (sourceView === 'handoff') await refreshHandoffInbox();
         $('connection').textContent = 'Connected';
         $('connection-panel').hidden = true;
         message('');
@@ -602,6 +633,43 @@ async function loadOverview() {
     }
 }
 
+function renderHandoffInbox() {
+    const counts = handoffInbox.counts || {};
+    $('handoff-count-incoming').textContent = String(counts.incoming || 0);
+    $('handoff-count-processed').textContent = String(counts.processed || 0);
+    $('handoff-count-failed').textContent = String(counts.failed || 0);
+    $('handoff-path').textContent = handoffInbox.incoming_path || 'handoff/incoming';
+
+    const items = handoffInbox.items || [];
+    $('handoff-list').innerHTML = items.length ? items.map(item => {
+        const state = item.status || 'unknown';
+        const summary = item.batch_key
+            ? esc(item.batch_key) + (item.record_count == null ? '' : ' · ' + esc(item.record_count) + ' records')
+            : 'Batch details unavailable';
+        const knownChannel = channels.find(row => row.id === item.channel_profile_id);
+        const channel = item.channel_profile_id
+            ? '<small>Channel ' + esc(knownChannel ? channelName(knownChannel) : item.channel_profile_id) + '</small>'
+            : '';
+        const error = item.error ? '<p class="handoff-error">' + esc(item.error) + '</p>' : '';
+        const countsText = item.receipt && state === 'processed'
+            ? '<small>' + esc(item.receipt.created_count || 0) + ' created · ' +
+                esc(item.receipt.updated_count || 0) + ' updated' +
+                (item.receipt.replayed ? ' · replayed safely' : '') + '</small>'
+            : '';
+        return '<article class="handoff-item is-' + esc(state) + '">' +
+            '<div class="handoff-item-head"><div><strong>' + esc(item.filename) + '</strong>' +
+            '<span>' + summary + '</span>' + channel + countsText + '</div>' +
+            '<div><span class="handoff-status">' + esc(state) + '</span><small>' + esc(formatWhen(item.modified_at)) + '</small></div></div>' +
+            error +
+        '</article>';
+    }).join('') : '<div class="empty-state handoff-empty"><span aria-hidden="true">⇢</span><h3>No handoffs yet</h3><p>Import a batch file here, or drop one into the local inbox folder.</p></div>';
+}
+
+async function refreshHandoffInbox() {
+    handoffInbox = await api('intelligence-ingest/inbox?limit=100');
+    renderHandoffInbox();
+}
+
 async function refreshSources({selectId = null, preserveSelection = true} = {}) {
     const epoch = ++libraryEpoch;
     const previous = selectId || (preserveSelection ? $('source').value : '');
@@ -771,6 +839,37 @@ async function handleInspectorClick(e) {
         if (output.isConnected) output.textContent = 'Results could not be loaded. Try again.';
     }
 }
+
+bind('handoff-upload', 'submit', async () => {
+    const file = $('handoff-file').files?.[0];
+    if (!file) throw new Error('Choose a Katcha intelligence batch JSON file.');
+    if (!file.name.toLowerCase().endsWith('.json')) throw new Error('Choose a .json handoff file.');
+    const result = await apiFile('intelligence-ingest/inbox/files?process=true', file);
+    $('handoff-file').value = '';
+    await refreshHandoffInbox();
+    if (result.status === 'failed') {
+        throw new Error(result.error || 'Katcha retained the file in the failed queue for review.');
+    }
+    message(
+        'Imported “' + result.filename + '”: ' +
+        (result.record_count || 0) + ' intelligence records are now available to Katcha.',
+    );
+});
+
+bind('handoff-process', 'click', async () => {
+    const results = await api('intelligence-ingest/inbox/process', {});
+    await refreshHandoffInbox();
+    const failed = results.filter(item => item.status === 'failed').length;
+    const processed = results.length - failed;
+    message(
+        results.length
+            ? processed + ' handoff' + (processed === 1 ? '' : 's') + ' processed' +
+                (failed ? '; ' + failed + ' failed and were retained for review.' : '.')
+            : 'No pending handoff files were found.',
+        failed > 0,
+    );
+});
+bind('handoff-refresh', 'click', refreshHandoffInbox);
 
 bind('connect', 'submit', connect);
 bind('methods', 'click', e => {
