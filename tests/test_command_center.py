@@ -1,9 +1,11 @@
 import uuid
 from datetime import UTC, datetime
+from types import SimpleNamespace
 
 import pytest
 
 from katcha.ai.command_planner import CommandPlan
+from katcha.api import command_center as command_api
 from katcha.api.command_center import CommandRequest, _action_specs
 from katcha.api.main import app
 from katcha.command_center_models import (
@@ -201,6 +203,87 @@ def test_operational_follow_up_confirms_the_prior_frozen_action() -> None:
     assert resolution.action_source_turn_id == assistant_id
     assert resolution.inherited_from_thread is True
     assert "frozen action" in str(resolution.resolution).casefold()
+
+
+@pytest.mark.asyncio
+async def test_named_source_action_starts_search_and_prepare_workflow(
+    monkeypatch,
+) -> None:
+    source = upsert_ingestion_source(
+        source_key=f"marvel-execute-{uuid.uuid4()}",
+        name="Marvel Entertainment",
+        adapter_key="youtube",
+        adapter_version="v1",
+        platform="youtube",
+        query_template={"channel_reference": "@marvel"},
+        enabled=True,
+    )
+    run_id = uuid.uuid4()
+    captured = {}
+
+    def create_run(source_id, **kwargs):
+        captured["source_id"] = source_id
+        captured.update(kwargs)
+        return SimpleNamespace(id=run_id)
+
+    async def start_prepare(run_id_value, workflow_id, *, ingest_task_queue):
+        captured["run_id"] = run_id_value
+        captured["workflow_id"] = workflow_id
+        captured["ingest_task_queue"] = ingest_task_queue
+        return workflow_id
+
+    monkeypatch.setattr(
+        command_api,
+        "create_discovery_run_from_source",
+        create_run,
+    )
+    monkeypatch.setattr(
+        command_api,
+        "start_command_source_prepare_workflow",
+        start_prepare,
+    )
+    monkeypatch.setattr(
+        command_api,
+        "get_settings",
+        lambda: SimpleNamespace(temporal_task_queue="katcha-media"),
+    )
+
+    proposal = SimpleNamespace(
+        id=uuid.uuid4(),
+        request_id=uuid.uuid4(),
+        channel_profile_id=uuid.uuid4(),
+        action_type="start_source_scout",
+        payload={
+            "source_id": str(source.id),
+            "source_name": source.name,
+            "query_overrides": {
+                "q": "VisionQuest official trailer",
+                "order": "relevance",
+                "freshness_horizon_hours": 0,
+                "limit": 25,
+            },
+            "prepare_for_production": True,
+            "operator_request": (
+                "Get the official trailers for VisionQuest from Marvel's "
+                "YouTube channel and prepare it for production."
+            ),
+            "search_query": "VisionQuest official trailer",
+        },
+    )
+
+    result = await command_api._execute_proposal(
+        proposal,  # type: ignore[arg-type]
+        actor="control-principal:operator",
+    )
+
+    assert captured["source_id"] == source.id
+    assert captured["query_overrides"]["q"] == "VisionQuest official trailer"
+    assert captured["metadata"]["command_prepare_for_production"] is True
+    assert captured["metadata"]["command_match_terms"] == ["visionquest"]
+    assert captured["run_id"] == str(run_id)
+    assert captured["ingest_task_queue"] == "katcha-media"
+    assert result["prepare_for_production"] is True
+    assert result["workflow_id"] == f"command-source-prepare-{run_id}"
 
 
 def test_selected_clip_explanation_is_read_only_intent() -> None:
