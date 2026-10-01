@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 import uuid
+from dataclasses import replace
 from datetime import datetime
 from importlib.util import find_spec
 from time import monotonic
@@ -86,6 +88,11 @@ from katcha.services.command_history import (
 from katcha.services.command_observability import (
     command_observability_summary,
     record_command_observation,
+)
+from katcha.services.command_planning import (
+    planning_context,
+    resolve_planned_clip_ids,
+    resolve_planned_proposals,
 )
 from katcha.services.command_resources import (
     resolve_command_resources,
@@ -592,6 +599,7 @@ def _action_specs(
     evidence: list[dict[str, object]],
     *,
     plan: CommandPlan | None = None,
+    semantic: bool = False,
 ) -> list[ActionProposalSpec]:
     specs: list[ActionProposalSpec] = []
     blueprint_key = infer_edit_blueprint_key(request.prompt)
@@ -631,10 +639,10 @@ def _action_specs(
         search_query = _source_search_query(plan, evidence)
         prepare_for_production = bool(
             (plan.prepare_for_production if plan is not None else False)
-            or (
+            or (not semantic and (
                 re.search(r"\b(prepare|ready|stage|ingest)\b", request.prompt, re.I)
                 and re.search(r"\b(production|review)\b", request.prompt, re.I)
-            )
+            ))
         )
         if matched_source is not None and search_query:
             source_name = str(matched_source.get("name") or "configured source")
@@ -774,6 +782,25 @@ def _action_specs(
     return specs[:4]
 
 
+def _inspect_command_capability(
+    intent: str,
+    request: CommandRequest,
+    prompt: str,
+    resource_evidence: list[dict[str, object]],
+) -> tuple[str, list[dict[str, object]]]:
+    if intent == "best_clips":
+        return best_clips(request.channel_profile_id, prompt)
+    if intent == "failures":
+        return failures(request.channel_profile_id)
+    if intent == "performance_advice":
+        return performance_advice(request.channel_profile_id, prompt)
+    if intent == "source_discovery":
+        return source_discovery_plan(request.channel_profile_id, prompt)
+    if intent == "resource_context":
+        return resource_context_summary(resource_evidence), resource_evidence
+    return channel_status(request.channel_profile_id)
+
+
 def _action_response(proposal: CommandActionProposal) -> CommandAction:
     return CommandAction(
         proposal_id=proposal.id,
@@ -786,6 +813,36 @@ def _action_response(proposal: CommandActionProposal) -> CommandAction:
         expires_at=proposal.expires_at,
         payload=dict(proposal.payload or {}),
     )
+
+
+async def _run_frozen_command_action(
+    pending: CommandActionProposal,
+    *,
+    actor: str,
+    credential_id: str | None,
+    credential_fingerprint: str | None,
+) -> tuple[CommandActionProposal, str]:
+    claim = claim_action_proposal(
+        pending.id, actor=actor, credential_id=credential_id,
+        credential_fingerprint=credential_fingerprint,
+    )
+    if not claim.should_execute:
+        pending = claim.proposal
+        return pending, f"{pending.label} is already {pending.status}; no duplicate was started."
+    try:
+        result = await _execute_proposal(claim.proposal, actor=actor)
+        pending = complete_action_proposal(
+            pending.id, result=result, credential_id=credential_id,
+            credential_fingerprint=credential_fingerprint,
+        )
+        state = "workflow started" if result.get("workflow_id") else "completed"
+        return pending, f"{pending.label}: {state}. The action record contains the server result."
+    except Exception as exc:
+        pending = fail_action_proposal(
+            pending.id, error=f"{type(exc).__name__}: {exc}",
+            credential_id=credential_id, credential_fingerprint=credential_fingerprint,
+        )
+        return pending, f"{pending.label} failed: {pending.error}"
 
 
 def _proposal_status(
@@ -906,6 +963,19 @@ async def command(http_request: Request, request: CommandRequest) -> CommandResp
         prior_turns,
         has_pending_proposal=has_pending_proposal,
     )
+    settings = get_settings()
+    live_planning = settings.ai_enabled and settings.resolved_ai_execution_mode() != "fixture"
+    context = planning_context(
+        prior_turns, prior_proposals, explicit_clip_ids, resource_evidence,
+    )
+    if live_planning:
+        # Phrase/ordinal heuristics are a labelled offline route, not live model authority.
+        resolution = replace(
+            resolution, effective_prompt=request.prompt,
+            selected_clip_ids=tuple(explicit_clip_ids), intent_hint=None,
+            inherited_from_thread=False, source_turn_id=None,
+            action_source_turn_id=None, resolution=None,
+        )
     resolved_selected_clip_ids = list(resolution.selected_clip_ids)
     resolved_request = request.model_copy(
         update={
@@ -919,7 +989,7 @@ async def command(http_request: Request, request: CommandRequest) -> CommandResp
     )
     if effective_resource_refs and deterministic_intent == "channel_status":
         deterministic_intent = "resource_context"
-    if deterministic_intent == "confirm_action":
+    if deterministic_intent == "confirm_action" and not live_planning:
         planning = deterministic_plan(
             "channel_status",
             "A pending proposal confirmation phrase was intercepted by the "
@@ -936,85 +1006,77 @@ async def command(http_request: Request, request: CommandRequest) -> CommandResp
                 selected_clip_count=len(resolved_selected_clip_ids),
                 previous_intent=latest_assistant.intent if latest_assistant else None,
                 deterministic_intent=deterministic_intent,
+                context=context,
+                settings=settings,
             )
         except CommandPlanningUnavailable as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
         intent = planning.value.intent
 
+    if live_planning and planning.target.provider != "katcha":
+        try:
+            semantic_clip_ids = resolve_planned_clip_ids(planning.value, context)
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        if semantic_clip_ids:
+            resolved_selected_clip_ids = semantic_clip_ids
+            resolved_request = resolved_request.model_copy(
+                update={"selected_clip_ids": semantic_clip_ids},
+            )
+            resolution = replace(
+                resolution, selected_clip_ids=tuple(semantic_clip_ids),
+                inherited_from_thread=not bool(explicit_clip_ids),
+                resolution="Resolved media references against grounded conversation records.",
+            )
+
     reused_proposals: list[CommandActionProposal] = []
     try:
         if intent == "confirm_action":
-            reused_proposals = [
-                proposal
-                for proposal in prior_proposals
-                if proposal.source_turn_id == resolution.action_source_turn_id
-                and proposal.status in {"proposed", "failed"}
-            ]
-            if len(reused_proposals) == 1:
-                pending = reused_proposals[0]
-                required_scope = COMMAND_ACTION_SCOPES.get(pending.action_type)
-                if required_scope is None:
-                    deterministic = (
-                        "The pending action is no longer supported. Nothing was started."
-                    )
-                else:
-                    require_control_scope(http_request, required_scope)
-                    try:
-                        claim = claim_action_proposal(
-                            pending.id,
-                            actor=actor,
-                            credential_id=credential_id,
-                            credential_fingerprint=credential_fingerprint,
-                        )
-                    except ValueError as exc:
-                        raise HTTPException(status_code=409, detail=str(exc)) from exc
-                    if claim.should_execute:
-                        try:
-                            execution_result = await _execute_proposal(
-                                claim.proposal,
-                                actor=actor,
-                            )
-                            pending = complete_action_proposal(
-                                pending.id,
-                                result=execution_result,
-                                credential_id=credential_id,
-                                credential_fingerprint=credential_fingerprint,
-                            )
-                            deterministic = (
-                                f"I proceeded with {pending.label}. The workflow "
-                                "has started; its server-issued result is attached "
-                                "to the action record."
-                            )
-                        except Exception as exc:
-                            pending = fail_action_proposal(
-                                pending.id,
-                                error=f"{type(exc).__name__}: {exc}",
-                                credential_id=credential_id,
-                                credential_fingerprint=credential_fingerprint,
-                            )
-                            deterministic = (
-                                f"I tried to proceed with {pending.label}, but the "
-                                f"action failed: {pending.error}"
-                            )
-                    else:
-                        pending = claim.proposal
-                        deterministic = (
-                            f"{pending.label} is already {pending.status}. "
-                            "I did not start a duplicate workflow."
-                        )
-                    reused_proposals = [pending]
-            elif reused_proposals:
-                deterministic = (
-                    "There is more than one pending action from the previous step. "
-                    "Tell me which one to run or use its action card so I do not "
-                    "guess between mutating operations."
+            if live_planning:
+                reused_proposals = resolve_planned_proposals(
+                    planning.value, prior_proposals, request.channel_profile_id,
+                )
+                resolution = replace(
+                    resolution, action_source_turn_id=reused_proposals[0].source_turn_id,
+                    inherited_from_thread=True,
+                    resolution="Resolved authorization to exact frozen action records.",
                 )
             else:
+                reused_proposals = [
+                    proposal for proposal in prior_proposals
+                    if proposal.source_turn_id == resolution.action_source_turn_id
+                    and proposal.status in {"proposed", "failed"}
+                ]
+            if reused_proposals and (live_planning or len(reused_proposals) == 1):
+                # Preflight every permission before starting any selected operation.
+                for pending in reused_proposals:
+                    required_scope = COMMAND_ACTION_SCOPES.get(pending.action_type)
+                    if required_scope is None:
+                        raise ValueError("The pending action is no longer supported")
+                    require_control_scope(http_request, required_scope)
+                completed = []
+                outcomes = []
+                for pending in reused_proposals:
+                    pending, outcome = await _run_frozen_command_action(
+                        pending, actor=actor, credential_id=credential_id,
+                        credential_fingerprint=credential_fingerprint,
+                    )
+                    completed.append(pending)
+                    outcomes.append(outcome)
+                reused_proposals = completed
+                deterministic = " ".join(outcomes)
+            elif reused_proposals:
                 deterministic = (
-                    "I could not find a pending server-issued action from the "
-                    "previous step, so nothing was started."
+                    "There is more than one pending action. Choose which action to run."
                 )
-            evidence = []
+            else:
+                deterministic = "No pending server-issued action was resolved. Nothing was started."
+            evidence = [
+                {"kind": "command_action", "id": str(proposal.id),
+                 "label": proposal.label, "status": proposal.status,
+                 "result": dict(proposal.result or {}), "error": proposal.error}
+                for proposal in reused_proposals
+            ]
         elif intent == "best_clips":
             deterministic, evidence = best_clips(
                 request.channel_profile_id,
@@ -1126,14 +1188,14 @@ async def command(http_request: Request, request: CommandRequest) -> CommandResp
                 "for your approval. What would you like to work on?"
             )
         elif intent == "unsupported":
-            deterministic = (
-                "I could not confidently tell what you want me to do. Could you "
-                "rephrase it or tell me which channel task you mean? I have not "
-                "started anything."
-                if planning.source == "ai_low_confidence_fallback"
-                else "I cannot do that action yet. I can inspect clips, failures, "
-                "performance, and source discovery, or prepare a confirmed "
-                "production proposal from selected clips. Nothing was started."
+            deterministic = planning.value.clarification_question or (
+                f"No supported executable plan was resolved: {planning.value.reason} "
+                "Nothing was started."
+            )
+            evidence = []
+        elif intent == "clarification":
+            deterministic = planning.value.clarification_question or (
+                "Which pending action or media item should I use? Nothing was started."
             )
             evidence = []
         else:
@@ -1141,14 +1203,41 @@ async def command(http_request: Request, request: CommandRequest) -> CommandResp
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
+    observations = {intent: list(evidence)}
+    semantic = live_planning and planning.target.provider != "katcha"
+    if intent not in {"confirm_action", "clarification", "unsupported"}:
+        for inspection in dict.fromkeys(planning.value.inspections):
+            if inspection == intent:
+                continue
+            try:
+                summary, inspected = _inspect_command_capability(
+                    inspection, resolved_request, request.prompt, resource_evidence,
+                )
+                deterministic += f"\n{summary}"
+                observations[inspection] = inspected
+                evidence.extend(inspected)
+            except ValueError as exc:
+                evidence.append({
+                    "kind": "capability_error", "id": inspection,
+                    "status": "unavailable", "error": str(exc),
+                })
+
     planned_specs: list[ActionProposalSpec] = []
-    if intent != "confirm_action":
-        planned_specs = _action_specs(
-            resolved_request,
-            intent,
-            evidence,
-            plan=planning.value,
-        )
+    if intent not in {"confirm_action", "clarification", "unsupported"}:
+        seen_specs: set[str] = set()
+        for capability, observed in observations.items():
+            for spec in _action_specs(
+                resolved_request, capability, observed, plan=planning.value, semantic=semantic,
+            ):
+                if (
+                    semantic and planning.value.requested_actions is not None
+                    and spec.action_type not in planning.value.requested_actions
+                ):
+                    continue
+                identity = json.dumps([spec.action_type, spec.payload], sort_keys=True, default=str)
+                if identity not in seen_specs and len(planned_specs) < 4:
+                    seen_specs.add(identity)
+                    planned_specs.append(spec)
         if intent == "source_discovery" and planned_specs:
             source_spec = planned_specs[0]
             source_id = source_spec.payload.get("source_id")
@@ -1204,6 +1293,7 @@ async def command(http_request: Request, request: CommandRequest) -> CommandResp
                 "model": planning.target.model,
                 "confidence": planning.value.confidence,
                 "reason": planning.value.reason,
+                "plan": planning.value.model_dump(mode="json"),
             },
         }
         if resolution.action_source_turn_id is not None:
