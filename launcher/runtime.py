@@ -118,6 +118,9 @@ class Runtime:
         self.known_secrets = set()
         self.services = []
         self.follow = None
+        self.follow_thread = None
+        self.shutdown_event = threading.Event()
+        self.monitor_thread = None
         self.logger = logging.getLogger(self.session)
         self.logger.setLevel(logging.INFO)
         handler = logging.handlers.RotatingFileHandler(
@@ -180,6 +183,8 @@ class Runtime:
         return text
 
     def event(self, level, component, message, **details):
+        if self.shutdown_event.is_set():
+            return
         row = dict(
             schema="katcha.diagnostic.v1",
             time=dt.datetime.now(dt.UTC).isoformat(),
@@ -247,11 +252,20 @@ class Runtime:
         lines = queue.Queue()
 
         def read():
-            for line in process.stdout:
-                lines.put(line)
-            lines.put(None)
+            try:
+                for line in process.stdout:
+                    lines.put(line)
+            except (OSError, ValueError):
+                pass
+            finally:
+                lines.put(None)
 
-        threading.Thread(target=read, daemon=True).start()
+        reader = threading.Thread(
+            target=read,
+            daemon=True,
+            name="katcha-command-reader",
+        )
+        reader.start()
         output = []
         deadline = time.monotonic() + timeout
         try:
@@ -279,7 +293,14 @@ class Runtime:
             if process.poll() is None:
                 process.kill()
                 process.wait()
-            process.stdout.close()
+            reader.join(timeout=3)
+            if reader.is_alive():
+                with contextlib.suppress(OSError, ValueError):
+                    process.stdout.close()
+                reader.join(timeout=1)
+            if not reader.is_alive():
+                with contextlib.suppress(OSError, ValueError):
+                    process.stdout.close()
 
     def release_revision(self):
         """Return the publishable main-branch revision, or None for local/dev trees."""
@@ -735,6 +756,8 @@ class Runtime:
         return True
 
     def start_logs(self):
+        if self.shutdown_event.is_set():
+            return
         if self.follow and self.follow.poll() is None:
             return
         self.follow = subprocess.Popen(
@@ -748,24 +771,49 @@ class Runtime:
         process = self.follow
 
         def consume():
-            for line in process.stdout:
-                self.event(
-                    "error"
-                    if re.search(r"error|exception|traceback|fatal", line, re.I)
-                    else "info",
-                    "service",
-                    line.rstrip(),
-                )
-            self.event(
-                "warning", "diagnostics", "Service log stream ended; monitoring will reconnect."
-            )
+            try:
+                for line in process.stdout:
+                    if self.shutdown_event.is_set():
+                        break
+                    self.event(
+                        "error"
+                        if re.search(r"error|exception|traceback|fatal", line, re.I)
+                        else "info",
+                        "service",
+                        line.rstrip(),
+                    )
+            except (OSError, ValueError):
+                # The launcher may close the pipe while stopping. That is an
+                # expected shutdown path, not an exception worth printing from
+                # a daemon thread while the interpreter is finalizing.
+                if not self.shutdown_event.is_set():
+                    self.event(
+                        "warning",
+                        "diagnostics",
+                        "Service log stream closed unexpectedly; monitoring will reconnect.",
+                    )
+            finally:
+                if not self.shutdown_event.is_set() and self.follow is process:
+                    self.event(
+                        "warning",
+                        "diagnostics",
+                        "Service log stream ended; monitoring will reconnect.",
+                    )
 
-        threading.Thread(target=consume, daemon=True).start()
+        thread = threading.Thread(
+            target=consume,
+            daemon=True,
+            name="katcha-log-consumer",
+        )
+        self.follow_thread = thread
+        thread.start()
 
     def stop_logs(self):
-        """Stop the launcher-owned log follower without touching Katcha services."""
+        """Stop and join the launcher-owned log follower without touching services."""
         process = self.follow
+        thread = self.follow_thread
         self.follow = None
+        self.follow_thread = None
         if process is None:
             return
         try:
@@ -779,11 +827,30 @@ class Runtime:
                         process.wait(timeout=3)
         except (OSError, ProcessLookupError):
             pass
-        finally:
-            stream = getattr(process, "stdout", None)
-            if stream is not None:
-                with contextlib.suppress(OSError, ValueError):
-                    stream.close()
+
+        # Waiting for the child process normally delivers EOF to the reader.
+        # Join before closing stdout so the reader cannot raise during Python
+        # interpreter teardown and attempt to write a traceback to stderr.
+        if thread is not None and thread is not threading.current_thread():
+            thread.join(timeout=3)
+
+        stream = getattr(process, "stdout", None)
+        if thread is not None and thread.is_alive() and stream is not None:
+            with contextlib.suppress(OSError, ValueError):
+                stream.close()
+            thread.join(timeout=1)
+
+        if stream is not None and (thread is None or not thread.is_alive()):
+            with contextlib.suppress(OSError, ValueError):
+                stream.close()
+
+    def shutdown(self):
+        """Stop launcher-owned background activity; leave Katcha services running."""
+        self.shutdown_event.set()
+        self.stop_logs()
+        thread = self.monitor_thread
+        if thread is not None and thread is not threading.current_thread():
+            thread.join(timeout=3)
 
     def reconcile_existing(self):
         """Adopt an existing Katcha Compose stack without rebuilding or relaunching it."""
@@ -930,12 +997,15 @@ class Runtime:
             self.operate("start")
 
     def monitor(self):
-        while True:
+        while not self.shutdown_event.is_set():
             delay = 10 if self.phase in ("ready", "idle", "stopped") else 2
-            time.sleep(delay)
+            if self.shutdown_event.wait(delay):
+                return
             try:
                 self.monitor_once()
             except Exception as exc:
+                if self.shutdown_event.is_set():
+                    return
                 self.event("error", "supervisor", str(exc))
 
     def snapshot(self):
@@ -1335,7 +1405,12 @@ def main():
     runtime = Runtime()
     server.runtime = runtime
     runtime.event("info", "launcher", "Launch console listening on " + url)
-    threading.Thread(target=runtime.monitor, daemon=True).start()
+    runtime.monitor_thread = threading.Thread(
+        target=runtime.monitor,
+        daemon=True,
+        name="katcha-supervisor",
+    )
+    runtime.monitor_thread.start()
     if (args.auto_start or runtime.desired_running) and not args.no_start:
         runtime.operate("start")
     elif not args.no_start:
@@ -1377,7 +1452,7 @@ def main():
         with contextlib.suppress(OSError, ValueError):
             signal.signal(signal.SIGINT, signal.SIG_IGN)
     finally:
-        runtime.stop_logs()
+        runtime.shutdown()
         server.server_close()
     if interrupted:
         print("Katcha launcher closed; services remain running.")

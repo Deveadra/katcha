@@ -73,8 +73,17 @@ def test_command_timeout_and_nonzero_exit(tmp_path):
 
     with pytest.raises(TimeoutError):
         app.run([sys.executable, "-c", "import time; time.sleep(10)"], timeout=0.1)
+    assert not any(
+        thread.name == "katcha-command-reader" and thread.is_alive()
+        for thread in threading.enumerate()
+    )
+
     with pytest.raises(RuntimeError):
         app.run([sys.executable, "-c", "raise SystemExit(2)"])
+    assert not any(
+        thread.name == "katcha-command-reader" and thread.is_alive()
+        for thread in threading.enumerate()
+    )
 
 
 def test_http_rejects_foreign_origin_and_secret_exposure(tmp_path):
@@ -166,14 +175,20 @@ def test_stop_logs_reaps_launcher_follower_without_stopping_services(tmp_path):
     follower = MagicMock()
     follower.poll.return_value = None
     follower.stdout = MagicMock()
+    reader = MagicMock()
+    reader.is_alive.return_value = False
     app.follow = follower
+    app.follow_thread = reader
 
     app.stop_logs()
 
     follower.terminate.assert_called_once_with()
     follower.wait.assert_called_once_with(timeout=3)
     follower.kill.assert_not_called()
+    reader.join.assert_called_once_with(timeout=3)
+    follower.stdout.close.assert_called_once_with()
     assert app.follow is None
+    assert app.follow_thread is None
 
 
 def test_stop_logs_kills_stuck_follower(tmp_path):
@@ -182,14 +197,57 @@ def test_stop_logs_kills_stuck_follower(tmp_path):
     follower.poll.return_value = None
     follower.wait.side_effect = [runtime.subprocess.TimeoutExpired("logs", 3), None]
     follower.stdout = MagicMock()
+    reader = MagicMock()
+    reader.is_alive.return_value = False
     app.follow = follower
+    app.follow_thread = reader
 
     app.stop_logs()
 
     follower.terminate.assert_called_once_with()
     follower.kill.assert_called_once_with()
     assert follower.wait.call_count == 2
+    reader.join.assert_called_once_with(timeout=3)
     assert app.follow is None
+    assert app.follow_thread is None
+
+
+def test_shutdown_joins_real_log_consumer_and_supervisor(tmp_path):
+    app = instance(tmp_path)
+    command = [
+        sys.executable,
+        "-u",
+        "-c",
+        "import time; print('fixture service log', flush=True); time.sleep(30)",
+    ]
+    with patch.object(app, "command", return_value=command):
+        app.start_logs()
+        reader = app.follow_thread
+        assert reader is not None
+        assert reader.is_alive()
+
+        supervisor = threading.Thread(target=app.monitor, daemon=True)
+        app.monitor_thread = supervisor
+        supervisor.start()
+        assert supervisor.is_alive()
+
+        app.shutdown()
+
+    assert app.shutdown_event.is_set()
+    assert app.follow is None
+    assert app.follow_thread is None
+    assert not reader.is_alive()
+    assert not supervisor.is_alive()
+
+
+def test_start_logs_is_disabled_after_launcher_shutdown(tmp_path):
+    app = instance(tmp_path)
+    app.shutdown_event.set()
+
+    with patch.object(runtime.subprocess, "Popen") as popen:
+        app.start_logs()
+
+    popen.assert_not_called()
 
 
 def test_launcher_chat_shortcut_keeps_focus_request(tmp_path):
