@@ -311,6 +311,7 @@ function review() {
     if (d.query_template.feed_url) rows.push(['Website feed', d.query_template.feed_url]);
     rows.push(['After saving', selectedMethod === 'links' ? 'Save the collection, then paste links.' : immediate ? 'Save the source and run one check immediately.' : 'Save the source only. No search starts.']);
     $('review').innerHTML = rows.map(([label, value]) => '<dt>' + esc(label) + '</dt><dd>' + esc(value) + '</dd>').join('');
+    $('save').textContent = selectedMethod === 'links' || !immediate ? 'Save source' : 'Save & check now';
     $('save-explanation').textContent = selectedMethod === 'links'
         ? 'Saving creates the source only. Add links from the Source Library when you are ready.'
         : immediate
@@ -357,10 +358,11 @@ async function connect() {
         $('custom-adapter').innerHTML = adapters.map(a => `<option value="${esc(`${a.key}@${a.version}`)}">${esc(a.label)}</option>`).join('');
         $('choose-custom').disabled = !adapters.length;
         await loadChannels(epoch);
+        renderLibraryFilters();
         await refreshSources();
         if (epoch !== connectionEpoch) return;
         const requestedView = sourceViewFromHash();
-        setSourceView(requestedView || (sources.length ? 'library' : 'add'), {updateHash: false});
+        setSourceView(requestedView || (sourcePage.total ? 'library' : 'add'), {updateHash: false});
         $('workspace').disabled = false;
         $('connection').textContent = 'Connected';
         $('connection-panel').hidden = true;
@@ -658,52 +660,29 @@ async function start(run) {
     await loadHistory();
     message('Request sent. Refresh activity to see its progress. Nothing has been published.');
 }
-bind('connect', 'submit', connect);
-bind('methods', 'click', e => { const choice = e.target.closest('[data-method]'); if (choice) choose(choice.dataset.method); }, true);
-bind('choose-custom', 'click', () => choose('custom'), true);
-bind('back', 'click', () => showStep(step - 1));
-bind('next', 'click', review, true);
-bind('usage', 'change', () => { $('usage-help').textContent = usage[$('usage').value][1]; });
-bind('retry-channels', 'click', async () => { await loadChannels(); if (source()) await selectSource(); });
-bind('source', 'change', selectSource);
-bind('refresh', 'click', refreshSources);
-bind('history-refresh', 'click', loadHistory);
-bind('setup', 'submit', async () => {
-    if (step !== 3) { if (step === 2) review(); return; }
-    const d = details(), signature = JSON.stringify(d), source_key = intent(signature, 'source');
-    // Recover a successful save whose response was lost, rather than duplicating it.
-    const existing = (await api('discovery/sources')).find(s => s.source_key === source_key);
-    const saved = existing || await api('discovery/sources', {...d, source_key});
-    await refreshSources();
-    $('source').value = saved.id;
-    await selectSource();
-    $('name').value = '';
-    showStep(1);
-    setSourceView('library');
-    message(`“${saved.name}” is saved. ${saved.adapter_key === 'operator_feed' ? 'Paste links in your collection to get started.' : 'Start a search when you are ready.'}`);
-    $('source').focus();
-}, true);
-bind('run', 'click', async () => {
-    const s = source(); if (!s?.enabled || s.usage_mode === 'blocked') return;
-    const key = `search:${s.id}`;
-    const run = await api(`discovery/sources/${encodeURIComponent(s.id)}/runs`, {idempotency_key: intent(key, 'search')});
+function resetLibraryFilters() {
+    sourcePage.offset = 0;
+    $('source-search').value = '';
+    $('source-channel-filter').value = 'all';
+    $('source-type-filter').value = 'all';
+    $('source-status-filter').value = 'all';
+    $('source-purpose-filter').value = 'all';
+    $('source-sort').value = 'recent';
+}
+
+async function runSelectedSource() {
+    const s = source();
+    if (!s?.enabled || s.usage_mode === 'blocked') return;
+    const key = 'search:' + s.id;
+    const run = await api(
+        'discovery/sources/' + encodeURIComponent(s.id) + '/runs',
+        {idempotency_key: intent(key, 'search')},
+    );
     runIntents.set(key, run.id);
     await start(run);
-});
-bind('import', 'submit', async () => {
-    const s = source(); if (!s?.enabled || s.usage_mode === 'blocked') return;
-    const urls = [...new Set($('urls').value.split(/\r?\n/).map(s => s.trim()).filter(Boolean))];
-    if (!urls.length) throw new Error('Paste at least one content link, one per line.');
-    urls.forEach(url => httpUrl(url, 'Each content link'));
-    const key = `import:${s.id}:${JSON.stringify(urls)}`;
-    const result = await api(`discovery/sources/${encodeURIComponent(s.id)}/imports`, {batch_key: intent(key, 'links'), urls});
-    runIntents.set(key, result.discovery_run.id);
-    await start(result.discovery_run);
-    linkDrafts.set(s.id, '');
-    if (displayedSourceId === s.id) $('urls').value = '';
-    intents.delete(key);
-});
-$('history').addEventListener('click', async e => {
+}
+
+async function handleInspectorClick(e) {
     const summary = e.target.closest('summary');
     if (summary) return;
 
@@ -722,14 +701,14 @@ $('history').addEventListener('click', async e => {
         return;
     }
 
-    const button = e.target.closest('[data-execute]');
-    if (button) {
+    const execute = e.target.closest('[data-execute]');
+    if (execute) {
         e.preventDefault();
-        if (button.disabled) return;
-        button.disabled = true;
-        try { await start({id: button.dataset.execute}); }
+        if (execute.disabled) return;
+        execute.disabled = true;
+        try { await start({id: execute.dataset.execute}); }
         catch (error) { message(error.message, true); }
-        finally { if (button.isConnected) button.disabled = false; }
+        finally { if (execute.isConnected) execute.disabled = false; }
         return;
     }
 
@@ -739,12 +718,19 @@ $('history').addEventListener('click', async e => {
         if (addClip.disabled) return;
         addClip.disabled = true;
         try {
-            await api(`discovery/candidates/${encodeURIComponent(addClip.dataset.addClip)}/promote`, {actor: 'operator', for_review: true});
-            addClip.textContent = 'Added · open Clips to review';
-            message('Video queued for download and analysis. Open Clips to review it.');
-        } catch (error) { message(error.message, true); addClip.disabled = false; }
+            await api(
+                'discovery/candidates/' + encodeURIComponent(addClip.dataset.addClip) + '/promote',
+                {actor: 'operator', for_review: true},
+            );
+            addClip.textContent = 'Added to Clips';
+            message('Find added to Clips for review. Nothing has been published.');
+        } catch (error) {
+            message(error.message, true);
+            addClip.disabled = false;
+        }
         return;
     }
+
     const results = e.target.closest('[data-results]');
     if (!results) return;
     e.preventDefault();
@@ -753,17 +739,176 @@ $('history').addEventListener('click', async e => {
     if (!selected || !output) return;
     output.textContent = 'Loading discoveries…';
     try {
-        const data = await api(`discovery/sources/${encodeURIComponent(selected.id)}/runs/${encodeURIComponent(results.dataset.results)}/results`);
+        const data = await api(
+            'discovery/sources/' + encodeURIComponent(selected.id) +
+            '/runs/' + encodeURIComponent(results.dataset.results) + '/results',
+        );
         if (source()?.id !== selected.id || !output.isConnected) return;
         const count = Number(data.total) || 0;
-        output.innerHTML = count ? `<p>${count} ${count === 1 ? 'item' : 'items'} found. Showing up to five recent discoveries.</p><ul>${data.candidates.map(c => {
-            let safe = '';
-            try { const url = new URL(c.source_url); if (['https:', 'http:'].includes(url.protocol) && !url.username && !url.password) safe = url.href; } catch {}
-            return `<li>${safe ? `<a href="${esc(safe)}" target="_blank" rel="noopener noreferrer">${esc(c.title || c.source_url)}</a>` : esc(c.title || 'Source link unavailable')}${c.creator ? ` · ${esc(c.creator)}` : ''}${c.id && selected.usage_mode !== 'discovery_only' && selected.usage_mode !== 'blocked' ? ` <button type="button" class="text-button" data-add-clip="${esc(c.id)}">Add to Clips for review</button>` : ''}</li>`;
-        }).join('')}</ul>` : '<p>No new items were found in this check. Try a broader topic or search again later.</p>';
-    } catch { if (output.isConnected) output.textContent = 'Results could not be loaded. Choose “See what was found” to retry.'; }
+        output.innerHTML = count
+            ? '<p>' + count + ' ' + (count === 1 ? 'item' : 'items') +
+                ' found. Showing up to five.</p><ul>' +
+                data.candidates.map(candidate => {
+                    const safe = safeExternalUrl(candidate.source_url);
+                    const canPromote = candidate.id &&
+                        selected.usage_mode !== 'discovery_only' &&
+                        selected.usage_mode !== 'blocked';
+                    return '<li>' +
+                        (safe
+                            ? '<a href="' + esc(safe) + '" target="_blank" rel="noopener noreferrer">' +
+                                esc(candidate.title || candidate.source_url) + '</a>'
+                            : esc(candidate.title || 'Source link unavailable')) +
+                        (candidate.creator ? ' · ' + esc(candidate.creator) : '') +
+                        (canPromote
+                            ? ' <button type="button" class="text-button" data-add-clip="' +
+                                esc(candidate.id) + '">Add to Clips</button>'
+                            : '') +
+                        '</li>';
+                }).join('') +
+                '</ul>'
+            : '<p>No new items were found in this check.</p>';
+    } catch {
+        if (output.isConnected) output.textContent = 'Results could not be loaded. Try again.';
+    }
+}
+
+bind('connect', 'submit', connect);
+bind('methods', 'click', e => {
+    const choice = e.target.closest('[data-method]');
+    if (choice) choose(choice.dataset.method);
+}, true);
+bind('choose-custom', 'click', () => choose('custom'), true);
+bind('back', 'click', () => showStep(step - 1));
+bind('next', 'click', review, true);
+bind('usage', 'change', () => {
+    const advanced = $('usage').value;
+    $('usage-help').textContent = advanced ? usage[advanced][1] : '';
 });
-$('usage-help').textContent = usage.candidate_review[1];
+bind('retry-channels', 'click', async () => {
+    await loadChannels();
+    renderLibraryFilters();
+    await refreshSources();
+});
+bind('source', 'change', () => selectSource());
+bind('refresh', 'click', () => refreshSources());
+bind('history-refresh', 'click', loadHistory);
+
+$('header-add-source').addEventListener('click', () => setSourceView('add', {focus: true}));
+$('source-list').addEventListener('click', async event => {
+    const row = event.target.closest('[data-source-id]');
+    if (!row) return;
+    await selectSource(row.dataset.sourceId);
+});
+
+$('source-search').addEventListener('input', () => {
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(async () => {
+        sourcePage.offset = 0;
+        try { await refreshSources({preserveSelection: false}); }
+        catch (error) { message(error.message, true); }
+    }, 250);
+});
+for (const id of [
+    'source-channel-filter',
+    'source-type-filter',
+    'source-status-filter',
+    'source-purpose-filter',
+    'source-sort',
+]) {
+    $(id).addEventListener('change', async () => {
+        sourcePage.offset = 0;
+        try { await refreshSources({preserveSelection: false}); }
+        catch (error) { message(error.message, true); }
+    });
+}
+$('source-prev').addEventListener('click', async () => {
+    sourcePage.offset = Math.max(0, sourcePage.offset - sourcePage.limit);
+    await refreshSources({preserveSelection: false});
+});
+$('source-next').addEventListener('click', async () => {
+    if (sourcePage.offset + sourcePage.limit >= sourcePage.total) return;
+    sourcePage.offset += sourcePage.limit;
+    await refreshSources({preserveSelection: false});
+});
+
+document.querySelectorAll('input[name="source-purpose"]').forEach(input => {
+    input.addEventListener('change', () => {
+        if (input.checked) {
+            $('usage').value = '';
+            $('usage-help').textContent = usage[input.value]?.[1] || '';
+        }
+    });
+});
+document.querySelectorAll('input[name="after-save"]').forEach(input => {
+    input.addEventListener('change', () => {
+        if (step === 3) review();
+    });
+});
+
+bind('setup', 'submit', async () => {
+    if (step !== 3) {
+        if (step === 2) review();
+        return;
+    }
+    const d = details();
+    const shouldRun = !$('after-save-fields').hidden && afterSaveMode() === 'run';
+    const signature = JSON.stringify(d);
+    const source_key = intent(signature, 'source');
+
+    // Recover a successful save whose response was lost without scanning the entire library.
+    const recovery = await api(
+        'discovery/source-library?q=' + encodeURIComponent(source_key) + '&limit=20&offset=0',
+    );
+    const existing = (recovery.items || []).find(row => row.source_key === source_key);
+    const saved = existing || await api('discovery/sources', {...d, source_key});
+
+    resetLibraryFilters();
+    await refreshSources({selectId: saved.id, preserveSelection: false});
+    $('name').value = '';
+    showStep(1);
+    setSourceView('library');
+    intents.delete(signature);
+
+    if (saved.adapter_key === 'operator_feed') {
+        message('“' + saved.name + '” is saved. Paste links in the source inspector when you are ready.');
+        return;
+    }
+
+    if (!shouldRun) {
+        message('“' + saved.name + '” is saved. No check was started.');
+        return;
+    }
+
+    await runSelectedSource();
+    message('“' + saved.name + '” is saved and its first check has started.');
+}, true);
+
+bind('run', 'click', runSelectedSource);
+
+bind('import', 'submit', async () => {
+    const s = source();
+    if (!s?.enabled || s.usage_mode === 'blocked') return;
+    const urls = [...new Set(
+        $('urls').value.split(/\r?\n/).map(value => value.trim()).filter(Boolean),
+    )];
+    if (!urls.length) throw new Error('Paste at least one content link, one per line.');
+    urls.forEach(url => httpUrl(url, 'Each content link'));
+    const key = 'import:' + s.id + ':' + JSON.stringify(urls);
+    const result = await api(
+        'discovery/sources/' + encodeURIComponent(s.id) + '/imports',
+        {batch_key: intent(key, 'links'), urls},
+    );
+    runIntents.set(key, result.discovery_run.id);
+    await start(result.discovery_run);
+    linkDrafts.set(s.id, '');
+    if (displayedSourceId === s.id) $('urls').value = '';
+    intents.delete(key);
+});
+
+$('history').addEventListener('click', handleInspectorClick);
+$('recent-finds').addEventListener('click', handleInspectorClick);
+
+$('usage-help').textContent = '';
 // The launcher bridge connects after startup. Direct API users connect automatically.
 if (location.port !== '8765') connect();
 
@@ -773,9 +918,20 @@ $('pause-source').onclick = async () => {
     const button = $('pause-source');
     button.disabled = true;
     try {
-        await api('discovery/sources', {...selected, create_only: false, enabled: !selected.enabled});
-        await refreshSources();
-        message(selected.enabled ? 'Source paused. Future checks are stopped.' : 'Source resumed. Automatic checks can continue.');
-    } catch (error) { message(error.message, true); }
-    finally { button.disabled = false; }
+        await api('discovery/sources', {
+            ...selected,
+            create_only: false,
+            enabled: !selected.enabled,
+        });
+        await refreshSources({selectId: selected.id});
+        message(
+            selected.enabled
+                ? 'Source paused. Manual and scheduled checks are disabled while paused.'
+                : 'Source resumed. You can run a check when ready.',
+        );
+    } catch (error) {
+        message(error.message, true);
+    } finally {
+        button.disabled = false;
+    }
 };
