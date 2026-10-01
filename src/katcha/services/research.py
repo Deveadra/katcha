@@ -96,29 +96,32 @@ def prepare_research_jobs(now: datetime | None = None) -> list[dict[str, object]
             continue
         if source.channel_profile_id and source.channel_profile_id not in active_channels:
             continue
-        query = dict(source.query_template or {})
-        specifications.append(
-            {
-                "key": f"source-{source.id}",
-                "channel_id": source.channel_profile_id,
-                "interval": source.poll_interval_minutes,
-                "spec": {
-                    "name": source.name,
-                    "include_terms": query.get("include_terms") or [],
-                    "exclude_terms": query.get("exclude_terms") or [],
-                    "freshness_horizon_hours": int(query.get("freshness_horizon_hours") or 72),
-                    "max_candidates": min(max(int(query.get("limit") or 40), 1), 100),
-                    "adapter_configs": [
-                        {
-                            "adapter_key": source.adapter_key,
-                            "adapter_version": source.adapter_version,
-                            "ingestion_source_id": str(source.id),
-                            "query": query,
-                        }
-                    ],
-                },
-            }
-        )
+        try:
+            query = dict(source.query_template or {})
+            specifications.append(
+                {
+                    "key": f"source-{source.id}",
+                    "channel_id": source.channel_profile_id,
+                    "interval": source.poll_interval_minutes,
+                    "spec": {
+                        "name": source.name,
+                        "include_terms": query.get("include_terms") or [],
+                        "exclude_terms": query.get("exclude_terms") or [],
+                        "freshness_horizon_hours": int(query.get("freshness_horizon_hours") or 72),
+                        "max_candidates": min(max(int(query.get("limit") or 40), 1), 100),
+                        "adapter_configs": [
+                            {
+                                "adapter_key": source.adapter_key,
+                                "adapter_version": source.adapter_version,
+                                "ingestion_source_id": str(source.id),
+                                "query": query,
+                            }
+                        ],
+                    },
+                }
+            )
+        except (ValueError, TypeError):
+            logging.getLogger(__name__).exception("Could not prepare source %s", source.id)
     for profile in profiles:
         interests = active_watch_profile(profile.id)
         if interests is None or not (interests.watch_metadata or {}).get(
@@ -214,4 +217,10 @@ def research_watch_is_current(watch: TopicWatchVersion) -> bool:
             profile = session.get(ChannelProfile, watch.channel_profile_id)
             if profile is None or profile.status != "active":
                 return False
+    if watch.watch_key == "channel-interest-research" and watch.channel_profile_id:
+        interests = active_watch_profile(watch.channel_profile_id)
+        if interests is None or not (interests.watch_metadata or {}).get(
+            "automatic_research", True
+        ):
+            return False
     return True

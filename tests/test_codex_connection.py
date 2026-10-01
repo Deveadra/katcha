@@ -219,3 +219,15 @@ def test_successful_inference_is_not_failed_by_usage_outage(monkeypatch):
     )
     assert codex.test_connection()["ok"] is True
     assert codex.test_connection()["usage_error"]
+
+
+@pytest.mark.parametrize("operation", [codex.usage, codex.list_models])
+def test_codex_network_failure_has_connection_error_not_quota_error(monkeypatch, operation):
+    monkeypatch.setattr(codex, "active_session", lambda settings=None: _session())
+
+    def fail(*args, **kwargs):
+        raise httpx.ConnectError("network is down")
+
+    monkeypatch.setattr(codex.httpx, "get", fail)
+    with pytest.raises(codex.CodexConnectionError, match="could not reach the provider"):
+        operation()

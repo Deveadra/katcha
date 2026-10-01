@@ -221,3 +221,93 @@ def test_consolidated_workers_register_every_called_activity():
                             item.id,
                             call.args[0].value,
                         )
+
+
+def test_malformed_source_does_not_stop_other_research(research_db):
+    from katcha.acquisition_models import IngestionSource
+
+    broken = upsert_ingestion_source(
+        source_key="malformed",
+        name="Legacy",
+        adapter_key="rss_atom",
+        adapter_version="v1",
+        platform="web",
+    )
+    with db.session_scope() as session:
+        session.get(IngestionSource, broken.id).query_template = {"limit": "not a number"}
+    good = upsert_ingestion_source(
+        source_key="good",
+        name="Working",
+        adapter_key="rss_atom",
+        adapter_version="v1",
+        platform="web",
+    )
+    jobs = prepare_research_jobs()
+    assert len(jobs) == 1
+    with db.session_scope() as session:
+        watch = session.get(TopicWatchVersion, uuid.UUID(jobs[0]["topic_watch_id"]))
+        assert watch.adapter_configs[0]["ingestion_source_id"] == str(good.id)
+
+
+def test_review_download_preserves_lineage_and_production_gate(research_db, monkeypatch, tmp_path):
+    from types import SimpleNamespace
+
+    from katcha.models import SourceItem
+    from katcha.orchestration import activities
+    from katcha.services.acquisition import promote_discovery_candidate
+
+    channel_id, _ = channel()
+    with db.session_scope() as session:
+        candidate = DiscoveryCandidate(
+            adapter_key="youtube",
+            source_url="https://youtube.com/watch?v=fixture",
+            canonical_url="https://youtube.com/watch?v=fixture",
+            platform="youtube",
+            candidate_metadata={"channel_profile_id": str(channel_id)},
+        )
+        session.add(candidate)
+        session.flush()
+        candidate_id = candidate.id
+    source = promote_discovery_candidate(candidate_id, for_review=True)
+    assert source.source_metadata["rights_basis"] == "unknown"
+    assert promote_discovery_candidate(candidate_id, for_review=True).id == source.id
+    with pytest.raises(ValueError, match="no rights assessment"):
+        promote_discovery_candidate(candidate_id)
+    directory = tmp_path / "isolated-download"
+    directory.mkdir()
+    path = directory / "video.mp4"
+    path.write_bytes(b"synthetic media; no live download")
+    monkeypatch.setattr(
+        activities,
+        "download",
+        lambda url: SimpleNamespace(
+            path=path,
+            sha256="a" * 64,
+            extension="mp4",
+            size_bytes=path.stat().st_size,
+            title="Fixture",
+            creator="Fixture",
+            platform="youtube",
+            canonical_url=url,
+            source_metadata={"channel_profile_id": "untrusted", "uploader": "fixture"},
+            media_metadata={},
+        ),
+    )
+    monkeypatch.setattr(
+        activities,
+        "ObjectStore",
+        lambda: SimpleNamespace(
+            ensure_bucket=lambda: None,
+            raw_key=lambda *args: "raw/fixture.mp4",
+            exists=lambda key: False,
+            put_file=lambda *args: None,
+        ),
+    )
+    result = activities.ingest_source(str(source.id))
+    assert result["clip_id"]
+    with db.session_scope() as session:
+        saved = session.get(SourceItem, source.id)
+        assert saved.source_metadata["channel_profile_id"] == str(channel_id)
+        assert saved.source_metadata["discovery_candidate_id"] == str(candidate_id)
+        assert saved.source_metadata["uploader"] == "fixture"
+        assert saved.source_metadata["acquisition_purpose"] == "review"

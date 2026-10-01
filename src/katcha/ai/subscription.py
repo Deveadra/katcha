@@ -42,7 +42,7 @@ def generate_subscription_json(
     image_bytes: bytes | None = None,
 ) -> SubscriptionResult | None:
     if (
-        not settings.ai_enabled
+        not getattr(settings, "ai_enabled", False)
         or settings.resolved_ai_execution_mode() != "live"
         or not settings.credential_encryption_key
     ):
@@ -50,8 +50,11 @@ def generate_subscription_json(
     providers = []
     if settings.codex_enabled and codex.connection_status().get("connected"):
         providers.append(("codex", codex.invoke_json))
-    if (image_bytes is None and settings.chatgpt_host_id
-            and chatgpt.connection_status().get("plan_usage_enabled")):
+    if (
+        image_bytes is None
+        and settings.chatgpt_host_id
+        and chatgpt.connection_status().get("plan_usage_enabled")
+    ):
         providers.append(("chatgpt", chatgpt.invoke_json))
     errors = []
     for provider, invoke in providers:

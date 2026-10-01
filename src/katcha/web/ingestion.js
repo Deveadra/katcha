@@ -109,9 +109,9 @@ function connectionName(row) {
 function sourceChannel(row) { return channels.find(c => c.id === row.channel_profile_id); }
 function channelHelp() {
     if (channels.length) {
-        return 'Choose a channel to keep this source channel-specific, or choose “Shared with all channels” so every channel can use discoveries from it.';
+        return 'Choose a channel to keep this source channel-specific, or choose “Shared collection (unassigned)” to collect discoveries without assigning a channel.';
     }
-    return 'No active channels are set up yet. This source will be shared with all channels you add now or later.';
+    return 'No active channels are set up yet. This source will stay in an unassigned shared collection until you choose a channel.';
 }
 function sourceViewFromHash() {
     const hash = location.hash.replace(/^#/, '');
@@ -247,7 +247,7 @@ function review() {
     const d = details();
     const rows = [
         ['Name', d.name], ['Content source', methods[selectedMethod]?.title || chosenAdapter().label],
-        ['For', channels.find(c => c.id === d.channel_profile_id) ? channelName(channels.find(c => c.id === d.channel_profile_id)) : 'Shared with all channels'],
+        ['For', channels.find(c => c.id === d.channel_profile_id) ? channelName(channels.find(c => c.id === d.channel_profile_id)) : 'Shared collection (unassigned)'],
         ['Review preference', usage[d.usage_mode][0]],
     ];
     if (d.query_template.channel_reference) rows.push(['YouTube channel', d.query_template.channel_reference]);
@@ -267,7 +267,7 @@ async function loadChannels(epoch = connectionEpoch) {
         channels = rows.filter(c => c.status === 'active');
         channelsReady = true;
         const previous = $('channel').value;
-        $('channel').innerHTML = '<option value="">Shared with all channels</option>' + channels.map(c => `<option value="${esc(c.id)}">${esc(channelName(c))}</option>`).join('');
+        $('channel').innerHTML = '<option value="">Shared collection (unassigned)</option>' + channels.map(c => `<option value="${esc(c.id)}">${esc(channelName(c))}</option>`).join('');
         if (channels.some(c => c.id === previous)) $('channel').value = previous;
         else if (channels.some(c => c.id === requestedChannel)) $('channel').value = requestedChannel;
         if ($('channel').value) sessionStorage.setItem("katcha.channel", $('channel').value);
@@ -339,7 +339,7 @@ async function selectSource() {
     $('import').hidden = !canImport || !usable;
     $('run').hidden = canImport || !usable;
     $('run').textContent = s.query_template?.channel_reference ? 'Check channel videos' : s.adapter_key === 'rss_atom' ? 'Check for updates' : 'Search now';
-    const channel = s.channel_profile_id ? channelName(sourceChannel(s) || {profile_metadata: {name: 'Assigned channel (not available)'}}) : 'Shared with all channels';
+    const channel = s.channel_profile_id ? channelName(sourceChannel(s) || {profile_metadata: {name: 'Assigned channel (not available)'}}) : 'Shared collection (unassigned)';
     $('source-info').innerHTML = `<strong>${esc(connectionName(s))}</strong><p>${esc(channel)} · ${esc(usage[s.usage_mode]?.[0] || 'Custom review preference')}</p>${s.query_template?.q ? `<p>Topic: ${esc(s.query_template.q)}</p>` : ''}`;
     const automatic = usable && ['youtube', 'reddit', 'rss_atom', 'web_scout'].includes(s.adapter_key) && s.source_metadata?.automatic_research !== false;
     $('pause-source').textContent = s.enabled ? 'Pause source' : 'Resume source';

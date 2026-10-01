@@ -37,6 +37,26 @@ class CodexConnectionError(RuntimeError):
     pass
 
 
+def _request(method: str, url: str, **kwargs) -> httpx.Response:
+    try:
+        return getattr(httpx, method)(url, **kwargs)
+    except httpx.HTTPError as exc:
+        raise CodexConnectionError(
+            f"Codex connection could not reach the provider ({type(exc).__name__}). "
+            "Check the connection and try again."
+        ) from exc
+
+
+def _json(response: httpx.Response) -> dict:
+    try:
+        payload = response.json()
+    except ValueError as exc:
+        raise CodexConnectionError("Codex returned an unreadable response; try again.") from exc
+    if not isinstance(payload, dict):
+        raise CodexConnectionError("Codex returned an unexpected response; try again.")
+    return payload
+
+
 @dataclass(frozen=True, slots=True)
 class CodexSession:
     connection_id: uuid.UUID
@@ -232,7 +252,8 @@ def complete_codex_oauth(
         verifier = decrypt_secret(oauth.encrypted_code_verifier, settings)
         redirect_uri = oauth.redirect_uri
 
-    response = httpx.post(
+    response = _request(
+        "post",
         TOKEN_URL,
         data={
             "grant_type": "authorization_code",
@@ -248,7 +269,7 @@ def complete_codex_oauth(
             f"Codex token exchange failed (HTTP {response.status_code}): "
             + " ".join(response.text.split())[:500]
         )
-    payload = response.json()
+    payload = _json(response)
     access_token = str(payload.get("access_token") or "")
     refresh_token = str(payload.get("refresh_token") or "")
     id_token = str(payload.get("id_token") or "")
@@ -321,7 +342,8 @@ def _refresh(connection_id: uuid.UUID, settings: Settings) -> CodexConnection:
                 return row
             refresh_token = decrypt_secret(row.encrypted_refresh_token, settings)
 
-        response = httpx.post(
+        response = _request(
+            "post",
             TOKEN_URL,
             data={
                 "grant_type": "refresh_token",
@@ -332,7 +354,7 @@ def _refresh(connection_id: uuid.UUID, settings: Settings) -> CodexConnection:
         )
         if response.is_error:
             raise CodexConnectionError(f"Codex token refresh failed (HTTP {response.status_code})")
-        payload = response.json()
+        payload = _json(response)
         access_token = str(payload.get("access_token") or "")
         if not access_token:
             raise CodexConnectionError("Codex token refresh returned no access token")
@@ -388,7 +410,8 @@ def list_models(settings: Settings | None = None) -> list[CodexModel]:
         raise CodexConnectionError("No Codex ChatGPT account is connected")
     headers = _headers(session)
     headers["Accept"] = "application/json"
-    response = httpx.get(
+    response = _request(
+        "get",
         f"{CODEX_BASE_URL}/models",
         params={"client_version": MODEL_CATALOG_VERSION},
         headers=headers,
@@ -401,7 +424,7 @@ def list_models(settings: Settings | None = None) -> list[CodexModel]:
             CodexModel("gpt-5.6-luna", "GPT-5.6 Luna", "Fast Codex model"),
             CodexModel("gpt-5.5", "GPT-5.5", "General ChatGPT subscription model"),
         ]
-    payload = response.json()
+    payload = _json(response)
     result: list[CodexModel] = []
     for raw in payload.get("models") or []:
         if not isinstance(raw, dict) or raw.get("visibility") not in {None, "list"}:
@@ -450,10 +473,10 @@ def usage(settings: Settings | None = None) -> dict[str, object]:
         raise CodexConnectionError("No Codex ChatGPT account is connected")
     headers = _headers(session)
     headers["Accept"] = "application/json"
-    response = httpx.get(WHAM_USAGE_URL, headers=headers, timeout=20.0)
+    response = _request("get", WHAM_USAGE_URL, headers=headers, timeout=20.0)
     if response.is_error:
         raise CodexConnectionError(f"Codex usage lookup failed (HTTP {response.status_code})")
-    payload = response.json()
+    payload = _json(response)
     limits = payload.get("rate_limit") or {}
 
     def window(raw: object) -> dict[str, object] | None:
@@ -517,10 +540,14 @@ def _stream(
             }
         )
     if image_bytes is not None:
-        body["input"][0]["content"].append({
-            "type": "input_image", "detail": "low",
-            "image_url": "data:image/jpeg;base64," + base64.b64encode(image_bytes).decode("ascii"),
-        })
+        body["input"][0]["content"].append(
+            {
+                "type": "input_image",
+                "detail": "low",
+                "image_url": "data:image/jpeg;base64,"
+                + base64.b64encode(image_bytes).decode("ascii"),
+            }
+        )
     text_chunks: list[str] = []
     output_items: dict[str, dict[str, object]] = {}
     payload: dict[str, object] = {}
