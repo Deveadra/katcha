@@ -1,4 +1,5 @@
 import uuid
+from types import SimpleNamespace
 
 from katcha.api import integrations
 from katcha.api.main import app
@@ -17,6 +18,7 @@ def test_external_provider_routes_are_registered() -> None:
         "/v1/integrations/elevenlabs/voices",
         "/v1/integrations/elevenlabs/models",
         "/v1/integrations/elevenlabs/channels/{channel_profile_id}",
+        "/v1/integrations/elevenlabs/channels/{channel_profile_id}/enabled",
         "/v1/integrations/elevenlabs/channels/{channel_profile_id}/preview",
         "/v1/integrations/invideo/handoffs",
         "/v1/integrations/invideo/handoffs/{handoff_id}",
@@ -31,6 +33,9 @@ def test_external_provider_routes_are_registered() -> None:
     assert "get" in paths["/v1/integrations/elevenlabs/voices"]
     assert "get" in paths["/v1/integrations/elevenlabs/models"]
     assert "put" in paths["/v1/integrations/elevenlabs/channels/{channel_profile_id}"]
+    assert "patch" in paths[
+        "/v1/integrations/elevenlabs/channels/{channel_profile_id}/enabled"
+    ]
     assert "post" in paths[
         "/v1/integrations/elevenlabs/channels/{channel_profile_id}/preview"
     ]
@@ -38,6 +43,60 @@ def test_external_provider_routes_are_registered() -> None:
     assert "post" in paths["/v1/integrations/invideo/handoffs/{handoff_id}/output"]
     assert "post" in paths["/v1/integrations/invideo/handoffs/{handoff_id}/adopt"]
     assert "post" in paths["/v1/integrations/invideo/handoffs/{handoff_id}/metrics"]
+
+
+def test_elevenlabs_enable_toggle_preserves_saved_channel_config(monkeypatch) -> None:
+    channel_id = uuid.uuid4()
+    saved_config = {
+        "voice_id": "voice-a",
+        "model_id": "eleven_multilingual_v2",
+        "saved_voices": [{"voice_id": "voice-a", "name": "Host"}],
+    }
+    captured: dict[str, object] = {}
+
+    monkeypatch.setattr(
+        integrations,
+        "get_channel_provider_setting",
+        lambda *_args: SimpleNamespace(enabled=True, config=saved_config),
+    )
+
+    def capture_setting(_channel_id, **kwargs):
+        captured.update(kwargs)
+        return object()
+
+    monkeypatch.setattr(integrations, "upsert_channel_provider_setting", capture_setting)
+    monkeypatch.setattr(
+        integrations,
+        "_channel_elevenlabs_response",
+        lambda _channel_id: integrations.ElevenLabsChannelConfigResponse(
+            channel_profile_id=channel_id,
+            enabled=False,
+            voice_id="voice-a",
+            voice_name="Host",
+            model_id="eleven_multilingual_v2",
+            model_name="Multilingual v2",
+            saved_voices=[
+                integrations.ElevenLabsSavedVoiceResponse(
+                    voice_id="voice-a",
+                    name="Host",
+                )
+            ],
+            source="channel",
+        ),
+    )
+
+    result = integrations.update_channel_elevenlabs_enabled(
+        channel_id,
+        integrations.ElevenLabsChannelEnabledUpdate(
+            enabled=False,
+            actor="channel-studio",
+        ),
+    )
+
+    assert captured["enabled"] is False
+    assert captured["config"] == saved_config
+    assert captured["actor"] == "channel-studio"
+    assert result.enabled is False
 
 
 def test_invideo_brief_keeps_katcha_as_source_of_truth() -> None:
