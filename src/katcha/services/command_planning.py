@@ -7,6 +7,7 @@ identity, channel boundaries, and frozen action arguments.
 from __future__ import annotations
 
 import uuid
+from typing import Any
 
 from katcha.ai.command_planner import CommandPlan
 from katcha.command_center_models import CommandActionProposal, CommandTurn
@@ -18,7 +19,7 @@ def planning_context(
     proposals: list[CommandActionProposal],
     explicit_clip_ids: list[uuid.UUID],
     resource_evidence: list[dict[str, object]],
-) -> dict[str, object]:
+) -> dict[str, Any]:
     return {
         "history": [
             {
@@ -54,10 +55,10 @@ def planning_context(
 
 def resolve_planned_clip_ids(
     plan: CommandPlan,
-    context: dict[str, object],
+    context: dict[str, Any],
 ) -> list[uuid.UUID]:
     allowed = set(context.get("explicit_clip_ids") or [])
-    records = list(context.get("attached_resources") or [])
+    records = [*(context.get("attached_resources") or []), *(context.get("observations") or [])]
     for turn in context.get("history") or []:
         records.extend(turn.get("evidence") or [])
         turn_context = turn.get("context") or {}

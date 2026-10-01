@@ -13,6 +13,7 @@ from typing import Literal
 from fastapi import APIRouter, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field
 from sqlalchemy import or_, select
+from starlette.concurrency import run_in_threadpool
 
 from katcha.acquisition_models import IngestionSource, TopicWatchVersion
 from katcha.ai.command_center import compose_grounded_answer
@@ -79,6 +80,7 @@ from katcha.services.command_center import (
 from katcha.services.command_history import (
     archive_command_thread,
     create_command_thread,
+    finalize_command_answer,
     get_command_thread,
     list_command_threads,
     list_command_turns,
@@ -670,6 +672,7 @@ def _action_specs(
                             "limit": 25,
                         },
                         "prepare_for_production": prepare_for_production,
+                        **({"media_kind": plan.media_kind} if semantic and plan else {}),
                         "operator_request": request.prompt[:1000],
                         "search_query": search_query,
                     },
@@ -689,6 +692,10 @@ def _action_specs(
                 for value in (overview.get("suggested_terms") or [])
                 if str(value)
             ]
+            if semantic and plan is not None:
+                platforms = list(plan.platforms) or platforms
+                if plan.search_query:
+                    terms = [plan.search_query]
             specs.append(
                 ActionProposalSpec(
                     action_type="start_source_scout",
@@ -812,6 +819,7 @@ def _action_response(proposal: CommandActionProposal) -> CommandAction:
         status=proposal.status,
         expires_at=proposal.expires_at,
         payload=dict(proposal.payload or {}),
+        requires_confirmation=proposal.status in {"proposed", "failed"},
     )
 
 
@@ -998,7 +1006,8 @@ async def command(http_request: Request, request: CommandRequest) -> CommandResp
         intent = "confirm_action"
     else:
         try:
-            planning = plan_ambiguous_command(
+            planning = await run_in_threadpool(
+                plan_ambiguous_command,
                 channel_profile_id=request.channel_profile_id,
                 request_id=request_id,
                 user_prompt=request.prompt,
@@ -1049,6 +1058,7 @@ async def command(http_request: Request, request: CommandRequest) -> CommandResp
                 ]
             if reused_proposals and (live_planning or len(reused_proposals) == 1):
                 # Preflight every permission before starting any selected operation.
+                require_control_scope(http_request, "ai:write")
                 for pending in reused_proposals:
                     required_scope = COMMAND_ACTION_SCOPES.get(pending.action_type)
                     if required_scope is None:
@@ -1183,9 +1193,8 @@ async def command(http_request: Request, request: CommandRequest) -> CommandResp
         elif intent == "conversation":
             _, evidence = channel_status(request.channel_profile_id)
             deterministic = (
-                "Hi, I’m Katcha. I can find and explain clips, inspect failures, "
-                "review performance, discover sources, and prepare video proposals "
-                "for your approval. What would you like to work on?"
+                "No action has been requested or started in this conversation turn. "
+                "Stored channel state and registered capabilities are supplied as context."
             )
         elif intent == "unsupported":
             deterministic = planning.value.clarification_question or (
@@ -1223,6 +1232,50 @@ async def command(http_request: Request, request: CommandRequest) -> CommandResp
                 })
 
     planned_specs: list[ActionProposalSpec] = []
+    if semantic and planning.value.requested_actions and intent not in {
+        "confirm_action", "clarification", "unsupported",
+    }:
+        # Observe first, then let the model bind actions to returned identities.
+        # This is one bounded planning round, not a keyword-selected top-clip shortcut.
+        context = {
+            **context, "phase": "bind_actions_after_observation",
+            "initial_plan": planning.value.model_dump(mode="json"),
+            "observations": evidence[:100],
+        }
+        try:
+            bound = await run_in_threadpool(
+                plan_ambiguous_command,
+                channel_profile_id=request.channel_profile_id, request_id=request_id,
+                user_prompt=request.prompt, effective_prompt=request.prompt,
+                selected_clip_count=len(resolved_selected_clip_ids),
+                previous_intent=intent, deterministic_intent="channel_status",
+                settings=settings, context=context,
+            )
+            selected = resolve_planned_clip_ids(bound.value, context)
+        except (CommandPlanningUnavailable, ValueError) as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        if bound.value.intent in {"confirm_action", "clarification", "unsupported"}:
+            # No new mutation when the observation round cannot bind a new action.
+            intent = (
+                "clarification" if bound.value.intent == "confirm_action" else bound.value.intent
+            )
+            deterministic = bound.value.clarification_question or bound.value.reason
+        if selected:
+            resolved_selected_clip_ids = selected
+            resolved_request = resolved_request.model_copy(update={"selected_clip_ids": selected})
+            resolution = replace(
+                resolution, selected_clip_ids=tuple(selected),
+                resolution="Bound production media to observed clip records.",
+            )
+            if any(action in (bound.value.requested_actions or []) for action in {
+                "create_short_production", "create_ranked_short_episode",
+            }):
+                observations["create_content"] = [
+                    {"kind": "selection", "id": "current", "selected_clip_ids": selected},
+                ]
+                # Keep general clip inspection from adding an unrequested top-clip production.
+                observations.pop("best_clips", None)
+        planning = bound
     if intent not in {"confirm_action", "clarification", "unsupported"}:
         seen_specs: set[str] = set()
         for capability, observed in observations.items():
@@ -1230,7 +1283,7 @@ async def command(http_request: Request, request: CommandRequest) -> CommandResp
                 resolved_request, capability, observed, plan=planning.value, semantic=semantic,
             ):
                 if (
-                    semantic and planning.value.requested_actions is not None
+                    semantic
                     and spec.action_type not in planning.value.requested_actions
                 ):
                     continue
@@ -1238,6 +1291,18 @@ async def command(http_request: Request, request: CommandRequest) -> CommandResp
                 if identity not in seen_specs and len(planned_specs) < 4:
                     seen_specs.add(identity)
                     planned_specs.append(spec)
+        if semantic and planning.value.requested_actions and not planned_specs:
+            unavailable = ", ".join(planning.value.requested_actions)
+            evidence.append({
+                "kind": "capability_gap", "id": "action_binding",
+                "requested_actions": planning.value.requested_actions,
+                "status": "not_ready",
+                "reason": "No action arguments could be bound to the observed channel state",
+            })
+            deterministic += (
+                f"\nThe requested operations ({unavailable}) could not be bound to "
+                "the observed media, sources, or channel configuration. No workflow was started."
+            )
         if intent == "source_discovery" and planned_specs:
             source_spec = planned_specs[0]
             source_id = source_spec.payload.get("source_id")
@@ -1266,14 +1331,6 @@ async def command(http_request: Request, request: CommandRequest) -> CommandResp
     if resolution.inherited_from_thread and resolution.resolution:
         deterministic = f"{deterministic} Context: {resolution.resolution}"
 
-    narrative = compose_grounded_answer(
-        channel_profile_id=request.channel_profile_id,
-        request_id=request_id,
-        user_prompt=request.prompt,
-        intent=intent,
-        deterministic_answer=deterministic,
-        evidence=evidence,
-    )
     try:
         if thread is None:
             thread = create_command_thread(
@@ -1284,8 +1341,6 @@ async def command(http_request: Request, request: CommandRequest) -> CommandResp
             )
 
         assistant_context: dict[str, object] = {
-            "key_points": list(narrative.value.key_points),
-            "caveats": list(narrative.value.caveats),
             "planning": {
                 "intent": intent,
                 "source": planning.source,
@@ -1305,9 +1360,9 @@ async def command(http_request: Request, request: CommandRequest) -> CommandResp
             thread_id=thread.id,
             request_id=request_id,
             user_content=request.prompt,
-            assistant_content=narrative.value.answer,
+            assistant_content=deterministic,
             intent=intent,
-            narrator=f"{narrative.target.provider}/{narrative.target.model}",
+            narrator="katcha/server-state",
             evidence=evidence,
             user_context={
                 "selected_clip_ids": [
@@ -1349,8 +1404,43 @@ async def command(http_request: Request, request: CommandRequest) -> CommandResp
                 credential_id=credential_id,
                 credential_fingerprint=credential_fingerprint,
             )
+            if semantic and planning.value.execution == "run" and planned_specs:
+                require_control_scope(http_request, "ai:write")
+                for proposal in proposals:
+                    require_control_scope(http_request, COMMAND_ACTION_SCOPES[proposal.action_type])
+                completed = []
+                outcomes = []
+                for proposal in proposals:
+                    proposal, outcome = await _run_frozen_command_action(
+                        proposal, actor=actor, credential_id=credential_id,
+                        credential_fingerprint=credential_fingerprint,
+                    )
+                    completed.append(proposal)
+                    outcomes.append(outcome)
+                    evidence.append({
+                        "kind": "command_action", "id": str(proposal.id),
+                        "label": proposal.label, "status": proposal.status,
+                        "result": dict(proposal.result or {}), "error": proposal.error,
+                    })
+                proposals = completed
+                deterministic = " ".join(outcomes)
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    narrative = await run_in_threadpool(
+        compose_grounded_answer,
+        channel_profile_id=request.channel_profile_id, request_id=request_id,
+        user_prompt=request.prompt, intent=intent,
+        deterministic_answer=deterministic, evidence=evidence,
+        conversation_context=context,
+    )
+    assistant_context["key_points"] = list(narrative.value.key_points)
+    assistant_context["caveats"] = list(narrative.value.caveats)
+    finalize_command_answer(
+        assistant_turn.id, content=narrative.value.answer,
+        narrator=f"{narrative.target.provider}/{narrative.target.model}",
+        evidence=evidence, context=assistant_context,
+    )
 
     record_command_observation(
         channel_profile_id=request.channel_profile_id,
@@ -1381,7 +1471,12 @@ async def command(http_request: Request, request: CommandRequest) -> CommandResp
         channel_profile_id=request.channel_profile_id,
         intent=intent,
         answer=narrative.value.answer,
-        ai_notice=narrative.degraded_reason,
+        ai_notice=(
+            "Live language planning was unavailable; a limited saved-data route was used. "
+            "No AI-authorized action was started. " + (narrative.degraded_reason or "")
+            if planning.source == "registered_route_ai_unavailable"
+            else narrative.degraded_reason
+        ),
         key_points=narrative.value.key_points,
         caveats=narrative.value.caveats,
         evidence=evidence,
@@ -1617,7 +1712,9 @@ async def _execute_proposal(
                         r"\b(trailers?|teasers?)\b",
                         str(payload.get("operator_request") or search_query),
                         re.I,
-                    )),
+                    )) if "media_kind" not in payload else payload["media_kind"] in {
+                        "trailer", "teaser",
+                    },
                 },
             )
             workflow_id = f"command-source-prepare-{run.id}"

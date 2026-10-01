@@ -96,6 +96,7 @@ def _prompt(
     intent: str,
     deterministic_answer: str,
     evidence: list[dict[str, object]],
+    conversation_context: dict[str, object] | None = None,
 ) -> str:
     payload = json.dumps(evidence, ensure_ascii=False, default=str)
     return (
@@ -111,10 +112,16 @@ def _prompt(
         "direct and operational, then explain the strongest evidence. For conversation, "
         "respond naturally to greetings and capability questions. Strategy suggestions "
         "must be labeled as suggestions; never portray them as measured results.\n\n"
+        "Use the conversation context to address the actual question, corrections, "
+        "and goal. Do not recite a greeting or capability list unless that answers "
+        "the user. Do not invent an operational next step that Katcha cannot execute. "
+        "Action evidence is authoritative about what started, failed, or is pending; "
+        "starting a workflow does not mean downstream production completed.\n\n"
         f"Intent: {intent}\n"
         f"Operator request: {user_prompt}\n"
         f"Deterministic grounded summary: {deterministic_answer}\n"
         f"KATCHA_EVIDENCE_JSON: {payload}"
+        f"\nCONVERSATION_CONTEXT_JSON: {json.dumps(conversation_context or {}, default=str)}"
     )
 
 
@@ -251,7 +258,7 @@ def _gemini(
     from google import genai
     from google.genai import types
 
-    client = genai.Client(api_key=settings.gemini_api_key)
+    client = genai.Client(api_key=settings.gemini_api_key, http_options={"timeout": 30000})
     try:
         response = client.models.generate_content(
             model=target.model,
@@ -294,6 +301,7 @@ def compose_grounded_answer(
     deterministic_answer: str,
     evidence: list[dict[str, object]],
     settings: Settings | None = None,
+    conversation_context: dict[str, object] | None = None,
 ) -> CommandNarrativeResult:
     settings = settings or get_settings()
     fallback = CommandNarrativeResult(
@@ -321,6 +329,7 @@ def compose_grounded_answer(
         intent=intent,
         deterministic_answer=deterministic_answer,
         evidence=evidence,
+        conversation_context=conversation_context,
     )
 
     try:

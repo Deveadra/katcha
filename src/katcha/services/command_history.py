@@ -275,6 +275,30 @@ def record_command_exchange(
         return user_turn, assistant_turn
 
 
+def finalize_command_answer(
+    assistant_turn_id: uuid.UUID,
+    *,
+    content: str,
+    narrator: str,
+    evidence: list[dict[str, object]],
+    context: dict[str, object],
+) -> None:
+    """Persist the observed outcome after actions; never leave a pre-execution claim."""
+    with session_scope() as session:
+        turn = session.get(CommandTurn, assistant_turn_id)
+        if turn is None or turn.role != "assistant":
+            raise ValueError("The assistant command turn could not be finalized")
+        turn.content = content
+        turn.narrator = narrator
+        turn.evidence = list(evidence)
+        turn.turn_context = dict(context)
+        session.add(DomainEvent(
+            aggregate_type="command_thread", aggregate_id=str(turn.thread_id),
+            event_type="command_center.answer_finalized",
+            payload={"turn_id": str(turn.id), "request_id": str(turn.request_id)},
+        ))
+
+
 def list_command_turns(thread_id: uuid.UUID) -> list[CommandTurn]:
     with session_scope() as session:
         thread = session.get(CommandThread, thread_id)
