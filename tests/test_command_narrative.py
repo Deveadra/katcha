@@ -41,7 +41,7 @@ def test_live_narrative_failure_is_labeled_as_saved_data(monkeypatch):
     assert result.value.answer == "A stored render failed."
     assert result.target.provider == "katcha"
     assert "Live AI could not complete this answer" in result.degraded_reason
-    assert "openai/test-model" in result.degraded_reason
+    assert "openai/gpt-5.6-luna" in result.degraded_reason
 
 
 def test_openai_answer_has_room_for_reasoning_and_structured_text(monkeypatch):
