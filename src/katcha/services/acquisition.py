@@ -14,6 +14,7 @@ from katcha.acquisition.policy import evaluate_acquisition_policy
 from katcha.acquisition_models import (
     DiscoveryCandidate,
     DiscoveryRun,
+    IngestionSource,
     RightsAssessment,
     RightsEvidence,
 )
@@ -392,11 +393,17 @@ def promote_discovery_candidate(
     candidate_id: uuid.UUID,
     *,
     actor: str = "operator",
+    for_review: bool = False,
 ) -> SourceItem:
     with session_scope() as session:
         candidate = session.get(DiscoveryCandidate, candidate_id)
         if candidate is None:
             raise ValueError(f"discovery candidate not found: {candidate_id}")
+        source_id = (candidate.candidate_metadata or {}).get("ingestion_source_id")
+        if source_id:
+            ingestion_source = session.get(IngestionSource, uuid.UUID(str(source_id)))
+            if ingestion_source is not None and ingestion_source.usage_mode == "blocked":
+                raise ValueError("this content source is blocked")
         if candidate.source_item_id is not None:
             source = session.get(SourceItem, candidate.source_item_id)
             if source is None:
@@ -404,17 +411,17 @@ def promote_discovery_candidate(
             session.expunge(source)
             return source
         assessment = latest_rights_assessment(session, candidate.id)
-        if assessment is None:
+        if assessment is None and not for_review:
             raise ValueError("candidate has no rights assessment")
-        if not assessment.production_eligible:
+        if not for_review and not assessment.production_eligible:
             raise ValueError(
                 "candidate cannot be promoted until rights, audio, and originality gates clear"
             )
         canonical_url = candidate.canonical_url
-        assessment_id = assessment.id
-        assessment_version = assessment.version
-        rights_basis = assessment.rights_basis
-        rights_lane = assessment.rights_lane
+        assessment_id = assessment.id if assessment else None
+        assessment_version = assessment.version if assessment else None
+        rights_basis = assessment.rights_basis if assessment else "unknown"
+        rights_lane = assessment.rights_lane if assessment else "yellow"
 
     source = register_source(canonical_url)
     with session_scope() as session:
@@ -434,10 +441,11 @@ def promote_discovery_candidate(
             **dict(managed_source.source_metadata or {}),
             "acquisition_managed": True,
             "discovery_candidate_id": str(candidate.id),
-            "rights_assessment_id": str(assessment_id),
+            "rights_assessment_id": str(assessment_id) if assessment_id else None,
             "rights_assessment_version": assessment_version,
             "rights_basis": rights_basis,
             "rights_lane": rights_lane,
+            "acquisition_purpose": "review" if for_review else "production",
             **(
                 {"channel_profile_id": str(candidate_channel_id)}
                 if candidate_channel_id

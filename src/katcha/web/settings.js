@@ -379,3 +379,27 @@ $("ai-settings-form").onsubmit = async (event) => {
     if (query.get("chatgpt") === "state_error") message("Direct ChatGPT sign-in returned an invalid or expired session. Start a fresh sign-in from this page.", "error");
     await Promise.allSettled([loadRuntime(), loadCodex(), loadChatGPT()]);
 })();
+
+$("check-systems").onclick = async () => {
+    const button = $("check-systems"), output = $("system-check-results");
+    button.disabled = true;
+    output.textContent = "Checking Katcha's services…";
+    try {
+        const result = await api("/v1/operations/system-check");
+        output.replaceChildren();
+        for (const check of result.checks) {
+            const row = document.createElement("p");
+            row.textContent = check.label + " · " + check.status + " — " + (typeof check.detail === "string" ? check.detail : "Saved data is available");
+            output.append(row);
+        }
+        const copy = document.createElement("button");
+        copy.className = "button secondary";
+        copy.textContent = "Copy diagnostics";
+        copy.onclick = async () => {
+            try { await navigator.clipboard.writeText(JSON.stringify(result, null, 2)); copy.textContent = "Copied"; }
+            catch { message("Clipboard is unavailable. Select and copy the check results.", "error"); }
+        };
+        output.append(copy);
+    } catch (error) { output.textContent = error.message; }
+    finally { button.disabled = false; }
+};

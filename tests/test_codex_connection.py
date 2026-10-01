@@ -5,6 +5,7 @@ from types import SimpleNamespace
 from urllib.parse import parse_qs, urlparse
 
 import httpx
+import pytest
 
 from katcha.config import Settings
 from katcha.integrations import codex
@@ -105,17 +106,13 @@ def test_codex_inference_uses_subscription_backend_and_account_header(monkeypatc
     body = "".join(
         [
             "data: "
-            + json.dumps(
-                {"type": "response.output_text.delta", "delta": '{"answer":"hello"}'}
-            )
+            + json.dumps({"type": "response.output_text.delta", "delta": '{"answer":"hello"}'})
             + "\n\n",
             "data: "
             + json.dumps(
                 {
                     "type": "response.completed",
-                    "response": {
-                        "usage": {"input_tokens": 15, "output_tokens": 6}
-                    },
+                    "response": {"usage": {"input_tokens": 15, "output_tokens": 6}},
                 }
             )
             + "\n\n",
@@ -152,4 +149,73 @@ def test_codex_inference_uses_subscription_backend_and_account_header(monkeypatc
     assert captured["headers"]["originator"] == "katcha"
     assert captured["json"]["store"] is False
     assert captured["json"]["stream"] is True
+    assert captured["json"]["instructions"]
     assert "Return only valid JSON" in captured["json"]["input"][0]["content"][0]["text"]
+
+
+def mock_stream(monkeypatch, events):
+    body = "".join("data: " + json.dumps(event) + "\n\n" for event in events)
+    monkeypatch.setattr(codex, "active_session", lambda settings=None: _session())
+    monkeypatch.setattr(
+        codex.httpx,
+        "stream",
+        lambda *args, **kwargs: _StreamContext(
+            httpx.Response(
+                200, content=body.encode(), request=httpx.Request("POST", "https://chatgpt.com")
+            )
+        ),
+    )
+
+
+def test_codex_accepts_completion_only_text_and_retains_search_evidence(monkeypatch):
+    payload = {
+        "output": [
+            {
+                "type": "web_search_call",
+                "action": {"sources": [{"url": "https://example.com/news"}]},
+            },
+            {"type": "message", "content": [{"type": "output_text", "text": '{"items":[]}'}]},
+        ],
+        "usage": {"input_tokens": 12, "output_tokens": 4},
+    }
+    mock_stream(monkeypatch, [{"type": "response.completed", "response": payload}])
+    result = codex.invoke_web_search_json(
+        prompt="research",
+        schema_name="results",
+        schema={},
+        tool={"type": "web_search"},
+    )
+    assert result.text == '{"items":[]}'
+    assert result.payload == payload
+
+
+@pytest.mark.parametrize("terminal", [None, "response.incomplete", "response.failed", "error"])
+def test_codex_rejects_partial_or_failed_answers(monkeypatch, terminal):
+    events = [{"type": "response.output_text.delta", "delta": '{"answer":"partial"}'}]
+    if terminal:
+        events.append({"type": terminal, "error": {"code": "fixture_failure"}})
+    mock_stream(monkeypatch, events)
+    with pytest.raises(codex.CodexConnectionError):
+        codex.invoke_json(prompt="hello", schema_name="answer", schema={})
+
+
+def test_successful_inference_is_not_failed_by_usage_outage(monkeypatch):
+    monkeypatch.setattr(codex, "active_session", lambda settings=None: _session())
+    monkeypatch.setattr(codex, "list_models", lambda settings=None: [])
+    monkeypatch.setattr(
+        codex,
+        "_stream",
+        lambda *args: codex.CodexInference(
+            "KATCHA_CONNECTED",
+            "fixture",
+            2,
+            2,
+        ),
+    )
+    monkeypatch.setattr(
+        codex,
+        "usage",
+        lambda settings=None: (_ for _ in ()).throw(httpx.ConnectError("fixture outage")),
+    )
+    assert codex.test_connection()["ok"] is True
+    assert codex.test_connection()["usage_error"]

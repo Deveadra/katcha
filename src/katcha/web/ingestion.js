@@ -5,7 +5,7 @@ const requestedChannel = launchParams.get("channel") || sessionStorage.getItem("
 const esc = (value) => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const methods = {
     links: {key: 'operator_feed', title: 'Paste links', icon: '↗', description: 'Add specific videos or posts from any supported site.', help: 'Give your collection a name. After saving, paste the links you want Katcha to consider. This option does not search social platforms for you.'},
-    scout: {key: 'web_scout', title: 'Discover new sources', icon: '✦', description: 'Discover public posts, creators, and communities around a topic.', help: 'Tell Katcha what to look for. Web scouting uses your connected ChatGPT plan first. An OpenAI API key is an optional fallback for plan limits or unsupported searches; API fallback searches can incur provider charges. Saving alone does not start or schedule a search.'},
+    scout: {key: 'web_scout', title: 'Discover new sources', icon: '✦', description: 'Discover public posts, creators, and communities around a topic.', help: 'Tell Katcha what to look for. Web scouting uses your connected ChatGPT plan first. An OpenAI API key is an optional fallback for plan limits or unsupported searches; API fallback searches can incur provider charges. Enable automatic checks to keep discovering new content after saving.'},
     youtube: {key: 'youtube', title: 'Search YouTube', icon: '▶', description: 'Find recent YouTube videos by topic.', help: 'Save a topic to search for recent YouTube videos. YouTube search access must be configured in Katcha before a search can run.'},
     youtube_channel: {key: 'youtube', title: 'Watch a YouTube channel', icon: '▶', description: 'Study creators serving your audience and collect their recent videos.', help: 'Add a creator’s @handle, channel link, or channel ID. Katcha collects recent videos with public engagement metrics for research. Save the source, then check for new videos; automatic checking is not enabled here.'},
     reddit: {key: 'reddit', title: 'Search Reddit', icon: '◎', description: 'Find discussions and shared links on Reddit.', help: 'Save a topic and, optionally, a Reddit community. Reddit search access must be configured in Katcha before a search can run.'},
@@ -190,6 +190,8 @@ function choose(method) {
     $('feed-fields').hidden = method !== 'feed';
     $('custom-fields').hidden = method !== 'custom';
     $('custom-query').value = '{}';
+    $('research-fields').hidden = !['youtube', 'reddit', 'rss_atom', 'web_scout'].includes(a.key);
+    $('auto-research').checked = true;
     showStep(2);
 }
 function intent(key, prefix) {
@@ -239,7 +241,7 @@ function details() {
         if (!query || Array.isArray(query) || typeof query !== 'object') throw new Error('Custom connection settings must be a JSON object.');
         platform = a.supported_platforms[0] || 'custom';
     }
-    return {create_only: true, name, adapter_key: a.key, adapter_version: a.version, platform, channel_profile_id: $('channel').value || null, usage_mode: $('usage').value, query_template: query};
+    return {create_only: true, name, adapter_key: a.key, adapter_version: a.version, platform, channel_profile_id: $('channel').value || null, usage_mode: $('usage').value, query_template: query, poll_interval_minutes: Number($('research-interval').value), source_metadata: {automatic_research: !$('research-fields').hidden && $('auto-research').checked}};
 }
 function review() {
     const d = details();
@@ -253,9 +255,9 @@ function review() {
     if (d.query_template.platforms) rows.push(['Search sites', d.query_template.platforms.join(', ')]);
     if (d.query_template.subreddit) rows.push(['Community', `r/${d.query_template.subreddit}`]);
     if (d.query_template.feed_url) rows.push(['Website feed', d.query_template.feed_url]);
-    rows.push(['Next step', selectedMethod === 'links' ? 'Paste links into your saved collection.' : 'Start a search or check for updates when you are ready.']);
+    rows.push(['Next step', selectedMethod === 'links' ? 'Paste links into your saved collection.' : d.source_metadata.automatic_research ? `Katcha will check this source every ${d.poll_interval_minutes} minutes.` : 'Start a search when you are ready.']);
     $('review').innerHTML = rows.map(([label, value]) => `<dt>${esc(label)}</dt><dd>${esc(value)}</dd>`).join('');
-    $('save-explanation').textContent = 'Saving adds this source to your workspace. It does not search, publish, or schedule anything yet.' + (selectedMethod === 'scout' ? ' Web scouting uses live AI and public web search. Provider charges may apply when you start a search.' : '');
+    $('save-explanation').textContent = (d.source_metadata.automatic_research ? 'Saving starts recurring research while Katcha is running. Pause this source at any time from your source library.' : 'Saving adds this source for manual checks.') + (selectedMethod === 'scout' ? ' Web scouting uses live AI and public web search. API fallback provider charges may apply.' : '');
     showStep(3);
 }
 async function loadChannels(epoch = connectionEpoch) {
@@ -339,7 +341,10 @@ async function selectSource() {
     $('run').textContent = s.query_template?.channel_reference ? 'Check channel videos' : s.adapter_key === 'rss_atom' ? 'Check for updates' : 'Search now';
     const channel = s.channel_profile_id ? channelName(sourceChannel(s) || {profile_metadata: {name: 'Assigned channel (not available)'}}) : 'Shared with all channels';
     $('source-info').innerHTML = `<strong>${esc(connectionName(s))}</strong><p>${esc(channel)} · ${esc(usage[s.usage_mode]?.[0] || 'Custom review preference')}</p>${s.query_template?.q ? `<p>Topic: ${esc(s.query_template.q)}</p>` : ''}`;
-    $('operation-help').textContent = !usable ? 'This source is paused or blocked. Content checks cannot be started here.' : canImport ? 'Add links whenever you find something worth considering. No posting happens here.' : s.adapter_key === 'web_scout' ? `Search now uses live AI and public web search; provider charges may apply. This saved source does not run automatically. ${s.channel_profile_id ? 'Its discoveries stay scoped to the selected channel.' : 'Its discoveries are shared across all channels.'}` : 'Checks start when you press the button. Automatic scheduled checking is not enabled here.';
+    const automatic = usable && ['youtube', 'reddit', 'rss_atom', 'web_scout'].includes(s.adapter_key) && s.source_metadata?.automatic_research !== false;
+    $('pause-source').textContent = s.enabled ? 'Pause source' : 'Resume source';
+    $('pause-source').hidden = s.usage_mode === 'blocked';
+    $('operation-help').textContent = !usable ? 'This source is paused or blocked.' : canImport ? 'Add links whenever you find something worth considering.' : automatic ? `Katcha checks this source every ${s.poll_interval_minutes || 60} minutes while running. Results and provider failures appear below. You can also search now.` : 'Automatic research is off. Press Search now to check for new content.';
     await loadHistory();
 }
 async function loadHistory() {
@@ -452,6 +457,18 @@ $('history').addEventListener('click', async e => {
         return;
     }
 
+    const addClip = e.target.closest('[data-add-clip]');
+    if (addClip) {
+        e.preventDefault();
+        if (addClip.disabled) return;
+        addClip.disabled = true;
+        try {
+            await api(`discovery/candidates/${encodeURIComponent(addClip.dataset.addClip)}/promote`, {actor: 'operator', for_review: true});
+            addClip.textContent = 'Added · open Clips to review';
+            message('Video queued for download and analysis. Open Clips to review it.');
+        } catch (error) { message(error.message, true); addClip.disabled = false; }
+        return;
+    }
     const results = e.target.closest('[data-results]');
     if (!results) return;
     e.preventDefault();
@@ -466,10 +483,23 @@ $('history').addEventListener('click', async e => {
         output.innerHTML = count ? `<p>${count} ${count === 1 ? 'item' : 'items'} found. Showing up to five recent discoveries.</p><ul>${data.candidates.map(c => {
             let safe = '';
             try { const url = new URL(c.source_url); if (['https:', 'http:'].includes(url.protocol) && !url.username && !url.password) safe = url.href; } catch {}
-            return `<li>${safe ? `<a href="${esc(safe)}" target="_blank" rel="noopener noreferrer">${esc(c.title || c.source_url)}</a>` : esc(c.title || 'Source link unavailable')}${c.creator ? ` · ${esc(c.creator)}` : ''}</li>`;
+            return `<li>${safe ? `<a href="${esc(safe)}" target="_blank" rel="noopener noreferrer">${esc(c.title || c.source_url)}</a>` : esc(c.title || 'Source link unavailable')}${c.creator ? ` · ${esc(c.creator)}` : ''}${c.id && selected.usage_mode !== 'discovery_only' && selected.usage_mode !== 'blocked' ? ` <button type="button" class="text-button" data-add-clip="${esc(c.id)}">Add to Clips for review</button>` : ''}</li>`;
         }).join('')}</ul>` : '<p>No new items were found in this check. Try a broader topic or search again later.</p>';
     } catch { if (output.isConnected) output.textContent = 'Results could not be loaded. Choose “See what was found” to retry.'; }
 });
 $('usage-help').textContent = usage.candidate_review[1];
 // The launcher bridge connects after startup. Direct API users connect automatically.
 if (location.port !== '8765') connect();
+
+$('pause-source').onclick = async () => {
+    const selected = source();
+    if (!selected) return;
+    const button = $('pause-source');
+    button.disabled = true;
+    try {
+        await api('discovery/sources', {...selected, create_only: false, enabled: !selected.enabled});
+        await refreshSources();
+        message(selected.enabled ? 'Source paused. Future checks are stopped.' : 'Source resumed. Automatic checks can continue.');
+    } catch (error) { message(error.message, true); }
+    finally { button.disabled = false; }
+};

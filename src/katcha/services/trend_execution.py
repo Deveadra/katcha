@@ -5,13 +5,15 @@ from dataclasses import dataclass
 from typing import Any
 
 from katcha.acquisition.adapters import get_adapter
-from katcha.acquisition_models import DiscoveryRun, TopicWatchVersion
+from katcha.acquisition_models import DiscoveryRun, IngestionSource, TopicWatchVersion
 from katcha.db import session_scope
+from katcha.intelligence_models import ChannelProfile
 from katcha.services.acquisition import register_discovery_run
 from katcha.services.discovery_polling import (
     begin_poll_attempt,
     bind_poll_attempt_run,
 )
+from katcha.services.ingestion_sources import _source_run_metadata
 from katcha.services.trend_source_reliability import ensure_topic_watch_source_states
 
 _SECRET_FRAGMENTS = (
@@ -53,9 +55,7 @@ def normalize_adapter_config(
     raw: dict[str, Any],
 ) -> tuple[str, str, dict[str, Any]]:
     if contains_secret_key(raw):
-        raise ValueError(
-            "topic watch adapter configuration must not contain credentials or tokens"
-        )
+        raise ValueError("topic watch adapter configuration must not contain credentials or tokens")
     adapter_key = str(raw.get("adapter_key") or "").strip()
     adapter_version = str(raw.get("adapter_version") or "v1").strip()
     query = raw.get("query", {})
@@ -72,6 +72,8 @@ def prepare_topic_watch_execution(
     *,
     execution_key: str,
 ) -> list[PreparedDiscoveryRun]:
+    from katcha.services.research import research_watch_is_current, source_research_enabled
+
     key = execution_key.strip()
     if not key:
         raise ValueError("execution_key is required")
@@ -86,6 +88,8 @@ def prepare_topic_watch_execution(
             raise ValueError(f"topic watch version not found: {topic_watch_id}")
         if not watch.enabled:
             raise ValueError("topic watch is disabled")
+        if not research_watch_is_current(watch):
+            return []
         watch_key = watch.watch_key
         watch_version = watch.version
         channel_profile_id = watch.channel_profile_id
@@ -103,6 +107,24 @@ def prepare_topic_watch_execution(
     runs: list[PreparedDiscoveryRun] = []
     for index, config in enumerate(configs):
         adapter_key, adapter_version, query = normalize_adapter_config(config)
+        source_metadata: dict[str, Any] = {}
+        if config.get("ingestion_source_id"):
+            with session_scope() as session:
+                source = session.get(IngestionSource, uuid.UUID(str(config["ingestion_source_id"])))
+                if source is None or not source_research_enabled(source):
+                    continue
+                if source.channel_profile_id != channel_profile_id:
+                    continue
+                source_metadata = _source_run_metadata(source, {})
+        if (
+            adapter_key == "youtube"
+            and channel_profile_id
+            and not query.get("youtube_connection_id")
+        ):
+            with session_scope() as session:
+                profile = session.get(ChannelProfile, channel_profile_id)
+                if profile is not None:
+                    query["youtube_connection_id"] = str(profile.youtube_connection_id)
         query["include_terms"] = include_terms
         query["exclude_terms"] = exclude_terms
         query["freshness_horizon_hours"] = freshness_horizon_hours
@@ -148,10 +170,17 @@ def prepare_topic_watch_execution(
             query=query,
             idempotency_key=run_key,
             metadata={
+                "default_candidate_metadata": {
+                    "source_scope": "channel" if channel_profile_id else "shared",
+                    **(
+                        {"channel_profile_id": str(channel_profile_id)}
+                        if channel_profile_id
+                        else {}
+                    ),
+                },
+                **source_metadata,
                 "topic_watch_id": str(topic_watch_id),
-                "channel_profile_id": (
-                    str(channel_profile_id) if channel_profile_id else None
-                ),
+                "channel_profile_id": (str(channel_profile_id) if channel_profile_id else None),
                 "watch_key": watch_key,
                 "watch_version": watch_version,
                 "execution_key": key,

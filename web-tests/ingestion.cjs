@@ -156,7 +156,7 @@ const catalog = [
         assert.equal(sources[2].platform, 'web');
         assert.equal(sources[2].channel_profile_id, null);
         assert.deepEqual(sources[2].query_template.platforms, ['tiktok', 'instagram', 'x', 'bluesky']);
-        assert.match(await page.locator('#operation-help').textContent(), /does not run automatically/);
+        assert.match(await page.locator('#operation-help').textContent(), /checks this source every/);
         await page.locator('#run').click();
         await page.waitForFunction(() => document.querySelector('#history').textContent.includes('Finding content'));
         runs.at(-1).status = 'completed';

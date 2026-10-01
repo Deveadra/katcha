@@ -8,7 +8,11 @@ from temporalio.client import Client
 from temporalio.worker import Worker
 
 from katcha.config import get_settings
-from katcha.orchestration.activities import ingest_source, mark_source_failed
+from katcha.orchestration.activities import (
+    enqueue_ingested_analysis_activity,
+    ingest_source,
+    mark_source_failed,
+)
 from katcha.orchestration.packaging_activities import (
     apply_packaging_text_activity,
     apply_packaging_thumbnail_activity,
@@ -59,7 +63,7 @@ async def main() -> None:
             client,
             task_queue=settings.temporal_task_queue,
             workflows=[ClipIngestWorkflow],
-            activities=[ingest_source, mark_source_failed],
+            activities=[ingest_source, mark_source_failed, enqueue_ingested_analysis_activity],
             activity_executor=activity_executor,
         )
         publishing_worker = Worker(

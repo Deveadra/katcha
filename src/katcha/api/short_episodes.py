@@ -5,6 +5,7 @@ import uuid
 from fastapi import APIRouter, HTTPException, Query, status
 from sqlalchemy import select
 
+from katcha.ai.subscription import subscription_connected
 from katcha.api.schemas import (
     CreatePublicationRequest,
     PublicationResponse,
@@ -74,7 +75,7 @@ def _require_ai_execution() -> None:
         raise HTTPException(status_code=503, detail="AI execution is disabled")
     if settings.resolved_ai_execution_mode() == "fixture":
         return
-    if not settings.openai_api_key and not settings.gemini_api_key:
+    if not (settings.openai_api_key or settings.gemini_api_key or subscription_connected(settings)):
         raise HTTPException(status_code=503, detail="no AI/TTS provider key is configured")
 
 

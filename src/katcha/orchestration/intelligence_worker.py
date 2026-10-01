@@ -3,8 +3,10 @@ from __future__ import annotations
 import asyncio
 import concurrent.futures
 import logging
+from contextlib import suppress
 
 from temporalio.client import Client
+from temporalio.exceptions import WorkflowAlreadyStartedError
 from temporalio.worker import Worker
 
 from katcha.acquisition.runtime import DISCOVERY_TASK_QUEUE
@@ -15,6 +17,7 @@ from katcha.orchestration.discovery_activities import (
     finalize_topic_watch_execution_activity,
     mark_discovery_run_failed,
     prepare_topic_watch_execution_activity,
+    record_topic_watch_command_cycle_activity,
 )
 from katcha.orchestration.discovery_workflows import (
     DiscoveryRunWorkflow,
@@ -45,6 +48,8 @@ from katcha.orchestration.intelligence_workflows import (
     ChannelTrendActivationScheduleWorkflow,
     ChannelTrendActivationWorkflow,
 )
+from katcha.orchestration.research_activities import prepare_research_jobs_activity
+from katcha.orchestration.research_workflows import AutomaticResearchWorkflow
 from katcha.orchestration.trend_activities import (
     refresh_channel_trends_activity,
     refresh_trend_calibration_activity,
@@ -54,6 +59,7 @@ from katcha.orchestration.trend_workflows import (
     ChannelTrendRefreshWorkflow,
 )
 from katcha.orchestration.worker_group import run_worker_group
+from katcha.services.research import RESEARCH_WORKFLOW_ID
 from katcha.trends.runtime import TREND_TASK_QUEUE
 
 
@@ -76,12 +82,15 @@ async def main() -> None:
                 DiscoveryRunWorkflow,
                 TopicWatchWorkflow,
                 TopicWatchScheduleWorkflow,
+                AutomaticResearchWorkflow,
             ],
             activities=[
                 execute_discovery_page_activity,
                 mark_discovery_run_failed,
                 prepare_topic_watch_execution_activity,
                 finalize_topic_watch_execution_activity,
+                record_topic_watch_command_cycle_activity,
+                prepare_research_jobs_activity,
             ],
             activity_executor=activity_executor,
         )
@@ -127,6 +136,13 @@ async def main() -> None:
             ],
             activity_executor=activity_executor,
         )
+        if settings.research_enabled:
+            with suppress(WorkflowAlreadyStartedError):
+                await client.start_workflow(
+                    AutomaticResearchWorkflow.run,
+                    id=RESEARCH_WORKFLOW_ID,
+                    task_queue=DISCOVERY_TASK_QUEUE,
+                )
         await run_worker_group([discovery_worker, trend_worker, intelligence_worker])
 
 

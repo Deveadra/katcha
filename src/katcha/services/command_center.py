@@ -18,6 +18,7 @@ from katcha.editorial.rankings import get_ranking_format
 from katcha.integrations.chatgpt import (
     connection_status as chatgpt_connection_status,
 )
+from katcha.integrations.codex import connection_status as codex_connection_status
 from katcha.intelligence_models import ChannelProfile, PerformanceObservation
 from katcha.longform_models import Compilation
 from katcha.models import Clip, ClipAnalysisRun, ClipFeature, SourceItem
@@ -746,8 +747,11 @@ def source_discovery_plan(
     chatgpt_plan_ready = bool(
         chatgpt.get("connected") and chatgpt.get("plan_usage_enabled")
     )
+    codex = codex_connection_status() if getattr(settings, "codex_enabled", False) else {}
     web_scout_provider = (
-        "chatgpt_plan"
+        "codex_plan"
+        if codex.get("connected")
+        else "chatgpt_plan"
         if chatgpt_plan_ready
         else ("openai_api" if settings.openai_api_key else None)
     )

@@ -57,6 +57,7 @@ def _source_run_metadata(
 ) -> dict[str, Any]:
     source_scope = "channel" if source.channel_profile_id is not None else "shared"
     default_candidate_metadata = {
+        **dict(source.default_candidate_metadata or {}),
         "ingestion_source_id": str(source.id),
         "ingestion_source_key": source.source_key,
         "source_platform": source.platform,
@@ -67,7 +68,6 @@ def _source_run_metadata(
             if source.channel_profile_id is not None
             else {}
         ),
-        **dict(source.default_candidate_metadata or {}),
     }
     return {
         **dict(metadata or {}),
@@ -206,6 +206,8 @@ def create_discovery_run_from_source(
             raise ValueError(f"ingestion source not found: {source_id}")
         if not source.enabled:
             raise ValueError("ingestion source is disabled")
+        if source.usage_mode == SourceUsageMode.BLOCKED.value:
+            raise ValueError("ingestion source is blocked")
         _validate_adapter(source.adapter_key, source.adapter_version)
         query = {
             **dict(source.query_template or {}),
@@ -759,4 +761,3 @@ def get_intelligence_record(
             raise ValueError(f"intelligence record not found: {record_id}")
         session.expunge(row)
         return row
-

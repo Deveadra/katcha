@@ -18,6 +18,7 @@ from katcha.ai.router import (
     route_for,
     route_for_channel,
 )
+from katcha.ai.subscription import generate_subscription_json
 from katcha.config import Settings, get_settings
 from katcha.db import session_scope
 from katcha.domain import AITask
@@ -258,6 +259,16 @@ def generate_short_scripts(
             0,
             0,
         )
+    prompt = build_script_prompt(persona, snapshot, prompt_version=prompt_version)
+    subscription = generate_subscription_json(
+        prompt=prompt, schema=ShortScriptSet, task=AITask.SHORT_SCRIPT,
+        reference_type="production", reference_id=production_id, settings=settings,
+    )
+    if subscription is not None:
+        return ScriptGenerationResult(
+            subscription.value, subscription.target,
+            subscription.input_tokens, subscription.output_tokens,
+        )
     estimated_increment = Decimal("0.05")
     assert_ai_budget(estimated_increment)
     channel_profile_id, expected_value = _routing_context(
@@ -281,8 +292,6 @@ def generate_short_scripts(
         reservation_id = decision.reservation_id
     else:
         route = route_for(AITask.SHORT_SCRIPT)
-    prompt = build_script_prompt(persona, snapshot, prompt_version=prompt_version)
-
     def generate_for(target: ModelTarget) -> ScriptGenerationResult:
         if target.provider == "openai" and settings.openai_api_key:
             return _openai_generate(

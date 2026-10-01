@@ -104,7 +104,12 @@ def ingest_source(source_id: str) -> dict[str, str | bool]:
             source.creator = media.creator
             source.platform = media.platform
             source.canonical_url = media.canonical_url
-            source.source_metadata = media.source_metadata
+            # Provider metadata must not erase (or replace) Katcha's channel and
+            # acquisition lineage established before the download.
+            source.source_metadata = {
+                **dict(media.source_metadata or {}),
+                **dict(source.source_metadata or {}),
+            }
             source.error = None
 
             session.add(
@@ -142,3 +147,14 @@ def mark_source_failed(source_id: str, message: str) -> None:
                 payload={"source_id": str(source.id), "error": source.error},
             )
         )
+
+
+@activity.defn
+async def enqueue_ingested_analysis_activity(clip_id: str) -> dict[str, str]:
+    from katcha.orchestration.client import start_analysis_workflow
+    from katcha.services.analysis import register_analysis
+
+    run = register_analysis(uuid.UUID(clip_id))
+    if run.status == "queued":
+        await start_analysis_workflow(str(run.id), run.workflow_id)
+    return {"analysis_run_id": str(run.id), "analysis_workflow_id": run.workflow_id}

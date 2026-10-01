@@ -216,7 +216,7 @@ def execute_discovery_page_activity(run_id: str) -> dict[str, object]:
             creator_url=item.creator_url,
             provenance_confidence=item.provenance_confidence,
             provenance_claims=item.provenance_claims,
-            metadata={**default_candidate_metadata, **dict(item.metadata or {})},
+            metadata={**dict(item.metadata or {}), **default_candidate_metadata},
         )
         candidate_ids.append(str(candidate.id))
         if topic_watch_id is not None:

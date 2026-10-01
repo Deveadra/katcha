@@ -12,6 +12,7 @@ from katcha.ai.fixtures import fixture_clip_vision, fixture_deep_video
 from katcha.ai.pricing import estimate_token_cost
 from katcha.ai.router import ModelTarget, assert_ai_budget, record_usage, route_for
 from katcha.ai.schemas import ClipVisionResult, DeepVideoResult
+from katcha.ai.subscription import generate_subscription_json
 from katcha.config import Settings, get_settings
 from katcha.domain import AITask
 
@@ -198,6 +199,16 @@ def analyze_contact_sheet(
             ModelTarget("fixture", "deterministic-vision-v1"),
             0,
             0,
+        )
+    subscription = generate_subscription_json(
+        prompt=_prompt(transcript, deep=False), schema=ClipVisionResult,
+        task=AITask.BULK_VISION, reference_type="analysis_run", reference_id=reference_id,
+        settings=settings, image_bytes=image_bytes,
+    )
+    if subscription is not None:
+        return AIResult(
+            subscription.value, subscription.target,
+            subscription.input_tokens, subscription.output_tokens,
         )
     assert_ai_budget(Decimal("0.01"))
     route = route_for(AITask.BULK_VISION)

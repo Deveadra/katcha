@@ -17,7 +17,7 @@ class ClipIngestWorkflow:
             maximum_attempts=4,
         )
         try:
-            return await workflow.execute_activity(
+            result = await workflow.execute_activity(
                 "ingest_source",
                 source_id,
                 start_to_close_timeout=timedelta(minutes=20),
@@ -32,3 +32,13 @@ class ClipIngestWorkflow:
                 retry_policy=RetryPolicy(maximum_attempts=3),
             )
             raise
+        # Preserve replay compatibility for ingests already in Temporal history.
+        # Analysis dispatch failure must not change a successful download to failed.
+        if workflow.patched("analyze-after-ingest-v1") and result.get("clip_id"):
+            await workflow.execute_activity(
+                "enqueue_ingested_analysis_activity",
+                str(result["clip_id"]),
+                start_to_close_timeout=timedelta(minutes=1),
+                retry_policy=retry_policy,
+            )
+        return result

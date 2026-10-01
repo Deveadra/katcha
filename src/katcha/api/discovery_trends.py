@@ -196,10 +196,11 @@ def list_topic_watches(
     with session_scope() as session:
         latest = (
             select(
+                TopicWatchVersion.scope_key.label("scope_key"),
                 TopicWatchVersion.watch_key.label("watch_key"),
                 func.max(TopicWatchVersion.version).label("version"),
             )
-            .group_by(TopicWatchVersion.watch_key)
+            .group_by(TopicWatchVersion.scope_key, TopicWatchVersion.watch_key)
             .subquery()
         )
         stmt = (
@@ -207,6 +208,7 @@ def list_topic_watches(
             .join(
                 latest,
                 and_(
+                    TopicWatchVersion.scope_key == latest.c.scope_key,
                     TopicWatchVersion.watch_key == latest.c.watch_key,
                     TopicWatchVersion.version == latest.c.version,
                 ),
