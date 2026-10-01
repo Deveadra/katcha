@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import io
 import json
 import uuid
 from collections.abc import Iterator
@@ -273,3 +274,57 @@ def test_different_file_with_conflicting_batch_key_moves_to_failed(
     assert result.error is not None
     assert "different intelligence content" in result.error
     assert (root / "failed" / "second.json").exists()
+
+
+@pytest.mark.asyncio
+async def test_handoff_api_upload_processes_file(
+    handoff_scope,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from types import SimpleNamespace
+
+    from starlette.datastructures import UploadFile
+
+    from katcha.api import acquisition
+    from katcha.services import intelligence_handoff
+
+    channel_id = _create_channel(handoff_scope)
+    root = tmp_path / "api-handoff"
+    monkeypatch.setattr(
+        intelligence_handoff,
+        "get_settings",
+        lambda: SimpleNamespace(intelligence_handoff_dir=root),
+    )
+    upload = UploadFile(
+        filename="api-batch.json",
+        file=io.BytesIO(_encoded(_batch(channel_id, batch_key="api-batch"))),
+    )
+
+    result = await acquisition.upload_intelligence_handoff_file(
+        file=upload,
+        process=True,
+    )
+
+    assert result.status == "processed"
+    assert result.channel_profile_id == str(channel_id)
+    assert result.batch_key == "api-batch"
+    inbox = acquisition.get_intelligence_handoff_inbox(limit=100)
+    assert inbox.counts["processed"] == 1
+    assert inbox.items[0].filename == "api-batch.json"
+
+
+def test_symlinked_local_drop_is_not_processed(
+    handoff_scope,
+    tmp_path: Path,
+) -> None:
+    channel_id = _create_channel(handoff_scope)
+    root = tmp_path / "handoff"
+    handoff_inbox_summary(root=root)
+    outside = tmp_path / "outside.json"
+    outside.write_bytes(_encoded(_batch(channel_id, batch_key="outside")))
+    link = root / "incoming" / "linked.json"
+    link.symlink_to(outside)
+
+    assert process_handoff_inbox(root=root) == []
+    assert all(item.filename != "linked.json" for item in list_handoff_inbox(root=root))
