@@ -206,7 +206,11 @@ def test_planner_exception_reports_unavailability_without_action_authority(monke
             deterministic_intent="channel_status",
             settings=_LiveSettings(),  # type: ignore[arg-type]
         )
-    assert released and released[0].startswith("command_planner_fallback:")
+    assert any(
+        reason.startswith("command_planner_provider_failed:openai:")
+        for reason in released
+    )
+    assert any(reason.startswith("command_planner_fallback:") for reason in released)
 
 
 
