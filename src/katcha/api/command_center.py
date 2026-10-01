@@ -10,7 +10,7 @@ from typing import Literal
 
 from fastapi import APIRouter, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import or_, select
 
 from katcha.acquisition_models import IngestionSource, TopicWatchVersion
 from katcha.ai.command_center import compose_grounded_answer
@@ -498,33 +498,52 @@ def _normalized_words(value: str) -> set[str]:
 
 def _matched_configured_source(
     *,
+    channel_profile_id: uuid.UUID,
     prompt: str,
     source_hint: str | None,
-    evidence: list[dict[str, object]],
 ) -> dict[str, object] | None:
-    overview = next(
-        (item for item in evidence if item.get("kind") == "source_discovery"),
-        None,
-    )
-    if not isinstance(overview, dict):
-        return None
-    raw_sources = overview.get("configured_sources")
-    if not isinstance(raw_sources, list):
-        return None
-
     prompt_words = _normalized_words(prompt)
     hint = (source_hint or "").strip()
     hint_words = _normalized_words(hint)
     normalized_prompt = " ".join(prompt.casefold().split())
     normalized_hint = " ".join(hint.casefold().split())
-    ranked: list[tuple[int, dict[str, object]]] = []
 
-    for raw in raw_sources:
-        if not isinstance(raw, dict) or not raw.get("enabled") or not raw.get("id"):
-            continue
-        name = str(raw.get("name") or "")
-        source_key = str(raw.get("source_key") or "")
-        channel_reference = str(raw.get("channel_reference") or "")
+    with session_scope() as session:
+        rows = list(
+            session.scalars(
+                select(IngestionSource)
+                .where(
+                    IngestionSource.enabled.is_(True),
+                    or_(
+                        IngestionSource.channel_profile_id == channel_profile_id,
+                        IngestionSource.channel_profile_id.is_(None),
+                    ),
+                )
+                .order_by(IngestionSource.updated_at.desc(), IngestionSource.id.asc())
+                .limit(500)
+            )
+        )
+        candidates = [
+            {
+                "id": str(row.id),
+                "name": row.name,
+                "source_key": row.source_key,
+                "platform": row.platform,
+                "adapter_key": row.adapter_key,
+                "adapter_version": row.adapter_version,
+                "channel_reference": str(
+                    (row.query_template or {}).get("channel_reference") or ""
+                )
+                or None,
+            }
+            for row in rows
+        ]
+
+    ranked: list[tuple[int, dict[str, object]]] = []
+    for candidate in candidates:
+        name = str(candidate.get("name") or "")
+        source_key = str(candidate.get("source_key") or "")
+        channel_reference = str(candidate.get("channel_reference") or "")
         haystack = " ".join([name, source_key, channel_reference]).casefold()
         source_words = _normalized_words(haystack)
         score = 0
@@ -534,11 +553,11 @@ def _matched_configured_source(
             score += 80
         overlap = source_words & (hint_words or prompt_words)
         score += 12 * len(overlap)
-        platform = str(raw.get("platform") or "").casefold()
+        platform = str(candidate.get("platform") or "").casefold()
         if platform and platform in normalized_prompt:
             score += 8
         if score:
-            ranked.append((score, raw))
+            ranked.append((score, candidate))
 
     ranked.sort(key=lambda item: item[0], reverse=True)
     if not ranked:
@@ -604,9 +623,9 @@ def _action_specs(
             evidence[0],
         )
         matched_source = _matched_configured_source(
+            channel_profile_id=request.channel_profile_id,
             prompt=request.prompt,
             source_hint=plan.source_hint if plan is not None else None,
-            evidence=evidence,
         )
         search_query = _source_search_query(plan, evidence)
         prepare_for_production = bool(
