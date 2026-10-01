@@ -162,3 +162,25 @@ def test_elevenlabs_role_specific_voice_resolution(monkeypatch) -> None:
     assert primary == "host-a"
     assert secondary == "host-b"
     assert model == "eleven_multilingual_v2"
+
+
+
+def test_channel_voice_disable_overrides_global_fallback(monkeypatch) -> None:
+    monkeypatch.setattr(
+        integration,
+        "_channel_config",
+        lambda _channel_profile_id: None,
+    )
+    settings = Settings(
+        elevenlabs_api_key="test-key",
+        elevenlabs_voice_id="global-fallback",
+        elevenlabs_model_id="eleven_flash_v2_5",
+    )
+
+    voice_id, model_id = integration.resolve_elevenlabs_voice(
+        channel_profile_id=None,
+        settings=settings,
+    )
+
+    assert voice_id is None
+    assert model_id == "eleven_flash_v2_5"

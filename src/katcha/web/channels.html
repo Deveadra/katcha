@@ -128,6 +128,20 @@
                             <div><span>CHANNEL PULSE</span><h2>What matters right now</h2></div>
                             <small id="overview-window">Stored Katcha + YouTube data</small>
                         </div>
+                        <article class="channel-overview-identity studio-card" aria-label="Channel identity">
+                            <div class="channel-overview-field">
+                                <span>CHANNEL NAME</span>
+                                <strong id="overview-channel-name">—</strong>
+                            </div>
+                            <div class="channel-overview-field">
+                                <span>HANDLE</span>
+                                <strong id="overview-channel-handle">—</strong>
+                            </div>
+                            <div class="channel-overview-field channel-profile-id-field">
+                                <span>CHANNEL PROFILE ID</span>
+                                <code id="overview-channel-profile-id">—</code>
+                            </div>
+                        </article>
                         <div class="metric-grid">
                             <article class="metric-card studio-card"><span>RECENT VIDEOS</span><strong id="metric-videos">—</strong><small id="metric-videos-sub">Stored publications</small></article>
                             <article class="metric-card studio-card"><span>MEASURED VIEWS</span><strong id="metric-views">—</strong><small id="metric-views-sub">Latest snapshots</small></article>
@@ -309,12 +323,26 @@
                             <small>Secrets stay server-side; selections are scoped to this channel</small>
                         </div>
                         <div class="provider-grid">
-                            <article class="studio-card provider-config-card">
-                                <div class="panel-heading">
-                                    <div><span class="eyebrow">VOICE</span><h3>ElevenLabs</h3></div>
-                                    <span id="elevenlabs-state" class="badge">—</span>
+                            <article id="voice-provider-card" class="studio-card provider-config-card voice-provider-card">
+                                <div class="voice-toggle-header">
+                                    <div class="voice-toggle-title">
+                                        <span class="eyebrow">VOICE</span>
+                                        <h3>Voice</h3>
+                                        <small>ElevenLabs text-to-speech</small>
+                                    </div>
+                                    <label class="voice-toggle-control" for="elevenlabs-enabled">
+                                        <span id="elevenlabs-enabled-label">Disabled</span>
+                                        <input id="elevenlabs-enabled" type="checkbox" role="switch" aria-controls="elevenlabs-panel" aria-expanded="false">
+                                        <span class="voice-toggle-track" aria-hidden="true"><i></i></span>
+                                    </label>
                                 </div>
-                                <p id="elevenlabs-detail" class="provider-copy">Connect Katcha to inspect the ElevenLabs account.</p>
+                                <div id="elevenlabs-panel" class="voice-settings-panel" aria-hidden="true">
+                                    <div class="voice-settings-inner">
+                                        <div class="panel-heading voice-provider-heading">
+                                            <div><span class="eyebrow">PROVIDER</span><h3>ElevenLabs</h3></div>
+                                            <span id="elevenlabs-state" class="badge">—</span>
+                                        </div>
+                                        <p id="elevenlabs-detail" class="provider-copy">Connect Katcha to inspect the ElevenLabs account.</p>
                                 <div class="provider-account">
                                     <div><span>PLAN</span><strong id="elevenlabs-plan">—</strong></div>
                                     <div><span>USAGE</span><strong id="elevenlabs-usage">—</strong></div>
@@ -360,8 +388,10 @@
                                     <textarea id="elevenlabs-preview-text" rows="3" maxlength="600">Okay, that was absolutely not supposed to happen. Number three just turned a normal match into pure chaos.</textarea>
                                 </label>
                                 <button id="preview-elevenlabs" class="studio-button secondary" type="button" disabled>Generate voice preview</button>
-                                <audio id="elevenlabs-preview" class="provider-audio" controls hidden></audio>
-                                <details class="ae-help"><summary>How voice configuration is stored</summary><p>The ElevenLabs API key remains server-side. This channel's saved voice library, default voice, long-form Voice A/B assignments, and model are stored in Katcha, so changing voices does not require editing .env.</p></details>
+                                        <audio id="elevenlabs-preview" class="provider-audio" controls hidden></audio>
+                                        <details class="ae-help"><summary>How voice configuration is stored</summary><p>The ElevenLabs API key remains server-side. This channel's saved voice library, default voice, long-form Voice A/B assignments, and model are stored in Katcha, so changing voices does not require editing .env.</p></details>
+                                    </div>
+                                </div>
                             </article>
 
                             <article class="studio-card provider-config-card">

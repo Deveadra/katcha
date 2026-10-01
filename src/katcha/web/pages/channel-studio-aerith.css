@@ -138,6 +138,64 @@ body[data-katcha-page="channel"] .section-title > div > span {
     color: var(--ae-text-tertiary);
 }
 
+body[data-katcha-page="channel"] .channel-overview-identity {
+    border-color: var(--ae-line);
+    background:
+        linear-gradient(110deg, rgba(183, 165, 255, 0.055), rgba(132, 231, 255, 0.02)),
+        rgba(255, 255, 255, 0.018);
+}
+body[data-katcha-page="channel"] .channel-overview-field {
+    border-color: var(--ae-line);
+}
+body[data-katcha-page="channel"] .channel-overview-field span {
+    color: var(--ae-text-tertiary);
+}
+body[data-katcha-page="channel"] .channel-overview-field strong,
+body[data-katcha-page="channel"] .channel-overview-field code {
+    color: var(--ae-text);
+}
+body[data-katcha-page="channel"] .channel-profile-id-field code {
+    color: var(--ae-text-secondary);
+}
+
+body[data-katcha-page="channel"] .voice-provider-card {
+    border-color: var(--ae-line);
+    background: rgba(255, 255, 255, 0.022);
+}
+body[data-katcha-page="channel"] .voice-provider-card.is-enabled {
+    border-color: rgba(155, 230, 194, 0.24);
+    box-shadow:
+        inset 0 1px rgba(255, 255, 255, 0.04),
+        0 0 0 1px rgba(155, 230, 194, 0.025);
+}
+body[data-katcha-page="channel"] .voice-toggle-title small {
+    color: var(--ae-text-tertiary);
+}
+body[data-katcha-page="channel"] .voice-toggle-control {
+    color: var(--ae-text-tertiary);
+}
+body[data-katcha-page="channel"] .voice-toggle-track {
+    border-color: var(--ae-line);
+    background: rgba(255, 255, 255, 0.075);
+}
+body[data-katcha-page="channel"] .voice-toggle-track i {
+    background: var(--ae-text-secondary);
+}
+body[data-katcha-page="channel"] .voice-toggle-control input:checked + .voice-toggle-track {
+    border-color: rgba(155, 230, 194, 0.58);
+    background: rgba(84, 184, 132, 0.92);
+    box-shadow: 0 0 0 3px rgba(155, 230, 194, 0.10);
+}
+body[data-katcha-page="channel"] .voice-toggle-control input:checked + .voice-toggle-track i {
+    background: #f7fff9;
+}
+body[data-katcha-page="channel"] .voice-toggle-control input:focus-visible + .voice-toggle-track {
+    outline-color: var(--ae-mint);
+}
+body[data-katcha-page="channel"] .voice-provider-card.is-enabled .voice-toggle-control {
+    color: var(--ae-mint);
+}
+
 body[data-katcha-page="channel"] .metric-card {
     min-height: 98px;
     padding: 14px;

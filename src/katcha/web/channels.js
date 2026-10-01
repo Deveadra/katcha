@@ -20,6 +20,7 @@ const state = {
     elevenlabsModels: [],
     elevenlabsPreviewUrl: null,
     providerError: "",
+    voiceToggleBusy: false,
     oauthResult: launchParams.get("youtube") || "",
     oauthConnectionId: launchParams.get("connection") || "",
     oauthMessage: launchParams.get("message") || "",
@@ -441,48 +442,56 @@ async function loadProviderData() {
     try {
         state.providerStatus = await api("/v1/integrations/providers");
         const eleven = state.providerStatus.find((row) => row.provider === "elevenlabs");
-        const configResult = await Promise.allSettled([
-            api("/v1/integrations/elevenlabs/channels/" + encodeURIComponent(state.channelId)),
-            eleven?.configured
-                ? api("/v1/integrations/elevenlabs/status?channel_profile_id=" + encodeURIComponent(state.channelId))
-                : Promise.resolve(null),
-            eleven?.configured
-                ? api("/v1/integrations/elevenlabs/models")
-                : Promise.resolve([]),
-            eleven?.configured
-                ? api("/v1/integrations/elevenlabs/voices?page_size=100")
-                : Promise.resolve({ voices: [] }),
+        state.elevenlabsConfig = await api(
+            "/v1/integrations/elevenlabs/channels/" +
+                encodeURIComponent(state.channelId),
+        );
+        state.elevenlabsVoiceLibrary = (state.elevenlabsConfig?.saved_voices || [])
+            .filter((voice) => voice?.voice_id)
+            .map((voice) => ({ ...voice }));
+        if (
+            state.elevenlabsConfig?.voice_id &&
+            !state.elevenlabsVoiceLibrary.some(
+                (voice) => voice.voice_id === state.elevenlabsConfig.voice_id,
+            )
+        ) {
+            state.elevenlabsVoiceLibrary.unshift({
+                voice_id: state.elevenlabsConfig.voice_id,
+                name:
+                    state.elevenlabsConfig.voice_name ||
+                    state.elevenlabsConfig.voice_id,
+                category: null,
+                labels: {},
+            });
+        }
+
+        if (!state.elevenlabsConfig?.enabled || !eleven?.configured) return;
+
+        const providerResults = await Promise.allSettled([
+            api(
+                "/v1/integrations/elevenlabs/status?channel_profile_id=" +
+                    encodeURIComponent(state.channelId),
+            ),
+            api("/v1/integrations/elevenlabs/models"),
+            api("/v1/integrations/elevenlabs/voices?page_size=100"),
         ]);
-        if (configResult[0].status === "fulfilled") {
-            state.elevenlabsConfig = configResult[0].value;
-            state.elevenlabsVoiceLibrary = (state.elevenlabsConfig?.saved_voices || [])
-                .filter((voice) => voice?.voice_id)
-                .map((voice) => ({ ...voice }));
-            if (
-                state.elevenlabsConfig?.voice_id &&
-                !state.elevenlabsVoiceLibrary.some(
-                    (voice) => voice.voice_id === state.elevenlabsConfig.voice_id,
-                )
-            ) {
-                state.elevenlabsVoiceLibrary.unshift({
-                    voice_id: state.elevenlabsConfig.voice_id,
-                    name: state.elevenlabsConfig.voice_name || state.elevenlabsConfig.voice_id,
-                    category: null,
-                    labels: {},
-                });
-            }
+        if (providerResults[0].status === "fulfilled") {
+            state.elevenlabsStatus = providerResults[0].value;
         }
-        if (configResult[1].status === "fulfilled") {
-            state.elevenlabsStatus = configResult[1].value;
+        if (providerResults[1].status === "fulfilled") {
+            state.elevenlabsModels = providerResults[1].value || [];
         }
-        if (configResult[2].status === "fulfilled") {
-            state.elevenlabsModels = configResult[2].value || [];
+        if (providerResults[2].status === "fulfilled") {
+            state.elevenlabsVoices = providerResults[2].value?.voices || [];
         }
-        if (configResult[3].status === "fulfilled") {
-            state.elevenlabsVoices = configResult[3].value?.voices || [];
+        const rejected = providerResults.find(
+            (result) => result.status === "rejected",
+        );
+        if (rejected) {
+            state.providerError =
+                rejected.reason?.message ||
+                "Provider discovery is partially unavailable.";
         }
-        const rejected = configResult.find((result) => result.status === "rejected");
-        if (rejected) state.providerError = rejected.reason?.message || "Provider discovery is partially unavailable.";
     } catch (error) {
         state.providerError = error.message;
     }
@@ -584,8 +593,22 @@ function renderVoiceLibrary(configured) {
 function renderProviders() {
     const elevenProvider = state.providerStatus.find((row) => row.provider === "elevenlabs");
     const invideoProvider = state.providerStatus.find((row) => row.provider === "invideo");
-    const connected = Boolean(state.elevenlabsStatus?.connected);
+    const enabled = Boolean(state.elevenlabsConfig?.enabled);
+    const connected = enabled && Boolean(state.elevenlabsStatus?.connected);
     const configured = Boolean(elevenProvider?.configured);
+    const voiceConfigured = enabled && configured;
+    const toggle = $("elevenlabs-enabled");
+    const panel = $("elevenlabs-panel");
+    const card = $("voice-provider-card");
+
+    toggle.checked = enabled;
+    toggle.disabled = !state.channelId || state.voiceToggleBusy;
+    toggle.setAttribute("aria-expanded", enabled ? "true" : "false");
+    $("elevenlabs-enabled-label").textContent = enabled ? "Enabled" : "Disabled";
+    panel.setAttribute("aria-hidden", enabled ? "false" : "true");
+    panel.inert = !enabled;
+    card.classList.toggle("is-enabled", enabled);
+
     $("elevenlabs-state").textContent = connected
         ? "CONNECTED"
         : configured
@@ -609,10 +632,10 @@ function renderProviders() {
         (voice.category ? " · " + escapeHtml(voice.category) : "") +
         "</option>"
     ).join("");
-    $("elevenlabs-new-voice-id").disabled = !configured;
-    $("add-elevenlabs-voice").disabled = !configured;
+    $("elevenlabs-new-voice-id").disabled = !voiceConfigured;
+    $("add-elevenlabs-voice").disabled = !voiceConfigured;
 
-    renderVoiceLibrary(configured);
+    renderVoiceLibrary(voiceConfigured);
 
     const defaultVoice = $("elevenlabs-default-voice").value;
     const selectedVoice = discoveredVoice(defaultVoice)
@@ -629,7 +652,7 @@ function renderProviders() {
     const savedModel = state.elevenlabsConfig?.model_id || state.elevenlabsStatus?.model_id || "";
     const models = [...state.elevenlabsModels];
     if (savedModel && !models.some((row) => row.model_id === savedModel)) {
-        models.unshift({ model_id: savedModel, name: savedModel });
+        models.unshift({ model_id: savedModel, name: state.elevenlabsConfig?.model_name || savedModel });
     }
     modelSelect.innerHTML = models.length
         ? models.map((model) =>
@@ -639,7 +662,7 @@ function renderProviders() {
         ).join("")
         : '<option value="">No TTS models discovered</option>';
     if (savedModel) modelSelect.value = savedModel;
-    modelSelect.disabled = !configured || !models.length;
+    modelSelect.disabled = !voiceConfigured || !models.length;
 
     updateProviderActionState();
 
@@ -651,6 +674,7 @@ function renderProviders() {
 
 function updateProviderActionState() {
     const configured = Boolean(
+        state.elevenlabsConfig?.enabled &&
         state.providerStatus.find((row) => row.provider === "elevenlabs")?.configured,
     );
     const defaultVoice = $("elevenlabs-default-voice").value;
@@ -660,6 +684,48 @@ function updateProviderActionState() {
     $("save-elevenlabs").disabled = !actionable;
     $("preview-elevenlabs").disabled = !(configured && Boolean(previewVoice) && Boolean(modelId));
     $("refresh-elevenlabs").disabled = !configured;
+}
+
+async function setElevenLabsEnabled(enabled) {
+    const previousConfig = state.elevenlabsConfig
+        ? { ...state.elevenlabsConfig }
+        : null;
+    state.voiceToggleBusy = true;
+    state.elevenlabsConfig = {
+        ...(state.elevenlabsConfig || {}),
+        enabled,
+    };
+    renderProviders();
+    setStatus((enabled ? "Enabling" : "Disabling") + " voice for this channel…");
+    try {
+        state.elevenlabsConfig = await api(
+            "/v1/integrations/elevenlabs/channels/" +
+                encodeURIComponent(state.channelId) +
+                "/enabled",
+            {
+                method: "PATCH",
+                body: JSON.stringify({
+                    enabled,
+                    actor: "channel-studio",
+                }),
+            },
+        );
+        await loadProviderData();
+        setStatus(
+            "Voice " +
+                (enabled ? "enabled" : "disabled") +
+                " for " +
+                channelName(activeChannel()) +
+                ".",
+            "success",
+        );
+    } catch (error) {
+        state.elevenlabsConfig = previousConfig;
+        setStatus(error.message, "error");
+    } finally {
+        state.voiceToggleBusy = false;
+        renderProviders();
+    }
 }
 
 function addElevenLabsVoice() {
@@ -816,7 +882,7 @@ function renderAll() {
 }
 
 function renderChannelHeader() {
-    const channel = activeChannel();
+    const channel = state.summary?.profile || activeChannel();
     const connection = activeConnection();
     const title = channelName(channel);
     $("channel-avatar").textContent = title
@@ -831,6 +897,11 @@ function renderChannelHeader() {
         " · " +
         (channel?.timezone || "UTC") +
         (connection?.status ? " · YouTube " + friendly(connection.status) : "");
+
+    $("overview-channel-name").textContent = title;
+    $("overview-channel-handle").textContent =
+        channel?.profile_metadata?.channel_handle || "—";
+    $("overview-channel-profile-id").textContent = channel?.id || "—";
 }
 
 function sampledTotals() {
@@ -1703,6 +1774,9 @@ $("channel").addEventListener("change", async (event) => {
 });
 $("reload").addEventListener("click", loadChannel);
 $("refresh-intelligence").addEventListener("click", refreshIntelligence);
+$("elevenlabs-enabled").addEventListener("change", async (event) => {
+    await setElevenLabsEnabled(event.target.checked);
+});
 $("save-elevenlabs").addEventListener("click", async () => {
     const button = $("save-elevenlabs");
     button.disabled = true;
