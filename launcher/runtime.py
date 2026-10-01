@@ -1265,7 +1265,12 @@ class Handler(BaseHTTPRequestHandler):
             if hashlib.sha256(existing.read_bytes()).digest() != hashlib.sha256(content).digest():
                 return self.send(
                     409,
-                    {"error": "A handoff file with this name already exists with different content."},
+                    {
+                        "error": (
+                            "A handoff file with this name already exists "
+                            "with different content."
+                        )
+                    },
                 )
         else:
             target = incoming / filename
