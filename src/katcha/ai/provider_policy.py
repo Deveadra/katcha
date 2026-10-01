@@ -36,7 +36,9 @@ def command_provider_order(settings: Settings, intent: str) -> tuple[str, ...]:
     return _ordered(*providers)
 
 
-def planner_provider_order(settings: Settings) -> tuple[str, ...]:
+def planner_provider_order(settings: Settings, *, phase: str = "interpret") -> tuple[str, ...]:
+    if phase == "bind_actions_after_observation":
+        return command_provider_order(settings, "create_content")
     preferred = getattr(settings, "conversation_provider", "gemini")
     if preferred == "auto":
         preferred = "gemini"

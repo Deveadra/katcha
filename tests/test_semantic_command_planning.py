@@ -108,6 +108,11 @@ def command_harness(monkeypatch):
     monkeypatch.setattr(api, "get_settings", lambda: settings)
     monkeypatch.setattr(api, "require_control_channel", lambda *args: None)
     monkeypatch.setattr(api, "require_control_scope", lambda *args: None)
+    monkeypatch.setattr(api, "control_scopes", lambda *args: {"*"})
+    monkeypatch.setattr(
+        api, "command_environment", lambda channel: {"channel": {"id": str(channel)}},
+    )
+    monkeypatch.setattr(api, "workflow_observations", lambda *args: [])
     monkeypatch.setattr(api, "control_actor", lambda request: "fixture-operator")
     monkeypatch.setattr(api, "control_credential_id", lambda request: None)
     monkeypatch.setattr(api, "control_credential_fingerprint", lambda request: None)
@@ -387,7 +392,7 @@ async def test_observation_round_binds_newly_found_clips_to_ranked_production(
     monkeypatch.setattr(
         api,
         "best_clips",
-        lambda *args: (
+        lambda *args, **kwargs: (
             "Fixture candidate clips",
             [{"kind": "clip", "id": str(clip)} for clip in clips],
         ),
@@ -507,7 +512,7 @@ async def test_missing_observed_clip_selection_never_substitutes_top_clip(
     monkeypatch.setattr(
         api,
         "best_clips",
-        lambda *args: (
+        lambda *args, **kwargs: (
             "Fixture clip options",
             [{"kind": "clip", "id": str(uuid.uuid4())}],
         ),
@@ -537,7 +542,9 @@ def test_planning_rounds_reserve_budget_independently(monkeypatch):
         gemini_api_key="fixture-key",
         resolved_ai_execution_mode=lambda: "live",
     )
-    monkeypatch.setattr(command_planner, "planner_provider_order", lambda settings: ["gemini"])
+    monkeypatch.setattr(
+        command_planner, "planner_provider_order", lambda settings, **kwargs: ["gemini"],
+    )
 
     def route(*args, **kwargs):
         reservations.append(kwargs["reservation_key"])
