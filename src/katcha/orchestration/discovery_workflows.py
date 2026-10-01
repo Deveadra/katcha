@@ -182,7 +182,20 @@ class CommandSourcePrepareWorkflow:
             failed_ingests = sum(
                 1 for item in ingests if not bool(item.get("success"))
             )
-            lifecycle_state = "failed" if failed_ingests else "completed"
+            raw_errors = prepared.get("errors")
+            preparation_errors = raw_errors if isinstance(raw_errors, list) else []
+            no_matches = not bool(prepared.get("skipped")) and not items
+            lifecycle_state = (
+                "failed" if failed_ingests or preparation_errors or no_matches
+                else "completed"
+            )
+            error = (
+                "No matching source videos were available for production preparation."
+                if no_matches and not preparation_errors
+                else "Some source videos could not be prepared for production."
+                if preparation_errors or failed_ingests
+                else None
+            )
             await workflow.execute_activity(
                 "record_command_source_prepare_lifecycle_activity",
                 args=[
@@ -196,6 +209,9 @@ class CommandSourcePrepareWorkflow:
                         "prepared_count": len(items),
                         "ingest_count": len(ingests),
                         "failed_ingest_count": failed_ingests,
+                        "preparation_error_count": len(preparation_errors),
+                        "preparation_errors": preparation_errors,
+                        "error": error,
                     },
                 ],
                 start_to_close_timeout=timedelta(seconds=30),
