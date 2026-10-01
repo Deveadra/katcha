@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime
 from decimal import Decimal
 
-from fastapi import APIRouter, File, HTTPException, Query, UploadFile, status
+from fastapi import APIRouter, HTTPException, Query, UploadFile, status
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import and_, func, select
 
@@ -20,10 +20,6 @@ from katcha.acquisition_models import (
     RightsEvidence,
 )
 from katcha.db import session_scope
-from katcha.intelligence_ingest_contract import (
-    IngestIntelligenceBatchRequest,
-    IntelligenceRecordInputRequest,
-)
 from katcha.domain import (
     AudioRightsStatus,
     DiscoveryRunStatus,
@@ -33,6 +29,7 @@ from katcha.domain import (
     SourceStatus,
     SourceUsageMode,
 )
+from katcha.intelligence_ingest_contract import IngestIntelligenceBatchRequest
 from katcha.orchestration.client import (
     start_discovery_workflow,
     start_ingest_workflow,
@@ -661,7 +658,7 @@ def get_intelligence_handoff_inbox(
     status_code=status.HTTP_201_CREATED,
 )
 async def upload_intelligence_handoff_file(
-    file: UploadFile = File(...),
+    file: UploadFile,
     process: bool = Query(default=True),
 ) -> HandoffInboxItemResponse:
     filename = str(file.filename or "").strip()
