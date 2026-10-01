@@ -103,6 +103,8 @@ const observability = { request_count: 16, p95_latency_ms: 720, estimated_cost_u
         assert.equal(await currentWorkspace.count(), 1);
         assert.equal((await currentWorkspace.locator("b").textContent()).trim(), "Home");
         assert.equal(await page.locator(".brand").getAttribute("href"), "/home");
+        assert.equal(await page.locator("#add-channel").getAttribute("href"), "/channels?setup=1");
+        assert.equal(await page.locator("#add-channel").isVisible(), true);
         const shellDisplay = await page.locator(".app-shell").evaluate(
             (node) => getComputedStyle(node).display,
         );
