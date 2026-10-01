@@ -226,6 +226,33 @@ def test_command_planner_registry_includes_source_discovery() -> None:
     assert plan.intent == "source_discovery"
 
 
+def test_source_discovery_plan_can_freeze_natural_language_arguments() -> None:
+    plan = CommandPlan.model_validate(
+        {
+            "intent": "source_discovery",
+            "confidence": 0.99,
+            "reason": "Search the official Marvel source.",
+            "source_hint": "Marvel Entertainment",
+            "search_query": "VisionQuest official trailer",
+            "prepare_for_production": True,
+        }
+    )
+
+    assert plan.source_hint == "Marvel Entertainment"
+    assert plan.search_query == "VisionQuest official trailer"
+    assert plan.prepare_for_production is True
+
+    prompt = _planner_prompt(
+        user_prompt="Get the VisionQuest trailers from Marvel and prepare them.",
+        effective_prompt="Get the VisionQuest trailers from Marvel and prepare them.",
+        selected_clip_count=0,
+        previous_intent=None,
+    )
+    assert "source_hint" in prompt
+    assert "search_query" in prompt
+    assert "prepare_for_production" in prompt
+
+
 def test_live_planner_can_correct_a_literal_route(monkeypatch) -> None:
     target = ModelTarget("openai", "gpt-5.6-luna")
     decision = type("Decision", (), {
