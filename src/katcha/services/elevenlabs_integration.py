@@ -29,12 +29,17 @@ def _client(settings: Settings) -> httpx.Client:
 
 def _channel_config(
     channel_profile_id: uuid.UUID | None,
-) -> dict[str, object]:
+) -> dict[str, object] | None:
     if channel_profile_id is None:
         return {}
     row = get_channel_provider_setting(channel_profile_id, "elevenlabs")
-    if row is None or not row.enabled:
+    if row is None:
         return {}
+    if not row.enabled:
+        # An explicit channel-level Off setting must override the legacy/global
+        # ElevenLabs fallback. Returning None distinguishes "disabled here"
+        # from "no channel override exists".
+        return None
     return dict(row.config or {})
 
 
@@ -46,6 +51,9 @@ def resolve_elevenlabs_voice(
 ) -> tuple[str | None, str]:
     settings = settings or get_settings()
     config = _channel_config(channel_profile_id)
+    if config is None:
+        return None, settings.elevenlabs_model_id.strip()
+
     role_key = {
         "longform_primary": "longform_primary_voice_id",
         "longform_secondary": "longform_secondary_voice_id",
