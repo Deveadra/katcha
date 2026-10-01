@@ -188,6 +188,19 @@ def _write_receipt(
     return payload
 
 
+def _validation_message(exc: ValidationError) -> str:
+    details: list[str] = []
+    for error in exc.errors(
+        include_url=False,
+        include_context=False,
+        include_input=False,
+    ):
+        location = ".".join(str(part) for part in error.get("loc", ()))
+        message = str(error.get("msg") or "invalid value")
+        details.append(f"{location}: {message}" if location else message)
+    return "; ".join(details)[:4000] or "handoff JSON failed validation"
+
+
 def _failure_receipt(
     *,
     filename: str,
@@ -228,7 +241,9 @@ def process_handoff_file(
         try:
             parsed = IngestIntelligenceBatchRequest.model_validate_json(body)
         except ValidationError as exc:
-            raise ValueError(f"handoff JSON failed validation: {exc}") from exc
+            raise ValueError(
+                "handoff JSON failed validation: " + _validation_message(exc)
+            ) from exc
 
         result = ingest_intelligence_batch(
             channel_profile_id=parsed.channel_profile_id,
