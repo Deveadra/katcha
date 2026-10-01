@@ -790,7 +790,7 @@ def _proposal_status(
 
 
 @router.post("/command", response_model=CommandResponse)
-def command(http_request: Request, request: CommandRequest) -> CommandResponse:
+async def command(http_request: Request, request: CommandRequest) -> CommandResponse:
     require_control_scope(http_request, "ai:read")
     require_control_channel(http_request, request.channel_profile_id)
     actor = control_actor(http_request)
@@ -926,12 +926,70 @@ def command(http_request: Request, request: CommandRequest) -> CommandResponse:
                 if proposal.source_turn_id == resolution.action_source_turn_id
                 and proposal.status in {"proposed", "failed"}
             ]
-            deterministic = (
-                "I did not execute anything from that chat message. "
-                "Katcha requires the exact server-issued action payload to be "
-                "reviewed and explicitly confirmed. I restored the pending "
-                "proposal below so you can verify it before execution."
-            )
+            if len(reused_proposals) == 1:
+                pending = reused_proposals[0]
+                required_scope = COMMAND_ACTION_SCOPES.get(pending.action_type)
+                if required_scope is None:
+                    deterministic = (
+                        "The pending action is no longer supported. Nothing was started."
+                    )
+                else:
+                    require_control_scope(http_request, required_scope)
+                    try:
+                        claim = claim_action_proposal(
+                            pending.id,
+                            actor=actor,
+                            credential_id=credential_id,
+                            credential_fingerprint=credential_fingerprint,
+                        )
+                    except ValueError as exc:
+                        raise HTTPException(status_code=409, detail=str(exc)) from exc
+                    if claim.should_execute:
+                        try:
+                            execution_result = await _execute_proposal(
+                                claim.proposal,
+                                actor=actor,
+                            )
+                            pending = complete_action_proposal(
+                                pending.id,
+                                result=execution_result,
+                                credential_id=credential_id,
+                                credential_fingerprint=credential_fingerprint,
+                            )
+                            deterministic = (
+                                f"I proceeded with {pending.label}. The workflow "
+                                "has started; its server-issued result is attached "
+                                "to the action record."
+                            )
+                        except Exception as exc:
+                            pending = fail_action_proposal(
+                                pending.id,
+                                error=f"{type(exc).__name__}: {exc}",
+                                credential_id=credential_id,
+                                credential_fingerprint=credential_fingerprint,
+                            )
+                            deterministic = (
+                                f"I tried to proceed with {pending.label}, but the "
+                                f"action failed: {pending.error}"
+                            )
+                    else:
+                        pending = claim.proposal
+                        deterministic = (
+                            f"{pending.label} is already {pending.status}. "
+                            "I did not start a duplicate workflow."
+                        )
+                    reused_proposals = [pending]
+            elif reused_proposals:
+                deterministic = (
+                    "There is more than one pending action from the previous step. "
+                    "Tell me which one to run or use its action card so I do not "
+                    "guess between mutating operations."
+                )
+            else:
+                deterministic = (
+                    "I could not find a pending server-issued action from the "
+                    "previous step, so nothing was started."
+                )
             evidence = []
         elif intent == "best_clips":
             deterministic, evidence = best_clips(
