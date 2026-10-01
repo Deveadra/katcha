@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import uuid
+from datetime import UTC, datetime
 from decimal import Decimal
 
-from sqlalchemy import desc, select
+from sqlalchemy import desc, func, or_, select
 
 from katcha.acquisition_models import IntelligenceRecord
 from katcha.db import session_scope
@@ -247,6 +248,52 @@ def _intelligence_record_evidence(
         "updated_at": row.updated_at.isoformat(),
         "context_source": "typed_resource",
     }
+
+
+def research_context(
+    channel_profile_id: uuid.UUID,
+    terms: list[str],
+) -> tuple[str, list[dict[str, object]]]:
+    """Connect existing retained research/trends to planning without manual attachments."""
+    terms = list(dict.fromkeys(term.strip().casefold()[:120] for term in terms if term.strip()))[:8]
+    with session_scope() as session:
+        record_query = select(IntelligenceRecord).where(
+            IntelligenceRecord.channel_profile_id == channel_profile_id,
+            IntelligenceRecord.status == "active",
+        )
+        trend_query = select(TrendOpportunity).join(
+            TrendTopic, TrendTopic.id == TrendOpportunity.trend_topic_id,
+        ).where(
+            TrendOpportunity.channel_profile_id == channel_profile_id,
+            TrendOpportunity.expires_at > datetime.now(UTC),
+        )
+        if terms:
+            record_query = record_query.where(or_(*[
+                func.lower(column).contains(term, autoescape=True)
+                for term in terms
+                for column in (IntelligenceRecord.title, IntelligenceRecord.summary)
+            ]))
+            trend_query = trend_query.where(or_(*[
+                func.lower(TrendTopic.display_name).contains(term, autoescape=True)
+                for term in terms
+            ]))
+        records = list(session.scalars(record_query.order_by(
+            IntelligenceRecord.observed_at.desc(), IntelligenceRecord.id,
+        ).limit(4)))
+        trends = list(session.scalars(trend_query.order_by(
+            TrendOpportunity.created_at.desc(), TrendOpportunity.opportunity_score.desc(),
+            TrendOpportunity.id,
+        ).limit(4)))
+        evidence = [
+            _intelligence_record_evidence(session, channel_profile_id, row.id)
+            for row in records
+        ] + [_trend_evidence(session, channel_profile_id, row.id) for row in trends]
+    return (
+        f"Found {len(records)} retained research records and {len(trends)} current trend "
+        "opportunities in this channel. This is a bounded saved-data lookup, not a live search "
+        "or proof that media has been downloaded. No collection or production was started.",
+        evidence,
+    )
 
 
 def resolve_command_resources(

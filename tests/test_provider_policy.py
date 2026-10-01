@@ -28,6 +28,18 @@ def test_paid_openai_fallback_is_opt_in() -> None:
     assert command_provider_order(paid, "performance_advice")[-1] == "openai"
 
 
+def test_observation_binding_uses_agent_preference_without_enabling_paid_fallback() -> None:
+    settings = Settings(conversation_provider="gemini", agent_provider="codex")
+    assert planner_provider_order(settings, phase="bind_actions_after_observation")[:2] == (
+        "codex", "gemini",
+    )
+    assert "openai" not in planner_provider_order(settings, phase="bind_actions_after_observation")
+    reversed_preferences = Settings(conversation_provider="codex", agent_provider="gemini")
+    assert planner_provider_order(
+        reversed_preferences, phase="bind_actions_after_observation",
+    )[:2] == ("gemini", "codex")
+
+
 def test_explicit_provider_preferences_are_respected() -> None:
     settings = Settings(
         conversation_provider="codex",

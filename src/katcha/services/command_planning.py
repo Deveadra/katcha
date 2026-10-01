@@ -96,6 +96,7 @@ def workflow_observations(
             "kind": "workflow_observation", "id": str(proposal.id),
             "workflow_id": activity.workflow_id, "state": activity.state,
             "settled": activity.settled,
+            "detail": activity.workflow_detail,
             "resource": ({"kind": resource.kind, "id": str(resource.id),
                           "status": resource.status, "stage": resource.stage,
                           "error": resource.error} if resource else None),

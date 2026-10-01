@@ -102,6 +102,7 @@ from katcha.services.command_planning import (
     workflow_observations,
 )
 from katcha.services.command_resources import (
+    research_context,
     resolve_command_resources,
     resource_context_summary,
 )
@@ -824,6 +825,8 @@ def _inspect_command_capability(
         return source_discovery_plan(request.channel_profile_id, prompt)
     if intent == "resource_context":
         return resource_context_summary(resource_evidence), resource_evidence
+    if intent == "research_context":
+        return research_context(request.channel_profile_id, plan.research_terms if plan else [])
     return channel_status(request.channel_profile_id)
 
 
@@ -1152,6 +1155,10 @@ async def command(http_request: Request, request: CommandRequest) -> CommandResp
         elif intent == "resource_context":
             deterministic = resource_context_summary(resource_evidence)
             evidence = list(resource_evidence)
+        elif intent == "research_context":
+            deterministic, evidence = research_context(
+                request.channel_profile_id, planning.value.research_terms,
+            )
         elif intent == "source_discovery":
             deterministic, evidence = source_discovery_plan(
                 request.channel_profile_id,

@@ -436,6 +436,68 @@ async def test_unavailable_secondary_inspection_keeps_other_evidence(command_har
     state.execute.assert_not_awaited()
 
 
+async def test_first_plan_receives_current_channel_permissions_and_background_feedback(
+    command_harness, monkeypatch,
+):
+    state = command_harness
+    state.plan = CommandPlan(intent="channel_status", confidence=0.99, reason="Inspect progress")
+    environment = {"channel": {"name": "RankSnaxx"}, "constraints": {"ranked_item_counts": [5]}}
+    feedback = [{"kind": "workflow_observation", "id": "fixture", "state": "failed"}]
+    monkeypatch.setattr(api, "command_environment", lambda *args: environment)
+    monkeypatch.setattr(api, "workflow_observations", lambda *args: feedback)
+    monkeypatch.setattr(api, "control_scopes", lambda *args: {"ai:read"})
+    result = await state.send("How did that search turn out?")
+    assert state.captured_context["environment"] == environment
+    assert state.captured_context["workflow_observations"] == feedback
+    assert state.captured_context["action_permissions"]["start_source_scout"]["allowed"] is False
+    assert state.captured_context["ai_write_allowed"] is False
+    assert result.evidence == feedback
+    state.execute.assert_not_awaited()
+
+
+async def test_model_can_inspect_retained_research_without_manual_attachment(
+    command_harness, monkeypatch,
+):
+    state = command_harness
+    state.plan = CommandPlan(
+        intent="research_context", confidence=0.99, reason="Inspect what research already knows",
+        research_terms=["visionquest"],
+    )
+    calls = []
+
+    def research(channel, terms):
+        calls.append((channel, terms))
+        return "Fixture retained research", [{"kind": "intelligence_record", "id": "fixture"}]
+
+    monkeypatch.setattr(api, "research_context", research)
+    result = await state.send("What have we already learned about that series?")
+    assert calls == [(state.channel, ["visionquest"])]
+    assert result.evidence[0]["kind"] == "intelligence_record"
+    assert result.actions == []
+    state.execute.assert_not_awaited()
+
+
+async def test_observation_round_cannot_authorize_preview(command_harness, monkeypatch):
+    state = command_harness
+    initial = CommandPlan(
+        intent="performance_advice", confidence=0.99, reason="Preview refresh",
+        requested_actions=["refresh_channel_intelligence"], execution="propose",
+    )
+
+    def plan(**kwargs):
+        value = (
+            initial.model_copy(update={"execution": "run"})
+            if kwargs["context"].get("phase") else initial
+        )
+        return CommandPlanResult(value, "ai", ModelTarget("codex", "fixture"), 0, 0)
+
+    monkeypatch.setattr(api, "plan_ambiguous_command", plan)
+    monkeypatch.setattr(api, "performance_advice", lambda *args: ("Fixture performance", []))
+    with pytest.raises(HTTPException, match="cannot turn a proposal"):
+        await state.send("Show me the proposed refresh first")
+    state.execute.assert_not_awaited()
+
+
 async def test_one_time_scout_does_not_create_a_recurring_watch(monkeypatch):
     channel, run_id = uuid.uuid4(), uuid.uuid4()
     proposal = _proposal(channel)
