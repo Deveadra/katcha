@@ -138,6 +138,18 @@ class CommandSourcePrepareWorkflow:
             item = raw if isinstance(raw, dict) else {}
             source_id = str(item.get("source_id") or "")
             ingest_workflow_id = str(item.get("workflow_id") or "")
+            clip_id = str(item.get("clip_id") or "")
+            if clip_id:
+                ingests.append(
+                    {
+                        "source_id": source_id,
+                        "workflow_id": ingest_workflow_id,
+                        "success": True,
+                        "reused": True,
+                        "clip_id": clip_id,
+                    }
+                )
+                continue
             if not source_id or not ingest_workflow_id:
                 continue
             try:
