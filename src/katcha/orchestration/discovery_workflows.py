@@ -26,6 +26,31 @@ _COMMAND_CYCLE_LIFECYCLE_RETRY = RetryPolicy(
     maximum_attempts=10,
 )
 
+_GENERIC_FAILURE_MESSAGES = {
+    "activity task failed",
+    "child workflow execution failed",
+    "workflow execution failed",
+}
+
+
+def _specific_failure_message(exc: BaseException) -> str:
+    """Prefer the deepest actionable Temporal/provider message over wrappers."""
+    seen: set[int] = set()
+    current: BaseException | None = exc
+    best = ""
+    fallback = str(exc).strip()
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        message = str(current).strip()
+        normalized = message.casefold()
+        if message and normalized not in _GENERIC_FAILURE_MESSAGES:
+            best = message
+        nested = getattr(current, "cause", None)
+        if not isinstance(nested, BaseException):
+            nested = current.__cause__
+        current = nested if isinstance(nested, BaseException) else None
+    return (best or fallback or type(exc).__name__)[:8000]
+
 
 def _cycle_lifecycle_detail(
     result: dict[str, object],
@@ -76,7 +101,7 @@ class DiscoveryRunWorkflow:
         except Exception as exc:
             await workflow.execute_activity(
                 "mark_discovery_run_failed",
-                args=[run_id, str(exc)],
+                args=[run_id, _specific_failure_message(exc)],
                 start_to_close_timeout=timedelta(seconds=30),
                 retry_policy=RetryPolicy(maximum_attempts=3),
             )

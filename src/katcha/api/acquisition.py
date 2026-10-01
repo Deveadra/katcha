@@ -43,8 +43,10 @@ from katcha.services.discovery import observe_discovery_candidate
 from katcha.services.ingestion_sources import (
     create_discovery_run_from_source,
     create_source_import_run,
+    get_ingestion_source_overview,
     get_intelligence_record,
     ingest_intelligence_batch,
+    list_ingestion_source_library,
     list_ingestion_sources,
     list_intelligence_records,
     list_source_runs,
@@ -127,6 +129,13 @@ class IngestionSourceResponse(BaseModel):
     source_metadata: dict[str, object]
     created_at: datetime
     updated_at: datetime
+
+
+class SourceLibraryPageResponse(BaseModel):
+    total: int
+    limit: int
+    offset: int
+    items: list[IngestionSourceResponse]
 
 
 class CreateSourceDiscoveryRunRequest(BaseModel):
@@ -257,6 +266,27 @@ class DiscoveryCandidateResponse(BaseModel):
     candidate_metadata: dict[str, object]
     discovered_at: datetime
     updated_at: datetime
+
+
+class SourceRecentFindResponse(BaseModel):
+    candidate: DiscoveryCandidateResponse
+    observed_at: datetime
+
+
+class SourceOverviewResponse(BaseModel):
+    source: IngestionSourceResponse
+    channel_name: str | None
+    channel_status: str | None
+    run_count: int
+    completed_runs: int
+    failed_runs: int
+    running_runs: int
+    queued_runs: int
+    success_rate: float | None
+    discovery_count: int
+    unique_candidate_count: int
+    recent_runs: list[DiscoveryRunResponse]
+    recent_finds: list[SourceRecentFindResponse]
 
 
 class SourceRunResultsResponse(BaseModel):
@@ -401,6 +431,92 @@ def get_sources(
     return list_ingestion_sources(
         channel_profile_id=channel_profile_id,
         enabled=enabled,
+    )
+
+
+@router.get(
+    "/discovery/source-library",
+    response_model=SourceLibraryPageResponse,
+)
+def get_source_library(
+    q: str | None = Query(default=None, max_length=200),
+    channel_profile_id: uuid.UUID | None = Query(default=None),
+    shared_only: bool = Query(default=False),
+    platform: str | None = Query(default=None, max_length=32),
+    adapter_key: str | None = Query(default=None, max_length=64),
+    usage_mode: str | None = Query(default=None, max_length=32),
+    enabled: bool | None = Query(default=None),
+    sort: str = Query(default="recent", pattern="^(recent|name|created)$"),
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+) -> SourceLibraryPageResponse:
+    try:
+        result = list_ingestion_source_library(
+            query=q,
+            channel_profile_id=channel_profile_id,
+            shared_only=shared_only,
+            platform=platform,
+            adapter_key=adapter_key,
+            usage_mode=usage_mode,
+            enabled=enabled,
+            sort=sort,
+            limit=limit,
+            offset=offset,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return SourceLibraryPageResponse(
+        total=result.total,
+        limit=result.limit,
+        offset=result.offset,
+        items=[
+            IngestionSourceResponse.model_validate(row)
+            for row in result.items
+        ],
+    )
+
+
+@router.get(
+    "/discovery/sources/{source_id}/overview",
+    response_model=SourceOverviewResponse,
+)
+def get_source_overview(source_id: uuid.UUID) -> SourceOverviewResponse:
+    try:
+        overview = get_ingestion_source_overview(source_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    completed = int(overview.status_counts.get(DiscoveryRunStatus.COMPLETED.value, 0))
+    failed = int(overview.status_counts.get(DiscoveryRunStatus.FAILED.value, 0))
+    terminal = completed + failed
+    success_rate = (completed / terminal) if terminal else None
+    return SourceOverviewResponse(
+        source=IngestionSourceResponse.model_validate(overview.source),
+        channel_name=overview.channel_name,
+        channel_status=overview.channel_status,
+        run_count=overview.run_count,
+        completed_runs=completed,
+        failed_runs=failed,
+        running_runs=int(
+            overview.status_counts.get(DiscoveryRunStatus.RUNNING.value, 0)
+        ),
+        queued_runs=int(
+            overview.status_counts.get(DiscoveryRunStatus.QUEUED.value, 0)
+        ),
+        success_rate=success_rate,
+        discovery_count=overview.discovery_count,
+        unique_candidate_count=overview.unique_candidate_count,
+        recent_runs=[
+            DiscoveryRunResponse.model_validate(row)
+            for row in overview.recent_runs
+        ],
+        recent_finds=[
+            SourceRecentFindResponse(
+                candidate=DiscoveryCandidateResponse.model_validate(item.candidate),
+                observed_at=item.observed_at,
+            )
+            for item in overview.recent_finds
+        ],
     )
 
 

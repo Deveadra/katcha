@@ -123,15 +123,20 @@ starts its durable schedule. By default it:
 This is metadata-first discovery. It does not bypass downstream acquisition policy,
 and it does not make a discovered candidate publishable merely because Katcha found it.
 
-## Usage modes
+## Source purpose / usage modes
 
-`usage_mode` is operational metadata, not a hardcoded rights decision:
+The Sources UI presents the two common choices in plain language:
 
-- `discovery_only`: collect signal and context only.
-- `candidate_review`: queue as a candidate that needs operator decisioning.
-- `operator_authorized`: operator controls whether it can proceed.
-- `render_allowed`: source is intended for direct render workflows.
+- **Find content for review** → `candidate_review`. Finds may be offered to Clips for operator review. Nothing is published automatically.
+- **Research only** → `discovery_only`. Finds can inform trends, packaging, audience, and editorial context, but they are not offered as clip candidates.
+
+Advanced modes remain available behind disclosure:
+
+- `operator_authorized`: operator controls whether a candidate can proceed.
+- `render_allowed`: the source is production-intended after normal rights, originality, and approval checks.
 - `blocked`: keep the source configured but prevent normal use.
+
+`usage_mode` is operational metadata, not a hardcoded rights decision.
 
 The active acquisition policy still decides whether a candidate can be promoted
 into a managed `SourceItem`. This keeps the pipeline honest while allowing the
@@ -257,42 +262,75 @@ When `batch_key` is present, Katcha derives a stable run key:
 same discovery run instead of duplicating work. The import batch key and item
 count are also added to candidate metadata through the operator feed adapter.
 
-## Content sources: guided setup
+## Sources workspace
 
-Open `/ingestion` on the running Katcha API (also linked from Editing Control
-Center). The launcher connects automatically once the workspace is ready. Direct
-API access connects automatically too; if authentication is required, the page
-asks for a workspace access token and keeps it only in memory.
+Open `/ingestion` to manage Katcha's source network.
 
-1. Choose **Paste links**, **Search YouTube**, **Search Reddit**, or **Follow a
-   website feed**. Katcha chooses the matching installed adapter. Unsupported
-   choices are visibly unavailable; future connectors remain available through
-   **Custom connections · advanced**.
-2. Give the source a recognizable name. Choose an active channel or explicitly
-   leave it as a shared collection. Channel labels use the saved YouTube channel
-   title. An empty channel list explains that no active profiles exist; a failed
-   channel request instead offers retry and prevents saving until resolved.
-3. For a search, enter a topic (and optionally a Reddit community). For a website,
-   enter its RSS/Atom feed URL. There is no JSON or adapter selection in guided
-   setup. Paste-link collections start empty so example content is never imported.
-4. Review the summary and save. Source keys are generated internally. Saving does
-   not start discovery or publishing. Review-first is the default intended use;
-   other preferences are explained under a disclosure and do not override policy.
-5. In **Saved sources**, paste links and choose **Add links & find content**,
-   or choose **Search now** / **Check for updates**. These actions create the
-   request and submit it for execution. Batch and run keys are generated internally.
-   Retry keys are retained in the current tab if a request fails. If dispatch
-   cannot be confirmed, activity offers **Start now** for queued requests.
-6. Use **Refresh activity** for progress. Provider errors are available in a
-   troubleshooting disclosure, rather than replacing the recovery guidance.
+### Source Library
 
-This screen uses real control-plane data. Execution still requires the discovery
-worker and Temporal. It does not add native TikTok/Instagram search or scheduled
-polling. The source `poll_interval_minutes` field remains configuration, not a
-scheduler guarantee. A shared collection is unassigned, not broadcast to channels.
+The library is server-paginated and designed for hundreds or thousands of sources.
+It does not render every source into a select menu.
 
-`GET /v1/discovery/sources/{source_id}/runs?limit=50` returns newest-first history
-for that source, including status and errors. The limit is bounded to 1–100;
-unknown sources return 404. History uses source identity frozen in run metadata.
+Use:
+
+- search by source name or key;
+- channel / shared-scope filter;
+- source-type filter;
+- active / paused filter;
+- purpose filter;
+- recent / name / created sorting;
+- bounded next / previous pages.
+
+Selecting a source opens its inspector. The inspector shows:
+
+- channel scope;
+- source purpose;
+- what the source watches;
+- active / paused state;
+- total checks and failed checks;
+- success rate;
+- last check;
+- total and unique finds;
+- recent discoveries;
+- recent check history;
+- the exact recorded provider/configuration error when a check fails.
+
+`GET /v1/discovery/source-library` provides the paginated/filterable library.
+`GET /v1/discovery/sources/{source_id}/overview` provides the source-level
+operational summary, recent runs, and recent finds.
+
+### Add source
+
+1. Choose the job: paste links, discover new sources, search YouTube, watch a
+   YouTube channel, search Reddit, follow a feed, or use an advanced installed
+   connector.
+2. Name the source and choose an active channel or explicitly keep it shared /
+   unassigned.
+3. Configure what the source watches.
+4. Choose its purpose: **Find content for review** or **Research only**. Advanced
+   usage modes stay behind disclosure.
+5. Choose exactly what happens after save:
+   - **Save & check now**: persist the source and immediately run one check.
+   - **Save only**: persist the source without starting a check.
+6. Confirm and save.
+
+Saving a source **never implies a recurring schedule**. Generic source
+`poll_interval_minutes` remains configuration metadata, not a scheduler guarantee.
+Durable recurring scouting is configured through the separate topic-watch /
+source-scout automation path.
+
+Paste-link collections save first; links are added from the source inspector and
+each import creates an explicit discovery check.
+
+Run and import requests retain idempotency keys in the current tab. If execution
+dispatch cannot be confirmed, queued activity can be started again without adding
+duplicate source records.
+
+A shared source is unassigned, not broadcast to every channel.
+
+`GET /v1/discovery/sources/{source_id}/runs?limit=50` remains the bounded
+newest-first run-history endpoint. Provider failures preserve the most specific
+recorded provider/configuration message rather than replacing it with a generic
+Temporal wrapper where possible.
 
 For future interface changes, follow [the product UX guidelines](UX_GUIDELINES.md).
