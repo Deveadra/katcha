@@ -10,6 +10,11 @@ class LiveSettings:
     ai_enabled = True
     openai_api_key = "test-key"
     gemini_api_key = None
+    conversation_provider = "auto"
+    agent_provider = "auto"
+    allow_paid_openai_fallback = True
+    codex_enabled = False
+    chatgpt_host_id = None
 
     @staticmethod
     def resolved_ai_execution_mode():
