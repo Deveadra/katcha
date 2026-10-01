@@ -73,8 +73,17 @@ def test_command_timeout_and_nonzero_exit(tmp_path):
 
     with pytest.raises(TimeoutError):
         app.run([sys.executable, "-c", "import time; time.sleep(10)"], timeout=0.1)
+    assert not any(
+        thread.name == "katcha-command-reader" and thread.is_alive()
+        for thread in threading.enumerate()
+    )
+
     with pytest.raises(RuntimeError):
         app.run([sys.executable, "-c", "raise SystemExit(2)"])
+    assert not any(
+        thread.name == "katcha-command-reader" and thread.is_alive()
+        for thread in threading.enumerate()
+    )
 
 
 def test_http_rejects_foreign_origin_and_secret_exposure(tmp_path):
