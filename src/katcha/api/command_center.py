@@ -1483,10 +1483,12 @@ async def _execute_proposal(
                 or ""
             ).strip()
             prepare_for_production = bool(payload.get("prepare_for_production"))
+            source_words = _normalized_words(source_name)
             match_terms = [
                 term
                 for term in re.findall(r"[a-z0-9]+", search_query.casefold())
                 if len(term) >= 4
+                and term not in source_words
                 and term not in {
                     "official",
                     "trailer",
