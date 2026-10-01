@@ -138,27 +138,6 @@ class SourceLibraryPageResponse(BaseModel):
     items: list[IngestionSourceResponse]
 
 
-class SourceRecentFindResponse(BaseModel):
-    candidate: DiscoveryCandidateResponse
-    observed_at: datetime
-
-
-class SourceOverviewResponse(BaseModel):
-    source: IngestionSourceResponse
-    channel_name: str | None
-    channel_status: str | None
-    run_count: int
-    completed_runs: int
-    failed_runs: int
-    running_runs: int
-    queued_runs: int
-    success_rate: float | None
-    discovery_count: int
-    unique_candidate_count: int
-    recent_runs: list[DiscoveryRunResponse]
-    recent_finds: list[SourceRecentFindResponse]
-
-
 class CreateSourceDiscoveryRunRequest(BaseModel):
     idempotency_key: str | None = Field(default=None, max_length=160)
     query_overrides: dict[str, object] = Field(default_factory=dict)
@@ -287,6 +266,27 @@ class DiscoveryCandidateResponse(BaseModel):
     candidate_metadata: dict[str, object]
     discovered_at: datetime
     updated_at: datetime
+
+
+class SourceRecentFindResponse(BaseModel):
+    candidate: DiscoveryCandidateResponse
+    observed_at: datetime
+
+
+class SourceOverviewResponse(BaseModel):
+    source: IngestionSourceResponse
+    channel_name: str | None
+    channel_status: str | None
+    run_count: int
+    completed_runs: int
+    failed_runs: int
+    running_runs: int
+    queued_runs: int
+    success_rate: float | None
+    discovery_count: int
+    unique_candidate_count: int
+    recent_runs: list[DiscoveryRunResponse]
+    recent_finds: list[SourceRecentFindResponse]
 
 
 class SourceRunResultsResponse(BaseModel):
