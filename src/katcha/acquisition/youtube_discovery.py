@@ -284,19 +284,25 @@ class YouTubeDiscoveryAdapter:
         order = str(query.get("order") or "date").strip()
         if order not in _ALLOWED_ORDERS:
             raise ValueError(f"unsupported YouTube search order: {order}")
-        freshness_hours = min(
-            max(int(query.get("freshness_horizon_hours", 72)), 1),
-            24 * 30,
+        requested_freshness = int(query.get("freshness_horizon_hours", 72))
+        freshness_hours = (
+            min(max(requested_freshness, 1), 24 * 30)
+            if requested_freshness > 0
+            else 0
         )
-        published_after = datetime.now(UTC) - timedelta(hours=freshness_hours)
         params: dict[str, object] = {
             **auth_params,
             "part": "snippet",
             "type": "video",
             "order": order,
             "maxResults": requested_limit,
-            "publishedAfter": published_after.isoformat().replace("+00:00", "Z"),
         }
+        if freshness_hours:
+            published_after = datetime.now(UTC) - timedelta(hours=freshness_hours)
+            params["publishedAfter"] = published_after.isoformat().replace(
+                "+00:00",
+                "Z",
+            )
         channel_reference = str(query.get("channel_reference") or "").strip()
         if not channel_reference:
             params["q"] = _search_query(query)

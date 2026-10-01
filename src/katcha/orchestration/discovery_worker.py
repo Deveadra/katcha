@@ -13,10 +13,13 @@ from katcha.orchestration.discovery_activities import (
     execute_discovery_page_activity,
     finalize_topic_watch_execution_activity,
     mark_discovery_run_failed,
+    prepare_command_discovery_candidates_activity,
     prepare_topic_watch_execution_activity,
+    record_command_source_prepare_lifecycle_activity,
     record_topic_watch_command_cycle_activity,
 )
 from katcha.orchestration.discovery_workflows import (
+    CommandSourcePrepareWorkflow,
     DiscoveryRunWorkflow,
     TopicWatchScheduleWorkflow,
     TopicWatchWorkflow,
@@ -38,12 +41,15 @@ async def main() -> None:
             client,
             task_queue=DISCOVERY_TASK_QUEUE,
             workflows=[
+                CommandSourcePrepareWorkflow,
                 DiscoveryRunWorkflow,
                 TopicWatchWorkflow,
                 TopicWatchScheduleWorkflow,
             ],
             activities=[
                 execute_discovery_page_activity,
+                prepare_command_discovery_candidates_activity,
+                record_command_source_prepare_lifecycle_activity,
                 mark_discovery_run_failed,
                 prepare_topic_watch_execution_activity,
                 finalize_topic_watch_execution_activity,

@@ -8,6 +8,7 @@ from katcha.domain import ChannelStatus
 from katcha.intelligence_models import ChannelProfile
 from katcha.models import DomainEvent
 from katcha.publishing_models import YouTubeConnection
+from katcha.services.acquisition import register_discovery_run
 from katcha.services.command_actions import (
     ActionProposalSpec,
     claim_action_proposal,
@@ -17,6 +18,7 @@ from katcha.services.command_actions import (
 from katcha.services.command_activity import get_action_activity
 from katcha.services.command_workflow_lifecycle import (
     proposal_id_from_command_run_key,
+    record_command_source_prepare_lifecycle,
     record_intelligence_command_workflow_lifecycle,
     record_topic_watch_command_cycle,
 )
@@ -257,6 +259,62 @@ def test_source_scout_cycles_report_active_degraded_then_recovered() -> None:
     disabled = get_action_activity(proposal.id)
     assert disabled.state == "disabled"
     assert disabled.settled is True
+
+
+def test_command_source_prepare_workflow_completion_is_visible() -> None:
+    profile_id = _profile()
+    proposal = create_action_proposals(
+        request_id=uuid.uuid4(),
+        channel_profile_id=profile_id,
+        specs=[
+            ActionProposalSpec(
+                action_type="start_source_scout",
+                label="Search Marvel Entertainment",
+                description="Find VisionQuest trailers and prepare them.",
+                payload={"prepare_for_production": True},
+            )
+        ],
+    )[0]
+    run = register_discovery_run(
+        adapter_key="manifest",
+        adapter_version="v1",
+        query={"items": []},
+        metadata={
+            "command_proposal_id": str(proposal.id),
+            "command_channel_profile_id": str(profile_id),
+            "command_prepare_for_production": True,
+        },
+    )
+    workflow_id = f"command-source-prepare-{run.id}"
+    claim_action_proposal(proposal.id, actor="control-principal:operator")
+    complete_action_proposal(
+        proposal.id,
+        result={
+            "workflow_id": workflow_id,
+            "discovery_run_id": str(run.id),
+            "prepare_for_production": True,
+        },
+    )
+
+    assert record_command_source_prepare_lifecycle(
+        discovery_run_id=run.id,
+        workflow_id=workflow_id,
+        state="completed",
+        detail={
+            "candidate_count": 2,
+            "prepared_count": 2,
+            "ingest_count": 2,
+            "failed_ingest_count": 0,
+        },
+    )
+
+    activity = get_action_activity(proposal.id)
+    assert activity.state == "completed"
+    assert activity.settled is True
+    assert any(
+        event["event_type"] == "command_center.workflow_completed"
+        for event in activity.events
+    )
 
 
 def test_intelligence_workflow_failure_is_terminal() -> None:

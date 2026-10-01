@@ -5,7 +5,7 @@ from typing import Any
 
 from sqlalchemy import select
 
-from katcha.acquisition_models import TopicWatchVersion
+from katcha.acquisition_models import DiscoveryRun, TopicWatchVersion
 from katcha.command_center_models import CommandActionProposal
 from katcha.db import session_scope
 from katcha.models import DomainEvent
@@ -208,6 +208,53 @@ def record_intelligence_command_workflow_lifecycle(
         workflow_id=workflow_id,
         state=state,
         detail=detail,
+    )
+
+
+def record_command_source_prepare_lifecycle(
+    *,
+    discovery_run_id: uuid.UUID,
+    workflow_id: str,
+    state: str,
+    detail: dict[str, Any] | None = None,
+) -> bool:
+    with session_scope() as session:
+        run = session.get(DiscoveryRun, discovery_run_id)
+        if run is None:
+            raise ValueError(f"discovery run not found: {discovery_run_id}")
+        metadata = dict(run.run_metadata or {})
+        raw_proposal_id = metadata.get("command_proposal_id")
+        if not raw_proposal_id:
+            return False
+        try:
+            proposal_id = uuid.UUID(str(raw_proposal_id))
+        except ValueError as exc:
+            raise ValueError(
+                "discovery run has invalid command_proposal_id metadata"
+            ) from exc
+        proposal = session.get(CommandActionProposal, proposal_id)
+        if proposal is None:
+            raise ValueError(f"command action proposal not found: {proposal_id}")
+        if proposal.action_type != "start_source_scout":
+            raise ValueError(
+                "discovery run command proposal is not a source-scout action"
+            )
+        expected_channel = str(metadata.get("command_channel_profile_id") or "")
+        if expected_channel and expected_channel != str(proposal.channel_profile_id):
+            raise ValueError(
+                "discovery run channel does not match command proposal"
+            )
+
+    merged_detail: dict[str, object] = {
+        "discovery_run_id": str(discovery_run_id),
+    }
+    if detail:
+        merged_detail.update(detail)
+    return record_command_workflow_lifecycle(
+        proposal_id,
+        workflow_id=workflow_id,
+        state=state,
+        detail=merged_detail,
     )
 
 

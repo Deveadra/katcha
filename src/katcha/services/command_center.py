@@ -108,6 +108,10 @@ _STOP_WORDS = {
     "used",
     "video",
     "videos",
+    "trailer",
+    "trailers",
+    "teaser",
+    "teasers",
     "would",
     "add",
     "find",
@@ -133,6 +137,13 @@ _STOP_WORDS = {
     "feeds",
     "community",
     "communities",
+    "get",
+    "fetch",
+    "retrieve",
+    "official",
+    "channel",
+    "prepare",
+    "production",
 }
 
 _PLATFORM_PATTERNS = {
@@ -147,6 +158,10 @@ _PLATFORM_PATTERNS = {
 _SOURCE_DISCOVERY_VERBS = (
     "add",
     "find",
+    "get",
+    "fetch",
+    "retrieve",
+    "pull",
     "search",
     "discover",
     "scout",
@@ -332,6 +347,8 @@ def _looks_like_confirmation(text: str) -> bool:
     normalized = " ".join(
         re.sub(r"[^a-z0-9]+", " ", text.casefold()).split()
     )
+    if normalized.startswith("proceed with "):
+        return True
     return normalized in {
         "yes",
         "yes do it",
@@ -342,6 +359,10 @@ def _looks_like_confirmation(text: str) -> bool:
         "run it",
         "start it",
         "execute it",
+        "proceed",
+        "proceed with it",
+        "continue",
+        "continue with it",
         "sounds good",
         "looks good",
         "approved",
@@ -376,8 +397,8 @@ def resolve_command_follow_up(
             inherited_from_thread=True,
             source_turn_id=assistant.id,
             resolution=(
-                "Chat text never confirms an executable proposal; the prior "
-                "server-issued proposal must be reviewed and confirmed explicitly."
+                "Resolved this explicit confirmation to the prior server-issued "
+                "proposal. Only that frozen action may execute."
             ),
             action_source_turn_id=assistant.id,
         )
@@ -446,7 +467,11 @@ def resolve_command_follow_up(
         )
 
     prior_intent = assistant.intent
-    if prior_intent in {"best_clips", "performance_advice"} and _looks_like_follow_up(
+    if prior_intent in {
+        "best_clips",
+        "performance_advice",
+        "source_discovery",
+    } and _looks_like_follow_up(
         prompt
     ):
         effective_prompt = prompt
@@ -560,7 +585,7 @@ def _looks_like_source_discovery(
 
     discovery_verb = any(
         re.search(rf"\b{re.escape(verb)}\b", text)
-        for verb in ("add", "expand", "find", "discover", "scout", "search")
+        for verb in _SOURCE_DISCOVERY_VERBS
     )
     if not discovery_verb:
         return False
@@ -783,12 +808,18 @@ def source_discovery_plan(
             "configured_source_count": len(configured),
             "configured_sources": [
                 {
+                    "id": str(row.id),
                     "source_key": row.source_key,
                     "name": row.name,
                     "platform": row.platform,
                     "adapter_key": row.adapter_key,
+                    "adapter_version": row.adapter_version,
                     "enabled": row.enabled,
                     "shared": row.channel_profile_id is None,
+                    "channel_reference": str(
+                        (row.query_template or {}).get("channel_reference") or ""
+                    )
+                    or None,
                 }
                 for row in configured[:30]
             ],

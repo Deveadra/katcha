@@ -218,6 +218,67 @@ def test_channel_watch_resolves_handle_and_scopes_video_search(monkeypatch, refe
     assert next_batch.provider_usage["youtube.core"] == 1
 
 
+def test_explicit_channel_search_can_scan_all_time(monkeypatch) -> None:
+    from katcha.acquisition import youtube_discovery as module
+
+    channel_id = "UC" + "b" * 22
+
+    def handler(request):
+        if request.url.path.endswith("/channels"):
+            return httpx.Response(200, json={"items": [{"id": channel_id}]})
+        if request.url.path.endswith("/search"):
+            assert request.url.params["channelId"] == channel_id
+            assert request.url.params["q"] == "VisionQuest official trailer"
+            assert "publishedAfter" not in request.url.params
+            return httpx.Response(
+                200,
+                json={"items": [{"id": {"videoId": "visionquest"}}]},
+            )
+        return httpx.Response(
+            200,
+            json={
+                "items": [
+                    {
+                        "id": "visionquest",
+                        "snippet": {
+                            "title": "VisionQuest Official Trailer",
+                            "channelId": channel_id,
+                            "channelTitle": "Marvel Entertainment",
+                        },
+                        "statistics": {},
+                    }
+                ]
+            },
+        )
+
+    client_type = httpx.Client
+    monkeypatch.setattr(
+        module,
+        "get_settings",
+        lambda: SimpleNamespace(youtube_data_api_key="test"),
+    )
+    monkeypatch.setattr(
+        module.httpx,
+        "Client",
+        lambda **kwargs: client_type(
+            transport=httpx.MockTransport(handler),
+            **kwargs,
+        ),
+    )
+
+    batch = module.YouTubeDiscoveryAdapter().discover(
+        {
+            "channel_reference": "@creator",
+            "q": "VisionQuest official trailer",
+            "freshness_horizon_hours": 0,
+        },
+        {},
+    )
+
+    assert len(batch.items) == 1
+    assert batch.items[0].creator == "Marvel Entertainment"
+
+
 @pytest.mark.parametrize("reference", [
     "https://evil.example/@creator", "https://www.youtube.com/watch?v=abc",
     "http://127.0.0.1/@creator", "https://user:password@youtube.com/@creator", "creator",

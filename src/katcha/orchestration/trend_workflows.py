@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import timedelta
+from typing import Any
 
 from temporalio import workflow
 from temporalio.common import RetryPolicy
@@ -9,7 +10,7 @@ from temporalio.common import RetryPolicy
 @workflow.defn
 class ChannelTrendRefreshWorkflow:
     @workflow.run
-    async def run(self, channel_profile_id: str, run_key: str) -> dict[str, object]:
+    async def run(self, channel_profile_id: str, run_key: str) -> dict[str, Any]:
         return await workflow.execute_activity(
             "refresh_channel_trends_activity",
             args=[channel_profile_id, run_key],
@@ -32,7 +33,7 @@ class ChannelTrendCalibrationWorkflow:
         channel_profile_id: str,
         run_key: str,
         target_age_hours: int = 24,
-    ) -> dict[str, object]:
+    ) -> dict[str, Any]:
         return await workflow.execute_activity(
             "refresh_trend_calibration_activity",
             args=[channel_profile_id, run_key, target_age_hours],

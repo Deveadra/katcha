@@ -524,13 +524,14 @@ def _restricted_request(
     return request
 
 
-def test_command_center_body_channel_cannot_escape_principal_allowlist() -> None:
+@pytest.mark.asyncio
+async def test_command_center_body_channel_cannot_escape_principal_allowlist() -> None:
     allowed = uuid.uuid4()
     blocked = uuid.uuid4()
     request = _restricted_request(allowed, scopes={"ai:read"})
 
     with pytest.raises(HTTPException) as exc:
-        command(
+        await command(
             request,
             CommandRequest(
                 channel_profile_id=blocked,

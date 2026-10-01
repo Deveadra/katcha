@@ -4,12 +4,14 @@ import asyncio
 import hashlib
 from contextlib import suppress
 from datetime import timedelta
+from typing import Any
 
 from temporalio import workflow
 from temporalio.common import RetryPolicy
 
 from katcha.acquisition.runtime import DISCOVERY_TASK_QUEUE, MAX_DISCOVERY_PAGES
 from katcha.orchestration.trend_workflows import ChannelTrendRefreshWorkflow
+from katcha.orchestration.workflows import ClipIngestWorkflow
 from katcha.trends.runtime import TREND_TASK_QUEUE
 
 _ACTIVITY_RETRY = RetryPolicy(
@@ -76,7 +78,7 @@ def _cycle_lifecycle_detail(
 @workflow.defn
 class DiscoveryRunWorkflow:
     @workflow.run
-    async def run(self, run_id: str) -> dict[str, object]:
+    async def run(self, run_id: str) -> dict[str, Any]:
         total_candidates = 0
         try:
             for page in range(MAX_DISCOVERY_PAGES):
@@ -109,6 +111,135 @@ class DiscoveryRunWorkflow:
 
 
 @workflow.defn
+class CommandSourcePrepareWorkflow:
+    @workflow.run
+    async def run(
+        self,
+        run_id: str,
+        ingest_task_queue: str,
+    ) -> dict[str, Any]:
+        workflow_id = workflow.info().workflow_id
+        try:
+            discovery_workflow_id = f"discovery-run-{run_id}"
+            discovery_result = await workflow.execute_child_workflow(
+                DiscoveryRunWorkflow.run,
+                run_id,
+                id=discovery_workflow_id,
+                task_queue=DISCOVERY_TASK_QUEUE,
+            )
+            prepared = await workflow.execute_activity(
+                "prepare_command_discovery_candidates_activity",
+                run_id,
+                start_to_close_timeout=timedelta(minutes=2),
+                retry_policy=_ACTIVITY_RETRY,
+            )
+            raw_items = prepared.get("prepared")
+            items = raw_items if isinstance(raw_items, list) else []
+            ingests: list[dict[str, object]] = []
+            for raw in items:
+                item = raw if isinstance(raw, dict) else {}
+                source_id = str(item.get("source_id") or "")
+                ingest_workflow_id = str(item.get("workflow_id") or "")
+                clip_id = str(item.get("clip_id") or "")
+                if clip_id:
+                    ingests.append(
+                        {
+                            "source_id": source_id,
+                            "workflow_id": ingest_workflow_id,
+                            "success": True,
+                            "reused": True,
+                            "clip_id": clip_id,
+                        }
+                    )
+                    continue
+                if not source_id or not ingest_workflow_id:
+                    continue
+                try:
+                    result = await workflow.execute_child_workflow(
+                        ClipIngestWorkflow.run,
+                        source_id,
+                        id=ingest_workflow_id,
+                        task_queue=ingest_task_queue,
+                    )
+                    ingests.append(
+                        {
+                            "source_id": source_id,
+                            "workflow_id": ingest_workflow_id,
+                            "success": True,
+                            "result": result,
+                        }
+                    )
+                except Exception as exc:
+                    ingests.append(
+                        {
+                            "source_id": source_id,
+                            "workflow_id": ingest_workflow_id,
+                            "success": False,
+                            "error": str(exc)[:1000],
+                        }
+                    )
+
+            failed_ingests = sum(
+                1 for item in ingests if not bool(item.get("success"))
+            )
+            raw_errors = prepared.get("errors")
+            preparation_errors = raw_errors if isinstance(raw_errors, list) else []
+            no_matches = not bool(prepared.get("skipped")) and not items
+            lifecycle_state = (
+                "failed" if failed_ingests or preparation_errors or no_matches
+                else "completed"
+            )
+            error = (
+                "No matching source videos were available for production preparation."
+                if no_matches and not preparation_errors
+                else "Some source videos could not be prepared for production."
+                if preparation_errors or failed_ingests
+                else None
+            )
+            await workflow.execute_activity(
+                "record_command_source_prepare_lifecycle_activity",
+                args=[
+                    run_id,
+                    workflow_id,
+                    lifecycle_state,
+                    {
+                        "candidate_count": int(
+                            discovery_result.get("candidate_count") or 0
+                        ),
+                        "prepared_count": len(items),
+                        "ingest_count": len(ingests),
+                        "failed_ingest_count": failed_ingests,
+                        "preparation_error_count": len(preparation_errors),
+                        "preparation_errors": preparation_errors,
+                        "error": error,
+                    },
+                ],
+                start_to_close_timeout=timedelta(seconds=30),
+                retry_policy=_ACTIVITY_RETRY,
+            )
+            return {
+                "run_id": run_id,
+                "discovery": discovery_result,
+                "preparation": prepared,
+                "ingests": ingests,
+            }
+        except Exception as exc:
+            with suppress(Exception):
+                await workflow.execute_activity(
+                    "record_command_source_prepare_lifecycle_activity",
+                    args=[
+                        run_id,
+                        workflow_id,
+                        "failed",
+                        {"error": _specific_failure_message(exc)[:2000]},
+                    ],
+                    start_to_close_timeout=timedelta(seconds=30),
+                    retry_policy=_ACTIVITY_RETRY,
+                )
+            raise
+
+
+@workflow.defn
 class TopicWatchWorkflow:
     @workflow.run
     async def run(
@@ -116,7 +247,7 @@ class TopicWatchWorkflow:
         topic_watch_id: str,
         execution_key: str,
         top_n: int,
-    ) -> dict[str, object]:
+    ) -> dict[str, Any]:
         prepared = await workflow.execute_activity(
             "prepare_topic_watch_execution_activity",
             args=[topic_watch_id, execution_key],

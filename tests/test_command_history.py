@@ -214,3 +214,28 @@ def test_action_proposal_rejects_mismatched_conversation_authority() -> None:
             thread_id=thread.id,
             specs=[],
         )
+
+
+def test_command_answer_finalization_preserves_observed_execution_and_goal() -> None:
+    from katcha.services.command_history import finalize_command_answer
+
+    profile_id = _channel_profile()
+    thread = create_command_thread(
+        channel_profile_id=profile_id, actor="fixture-operator", title="Prepare trailers",
+    )
+    _, assistant = record_command_exchange(
+        thread_id=thread.id, request_id=uuid.uuid4(), user_content="Prepare the trailers",
+        assistant_content="The action is prepared", intent="source_discovery",
+        narrator="katcha/server-state",
+    )
+    evidence = [{"kind": "command_action", "id": "fixture-action", "status": "executed"}]
+    context = {"planning": {"plan": {"goal": "Prepare trailers", "execution": "run"}}}
+    finalize_command_answer(
+        assistant.id, content="The workflow started", narrator="fixture/semantic-model",
+        evidence=evidence, context=context,
+    )
+    persisted = list_command_turns(thread.id)[-1]
+    assert persisted.content == "The workflow started"
+    assert persisted.evidence == evidence
+    assert persisted.turn_context == context
+    assert persisted.narrator == "fixture/semantic-model"

@@ -1,19 +1,27 @@
 from __future__ import annotations
 
+import re
 import uuid
 from datetime import UTC, datetime
+from typing import Any
 
 from sqlalchemy import select
 from temporalio import activity
 from temporalio.exceptions import ApplicationError
 
 from katcha.acquisition.adapters import DiscoveryProviderError, get_adapter
-from katcha.acquisition_models import DiscoveryRun
+from katcha.acquisition_models import (
+    DiscoveryCandidate,
+    DiscoveryObservation,
+    DiscoveryRun,
+)
 from katcha.config import get_settings
 from katcha.db import session_scope
 from katcha.domain import DiscoveryRunStatus
 from katcha.models import DomainEvent
+from katcha.services.acquisition import promote_discovery_candidate
 from katcha.services.command_workflow_lifecycle import (
+    record_command_source_prepare_lifecycle,
     record_topic_watch_command_cycle,
 )
 from katcha.services.discovery import observe_discovery_candidate
@@ -59,12 +67,33 @@ def _poll_attempt_id(metadata: dict[str, object]) -> uuid.UUID | None:
 
 
 @activity.defn
+def record_command_source_prepare_lifecycle_activity(
+    run_id: str,
+    workflow_id: str,
+    state: str,
+    detail: dict[str, Any] | None = None,
+) -> dict[str, object]:
+    recorded = record_command_source_prepare_lifecycle(
+        discovery_run_id=uuid.UUID(run_id),
+        workflow_id=workflow_id,
+        state=state,
+        detail=detail,
+    )
+    return {
+        "recorded": recorded,
+        "run_id": run_id,
+        "workflow_id": workflow_id,
+        "state": state,
+    }
+
+
+@activity.defn
 def record_topic_watch_command_cycle_activity(
     topic_watch_id: str,
     workflow_id: str,
     cycle_key: str,
     state: str,
-    detail: dict[str, object] | None = None,
+    detail: dict[str, Any] | None = None,
 ) -> dict[str, object]:
     recorded = record_topic_watch_command_cycle(
         topic_watch_id=uuid.UUID(topic_watch_id),
@@ -291,6 +320,114 @@ def execute_discovery_page_activity(run_id: str) -> dict[str, object]:
         "done": batch.done,
         "reused": False,
         "provider_usage": dict(batch.provider_usage or {}),
+    }
+
+
+def _matches_command_media(
+    title: str,
+    metadata: dict[str, object],
+    match_terms: list[str],
+    *,
+    trailers_only: bool,
+) -> bool:
+    # Provider/channel metadata is provenance, not evidence of the requested topic.
+    haystack = f"{title} {metadata.get('description') or ''}".casefold()
+    if match_terms and not any(term in haystack for term in match_terms):
+        return False
+    return not trailers_only or bool(re.search(r"\b(trailer|teaser)\b", title, re.I))
+
+
+@activity.defn
+def prepare_command_discovery_candidates_activity(
+    run_id: str,
+) -> dict[str, object]:
+    run_uuid = uuid.UUID(run_id)
+    with session_scope() as session:
+        run = session.get(DiscoveryRun, run_uuid)
+        if run is None:
+            raise ValueError(f"discovery run not found: {run_id}")
+        metadata = dict(run.run_metadata or {})
+        if not bool(metadata.get("command_prepare_for_production")):
+            return {
+                "run_id": run_id,
+                "prepared": [],
+                "skipped": True,
+                "reason": "production preparation was not requested",
+            }
+        max_candidates = max(
+            1,
+            min(int(metadata.get("command_prepare_max_candidates") or 5), 20),
+        )
+        match_terms = [
+            str(value).strip().casefold()
+            for value in (metadata.get("command_match_terms") or [])
+            if str(value).strip()
+        ][:8]
+        trailers_only = bool(metadata.get("command_trailers_only"))
+        candidate_rows = [
+            (
+                candidate.id,
+                str(candidate.title or ""),
+                str(candidate.creator or ""),
+                dict(candidate.candidate_metadata or {}),
+            )
+            for candidate in session.scalars(
+                select(DiscoveryCandidate)
+                .join(
+                    DiscoveryObservation,
+                    DiscoveryObservation.discovery_candidate_id
+                    == DiscoveryCandidate.id,
+                )
+                .where(DiscoveryObservation.discovery_run_id == run_uuid)
+                .order_by(
+                    DiscoveryObservation.observed_at.asc(),
+                    DiscoveryObservation.id.asc(),
+                )
+            )
+        ]
+
+    candidate_ids: list[uuid.UUID] = []
+    for candidate_id, title, _creator, metadata in candidate_rows:
+        if not _matches_command_media(
+            title, metadata, match_terms, trailers_only=trailers_only,
+        ):
+            continue
+        if candidate_id not in candidate_ids:
+            candidate_ids.append(candidate_id)
+        if len(candidate_ids) >= max_candidates:
+            break
+
+    prepared: list[dict[str, object]] = []
+    errors: list[dict[str, str]] = []
+    for candidate_id in candidate_ids:
+        try:
+            source = promote_discovery_candidate(
+                candidate_id,
+                actor="katcha-ai",
+                for_review=True,
+            )
+            prepared.append(
+                {
+                    "candidate_id": str(candidate_id),
+                    "source_id": str(source.id),
+                    "workflow_id": source.workflow_id,
+                    "clip_id": str(source.clip_id) if source.clip_id else None,
+                }
+            )
+        except ValueError as exc:
+            errors.append(
+                {
+                    "candidate_id": str(candidate_id),
+                    "error": str(exc)[:1000],
+                }
+            )
+
+    return {
+        "run_id": run_id,
+        "prepared": prepared,
+        "errors": errors,
+        "skipped": False,
+        "match_terms": match_terms,
     }
 
 

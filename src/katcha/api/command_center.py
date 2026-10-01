@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import hashlib
+import json
+import re
 import uuid
+from dataclasses import replace
 from datetime import datetime
 from importlib.util import find_spec
 from time import monotonic
@@ -9,11 +12,13 @@ from typing import Literal
 
 from fastapi import APIRouter, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import or_, select
+from starlette.concurrency import run_in_threadpool
 
-from katcha.acquisition_models import TopicWatchVersion
+from katcha.acquisition_models import IngestionSource, TopicWatchVersion
 from katcha.ai.command_center import compose_grounded_answer
 from katcha.ai.command_planner import (
+    CommandPlan,
     CommandPlanningUnavailable,
     deterministic_plan,
     plan_ambiguous_command,
@@ -44,11 +49,13 @@ from katcha.integrations.codex import (
 from katcha.integrations.codex import usage as codex_usage
 from katcha.orchestration.client import (
     start_channel_intelligence_refresh,
+    start_command_source_prepare_workflow,
     start_production_workflow,
     start_short_episode_editorial_workflow,
 )
 from katcha.orchestration.trend_client import start_topic_watch_schedule
 from katcha.production_models import Production
+from katcha.services.acquisition import register_discovery_run
 from katcha.services.command_actions import (
     ActionProposalSpec,
     claim_action_proposal,
@@ -74,6 +81,7 @@ from katcha.services.command_center import (
 from katcha.services.command_history import (
     archive_command_thread,
     create_command_thread,
+    finalize_command_answer,
     get_command_thread,
     list_command_threads,
     list_command_turns,
@@ -84,11 +92,17 @@ from katcha.services.command_observability import (
     command_observability_summary,
     record_command_observation,
 )
+from katcha.services.command_planning import (
+    planning_context,
+    resolve_planned_clip_ids,
+    resolve_planned_proposals,
+)
 from katcha.services.command_resources import (
     resolve_command_resources,
     resource_context_summary,
 )
 from katcha.services.discovery_trends import create_topic_watch_version
+from katcha.services.ingestion_sources import create_discovery_run_from_source
 from katcha.services.productions import (
     register_regeneration,
     register_short_production,
@@ -483,10 +497,112 @@ def _uuid_from_prompt(prompt: str) -> uuid.UUID | None:
     return None
 
 
+def _normalized_words(value: str) -> set[str]:
+    return {
+        word
+        for word in re.findall(r"[a-z0-9]+", value.casefold())
+        if len(word) >= 3
+    }
+
+
+def _matched_configured_source(
+    *,
+    channel_profile_id: uuid.UUID,
+    prompt: str,
+    source_hint: str | None,
+) -> dict[str, object] | None:
+    prompt_words = _normalized_words(prompt)
+    hint = (source_hint or "").strip()
+    hint_words = _normalized_words(hint)
+    normalized_prompt = " ".join(prompt.casefold().split())
+    normalized_hint = " ".join(hint.casefold().split())
+
+    with session_scope() as session:
+        rows = list(
+            session.scalars(
+                select(IngestionSource)
+                .where(
+                    IngestionSource.enabled.is_(True),
+                    or_(
+                        IngestionSource.channel_profile_id == channel_profile_id,
+                        IngestionSource.channel_profile_id.is_(None),
+                    ),
+                )
+                .order_by(IngestionSource.updated_at.desc(), IngestionSource.id.asc())
+            )
+        )
+        candidates = [
+            {
+                "id": str(row.id),
+                "name": row.name,
+                "source_key": row.source_key,
+                "platform": row.platform,
+                "adapter_key": row.adapter_key,
+                "adapter_version": row.adapter_version,
+                "channel_reference": str(
+                    (row.query_template or {}).get("channel_reference") or ""
+                )
+                or None,
+            }
+            for row in rows
+        ]
+
+    ranked: list[tuple[int, dict[str, object]]] = []
+    for candidate in candidates:
+        name = str(candidate.get("name") or "")
+        source_key = str(candidate.get("source_key") or "")
+        channel_reference = str(candidate.get("channel_reference") or "")
+        haystack = " ".join([name, source_key, channel_reference]).casefold()
+        source_words = _normalized_words(haystack) - {
+            "youtube", "tiktok", "instagram", "bluesky", "reddit", "discord",
+            "channel", "official", "source", "video", "videos", "trailer", "trailers",
+        }
+        score = 0
+        if normalized_hint and normalized_hint in haystack:
+            score += 100
+        if name and " ".join(name.casefold().split()) in normalized_prompt:
+            score += 80
+        overlap = source_words & (hint_words or prompt_words)
+        score += 12 * len(overlap)
+        platform = str(candidate.get("platform") or "").casefold()
+        if score and platform and platform in normalized_prompt:
+            score += 8
+        if score:
+            ranked.append((score, candidate))
+
+    ranked.sort(key=lambda item: item[0], reverse=True)
+    if not ranked:
+        return None
+    if len(ranked) > 1 and ranked[0][0] == ranked[1][0]:
+        return None
+    return ranked[0][1]
+
+
+def _source_search_query(
+    plan: CommandPlan | None,
+    evidence: list[dict[str, object]],
+) -> str:
+    if plan is not None and plan.search_query:
+        return plan.search_query.strip()
+    overview = next(
+        (item for item in evidence if item.get("kind") == "source_discovery"),
+        None,
+    )
+    terms = overview.get("suggested_terms") if isinstance(overview, dict) else None
+    if isinstance(terms, list):
+        query = " ".join(str(value).strip() for value in terms if str(value).strip())
+        if query:
+            return query[:320]
+    return ""
+
+
 def _action_specs(
     request: CommandRequest,
     intent: str,
     evidence: list[dict[str, object]],
+    *,
+    plan: CommandPlan | None = None,
+    semantic: bool = False,
 ) -> list[ActionProposalSpec]:
     specs: list[ActionProposalSpec] = []
     blueprint_key = infer_edit_blueprint_key(request.prompt)
@@ -514,8 +630,61 @@ def _action_specs(
                 break
 
     if intent == "source_discovery" and evidence:
-        overview = evidence[0]
-        if bool(overview.get("web_scout_ready")):
+        overview = next(
+            (item for item in evidence if item.get("kind") == "source_discovery"),
+            evidence[0],
+        )
+        matched_source = _matched_configured_source(
+            channel_profile_id=request.channel_profile_id,
+            prompt=request.prompt,
+            source_hint=plan.source_hint if plan is not None else None,
+        )
+        search_query = _source_search_query(plan, evidence)
+        prepare_for_production = bool(
+            (plan.prepare_for_production if plan is not None else False)
+            or (not semantic and (
+                re.search(r"\b(prepare|ready|stage|ingest)\b", request.prompt, re.I)
+                and re.search(r"\b(production|review)\b", request.prompt, re.I)
+            ))
+        )
+        if matched_source is not None and search_query:
+            source_name = str(matched_source.get("name") or "configured source")
+            specs.append(
+                ActionProposalSpec(
+                    action_type="start_source_scout",
+                    label=f"Search {source_name}",
+                    description=(
+                        f"Search the configured {source_name} source for "
+                        f"{search_query!r}"
+                        + (
+                            " and ingest matching finds into the review pipeline "
+                            "so they are ready for production qualification."
+                            if prepare_for_production
+                            else "."
+                        )
+                    ),
+                    payload={
+                        "source_id": str(matched_source["id"]),
+                        "source_name": source_name,
+                        "query_overrides": {
+                            "q": search_query,
+                            "order": "relevance",
+                            "freshness_horizon_hours": 0,
+                            "limit": 25,
+                            **({"channel_reference": matched_source["channel_reference"]}
+                               if matched_source.get("channel_reference") else {}),
+                        },
+                        "prepare_for_production": prepare_for_production,
+                        **({"media_kind": plan.media_kind} if semantic and plan else {}),
+                        "operator_request": request.prompt[:1000],
+                        "search_query": search_query,
+                    },
+                )
+            )
+        elif plan is not None and plan.source_hint:
+            # A named-source request must not become an unrestricted web search.
+            return specs
+        elif bool(overview.get("web_scout_ready")):
             platforms = [
                 str(value)
                 for value in (overview.get("requested_platforms") or [])
@@ -526,12 +695,21 @@ def _action_specs(
                 for value in (overview.get("suggested_terms") or [])
                 if str(value)
             ]
+            if semantic and plan is not None:
+                platforms = list(plan.platforms) or platforms
+                if plan.search_query:
+                    terms = [plan.search_query]
+            recurring = plan.recurring if semantic and plan else True
             specs.append(
                 ActionProposalSpec(
                     action_type="start_source_scout",
-                    label="Start autonomous source scout",
+                    label=(
+                        "Start autonomous source scout" if recurring else "Search for sources now"
+                    ),
                     description=(
-                        "Search beyond saved profiles once per hour for new "
+                        ("Search beyond saved profiles once per hour for new " if recurring
+                         else "Search beyond saved profiles once for new ")
+                        +
                         "public posts, creators, communities, and sites. "
                         "Results enter discovery and trend scoring, not publishing."
                     ),
@@ -541,6 +719,9 @@ def _action_specs(
                         "terms": terms,
                         "interval_minutes": 60,
                         "top_n": 50,
+                        "recurring": recurring,
+                        "prepare_for_production": prepare_for_production,
+                        **({"media_kind": plan.media_kind} if semantic and plan else {}),
                     },
                 )
             )
@@ -557,7 +738,7 @@ def _action_specs(
             )
         )
 
-    if intent == "best_clips" and evidence:
+    if intent == "best_clips" and evidence and not semantic:
         lead = evidence[0]
         payload: dict[str, object] = {"clip_id": str(lead["id"])}
         if blueprint_key:
@@ -619,6 +800,25 @@ def _action_specs(
     return specs[:4]
 
 
+def _inspect_command_capability(
+    intent: str,
+    request: CommandRequest,
+    prompt: str,
+    resource_evidence: list[dict[str, object]],
+) -> tuple[str, list[dict[str, object]]]:
+    if intent == "best_clips":
+        return best_clips(request.channel_profile_id, prompt)
+    if intent == "failures":
+        return failures(request.channel_profile_id)
+    if intent == "performance_advice":
+        return performance_advice(request.channel_profile_id, prompt)
+    if intent == "source_discovery":
+        return source_discovery_plan(request.channel_profile_id, prompt)
+    if intent == "resource_context":
+        return resource_context_summary(resource_evidence), resource_evidence
+    return channel_status(request.channel_profile_id)
+
+
 def _action_response(proposal: CommandActionProposal) -> CommandAction:
     return CommandAction(
         proposal_id=proposal.id,
@@ -630,7 +830,38 @@ def _action_response(proposal: CommandActionProposal) -> CommandAction:
         status=proposal.status,
         expires_at=proposal.expires_at,
         payload=dict(proposal.payload or {}),
+        requires_confirmation=proposal.status in {"proposed", "failed"},
     )
+
+
+async def _run_frozen_command_action(
+    pending: CommandActionProposal,
+    *,
+    actor: str,
+    credential_id: str | None,
+    credential_fingerprint: str | None,
+) -> tuple[CommandActionProposal, str]:
+    claim = claim_action_proposal(
+        pending.id, actor=actor, credential_id=credential_id,
+        credential_fingerprint=credential_fingerprint,
+    )
+    if not claim.should_execute:
+        pending = claim.proposal
+        return pending, f"{pending.label} is already {pending.status}; no duplicate was started."
+    try:
+        result = await _execute_proposal(claim.proposal, actor=actor)
+        pending = complete_action_proposal(
+            pending.id, result=result, credential_id=credential_id,
+            credential_fingerprint=credential_fingerprint,
+        )
+        state = "workflow started" if result.get("workflow_id") else "completed"
+        return pending, f"{pending.label}: {state}. The action record contains the server result."
+    except Exception as exc:
+        pending = fail_action_proposal(
+            pending.id, error=f"{type(exc).__name__}: {exc}",
+            credential_id=credential_id, credential_fingerprint=credential_fingerprint,
+        )
+        return pending, f"{pending.label} failed: {pending.error}"
 
 
 def _proposal_status(
@@ -659,7 +890,7 @@ def _proposal_status(
 
 
 @router.post("/command", response_model=CommandResponse)
-def command(http_request: Request, request: CommandRequest) -> CommandResponse:
+async def command(http_request: Request, request: CommandRequest) -> CommandResponse:
     require_control_scope(http_request, "ai:read")
     require_control_channel(http_request, request.channel_profile_id)
     actor = control_actor(http_request)
@@ -751,6 +982,19 @@ def command(http_request: Request, request: CommandRequest) -> CommandResponse:
         prior_turns,
         has_pending_proposal=has_pending_proposal,
     )
+    settings = get_settings()
+    live_planning = settings.ai_enabled and settings.resolved_ai_execution_mode() != "fixture"
+    context = planning_context(
+        prior_turns, prior_proposals, explicit_clip_ids, resource_evidence,
+    )
+    if live_planning:
+        # Phrase/ordinal heuristics are a labelled offline route, not live model authority.
+        resolution = replace(
+            resolution, effective_prompt=request.prompt,
+            selected_clip_ids=tuple(explicit_clip_ids), intent_hint=None,
+            inherited_from_thread=False, source_turn_id=None,
+            action_source_turn_id=None, resolution=None,
+        )
     resolved_selected_clip_ids = list(resolution.selected_clip_ids)
     resolved_request = request.model_copy(
         update={
@@ -764,7 +1008,7 @@ def command(http_request: Request, request: CommandRequest) -> CommandResponse:
     )
     if effective_resource_refs and deterministic_intent == "channel_status":
         deterministic_intent = "resource_context"
-    if deterministic_intent == "confirm_action":
+    if deterministic_intent == "confirm_action" and not live_planning:
         planning = deterministic_plan(
             "channel_status",
             "A pending proposal confirmation phrase was intercepted by the "
@@ -773,7 +1017,8 @@ def command(http_request: Request, request: CommandRequest) -> CommandResponse:
         intent = "confirm_action"
     else:
         try:
-            planning = plan_ambiguous_command(
+            planning = await run_in_threadpool(
+                plan_ambiguous_command,
                 channel_profile_id=request.channel_profile_id,
                 request_id=request_id,
                 user_prompt=request.prompt,
@@ -781,27 +1026,78 @@ def command(http_request: Request, request: CommandRequest) -> CommandResponse:
                 selected_clip_count=len(resolved_selected_clip_ids),
                 previous_intent=latest_assistant.intent if latest_assistant else None,
                 deterministic_intent=deterministic_intent,
+                context=context,
+                settings=settings,
             )
         except CommandPlanningUnavailable as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
         intent = planning.value.intent
 
+    if live_planning and planning.target.provider != "katcha":
+        try:
+            semantic_clip_ids = resolve_planned_clip_ids(planning.value, context)
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        if semantic_clip_ids:
+            resolved_selected_clip_ids = semantic_clip_ids
+            resolved_request = resolved_request.model_copy(
+                update={"selected_clip_ids": semantic_clip_ids},
+            )
+            resolution = replace(
+                resolution, selected_clip_ids=tuple(semantic_clip_ids),
+                inherited_from_thread=not bool(explicit_clip_ids),
+                resolution="Resolved media references against grounded conversation records.",
+            )
+
     reused_proposals: list[CommandActionProposal] = []
     try:
         if intent == "confirm_action":
-            reused_proposals = [
-                proposal
-                for proposal in prior_proposals
-                if proposal.source_turn_id == resolution.action_source_turn_id
-                and proposal.status in {"proposed", "failed"}
+            if live_planning:
+                reused_proposals = resolve_planned_proposals(
+                    planning.value, prior_proposals, request.channel_profile_id,
+                )
+                resolution = replace(
+                    resolution, action_source_turn_id=reused_proposals[0].source_turn_id,
+                    inherited_from_thread=True,
+                    resolution="Resolved authorization to exact frozen action records.",
+                )
+            else:
+                reused_proposals = [
+                    proposal for proposal in prior_proposals
+                    if proposal.source_turn_id == resolution.action_source_turn_id
+                    and proposal.status in {"proposed", "failed"}
+                ]
+            if reused_proposals and (live_planning or len(reused_proposals) == 1):
+                # Preflight every permission before starting any selected operation.
+                require_control_scope(http_request, "ai:write")
+                for pending in reused_proposals:
+                    required_scope = COMMAND_ACTION_SCOPES.get(pending.action_type)
+                    if required_scope is None:
+                        raise ValueError("The pending action is no longer supported")
+                    require_control_scope(http_request, required_scope)
+                completed = []
+                outcomes = []
+                for pending in reused_proposals:
+                    pending, outcome = await _run_frozen_command_action(
+                        pending, actor=actor, credential_id=credential_id,
+                        credential_fingerprint=credential_fingerprint,
+                    )
+                    completed.append(pending)
+                    outcomes.append(outcome)
+                reused_proposals = completed
+                deterministic = " ".join(outcomes)
+            elif reused_proposals:
+                deterministic = (
+                    "There is more than one pending action. Choose which action to run."
+                )
+            else:
+                deterministic = "No pending server-issued action was resolved. Nothing was started."
+            evidence = [
+                {"kind": "command_action", "id": str(proposal.id),
+                 "label": proposal.label, "status": proposal.status,
+                 "result": dict(proposal.result or {}), "error": proposal.error}
+                for proposal in reused_proposals
             ]
-            deterministic = (
-                "I did not execute anything from that chat message. "
-                "Katcha requires the exact server-issued action payload to be "
-                "reviewed and explicitly confirmed. I restored the pending "
-                "proposal below so you can verify it before execution."
-            )
-            evidence = []
         elif intent == "best_clips":
             deterministic, evidence = best_clips(
                 request.channel_profile_id,
@@ -908,19 +1204,18 @@ def command(http_request: Request, request: CommandRequest) -> CommandResponse:
         elif intent == "conversation":
             _, evidence = channel_status(request.channel_profile_id)
             deterministic = (
-                "Hi, I’m Katcha. I can find and explain clips, inspect failures, "
-                "review performance, discover sources, and prepare video proposals "
-                "for your approval. What would you like to work on?"
+                "No action has been requested or started in this conversation turn. "
+                "Stored channel state and registered capabilities are supplied as context."
             )
         elif intent == "unsupported":
-            deterministic = (
-                "I could not confidently tell what you want me to do. Could you "
-                "rephrase it or tell me which channel task you mean? I have not "
-                "started anything."
-                if planning.source == "ai_low_confidence_fallback"
-                else "I cannot do that action yet. I can inspect clips, failures, "
-                "performance, and source discovery, or prepare a confirmed "
-                "production proposal from selected clips. Nothing was started."
+            deterministic = planning.value.clarification_question or (
+                f"No supported executable plan was resolved: {planning.value.reason} "
+                "Nothing was started."
+            )
+            evidence = []
+        elif intent == "clarification":
+            deterministic = planning.value.clarification_question or (
+                "Which pending action or media item should I use? Nothing was started."
             )
             evidence = []
         else:
@@ -928,17 +1223,125 @@ def command(http_request: Request, request: CommandRequest) -> CommandResponse:
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
+    observations = {intent: list(evidence)}
+    semantic = live_planning and planning.target.provider != "katcha"
+    if intent not in {"confirm_action", "clarification", "unsupported"}:
+        for inspection in dict.fromkeys(planning.value.inspections):
+            if inspection == intent:
+                continue
+            try:
+                summary, inspected = _inspect_command_capability(
+                    inspection, resolved_request, request.prompt, resource_evidence,
+                )
+                deterministic += f"\n{summary}"
+                observations[inspection] = inspected
+                evidence.extend(inspected)
+            except ValueError as exc:
+                evidence.append({
+                    "kind": "capability_error", "id": inspection,
+                    "status": "unavailable", "error": str(exc),
+                })
+
+    planned_specs: list[ActionProposalSpec] = []
+    if semantic and planning.value.requested_actions and intent not in {
+        "confirm_action", "clarification", "unsupported",
+    }:
+        # Observe first, then let the model bind actions to returned identities.
+        # This is one bounded planning round, not a keyword-selected top-clip shortcut.
+        context = {
+            **context, "phase": "bind_actions_after_observation",
+            "initial_plan": planning.value.model_dump(mode="json"),
+            "observations": evidence[:100],
+        }
+        try:
+            bound = await run_in_threadpool(
+                plan_ambiguous_command,
+                channel_profile_id=request.channel_profile_id, request_id=request_id,
+                user_prompt=request.prompt, effective_prompt=request.prompt,
+                selected_clip_count=len(resolved_selected_clip_ids),
+                previous_intent=intent, deterministic_intent="channel_status",
+                settings=settings, context=context,
+            )
+            selected = resolve_planned_clip_ids(bound.value, context)
+        except (CommandPlanningUnavailable, ValueError) as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        if bound.value.intent in {"confirm_action", "clarification", "unsupported"}:
+            # No new mutation when the observation round cannot bind a new action.
+            intent = (
+                "clarification" if bound.value.intent == "confirm_action" else bound.value.intent
+            )
+            deterministic = bound.value.clarification_question or bound.value.reason
+        if selected:
+            resolved_selected_clip_ids = selected
+            resolved_request = resolved_request.model_copy(update={"selected_clip_ids": selected})
+            resolution = replace(
+                resolution, selected_clip_ids=tuple(selected),
+                resolution="Bound production media to observed clip records.",
+            )
+            if any(action in (bound.value.requested_actions or []) for action in {
+                "create_short_production", "create_ranked_short_episode",
+            }):
+                observations["create_content"] = [
+                    {"kind": "selection", "id": "current", "selected_clip_ids": selected},
+                ]
+                # Keep general clip inspection from adding an unrequested top-clip production.
+                observations.pop("best_clips", None)
+        planning = bound
+    if intent not in {"confirm_action", "clarification", "unsupported"}:
+        seen_specs: set[str] = set()
+        for capability, observed in observations.items():
+            for spec in _action_specs(
+                resolved_request, capability, observed, plan=planning.value, semantic=semantic,
+            ):
+                if (
+                    semantic
+                    and spec.action_type not in planning.value.requested_actions
+                ):
+                    continue
+                identity = json.dumps([spec.action_type, spec.payload], sort_keys=True, default=str)
+                if identity not in seen_specs and len(planned_specs) < 4:
+                    seen_specs.add(identity)
+                    planned_specs.append(spec)
+        if semantic and planning.value.requested_actions and not planned_specs:
+            unavailable = ", ".join(planning.value.requested_actions)
+            evidence.append({
+                "kind": "capability_gap", "id": "action_binding",
+                "requested_actions": planning.value.requested_actions,
+                "status": "not_ready",
+                "reason": "No action arguments could be bound to the observed channel state",
+            })
+            deterministic += (
+                f"\nThe requested operations ({unavailable}) could not be bound to "
+                "the observed media, sources, or channel configuration. No workflow was started."
+            )
+        if intent == "source_discovery" and planned_specs:
+            source_spec = planned_specs[0]
+            source_id = source_spec.payload.get("source_id")
+            if source_id:
+                source_name = str(
+                    source_spec.payload.get("source_name") or "configured source"
+                )
+                search_query = str(
+                    source_spec.payload.get("search_query") or ""
+                )
+                if bool(source_spec.payload.get("prepare_for_production")):
+                    deterministic = (
+                        f"I resolved {source_name} as the configured source and "
+                        f"prepared a search for {search_query!r}. The action below "
+                        "will search that exact source, move matching results into "
+                        "the review ingest pipeline, and analyze them for production "
+                        "qualification. It will not publish anything."
+                    )
+                else:
+                    deterministic = (
+                        f"I resolved {source_name} as the configured source and "
+                        f"prepared a search for {search_query!r}. The action below "
+                        "will run that exact source search."
+                    )
+
     if resolution.inherited_from_thread and resolution.resolution:
         deterministic = f"{deterministic} Context: {resolution.resolution}"
 
-    narrative = compose_grounded_answer(
-        channel_profile_id=request.channel_profile_id,
-        request_id=request_id,
-        user_prompt=request.prompt,
-        intent=intent,
-        deterministic_answer=deterministic,
-        evidence=evidence,
-    )
     try:
         if thread is None:
             thread = create_command_thread(
@@ -949,8 +1352,6 @@ def command(http_request: Request, request: CommandRequest) -> CommandResponse:
             )
 
         assistant_context: dict[str, object] = {
-            "key_points": list(narrative.value.key_points),
-            "caveats": list(narrative.value.caveats),
             "planning": {
                 "intent": intent,
                 "source": planning.source,
@@ -958,6 +1359,7 @@ def command(http_request: Request, request: CommandRequest) -> CommandResponse:
                 "model": planning.target.model,
                 "confidence": planning.value.confidence,
                 "reason": planning.value.reason,
+                "plan": planning.value.model_dump(mode="json"),
             },
         }
         if resolution.action_source_turn_id is not None:
@@ -969,9 +1371,9 @@ def command(http_request: Request, request: CommandRequest) -> CommandResponse:
             thread_id=thread.id,
             request_id=request_id,
             user_content=request.prompt,
-            assistant_content=narrative.value.answer,
+            assistant_content=deterministic,
             intent=intent,
-            narrator=f"{narrative.target.provider}/{narrative.target.model}",
+            narrator="katcha/server-state",
             evidence=evidence,
             user_context={
                 "selected_clip_ids": [
@@ -1003,19 +1405,53 @@ def command(http_request: Request, request: CommandRequest) -> CommandResponse:
         if intent == "confirm_action":
             proposals = reused_proposals
         else:
-            specs = _action_specs(resolved_request, intent, evidence)
             proposals = create_action_proposals(
                 request_id=request_id,
                 channel_profile_id=request.channel_profile_id,
-                specs=specs,
+                specs=planned_specs,
                 thread_id=thread.id,
                 source_turn_id=assistant_turn.id,
                 actor=actor,
                 credential_id=credential_id,
                 credential_fingerprint=credential_fingerprint,
             )
+            if semantic and planning.value.execution == "run" and planned_specs:
+                require_control_scope(http_request, "ai:write")
+                for proposal in proposals:
+                    require_control_scope(http_request, COMMAND_ACTION_SCOPES[proposal.action_type])
+                completed = []
+                outcomes = []
+                for proposal in proposals:
+                    proposal, outcome = await _run_frozen_command_action(
+                        proposal, actor=actor, credential_id=credential_id,
+                        credential_fingerprint=credential_fingerprint,
+                    )
+                    completed.append(proposal)
+                    outcomes.append(outcome)
+                    evidence.append({
+                        "kind": "command_action", "id": str(proposal.id),
+                        "label": proposal.label, "status": proposal.status,
+                        "result": dict(proposal.result or {}), "error": proposal.error,
+                    })
+                proposals = completed
+                deterministic = " ".join(outcomes)
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    narrative = await run_in_threadpool(
+        compose_grounded_answer,
+        channel_profile_id=request.channel_profile_id, request_id=request_id,
+        user_prompt=request.prompt, intent=intent,
+        deterministic_answer=deterministic, evidence=evidence,
+        conversation_context=context,
+    )
+    assistant_context["key_points"] = list(narrative.value.key_points)
+    assistant_context["caveats"] = list(narrative.value.caveats)
+    finalize_command_answer(
+        assistant_turn.id, content=narrative.value.answer,
+        narrator=f"{narrative.target.provider}/{narrative.target.model}",
+        evidence=evidence, context=assistant_context,
+    )
 
     record_command_observation(
         channel_profile_id=request.channel_profile_id,
@@ -1046,7 +1482,12 @@ def command(http_request: Request, request: CommandRequest) -> CommandResponse:
         channel_profile_id=request.channel_profile_id,
         intent=intent,
         answer=narrative.value.answer,
-        ai_notice=narrative.degraded_reason,
+        ai_notice=(
+            "Live language planning was unavailable; a limited saved-data route was used. "
+            "No AI-authorized action was started. " + (narrative.degraded_reason or "")
+            if planning.source == "registered_route_ai_unavailable"
+            else narrative.degraded_reason
+        ),
         key_points=narrative.value.key_points,
         caveats=narrative.value.caveats,
         evidence=evidence,
@@ -1218,6 +1659,92 @@ async def _execute_proposal(
         return {"workflow_id": workflow_id, "run_key": run_key}
 
     if proposal.action_type == "start_source_scout":
+        if payload.get("source_id"):
+            source_id = uuid.UUID(str(payload["source_id"]))
+            with session_scope() as session:
+                source = session.get(IngestionSource, source_id)
+                if source is None:
+                    raise ValueError(f"ingestion source not found: {source_id}")
+                if not source.enabled:
+                    raise ValueError("The configured source is disabled; no search was started")
+                if (
+                    source.channel_profile_id is not None
+                    and source.channel_profile_id != proposal.channel_profile_id
+                ):
+                    raise ValueError("ingestion source is outside the proposal channel")
+                source_name = source.name
+
+            raw_overrides = payload.get("query_overrides") or {}
+            if not isinstance(raw_overrides, dict):
+                raise ValueError("source search query_overrides must be an object")
+            query_overrides = {
+                str(key): value for key, value in raw_overrides.items()
+            }
+            search_query = str(
+                payload.get("search_query")
+                or query_overrides.get("q")
+                or ""
+            ).strip()
+            prepare_for_production = bool(payload.get("prepare_for_production"))
+            source_words = _normalized_words(source_name)
+            match_terms = [
+                term
+                for term in re.findall(r"[a-z0-9]+", search_query.casefold())
+                if len(term) >= 4
+                and term not in source_words
+                and term not in {
+                    "official",
+                    "trailer",
+                    "trailers",
+                    "teaser",
+                    "teasers",
+                    "video",
+                    "videos",
+                    "youtube",
+                    "channel",
+                    "from",
+                    "prepare",
+                    "production",
+                }
+            ][:8]
+            run = create_discovery_run_from_source(
+                source_id,
+                query_overrides=query_overrides,
+                idempotency_key=f"command-source:{proposal.id}",
+                metadata={
+                    "command_proposal_id": str(proposal.id),
+                    "command_request_id": str(proposal.request_id),
+                    "command_channel_profile_id": str(proposal.channel_profile_id),
+                    "command_operator_request": str(
+                        payload.get("operator_request") or ""
+                    )[:1000],
+                    "command_prepare_for_production": prepare_for_production,
+                    "command_prepare_max_candidates": 5,
+                    "command_match_terms": match_terms,
+                    "command_trailers_only": bool(re.search(
+                        r"\b(trailers?|teasers?)\b",
+                        str(payload.get("operator_request") or search_query),
+                        re.I,
+                    )) if "media_kind" not in payload else payload["media_kind"] in {
+                        "trailer", "teaser",
+                    },
+                },
+            )
+            workflow_id = f"command-source-prepare-{run.id}"
+            await start_command_source_prepare_workflow(
+                str(run.id),
+                workflow_id,
+                ingest_task_queue=get_settings().temporal_task_queue,
+            )
+            return {
+                "discovery_run_id": str(run.id),
+                "workflow_id": workflow_id,
+                "source_id": str(source_id),
+                "source_name": source_name,
+                "search_query": search_query,
+                "prepare_for_production": prepare_for_production,
+            }
+
         raw_platforms = payload.get("platforms") or []
         if not isinstance(raw_platforms, list):
             raise ValueError("source scout platforms must be a list")
@@ -1257,6 +1784,36 @@ async def _execute_proposal(
             payload.get("operator_request")
             or "Find new relevant public sources for this channel."
         )[:1000]
+
+        if payload.get("recurring") is False:
+            run = register_discovery_run(
+                adapter_key="web_scout", adapter_version="v1",
+                query={
+                    "operator_request": operator_request, "platforms": platforms,
+                    "include_terms": terms, "limit": min(top_n * 2, 100),
+                },
+                idempotency_key=f"command-scout:{proposal.id}",
+                metadata={
+                    "command_proposal_id": str(proposal.id),
+                    "command_channel_profile_id": str(proposal.channel_profile_id),
+                    "command_prepare_for_production": bool(payload.get("prepare_for_production")),
+                    "command_trailers_only": payload.get("media_kind") in {"trailer", "teaser"},
+                    "command_prepare_max_candidates": 5,
+                    "default_candidate_metadata": {
+                        "channel_profile_id": str(proposal.channel_profile_id),
+                        "source_scope": "channel",
+                    },
+                },
+            )
+            workflow_id = f"command-source-prepare-{run.id}"
+            await start_command_source_prepare_workflow(
+                str(run.id), workflow_id,
+                ingest_task_queue=get_settings().temporal_task_queue,
+            )
+            return {
+                "discovery_run_id": str(run.id), "workflow_id": workflow_id,
+                "continuous": False, "platforms": platforms, "terms": terms,
+            }
 
         watch_suffix = "-".join(platforms) if platforms else "wide-web"
         fingerprint_source = "|".join(platforms) + "::" + "|".join(terms)

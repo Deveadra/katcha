@@ -14,7 +14,10 @@ from katcha.intelligence.runtime import (
 )
 from katcha.orchestration.analysis_workflows import ClipAnalysisWorkflow
 from katcha.orchestration.brand_preview_workflows import StagedBrandPreviewWorkflow
-from katcha.orchestration.discovery_workflows import DiscoveryRunWorkflow
+from katcha.orchestration.discovery_workflows import (
+    CommandSourcePrepareWorkflow,
+    DiscoveryRunWorkflow,
+)
 from katcha.orchestration.intelligence_workflows import (
     ChannelIntelligenceRefreshWorkflow,
     ChannelIntelligenceScheduleWorkflow,
@@ -77,6 +80,25 @@ async def start_discovery_workflow(run_id: str, workflow_id: str) -> str:
         handle = await client.start_workflow(
             DiscoveryRunWorkflow.run,
             run_id,
+            id=workflow_id,
+            task_queue=DISCOVERY_TASK_QUEUE,
+        )
+    except WorkflowAlreadyStartedError:
+        handle = client.get_workflow_handle(workflow_id)
+    return handle.id
+
+
+async def start_command_source_prepare_workflow(
+    run_id: str,
+    workflow_id: str,
+    *,
+    ingest_task_queue: str,
+) -> str:
+    client = await get_temporal_client()
+    try:
+        handle = await client.start_workflow(
+            CommandSourcePrepareWorkflow.run,
+            args=[run_id, ingest_task_queue],
             id=workflow_id,
             task_queue=DISCOVERY_TASK_QUEUE,
         )

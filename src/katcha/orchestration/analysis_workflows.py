@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import timedelta
+from typing import Any
 
 from temporalio import workflow
 from temporalio.common import RetryPolicy
@@ -9,7 +10,7 @@ from temporalio.common import RetryPolicy
 @workflow.defn
 class ClipAnalysisWorkflow:
     @workflow.run
-    async def run(self, run_id: str, ai_enabled: bool) -> dict[str, object]:
+    async def run(self, run_id: str, ai_enabled: bool) -> dict[str, Any]:
         media_retry = RetryPolicy(
             initial_interval=timedelta(seconds=15),
             backoff_coefficient=2.0,
