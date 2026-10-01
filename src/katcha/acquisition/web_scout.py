@@ -461,7 +461,8 @@ class WebScoutDiscoveryAdapter:
         ):
             if plan_errors:
                 raise DiscoveryProviderError(
-                    "Subscription web research is unavailable and paid OpenAI API fallback is disabled or not configured. "
+                    "Subscription web research is unavailable and paid OpenAI API "
+                    "fallback is disabled or not configured. "
                     + " | ".join(plan_errors)[:1500],
                     kind="provider_unavailable",
                     transient=False,
