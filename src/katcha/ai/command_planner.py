@@ -357,11 +357,6 @@ def plan_ambiguous_command(
     settings: Settings | None = None,
 ) -> CommandPlanResult:
     settings = settings or get_settings()
-    if deterministic_intent == "source_discovery":
-        return deterministic_plan(
-            "source_discovery",
-            "A request to find new content sources or media matched the discovery action.",
-        )
     if settings.resolved_ai_execution_mode() == "fixture" or not settings.ai_enabled:
         return deterministic_plan(
             deterministic_intent,
