@@ -112,6 +112,8 @@ services:
     depends_on:
       migrate:
         condition: service_completed_successfully
+    environment:
+      KATCHA_INTELLIGENCE_HANDOFF_DIR: /handoff
     ports:
       - "8000:8000"
       # Codex ChatGPT-login callback. 1457 is OpenAI's registered fallback
