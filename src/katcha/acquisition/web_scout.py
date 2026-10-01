@@ -455,18 +455,21 @@ class WebScoutDiscoveryAdapter:
             except (CodexConnectionError, ChatGPTConnectionError, httpx.HTTPError) as exc:
                 plan_errors.append(f"{provider}: {exc}")
 
-        if not settings.openai_api_key:
+        if not (
+            settings.openai_api_key
+            and getattr(settings, "allow_paid_openai_fallback", False)
+        ):
             if plan_errors:
                 raise DiscoveryProviderError(
-                    "Subscription web research is unavailable and no API fallback is configured. "
+                    "Subscription web research is unavailable and paid OpenAI API fallback is disabled or not configured. "
                     + " | ".join(plan_errors)[:1500],
                     kind="provider_unavailable",
                     transient=False,
                     provider_usage={"openai.web_search": 0},
                 )
             raise ValueError(
-                "Autonomous web scouting needs a connected ChatGPT plan or "
-                "KATCHA_OPENAI_API_KEY fallback. Open Katcha Settings to connect one."
+                "Autonomous web scouting needs a connected Codex/ChatGPT plan. "
+                "Paid OpenAI API fallback is opt-in from Katcha Settings."
             )
 
         target = ModelTarget("openai", settings.web_scout_model)
