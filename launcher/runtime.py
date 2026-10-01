@@ -1271,7 +1271,7 @@ class Handler(BaseHTTPRequestHandler):
         headers_sent = False
         try:
             length = int(self.headers.get("Content-Length", "0"))
-            if not 0 <= length <= 10_000_000:
+            if not 0 <= length <= 11_000_000:
                 return self.send(413, {"error": "Request too large"})
             headers = {
                 k: v
