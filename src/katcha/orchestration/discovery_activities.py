@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import uuid
 from datetime import UTC, datetime
 
@@ -321,6 +322,20 @@ def execute_discovery_page_activity(run_id: str) -> dict[str, object]:
     }
 
 
+def _matches_command_media(
+    title: str,
+    metadata: dict[str, object],
+    match_terms: list[str],
+    *,
+    trailers_only: bool,
+) -> bool:
+    # Provider/channel metadata is provenance, not evidence of the requested topic.
+    haystack = f"{title} {metadata.get('description') or ''}".casefold()
+    if match_terms and not any(term in haystack for term in match_terms):
+        return False
+    return not trailers_only or bool(re.search(r"\b(trailer|teaser)\b", title, re.I))
+
+
 @activity.defn
 def prepare_command_discovery_candidates_activity(
     run_id: str,
@@ -347,6 +362,7 @@ def prepare_command_discovery_candidates_activity(
             for value in (metadata.get("command_match_terms") or [])
             if str(value).strip()
         ][:8]
+        trailers_only = bool(metadata.get("command_trailers_only"))
         candidate_rows = [
             (
                 candidate.id,
@@ -370,9 +386,10 @@ def prepare_command_discovery_candidates_activity(
         ]
 
     candidate_ids: list[uuid.UUID] = []
-    for candidate_id, title, creator, metadata in candidate_rows:
-        haystack = " ".join([title, creator, str(metadata)]).casefold()
-        if match_terms and not any(term in haystack for term in match_terms):
+    for candidate_id, title, _creator, metadata in candidate_rows:
+        if not _matches_command_media(
+            title, metadata, match_terms, trailers_only=trailers_only,
+        ):
             continue
         if candidate_id not in candidate_ids:
             candidate_ids.append(candidate_id)

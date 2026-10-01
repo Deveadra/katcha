@@ -8,6 +8,32 @@ from unittest.mock import AsyncMock
 import pytest
 
 from katcha.orchestration import discovery_workflows
+from katcha.orchestration.discovery_activities import _matches_command_media
+
+
+@pytest.mark.parametrize(
+    ("title", "metadata", "expected"),
+    [
+        ("VisionQuest | Official Trailer", {}, True),
+        ("VisionQuest | Official Teaser", {}, True),
+        ("VisionQuest cast interview", {}, False),
+        (
+            "Avengers | Official Trailer",
+            {"provider": "youtube", "channel_id": "visionquest"},
+            False,
+        ),
+    ],
+)
+def test_trailer_preparation_requires_requested_media(title, metadata, expected):
+    assert (
+        _matches_command_media(
+            title,
+            metadata,
+            ["visionquest"],
+            trailers_only=True,
+        )
+        is expected
+    )
 
 
 def test_launcher_registers_command_source_workflow():

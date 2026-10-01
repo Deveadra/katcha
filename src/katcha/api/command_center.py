@@ -1496,6 +1496,11 @@ async def _execute_proposal(
                     "teasers",
                     "video",
                     "videos",
+                    "youtube",
+                    "channel",
+                    "from",
+                    "prepare",
+                    "production",
                 }
             ][:8]
             run = create_discovery_run_from_source(
@@ -1512,6 +1517,11 @@ async def _execute_proposal(
                     "command_prepare_for_production": prepare_for_production,
                     "command_prepare_max_candidates": 5,
                     "command_match_terms": match_terms,
+                    "command_trailers_only": bool(re.search(
+                        r"\b(trailers?|teasers?)\b",
+                        str(payload.get("operator_request") or search_query),
+                        re.I,
+                    )),
                 },
             )
             workflow_id = f"command-source-prepare-{run.id}"
