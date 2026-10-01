@@ -99,6 +99,42 @@ def test_elevenlabs_enable_toggle_preserves_saved_channel_config(monkeypatch) ->
     assert result.enabled is False
 
 
+def test_disabled_elevenlabs_response_preserves_saved_voice_without_global_fallback(
+    monkeypatch,
+) -> None:
+    channel_id = uuid.uuid4()
+    monkeypatch.setattr(
+        integrations,
+        "get_channel_provider_setting",
+        lambda *_args: SimpleNamespace(
+            enabled=False,
+            config={
+                "voice_id": "saved-voice",
+                "voice_name": "Saved Host",
+                "model_id": "eleven_multilingual_v2",
+                "model_name": "Multilingual v2",
+                "saved_voices": [
+                    {"voice_id": "saved-voice", "name": "Saved Host"}
+                ],
+            },
+        ),
+    )
+    monkeypatch.setattr(
+        integrations,
+        "resolve_elevenlabs_voice",
+        lambda **_kwargs: (None, "eleven_flash_v2_5"),
+    )
+
+    result = integrations._channel_elevenlabs_response(channel_id)
+
+    assert result.enabled is False
+    assert result.source == "channel"
+    assert result.voice_id == "saved-voice"
+    assert result.voice_name == "Saved Host"
+    assert result.model_id == "eleven_multilingual_v2"
+    assert [voice.voice_id for voice in result.saved_voices] == ["saved-voice"]
+
+
 def test_invideo_brief_keeps_katcha_as_source_of_truth() -> None:
     instructions = _invideo_instructions(
         brand={"brand_key": "ranksnaxx"},
