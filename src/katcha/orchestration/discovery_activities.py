@@ -17,11 +17,11 @@ from katcha.config import get_settings
 from katcha.db import session_scope
 from katcha.domain import DiscoveryRunStatus
 from katcha.models import DomainEvent
+from katcha.services.acquisition import promote_discovery_candidate
 from katcha.services.command_workflow_lifecycle import (
     record_command_source_prepare_lifecycle,
     record_topic_watch_command_cycle,
 )
-from katcha.services.acquisition import promote_discovery_candidate
 from katcha.services.discovery import observe_discovery_candidate
 from katcha.services.discovery_polling import (
     mark_poll_provider_started,
