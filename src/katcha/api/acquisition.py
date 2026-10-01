@@ -43,9 +43,9 @@ from katcha.services.discovery import observe_discovery_candidate
 from katcha.services.ingestion_sources import (
     create_discovery_run_from_source,
     create_source_import_run,
+    get_ingestion_source_overview,
     get_intelligence_record,
     ingest_intelligence_batch,
-    get_ingestion_source_overview,
     list_ingestion_source_library,
     list_ingestion_sources,
     list_intelligence_records,
