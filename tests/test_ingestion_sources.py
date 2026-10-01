@@ -471,3 +471,159 @@ def test_create_only_does_not_overwrite_existing_source(source_scope):
     from katcha.acquisition_models import IngestionSource
     with source_scope() as session:
         assert session.get(IngestionSource, original.id).name == "Original"
+
+
+
+def test_source_library_search_and_pagination(source_scope) -> None:
+    from katcha.services.ingestion_sources import list_ingestion_source_library
+
+    first = upsert_ingestion_source(
+        source_key="marvel-watch",
+        name="Marvel Entertainment",
+        adapter_key="youtube",
+        adapter_version="v1",
+        platform="youtube",
+        usage_mode=SourceUsageMode.DISCOVERY_ONLY,
+    )
+    upsert_ingestion_source(
+        source_key="ign-watch",
+        name="IGN",
+        adapter_key="youtube",
+        adapter_version="v1",
+        platform="youtube",
+    )
+    upsert_ingestion_source(
+        source_key="reddit-gaming",
+        name="Gaming Reddit",
+        adapter_key="reddit",
+        adapter_version="v1",
+        platform="reddit",
+        enabled=False,
+    )
+
+    page = list_ingestion_source_library(
+        query="marvel",
+        platform="youtube",
+        limit=10,
+        offset=0,
+    )
+    assert page.total == 1
+    assert [row.id for row in page.items] == [first.id]
+
+    youtube = list_ingestion_source_library(
+        platform="youtube",
+        sort="name",
+        limit=1,
+        offset=1,
+    )
+    assert youtube.total == 2
+    assert len(youtube.items) == 1
+    assert youtube.items[0].name == "Marvel Entertainment"
+
+    paused = list_ingestion_source_library(enabled=False)
+    assert paused.total == 1
+    assert paused.items[0].source_key == "reddit-gaming"
+
+
+def test_source_overview_includes_health_and_recent_finds(source_scope) -> None:
+    from datetime import UTC, datetime
+
+    from katcha.acquisition_models import (
+        DiscoveryCandidate,
+        DiscoveryObservation,
+        DiscoveryRun,
+    )
+    from katcha.services.ingestion_sources import get_ingestion_source_overview
+
+    source = upsert_ingestion_source(
+        source_key="overview-source",
+        name="Overview Source",
+        adapter_key="manifest",
+        adapter_version="v1",
+        platform="web",
+    )
+    completed = create_discovery_run_from_source(source.id, idempotency_key="overview-complete")
+    failed = create_discovery_run_from_source(source.id, idempotency_key="overview-failed")
+
+    with source_scope() as session:
+        completed_row = session.get(DiscoveryRun, completed.id)
+        failed_row = session.get(DiscoveryRun, failed.id)
+        assert completed_row is not None and failed_row is not None
+        completed_row.status = "completed"
+        completed_row.completed_at = datetime.now(UTC)
+        failed_row.status = "failed"
+        failed_row.error = "Provider unavailable"
+        failed_row.completed_at = datetime.now(UTC)
+
+        candidate = DiscoveryCandidate(
+            adapter_key="manifest",
+            external_id="overview-item",
+            source_url="https://example.com/item",
+            canonical_url="https://example.com/item",
+            platform="web",
+            status="discovered",
+            title="Recent find",
+            creator="Example Creator",
+            provenance_confidence=0.9,
+            provenance_claims={},
+            candidate_metadata={},
+        )
+        session.add(candidate)
+        session.flush()
+        session.add(
+            DiscoveryObservation(
+                discovery_run_id=completed.id,
+                discovery_candidate_id=candidate.id,
+                external_id="overview-item",
+                observation_metadata={},
+            )
+        )
+
+    overview = get_ingestion_source_overview(source.id)
+    assert overview.run_count == 2
+    assert overview.status_counts["completed"] == 1
+    assert overview.status_counts["failed"] == 1
+    assert overview.discovery_count == 1
+    assert overview.unique_candidate_count == 1
+    assert overview.recent_runs[0].status in {"completed", "failed"}
+    assert overview.recent_finds[0].candidate.title == "Recent find"
+
+
+def test_youtube_source_without_profile_connection_does_not_serialize_none(
+    source_scope,
+) -> None:
+    from katcha.acquisition_models import DiscoveryRun
+    from katcha.intelligence_models import ChannelProfile
+
+    with source_scope() as session:
+        profile = ChannelProfile(
+            name="No OAuth channel",
+            slug="no-oauth-channel",
+            status="active",
+            profile_metadata={"channel_title": "No OAuth Channel"},
+            goals={},
+            brand_profile={},
+            voice_profile={},
+            editorial_policy={},
+            automation_policy={},
+            youtube_connection_id=None,
+        )
+        session.add(profile)
+        session.flush()
+        profile_id = profile.id
+
+    source = upsert_ingestion_source(
+        source_key="youtube-no-oauth",
+        name="YouTube no OAuth",
+        adapter_key="youtube",
+        adapter_version="v1",
+        platform="youtube",
+        channel_profile_id=profile_id,
+        query_template={"q": "trailers"},
+    )
+    run = create_discovery_run_from_source(source.id, idempotency_key="youtube-no-oauth")
+
+    with source_scope() as session:
+        row = session.get(DiscoveryRun, run.id)
+        assert row is not None
+        assert "youtube_connection_id" not in row.query
