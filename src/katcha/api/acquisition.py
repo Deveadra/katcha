@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime
 from decimal import Decimal
 
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, File, HTTPException, Query, UploadFile, status
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import and_, func, select
 
@@ -20,6 +20,10 @@ from katcha.acquisition_models import (
     RightsEvidence,
 )
 from katcha.db import session_scope
+from katcha.intelligence_ingest_contract import (
+    IngestIntelligenceBatchRequest,
+    IntelligenceRecordInputRequest,
+)
 from katcha.domain import (
     AudioRightsStatus,
     DiscoveryRunStatus,
@@ -40,6 +44,14 @@ from katcha.services.acquisition import (
     register_discovery_run,
 )
 from katcha.services.discovery import observe_discovery_candidate
+from katcha.services.intelligence_handoff import (
+    HandoffInboxItem,
+    handoff_inbox_summary,
+    list_handoff_inbox,
+    process_handoff_file,
+    process_handoff_inbox,
+    submit_handoff_file,
+)
 from katcha.services.ingestion_sources import (
     create_discovery_run_from_source,
     create_source_import_run,
@@ -166,30 +178,6 @@ class SourceImportRunResponse(BaseModel):
     item_count: int
 
 
-class IntelligenceRecordInputRequest(BaseModel):
-    record_kind: str = Field(min_length=1, max_length=64)
-    record_key: str = Field(min_length=1, max_length=255)
-    title: str | None = Field(default=None, max_length=2000)
-    summary: str | None = Field(default=None, max_length=8000)
-    source_url: str | None = Field(default=None, max_length=4000)
-    platform: str | None = Field(default=None, max_length=32)
-    status: str = Field(default="active", min_length=1, max_length=32)
-    tags: list[str] = Field(default_factory=list, max_length=50)
-    payload: dict[str, object] = Field(default_factory=dict)
-    provenance: dict[str, object] = Field(default_factory=dict)
-    observed_at: datetime | None = None
-    event_time: datetime | None = None
-
-
-class IngestIntelligenceBatchRequest(BaseModel):
-    channel_profile_id: uuid.UUID
-    batch_key: str = Field(min_length=1, max_length=160)
-    producer: str = Field(default="orion", min_length=1, max_length=128)
-    source_type: str = Field(default="assistant", min_length=1, max_length=64)
-    batch_metadata: dict[str, object] = Field(default_factory=dict)
-    records: list[IntelligenceRecordInputRequest] = Field(min_length=1, max_length=500)
-
-
 class IntelligenceRecordResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -225,6 +213,30 @@ class IngestIntelligenceBatchResponse(BaseModel):
     updated_count: int
     replayed: bool
     records: list[IntelligenceRecordResponse]
+
+
+class HandoffInboxItemResponse(BaseModel):
+    filename: str
+    status: str
+    size_bytes: int
+    modified_at: datetime
+    channel_profile_id: str | None = None
+    batch_key: str | None = None
+    record_count: int | None = None
+    error: str | None = None
+    receipt: dict[str, object] | None = None
+
+
+class HandoffInboxResponse(BaseModel):
+    incoming_path: str
+    max_file_bytes: int
+    counts: dict[str, int]
+    items: list[HandoffInboxItemResponse]
+
+
+class ProcessHandoffInboxRequest(BaseModel):
+    filenames: list[str] = Field(default_factory=list, max_length=100)
+    limit: int = Field(default=50, ge=1, le=500)
 
 
 class ExecuteDiscoveryRunResponse(BaseModel):
@@ -607,6 +619,80 @@ def create_intelligence_ingest_batch(
             for row in result.records
         ],
     )
+
+
+def _handoff_response(item: HandoffInboxItem) -> HandoffInboxItemResponse:
+    return HandoffInboxItemResponse(
+        filename=item.filename,
+        status=item.status,
+        size_bytes=item.size_bytes,
+        modified_at=item.modified_at,
+        channel_profile_id=item.channel_profile_id,
+        batch_key=item.batch_key,
+        record_count=item.record_count,
+        error=item.error,
+        receipt=item.receipt,
+    )
+
+
+@router.get(
+    "/intelligence-ingest/inbox",
+    response_model=HandoffInboxResponse,
+)
+def get_intelligence_handoff_inbox(
+    limit: int = Query(default=100, ge=1, le=500),
+) -> HandoffInboxResponse:
+    try:
+        summary = handoff_inbox_summary()
+        items = list_handoff_inbox(limit=limit)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return HandoffInboxResponse(
+        incoming_path="handoff/incoming",
+        max_file_bytes=int(summary["max_file_bytes"]),
+        counts={str(key): int(value) for key, value in summary["counts"].items()},
+        items=[_handoff_response(item) for item in items],
+    )
+
+
+@router.post(
+    "/intelligence-ingest/inbox/files",
+    response_model=HandoffInboxItemResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def upload_intelligence_handoff_file(
+    file: UploadFile = File(...),
+    process: bool = Query(default=True),
+) -> HandoffInboxItemResponse:
+    filename = str(file.filename or "").strip()
+    content = await file.read(10 * 1024 * 1024 + 1)
+    try:
+        item = submit_handoff_file(filename, content)
+        if process and item.status == "incoming":
+            item = process_handoff_file(item.filename)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return _handoff_response(item)
+
+
+@router.post(
+    "/intelligence-ingest/inbox/process",
+    response_model=list[HandoffInboxItemResponse],
+)
+def process_intelligence_handoff_files(
+    request: ProcessHandoffInboxRequest,
+) -> list[HandoffInboxItemResponse]:
+    try:
+        if request.filenames:
+            items = [
+                process_handoff_file(filename)
+                for filename in dict.fromkeys(request.filenames)
+            ]
+        else:
+            items = process_handoff_inbox(limit=request.limit)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return [_handoff_response(item) for item in items]
 
 
 @router.get(
