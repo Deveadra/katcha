@@ -332,16 +332,18 @@ def active_connection() -> CodexConnection | None:
 
 
 def _refresh(connection_id: uuid.UUID, settings: Settings) -> CodexConnection:
-    with _refresh_lock:
-        with session_scope() as session:
-            row = session.get(CodexConnection, connection_id)
-            if row is None or not row.active:
-                raise CodexConnectionError("Codex connection is no longer active")
-            if row.access_token_expires_at > datetime.now(UTC) + timedelta(minutes=5):
-                session.expunge(row)
-                return row
-            refresh_token = decrypt_secret(row.encrypted_refresh_token, settings)
-
+    # Several API/worker processes share rotating OAuth credentials. Hold a row
+    # lock through refresh so a second process cannot reuse the old refresh token.
+    with _refresh_lock, session_scope() as session:
+        row = session.scalar(
+            select(CodexConnection).where(CodexConnection.id == connection_id).with_for_update()
+        )
+        if row is None or not row.active:
+            raise CodexConnectionError("Codex connection is no longer active")
+        if row.access_token_expires_at > datetime.now(UTC) + timedelta(minutes=5):
+            session.expunge(row)
+            return row
+        refresh_token = decrypt_secret(row.encrypted_refresh_token, settings)
         response = _request(
             "post",
             TOKEN_URL,
@@ -360,17 +362,13 @@ def _refresh(connection_id: uuid.UUID, settings: Settings) -> CodexConnection:
             raise CodexConnectionError("Codex token refresh returned no access token")
         replacement = str(payload.get("refresh_token") or refresh_token)
         expires_in = max(60, int(payload.get("expires_in") or 3600))
-        with session_scope() as session:
-            row = session.get(CodexConnection, connection_id)
-            if row is None or not row.active:
-                raise CodexConnectionError("Codex connection is no longer active")
-            row.encrypted_access_token = encrypt_secret(access_token, settings)
-            row.encrypted_refresh_token = encrypt_secret(replacement, settings)
-            row.access_token_expires_at = datetime.now(UTC) + timedelta(seconds=expires_in)
-            session.flush()
-            session.refresh(row)
-            session.expunge(row)
-            return row
+        row.encrypted_access_token = encrypt_secret(access_token, settings)
+        row.encrypted_refresh_token = encrypt_secret(replacement, settings)
+        row.access_token_expires_at = datetime.now(UTC) + timedelta(seconds=expires_in)
+        session.flush()
+        session.refresh(row)
+        session.expunge(row)
+        return row
 
 
 def active_session(settings: Settings | None = None) -> CodexSession | None:
@@ -670,10 +668,15 @@ def test_connection(settings: Settings | None = None) -> dict[str, object]:
     session = active_session(settings)
     if session is None:
         raise CodexConnectionError("No Codex ChatGPT account is connected")
-    models = list_models(settings)
     result = _stream(session, "Reply with exactly: KATCHA_CONNECTED")
     if "KATCHA_CONNECTED" not in result.text:
         raise CodexConnectionError("Codex live inference returned an unexpected response")
+    try:
+        models = list_models(settings)
+        models_error = None
+    except (CodexConnectionError, httpx.HTTPError, ValueError):
+        models = []
+        models_error = "Inference succeeded; the model catalog is temporarily unavailable."
     try:
         usage_result = usage(settings)
         usage_error = None
@@ -683,6 +686,7 @@ def test_connection(settings: Settings | None = None) -> dict[str, object]:
     return {
         "ok": True,
         "model_count": len(models),
+        "models_error": models_error,
         "selected_model": session.model,
         "email": session.email,
         "plan_type": session.plan_type,

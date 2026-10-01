@@ -70,10 +70,11 @@ function resetLabel(epochSeconds) {
 
 function renderCodexWindow(prefix, row, fallbackLabel) {
     const window = row || {};
-    const percent = Math.max(0, Math.min(100, Number(window.used_percent || 0)));
+    const known = typeof window.used_percent === "number" && Number.isFinite(window.used_percent);
+    const percent = known ? Math.max(0, Math.min(100, window.used_percent)) : 0;
     $(prefix + "-label").textContent =
         usageWindowLabel(window.window_minutes, fallbackLabel);
-    $(prefix + "-value").textContent = percent.toFixed(percent % 1 ? 1 : 0) + "% used";
+    $(prefix + "-value").textContent = known ? percent.toFixed(percent % 1 ? 1 : 0) + "% used" : "Unavailable";
     $(prefix + "-bar").style.width = percent + "%";
     $(prefix + "-reset").textContent = resetLabel(window.resets_at);
 }
@@ -120,6 +121,11 @@ async function loadCodex() {
         api("/v1/integrations/codex/models"),
         loadCodexUsage(),
     ]);
+    if (results[1].status === "rejected") {
+        renderCodexWindow("codex-primary", null, "5h limit");
+        renderCodexWindow("codex-secondary", null, "Weekly limit");
+        $("codex-credits").textContent = "Usage unavailable. Test response can still verify AI.";
+    }
     if (results[0].status === "fulfilled") {
         const models = results[0].value;
         $("codex-model").replaceChildren(

@@ -199,7 +199,8 @@ def test_codex_rejects_partial_or_failed_answers(monkeypatch, terminal):
         codex.invoke_json(prompt="hello", schema_name="answer", schema={})
 
 
-def test_successful_inference_is_not_failed_by_usage_outage(monkeypatch):
+@pytest.mark.parametrize("catalog_outage", [False, True])
+def test_successful_inference_is_not_failed_by_usage_outage(monkeypatch, catalog_outage):
     monkeypatch.setattr(codex, "active_session", lambda settings=None: _session())
     monkeypatch.setattr(codex, "list_models", lambda settings=None: [])
     monkeypatch.setattr(
@@ -217,6 +218,12 @@ def test_successful_inference_is_not_failed_by_usage_outage(monkeypatch):
         "usage",
         lambda settings=None: (_ for _ in ()).throw(httpx.ConnectError("fixture outage")),
     )
+    if catalog_outage:
+        monkeypatch.setattr(
+            codex,
+            "list_models",
+            lambda settings=None: (_ for _ in ()).throw(httpx.ConnectError("catalog outage")),
+        )
     assert codex.test_connection()["ok"] is True
     assert codex.test_connection()["usage_error"]
 
@@ -231,3 +238,62 @@ def test_codex_network_failure_has_connection_error_not_quota_error(monkeypatch,
     monkeypatch.setattr(codex.httpx, "get", fail)
     with pytest.raises(codex.CodexConnectionError, match="could not reach the provider"):
         operation()
+
+
+def test_refresh_serializes_rotating_tokens_across_workers(monkeypatch):
+    """Exercise the database lock with the process-local mutex deliberately absent."""
+    import os
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+    from contextlib import nullcontext
+    from datetime import UTC, datetime, timedelta
+
+    from sqlalchemy import delete
+
+    from katcha.codex_models import CodexConnection
+    from katcha.db import session_scope
+
+    if not os.environ.get("GITHUB_ACTIONS"):
+        pytest.skip("PostgreSQL concurrency acceptance runs in CI")
+    connection_id = uuid.uuid4()
+    with session_scope() as session:
+        session.add(
+            CodexConnection(
+                id=connection_id,
+                subject=f"fixture-{connection_id}",
+                active=True,
+                encrypted_access_token="old-access",
+                encrypted_refresh_token="old-refresh",
+                access_token_expires_at=datetime.now(UTC) - timedelta(minutes=1),
+            )
+        )
+    entered = threading.Event()
+    release = threading.Event()
+    calls = []
+    monkeypatch.setattr(codex, "_refresh_lock", nullcontext())
+    monkeypatch.setattr(codex, "decrypt_secret", lambda value, settings: value)
+    monkeypatch.setattr(codex, "encrypt_secret", lambda value, settings: value)
+
+    def refresh(url, **kwargs):
+        calls.append(kwargs["data"]["refresh_token"])
+        entered.set()
+        assert release.wait(5)
+        return httpx.Response(
+            200,
+            json={"access_token": "new-access", "refresh_token": "new-refresh", "expires_in": 3600},
+        )
+
+    monkeypatch.setattr(codex.httpx, "post", refresh)
+    try:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            first = pool.submit(codex._refresh, connection_id, _settings())
+            assert entered.wait(5)
+            second = pool.submit(codex._refresh, connection_id, _settings())
+            release.set()
+            assert first.result(timeout=10).encrypted_access_token == "new-access"
+            assert second.result(timeout=10).encrypted_refresh_token == "new-refresh"
+        assert calls == ["old-refresh"]
+    finally:
+        release.set()
+        with session_scope() as session:
+            session.execute(delete(CodexConnection).where(CodexConnection.id == connection_id))
