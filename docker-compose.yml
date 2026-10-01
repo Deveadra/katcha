@@ -105,6 +105,8 @@ services:
 
   api:
     image: katcha-control:local
+    group_add:
+      - "${KATCHA_HOST_GID:-1000}"
     build:
       context: .
       dockerfile: Dockerfile.control
