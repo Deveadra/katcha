@@ -162,34 +162,69 @@ installSettingsShortcut();
     const form = document.getElementById('connect-form') || document.getElementById('connect');
     const connection = document.getElementById('connection') || document.getElementById('connection-state');
     const status = document.getElementById('message') || document.getElementById('status');
+    let workspaceConnected = false;
+
+    const renderRuntimeState = (runtime) => {
+        if (!connection) return;
+        connection.classList.toggle('online', Boolean(runtime.workspace_ready));
+        connection.classList.toggle('degraded', runtime.workspace_ready && runtime.phase === 'degraded');
+
+        if (!runtime.workspace_ready) {
+            connection.textContent = runtime.desired_running ? 'WARMING' : 'OFFLINE';
+            connection.title = runtime.desired_running
+                ? 'The local launcher is available, but the Katcha API is not ready yet.'
+                : 'Katcha services are not running.';
+            return;
+        }
+        if (runtime.phase === 'degraded') {
+            connection.textContent = 'CONNECTED · DEGRADED';
+            connection.title = 'The Katcha API is connected, but one or more background services need attention.';
+            return;
+        }
+        if (runtime.phase === 'starting' || runtime.phase === 'reconnecting') {
+            connection.textContent = 'CONNECTED · WARMING';
+            connection.title = 'The Katcha API is connected while background services finish starting.';
+            return;
+        }
+        connection.textContent = 'CONNECTED';
+        connection.title = 'The Katcha API and required background services are healthy.';
+    };
+
     for (;;) {
         try {
             const response = await fetch('/runtime/status', {cache: 'no-store'});
             if (!response.ok) throw new Error('launcher unavailable');
             const runtime = await response.json();
             if (!runtime.session) return;
-            if (runtime.workspace_ready) {
+            renderRuntimeState(runtime);
+
+            if (runtime.workspace_ready && !workspaceConnected) {
+                workspaceConnected = true;
                 if (form) {
                     form.hidden = true;
                     form.style.display = 'none';
                     form.requestSubmit();
                 }
-                return;
-            }
-            if (connection) {
-                connection.textContent = 'WARMING';
-                connection.classList.remove('online');
-            }
-            if (status) {
-                status.textContent = runtime.desired_running
-                    ? 'Katcha is open. Core services are warming in the background…'
-                    : 'Katcha is open. Start services from the launch console when ready.';
+            } else if (!runtime.workspace_ready) {
+                workspaceConnected = false;
+                if (status && !status.textContent.trim()) {
+                    status.textContent = runtime.desired_running
+                        ? 'Katcha is open. Core services are warming in the background…'
+                        : 'Katcha is open. Start services from the launch console when ready.';
+                }
             }
         } catch {
-            if (connection) connection.textContent = 'RECONNECTING';
-            if (status) status.textContent = 'Reconnecting to the local Katcha supervisor…';
+            workspaceConnected = false;
+            if (connection) {
+                connection.textContent = 'RECONNECTING';
+                connection.classList.remove('online', 'degraded');
+                connection.title = 'The browser lost contact with the local Katcha supervisor.';
+            }
+            if (status && !status.textContent.trim()) {
+                status.textContent = 'Reconnecting to the local Katcha supervisor…';
+            }
         }
-        await new Promise((resolve) => setTimeout(resolve, 1000));
+        await new Promise((resolve) => setTimeout(resolve, 3000));
     }
 })();
 if (location.port === '8765') {
