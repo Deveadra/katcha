@@ -60,7 +60,13 @@ def _safe_filename(filename: str) -> str:
     return value
 
 
+def _is_regular_handoff_file(path: Path) -> bool:
+    return path.is_file() and not path.is_symlink()
+
+
 def _read_limited(path: Path) -> bytes:
+    if not _is_regular_handoff_file(path):
+        raise ValueError("handoff path must be a regular file")
     size = path.stat().st_size
     if size < 1:
         raise ValueError("handoff file is empty")
@@ -134,7 +140,7 @@ def list_handoff_inbox(
     items: list[HandoffInboxItem] = []
     for status in ("incoming", "failed", "processed"):
         for path in paths[status].glob("*.json"):
-            if path.is_file():
+            if _is_regular_handoff_file(path):
                 items.append(_file_item(path, status, paths))
     items.sort(key=lambda item: (item.modified_at, item.filename), reverse=True)
     return items[:limit]
@@ -301,7 +307,11 @@ def process_handoff_inbox(
         raise ValueError("limit must be between 1 and 500")
     paths = _paths(root)
     pending = sorted(
-        (path for path in paths["incoming"].glob("*.json") if path.is_file()),
+        (
+            path
+            for path in paths["incoming"].glob("*.json")
+            if _is_regular_handoff_file(path)
+        ),
         key=lambda path: (path.stat().st_mtime, path.name),
     )
     return [
@@ -313,7 +323,11 @@ def process_handoff_inbox(
 def handoff_inbox_summary(*, root: Path | None = None) -> dict[str, Any]:
     paths = _paths(root)
     counts = {
-        status: sum(1 for path in paths[status].glob("*.json") if path.is_file())
+        status: sum(
+            1
+            for path in paths[status].glob("*.json")
+            if _is_regular_handoff_file(path)
+        )
         for status in ("incoming", "processed", "failed")
     }
     return {
