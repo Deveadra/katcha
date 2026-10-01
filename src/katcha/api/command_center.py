@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import re
 import uuid
 from datetime import datetime
 from importlib.util import find_spec
@@ -14,6 +15,7 @@ from sqlalchemy import select
 from katcha.acquisition_models import TopicWatchVersion
 from katcha.ai.command_center import compose_grounded_answer
 from katcha.ai.command_planner import (
+    CommandPlan,
     CommandPlanningUnavailable,
     deterministic_plan,
     plan_ambiguous_command,
@@ -483,10 +485,90 @@ def _uuid_from_prompt(prompt: str) -> uuid.UUID | None:
     return None
 
 
+def _normalized_words(value: str) -> set[str]:
+    return {
+        word
+        for word in re.findall(r"[a-z0-9]+", value.casefold())
+        if len(word) >= 3
+    }
+
+
+def _matched_configured_source(
+    *,
+    prompt: str,
+    source_hint: str | None,
+    evidence: list[dict[str, object]],
+) -> dict[str, object] | None:
+    overview = next(
+        (item for item in evidence if item.get("kind") == "source_discovery"),
+        None,
+    )
+    if not isinstance(overview, dict):
+        return None
+    raw_sources = overview.get("configured_sources")
+    if not isinstance(raw_sources, list):
+        return None
+
+    prompt_words = _normalized_words(prompt)
+    hint = (source_hint or "").strip()
+    hint_words = _normalized_words(hint)
+    normalized_prompt = " ".join(prompt.casefold().split())
+    normalized_hint = " ".join(hint.casefold().split())
+    ranked: list[tuple[int, dict[str, object]]] = []
+
+    for raw in raw_sources:
+        if not isinstance(raw, dict) or not raw.get("enabled") or not raw.get("id"):
+            continue
+        name = str(raw.get("name") or "")
+        source_key = str(raw.get("source_key") or "")
+        channel_reference = str(raw.get("channel_reference") or "")
+        haystack = " ".join([name, source_key, channel_reference]).casefold()
+        source_words = _normalized_words(haystack)
+        score = 0
+        if normalized_hint and normalized_hint in haystack:
+            score += 100
+        if name and " ".join(name.casefold().split()) in normalized_prompt:
+            score += 80
+        overlap = source_words & (hint_words or prompt_words)
+        score += 12 * len(overlap)
+        platform = str(raw.get("platform") or "").casefold()
+        if platform and platform in normalized_prompt:
+            score += 8
+        if score:
+            ranked.append((score, raw))
+
+    ranked.sort(key=lambda item: item[0], reverse=True)
+    if not ranked:
+        return None
+    if len(ranked) > 1 and ranked[0][0] == ranked[1][0]:
+        return None
+    return ranked[0][1]
+
+
+def _source_search_query(
+    plan: CommandPlan | None,
+    evidence: list[dict[str, object]],
+) -> str:
+    if plan is not None and plan.search_query:
+        return plan.search_query.strip()
+    overview = next(
+        (item for item in evidence if item.get("kind") == "source_discovery"),
+        None,
+    )
+    terms = overview.get("suggested_terms") if isinstance(overview, dict) else None
+    if isinstance(terms, list):
+        query = " ".join(str(value).strip() for value in terms if str(value).strip())
+        if query:
+            return query[:320]
+    return ""
+
+
 def _action_specs(
     request: CommandRequest,
     intent: str,
     evidence: list[dict[str, object]],
+    *,
+    plan: CommandPlan | None = None,
 ) -> list[ActionProposalSpec]:
     specs: list[ActionProposalSpec] = []
     blueprint_key = infer_edit_blueprint_key(request.prompt)
@@ -514,8 +596,54 @@ def _action_specs(
                 break
 
     if intent == "source_discovery" and evidence:
-        overview = evidence[0]
-        if bool(overview.get("web_scout_ready")):
+        overview = next(
+            (item for item in evidence if item.get("kind") == "source_discovery"),
+            evidence[0],
+        )
+        matched_source = _matched_configured_source(
+            prompt=request.prompt,
+            source_hint=plan.source_hint if plan is not None else None,
+            evidence=evidence,
+        )
+        search_query = _source_search_query(plan, evidence)
+        prepare_for_production = bool(
+            (plan.prepare_for_production if plan is not None else False)
+            or (
+                re.search(r"\b(prepare|ready|stage|ingest)\b", request.prompt, re.I)
+                and re.search(r"\b(production|review)\b", request.prompt, re.I)
+            )
+        )
+        if matched_source is not None and search_query:
+            source_name = str(matched_source.get("name") or "configured source")
+            specs.append(
+                ActionProposalSpec(
+                    action_type="start_source_scout",
+                    label=f"Search {source_name}",
+                    description=(
+                        f"Search the configured {source_name} source for "
+                        f"{search_query!r}"
+                        + (
+                            " and ingest matching finds into the review pipeline "
+                            "so they are ready for production qualification."
+                            if prepare_for_production
+                            else "."
+                        )
+                    ),
+                    payload={
+                        "source_id": str(matched_source["id"]),
+                        "source_name": source_name,
+                        "query_overrides": {
+                            "q": search_query,
+                            "order": "relevance",
+                            "limit": 25,
+                        },
+                        "prepare_for_production": prepare_for_production,
+                        "operator_request": request.prompt[:1000],
+                        "search_query": search_query,
+                    },
+                )
+            )
+        elif bool(overview.get("web_scout_ready")):
             platforms = [
                 str(value)
                 for value in (overview.get("requested_platforms") or [])
