@@ -127,6 +127,40 @@ def test_channel_youtube_source_freezes_profile_connection(source_scope) -> None
     assert run.query["youtube_connection_id"] == str(connection_id)
 
 
+def test_channel_youtube_source_without_profile_connection_uses_provider_fallback(
+    source_scope,
+) -> None:
+    import uuid
+
+    from katcha.intelligence_models import ChannelProfile
+
+    profile_id = uuid.uuid4()
+    with source_scope() as session:
+        session.add(
+            ChannelProfile(
+                id=profile_id,
+                youtube_connection_id=None,
+                status="active",
+                timezone="UTC",
+            )
+        )
+
+    source = upsert_ingestion_source(
+        source_key="youtube-channel-watch-provider-fallback",
+        name="Marvel Entertainment",
+        adapter_key="youtube",
+        adapter_version="v1",
+        platform="youtube",
+        channel_profile_id=profile_id,
+        query_template={"channel_reference": "@marvel", "limit": 25},
+    )
+
+    run = create_discovery_run_from_source(source.id)
+
+    assert run.query["channel_reference"] == "@marvel"
+    assert "youtube_connection_id" not in run.query
+
+
 def test_ingestion_source_metadata_flows_to_candidates(source_scope) -> None:
     source = upsert_ingestion_source(
         source_key="rank-snaxx-ig-watch",
