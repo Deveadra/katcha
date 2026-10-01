@@ -606,6 +606,7 @@ function renderProviders() {
     toggle.setAttribute("aria-expanded", enabled ? "true" : "false");
     $("elevenlabs-enabled-label").textContent = enabled ? "Enabled" : "Disabled";
     panel.setAttribute("aria-hidden", enabled ? "false" : "true");
+    panel.inert = !enabled;
     card.classList.toggle("is-enabled", enabled);
 
     $("elevenlabs-state").textContent = connected
@@ -686,7 +687,14 @@ function updateProviderActionState() {
 }
 
 async function setElevenLabsEnabled(enabled) {
+    const previousConfig = state.elevenlabsConfig
+        ? { ...state.elevenlabsConfig }
+        : null;
     state.voiceToggleBusy = true;
+    state.elevenlabsConfig = {
+        ...(state.elevenlabsConfig || {}),
+        enabled,
+    };
     renderProviders();
     setStatus((enabled ? "Enabling" : "Disabling") + " voice for this channel…");
     try {
@@ -712,6 +720,7 @@ async function setElevenLabsEnabled(enabled) {
             "success",
         );
     } catch (error) {
+        state.elevenlabsConfig = previousConfig;
         setStatus(error.message, "error");
     } finally {
         state.voiceToggleBusy = false;
