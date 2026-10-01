@@ -371,6 +371,7 @@ def prepare_command_discovery_candidates_activity(
                     "candidate_id": str(candidate_id),
                     "source_id": str(source.id),
                     "workflow_id": source.workflow_id,
+                    "clip_id": str(source.clip_id) if source.clip_id else None,
                 }
             )
         except ValueError as exc:
