@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 import uuid
 from datetime import UTC, datetime
+from typing import Any
 
 from sqlalchemy import select
 from temporalio import activity
@@ -70,7 +71,7 @@ def record_command_source_prepare_lifecycle_activity(
     run_id: str,
     workflow_id: str,
     state: str,
-    detail: dict[str, object] | None = None,
+    detail: dict[str, Any] | None = None,
 ) -> dict[str, object]:
     recorded = record_command_source_prepare_lifecycle(
         discovery_run_id=uuid.UUID(run_id),
@@ -92,7 +93,7 @@ def record_topic_watch_command_cycle_activity(
     workflow_id: str,
     cycle_key: str,
     state: str,
-    detail: dict[str, object] | None = None,
+    detail: dict[str, Any] | None = None,
 ) -> dict[str, object]:
     recorded = record_topic_watch_command_cycle(
         topic_watch_id=uuid.UUID(topic_watch_id),

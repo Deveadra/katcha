@@ -49,3 +49,21 @@ def test_workflow_result_hints_decode_actual_json_payloads() -> None:
                 assert value_to_type(result_hint, payload) == payload
     assert "CommandSourcePrepareWorkflow" in checked
     assert "DiscoveryRunWorkflow" in checked
+
+
+def test_discovery_lifecycle_arguments_decode_heterogeneous_details() -> None:
+    from temporalio import activity
+    from temporalio.converter import value_to_type
+
+    from katcha.orchestration.discovery_activities import (
+        record_command_source_prepare_lifecycle_activity,
+        record_topic_watch_command_cycle_activity,
+    )
+
+    detail = {"count": 2, "error": None, "items": [{"success": True}]}
+    for fn in [
+        record_command_source_prepare_lifecycle_activity,
+        record_topic_watch_command_cycle_activity,
+    ]:
+        hints = activity._Definition.must_from_callable(fn).arg_types
+        assert value_to_type(hints[-1], detail) == detail
