@@ -11,11 +11,11 @@ from katcha.acquisition.runtime import DISCOVERY_TASK_QUEUE
 from katcha.config import get_settings
 from katcha.orchestration.discovery_activities import (
     execute_discovery_page_activity,
-    prepare_command_discovery_candidates_activity,
-    record_command_source_prepare_lifecycle_activity,
     finalize_topic_watch_execution_activity,
     mark_discovery_run_failed,
+    prepare_command_discovery_candidates_activity,
     prepare_topic_watch_execution_activity,
+    record_command_source_prepare_lifecycle_activity,
     record_topic_watch_command_cycle_activity,
 )
 from katcha.orchestration.discovery_workflows import (
