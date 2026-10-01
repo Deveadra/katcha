@@ -882,7 +882,7 @@ function renderAll() {
 }
 
 function renderChannelHeader() {
-    const channel = activeChannel();
+    const channel = state.summary?.profile || activeChannel();
     const connection = activeConnection();
     const title = channelName(channel);
     $("channel-avatar").textContent = title
