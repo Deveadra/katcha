@@ -4,7 +4,7 @@ import hashlib
 import json
 import os
 import re
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -337,8 +337,3 @@ def handoff_inbox_summary(*, root: Path | None = None) -> dict[str, Any]:
         "max_file_bytes": _MAX_HANDOFF_BYTES,
     }
 
-
-def item_as_dict(item: HandoffInboxItem) -> dict[str, Any]:
-    value = asdict(item)
-    value["modified_at"] = item.modified_at.isoformat()
-    return value
