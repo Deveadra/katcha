@@ -264,6 +264,9 @@ def ai_runtime() -> dict[str, object]:
     return {
         "execution_mode": mode,
         "live_routing_mode": settings.ai_live_routing_mode,
+        "conversation_provider": settings.conversation_provider,
+        "agent_provider": settings.agent_provider,
+        "paid_openai_fallback_enabled": settings.allow_paid_openai_fallback,
         "external_provider_calls_enabled": mode == "live",
     }
 

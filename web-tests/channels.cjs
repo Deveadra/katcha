@@ -732,7 +732,10 @@ const analytics = [
     const statusCallsBeforeDisable = requests.filter(
         (request) => request.path === "/v1/integrations/elevenlabs/status",
     ).length;
-    await page.locator("#elevenlabs-enabled").uncheck();
+    await page.locator('label[for="elevenlabs-enabled"]').click();
+    await page.waitForFunction(
+        () => document.getElementById("elevenlabs-enabled").checked === false,
+    );
     await page.getByText(/Voice disabled for Fixture Gaming/).waitFor();
     assert.equal(await page.locator("#elevenlabs-enabled-label").innerText(), "Disabled");
     assert.equal(await page.locator("#elevenlabs-panel").getAttribute("aria-hidden"), "true");
@@ -751,7 +754,10 @@ const analytics = [
     );
     assert(disableRequest);
 
-    await page.locator("#elevenlabs-enabled").check();
+    await page.locator('label[for="elevenlabs-enabled"]').click();
+    await page.waitForFunction(
+        () => document.getElementById("elevenlabs-enabled").checked === true,
+    );
     await page.getByText(/Voice enabled for Fixture Gaming/).waitFor();
     assert.equal(await page.locator("#elevenlabs-enabled-label").innerText(), "Enabled");
     assert.equal(await page.locator("#elevenlabs-panel").getAttribute("aria-hidden"), "false");

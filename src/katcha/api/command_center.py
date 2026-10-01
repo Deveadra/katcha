@@ -238,71 +238,99 @@ def command_readiness(http_request: Request) -> CommandReadinessResponse:
         )
 
     codex = codex_connection_status()
-    if getattr(settings, "codex_enabled", False) and bool(codex.get("connected")):
-        model = str(codex.get("selected_model") or "Codex")
+    chatgpt = chatgpt_connection_status()
+    codex_connected = (
+        getattr(settings, "codex_enabled", False)
+        and bool(codex.get("connected"))
+    )
+    gemini_ready = (
+        bool(settings.gemini_api_key)
+        and find_spec("google") is not None
+        and find_spec("google.genai") is not None
+    )
+
+    if gemini_ready and settings.conversation_provider in {"gemini", "auto"}:
         suffix = ""
-        try:
-            limits = codex_usage()
-            primary = limits.get("primary")
-            secondary = limits.get("secondary")
-            parts: list[str] = []
-            if isinstance(primary, dict):
-                parts.append(f"{float(primary.get('used_percent') or 0):g}% short-window used")
-            if isinstance(secondary, dict):
-                parts.append(f"{float(secondary.get('used_percent') or 0):g}% weekly used")
-            if parts:
-                suffix = " · " + " · ".join(parts)
-        except CodexConnectionError:
-            suffix = ""
+        if codex_connected:
+            model = str(codex.get("selected_model") or "Codex")
+            usage_suffix = ""
+            try:
+                limits = codex_usage()
+                primary = limits.get("primary")
+                secondary = limits.get("secondary")
+                parts: list[str] = []
+                if isinstance(primary, dict):
+                    parts.append(
+                        f"{float(primary.get('used_percent') or 0):g}% short-window used"
+                    )
+                if isinstance(secondary, dict):
+                    parts.append(
+                        f"{float(secondary.get('used_percent') or 0):g}% weekly used"
+                    )
+                if parts:
+                    usage_suffix = " · " + " · ".join(parts)
+            except CodexConnectionError:
+                usage_suffix = ""
+            suffix = f" Codex heavy-work route: {model}{usage_suffix}."
+        else:
+            suffix = " Codex heavy-work route is not connected."
         return CommandReadinessResponse(
             live=True,
             message=(
-                f"Codex ChatGPT plan connected · {model}{suffix}. "
-                "Katcha uses the Codex subscription path first for conversation "
-                "and command reasoning."
+                "Gemini Flash-Lite is configured as the routine conversation and "
+                "command-understanding provider." + suffix
             ),
         )
 
-    chatgpt = chatgpt_connection_status()
+    if codex_connected:
+        model = str(codex.get("selected_model") or "Codex")
+        return CommandReadinessResponse(
+            live=True,
+            message=(
+                f"Codex ChatGPT plan connected · {model}. "
+                "Gemini conversation routing is unavailable, so Codex may be used "
+                "for routine chat until Gemini is configured."
+            ),
+        )
+
     if bool(chatgpt.get("connected")):
         return CommandReadinessResponse(
             live=True,
             message=(
-                "Direct ChatGPT app sharing is connected. This path has a separate "
-                "subscription-sharing allowance from Codex. Open Settings to connect "
-                "Codex for Roo-style subscription usage."
+                "Direct ChatGPT app sharing is connected as a secondary fallback. "
+                "Configure Gemini for routine conversation and Codex for heavy agent work."
             ),
         )
 
-    if not (settings.openai_api_key or settings.gemini_api_key):
-        return CommandReadinessResponse(
-            live=False,
-            message=(
-                "No live AI provider is connected. Open Settings and choose "
-                "Continue with ChatGPT · Codex; API keys remain optional fallbacks."
-            ),
-        )
-    installed = (
-        (settings.openai_api_key and find_spec("openai") is not None)
-        or (
-            settings.gemini_api_key
-            and find_spec("google") is not None
-            and find_spec("google.genai") is not None
-        )
+    paid_openai_ready = (
+        settings.allow_paid_openai_fallback
+        and bool(settings.openai_api_key)
+        and find_spec("openai") is not None
     )
-    if not installed:
+    if paid_openai_ready:
+        return CommandReadinessResponse(
+            live=True,
+            message=(
+                "Only the paid OpenAI API fallback is currently available. "
+                "Configure Gemini for routine chat or Codex for heavy agent work."
+            ),
+        )
+
+    if settings.gemini_api_key and not gemini_ready:
         return CommandReadinessResponse(
             live=False,
             message=(
-                "An API provider is configured but its client library is missing. "
-                "Rebuild Katcha or connect the Codex ChatGPT plan from Settings."
+                "Gemini is configured but its client library is missing. Rebuild Katcha "
+                "before using the conversation route."
             ),
         )
+
     return CommandReadinessResponse(
-        live=True,
+        live=False,
         message=(
-            "API-key fallback is configured. Connect ChatGPT · Codex in Settings "
-            "to use subscription-backed conversation and agent reasoning first."
+            "No usable live AI route is available. Add a Gemini API key for routine "
+            "conversation and connect ChatGPT · Codex for heavy agent work. Paid OpenAI "
+            "API fallback remains disabled unless you explicitly enable it."
         ),
     )
 

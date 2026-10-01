@@ -66,6 +66,9 @@ FIELDS = {
     "KATCHA_OPENAI_API_KEY",
     "KATCHA_GEMINI_API_KEY",
     "KATCHA_AI_EXECUTION_MODE",
+    "KATCHA_CONVERSATION_PROVIDER",
+    "KATCHA_AGENT_PROVIDER",
+    "KATCHA_ALLOW_PAID_OPENAI_FALLBACK",
     "KATCHA_YOUTUBE_CLIENT_ID",
     "KATCHA_YOUTUBE_CLIENT_SECRET",
     "KATCHA_YOUTUBE_DATA_API_KEY",
@@ -1205,6 +1208,9 @@ class Handler(BaseHTTPRequestHandler):
                     for key, choices in [
                         ("KATCHA_RENDER_BACKEND", ("local", "lambda")),
                         ("KATCHA_AI_EXECUTION_MODE", ("fixture", "live", "auto")),
+                        ("KATCHA_CONVERSATION_PROVIDER", ("gemini", "codex", "auto")),
+                        ("KATCHA_AGENT_PROVIDER", ("codex", "gemini", "auto")),
+                        ("KATCHA_ALLOW_PAID_OPENAI_FALLBACK", ("true", "false")),
                     ]:
                         if key in body and body[key] not in choices:
                             raise ValueError(f"Invalid {key}")
