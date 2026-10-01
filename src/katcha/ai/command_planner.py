@@ -8,7 +8,6 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-from katcha.ai.failover import safe_to_fail_over_generation
 from katcha.ai.pricing import estimate_token_cost
 from katcha.ai.provider_policy import planner_provider_order
 from katcha.ai.router import (
@@ -20,7 +19,6 @@ from katcha.ai.router import (
 from katcha.config import Settings, get_settings
 from katcha.domain import AITask
 from katcha.integrations.chatgpt import invoke_json as invoke_chatgpt_json
-from katcha.integrations.codex import CodexConnectionError
 from katcha.integrations.codex import invoke_json as invoke_codex_json
 
 CommandIntent = Literal[
