@@ -325,8 +325,14 @@ def prepare_command_discovery_candidates_activity(
             for value in (metadata.get("command_match_terms") or [])
             if str(value).strip()
         ][:8]
-        rows = list(
-            session.execute(
+        candidate_rows = [
+            (
+                candidate.id,
+                str(candidate.title or ""),
+                str(candidate.creator or ""),
+                dict(candidate.candidate_metadata or {}),
+            )
+            for candidate in session.scalars(
                 select(DiscoveryCandidate)
                 .join(
                     DiscoveryObservation,
@@ -338,22 +344,16 @@ def prepare_command_discovery_candidates_activity(
                     DiscoveryObservation.observed_at.asc(),
                     DiscoveryObservation.id.asc(),
                 )
-            ).scalars()
-        )
+            )
+        ]
 
     candidate_ids: list[uuid.UUID] = []
-    for candidate in rows:
-        haystack = " ".join(
-            [
-                str(candidate.title or ""),
-                str(candidate.creator or ""),
-                str(candidate.candidate_metadata or {}),
-            ]
-        ).casefold()
+    for candidate_id, title, creator, metadata in candidate_rows:
+        haystack = " ".join([title, creator, str(metadata)]).casefold()
         if match_terms and not any(term in haystack for term in match_terms):
             continue
-        if candidate.id not in candidate_ids:
-            candidate_ids.append(candidate.id)
+        if candidate_id not in candidate_ids:
+            candidate_ids.append(candidate_id)
         if len(candidate_ids) >= max_candidates:
             break
 
