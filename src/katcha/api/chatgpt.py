@@ -198,18 +198,28 @@ def test_api_provider(provider: str) -> dict[str, object]:
             model = "gemini-3.5-flash-lite"
             client = genai.Client(api_key=settings.gemini_api_key)
             try:
-                client.models.get(model=model)
+                response = client.models.generate_content(
+                    model=model,
+                    contents="Reply with exactly: KATCHA_GEMINI_CONNECTED",
+                )
             finally:
                 close = getattr(client, "close", None)
                 if callable(close):
                     close()
+            text = str(getattr(response, "text", "") or "")
+            if "KATCHA_GEMINI_CONNECTED" not in text:
+                raise ChatGPTConnectionError(
+                    "Gemini credentials are valid, but live inference returned "
+                    "an unexpected response"
+                )
             return {
                 "ok": True,
                 "provider": provider,
                 "model": model,
                 "detail": (
-                    "Credential and model access confirmed. Inference quota/billing "
-                    "is checked by the provider when a generation request runs."
+                    "Live Gemini inference confirmed. Katcha can use this route for "
+                    "routine conversation. Billing/free-tier status is controlled by "
+                    "the Google AI project."
                 ),
             }
 
