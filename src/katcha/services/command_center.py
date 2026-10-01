@@ -108,6 +108,10 @@ _STOP_WORDS = {
     "used",
     "video",
     "videos",
+    "trailer",
+    "trailers",
+    "teaser",
+    "teasers",
     "would",
     "add",
     "find",
@@ -147,6 +151,10 @@ _PLATFORM_PATTERNS = {
 _SOURCE_DISCOVERY_VERBS = (
     "add",
     "find",
+    "get",
+    "fetch",
+    "retrieve",
+    "pull",
     "search",
     "discover",
     "scout",
@@ -332,6 +340,8 @@ def _looks_like_confirmation(text: str) -> bool:
     normalized = " ".join(
         re.sub(r"[^a-z0-9]+", " ", text.casefold()).split()
     )
+    if normalized.startswith("proceed with "):
+        return True
     return normalized in {
         "yes",
         "yes do it",
@@ -342,6 +352,10 @@ def _looks_like_confirmation(text: str) -> bool:
         "run it",
         "start it",
         "execute it",
+        "proceed",
+        "proceed with it",
+        "continue",
+        "continue with it",
         "sounds good",
         "looks good",
         "approved",
@@ -446,7 +460,11 @@ def resolve_command_follow_up(
         )
 
     prior_intent = assistant.intent
-    if prior_intent in {"best_clips", "performance_advice"} and _looks_like_follow_up(
+    if prior_intent in {
+        "best_clips",
+        "performance_advice",
+        "source_discovery",
+    } and _looks_like_follow_up(
         prompt
     ):
         effective_prompt = prompt
@@ -783,12 +801,18 @@ def source_discovery_plan(
             "configured_source_count": len(configured),
             "configured_sources": [
                 {
+                    "id": str(row.id),
                     "source_key": row.source_key,
                     "name": row.name,
                     "platform": row.platform,
                     "adapter_key": row.adapter_key,
+                    "adapter_version": row.adapter_version,
                     "enabled": row.enabled,
                     "shared": row.channel_profile_id is None,
+                    "channel_reference": str(
+                        (row.query_template or {}).get("channel_reference") or ""
+                    )
+                    or None,
                 }
                 for row in configured[:30]
             ],
