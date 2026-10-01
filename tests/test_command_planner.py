@@ -260,3 +260,76 @@ def test_command_planner_registry_includes_resource_context() -> None:
     )
 
     assert plan.intent == "resource_context"
+
+
+
+class _GeminiConversationSettings(_LiveSettings):
+    openai_api_key = None
+    gemini_api_key = "gemini-free-tier-key"
+    conversation_provider = "gemini"
+    agent_provider = "codex"
+    allow_paid_openai_fallback = False
+    codex_enabled = True
+
+
+def test_ambiguous_command_uses_gemini_before_codex(monkeypatch) -> None:
+    target = ModelTarget("gemini", "gemini-3.5-flash-lite")
+    calls = []
+
+    monkeypatch.setattr(
+        "katcha.ai.command_planner.route_for_channel",
+        lambda *args, **kwargs: type(
+            "Decision",
+            (),
+            {"reservation_id": None},
+        )(),
+    )
+    monkeypatch.setattr(
+        "katcha.ai.command_planner._gemini",
+        lambda *args, **kwargs: (
+            calls.append("gemini"),
+            CommandPlanResult(
+                CommandPlan(
+                    intent="conversation",
+                    confidence=0.96,
+                    reason="Routine operator conversation",
+                ),
+                "ai",
+                target,
+                12,
+                4,
+            ),
+        )[1],
+    )
+    monkeypatch.setattr(
+        "katcha.ai.command_planner._codex",
+        lambda *args, **kwargs: (
+            calls.append("codex"),
+            CommandPlanResult(
+                CommandPlan(
+                    intent="conversation",
+                    confidence=0.99,
+                    reason="Codex fallback",
+                ),
+                "codex_plan",
+                ModelTarget("codex", "gpt-test"),
+                12,
+                4,
+            ),
+        )[1],
+    )
+
+    result = plan_ambiguous_command(
+        channel_profile_id=uuid.uuid4(),
+        request_id=uuid.uuid4(),
+        user_prompt="Hey, what are we working on today?",
+        effective_prompt="Hey, what are we working on today?",
+        selected_clip_count=0,
+        previous_intent=None,
+        deterministic_intent="channel_status",
+        settings=_GeminiConversationSettings(),  # type: ignore[arg-type]
+    )
+
+    assert result.target == target
+    assert result.value.intent == "conversation"
+    assert calls == ["gemini"]
