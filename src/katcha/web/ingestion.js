@@ -67,7 +67,7 @@ async function apiFile(path, file) {
     }
     const data = await response.json().catch(() => ({}));
     if (!response.ok) {
-        const detail = typeof data.detail === 'string' ? data.detail : 'The handoff file could not be imported.';
+        const detail = typeof data.detail === 'string' ? data.detail : typeof data.error === 'string' ? data.error : 'The handoff file could not be imported.';
         const error = new Error(response.status === 401 ? 'Your workspace needs an access token.' : detail);
         error.status = response.status;
         throw error;
@@ -394,6 +394,7 @@ async function connect() {
         const requestedView = sourceViewFromHash();
         setSourceView(requestedView || (sourcePage.total ? 'library' : 'add'), {updateHash: false});
         $('workspace').disabled = false;
+        if (sourceView === 'handoff') await refreshHandoffInbox();
         $('connection').textContent = 'Connected';
         $('connection-panel').hidden = true;
         message('');
