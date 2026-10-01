@@ -7,10 +7,12 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import func, or_, select
 
 from katcha.acquisition.adapters import get_adapter
 from katcha.acquisition_models import (
+    DiscoveryCandidate,
+    DiscoveryObservation,
     DiscoveryRun,
     IngestionSource,
     IntelligenceBatchRecord,
@@ -22,6 +24,33 @@ from katcha.domain import SourceUsageMode
 from katcha.intelligence_models import ChannelProfile
 from katcha.models import DomainEvent
 from katcha.services.acquisition import register_discovery_run
+
+
+@dataclass(frozen=True, slots=True)
+class SourceLibraryPage:
+    items: list[IngestionSource]
+    total: int
+    limit: int
+    offset: int
+
+
+@dataclass(frozen=True, slots=True)
+class SourceRecentFind:
+    candidate: DiscoveryCandidate
+    observed_at: datetime
+
+
+@dataclass(frozen=True, slots=True)
+class SourceOverview:
+    source: IngestionSource
+    channel_name: str | None
+    channel_status: str | None
+    run_count: int
+    status_counts: dict[str, int]
+    discovery_count: int
+    unique_candidate_count: int
+    recent_runs: list[DiscoveryRun]
+    recent_finds: list[SourceRecentFind]
 
 
 @dataclass(frozen=True, slots=True)
@@ -191,6 +220,205 @@ def list_ingestion_sources(
         return rows
 
 
+def list_ingestion_source_library(
+    *,
+    query: str | None = None,
+    channel_profile_id: uuid.UUID | None = None,
+    shared_only: bool = False,
+    platform: str | None = None,
+    adapter_key: str | None = None,
+    usage_mode: str | None = None,
+    enabled: bool | None = None,
+    sort: str = "recent",
+    limit: int = 50,
+    offset: int = 0,
+) -> SourceLibraryPage:
+    cleaned_query = (query or "").strip().casefold()
+    cleaned_platform = (platform or "").strip().casefold()
+    cleaned_adapter = (adapter_key or "").strip().casefold()
+    cleaned_usage = (usage_mode or "").strip()
+    if limit < 1 or limit > 200:
+        raise ValueError("limit must be between 1 and 200")
+    if offset < 0:
+        raise ValueError("offset must be non-negative")
+    if shared_only and channel_profile_id is not None:
+        raise ValueError("shared_only and channel_profile_id cannot be combined")
+    if sort not in {"recent", "name", "created"}:
+        raise ValueError("unsupported source-library sort")
+
+    filters = []
+    if cleaned_query:
+        pattern = f"%{cleaned_query}%"
+        filters.append(
+            or_(
+                func.lower(IngestionSource.name).like(pattern),
+                func.lower(IngestionSource.source_key).like(pattern),
+            )
+        )
+    if channel_profile_id is not None:
+        filters.append(IngestionSource.channel_profile_id == channel_profile_id)
+    elif shared_only:
+        filters.append(IngestionSource.channel_profile_id.is_(None))
+    if cleaned_platform:
+        filters.append(IngestionSource.platform == cleaned_platform)
+    if cleaned_adapter:
+        filters.append(IngestionSource.adapter_key == cleaned_adapter)
+    if cleaned_usage:
+        filters.append(IngestionSource.usage_mode == cleaned_usage)
+    if enabled is not None:
+        filters.append(IngestionSource.enabled == enabled)
+
+    order = (
+        (IngestionSource.updated_at.desc(), IngestionSource.id.desc())
+        if sort == "recent"
+        else (
+            (func.lower(IngestionSource.name).asc(), IngestionSource.id.asc())
+            if sort == "name"
+            else (IngestionSource.created_at.desc(), IngestionSource.id.desc())
+        )
+    )
+
+    with session_scope() as session:
+        total = int(
+            session.scalar(
+                select(func.count())
+                .select_from(IngestionSource)
+                .where(*filters)
+            )
+            or 0
+        )
+        rows = list(
+            session.scalars(
+                select(IngestionSource)
+                .where(*filters)
+                .order_by(*order)
+                .offset(offset)
+                .limit(limit)
+            )
+        )
+        for row in rows:
+            session.expunge(row)
+        return SourceLibraryPage(
+            items=rows,
+            total=total,
+            limit=limit,
+            offset=offset,
+        )
+
+
+def get_ingestion_source_overview(
+    source_id: uuid.UUID,
+    *,
+    recent_run_limit: int = 8,
+    recent_find_limit: int = 8,
+) -> SourceOverview:
+    if recent_run_limit < 1 or recent_run_limit > 50:
+        raise ValueError("recent_run_limit must be between 1 and 50")
+    if recent_find_limit < 1 or recent_find_limit > 50:
+        raise ValueError("recent_find_limit must be between 1 and 50")
+
+    with session_scope() as session:
+        source = session.get(IngestionSource, source_id)
+        if source is None:
+            raise ValueError("ingestion source not found")
+
+        source_filter = (
+            DiscoveryRun.run_metadata["ingestion_source_id"].as_string()
+            == str(source_id)
+        )
+        status_rows = session.execute(
+            select(DiscoveryRun.status, func.count())
+            .where(source_filter)
+            .group_by(DiscoveryRun.status)
+        ).all()
+        status_counts = {str(status): int(count) for status, count in status_rows}
+        run_count = sum(status_counts.values())
+
+        recent_runs = list(
+            session.scalars(
+                select(DiscoveryRun)
+                .where(source_filter)
+                .order_by(DiscoveryRun.created_at.desc(), DiscoveryRun.id.desc())
+                .limit(recent_run_limit)
+            )
+        )
+
+        discovery_count, unique_candidate_count = session.execute(
+            select(
+                func.count(DiscoveryObservation.id),
+                func.count(func.distinct(DiscoveryObservation.discovery_candidate_id)),
+            )
+            .select_from(DiscoveryObservation)
+            .join(
+                DiscoveryRun,
+                DiscoveryObservation.discovery_run_id == DiscoveryRun.id,
+            )
+            .where(source_filter)
+        ).one()
+
+        recent_rows = session.execute(
+            select(DiscoveryCandidate, DiscoveryObservation.observed_at)
+            .join(
+                DiscoveryObservation,
+                DiscoveryObservation.discovery_candidate_id == DiscoveryCandidate.id,
+            )
+            .join(
+                DiscoveryRun,
+                DiscoveryObservation.discovery_run_id == DiscoveryRun.id,
+            )
+            .where(source_filter)
+            .order_by(DiscoveryObservation.observed_at.desc())
+            .limit(max(recent_find_limit * 4, recent_find_limit))
+        ).all()
+
+        seen: set[uuid.UUID] = set()
+        recent_finds: list[SourceRecentFind] = []
+        for candidate, observed_at in recent_rows:
+            if candidate.id in seen:
+                continue
+            seen.add(candidate.id)
+            recent_finds.append(
+                SourceRecentFind(
+                    candidate=candidate,
+                    observed_at=observed_at,
+                )
+            )
+            if len(recent_finds) >= recent_find_limit:
+                break
+
+        channel_name: str | None = None
+        channel_status: str | None = None
+        if source.channel_profile_id is not None:
+            profile = session.get(ChannelProfile, source.channel_profile_id)
+            if profile is not None:
+                metadata = dict(profile.profile_metadata or {})
+                channel_name = str(
+                    metadata.get("channel_title")
+                    or metadata.get("name")
+                    or metadata.get("channel_handle")
+                    or profile.id
+                )
+                channel_status = str(profile.status or "") or None
+
+        session.expunge(source)
+        for row in recent_runs:
+            session.expunge(row)
+        for item in recent_finds:
+            session.expunge(item.candidate)
+
+        return SourceOverview(
+            source=source,
+            channel_name=channel_name,
+            channel_status=channel_status,
+            run_count=run_count,
+            status_counts=status_counts,
+            discovery_count=int(discovery_count or 0),
+            unique_candidate_count=int(unique_candidate_count or 0),
+            recent_runs=recent_runs,
+            recent_finds=recent_finds,
+        )
+
+
 def create_discovery_run_from_source(
     source_id: uuid.UUID,
     *,
@@ -217,7 +445,7 @@ def create_discovery_run_from_source(
             and not query.get("youtube_connection_id")
         ):
             profile = session.get(ChannelProfile, source.channel_profile_id)
-            if profile is not None:
+            if profile is not None and profile.youtube_connection_id is not None:
                 query["youtube_connection_id"] = str(profile.youtube_connection_id)
         run_metadata = _source_run_metadata(source, metadata)
         adapter_key = source.adapter_key
