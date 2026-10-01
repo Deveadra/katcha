@@ -8,7 +8,11 @@ from temporalio import activity
 from temporalio.exceptions import ApplicationError
 
 from katcha.acquisition.adapters import DiscoveryProviderError, get_adapter
-from katcha.acquisition_models import DiscoveryRun
+from katcha.acquisition_models import (
+    DiscoveryCandidate,
+    DiscoveryObservation,
+    DiscoveryRun,
+)
 from katcha.config import get_settings
 from katcha.db import session_scope
 from katcha.domain import DiscoveryRunStatus
@@ -16,6 +20,7 @@ from katcha.models import DomainEvent
 from katcha.services.command_workflow_lifecycle import (
     record_topic_watch_command_cycle,
 )
+from katcha.services.acquisition import promote_discovery_candidate
 from katcha.services.discovery import observe_discovery_candidate
 from katcha.services.discovery_polling import (
     mark_poll_provider_started,
@@ -291,6 +296,97 @@ def execute_discovery_page_activity(run_id: str) -> dict[str, object]:
         "done": batch.done,
         "reused": False,
         "provider_usage": dict(batch.provider_usage or {}),
+    }
+
+
+@activity.defn
+def prepare_command_discovery_candidates_activity(
+    run_id: str,
+) -> dict[str, object]:
+    run_uuid = uuid.UUID(run_id)
+    with session_scope() as session:
+        run = session.get(DiscoveryRun, run_uuid)
+        if run is None:
+            raise ValueError(f"discovery run not found: {run_id}")
+        metadata = dict(run.run_metadata or {})
+        if not bool(metadata.get("command_prepare_for_production")):
+            return {
+                "run_id": run_id,
+                "prepared": [],
+                "skipped": True,
+                "reason": "production preparation was not requested",
+            }
+        max_candidates = max(
+            1,
+            min(int(metadata.get("command_prepare_max_candidates") or 5), 20),
+        )
+        match_terms = [
+            str(value).strip().casefold()
+            for value in (metadata.get("command_match_terms") or [])
+            if str(value).strip()
+        ][:8]
+        rows = list(
+            session.execute(
+                select(DiscoveryCandidate)
+                .join(
+                    DiscoveryObservation,
+                    DiscoveryObservation.discovery_candidate_id
+                    == DiscoveryCandidate.id,
+                )
+                .where(DiscoveryObservation.discovery_run_id == run_uuid)
+                .order_by(
+                    DiscoveryObservation.observed_at.asc(),
+                    DiscoveryObservation.id.asc(),
+                )
+            ).scalars()
+        )
+
+    candidate_ids: list[uuid.UUID] = []
+    for candidate in rows:
+        haystack = " ".join(
+            [
+                str(candidate.title or ""),
+                str(candidate.creator or ""),
+                str(candidate.candidate_metadata or {}),
+            ]
+        ).casefold()
+        if match_terms and not any(term in haystack for term in match_terms):
+            continue
+        if candidate.id not in candidate_ids:
+            candidate_ids.append(candidate.id)
+        if len(candidate_ids) >= max_candidates:
+            break
+
+    prepared: list[dict[str, object]] = []
+    errors: list[dict[str, str]] = []
+    for candidate_id in candidate_ids:
+        try:
+            source = promote_discovery_candidate(
+                candidate_id,
+                actor="katcha-ai",
+                for_review=True,
+            )
+            prepared.append(
+                {
+                    "candidate_id": str(candidate_id),
+                    "source_id": str(source.id),
+                    "workflow_id": source.workflow_id,
+                }
+            )
+        except ValueError as exc:
+            errors.append(
+                {
+                    "candidate_id": str(candidate_id),
+                    "error": str(exc)[:1000],
+                }
+            )
+
+    return {
+        "run_id": run_id,
+        "prepared": prepared,
+        "errors": errors,
+        "skipped": False,
+        "match_terms": match_terms,
     }
 
 
