@@ -646,7 +646,10 @@ function renderHandoffInbox() {
         const summary = item.batch_key
             ? esc(item.batch_key) + (item.record_count == null ? '' : ' · ' + esc(item.record_count) + ' records')
             : 'Batch details unavailable';
-        const channel = item.channel_profile_id ? '<small>Channel ' + esc(item.channel_profile_id) + '</small>' : '';
+        const knownChannel = channels.find(row => row.id === item.channel_profile_id);
+        const channel = item.channel_profile_id
+            ? '<small>Channel ' + esc(knownChannel ? channelName(knownChannel) : item.channel_profile_id) + '</small>'
+            : '';
         const error = item.error ? '<p class="handoff-error">' + esc(item.error) + '</p>' : '';
         const countsText = item.receipt && state === 'processed'
             ? '<small>' + esc(item.receipt.created_count || 0) + ' created · ' +
