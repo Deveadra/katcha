@@ -5,22 +5,25 @@ const requestedChannel = launchParams.get("channel") || sessionStorage.getItem("
 const esc = (value) => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const methods = {
     links: {key: 'operator_feed', title: 'Paste links', icon: '↗', description: 'Add specific videos or posts from any supported site.', help: 'Give your collection a name. After saving, paste the links you want Katcha to consider. This option does not search social platforms for you.'},
-    scout: {key: 'web_scout', title: 'Discover new sources', icon: '✦', description: 'Discover public posts, creators, and communities around a topic.', help: 'Tell Katcha what to look for. Web scouting uses your connected ChatGPT plan first. An OpenAI API key is an optional fallback for plan limits or unsupported searches; API fallback searches can incur provider charges. Enable automatic checks to keep discovering new content after saving.'},
-    youtube: {key: 'youtube', title: 'Search YouTube', icon: '▶', description: 'Find recent YouTube videos by topic.', help: 'Save a topic to search for recent YouTube videos. YouTube search access must be configured in Katcha before a search can run.'},
-    youtube_channel: {key: 'youtube', title: 'Watch a YouTube channel', icon: '▶', description: 'Study creators serving your audience and collect their recent videos.', help: 'Add a creator’s @handle, channel link, or channel ID. Katcha collects recent videos with public engagement metrics for research. Save the source, then check for new videos; automatic checking is not enabled here.'},
-    reddit: {key: 'reddit', title: 'Search Reddit', icon: '◎', description: 'Find discussions and shared links on Reddit.', help: 'Save a topic and, optionally, a Reddit community. Reddit search access must be configured in Katcha before a search can run.'},
-    feed: {key: 'rss_atom', title: 'Follow a website feed', icon: '≋', description: 'Follow a site’s RSS or Atom updates.', help: 'Save a website’s RSS or Atom feed. Use “Check for updates” whenever you want to collect new entries. Scheduled checking is not enabled here.'},
+    scout: {key: 'web_scout', title: 'Discover new sources', icon: '✦', description: 'Find public creators, posts, communities, and sites around a topic.', help: 'Tell Katcha what to look for. Web scouting uses grounded public-web search. Saving creates the source; the final step lets you decide whether to run one check immediately.'},
+    youtube: {key: 'youtube', title: 'Search YouTube', icon: '▶', description: 'Find recent YouTube videos around a topic.', help: 'Save a topic as a reusable source. YouTube access must be configured before a check can run.'},
+    youtube_channel: {key: 'youtube', title: 'Watch a YouTube channel', icon: '▶', description: 'Track a creator and inspect its recent public videos.', help: 'Add a creator’s @handle, channel link, or channel ID. Katcha can collect recent videos and engagement signals when you run a check.'},
+    reddit: {key: 'reddit', title: 'Search Reddit', icon: '◎', description: 'Find discussions and shared links on Reddit.', help: 'Save a topic and, optionally, a community. Saving does not start a recurring search.'},
+    feed: {key: 'rss_atom', title: 'Follow a website feed', icon: '≋', description: 'Check a site’s RSS or Atom feed for new entries.', help: 'Save the feed as a source, then choose whether to check it immediately.'},
 };
 const usage = {
-    candidate_review: ['Review first', 'Keep this source marked for review before deciding what to use.'],
-    discovery_only: ['Research and inspiration', 'Mark this source as research material rather than intended video material.'],
-    operator_authorized: ['I will decide what can be used', 'Record that you will make the content-use decision.'],
-    render_allowed: ['Intended for video production', 'Mark this source as intended video material. Existing production checks still apply.'],
-    blocked: ['Blocked', 'This source is marked as blocked.'],
+    candidate_review: ['Find content for review', 'Finds may be offered to Clips for operator review. Nothing is published automatically.'],
+    discovery_only: ['Research only', 'Finds are used as trend, packaging, audience, and editorial context and are not offered as clip candidates.'],
+    operator_authorized: ['Operator decides each use', 'Record that the operator will make the content-use decision.'],
+    render_allowed: ['Production-intended', 'Mark this source as production-intended after normal rights, originality, and approval checks.'],
+    blocked: ['Blocked', 'This source is blocked from normal use.'],
 };
 let token = sessionStorage.getItem("katcha.controlToken") || '', adapters = [], channels = [], sources = [], selectedMethod = '', step = 1;
-let sourceView = 'add';
-let channelsReady = false, historyEpoch = 0, connectionEpoch = 0, busy = false;
+let sourceView = 'library';
+let sourcePage = {total: 0, limit: 50, offset: 0, items: []};
+let selectedOverview = null;
+let channelsReady = false, historyEpoch = 0, connectionEpoch = 0, libraryEpoch = 0, detailEpoch = 0, busy = false;
+let searchTimer = null;
 const intents = new Map();
 const runIntents = new Map();
 const linkDrafts = new Map();
@@ -76,6 +79,40 @@ function chosenAdapter() {
 }
 function channelName(row) { return row.profile_metadata?.channel_title || row.profile_metadata?.name || 'Unnamed channel'; }
 function source() { return sources.find(s => s.id === $('source').value); }
+function selectedUsage() {
+    const advanced = $('usage').value;
+    if (advanced) return advanced;
+    return document.querySelector('input[name="source-purpose"]:checked')?.value || 'candidate_review';
+}
+function afterSaveMode() {
+    return document.querySelector('input[name="after-save"]:checked')?.value || 'save';
+}
+function adapterSupportsImports(row) {
+    return adapters.some(a => a.key === row.adapter_key && a.version === row.adapter_version && a.supports_imports);
+}
+function targetSummary(row) {
+    if (!row) return 'No target';
+    if (row.query_template?.channel_reference) return row.query_template.channel_reference;
+    if (row.query_template?.q) return row.query_template.q;
+    if (row.query_template?.subreddit) return 'r/' + row.query_template.subreddit;
+    if (row.query_template?.feed_url) {
+        try { return new URL(row.query_template.feed_url).hostname; } catch {}
+        return row.query_template.feed_url;
+    }
+    if (row.adapter_key === 'operator_feed') return 'Link collection';
+    return row.platform || row.adapter_key;
+}
+function safeExternalUrl(value) {
+    try {
+        const url = new URL(value);
+        return ['https:', 'http:'].includes(url.protocol) && !url.username && !url.password ? url.href : '';
+    } catch { return ''; }
+}
+function formatWhen(value) {
+    if (!value) return 'Never';
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? 'Unknown' : date.toLocaleString();
+}
 function runDiagnostics(run, selectedSource) {
     return [
         `Run ID: ${run.id}`,
@@ -183,15 +220,19 @@ function choose(method) {
     $('scout-fields').hidden = method !== 'scout';
     if (channelsReady) $('channel-help').textContent = channelHelp();
     $('youtube-channel-fields').hidden = method !== 'youtube_channel';
-    if (method === 'youtube_channel') $('usage').value = 'discovery_only';
-    else $('usage').value = 'candidate_review';
-    $('usage-help').textContent = usage[$('usage').value][1];
+    const purpose = method === 'youtube_channel' ? 'discovery_only' : 'candidate_review';
+    const purposeInput = document.querySelector('input[name="source-purpose"][value="' + purpose + '"]');
+    if (purposeInput) purposeInput.checked = true;
+    $('usage').value = '';
+    $('usage-help').textContent = '';
     $('reddit-fields').hidden = method !== 'reddit';
     $('feed-fields').hidden = method !== 'feed';
     $('custom-fields').hidden = method !== 'custom';
     $('custom-query').value = '{}';
-    $('research-fields').hidden = !['youtube', 'reddit', 'rss_atom', 'web_scout'].includes(a.key);
-    $('auto-research').checked = true;
+    const canRunAfterSave = method !== 'links' && !a.supports_imports;
+    $('after-save-fields').hidden = !canRunAfterSave;
+    const after = document.querySelector('input[name="after-save"][value="' + (canRunAfterSave ? 'run' : 'save') + '"]');
+    if (after) after.checked = true;
     showStep(2);
 }
 function intent(key, prefix) {
@@ -241,23 +282,41 @@ function details() {
         if (!query || Array.isArray(query) || typeof query !== 'object') throw new Error('Custom connection settings must be a JSON object.');
         platform = a.supported_platforms[0] || 'custom';
     }
-    return {create_only: true, name, adapter_key: a.key, adapter_version: a.version, platform, channel_profile_id: $('channel').value || null, usage_mode: $('usage').value, query_template: query, poll_interval_minutes: Number($('research-interval').value), source_metadata: {automatic_research: !$('research-fields').hidden && $('auto-research').checked}};
+    return {
+        create_only: true,
+        name,
+        adapter_key: a.key,
+        adapter_version: a.version,
+        platform,
+        channel_profile_id: $('channel').value || null,
+        usage_mode: selectedUsage(),
+        query_template: query,
+        poll_interval_minutes: 60,
+        source_metadata: {execution_mode: 'manual'},
+    };
 }
 function review() {
     const d = details();
+    const immediate = !$('after-save-fields').hidden && afterSaveMode() === 'run';
     const rows = [
-        ['Name', d.name], ['Content source', methods[selectedMethod]?.title || chosenAdapter().label],
-        ['For', channels.find(c => c.id === d.channel_profile_id) ? channelName(channels.find(c => c.id === d.channel_profile_id)) : 'Shared collection (unassigned)'],
-        ['Review preference', usage[d.usage_mode][0]],
+        ['Name', d.name],
+        ['Source type', methods[selectedMethod]?.title || chosenAdapter().label],
+        ['Used by', channels.find(c => c.id === d.channel_profile_id) ? channelName(channels.find(c => c.id === d.channel_profile_id)) : 'Shared collection (unassigned)'],
+        ['Purpose', usage[d.usage_mode]?.[0] || d.usage_mode],
     ];
     if (d.query_template.channel_reference) rows.push(['YouTube channel', d.query_template.channel_reference]);
     if (d.query_template.q) rows.push(['Search topic', d.query_template.q]);
-    if (d.query_template.platforms) rows.push(['Search sites', d.query_template.platforms.join(', ')]);
-    if (d.query_template.subreddit) rows.push(['Community', `r/${d.query_template.subreddit}`]);
+    if (d.query_template.platforms) rows.push(['Search area', d.query_template.platforms.join(', ')]);
+    if (d.query_template.subreddit) rows.push(['Community', 'r/' + d.query_template.subreddit]);
     if (d.query_template.feed_url) rows.push(['Website feed', d.query_template.feed_url]);
-    rows.push(['Next step', selectedMethod === 'links' ? 'Paste links into your saved collection.' : d.source_metadata.automatic_research ? `Katcha will check this source every ${d.poll_interval_minutes} minutes.` : 'Start a search when you are ready.']);
-    $('review').innerHTML = rows.map(([label, value]) => `<dt>${esc(label)}</dt><dd>${esc(value)}</dd>`).join('');
-    $('save-explanation').textContent = (d.source_metadata.automatic_research ? 'Saving starts recurring research while Katcha is running. Pause this source at any time from your source library.' : 'Saving adds this source for manual checks.') + (selectedMethod === 'scout' ? ' Web scouting uses live AI and public web search. API fallback provider charges may apply.' : '');
+    rows.push(['After saving', selectedMethod === 'links' ? 'Save the collection, then paste links.' : immediate ? 'Save the source and run one check immediately.' : 'Save the source only. No search starts.']);
+    $('review').innerHTML = rows.map(([label, value]) => '<dt>' + esc(label) + '</dt><dd>' + esc(value) + '</dd>').join('');
+    $('save-explanation').textContent = selectedMethod === 'links'
+        ? 'Saving creates the source only. Add links from the Source Library when you are ready.'
+        : immediate
+            ? 'Katcha will save this source, then start one check. This does not create a recurring schedule.'
+            : 'Katcha will save this source without starting a search or recurring schedule.';
+    if (selectedMethod === 'scout') $('save-explanation').textContent += ' Web scouting can use live AI and public web search; provider charges may apply when API fallback is used.';
     showStep(3);
 }
 async function loadChannels(epoch = connectionEpoch) {
