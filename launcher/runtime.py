@@ -135,8 +135,12 @@ class Runtime:
 
     def bootstrap(self):
         handoff = self.root / "handoff"
+        handoff.mkdir(parents=True, exist_ok=True)
+        handoff.chmod(0o770)
         for name in ("incoming", "processed", "failed", "receipts"):
-            (handoff / name).mkdir(parents=True, exist_ok=True, mode=0o700)
+            path = handoff / name
+            path.mkdir(parents=True, exist_ok=True)
+            path.chmod(0o770)
         if not self.env_path.exists():
             with open(self.env_path, "x", opener=lambda p, f: os.open(p, f, 0o600)) as stream:
                 stream.write((self.root / ".env.example").read_text())
