@@ -343,6 +343,6 @@ def test_shared_source_cannot_inherit_provider_or_default_channel(research_db, m
     execute_discovery_page_activity(str(runs[0].run_id))
     with db.session_scope() as session:
         candidate = session.scalar(select(DiscoveryCandidate))
-        assert candidate.candidate_metadata["channel_profile_id"] is None
+        assert "channel_profile_id" not in candidate.candidate_metadata
         assert candidate.candidate_metadata["source_scope"] == "shared"
         assert candidate.candidate_metadata["ingestion_source_id"] == str(source.id)
