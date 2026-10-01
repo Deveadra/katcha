@@ -14,6 +14,7 @@ from katcha.integrations.youtube.oauth import (
     requested_scopes,
     youtube_oauth_return_to,
 )
+from katcha.services.channel_profiles import _connection_profile_metadata
 
 
 def test_requested_scopes_make_monetary_access_opt_in() -> None:
@@ -106,3 +107,29 @@ def test_oauth_callback_redirects_google_error_back_to_channel_studio() -> None:
     assert target.netloc == "127.0.0.1:8765"
     assert query["youtube"] == ["error"]
     assert "access_denied" in query["message"][0]
+
+
+
+def test_channel_profile_metadata_extracts_nested_youtube_handle() -> None:
+    connection = SimpleNamespace(
+        channel_id="UC-fixture",
+        channel_title="FORESCENE",
+        connection_metadata={
+            "channel_response": {
+                "items": [
+                    {
+                        "snippet": {
+                            "title": "FORESCENE",
+                            "customUrl": "@forescene",
+                        }
+                    }
+                ]
+            }
+        },
+    )
+
+    metadata = _connection_profile_metadata(connection)
+
+    assert metadata["channel_title"] == "FORESCENE"
+    assert metadata["channel_handle"] == "@forescene"
+    assert metadata["custom_url"] == "@forescene"

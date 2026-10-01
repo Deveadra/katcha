@@ -103,7 +103,38 @@ def _connection_profile_metadata(connection: YouTubeConnection) -> dict[str, obj
         value = connection_metadata.get(key)
         if value:
             metadata[key] = value
+
+    # OAuth stores the complete YouTube channels.list response. YouTube's
+    # public handle/custom URL lives under items[0].snippet.customUrl, so
+    # promote it into stable channel profile metadata for UI and automation.
+    if not metadata.get("channel_handle"):
+        payload = connection_metadata.get("channel_response")
+        if isinstance(payload, dict):
+            items = payload.get("items")
+            if isinstance(items, list) and items and isinstance(items[0], dict):
+                snippet = items[0].get("snippet")
+                if isinstance(snippet, dict):
+                    custom_url = str(snippet.get("customUrl") or "").strip()
+                    if custom_url:
+                        metadata["channel_handle"] = custom_url
+                        metadata.setdefault("custom_url", custom_url)
     return metadata
+
+
+def sync_channel_profile_metadata(
+    session: Session,
+    profile: ChannelProfile,
+) -> ChannelProfile:
+    connection = session.get(YouTubeConnection, profile.youtube_connection_id)
+    if connection is None:
+        return profile
+    current_metadata = dict(profile.profile_metadata or {})
+    resolved_metadata = _connection_profile_metadata(connection)
+    if any(current_metadata.get(key) != value for key, value in resolved_metadata.items()):
+        profile.profile_metadata = {**current_metadata, **resolved_metadata}
+        session.flush()
+        session.refresh(profile)
+    return profile
 
 
 def ensure_channel_profile(
@@ -127,12 +158,7 @@ def ensure_channel_profile(
             )
         )
         if existing is not None:
-            current_metadata = dict(existing.profile_metadata or {})
-            resolved_metadata = _connection_profile_metadata(connection)
-            if any(current_metadata.get(key) != value for key, value in resolved_metadata.items()):
-                existing.profile_metadata = {**current_metadata, **resolved_metadata}
-                session.flush()
-                session.refresh(existing)
+            sync_channel_profile_metadata(session, existing)
             session.expunge(existing)
             return existing
 

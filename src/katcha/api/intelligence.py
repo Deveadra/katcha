@@ -54,6 +54,7 @@ from katcha.services.channel_profiles import (
     create_strategy_version,
     ensure_active_profile,
     ensure_channel_profile,
+    sync_channel_profile_metadata,
 )
 from katcha.services.channel_scheduling import latest_schedule_recommendations
 from katcha.services.compilations import register_compilation
@@ -421,6 +422,7 @@ def get_channel_summary(
     try:
         with session_scope() as session:
             profile = ensure_active_profile(session, channel_profile_id)
+            sync_channel_profile_metadata(session, profile)
             strategy = active_strategy(session, profile)
             ranking = latest_ranking_snapshot(session, profile)
             economics = latest_economics_snapshot(session, profile)
