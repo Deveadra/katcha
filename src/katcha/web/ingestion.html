@@ -394,6 +394,14 @@
                                 <button type="submit" class="button primary">Import batch</button>
                             </div>
                             <p class="hint">Files are imported immediately, then retained in the processed or failed queue with a receipt. Nothing is published by this action.</p>
+                            <div id="handoff-progress" class="handoff-progress" role="status" aria-live="polite" hidden>
+                                <div class="handoff-progress-head">
+                                    <strong id="handoff-progress-title">Ready</strong>
+                                    <span id="handoff-progress-percent"></span>
+                                </div>
+                                <progress id="handoff-progress-bar" max="100" value="0"></progress>
+                                <p id="handoff-progress-detail"></p>
+                            </div>
                         </form>
 
                         <div class="callout handoff-folder">
