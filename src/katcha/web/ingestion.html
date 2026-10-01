@@ -30,58 +30,340 @@
             <a href="/studio">Clip Studio</a>
             <a href="/ai">Katcha AI</a>
         </nav>
-        <div class="sidebar-bottom">YOUR CONTENT STARTS HERE<small>Find · Collect · Review</small></div>
+        <div class="sidebar-bottom">SOURCE INTELLIGENCE<small>Find · Watch · Learn</small></div>
     </aside>
+
     <main>
-        <header class="topbar"><span>Workspace / <strong>Sources</strong></span><span id="connection" class="connection">Connecting…</span></header>
+        <header class="topbar">
+            <span>Workspace / <strong>Sources</strong></span>
+            <span id="connection" class="connection">Connecting…</span>
+        </header>
+
         <div class="content source-content">
-            <div class="source-head"><div><div class="eyebrow">CONTENT SOURCES</div><h1>Find better inputs.</h1><p>Manage where Katcha looks for clips, posts, discussions, and updates.</p></div></div>
+            <header class="source-head">
+                <div>
+                    <div class="eyebrow">SOURCE INTELLIGENCE</div>
+                    <h1>Teach Katcha where to look.</h1>
+                    <p>Build a source network, see what each source is producing, and catch failures before they waste discovery cycles.</p>
+                </div>
+                <button id="header-add-source" type="button" class="button primary">+ Add source</button>
+            </header>
+
             <section id="connection-panel" class="card panel" hidden>
                 <h2 id="connection-title">Connect to your workspace</h2>
                 <p id="connection-help">Enter your workspace access token if Katcha requires one. It is kept only in this tab.</p>
-                <form id="connect"><label for="token">Workspace access token</label><div class="connect-row"><input id="token" type="password" autocomplete="off"><button class="button primary">Reconnect</button></div></form>
+                <form id="connect">
+                    <label for="token">Workspace access token</label>
+                    <div class="connect-row">
+                        <input id="token" type="password" autocomplete="off">
+                        <button class="button primary">Reconnect</button>
+                    </div>
+                </form>
             </section>
+
             <p id="message" class="message" role="status" aria-live="polite"></p>
+
             <fieldset id="workspace" disabled>
-                <nav class="source-workspace-tabs" aria-label="Content source workspaces" role="tablist">
-                    <button type="button" role="tab" data-source-tab="library" aria-selected="false">Sources</button>
-                    <button type="button" role="tab" data-source-tab="add" aria-selected="true">Add source</button>
+                <nav class="source-workspace-tabs" aria-label="Source workspace" role="tablist">
+                    <button type="button" role="tab" data-source-tab="library" aria-selected="true">Source library</button>
+                    <button type="button" role="tab" data-source-tab="add" aria-selected="false">Add source</button>
                 </nav>
+
                 <div class="workspace-grid">
-                    <section class="panel card builder" data-source-view="add" aria-labelledby="builder-title">
-                        <div class="panel-head"><div><div class="eyebrow">ADD SOURCE</div><h2 id="builder-title">Choose a source</h2></div><span id="step-label" class="tag">1 OF 3</span></div>
-                        <ol class="steps" aria-label="Setup progress"><li aria-current="step">1. Source</li><li>2. Details</li><li>3. Review</li></ol>
+                    <section class="panel card builder" data-source-view="add" aria-labelledby="builder-title" hidden>
+                        <div class="panel-head">
+                            <div>
+                                <div class="eyebrow">ADD SOURCE</div>
+                                <h2 id="builder-title">Choose what Katcha should watch</h2>
+                            </div>
+                            <span id="step-label" class="tag">1 OF 3</span>
+                        </div>
+
+                        <ol class="steps" aria-label="Setup progress">
+                            <li aria-current="step">1. Type</li>
+                            <li>2. Configure</li>
+                            <li>3. Confirm</li>
+                        </ol>
+
                         <form id="setup">
-                            <section id="step-1" aria-label="Choose a source">
-                                <p class="section-copy">Choose what you want to do. Katcha handles the connection type for you.</p>
+                            <section id="step-1" aria-label="Choose source type">
+                                <p class="section-copy">Start with the job you want this source to do. Katcha chooses the installed adapter behind it.</p>
                                 <div id="methods" class="methods"></div>
-                                <details class="advanced ae-help"><summary>Custom connections · advanced</summary><p>For an installed connector that does not have a guided setup yet. Most people can use one of the options above.</p><label for="custom-adapter">Installed connection</label><select id="custom-adapter"></select><button id="choose-custom" type="button" class="button secondary">Use custom connection</button></details>
+                                <details class="advanced ae-help">
+                                    <summary>Custom connection · advanced</summary>
+                                    <p>Use an installed connector that does not have a guided setup yet.</p>
+                                    <label for="custom-adapter">Installed connection</label>
+                                    <select id="custom-adapter"></select>
+                                    <button id="choose-custom" type="button" class="button secondary">Use custom connection</button>
+                                </details>
                             </section>
-                            <section id="step-2" aria-label="Source details" hidden>
+
+                            <section id="step-2" aria-label="Configure source" hidden>
                                 <p id="method-help" class="callout"></p>
-                                <label for="name">What would you like to call this source?</label><input id="name" maxlength="255" placeholder="For example, Funny animal clips"><p class="hint">A name you’ll recognize when you come back.</p>
-                                <div id="channel-area"><label for="channel">Who can use this source?</label><select id="channel" aria-describedby="channel-help"></select></div><p id="channel-help" class="hint" role="status"></p><button id="retry-channels" type="button" class="text-button" hidden>Try loading channels again</button>
-                                <div id="search-fields" hidden><label for="search">What should Katcha look for?</label><input id="search" placeholder="For example, Xbox game announcements"><p class="hint">Use a topic or a few search words.</p></div>
-                                <div id="scout-fields" hidden><label for="scout-platforms">Where should Katcha look?</label><select id="scout-platforms"><option value="all">Across the public web</option><option value="social">TikTok, Instagram, X, and Bluesky</option><option value="tiktok">TikTok</option><option value="instagram">Instagram</option><option value="x">X</option><option value="bluesky">Bluesky</option></select><p class="hint">A platform choice narrows the search. Katcha can discover public posts, people, and sites you have not added before.</p></div>
-                                <div id="youtube-channel-fields" hidden><label for="youtube-channel">YouTube channel to watch</label><input id="youtube-channel" placeholder="@creator or https://www.youtube.com/@creator"><p class="hint">Collect recent videos, titles, and public engagement for audience and packaging research.</p></div>
-                                <div id="reddit-fields" hidden><label for="community">Reddit community <span class="optional">optional</span></label><input id="community" placeholder="For example, gaming or r/gaming"><p class="hint">Leave blank to search across Reddit.</p></div>
-                                <div id="feed-fields" hidden><label for="feed">Website feed link</label><input id="feed" type="text" inputmode="url" spellcheck="false" placeholder="https://example.com/feed.xml"><p class="hint">Paste the site’s RSS or Atom feed, not its homepage. Look for a “RSS” or “Subscribe” link on the website. If it has no feed, use “Paste links” instead.</p></div>
-                                <div id="custom-fields" hidden><label for="custom-query">Connection settings (JSON)</label><textarea id="custom-query" rows="7" spellcheck="false"></textarea><p class="hint">Advanced connector configuration. Replace example settings with your own.</p></div>
-                                <div id="research-fields"><label for="auto-research"><input id="auto-research" type="checkbox" checked> Keep checking for new content</label><label for="research-interval">Check frequency</label><select id="research-interval"><option value="15">Every 15 minutes</option><option value="60" selected>Every hour</option><option value="360">Every 6 hours</option></select><p class="hint">Starts after saving while Katcha is running. Searches use your connected providers and existing limits.</p></div>
-                                <details class="advanced"><summary>Content review preference</summary><p>New sources default to “Review first.” This records your intended use; it does not publish anything or change your channel’s approval rules.</p><label for="usage">How do you intend to use this content?</label><select id="usage" aria-describedby="usage-help"><option value="candidate_review">Review first (default)</option><option value="discovery_only">Research and inspiration</option><option value="operator_authorized">I will decide what can be used</option><option value="render_allowed">Intended for video production</option></select><p id="usage-help" class="hint"></p></details>
+
+                                <div class="setup-section">
+                                    <div class="setup-section-heading">
+                                        <span class="setup-number">1</span>
+                                        <div><strong>Identity & scope</strong><small>Name it and choose which channel receives the intelligence.</small></div>
+                                    </div>
+                                    <label for="name">Source name</label>
+                                    <input id="name" maxlength="255" placeholder="For example, Marvel Entertainment">
+                                    <p class="hint">Use a name you will recognize in a large library.</p>
+
+                                    <div id="channel-area">
+                                        <label for="channel">Channel</label>
+                                        <select id="channel" aria-describedby="channel-help"></select>
+                                    </div>
+                                    <p id="channel-help" class="hint" role="status"></p>
+                                    <button id="retry-channels" type="button" class="text-button" hidden>Try loading channels again</button>
+                                </div>
+
+                                <div class="setup-section">
+                                    <div class="setup-section-heading">
+                                        <span class="setup-number">2</span>
+                                        <div><strong>What to watch</strong><small>Tell Katcha what this source represents.</small></div>
+                                    </div>
+
+                                    <div id="search-fields" hidden>
+                                        <label for="search">Search topic</label>
+                                        <input id="search" placeholder="For example, Xbox game announcements">
+                                        <p class="hint">A focused topic usually produces cleaner finds than a long prompt.</p>
+                                    </div>
+
+                                    <div id="scout-fields" hidden>
+                                        <label for="scout-platforms">Search area</label>
+                                        <select id="scout-platforms">
+                                            <option value="all">Across the public web</option>
+                                            <option value="social">TikTok, Instagram, X, and Bluesky</option>
+                                            <option value="tiktok">TikTok</option>
+                                            <option value="instagram">Instagram</option>
+                                            <option value="x">X</option>
+                                            <option value="bluesky">Bluesky</option>
+                                        </select>
+                                        <p class="hint">Katcha can discover public creators, posts, communities, and sites you have not registered yet.</p>
+                                    </div>
+
+                                    <div id="youtube-channel-fields" hidden>
+                                        <label for="youtube-channel">YouTube channel</label>
+                                        <input id="youtube-channel" placeholder="@creator or https://www.youtube.com/@creator">
+                                        <p class="hint">Katcha will check this creator’s recent public videos and engagement signals.</p>
+                                    </div>
+
+                                    <div id="reddit-fields" hidden>
+                                        <label for="community">Reddit community <span class="optional">optional</span></label>
+                                        <input id="community" placeholder="For example, gaming or r/gaming">
+                                        <p class="hint">Leave blank to search across Reddit.</p>
+                                    </div>
+
+                                    <div id="feed-fields" hidden>
+                                        <label for="feed">Website feed</label>
+                                        <input id="feed" type="text" inputmode="url" spellcheck="false" placeholder="https://example.com/feed.xml">
+                                        <p class="hint">Use the RSS or Atom feed URL, not the site homepage.</p>
+                                    </div>
+
+                                    <div id="custom-fields" hidden>
+                                        <label for="custom-query">Connection settings (JSON)</label>
+                                        <textarea id="custom-query" rows="7" spellcheck="false"></textarea>
+                                        <p class="hint">Advanced connector configuration.</p>
+                                    </div>
+                                </div>
+
+                                <div class="setup-section">
+                                    <div class="setup-section-heading">
+                                        <span class="setup-number">3</span>
+                                        <div><strong>How Katcha may use finds</strong><small>This changes what happens to discoveries, not publishing permissions.</small></div>
+                                    </div>
+                                    <div class="purpose-choices" role="radiogroup" aria-label="Source purpose">
+                                        <label class="purpose-choice">
+                                            <input type="radio" name="source-purpose" value="candidate_review" checked>
+                                            <span><strong>Find content for review</strong><small>Finds may be offered to Clips for your review. Nothing is published automatically.</small></span>
+                                        </label>
+                                        <label class="purpose-choice">
+                                            <input type="radio" name="source-purpose" value="discovery_only">
+                                            <span><strong>Research only</strong><small>Use finds as trend, packaging, audience, and editorial context. They are not offered as clip candidates.</small></span>
+                                        </label>
+                                    </div>
+                                    <details class="advanced ae-help">
+                                        <summary>Advanced content-use modes</summary>
+                                        <p>These modes record additional operator intent but do not bypass rights, originality, or approval gates.</p>
+                                        <label for="usage">Advanced mode</label>
+                                        <select id="usage">
+                                            <option value="">Use the choice above</option>
+                                            <option value="operator_authorized">Operator decides each use</option>
+                                            <option value="render_allowed">Intended for production after normal checks</option>
+                                        </select>
+                                        <p id="usage-help" class="hint"></p>
+                                    </details>
+                                </div>
+
+                                <div id="after-save-fields" class="setup-section">
+                                    <div class="setup-section-heading">
+                                        <span class="setup-number">4</span>
+                                        <div><strong>After saving</strong><small>Saving and checking are separate actions. Choose exactly what should happen next.</small></div>
+                                    </div>
+                                    <div class="purpose-choices" role="radiogroup" aria-label="After saving">
+                                        <label class="purpose-choice">
+                                            <input type="radio" name="after-save" value="run" checked>
+                                            <span><strong>Save & check now</strong><small>Create the source, then immediately run one check.</small></span>
+                                        </label>
+                                        <label class="purpose-choice">
+                                            <input type="radio" name="after-save" value="save">
+                                            <span><strong>Save only</strong><small>Register the source without starting a search or check.</small></span>
+                                        </label>
+                                    </div>
+                                    <p class="hint">Recurring source schedules are not started by saving. Durable automation is configured separately.</p>
+                                </div>
                             </section>
-                            <section id="step-3" aria-label="Review source" hidden><p class="section-copy">Check the details before adding this source.</p><dl id="review" class="review"></dl><p id="save-explanation" class="callout">Your review shows whether Katcha will check this source automatically.</p></section>
+
+                            <section id="step-3" aria-label="Confirm source" hidden>
+                                <p class="section-copy">Confirm what Katcha will save and whether it should run one check immediately.</p>
+                                <dl id="review" class="review"></dl>
+                                <p id="save-explanation" class="callout"></p>
+                            </section>
+
                             <p id="setup-error" class="error-text" role="alert"></p>
-                            <div id="wizard-actions" class="wizard-actions" hidden><button id="back" type="button" class="button secondary">Back</button><button id="next" type="button" class="button primary">Review source →</button><button id="save" class="button primary" hidden>Save source</button></div>
+                            <div id="wizard-actions" class="wizard-actions" hidden>
+                                <button id="back" type="button" class="button secondary">Back</button>
+                                <button id="next" type="button" class="button primary">Review source →</button>
+                                <button id="save" class="button primary" hidden>Save source</button>
+                            </div>
                         </form>
                     </section>
-                    <section class="panel card library" data-source-view="library" aria-labelledby="library-title" hidden>
-                        <div class="panel-head"><div><div class="eyebrow">SOURCE LIBRARY</div><h2 id="library-title">Sources</h2></div><button id="refresh" type="button" class="text-button">Refresh</button></div>
-                        <div id="empty-sources" class="empty-state"><span aria-hidden="true">↗</span><h3>No sources yet</h3><p>Add a search, feed, or collection of links to start discovering content.</p><button id="empty-add-source" type="button" class="button primary">Add a source</button></div>
-                        <div id="source-controls" hidden><label for="source">SOURCE</label><select id="source"></select><div id="source-info" class="source-summary"></div>
-                            <form id="import" hidden><label for="urls">Paste content links</label><textarea id="urls" rows="5" placeholder="https://www.tiktok.com/@creator/video/…&#10;https://www.instagram.com/reel/…" aria-describedby="links-help"></textarea><p id="links-help" class="hint">One link per line, from any supported website. Katcha will collect them for review; this does not download or publish a video.</p><button class="button primary">Add links & find content</button></form>
-                            <button id="run" type="button" class="button primary" hidden>Search now</button><button id="pause-source" type="button" class="button secondary">Pause source</button><p id="operation-help" class="hint"></p>
-                            <div class="activity-heading"><h3>Recent activity</h3><button id="history-refresh" type="button" class="text-button">Refresh activity</button></div><div id="history" class="list" aria-live="polite"></div>
+
+                    <section class="panel card library" data-source-view="library" aria-labelledby="library-title">
+                        <div class="panel-head library-head">
+                            <div>
+                                <div class="eyebrow">SOURCE LIBRARY</div>
+                                <h2 id="library-title">Your source network</h2>
+                            </div>
+                            <button id="refresh" type="button" class="text-button">Refresh</button>
+                        </div>
+
+                        <div id="library-toolbar" class="source-library-toolbar">
+                            <label class="source-search">
+                                <span>Search</span>
+                                <input id="source-search" type="search" placeholder="Search source name or key…">
+                            </label>
+                            <label>
+                                <span>Channel</span>
+                                <select id="source-channel-filter"><option value="all">All channels</option></select>
+                            </label>
+                            <label>
+                                <span>Type</span>
+                                <select id="source-type-filter"><option value="all">All types</option></select>
+                            </label>
+                            <label>
+                                <span>Status</span>
+                                <select id="source-status-filter">
+                                    <option value="all">Any status</option>
+                                    <option value="active">Active</option>
+                                    <option value="paused">Paused</option>
+                                </select>
+                            </label>
+                            <label>
+                                <span>Purpose</span>
+                                <select id="source-purpose-filter">
+                                    <option value="all">Any purpose</option>
+                                    <option value="candidate_review">Content for review</option>
+                                    <option value="discovery_only">Research only</option>
+                                </select>
+                            </label>
+                            <label>
+                                <span>Sort</span>
+                                <select id="source-sort">
+                                    <option value="recent">Recently updated</option>
+                                    <option value="name">Name</option>
+                                    <option value="created">Newest added</option>
+                                </select>
+                            </label>
+                        </div>
+
+                        <div id="empty-sources" class="empty-state" hidden>
+                            <span aria-hidden="true">✦</span>
+                            <h3>No sources match this view</h3>
+                            <p>Adjust the filters or add a new source to grow Katcha’s discovery network.</p>
+                            <button id="empty-add-source" type="button" class="button primary">Add source</button>
+                        </div>
+
+                        <div id="source-controls" class="source-library-layout">
+                            <select id="source" hidden aria-hidden="true"></select>
+                            <section class="source-list-pane" aria-label="Sources">
+                                <div class="source-list-summary">
+                                    <span id="source-count">0 sources</span>
+                                    <span id="source-page-label">0–0</span>
+                                </div>
+                                <div id="source-list" class="source-list" role="listbox" aria-label="Source library"></div>
+                                <div class="source-pagination">
+                                    <button id="source-prev" type="button" class="button secondary">← Previous</button>
+                                    <button id="source-next" type="button" class="button secondary">Next →</button>
+                                </div>
+                            </section>
+
+                            <section id="source-inspector" class="source-inspector" aria-live="polite">
+                                <div id="source-inspector-empty" class="source-inspector-empty">
+                                    <span aria-hidden="true">◇</span>
+                                    <h3>Select a source</h3>
+                                    <p>See health, recent finds, channel scope, and check history here.</p>
+                                </div>
+
+                                <div id="source-inspector-content" hidden>
+                                    <header class="source-inspector-head">
+                                        <div>
+                                            <div class="source-title-line">
+                                                <span id="source-platform-badge" class="source-platform-badge">SOURCE</span>
+                                                <span id="source-state-badge" class="source-state-badge">Active</span>
+                                            </div>
+                                            <h2 id="source-name">Source</h2>
+                                            <p id="source-subtitle"></p>
+                                        </div>
+                                        <div class="source-actions">
+                                            <button id="run" type="button" class="button primary">Check now</button>
+                                            <button id="pause-source" type="button" class="button secondary">Pause</button>
+                                        </div>
+                                    </header>
+
+                                    <div id="source-alert" class="source-alert" hidden></div>
+
+                                    <div class="source-stats" aria-label="Source statistics">
+                                        <div><span>Finds</span><strong id="stat-finds">—</strong><small id="stat-finds-note">unique discoveries</small></div>
+                                        <div><span>Checks</span><strong id="stat-runs">—</strong><small id="stat-runs-note">recorded runs</small></div>
+                                        <div><span>Success rate</span><strong id="stat-success">—</strong><small>completed checks</small></div>
+                                        <div><span>Last check</span><strong id="stat-last">—</strong><small id="stat-last-note">No checks yet</small></div>
+                                    </div>
+
+                                    <section class="source-inspector-section">
+                                        <div class="source-section-head">
+                                            <div><span class="section-kicker">SCOPE & BEHAVIOR</span><h3>What this source does</h3></div>
+                                        </div>
+                                        <dl id="source-info" class="source-facts"></dl>
+                                        <p id="operation-help" class="source-operation-help"></p>
+                                    </section>
+
+                                    <form id="import" class="source-inspector-section" hidden>
+                                        <div class="source-section-head">
+                                            <div><span class="section-kicker">ADD SPECIFIC LINKS</span><h3>Send known content into this source</h3></div>
+                                        </div>
+                                        <textarea id="urls" rows="4" placeholder="https://www.tiktok.com/@creator/video/…&#10;https://www.instagram.com/reel/…" aria-describedby="links-help"></textarea>
+                                        <p id="links-help" class="hint">One link per line. This creates a discovery check; it does not publish anything.</p>
+                                        <button class="button primary">Add links & check now</button>
+                                    </form>
+
+                                    <section class="source-inspector-section">
+                                        <div class="source-section-head">
+                                            <div><span class="section-kicker">RECENT FINDS</span><h3>What Katcha found</h3></div>
+                                        </div>
+                                        <div id="recent-finds" class="recent-finds"></div>
+                                    </section>
+
+                                    <section class="source-inspector-section">
+                                        <div class="source-section-head">
+                                            <div><span class="section-kicker">CHECK HISTORY</span><h3>Recent activity</h3></div>
+                                            <button id="history-refresh" type="button" class="text-button">Refresh</button>
+                                        </div>
+                                        <div id="history" class="source-history"></div>
+                                    </section>
+                                </div>
+                            </section>
                         </div>
                     </section>
                 </div>
