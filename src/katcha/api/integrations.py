@@ -114,6 +114,13 @@ class ElevenLabsChannelConfigResponse(BaseModel):
     source: Literal["channel", "global", "unset"]
 
 
+class ElevenLabsChannelEnabledUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool
+    actor: str = Field(default="operator", min_length=1, max_length=128)
+
+
 class ElevenLabsChannelConfigUpdate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -279,19 +286,23 @@ def _channel_elevenlabs_response(
     model_name: str | None = None,
 ) -> ElevenLabsChannelConfigResponse:
     row = get_channel_provider_setting(channel_profile_id, "elevenlabs")
-    voice_id, model_id = resolve_elevenlabs_voice(
+    resolved_voice_id, resolved_model_id = resolve_elevenlabs_voice(
         channel_profile_id=channel_profile_id,
     )
-    config: dict[str, object] = {}
-    if row is not None and row.enabled:
+    config: dict[str, object] = dict(row.config or {}) if row is not None else {}
+    if row is not None:
         source: Literal["channel", "global", "unset"] = "channel"
-        config = dict(row.config or {})
+        voice_id = (
+            str(config.get("voice_id") or "").strip()
+            or (resolved_voice_id if row.enabled else None)
+        )
+        model_id = str(config.get("model_id") or resolved_model_id).strip()
         voice_name = voice_name or str(config.get("voice_name") or "") or None
         model_name = model_name or str(config.get("model_name") or "") or None
-    elif voice_id:
-        source = "global"
     else:
-        source = "unset"
+        voice_id = resolved_voice_id
+        model_id = resolved_model_id
+        source = "global" if voice_id else "unset"
 
     saved_voices: list[ElevenLabsSavedVoiceResponse] = []
     raw_saved = config.get("saved_voices")
@@ -345,6 +356,29 @@ def get_channel_elevenlabs_config(
     channel_profile_id: uuid.UUID,
 ) -> ElevenLabsChannelConfigResponse:
     return _channel_elevenlabs_response(channel_profile_id)
+
+
+@router.patch(
+    "/elevenlabs/channels/{channel_profile_id}/enabled",
+    response_model=ElevenLabsChannelConfigResponse,
+)
+def update_channel_elevenlabs_enabled(
+    channel_profile_id: uuid.UUID,
+    request: ElevenLabsChannelEnabledUpdate,
+) -> ElevenLabsChannelConfigResponse:
+    try:
+        row = get_channel_provider_setting(channel_profile_id, "elevenlabs")
+        upsert_channel_provider_setting(
+            channel_profile_id,
+            provider="elevenlabs",
+            enabled=request.enabled,
+            config=dict(row.config or {}) if row is not None else {},
+            actor=request.actor,
+        )
+        return _channel_elevenlabs_response(channel_profile_id)
+    except ValueError as exc:
+        code = 404 if "channel profile not found" in str(exc) else 400
+        raise HTTPException(status_code=code, detail=str(exc)) from exc
 
 
 @router.put(
