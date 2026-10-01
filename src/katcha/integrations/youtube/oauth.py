@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import binascii
 import hashlib
 import secrets
 from datetime import UTC, datetime, timedelta
@@ -92,7 +93,7 @@ def youtube_oauth_return_to(state: str | None) -> str:
     try:
         padding = "=" * (-len(encoded_return_to) % 4)
         decoded = base64.urlsafe_b64decode(encoded_return_to + padding).decode("utf-8")
-    except (UnicodeDecodeError, ValueError):
+    except (binascii.Error, UnicodeDecodeError, ValueError):
         return DEFAULT_YOUTUBE_OAUTH_RETURN_TO
     return normalize_youtube_oauth_return_to(decoded)
 
