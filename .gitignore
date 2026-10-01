@@ -33,3 +33,6 @@ web-tests/test-results/
 crash.log
 crash.*.log
 *.tfplan
+
+# Local intelligence handoff inbox
+handoff/
