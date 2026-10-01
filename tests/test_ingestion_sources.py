@@ -129,17 +129,33 @@ def test_channel_youtube_source_freezes_profile_connection(source_scope) -> None
 
 def test_channel_youtube_source_without_profile_connection_uses_provider_fallback(
     source_scope,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     import uuid
+    from datetime import UTC, datetime, timedelta
 
     from katcha.intelligence_models import ChannelProfile
+    from katcha.publishing_models import YouTubeConnection
 
+    connection_id = uuid.uuid4()
     profile_id = uuid.uuid4()
     with source_scope() as session:
         session.add(
+            YouTubeConnection(
+                id=connection_id,
+                channel_id="UC" + "b" * 22,
+                channel_title="Marvel Entertainment",
+                status="active",
+                scopes=["https://www.googleapis.com/auth/youtube"],
+                encrypted_access_token="encrypted-access",
+                encrypted_refresh_token="encrypted-refresh",
+                token_expires_at=datetime.now(UTC) + timedelta(hours=1),
+            )
+        )
+        session.add(
             ChannelProfile(
                 id=profile_id,
-                youtube_connection_id=None,
+                youtube_connection_id=connection_id,
                 status="active",
                 timezone="UTC",
             )
@@ -154,6 +170,19 @@ def test_channel_youtube_source_without_profile_connection_uses_provider_fallbac
         channel_profile_id=profile_id,
         query_template={"channel_reference": "@marvel", "limit": 25},
     )
+
+    original_get = Session.get
+
+    def get_without_connection(session, entity, ident, **kwargs):
+        if entity is ChannelProfile and ident == profile_id:
+            return type(
+                "ProfileWithoutConnection",
+                (),
+                {"youtube_connection_id": None},
+            )()
+        return original_get(session, entity, ident, **kwargs)
+
+    monkeypatch.setattr(Session, "get", get_without_connection)
 
     run = create_discovery_run_from_source(source.id)
 

@@ -347,6 +347,15 @@ def route_for_channel(
             providers=providers,
             channel_profile_id=channel_profile_id,
         )
+        if (
+            preferred_target is None
+            and not getattr(
+                get_settings(), "allow_paid_openai_fallback", False
+            )
+        ):
+            candidates = [
+                target for target in candidates if target.provider != "openai"
+            ]
         if not candidates:
             raise BudgetExceeded(
                 f"no configured provider satisfies quality floor {floor} for {task.value}"

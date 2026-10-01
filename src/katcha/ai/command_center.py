@@ -9,8 +9,8 @@ from decimal import Decimal
 
 from pydantic import BaseModel, Field
 
-from katcha.ai.failover import safe_to_fail_over_generation
 from katcha.ai.pricing import estimate_token_cost
+from katcha.ai.provider_policy import command_provider_order
 from katcha.ai.router import (
     ModelTarget,
     record_usage,
@@ -19,9 +19,7 @@ from katcha.ai.router import (
 )
 from katcha.config import Settings, get_settings
 from katcha.domain import AITask
-from katcha.integrations.chatgpt import ChatGPTConnectionError
 from katcha.integrations.chatgpt import invoke_json as invoke_chatgpt_json
-from katcha.integrations.codex import CodexConnectionError
 from katcha.integrations.codex import invoke_json as invoke_codex_json
 
 logger = logging.getLogger(__name__)
@@ -321,56 +319,61 @@ def compose_grounded_answer(
     )
 
     try:
-        if getattr(settings, "codex_enabled", False):
-            try:
-                return _codex(prompt, request_id=request_id)
-            except Exception as exc:
-                if not (
-                    isinstance(exc, CodexConnectionError)
-                    and "No Codex ChatGPT account is connected" in str(exc)
-                ):
-                    attempts.append(
-                        _attempt_label(ModelTarget("codex", "plan"), exc)
-                    )
-
-        if getattr(settings, "chatgpt_host_id", None):
-            try:
-                return _chatgpt(prompt, request_id=request_id)
-            except Exception as exc:
-                if not (
-                    isinstance(exc, ChatGPTConnectionError)
-                    and "No ChatGPT plan connection is available" in str(exc)
-                ):
-                    attempts.append(
-                        _attempt_label(ModelTarget("chatgpt", "plan"), exc)
-                    )
-
-        decision = route_for_channel(
-            AITask.COMMAND_PLANNING,
-            channel_profile_id,
-            estimated_increment_usd=Decimal("0.01"),
-            expected_value=0.7,
-            reference_type="command_center",
-            reference_id=str(request_id),
-            reservation_key=f"command-center:{request_id}",
-        )
-        reservation_id = decision.reservation_id
-        targets = [decision.route.primary]
-        if decision.route.fallback is not None:
-            targets.append(decision.route.fallback)
         last_error: Exception | None = None
-        for index, target in enumerate(targets):
+        for provider in command_provider_order(settings, intent):
             try:
-                if target.provider == "openai" and settings.openai_api_key:
-                    return _openai(
+                if provider == "gemini":
+                    if not settings.gemini_api_key:
+                        continue
+                    target = ModelTarget("gemini", "gemini-3.5-flash-lite")
+                    decision = route_for_channel(
+                        AITask.COMMAND_PLANNING,
+                        channel_profile_id,
+                        estimated_increment_usd=Decimal("0.003"),
+                        expected_value=0.55,
+                        reference_type="command_center",
+                        reference_id=str(request_id),
+                        reservation_key=f"command-center:{request_id}:gemini",
+                        preferred_target=target,
+                    )
+                    reservation_id = decision.reservation_id
+                    return _gemini(
                         prompt,
                         target=target,
                         settings=settings,
                         request_id=request_id,
                         reservation_id=reservation_id,
                     )
-                if target.provider == "gemini" and settings.gemini_api_key:
-                    return _gemini(
+
+                if provider == "codex":
+                    if not getattr(settings, "codex_enabled", False):
+                        continue
+                    return _codex(prompt, request_id=request_id)
+
+                if provider == "chatgpt":
+                    if not getattr(settings, "chatgpt_host_id", None):
+                        continue
+                    return _chatgpt(prompt, request_id=request_id)
+
+                if provider == "openai":
+                    if not (
+                        settings.openai_api_key
+                        and getattr(settings, "allow_paid_openai_fallback", False)
+                    ):
+                        continue
+                    target = ModelTarget("openai", "gpt-5.6-luna")
+                    decision = route_for_channel(
+                        AITask.COMMAND_PLANNING,
+                        channel_profile_id,
+                        estimated_increment_usd=Decimal("0.01"),
+                        expected_value=0.7,
+                        reference_type="command_center",
+                        reference_id=str(request_id),
+                        reservation_key=f"command-center:{request_id}:openai",
+                        preferred_target=target,
+                    )
+                    reservation_id = decision.reservation_id
+                    return _openai(
                         prompt,
                         target=target,
                         settings=settings,
@@ -379,13 +382,24 @@ def compose_grounded_answer(
                     )
             except Exception as exc:
                 last_error = exc
-                attempts.append(_attempt_label(target, exc))
-                if index < len(targets) - 1 and safe_to_fail_over_generation(exc):
-                    continue
-                break
+                model = {
+                    "gemini": "gemini-3.5-flash-lite",
+                    "codex": "plan",
+                    "chatgpt": "plan",
+                    "openai": "gpt-5.6-luna",
+                }.get(provider, "unknown")
+                attempts.append(_attempt_label(ModelTarget(provider, model), exc))
+                release_budget_reservation(
+                    reservation_id,
+                    reason=f"command_center_provider_failed:{provider}:{type(exc).__name__}",
+                )
+                reservation_id = None
+                continue
+
         if last_error is not None:
             raise last_error
         raise RuntimeError("no configured provider is available for command-center narration")
+
     except Exception as exc:
         logger.warning(
             "Katcha AI answer unavailable request_id=%s cause=%s attempts=%s",

@@ -28,23 +28,35 @@ For `KATCHA_ENV=development`, `KATCHA_AI_EXECUTION_MODE=auto` resolves to
 Katcha has two distinct ChatGPT subscription paths because OpenAI meters them
 separately.
 
-The primary path is **ChatGPT · Codex**. It follows the same Codex OAuth/backend
-pattern used by OpenAI Codex and Roo Code: Katcha authenticates the operator's
-ChatGPT account, sends normal command reasoning to the Codex Responses backend, and
-reads the account's short-window and weekly Codex usage from the ChatGPT usage
-endpoint. The OAuth credentials stay encrypted in Katcha's local database.
+The heavy-work subscription path is **ChatGPT · Codex**. It follows the same Codex
+OAuth/backend pattern used by OpenAI Codex and Roo Code: Katcha authenticates the
+operator's ChatGPT account, uses the Codex Responses backend for deeper agent,
+research, scripting, and production reasoning, and reads the account's short-window
+and weekly Codex usage from the ChatGPT usage endpoint. The OAuth credentials stay
+encrypted in Katcha's local database.
 
 The secondary path is **Direct ChatGPT app sharing**. This is OpenAI's
 subscription-sharing flow for third-party/open-source apps. Its usage and policy checks are distinct from the Codex backend, and an app-specific
 subscription-sharing limit can block this path even while Codex and Roo Code still have
 capacity.
 
-Command Center provider order is:
+Katcha now separates routine conversation from heavy work.
 
-1. connected ChatGPT Codex subscription;
-2. connected Direct ChatGPT app-sharing subscription;
-3. configured OpenAI/Gemini API-key providers;
-4. deterministic stored-data fallback.
+Routine conversation and command interpretation default to:
+
+1. Gemini Flash-Lite through the configured Gemini API project;
+2. Codex subscription if Gemini is unavailable;
+3. Direct ChatGPT app sharing;
+4. paid OpenAI API only when explicitly enabled;
+5. deterministic stored-data fallback.
+
+Heavy Command Center intents, subscription-backed production generation, and grounded
+source research default to Codex first, then Gemini/other safe fallbacks. This preserves
+the limited Codex 5-hour/weekly pool for work that benefits from deeper reasoning.
+
+Whether Gemini is actually free depends on the Google AI Studio/API project and its
+billing tier. Katcha cannot force a paid Gemini project to behave as a free-tier project,
+so use a project that remains on Google's free tier for the conversation route.
 
 Both subscription paths are recorded as zero API-dollar cost in Katcha's own usage
 ledger. Provider subscription limits still apply. Specialist workloads such as native
@@ -84,6 +96,9 @@ Use:
 KATCHA_AI_ENABLED=true
 KATCHA_AI_EXECUTION_MODE=live
 KATCHA_AI_LIVE_ROUTING_MODE=free_first
+KATCHA_CONVERSATION_PROVIDER=gemini
+KATCHA_AGENT_PROVIDER=codex
+KATCHA_ALLOW_PAID_OPENAI_FALLBACK=false
 ```
 
 The normal Katcha monthly/channel budget protections still apply in live mode.
@@ -102,6 +117,9 @@ It reports only non-secret state:
 {
   "execution_mode": "fixture",
   "live_routing_mode": "free_first",
+  "conversation_provider": "gemini",
+  "agent_provider": "codex",
+  "paid_openai_fallback_enabled": false,
   "external_provider_calls_enabled": false
 }
 ```
