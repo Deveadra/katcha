@@ -41,6 +41,9 @@ class CommandPlan(BaseModel):
     intent: CommandIntent
     confidence: float = Field(ge=0.0, le=1.0)
     reason: str = Field(min_length=1, max_length=320)
+    source_hint: str | None = Field(default=None, max_length=160)
+    search_query: str | None = Field(default=None, max_length=320)
+    prepare_for_production: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -81,9 +84,14 @@ def _planner_prompt(
         "behavior.\n"
         "- create_content: prepare a proposal to make a short/video/episode "
         "from selected context.\n"
-        "- source_discovery: search for new public posts, videos, clips, media "
+        "- source_discovery: search for public posts, videos, clips, media "
         "candidates, sources, creators, communities, or sites outside the "
-        "already-stored clip pool.\n"
+        "already-stored clip pool. This also includes searching a configured "
+        "official source such as a named YouTube channel. For this intent, extract "
+        "source_hint when the operator names a source/account/channel, search_query "
+        "as the concise provider search text, and set prepare_for_production=true "
+        "when the operator asks Katcha to ingest, prepare, stage, or ready the finds "
+        "for production/review. Do not invent a source name that was not implied.\n"
         "- resource_context: explain or inspect typed Katcha resources already "
         "attached by the operator interface.\n"
         "- conversation: greetings, questions about Katcha capabilities, or discussion "
