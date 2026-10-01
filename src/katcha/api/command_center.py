@@ -1136,6 +1136,39 @@ async def command(http_request: Request, request: CommandRequest) -> CommandResp
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
+    planned_specs: list[ActionProposalSpec] = []
+    if intent != "confirm_action":
+        planned_specs = _action_specs(
+            resolved_request,
+            intent,
+            evidence,
+            plan=planning.value,
+        )
+        if intent == "source_discovery" and planned_specs:
+            source_spec = planned_specs[0]
+            source_id = source_spec.payload.get("source_id")
+            if source_id:
+                source_name = str(
+                    source_spec.payload.get("source_name") or "configured source"
+                )
+                search_query = str(
+                    source_spec.payload.get("search_query") or ""
+                )
+                if bool(source_spec.payload.get("prepare_for_production")):
+                    deterministic = (
+                        f"I resolved {source_name} as the configured source and "
+                        f"prepared a search for {search_query!r}. The action below "
+                        "will search that exact source, move matching results into "
+                        "the review ingest pipeline, and analyze them for production "
+                        "qualification. It will not publish anything."
+                    )
+                else:
+                    deterministic = (
+                        f"I resolved {source_name} as the configured source and "
+                        f"prepared a search for {search_query!r}. The action below "
+                        "will run that exact source search."
+                    )
+
     if resolution.inherited_from_thread and resolution.resolution:
         deterministic = f"{deterministic} Context: {resolution.resolution}"
 
@@ -1211,16 +1244,10 @@ async def command(http_request: Request, request: CommandRequest) -> CommandResp
         if intent == "confirm_action":
             proposals = reused_proposals
         else:
-            specs = _action_specs(
-                resolved_request,
-                intent,
-                evidence,
-                plan=planning.value,
-            )
             proposals = create_action_proposals(
                 request_id=request_id,
                 channel_profile_id=request.channel_profile_id,
-                specs=specs,
+                specs=planned_specs,
                 thread_id=thread.id,
                 source_turn_id=assistant_turn.id,
                 actor=actor,
