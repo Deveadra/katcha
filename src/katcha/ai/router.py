@@ -349,7 +349,9 @@ def route_for_channel(
         )
         if (
             preferred_target is None
-            and not get_settings().allow_paid_openai_fallback
+            and not getattr(
+                get_settings(), "allow_paid_openai_fallback", False
+            )
         ):
             candidates = [
                 target for target in candidates if target.provider != "openai"
