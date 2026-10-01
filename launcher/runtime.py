@@ -23,6 +23,7 @@ import subprocess
 import threading
 import time
 import traceback
+import urllib.parse
 import uuid
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -87,6 +88,8 @@ FIELDS = {
     "KATCHA_REMOTION_STAGING_BUCKET",
 }
 SENSITIVE = re.compile(r"KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL", re.I)
+HANDOFF_MAX_BYTES = 10 * 1024 * 1024
+HANDOFF_FILENAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,179}\.json$")
 
 
 def read_env(path):
@@ -1178,11 +1181,216 @@ class Handler(BaseHTTPRequestHandler):
             return self.send(200, b"".join(chunks), "application/x-ndjson")
         return self.proxy()
 
+    def _api_json_request(self, method, path, payload=None):
+        body = b""
+        headers = {
+            "Authorization": (
+                "Bearer " + self.server.runtime.values["KATCHA_CONTROL_API_TOKEN"]
+            ),
+            "Accept": "application/json",
+        }
+        if payload is not None:
+            body = json.dumps(payload).encode()
+            headers["Content-Type"] = "application/json"
+        connection = http.client.HTTPConnection("127.0.0.1", 8000, timeout=120)
+        try:
+            connection.request(method, path, body=body, headers=headers)
+            response = connection.getresponse()
+            raw = response.read()
+            try:
+                data = json.loads(raw or b"{}")
+            except (TypeError, ValueError):
+                data = {
+                    "error": (
+                        raw.decode("utf-8", errors="replace")[:4000]
+                        or "Katcha returned an unreadable response."
+                    )
+                }
+            return response.status, data
+        finally:
+            connection.close()
+
+    def _handoff_filename(self):
+        parsed = urllib.parse.urlsplit(self.path)
+        values = urllib.parse.parse_qs(parsed.query, keep_blank_values=True)
+        names = values.get("filename", [])
+        filename = names[0] if len(names) == 1 else ""
+        if (
+            not filename
+            or Path(filename).name != filename
+            or not HANDOFF_FILENAME.fullmatch(filename)
+        ):
+            raise ValueError(
+                "Handoff filename must be a simple .json name using letters, "
+                "numbers, dots, dashes, or underscores."
+            )
+        return filename
+
+    def _existing_handoff_path(self, filename):
+        root = self.server.runtime.root / "handoff"
+        for status in ("incoming", "processed", "failed"):
+            path = root / status / filename
+            if path.exists():
+                if path.is_symlink() or not path.is_file():
+                    raise ValueError("Existing handoff path is not a regular file.")
+                return path
+        return None
+
+    def _handle_handoff_upload(self):
+        runtime = self.server.runtime
+        filename = self._handoff_filename()
+        content_type = self.headers.get("Content-Type", "").split(";", 1)[0].strip()
+        if content_type != "application/octet-stream":
+            return self.send(415, {"error": "Handoff upload requires application/octet-stream"})
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+        except ValueError as exc:
+            raise ValueError("Handoff upload has an invalid Content-Length.") from exc
+        if not 0 < length <= HANDOFF_MAX_BYTES:
+            return self.send(
+                413,
+                {"error": "Handoff file must be between 1 byte and 10 MiB."},
+            )
+        content = self.rfile.read(length)
+        if len(content) != length:
+            raise OSError(
+                f"Handoff upload ended early ({len(content)} of {length} bytes received)."
+            )
+
+        root = runtime.root / "handoff"
+        incoming = root / "incoming"
+        incoming.mkdir(parents=True, exist_ok=True)
+        existing = self._existing_handoff_path(filename)
+        if existing is not None:
+            if hashlib.sha256(existing.read_bytes()).digest() != hashlib.sha256(content).digest():
+                return self.send(
+                    409,
+                    {
+                        "error": (
+                            "A handoff file with this name already exists "
+                            "with different content."
+                        )
+                    },
+                )
+        else:
+            target = incoming / filename
+            temporary = incoming / f".{filename}.{uuid.uuid4().hex}.pending"
+            temporary.write_bytes(content)
+            os.replace(temporary, target)
+
+        runtime.event(
+            "info",
+            "handoff",
+            "Handoff upload received.",
+            filename=filename,
+            size_bytes=length,
+        )
+        status, data = self._api_json_request(
+            "POST",
+            "/v1/intelligence-ingest/inbox/process",
+            {"filenames": [filename], "limit": 1},
+        )
+        if status >= 400:
+            runtime.event(
+                "error",
+                "handoff",
+                "Katcha rejected the handoff processing request.",
+                filename=filename,
+                status_code=status,
+            )
+            return self.send(status, data)
+        if not isinstance(data, list) or not data:
+            runtime.event(
+                "error",
+                "handoff",
+                "Katcha returned no result for the uploaded handoff.",
+                filename=filename,
+            )
+            return self.send(
+                502,
+                {"error": "Katcha accepted the file but returned no processing result."},
+            )
+        result = data[0]
+        runtime.event(
+            "info" if result.get("status") == "processed" else "error",
+            "handoff",
+            "Handoff processing finished.",
+            filename=filename,
+            handoff_status=str(result.get("status") or "unknown"),
+            record_count=result.get("record_count"),
+        )
+        return self.send(200, result)
+
+    def _handle_handoff_process(self):
+        runtime = self.server.runtime
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+        except ValueError as exc:
+            raise ValueError("Handoff process request has an invalid Content-Length.") from exc
+        if not 0 <= length <= 65536:
+            return self.send(413, {"error": "Handoff process request is too large."})
+        raw = self.rfile.read(length)
+        try:
+            body = json.loads(raw or b"{}")
+        except ValueError as exc:
+            raise ValueError("Handoff process request must contain valid JSON.") from exc
+        if not isinstance(body, dict) or set(body) - {"limit"}:
+            raise ValueError("Handoff process request contains unsupported fields.")
+        limit = body.get("limit", 50)
+        if not isinstance(limit, int) or isinstance(limit, bool) or not 1 <= limit <= 500:
+            raise ValueError("Handoff process limit must be between 1 and 500.")
+
+        runtime.event("info", "handoff", "Processing pending handoff files.", limit=limit)
+        status, data = self._api_json_request(
+            "POST",
+            "/v1/intelligence-ingest/inbox/process",
+            {"limit": limit},
+        )
+        if status >= 400:
+            runtime.event(
+                "error",
+                "handoff",
+                "Katcha rejected the pending handoff processing request.",
+                status_code=status,
+            )
+            return self.send(status, data)
+        processed = len(data) if isinstance(data, list) else 0
+        failed = (
+            sum(1 for item in data if item.get("status") == "failed")
+            if isinstance(data, list)
+            else 0
+        )
+        runtime.event(
+            "info" if failed == 0 else "warning",
+            "handoff",
+            "Pending handoff processing finished.",
+            processed_count=processed,
+            failed_count=failed,
+        )
+        return self.send(200, data)
+
     def do_POST(self):
         if not self.allowed() or self.headers.get("Sec-Fetch-Site") == "cross-site":
             return self.send(403, {"error": "Local requests only"})
         if not self.path.startswith("/runtime/"):
             return self.proxy()
+        runtime_path = urllib.parse.urlsplit(self.path).path
+        try:
+            if runtime_path == "/runtime/handoff/upload":
+                return self._handle_handoff_upload()
+            if runtime_path == "/runtime/handoff/process":
+                return self._handle_handoff_process()
+        except (OSError, ValueError, http.client.HTTPException) as exc:
+            self.server.runtime.event(
+                "error",
+                "handoff",
+                f"{type(exc).__name__}: {exc}",
+                path=runtime_path,
+            )
+            return self.send(
+                502 if isinstance(exc, (OSError, http.client.HTTPException)) else 400,
+                {"error": self.server.runtime.redact(str(exc))},
+            )
         if self.headers.get("Content-Type") != "application/json":
             return self.send(415, {"error": "JSON required"})
         runtime = self.server.runtime
@@ -1271,9 +1479,14 @@ class Handler(BaseHTTPRequestHandler):
         )
         if not self.path.startswith(allowed_prefixes):
             return self.send(404, {"error": "Not found"})
-        connection = http.client.HTTPConnection("127.0.0.1", 8000, timeout=120)
+        connection = None
         headers_sent = False
         try:
+            connection = http.client.HTTPConnection(
+                "127.0.0.1",
+                8000,
+                timeout=120,
+            )
             length = int(self.headers.get("Content-Length", "0"))
             if not 0 <= length <= 11_000_000:
                 return self.send(413, {"error": "Request too large"})
@@ -1306,14 +1519,29 @@ class Handler(BaseHTTPRequestHandler):
                 self.server.runtime.event(
                     "error", "api", f"HTTP {response.status}", path=self.path.split("?")[0]
                 )
-        except (OSError, ValueError) as exc:
-            self.server.runtime.event("error", "gateway", str(exc))
+        except Exception as exc:
+            self.server.runtime.event(
+                "error",
+                "gateway",
+                f"{type(exc).__name__}: {exc}",
+                method=self.command,
+                path=self.path.split("?")[0],
+            )
             if not headers_sent:
-                self.send(502, {"error": "Katcha is unavailable. Open the launch console."})
+                self.send(
+                    502,
+                    {
+                        "error": (
+                            "The local Katcha gateway could not complete this request. "
+                            "Open the launch console for the recorded gateway error."
+                        )
+                    },
+                )
             else:
                 self.close_connection = True
         finally:
-            connection.close()
+            if connection is not None:
+                connection.close()
 
     do_PUT = do_POST
     do_PATCH = do_POST

@@ -117,6 +117,185 @@ def test_http_rejects_foreign_origin_and_secret_exposure(tmp_path):
         server.server_close()
 
 
+def test_handoff_upload_uses_launcher_local_transport(tmp_path):
+    app = instance(tmp_path)
+    server = runtime.ThreadingHTTPServer(("127.0.0.1", 0), runtime.Handler)
+    server.runtime = app
+    result = {
+        "filename": "batch.json",
+        "status": "processed",
+        "size_bytes": 17,
+        "modified_at": "2026-10-01T19:00:00Z",
+        "channel_profile_id": "channel-one",
+        "batch_key": "batch-001",
+        "record_count": 2,
+        "error": None,
+        "receipt": {"created_count": 2, "updated_count": 0, "replayed": False},
+    }
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        with patch.object(
+            runtime.Handler,
+            "_api_json_request",
+            return_value=(200, [result]),
+        ) as api:
+            connection = http.client.HTTPConnection(
+                "127.0.0.1",
+                server.server_port,
+            )
+            payload = b'{"handoff":"ok"}'
+            connection.request(
+                "POST",
+                "/runtime/handoff/upload?filename=batch.json",
+                payload,
+                {"Content-Type": "application/octet-stream"},
+            )
+            response = connection.getresponse()
+            assert response.status == 200
+            body = json.loads(response.read())
+            connection.close()
+
+        assert body["status"] == "processed"
+        assert body["record_count"] == 2
+        assert (tmp_path / "handoff" / "incoming" / "batch.json").read_bytes() == payload
+        api.assert_called_once_with(
+            "POST",
+            "/v1/intelligence-ingest/inbox/process",
+            {"filenames": ["batch.json"], "limit": 1},
+        )
+        assert any(
+            event["component"] == "handoff"
+            and event["message"] == "Handoff upload received."
+            for event in app.events
+        )
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_handoff_upload_rejects_conflicting_filename_content(tmp_path):
+    app = instance(tmp_path)
+    existing = tmp_path / "handoff" / "incoming" / "batch.json"
+    existing.write_bytes(b"first")
+    server = runtime.ThreadingHTTPServer(("127.0.0.1", 0), runtime.Handler)
+    server.runtime = app
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        with patch.object(runtime.Handler, "_api_json_request") as api:
+            connection = http.client.HTTPConnection(
+                "127.0.0.1",
+                server.server_port,
+            )
+            connection.request(
+                "POST",
+                "/runtime/handoff/upload?filename=batch.json",
+                b"second",
+                {"Content-Type": "application/octet-stream"},
+            )
+            response = connection.getresponse()
+            assert response.status == 409
+            assert "different content" in json.loads(response.read())["error"]
+            connection.close()
+        api.assert_not_called()
+        assert existing.read_bytes() == b"first"
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_handoff_upload_rejects_path_traversal(tmp_path):
+    app = instance(tmp_path)
+    server = runtime.ThreadingHTTPServer(("127.0.0.1", 0), runtime.Handler)
+    server.runtime = app
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        connection = http.client.HTTPConnection("127.0.0.1", server.server_port)
+        connection.request(
+            "POST",
+            "/runtime/handoff/upload?filename=..%2Foutside.json",
+            b"{}",
+            {"Content-Type": "application/octet-stream"},
+        )
+        response = connection.getresponse()
+        assert response.status == 400
+        assert "filename" in json.loads(response.read())["error"].lower()
+        connection.close()
+        assert not (tmp_path / "outside.json").exists()
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_handoff_process_pending_uses_control_plane_api(tmp_path):
+    app = instance(tmp_path)
+    server = runtime.ThreadingHTTPServer(("127.0.0.1", 0), runtime.Handler)
+    server.runtime = app
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    result = [{
+        "filename": "pending.json",
+        "status": "processed",
+        "record_count": 3,
+    }]
+    try:
+        with patch.object(
+            runtime.Handler,
+            "_api_json_request",
+            return_value=(200, result),
+        ) as api:
+            connection = http.client.HTTPConnection(
+                "127.0.0.1",
+                server.server_port,
+            )
+            connection.request(
+                "POST",
+                "/runtime/handoff/process",
+                json.dumps({"limit": 50}),
+                {"Content-Type": "application/json"},
+            )
+            response = connection.getresponse()
+            assert response.status == 200
+            assert json.loads(response.read()) == result
+            connection.close()
+
+        api.assert_called_once_with(
+            "POST",
+            "/v1/intelligence-ingest/inbox/process",
+            {"limit": 50},
+        )
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_proxy_exception_returns_controlled_gateway_error(tmp_path):
+    app = instance(tmp_path)
+    server = runtime.ThreadingHTTPServer(("127.0.0.1", 0), runtime.Handler)
+    server.runtime = app
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        original = http.client.HTTPConnection
+        connection = original("127.0.0.1", server.server_port)
+        with patch.object(
+            runtime.http.client,
+            "HTTPConnection",
+            side_effect=RuntimeError("fixture proxy failure"),
+        ):
+            connection.request("POST", "/v1/fixture", b"{}", {"Content-Type": "application/json"})
+            response = connection.getresponse()
+            assert response.status == 502
+            body = json.loads(response.read())
+        connection.close()
+        assert "gateway" in body["error"].lower()
+        assert any(
+            event["component"] == "gateway"
+            and "RuntimeError" in event["message"]
+            for event in app.events
+        )
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
 def test_launcher_live_choice_enables_ai(tmp_path):
     app = instance(tmp_path)
     app.save({"KATCHA_AI_ENABLED": "false", "KATCHA_AI_EXECUTION_MODE": "fixture"})

@@ -197,7 +197,28 @@ function overview(source) {
         }
 
         if (url.pathname === "/v1/intelligence-ingest/inbox/process" && req.method() === "POST") {
-            return reply([]);
+            const pending = handoffItems.filter((item) => item.status === "incoming");
+            handoffItems = handoffItems.map((item) => item.status === "incoming"
+                ? {
+                    ...item,
+                    status: "processed",
+                    receipt: {
+                        created_count: item.record_count || 0,
+                        updated_count: 0,
+                        replayed: false,
+                    },
+                }
+                : item
+            );
+            return reply(pending.map((item) => ({
+                ...item,
+                status: "processed",
+                receipt: {
+                    created_count: item.record_count || 0,
+                    updated_count: 0,
+                    replayed: false,
+                },
+            })));
         }
 
         if (url.pathname === "/v1/discovery/source-library" && req.method() === "GET") {
@@ -346,6 +367,10 @@ function overview(source) {
                 }],
             })),
         });
+        assert.equal(await page.locator("#handoff-progress").isVisible(), true);
+        assert.match(await page.locator("#handoff-progress-title").innerText(), /Ready to import/);
+        assert.match(await page.locator("#handoff-progress-detail").innerText(), /Nothing has been sent yet/);
+
         await page.locator("#handoff-upload button[type=submit]").click();
         await page.waitForFunction(() =>
             document.querySelector("#handoff-count-processed")?.textContent === "1"
@@ -353,10 +378,39 @@ function overview(source) {
         assert.match(await page.locator("#handoff-list").innerText(), /rank-snaxx-first-run\.json/);
         assert.match(await page.locator("#handoff-list").innerText(), /RankSnaxx/);
         assert.match(await page.locator("#message").innerText(), /4 intelligence records/);
+        assert.match(await page.locator("#handoff-progress-title").innerText(), /Batch imported/);
+        assert.equal(await page.locator("#handoff-progress-bar").getAttribute("value"), "100");
         assert(requests.some((row) =>
             row.path === "/v1/intelligence-ingest/inbox/files" &&
             row.method === "POST"
         ));
+
+        handoffItems.unshift({
+            filename: "manual-drop.json",
+            status: "incoming",
+            size_bytes: 128,
+            modified_at: now,
+            channel_profile_id: "channel-two",
+            batch_key: "manual-drop",
+            record_count: 3,
+            error: null,
+            receipt: null,
+        });
+        await page.locator("#handoff-refresh").click();
+        await page.waitForFunction(() =>
+            document.querySelector("#handoff-count-incoming")?.textContent === "1"
+        );
+        await page.locator("#handoff-process").click();
+        await page.waitForFunction(() =>
+            document.querySelector("#handoff-count-incoming")?.textContent === "0"
+        );
+        assert.match(await page.locator("#handoff-progress-title").innerText(), /processing complete/i);
+        assert.match(await page.locator("#handoff-progress-detail").innerText(), /1 processed/);
+        assert(requests.some((row) =>
+            row.path === "/v1/intelligence-ingest/inbox/process" &&
+            row.method === "POST"
+        ));
+
         await page.locator('[data-source-tab="library"]').click();
         await page.locator('[data-source-view="library"]').waitFor({ state: "visible" });
 
