@@ -3,6 +3,7 @@ from datetime import UTC, datetime
 
 import pytest
 
+from katcha.ai.command_planner import CommandPlan
 from katcha.api.command_center import CommandRequest, _action_specs
 from katcha.api.main import app
 from katcha.command_center_models import (
@@ -15,6 +16,7 @@ from katcha.editorial.rankings import (
     build_locked_ranking_episode_plan,
     rank_snaxx_countdown_v1,
 )
+from katcha.services.ingestion_sources import upsert_ingestion_source
 from katcha.services.command_center import (
     _search_terms,
     classify_intent,
@@ -97,6 +99,14 @@ def test_command_center_classifies_operator_examples() -> None:
         classify_intent("Look for why this render failed.", [])
         == "failures"
     )
+    assert (
+        classify_intent(
+            "Get the official trailers for VisionQuest from Marvel's YouTube "
+            "channel and prepare it for production.",
+            [],
+        )
+        == "source_discovery"
+    )
 
 
 def test_source_scout_proposal_freezes_discovery_scope() -> None:
@@ -124,6 +134,73 @@ def test_source_scout_proposal_freezes_discovery_scope() -> None:
     assert specs[0].payload["platforms"] == ["tiktok", "bluesky"]
     assert specs[0].payload["terms"] == ["gaming"]
     assert specs[0].payload["interval_minutes"] == 60
+
+
+def test_named_official_source_becomes_a_bounded_executable_search() -> None:
+    source = upsert_ingestion_source(
+        source_key=f"marvel-fixture-{uuid.uuid4()}",
+        name="Marvel Entertainment",
+        adapter_key="youtube",
+        adapter_version="v1",
+        platform="youtube",
+        query_template={"channel_reference": "@marvel"},
+        enabled=True,
+    )
+    request = CommandRequest(
+        channel_profile_id=uuid.uuid4(),
+        prompt=(
+            "Get the official trailers for VisionQuest from Marvel's YouTube "
+            "channel and prepare it for production."
+        ),
+    )
+    plan = CommandPlan(
+        intent="source_discovery",
+        confidence=0.99,
+        reason="Search a configured official source and prepare the matches.",
+        source_hint="Marvel Entertainment",
+        search_query="VisionQuest official trailer",
+        prepare_for_production=True,
+    )
+
+    specs = _action_specs(
+        request,
+        "source_discovery",
+        [
+            {
+                "kind": "source_discovery",
+                "id": "current",
+                "web_scout_ready": True,
+                "requested_platforms": ["youtube"],
+                "suggested_terms": ["visionquest", "marvel"],
+            }
+        ],
+        plan=plan,
+    )
+
+    assert len(specs) == 1
+    assert specs[0].action_type == "start_source_scout"
+    assert specs[0].payload["source_id"] == str(source.id)
+    assert specs[0].payload["source_name"] == "Marvel Entertainment"
+    assert specs[0].payload["query_overrides"]["q"] == "VisionQuest official trailer"
+    assert specs[0].payload["prepare_for_production"] is True
+    assert "review pipeline" in specs[0].description
+
+
+def test_operational_follow_up_confirms_the_prior_frozen_action() -> None:
+    turns, assistant_id = _conversation_turns_with_clips([uuid.uuid4()])
+    turns[-1].intent = "source_discovery"
+
+    resolution = resolve_command_follow_up(
+        "Proceed with the operational next step you defined.",
+        [],
+        turns,
+        has_pending_proposal=True,
+    )
+
+    assert resolution.intent_hint == "confirm_action"
+    assert resolution.action_source_turn_id == assistant_id
+    assert resolution.inherited_from_thread is True
+    assert "frozen action" in str(resolution.resolution).casefold()
 
 
 def test_selected_clip_explanation_is_read_only_intent() -> None:
@@ -329,7 +406,7 @@ def test_conversation_follow_up_never_treats_chat_confirmation_as_execution() ->
 
     assert resolution.intent_hint == "confirm_action"
     assert resolution.action_source_turn_id == assistant_id
-    assert "never confirms" in str(resolution.resolution).casefold()
+    assert "frozen action" in str(resolution.resolution).casefold()
 
 
 def test_explicit_clip_selection_wins_over_conversation_reference() -> None:
