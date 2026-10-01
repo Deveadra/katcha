@@ -179,7 +179,7 @@ def _available_providers(
 ) -> set[str]:
     settings = get_settings()
     providers: set[str] = set()
-    if settings.openai_api_key and settings.allow_paid_openai_fallback:
+    if settings.openai_api_key:
         providers.add("openai")
     if settings.gemini_api_key:
         providers.add("gemini")
@@ -347,6 +347,13 @@ def route_for_channel(
             providers=providers,
             channel_profile_id=channel_profile_id,
         )
+        if (
+            preferred_target is None
+            and not get_settings().allow_paid_openai_fallback
+        ):
+            candidates = [
+                target for target in candidates if target.provider != "openai"
+            ]
         if not candidates:
             raise BudgetExceeded(
                 f"no configured provider satisfies quality floor {floor} for {task.value}"
