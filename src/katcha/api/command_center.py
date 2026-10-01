@@ -46,6 +46,7 @@ from katcha.integrations.codex import (
 from katcha.integrations.codex import usage as codex_usage
 from katcha.orchestration.client import (
     start_channel_intelligence_refresh,
+    start_command_source_prepare_workflow,
     start_discovery_workflow,
     start_production_workflow,
     start_short_episode_editorial_workflow,
@@ -1408,8 +1409,16 @@ async def _execute_proposal(
                     "command_match_terms": match_terms,
                 },
             )
-            workflow_id = f"discovery-run-{run.id}"
-            await start_discovery_workflow(str(run.id), workflow_id)
+            if prepare_for_production:
+                workflow_id = f"command-source-prepare-{run.id}"
+                await start_command_source_prepare_workflow(
+                    str(run.id),
+                    workflow_id,
+                    ingest_task_queue=get_settings().temporal_task_queue,
+                )
+            else:
+                workflow_id = f"discovery-run-{run.id}"
+                await start_discovery_workflow(str(run.id), workflow_id)
             return {
                 "discovery_run_id": str(run.id),
                 "workflow_id": workflow_id,
