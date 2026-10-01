@@ -10,6 +10,7 @@ from temporalio.common import RetryPolicy
 
 from katcha.acquisition.runtime import DISCOVERY_TASK_QUEUE, MAX_DISCOVERY_PAGES
 from katcha.orchestration.trend_workflows import ChannelTrendRefreshWorkflow
+from katcha.orchestration.workflows import ClipIngestWorkflow
 from katcha.trends.runtime import TREND_TASK_QUEUE
 
 _ACTIVITY_RETRY = RetryPolicy(
@@ -106,6 +107,69 @@ class DiscoveryRunWorkflow:
                 retry_policy=RetryPolicy(maximum_attempts=3),
             )
             raise
+
+
+@workflow.defn
+class CommandSourcePrepareWorkflow:
+    @workflow.run
+    async def run(
+        self,
+        run_id: str,
+        ingest_task_queue: str,
+    ) -> dict[str, object]:
+        discovery_workflow_id = f"discovery-run-{run_id}"
+        discovery_result = await workflow.execute_child_workflow(
+            DiscoveryRunWorkflow.run,
+            run_id,
+            id=discovery_workflow_id,
+            task_queue=DISCOVERY_TASK_QUEUE,
+        )
+        prepared = await workflow.execute_activity(
+            "prepare_command_discovery_candidates_activity",
+            run_id,
+            start_to_close_timeout=timedelta(minutes=2),
+            retry_policy=_ACTIVITY_RETRY,
+            result_type=dict[str, object],
+        )
+        raw_items = prepared.get("prepared")
+        items = raw_items if isinstance(raw_items, list) else []
+        ingests: list[dict[str, object]] = []
+        for raw in items:
+            item = raw if isinstance(raw, dict) else {}
+            source_id = str(item.get("source_id") or "")
+            ingest_workflow_id = str(item.get("workflow_id") or "")
+            if not source_id or not ingest_workflow_id:
+                continue
+            try:
+                result = await workflow.execute_child_workflow(
+                    ClipIngestWorkflow.run,
+                    source_id,
+                    id=ingest_workflow_id,
+                    task_queue=ingest_task_queue,
+                )
+                ingests.append(
+                    {
+                        "source_id": source_id,
+                        "workflow_id": ingest_workflow_id,
+                        "success": True,
+                        "result": result,
+                    }
+                )
+            except Exception as exc:
+                ingests.append(
+                    {
+                        "source_id": source_id,
+                        "workflow_id": ingest_workflow_id,
+                        "success": False,
+                        "error": str(exc)[:1000],
+                    }
+                )
+        return {
+            "run_id": run_id,
+            "discovery": discovery_result,
+            "preparation": prepared,
+            "ingests": ingests,
+        }
 
 
 @workflow.defn
