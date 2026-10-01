@@ -28,6 +28,56 @@ const assert = require('node:assert/strict');
         await workspace.getByRole('heading',{name:/What needs you now/}).waitFor();
         await workspace.waitForFunction(()=>document.getElementById('connection-state').textContent==='WARMING');
         assert.match(await workspace.locator('#status').textContent(),/Start services/);
+
+        // The bridge must keep reporting runtime state after initial page load.
+        await workspace.route('**/runtime/status', async route => route.fulfill({
+            status: 200,
+            contentType: 'application/json',
+            body: JSON.stringify({
+                session: 'fixture-session',
+                workspace_ready: true,
+                desired_running: true,
+                phase: 'degraded',
+                stage: 'degraded',
+                services: [],
+                events: [],
+                settings: {},
+            }),
+        }));
+        await workspace.waitForFunction(() =>
+            document.getElementById('connection-state').textContent.includes('DEGRADED')
+        );
+        assert.match(
+            await workspace.locator('#connection-state').getAttribute('title'),
+            /background services need attention/i,
+        );
+
+        // Handoff browser requests must receive a controlled HTTP response even
+        // when the upstream API is unavailable; they must never become Failed to fetch.
+        const handoffPayload = Buffer.from('{"fixture":"handoff"}');
+        const handoffResponse = await workspace.request.post(
+            'http://localhost:8765/runtime/handoff/upload?filename=browser-fixture.json',
+            {
+                headers: {'Content-Type': 'application/octet-stream'},
+                data: handoffPayload,
+            },
+        );
+        assert.equal(handoffResponse.status(), 502);
+        assert(existsSync(join(root, 'handoff', 'incoming', 'browser-fixture.json')));
+        assert.deepEqual(
+            readFileSync(join(root, 'handoff', 'incoming', 'browser-fixture.json')),
+            handoffPayload,
+        );
+
+        const processResponse = await workspace.request.post(
+            'http://localhost:8765/runtime/handoff/process',
+            {
+                headers: {'Content-Type': 'application/json'},
+                data: {limit: 50},
+            },
+        );
+        assert.equal(processResponse.status(), 502);
+
         const chatShortcut=workspace.locator('#katcha-chat-shortcut');
         await chatShortcut.waitFor();
         assert.equal(await chatShortcut.evaluate(node=>getComputedStyle(node).position),'fixed');
