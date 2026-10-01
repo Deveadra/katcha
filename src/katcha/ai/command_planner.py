@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 
 from katcha.ai.failover import safe_to_fail_over_generation
 from katcha.ai.pricing import estimate_token_cost
+from katcha.ai.provider_policy import planner_provider_order
 from katcha.ai.router import (
     ModelTarget,
     record_usage,
@@ -301,6 +302,43 @@ def deterministic_plan(intent: str, reason: str) -> CommandPlanResult:
     )
 
 
+def _finalize_plan_result(
+    result: CommandPlanResult,
+    *,
+    deterministic_intent: str,
+) -> CommandPlanResult:
+    if result.value.confidence >= 0.65:
+        return result
+    if deterministic_intent != "channel_status":
+        return CommandPlanResult(
+            value=CommandPlan(
+                intent=deterministic_intent,
+                confidence=result.value.confidence,
+                reason=(
+                    "The AI plan was uncertain; a registered command route matched."
+                ),
+            ),
+            source=f"{result.source}_uncertain_registered_route",
+            target=result.target,
+            input_tokens=result.input_tokens,
+            output_tokens=result.output_tokens,
+        )
+    return CommandPlanResult(
+        value=CommandPlan(
+            intent="unsupported",
+            confidence=result.value.confidence,
+            reason=(
+                "Katcha could not confidently determine the request. "
+                "Ask a clarifying question rather than changing the topic."
+            ),
+        ),
+        source=f"{result.source}_low_confidence_fallback",
+        target=result.target,
+        input_tokens=result.input_tokens,
+        output_tokens=result.output_tokens,
+    )
+
+
 def plan_ambiguous_command(
     *,
     channel_profile_id: uuid.UUID,
@@ -323,126 +361,34 @@ def plan_ambiguous_command(
             deterministic_intent,
             "Live AI planning is not enabled; using a registered command route.",
         )
-    reservation_id: uuid.UUID | None = None
+
     prompt = _planner_prompt(
         user_prompt=user_prompt,
         effective_prompt=effective_prompt,
         selected_clip_count=selected_clip_count,
         previous_intent=previous_intent,
     )
+    reservation_id: uuid.UUID | None = None
 
     try:
-        if getattr(settings, "codex_enabled", False):
-            try:
-                plan_result = _codex(prompt, request_id=request_id)
-                if plan_result.value.confidence < 0.65:
-                    if deterministic_intent != "channel_status":
-                        return CommandPlanResult(
-                            value=CommandPlan(
-                                intent=deterministic_intent,
-                                confidence=plan_result.value.confidence,
-                                reason=(
-                                    "The Codex plan was uncertain; a registered "
-                                    "command route matched."
-                                ),
-                            ),
-                            source="codex_uncertain_registered_route",
-                            target=plan_result.target,
-                            input_tokens=plan_result.input_tokens,
-                            output_tokens=plan_result.output_tokens,
-                        )
-                    return CommandPlanResult(
-                        value=CommandPlan(
-                            intent="unsupported",
-                            confidence=plan_result.value.confidence,
-                            reason=(
-                                "Katcha could not confidently determine the request. "
-                                "Ask a clarifying question rather than changing the topic."
-                            ),
-                        ),
-                        source="codex_low_confidence_fallback",
-                        target=plan_result.target,
-                        input_tokens=plan_result.input_tokens,
-                        output_tokens=plan_result.output_tokens,
-                    )
-                return plan_result
-            except Exception as exc:
-                if not (
-                    isinstance(exc, CodexConnectionError)
-                    and "No Codex ChatGPT account is connected" in str(exc)
-                ):
-                    logger.info(
-                        "Codex command planning unavailable request_id=%s cause=%s",
-                        request_id,
-                        type(exc).__name__,
-                    )
-
-        if getattr(settings, "chatgpt_host_id", None):
-            try:
-                plan_result = _chatgpt(prompt, request_id=request_id)
-                if plan_result.value.confidence < 0.65:
-                    if deterministic_intent != "channel_status":
-                        return CommandPlanResult(
-                            value=CommandPlan(
-                                intent=deterministic_intent,
-                                confidence=plan_result.value.confidence,
-                                reason=(
-                                    "The ChatGPT plan was uncertain; a registered "
-                                    "command route matched."
-                                ),
-                            ),
-                            source="chatgpt_uncertain_registered_route",
-                            target=plan_result.target,
-                            input_tokens=plan_result.input_tokens,
-                            output_tokens=plan_result.output_tokens,
-                        )
-                    return CommandPlanResult(
-                        value=CommandPlan(
-                            intent="unsupported",
-                            confidence=plan_result.value.confidence,
-                            reason=(
-                                "Katcha could not confidently determine the request. "
-                                "Ask a clarifying question rather than changing the topic."
-                            ),
-                        ),
-                        source="chatgpt_low_confidence_fallback",
-                        target=plan_result.target,
-                        input_tokens=plan_result.input_tokens,
-                        output_tokens=plan_result.output_tokens,
-                    )
-                return plan_result
-            except Exception:
-                # ChatGPT plan inference is read-only. A malformed response,
-                # expired session, or transport failure may safely fall through
-                # to the configured API-provider route.
-                pass
-
-        decision = route_for_channel(
-            AITask.COMMAND_PLANNING,
-            channel_profile_id,
-            estimated_increment_usd=Decimal("0.003"),
-            expected_value=0.45,
-            reference_type="command_planner",
-            reference_id=str(request_id),
-            reservation_key=f"command-planner:{request_id}",
-        )
-        reservation_id = decision.reservation_id
-        targets = [decision.route.primary]
-        if decision.route.fallback is not None:
-            targets.append(decision.route.fallback)
-
         last_error: Exception | None = None
-        for index, target in enumerate(targets):
+        for provider in planner_provider_order(settings):
             try:
-                if target.provider == "openai" and settings.openai_api_key:
-                    result = _openai(
-                        prompt,
-                        target=target,
-                        settings=settings,
-                        request_id=request_id,
-                        reservation_id=reservation_id,
+                if provider == "gemini":
+                    if not settings.gemini_api_key:
+                        continue
+                    target = ModelTarget("gemini", "gemini-3.5-flash-lite")
+                    decision = route_for_channel(
+                        AITask.COMMAND_PLANNING,
+                        channel_profile_id,
+                        estimated_increment_usd=Decimal("0.003"),
+                        expected_value=0.45,
+                        reference_type="command_planner",
+                        reference_id=str(request_id),
+                        reservation_key=f"command-planner:{request_id}:gemini",
+                        preferred_target=target,
                     )
-                elif target.provider == "gemini" and settings.gemini_api_key:
+                    reservation_id = decision.reservation_id
                     result = _gemini(
                         prompt,
                         target=target,
@@ -450,43 +396,70 @@ def plan_ambiguous_command(
                         request_id=request_id,
                         reservation_id=reservation_id,
                     )
-                else:
-                    continue
-                if result.value.confidence < 0.65:
-                    if deterministic_intent != "channel_status":
-                        return CommandPlanResult(
-                            value=CommandPlan(
-                                intent=deterministic_intent,
-                                confidence=result.value.confidence,
-                                reason=(
-                                    "The AI plan was uncertain; a registered command route matched."
-                                ),
-                            ),
-                            source="ai_uncertain_registered_route",
-                            target=result.target,
-                            input_tokens=result.input_tokens,
-                            output_tokens=result.output_tokens,
-                        )
-                    return CommandPlanResult(
-                        value=CommandPlan(
-                            intent="unsupported",
-                            confidence=result.value.confidence,
-                            reason=(
-                                "Katcha could not confidently determine the request. "
-                                "Ask a clarifying question rather than changing the topic."
-                            ),
-                        ),
-                        source="ai_low_confidence_fallback",
-                        target=result.target,
-                        input_tokens=result.input_tokens,
-                        output_tokens=result.output_tokens,
+                    return _finalize_plan_result(
+                        result,
+                        deterministic_intent=deterministic_intent,
                     )
-                return result
+
+                if provider == "codex":
+                    if not getattr(settings, "codex_enabled", False):
+                        continue
+                    return _finalize_plan_result(
+                        _codex(prompt, request_id=request_id),
+                        deterministic_intent=deterministic_intent,
+                    )
+
+                if provider == "chatgpt":
+                    if not getattr(settings, "chatgpt_host_id", None):
+                        continue
+                    return _finalize_plan_result(
+                        _chatgpt(prompt, request_id=request_id),
+                        deterministic_intent=deterministic_intent,
+                    )
+
+                if provider == "openai":
+                    if not (
+                        settings.openai_api_key
+                        and getattr(settings, "allow_paid_openai_fallback", False)
+                    ):
+                        continue
+                    target = ModelTarget("openai", "gpt-5.6-luna")
+                    decision = route_for_channel(
+                        AITask.COMMAND_PLANNING,
+                        channel_profile_id,
+                        estimated_increment_usd=Decimal("0.003"),
+                        expected_value=0.45,
+                        reference_type="command_planner",
+                        reference_id=str(request_id),
+                        reservation_key=f"command-planner:{request_id}:openai",
+                        preferred_target=target,
+                    )
+                    reservation_id = decision.reservation_id
+                    result = _openai(
+                        prompt,
+                        target=target,
+                        settings=settings,
+                        request_id=request_id,
+                        reservation_id=reservation_id,
+                    )
+                    return _finalize_plan_result(
+                        result,
+                        deterministic_intent=deterministic_intent,
+                    )
             except Exception as exc:
                 last_error = exc
-                if index < len(targets) - 1 and safe_to_fail_over_generation(exc):
-                    continue
-                break
+                release_budget_reservation(
+                    reservation_id,
+                    reason=f"command_planner_provider_failed:{provider}:{type(exc).__name__}",
+                )
+                reservation_id = None
+                logger.info(
+                    "%s command planning unavailable request_id=%s cause=%s",
+                    provider,
+                    request_id,
+                    type(exc).__name__,
+                )
+                continue
 
         if last_error is not None:
             raise last_error
