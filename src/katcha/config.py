@@ -246,6 +246,9 @@ class Settings(BaseSettings):
     ai_live_routing_mode: Literal["free_first", "balanced", "quality", "economy"] = (
         "free_first"
     )
+    conversation_provider: Literal["gemini", "codex", "auto"] = "gemini"
+    agent_provider: Literal["codex", "gemini", "auto"] = "codex"
+    allow_paid_openai_fallback: bool = False
     ai_budget_usd_monthly: float = Field(default=25.0, ge=0)
     web_scout_model: str = "gpt-5.6-luna"
 
