@@ -25,21 +25,23 @@ def assert_mutation_authority(
     settings: Settings | None = None,
 ) -> LeadershipReceipt | None:
     resolved = settings or get_settings()
-    if resolved.leadership_fence_mode == "disabled":
+    mode = str(getattr(resolved, "leadership_fence_mode", "disabled"))
+    if mode == "disabled":
         return None
 
-    if resolved.leadership_fence_mode != "http":
+    if mode != "http":
         raise LeadershipFenceError(
-            f"unsupported leadership fence mode: {resolved.leadership_fence_mode}"
+            f"unsupported leadership fence mode: {mode}"
         )
-    endpoint = (resolved.leadership_fence_url or "").strip()
+    endpoint = str(getattr(resolved, "leadership_fence_url", "") or "").strip()
+    raw_token = getattr(resolved, "leadership_fence_token", None)
     token = (
-        resolved.leadership_fence_token.get_secret_value().strip()
-        if resolved.leadership_fence_token is not None
-        else ""
+        raw_token.get_secret_value().strip()
+        if hasattr(raw_token, "get_secret_value")
+        else str(raw_token or "").strip()
     )
-    deployment_id = resolved.deployment_id.strip()
-    deployment_epoch = int(resolved.deployment_epoch)
+    deployment_id = str(getattr(resolved, "deployment_id", "") or "").strip()
+    deployment_epoch = int(getattr(resolved, "deployment_epoch", 0) or 0)
     if not endpoint or not token or not deployment_id or deployment_epoch < 1:
         raise LeadershipFenceError(
             "leadership fencing is enabled but the runtime identity is incomplete"
@@ -57,7 +59,9 @@ def assert_mutation_authority(
                 "deployment_epoch": deployment_epoch,
                 "operation": operation,
             },
-            timeout=resolved.leadership_fence_timeout_seconds,
+            timeout=float(
+                getattr(resolved, "leadership_fence_timeout_seconds", 5.0)
+            ),
         )
         response.raise_for_status()
         payload = response.json()
