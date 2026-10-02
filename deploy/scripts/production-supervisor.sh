@@ -24,7 +24,8 @@ if [[ ! -r /etc/katcha/aws/config ]]; then
   exit 22
 fi
 
-python3 scripts/validate_production_runtime.py --env-file "${ENV_FILE}"
+PYTHONPATH="${ROOT}/src${PYTHONPATH:+:${PYTHONPATH}}" \
+  python3 scripts/validate_production_runtime.py --env-file "${ENV_FILE}"
 
 compose=(
   docker compose
