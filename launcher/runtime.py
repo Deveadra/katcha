@@ -1066,7 +1066,31 @@ class Runtime:
         )
 
 
+class ClientDisconnected(ConnectionError):
+    """The browser closed its socket while receiving a response."""
+
+
 class Handler(BaseHTTPRequestHandler):
+    def handle(self):
+        try:
+            super().handle()
+        except (ClientDisconnected, BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+            # Navigation and polling cancellation can close a browser socket.
+            # There is no client left to receive another response.
+            self.close_connection = True
+
+    def end_headers(self):
+        try:
+            super().end_headers()
+        except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError) as exc:
+            raise ClientDisconnected() from exc
+
+    def write_response(self, payload):
+        try:
+            self.wfile.write(payload)
+        except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError) as exc:
+            raise ClientDisconnected() from exc
+
     def log_message(self, *_):
         pass  # Request URLs can contain OAuth credentials.
 
@@ -1078,7 +1102,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Cache-Control", "no-store")
         self.send_header("X-Content-Type-Options", "nosniff")
         self.end_headers()
-        self.wfile.write(payload)
+        self.write_response(payload)
 
     def redirect(self, location):
         self.send_response(302)
@@ -1400,6 +1424,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._handle_handoff_upload()
             if runtime_path == "/runtime/handoff/process":
                 return self._handle_handoff_process()
+        except ClientDisconnected:
+            raise
         except (OSError, ValueError, http.client.HTTPException) as exc:
             self.server.runtime.event(
                 "error",
@@ -1478,6 +1504,8 @@ class Handler(BaseHTTPRequestHandler):
             if action not in ("start", "stop"):
                 return self.send(404, {"error": "Unknown action"})
             return self.send(202 if runtime.operate(action) else 409, {"action": action})
+        except ClientDisconnected:
+            raise
         except (ValueError, OSError) as exc:
             runtime.event("error", "setup", str(exc))
             return self.send(400, {"error": runtime.redact(exc)})
@@ -1534,11 +1562,13 @@ class Handler(BaseHTTPRequestHandler):
             self.end_headers()
             headers_sent = True
             while chunk := response.read(65536):
-                self.wfile.write(chunk)
+                self.write_response(chunk)
             if response.status >= 500:
                 self.server.runtime.event(
                     "error", "api", f"HTTP {response.status}", path=self.path.split("?")[0]
                 )
+        except ClientDisconnected:
+            raise
         except Exception as exc:
             self.server.runtime.event(
                 "error",
