@@ -7,7 +7,7 @@ immutable; activating it is a separate durable operation.
 
 This slice supports:
 
-- a title and description;
+- a title and description, plus optional versioned tags and hashtags;
 - an optional PNG or JPEG thumbnail stored under a publication/version namespace;
 - immutable thumbnail size, MIME type and SHA-256;
 - manual, idempotent activation on a publication that already has a YouTube video ID;
@@ -71,7 +71,8 @@ Activation uses the existing publishing Temporal task queue and the publication'
 YouTube OAuth connection.
 
 1. Validate publication, channel connection, frozen variant and video ID.
-2. Update the YouTube snippet while preserving the publication's tags and category.
+2. Update the YouTube snippet using the variant's tags when supplied, otherwise preserving
+   the publication's tags; always preserve the publication category.
 3. If present, verify the stored thumbnail still matches the frozen size/hash and upload it.
 4. Mark the activation applied and freeze the active packaging lineage into
    `Publication.treatment_metadata.active_packaging`.
