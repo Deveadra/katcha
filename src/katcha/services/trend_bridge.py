@@ -20,6 +20,7 @@ from katcha.domain import DiscoveryRunStatus
 from katcha.models import DomainEvent
 from katcha.services.trends import register_signal
 from katcha.trend_models import TrendSignal
+from katcha.trends.scoring import canonical_topic_key
 
 
 @dataclass(frozen=True, slots=True)
@@ -156,31 +157,22 @@ def topic_for_discovery(
     run: DiscoveryRun | None = None,
 ) -> str:
     queue_metadata = queue_metadata or {}
-    cluster_label = _clean_text(queue_metadata.get("cluster_label"))
-    if cluster_label:
-        return cluster_label
-    if candidate.title and candidate.title.strip():
-        return candidate.title.strip()
-    if run is not None:
-        query = dict(run.query or {})
-        explicit = _clean_text(query.get("q"))
-        if explicit:
-            return explicit
-        include_terms = [
-            str(term).strip()
-            for term in query.get("include_terms", [])
-            if str(term).strip()
-        ]
-        if include_terms:
-            return " ".join(include_terms)
-    if watch is not None and watch.include_terms:
-        terms = [str(term).strip() for term in watch.include_terms if str(term).strip()]
-        if terms:
-            return " ".join(terms)
-    if candidate.canonical_url:
-        return candidate.canonical_url
-    host = _host(candidate.source_url)
-    return host or f"discovery-{candidate.id}"
+    query = dict(run.query or {}) if run is not None else {}
+    options = [
+        queue_metadata.get("cluster_label"),
+        candidate.title,
+        query.get("q"),
+        " ".join(str(term) for term in (query.get("include_terms") or [])),
+        " ".join(str(term) for term in (watch.include_terms or [])) if watch else None,
+        watch.name if watch else None,
+        candidate.canonical_url,
+        _host(candidate.source_url),
+    ]
+    for option in options:
+        text = _clean_text(option)
+        if text and canonical_topic_key(text):
+            return text
+    return f"discovery-{candidate.id}"
 
 
 def _language_region(

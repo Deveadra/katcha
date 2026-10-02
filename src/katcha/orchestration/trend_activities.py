@@ -38,7 +38,7 @@ def refresh_channel_trends_activity(
     result = refresh_channel_trends(channel_id, run_key=run_key)
     return {
         **result,
-        "status": "completed",
+        "status": result.get("status", "completed"),
         "source_health": health,
     }
 

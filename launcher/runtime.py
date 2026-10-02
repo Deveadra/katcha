@@ -36,6 +36,9 @@ EARLY_AUTOMATION_SERVICES = (
     "temporal",
     "intelligence-worker",
 )
+RETIRED_WORKER_SERVICES = (
+    "discovery-worker", "trend-worker", "longform-worker", "publishing-worker",
+)
 BACKGROUND_BUILD_SERVICES = (
     "minio",
     "worker",
@@ -552,6 +555,21 @@ class Runtime:
         temporary.write_text(fingerprint)
         temporary.replace(stamp)
 
+    def stop_retired_workers(self):
+        """Retire only replaced pollers in this Compose project; retain all data."""
+        for service in RETIRED_WORKER_SERVICES:
+            containers = self.run(
+                [
+                    "docker", "ps", "-q",
+                    "--filter", "label=com.docker.compose.project=katcha",
+                    "--filter", f"label=com.docker.compose.service={service}",
+                ],
+                capture=True,
+            ).split()
+            if containers:
+                self.event("info", "launcher", f"Stopping replaced {service} containers.")
+                self.run(["docker", "stop", "--time", "30", *containers], timeout=120)
+
     def operate(self, action):
         if not self.lock.acquire(blocking=False):
             return False
@@ -598,6 +616,7 @@ class Runtime:
             # Keep the interactive launch serialized at the Docker boundary. Running
             # Compose startup and image preparation concurrently is fragile on WSL/Docker
             # Desktop and can make the launcher itself unreachable under resource pressure.
+            self.stop_retired_workers()
             self.prepare_workspace_image()
 
             self.stage = "starting workspace"
@@ -900,8 +919,14 @@ class Runtime:
             self.services = [
                 {key: row.get(key) for key in ("Service", "State", "Health", "ExitCode")}
                 for row in rows
+                if row.get("Service") not in RETIRED_WORKER_SERVICES
             ]
-            if not rows:
+            if any(
+                row.get("Service") in RETIRED_WORKER_SERVICES and row.get("State") == "running"
+                for row in rows
+            ):
+                self.stop_retired_workers()
+            if not self.services:
                 self.phase = "idle"
                 self.stage = "idle"
                 return True
@@ -955,6 +980,7 @@ class Runtime:
         self.services = [
             {key: row.get(key) for key in ("Service", "State", "Health", "ExitCode")}
             for row in rows
+            if row.get("Service") not in RETIRED_WORKER_SERVICES
         ]
         bad = [
             r
