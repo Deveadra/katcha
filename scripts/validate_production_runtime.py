@@ -85,10 +85,14 @@ def validate(values: dict[str, str]) -> list[str]:
     if not is_placeholder(encryption_key) and len(encryption_key) < 32:
         errors.append("KATCHA_CREDENTIAL_ENCRYPTION_KEY must contain at least 32 characters")
 
-    if is_placeholder(values.get("KATCHA_CONTROL_API_TOKEN", "")) and is_placeholder(
-        values.get("KATCHA_CONTROL_PRINCIPALS", "")
-    ):
-        errors.append("configure KATCHA_CONTROL_API_TOKEN or KATCHA_CONTROL_PRINCIPALS")
+    control_token = values.get("KATCHA_CONTROL_API_TOKEN", "")
+    principal_registry = values.get("KATCHA_CONTROL_PRINCIPALS", "").strip()
+    principals_configured = (
+        principal_registry not in {"", "[]", "{}"}
+        and not is_placeholder(principal_registry)
+    )
+    if is_placeholder(control_token) and not principals_configured:
+        errors.append("configure KATCHA_CONTROL_API_TOKEN or a non-empty KATCHA_CONTROL_PRINCIPALS")
 
     redirect = require(values, "KATCHA_YOUTUBE_REDIRECT_URI", errors)
     if redirect:

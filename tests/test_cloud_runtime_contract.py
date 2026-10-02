@@ -41,6 +41,22 @@ def test_production_validator_accepts_safe_hosted_settings() -> None:
     assert validate(valid_production_env()) == []
 
 
+def test_production_validator_requires_real_control_credential() -> None:
+    values = valid_production_env()
+    values["KATCHA_CONTROL_API_TOKEN"] = "CHANGE_ME"
+    values["KATCHA_CONTROL_PRINCIPALS"] = "[]"
+    assert any("CONTROL" in error for error in validate(values))
+
+
+def test_production_validator_accepts_nonempty_principal_registry() -> None:
+    values = valid_production_env()
+    values["KATCHA_CONTROL_API_TOKEN"] = ""
+    values["KATCHA_CONTROL_PRINCIPALS"] = (
+        '[{"name":"operator","token":"principal-token-with-more-than-32-characters"}]'
+    )
+    assert validate(values) == []
+
+
 def test_production_validator_rejects_local_defaults() -> None:
     values = valid_production_env()
     values.update(
