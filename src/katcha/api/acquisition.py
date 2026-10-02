@@ -55,6 +55,7 @@ from katcha.services.ingestion_sources import (
     restart_source_run,
     upsert_ingestion_source,
 )
+from katcha.services.intelligence_automation import advance_processed_handoff_receipt
 from katcha.services.intelligence_handoff import (
     HandoffInboxItem,
     handoff_inbox_summary,
@@ -645,7 +646,7 @@ def import_source_drop(
     "/intelligence-ingest/batches",
     response_model=IngestIntelligenceBatchResponse,
 )
-def create_intelligence_ingest_batch(
+async def create_intelligence_ingest_batch(
     request: IngestIntelligenceBatchRequest,
 ) -> IngestIntelligenceBatchResponse:
     try:
@@ -661,7 +662,7 @@ def create_intelligence_ingest_batch(
         code = 404 if "channel profile not found" in str(exc) else 409
         raise HTTPException(status_code=code, detail=str(exc)) from exc
     batch: IntelligenceIngestBatch = result.batch
-    return IngestIntelligenceBatchResponse(
+    response = IngestIntelligenceBatchResponse(
         batch_id=batch.id,
         channel_profile_id=batch.channel_profile_id,
         batch_key=batch.batch_key,
@@ -677,6 +678,13 @@ def create_intelligence_ingest_batch(
             for row in result.records
         ],
     )
+    await advance_processed_handoff_receipt(
+        {
+            "status": "processed",
+            "record_ids": [str(row.id) for row in result.records],
+        }
+    )
+    return response
 
 
 def _handoff_response(item: HandoffInboxItem) -> HandoffInboxItemResponse:
@@ -728,6 +736,8 @@ async def upload_intelligence_handoff_file(
         item = submit_handoff_file(filename, content)
         if process and item.status == "incoming":
             item = process_handoff_file(item.filename)
+        if process and item.status == "processed":
+            await advance_processed_handoff_receipt(item.receipt)
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     return _handoff_response(item)
@@ -737,7 +747,7 @@ async def upload_intelligence_handoff_file(
     "/intelligence-ingest/inbox/process",
     response_model=list[HandoffInboxItemResponse],
 )
-def process_intelligence_handoff_files(
+async def process_intelligence_handoff_files(
     request: ProcessHandoffInboxRequest,
 ) -> list[HandoffInboxItemResponse]:
     try:
@@ -750,6 +760,9 @@ def process_intelligence_handoff_files(
             items = process_handoff_inbox(limit=request.limit)
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    for item in items:
+        if item.status == "processed":
+            await advance_processed_handoff_receipt(item.receipt)
     return [_handoff_response(item) for item in items]
 
 
