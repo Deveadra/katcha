@@ -13,10 +13,18 @@ from katcha.api.control_auth import control_allowed_channel_ids, require_control
 from katcha.db import session_scope
 from katcha.intelligence_models import ChannelProfile
 from katcha.models import DomainEvent
-from katcha.production_models import Production
+from katcha.orchestration.client import (
+    start_production_workflow,
+    start_publication_workflow,
+    start_short_episode_editorial_workflow,
+)
+from katcha.production_models import Production, ProductionAsset
 from katcha.publishing_models import Publication, PublicationAnalyticsSnapshot
 from katcha.render_models import RenderAttempt
-from katcha.short_episode_models import ShortEpisode
+from katcha.services.productions import register_regeneration
+from katcha.services.publications import retry_publication
+from katcha.services.short_episode_reviews import register_short_episode_regeneration
+from katcha.short_episode_models import ShortEpisode, ShortEpisodeAsset
 from katcha.trend_models import (
     ChannelTrendWatchVersion,
     TrendOpportunity,
@@ -68,6 +76,21 @@ class OperationsWorkItem(BaseModel):
     message: str | None = None
     updated_at: datetime
     href: str
+    recovery_action: Literal["resume", "restart"] | None = None
+    recovery_label: str | None = None
+
+
+class RecoverWorkRequest(BaseModel):
+    actor: str = Field(default="operator", min_length=1, max_length=128)
+    allow_new_upload_session: bool = False
+
+
+class RecoverWorkResponse(BaseModel):
+    kind: Literal["short_episode", "production", "publication"]
+    source_id: uuid.UUID
+    action: Literal["resumed", "restarted"]
+    workflow_id: str
+    replacement_id: uuid.UUID | None = None
 
 
 class OperationsOpportunity(BaseModel):
@@ -155,6 +178,105 @@ def _item_href(channel_profile_id: uuid.UUID) -> str:
 
 def _publication_href(channel_profile_id: uuid.UUID) -> str:
     return f"/channels?channel={channel_profile_id}#content"
+
+
+def _production_resume_stage(row: Production) -> str | None:
+    status = str(row.status or "").lower()
+    if status in {"queued", "scripting"}:
+        return "script"
+    if status in {"scripted", "voicing"}:
+        return "voice"
+    if status in {"voiced", "rendering"}:
+        return "render"
+    return None
+
+
+def _short_episode_resume_stage(row: ShortEpisode) -> str | None:
+    status = str(row.status or "").lower()
+    stage = str(row.stage or "").lower()
+    if status == "planned" and stage in {"script_queued", "regenerate_script_queued"}:
+        return "script"
+    if status == "scripting":
+        return "script"
+    if status in {"scripted", "voicing"}:
+        return "voice"
+    if status == "planned" and stage == "regenerate_voice_queued":
+        return "voice"
+    if status in {"editorial_approved", "rendering"}:
+        return "render"
+    if status == "planned" and stage == "render_regeneration_queued":
+        return "render"
+    return None
+
+
+def _work_recovery(
+    *,
+    kind: str,
+    status: str,
+    stage: str,
+    state: WorkState,
+    row: Production | ShortEpisode | Publication,
+) -> tuple[str | None, str | None]:
+    normalized_status = str(status or "").lower()
+    normalized_stage = str(stage or "").lower()
+    if kind == "publication" and (
+        normalized_status == "failed" or normalized_stage == "processing_timeout"
+    ):
+        return "restart", "Restart"
+    if state == "attention":
+        return "restart", "Restart"
+    if kind == "production" and isinstance(row, Production):
+        return ("resume", "Resume") if _production_resume_stage(row) else (None, None)
+    if kind == "short_episode" and isinstance(row, ShortEpisode):
+        return ("resume", "Resume") if _short_episode_resume_stage(row) else (None, None)
+    if kind == "publication" and normalized_status in {
+        "queued",
+        "uploading",
+        "uploaded",
+        "processing",
+    }:
+        return "resume", "Resume"
+    return None, None
+
+
+def _production_restart_stage(production_id: uuid.UUID) -> str:
+    with session_scope() as session:
+        row = session.get(Production, production_id)
+        if row is None:
+            raise ValueError("production not found")
+        if row.selected_script_id is None:
+            return "script"
+        narration = session.scalar(
+            select(ProductionAsset.id)
+            .where(
+                ProductionAsset.production_id == production_id,
+                ProductionAsset.kind.like("narration_%"),
+            )
+            .limit(1)
+        )
+        return "render" if narration is not None else "voice"
+
+
+def _short_episode_restart_stage(episode_id: uuid.UUID) -> str:
+    with session_scope() as session:
+        row = session.get(ShortEpisode, episode_id)
+        if row is None:
+            raise ValueError("short episode not found")
+        if row.selected_script_id is None:
+            return "script"
+        narration = session.scalar(
+            select(ShortEpisodeAsset.id)
+            .where(
+                ShortEpisodeAsset.short_episode_id == episode_id,
+                ShortEpisodeAsset.kind.like("narration_%"),
+            )
+            .limit(1)
+        )
+        return "render" if narration is not None else "voice"
+
+
+def _episode_workflow_id(base_workflow_id: str, start_stage: str) -> str:
+    return f"{base_workflow_id}-editorial-{start_stage}"
 
 
 def _latest_attempts(
