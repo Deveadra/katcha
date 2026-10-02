@@ -43,6 +43,37 @@ TOOLS = {
     tool.name: tool
     for tool in [
         GoalTool(
+            "start_editorial_analysis",
+            "Acquire brief sources and prepare sampled frames/transcript in a durable run. "
+            "Does not yet perform native-video interpretation or research.",
+            "production:create", "POST",
+            "/v1/channels/{channel_profile_id}/editorial-projects/{project_id}/runs",
+            retry_safe=True,
+        ),
+        GoalTool(
+            "editorial_runs", "List editorial execution progress and saved blockers",
+            "ai:read", "GET",
+            "/v1/channels/{channel_profile_id}/editorial-projects/{project_id}/runs",
+        ),
+        GoalTool(
+            "editorial_run", "Inspect exact editorial receipts, source coverage and progress",
+            "ai:read", "GET",
+            "/v1/channels/{channel_profile_id}/editorial-projects/{project_id}"
+            "/runs/{editorial_run_id}",
+        ),
+        GoalTool(
+            "resume_editorial_run", "Resume failed work from saved checkpoints",
+            "production:create", "POST",
+            "/v1/channels/{channel_profile_id}/editorial-projects/{project_id}"
+            "/runs/{editorial_run_id}/resume", retry_safe=True,
+        ),
+        GoalTool(
+            "cancel_editorial_run", "Stop further editorial stages; retain saved work",
+            "production:create", "POST",
+            "/v1/channels/{channel_profile_id}/editorial-projects/{project_id}"
+            "/runs/{editorial_run_id}/cancel", retry_safe=True,
+        ),
+        GoalTool(
             "create_editorial_project",
             "Save a researched-original brief and source URLs. Draft storage only; "
             "does not start analysis, research, generation or rendering.",
@@ -630,6 +661,7 @@ def validate_resource_arguments(goal: CommandGoal, arguments: dict) -> None:
                 "goal_id",
                 "topic_watch_id",
                 "project_id",
+                "editorial_run_id",
             }
             and value is not None
         ):
@@ -899,7 +931,7 @@ def require_native_resource_channels(request, tool: GoalTool) -> None:
     """Also guard direct scoped API access, not only goal callers."""
     from katcha.acquisition_models import TopicWatchVersion
     from katcha.api.control_auth import require_control_channel
-    from katcha.editorial_models import EditorialProject
+    from katcha.editorial_models import EditorialProject, EditorialRun
     from katcha.intelligence_models import ChannelProfile
     from katcha.models import Clip
     from katcha.production_models import Production
@@ -909,6 +941,7 @@ def require_native_resource_channels(request, tool: GoalTool) -> None:
 
     mapping = {
         "project_id": EditorialProject,
+        "editorial_run_id": EditorialRun,
         "source_id": IngestionSource,
         "production_id": Production,
         "short_episode_id": ShortEpisode,

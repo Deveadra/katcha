@@ -165,11 +165,12 @@ class EditorialProjectResponse(Contract):
     revision: int
     status: Literal["draft"] = "draft"
     capabilities: list[str] = Field(
-        default_factory=lambda: ["draft_storage", "evidence_validation"]
+        default_factory=lambda: ["draft_storage", "evidence_validation", "source_intake"]
     )
     limitation: str = (
-        "Draft storage only. Automated video analysis, research, script generation and rendering "
-        "are not connected to editorial projects yet. Saved claims are not independently verified."
+        "Source runs acquire media and prepare sampled frames/transcripts. Native-video "
+        "interpretation, research, script generation and rendering are not connected yet. "
+        "Saved claims are not independently verified."
     )
     created_at: datetime
     updated_at: datetime

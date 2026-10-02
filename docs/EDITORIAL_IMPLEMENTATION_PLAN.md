@@ -39,8 +39,8 @@ as API credit. Verify supported account capabilities when enabling each live rou
 
 | Milestone | Concrete deliverable | Dependencies | Initial status |
 | --- | --- | --- | --- |
-| E1 | Durable projects, evidence/script contracts, revision concurrency, authenticated APIs, native AI tool registration | Baseline | Implemented; local checks pass; CI pending |
-| E2 | URL/managed asset intake and measured video analysis attached to project | E1 | Planned |
+| E1 | Durable projects, evidence/script contracts, revision concurrency, authenticated APIs, native AI tool registration | Baseline | Implemented; CI passed on 6c55ae4 |
+| E2 | URL/managed asset intake and measured video analysis attached to project | E1 | Intake/local-analysis implemented; richer interpretation pending |
 | E3 | Durable specialist research, evidence verification and cost-bounded recursion | E1–E2 | Planned |
 | E4 | Story selection, writer/critic/revision loop and cited script review | E3 | Planned |
 | E5 | Claim-directed supplementary asset scout and acquisition/rights gate | E3–E4 | Planned |
@@ -364,3 +364,23 @@ acceptance are not claimed. No UI/worker/render/publication changes shipped in E
 
 Next implementation boundary is E2: resolve real managed source/analysis identities,
 persist source provenance and coverage, and add durable intake/start/recovery orchestration.
+
+### E2 intake checkpoint
+
+Draft PR: https://github.com/Deveadra/katcha/pull/257. Foundation CI, launcher and
+Cloudflare workflows passed for remote commit `6c55ae4`.
+
+Added durable `EditorialRun` records (migration 0051), start/status/resume/cancel APIs,
+native tools and longform-worker registration. A periodic reconciler drains persisted
+start intent even when the API could not reach Temporal. Attempts fence stale
+completions; cancellation preserves artifacts. The workflow uses existing managed
+ingest and local-analysis activities on their registered queues without triggering
+unbudgeted generic AI/passthrough side effects. Public HTTPS YouTube intake and
+channel-owned clip bindings are supported. Source snapshots preserve clip hash,
+measured duration, analysis receipt, frame keys, transcript and sampled-frame coverage.
+This checkpoint does not claim native-video understanding or frame-level findings.
+
+Local checkpoint: 81 tests passed including interrupted dispatch/reconciliation,
+attempt fencing, cancellation, managed-source reuse and unsupported URL rejection.
+Repository Ruff, compileall, longform-worker import and whitespace checks passed.
+Live media/Temporal acceptance and the remaining research/render stages are pending.
