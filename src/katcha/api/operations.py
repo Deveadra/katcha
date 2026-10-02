@@ -359,7 +359,6 @@ async def recover_work_item(
                 raise HTTPException(status_code=404, detail="production not found")
             require_control_channel(http_request, row.channel_profile_id)
             status_value = str(row.status or "").lower()
-            error = str(row.error or "").strip()
             workflow_id = row.workflow_id
             resume_stage = _production_resume_stage(row)
             latest_attempt = session.scalar(
@@ -420,7 +419,6 @@ async def recover_work_item(
                 raise HTTPException(status_code=404, detail="short episode not found")
             require_control_channel(http_request, row.channel_profile_id)
             status_value = str(row.status or "").lower()
-            error = str(row.error or "").strip()
             base_workflow_id = row.workflow_id
             resume_stage = _short_episode_resume_stage(row)
             latest_attempt = session.scalar(
