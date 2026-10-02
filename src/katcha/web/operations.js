@@ -62,10 +62,16 @@ function setStatus(message, kind = "") {
     host.className = "ops-status" + (kind ? " " + kind : "");
 }
 
-async function api(path) {
+async function api(path, { method = "GET", body = null } = {}) {
     const headers = { Accept: "application/json" };
     if (state.token) headers.Authorization = "Bearer " + state.token;
-    const response = await fetch(path, { headers, cache: "no-store" });
+    if (body !== null) headers["Content-Type"] = "application/json";
+    const response = await fetch(path, {
+        method,
+        headers,
+        cache: "no-store",
+        ...(body === null ? {} : { body: JSON.stringify(body) }),
+    });
     let payload = null;
     try {
         payload = await response.json();
@@ -125,7 +131,17 @@ function renderWork(items, hostId, stateClass) {
                     '<span>' + escapeHTML(friendly(row.stage)) + '</span>' +
                     '<span>Updated ' + escapeHTML(when(row.updated_at)) + '</span></div>' +
             '</div>' +
-            '<div class="ops-actions"><a href="' + escapeHTML(row.href) + '">Open</a>' +
+            '<div class="ops-actions">' +
+                (row.recovery_action
+                    ? '<button type="button" class="ops-recover ' +
+                        (row.recovery_action === "restart" ? "restart" : "") +
+                        '" data-recover-kind="' + escapeHTML(row.kind) +
+                        '" data-recover-id="' + escapeHTML(row.id) +
+                        '" data-recover-action="' + escapeHTML(row.recovery_action) + '">' +
+                        escapeHTML(row.recovery_label || friendly(row.recovery_action)) +
+                        '</button>'
+                    : '') +
+                '<a href="' + escapeHTML(row.href) + '">Open</a>' +
                 '<a href="' + escapeHTML(askHref(row)) + '">Ask Katcha ✦</a></div>' +
         '</article>';
     }).join("");
@@ -365,8 +381,43 @@ async function launcherConnect() {
     }
 }
 
+async function recoverWork(event) {
+    const button = event.target.closest("[data-recover-kind][data-recover-id]");
+    if (!button) return;
+    button.disabled = true;
+    const action = button.dataset.recoverAction || "resume";
+    setStatus(
+        (action === "restart" ? "Restarting" : "Resuming") + " work safely…",
+    );
+    try {
+        const result = await api(
+            "/v1/operations/work/" +
+                encodeURIComponent(button.dataset.recoverKind) +
+                "/" +
+                encodeURIComponent(button.dataset.recoverId) +
+                "/recover",
+            {
+                method: "POST",
+                body: { actor: "operations-ui" },
+            },
+        );
+        setStatus(
+            result.action === "restarted"
+                ? "Restart created a new attempt; previous failure history was preserved."
+                : "Resume request accepted. Existing workflow history will continue from its durable state.",
+            "success",
+        );
+        await loadOverview($("channel-filter").value, { preserveStatus: true });
+    } catch (error) {
+        setStatus(error.message, "error");
+        button.disabled = false;
+    }
+}
+
 $("connect-form").addEventListener("submit", connect);
 $("refresh").addEventListener("click", () => loadOverview($("channel-filter").value));
+$("attention-list").addEventListener("click", recoverWork);
+$("active-list").addEventListener("click", recoverWork);
 $("channel-filter").addEventListener("change", async (event) => {
     const channel = event.target.value;
     const url = new URL(location.href);
