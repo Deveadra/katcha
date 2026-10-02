@@ -85,7 +85,7 @@ async def test_intelligence_worker_reconciles_persisted_discovery_runs(
     )
     assert all(
         call[2]["id_reuse_policy"]
-        == intelligence_worker.WorkflowIDReusePolicy.REJECT_DUPLICATE
+        == intelligence_worker.WorkflowIDReusePolicy.ALLOW_DUPLICATE_FAILED_ONLY
         for call in client.calls
     )
 
@@ -123,7 +123,7 @@ async def test_standalone_longform_worker_reconciles_persisted_compilation(
     assert client.calls[0][2]["args"] == ["comp-standalone", "voice"]
     assert (
         client.calls[0][2]["id_reuse_policy"]
-        == longform_worker.WorkflowIDReusePolicy.REJECT_DUPLICATE
+        == longform_worker.WorkflowIDReusePolicy.ALLOW_DUPLICATE_FAILED_ONLY
     )
 
 
@@ -179,6 +179,11 @@ async def test_production_worker_reconciles_persisted_execution_stages(
     assert calls["production-prod-1"][2]["args"] == ["prod-1", "voice"]
     assert calls["episode-base-editorial-render"][2]["args"] == ["episode-1", "render"]
     assert calls["compilation-comp-1"][2]["args"] == ["comp-1", "render"]
+    assert all(
+        call[2]["id_reuse_policy"]
+        == production_worker.WorkflowIDReusePolicy.ALLOW_DUPLICATE_FAILED_ONLY
+        for call in client.calls
+    )
 
 
 @pytest.mark.asyncio
@@ -225,6 +230,11 @@ async def test_ingest_worker_reconciles_ingest_and_publication(
         10,
         [24, 72],
     ]
+    assert all(
+        call[2]["id_reuse_policy"]
+        == worker.WorkflowIDReusePolicy.ALLOW_DUPLICATE_FAILED_ONLY
+        for call in client.calls
+    )
 
 
 @pytest.mark.asyncio
@@ -263,3 +273,8 @@ async def test_analysis_worker_reconciles_queued_and_running_analysis(
         "analysis-workflow-2",
     ]
     assert all(call[2]["args"][1] is True for call in client.calls)
+    assert all(
+        call[2]["id_reuse_policy"]
+        == analysis_worker.WorkflowIDReusePolicy.ALLOW_DUPLICATE_FAILED_ONLY
+        for call in client.calls
+    )
