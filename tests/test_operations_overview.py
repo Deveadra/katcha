@@ -454,6 +454,43 @@ def test_operations_recover_resumes_active_production(data, monkeypatch) -> None
     assert calls == [(str(data.active), "prod-active", "script")]
 
 
+def test_operations_stale_error_on_active_work_stays_resume_safe(
+    data,
+    monkeypatch,
+) -> None:
+    with data.factory.begin() as session:
+        row = session.get(Production, data.active)
+        assert row is not None
+        row.error = "Worker disconnected after persisting progress"
+
+    client = TestClient(app)
+    overview = client.get(
+        f"/v1/operations/overview?channel_profile_id={data.channel}&limit=12"
+    )
+    assert overview.status_code == 200
+    payload = overview.json()
+    item = next(
+        row for row in payload["attention"] if row["id"] == str(data.active)
+    )
+    assert item["recovery_action"] == "resume"
+    assert item["recovery_label"] == "Resume"
+
+    calls: list[tuple[str, str, str]] = []
+
+    async def fake_start(production_id, workflow_id, *, start_stage="script"):
+        calls.append((production_id, workflow_id, start_stage))
+        return SimpleNamespace(id=workflow_id)
+
+    monkeypatch.setattr(operations, "start_production_workflow", fake_start)
+    response = client.post(
+        f"/v1/operations/work/production/{data.active}/recover",
+        json={"actor": "test"},
+    )
+    assert response.status_code == 200
+    assert response.json()["action"] == "resumed"
+    assert calls == [(str(data.active), "prod-active", "script")]
+
+
 def test_operations_recover_restarts_failed_publication(data, monkeypatch) -> None:
     new_workflow = "publish-retry-a2"
     calls: list[tuple[str, str]] = []
