@@ -850,9 +850,10 @@ const analytics = [
     assert.equal(await page.locator("#token").inputValue(), "");
     assert.equal(await page.evaluate(() => localStorage.length), 0);
     assert.match(await page.locator("#metric-videos").innerText(), /3/);
-    await page.locator('[data-channel-tab="content"]').click();
+    assert.equal(await page.locator("#channel-activity").isHidden(), false);
     assert.match(await page.locator("#channel-activity-list").innerText(), /VisionQuest Final Trailer/);
     assert.match(await page.locator("#channel-activity-list").innerText(), /Downloading/);
+    await page.locator('[data-channel-tab="content"]').click();
     await page.locator('[data-publication="publication-3"]').click();
     await page.waitForFunction(() => document.querySelectorAll("[data-apply-packaging]").length > 0);
     assert.match(await page.locator("#video-detail").innerText(), /SEO package & publish plan/);
