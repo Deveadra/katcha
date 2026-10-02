@@ -404,6 +404,7 @@ async def recover_work_item(
             str(source_id),
             workflow_id,
             start_stage=resume_stage,
+            allow_failed_reuse=True,
         )
         return RecoverWorkResponse(
             kind=kind,
@@ -466,6 +467,7 @@ async def recover_work_item(
             str(source_id),
             workflow_id,
             start_stage=resume_stage,
+            allow_failed_reuse=True,
         )
         return RecoverWorkResponse(
             kind=kind,
@@ -517,7 +519,11 @@ async def recover_work_item(
             status_code=409,
             detail="publication is not in a resumable execution stage",
         )
-    await start_publication_workflow(str(source_id), workflow_id)
+    await start_publication_workflow(
+        str(source_id),
+        workflow_id,
+        allow_failed_reuse=True,
+    )
     return RecoverWorkResponse(
         kind=kind,
         source_id=source_id,
