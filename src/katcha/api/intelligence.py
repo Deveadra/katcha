@@ -38,6 +38,10 @@ from katcha.orchestration.client import (
 )
 from katcha.packaging_intelligence_models import PackagingIntelligenceSnapshot
 from katcha.production_models import Production
+from katcha.services.automation_schedules import (
+    mark_schedule_reconciled,
+    register_channel_intelligence_schedule,
+)
 from katcha.services.channel_automation import (
     automation_summary,
     promote_automation,
@@ -260,6 +264,21 @@ class RefreshIntelligenceResponse(BaseModel):
     run_key: str
 
 
+class IntelligenceScheduleRequest(BaseModel):
+    interval_hours: int = Field(
+        default=DEFAULT_REFRESH_INTERVAL_HOURS,
+        ge=1,
+        le=168,
+    )
+
+
+class IntelligenceScheduleResponse(BaseModel):
+    channel_profile_id: uuid.UUID
+    workflow_id: str
+    interval_hours: int
+    generation: int
+
+
 class PromoteAutomationRequest(BaseModel):
     target_level: Literal[
         "auto_approve_low_risk",
@@ -392,10 +411,22 @@ async def create_channel(
             timezone=request.timezone,
             fallback_schedule=_slots(request.fallback_schedule),
         )
+        registration = register_channel_intelligence_schedule(
+            profile.id,
+            interval_hours=request.refresh_interval_hours,
+            replace_existing=False,
+        )
         await start_channel_intelligence_schedule(
             str(profile.id),
-            f"channel-intelligence-schedule-{profile.id}",
-            interval_hours=request.refresh_interval_hours,
+            registration.schedule.workflow_id,
+            interval_hours=int(
+                registration.schedule.schedule_config["interval_hours"]
+            ),
+            supersedes_workflow_id=registration.supersedes_workflow_id,
+        )
+        mark_schedule_reconciled(
+            registration.schedule.id,
+            registration.schedule.workflow_id,
         )
         return profile
     except ValueError as exc:
@@ -528,6 +559,44 @@ def update_channel_growth_goals(
         )
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.post(
+    "/channels/{channel_profile_id}/intelligence/schedule",
+    response_model=IntelligenceScheduleResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def schedule_channel_intelligence(
+    channel_profile_id: uuid.UUID,
+    http_request: Request,
+    request: IntelligenceScheduleRequest,
+) -> IntelligenceScheduleResponse:
+    require_control_scope(http_request, "intelligence:write")
+    try:
+        with session_scope() as session:
+            ensure_active_profile(session, channel_profile_id)
+        registration = register_channel_intelligence_schedule(
+            channel_profile_id,
+            interval_hours=request.interval_hours,
+        )
+        await start_channel_intelligence_schedule(
+            str(channel_profile_id),
+            registration.schedule.workflow_id,
+            interval_hours=request.interval_hours,
+            supersedes_workflow_id=registration.supersedes_workflow_id,
+        )
+        mark_schedule_reconciled(
+            registration.schedule.id,
+            registration.schedule.workflow_id,
+        )
+        return IntelligenceScheduleResponse(
+            channel_profile_id=channel_profile_id,
+            workflow_id=registration.schedule.workflow_id,
+            interval_hours=request.interval_hours,
+            generation=registration.schedule.generation,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @router.post(
