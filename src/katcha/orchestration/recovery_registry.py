@@ -89,24 +89,21 @@ WORKFLOW_RECOVERY_CONTRACTS: dict[str, WorkflowRecoveryContract] = {
     ),
     "TopicWatchScheduleWorkflow": WorkflowRecoveryContract(
         "TopicWatchScheduleWorkflow",
-        RecoveryMode.TEMPORAL_SCHEDULE,
+        RecoveryMode.PERSISTED_RECONCILE,
         "intelligence-worker",
-        "Long-running schedule is durable in Temporal; schedule config "
-        "persistence is a cutover gate.",
+        "AutomationSchedule persists the interval, top-N and current generation.",
     ),
     "ChannelIntelligenceScheduleWorkflow": WorkflowRecoveryContract(
         "ChannelIntelligenceScheduleWorkflow",
-        RecoveryMode.TEMPORAL_SCHEDULE,
+        RecoveryMode.PERSISTED_RECONCILE,
         "intelligence-worker",
-        "Long-running schedule is durable in Temporal; active-channel schedule "
-        "reconstruction is a cutover gate.",
+        "AutomationSchedule persists the refresh interval and current generation.",
     ),
     "ChannelTrendActivationScheduleWorkflow": WorkflowRecoveryContract(
         "ChannelTrendActivationScheduleWorkflow",
-        RecoveryMode.TEMPORAL_SCHEDULE,
+        RecoveryMode.PERSISTED_RECONCILE,
         "intelligence-worker",
-        "Long-running schedule is durable in Temporal; activation schedule config "
-        "persistence is a cutover gate.",
+        "AutomationSchedule persists the activation interval and current generation.",
     ),
     "CommandSourcePrepareWorkflow": WorkflowRecoveryContract(
         "CommandSourcePrepareWorkflow",
