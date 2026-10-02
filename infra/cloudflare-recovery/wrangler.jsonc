@@ -1,0 +1,25 @@
+{
+  "name": "katcha-recovery-coordinator",
+  "main": "src/index.js",
+  "compatibility_date": "2026-10-01",
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "AUTHORITY",
+        "class_name": "RecoveryAuthority"
+      }
+    ]
+  },
+  "exports": {
+    "RecoveryAuthority": {
+      "type": "durable-object",
+      "storage": "sqlite"
+    }
+  },
+  "vars": {
+    "AUTHORITY_OBJECT_NAME": "production"
+  },
+  "observability": {
+    "enabled": true
+  }
+}
