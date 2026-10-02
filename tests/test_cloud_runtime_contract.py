@@ -26,13 +26,13 @@ def valid_production_env() -> dict[str, str]:
         "KATCHA_CONTROL_API_TOKEN": "control-token-with-more-than-32-characters",
         "KATCHA_CONTROL_PRINCIPALS": "[]",
         "KATCHA_YOUTUBE_REDIRECT_URI": (
-            "https://katcha.example.net/v1/integrations/youtube/oauth/callback"
+            "https://katcha.test/v1/integrations/youtube/oauth/callback"
         ),
         "KATCHA_RENDER_BACKEND": "lambda",
         "KATCHA_AWS_EXPECTED_ACCOUNT_ID": "123456789012",
         "KATCHA_AWS_PROFILE": "katcha-automation",
         "KATCHA_REMOTION_LAMBDA_FUNCTION_NAME": "katcha-render",
-        "KATCHA_REMOTION_LAMBDA_SERVE_URL": "https://example.net/remotion",
+        "KATCHA_REMOTION_LAMBDA_SERVE_URL": "https://render.katcha.test/remotion",
         "KATCHA_REMOTION_STAGING_BUCKET": "katcha-render-staging",
     }
 

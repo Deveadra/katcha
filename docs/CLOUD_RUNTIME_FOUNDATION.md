@@ -4,6 +4,8 @@ Audited against accepted `main` at `2ec7fc9ae556d923f2a8266f798176be8dc6d110` on
 
 This document is the implementation checkpoint for moving Katcha away from a local-machine availability dependency. It does **not** claim that OCI, Cloudflare, or AWS resources have been provisioned yet.
 
+The production objective is **not** "Oracle Free Tier is Katcha's production machine." The production objective is: **OCI Always Free is Katcha's normal $0 control plane, with a tightly bounded paid/credited escape hatch when free capacity cannot be restored.** Free capacity is an optimization; continuity, fencing, durable state, and spend limits are correctness requirements.
+
 ## What this foundation changes
 
 - Production runtime images used by the OCI control plane are built for both `linux/amd64` and `linux/arm64`.
@@ -122,6 +124,15 @@ The following are not optional; they are simply later implementation phases:
 7. on-demand AWS Fargate Spot analysis backend,
 8. PostgreSQL point-in-time backup to R2 and tested restore,
 9. production deployment workflow using immutable image SHAs,
-10. VM reboot/replacement and local-PC-off chaos acceptance.
+10. VM reboot/replacement and local-PC-off chaos acceptance,
+11. recovery coordination in a SQLite-backed Cloudflare Durable Object rather than eventually-consistent KV,
+12. an OCI paid-compute escape hatch with TTL, spend ceiling, and automatic return to Always Free capacity,
+13. immutable R2 backup prefixes with separate backup and runtime-media credentials,
+14. an encrypted off-OCI break-glass bootstrap bundle that normal Katcha processes cannot read,
+15. hard external-compute/API cost circuit breakers and a global kill switch,
+16. Cloudflare Access plus endpoint-specific WAF/rate-limit policy,
+17. monotonically increasing deployment epochs / leadership fencing so a stale control plane cannot resume side effects,
+18. an on-demand secondary compute backend (Modal or equivalent) for workloads where it is cheaper/simpler than maintaining warm compute,
+19. startup/cloud credits used opportunistically but never required for the recovery design.
 
 Until those gates pass, the existing installation remains the authoritative production candidate and no local data/volumes should be deleted.
