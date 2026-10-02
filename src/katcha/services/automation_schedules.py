@@ -54,9 +54,10 @@ def _register_schedule(
             session.add(row)
             session.flush()
             changed = True
-        elif not replace_existing:
-            changed = False
-        elif row.enabled and dict(row.schedule_config or {}) == schedule_config:
+        elif (
+            not replace_existing
+            or row.enabled and dict(row.schedule_config or {}) == schedule_config
+        ):
             changed = False
         else:
             previous_workflow_id = row.workflow_id
