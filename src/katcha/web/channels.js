@@ -1468,7 +1468,10 @@ async function selectPublication(id) {
             setStatus("Video loaded, but analytics could not be read: " + error.message, "error");
         }
     }
-    if (!state.packagingVariants.has(id)) {
+    const selected = state.publications.find((item) => item.id === id);
+    const needsPreuploadPackaging =
+        selected?.stage === "metadata_hold" && !selected.youtube_video_id;
+    if (needsPreuploadPackaging && !state.packagingVariants.has(id)) {
         try {
             const variants = await api("/v1/publications/" + id + "/packaging/variants");
             state.packagingVariants.set(id, variants || []);
