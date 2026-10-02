@@ -681,6 +681,7 @@ let browser;
     await page.getByText("Durable goal completed from its saved result").waitFor();
     assert.equal(goalBodies[0].command_id, goalBodies[1].command_id);
     assert.deepEqual(goalBodies[0], goalBodies[1]);
+    await page.waitForFunction(() => !document.getElementById("send").disabled);
     goalPhase = "waiting_workflow";
     await page.locator("#prompt").fill("Keep checking this pending work");
     await page.locator("#command-form").evaluate((form) => form.requestSubmit());

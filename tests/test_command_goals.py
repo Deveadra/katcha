@@ -257,3 +257,167 @@ async def test_background_running_waits_before_next_model_decision(saved, monkey
     monkeypatch.setattr(goal_runner, "decide_goal", lambda **kwargs: pytest.fail("Too early"))
     assert await goal_runner.advance_goal(goal.id) == "waiting_workflow"
     assert get_goal(goal.id).step_count == 0
+
+
+async def test_publish_always_waits_for_exact_confirmation(saved, monkeypatch):
+    goal = receipt(saved[0], "Publish the prepared short")
+    monkeypatch.setattr(
+        goal_runner,
+        "decide_goal",
+        lambda **kwargs: decision("publish_production", {}, allowed=["publish_production"]),
+    )
+    assert await goal_runner.advance_goal(goal.id) == "waiting_confirmation"
+    assert get_goal(goal.id).result["actions"][0]["requires_confirmation"]
+
+
+async def test_mutating_goal_cannot_claim_success_without_observed_execution(saved, monkeypatch):
+    goal = receipt(saved[0])
+    monkeypatch.setattr(
+        goal_runner,
+        "decide_goal",
+        lambda **kwargs: decision(outcome="complete", allowed=["save_watch"]),
+    )
+    assert await goal_runner.advance_goal(goal.id) == "blocked"
+    assert "no observed" in get_goal(goal.id).summary
+
+
+def test_named_native_channel_boundaries_and_revocation(saved, monkeypatch):
+    from katcha.config import ControlPrincipalSettings
+
+    token = "named-goal-fixture-token-1234"
+    principal = ControlPrincipalSettings(
+        name="goal-operator",
+        token=token,
+        scopes=["ai:read", "ai:command", "ai:write", "trends:read", "trends:write"],
+        channel_profile_ids=[str(saved[0])],
+    )
+    saved[1].control_principals = [principal]
+    with TestClient(app) as api:
+        headers = {"Authorization": f"Bearer {token}"}
+        blocked = api.post(
+            f"/v1/channels/{uuid.uuid4()}/trends/watches",
+            headers=headers,
+            json={"watch_key": "blocked", "name": "Outside channel"},
+        )
+        assert blocked.status_code == 403
+        allowed = api.post(
+            f"/v1/channels/{saved[0]}/trends/watches",
+            headers=headers,
+            json={"watch_key": "allowed", "name": "Own channel"},
+        )
+        assert allowed.status_code == 201
+        unfiltered = api.get("/v1/discovery/sources", headers=headers)
+        assert unfiltered.status_code == 403
+    credential = principal.resolved_credentials()[0]
+    goal = receipt(saved[0])
+    goal.authority = {
+        "actor": "control-principal:goal-operator",
+        "scopes": principal.scopes,
+        "principal_name": principal.name,
+        "credential_id": credential.id,
+        "credential_fingerprint": hashlib.sha256(token.encode()).hexdigest()[:12],
+        "channel_ids": [str(saved[0])],
+    }
+    assert "trends:write" in resolve_goal_authority(goal)[0]
+    principal.scopes = ["ai:read"]
+    with pytest.raises(ValueError, match="permissions"):
+        resolve_goal_authority(goal)
+
+
+async def test_completed_background_outcome_is_available_to_next_decision(saved, monkeypatch):
+    from temporalio.client import WorkflowExecutionStatus
+
+    goal = receipt(saved[0], "Refresh learning then explain its result")
+    with db.session_scope() as session:
+        session.add(
+            CommandGoalStep(
+                id=uuid.uuid4(),
+                goal_id=goal.id,
+                number=0,
+                decision=decision("refresh_intelligence").model_dump(),
+                status="waiting_workflow",
+                result={"workflow_id": "fixture-completed-workflow"},
+            )
+        )
+
+    async def describe():
+        return SimpleNamespace(status=WorkflowExecutionStatus.COMPLETED)
+
+    async def result():
+        return {"records": 7, "completed": True}
+
+    async def client():
+        return SimpleNamespace(
+            get_workflow_handle=lambda _: SimpleNamespace(describe=describe, result=result)
+        )
+
+    monkeypatch.setattr("katcha.orchestration.client.get_temporal_client", client)
+    assert await goal_runner.advance_goal(goal.id) == "running"
+    contexts = []
+
+    def planner(**kwargs):
+        contexts.append(kwargs["context"])
+        return decision(outcome="complete")
+
+    monkeypatch.setattr(goal_runner, "decide_goal", planner)
+    assert await goal_runner.advance_goal(goal.id) == "completed"
+    assert contexts[0]["observations"][0]["result"]["workflow_result"]["records"] == 7
+
+
+async def test_pending_decision_survives_retry_without_new_inference(saved, monkeypatch):
+    goal = receipt(saved[0])
+    with db.session_scope() as session:
+        session.add(
+            CommandGoalStep(
+                id=uuid.uuid4(),
+                goal_id=goal.id,
+                number=0,
+                decision=decision("channel_state").model_dump(),
+                status="planned",
+                result={},
+            )
+        )
+    monkeypatch.setattr(goal_runner, "decide_goal", lambda **kwargs: pytest.fail("Already saved"))
+    assert await goal_runner.advance_goal(goal.id) == "running"
+    assert get_goal(goal.id).step_count == 1
+
+
+def test_workflow_cancellation_rejects_unobserved_target(saved):
+    from katcha.services.goal_tools import action_spec
+
+    goal = receipt(saved[0], "Stop that workflow")
+    with pytest.raises(ValueError, match="not observed"):
+        action_spec(
+            goal, "cancel_workflow", {"workflow_id": "another-channel-workflow"}, uuid.uuid4()
+        )
+
+
+async def test_workflow_cancellation_is_confirmed_then_uses_exact_saved_target(saved, monkeypatch):
+    from katcha.services.goal_tools import run_native_tool
+
+    goal = receipt(saved[0], "Cancel this work")
+    with db.session_scope() as session:
+        current = session.get(CommandGoal, goal.id)
+        current.observations = [
+            {
+                "step": 0,
+                "tool": "refresh_intelligence",
+                "result": {"workflow_id": "observed-fixture-workflow"},
+            }
+        ]
+    goal = get_goal(goal.id)
+    cancelled = []
+
+    async def cancel():
+        cancelled.append("observed-fixture-workflow")
+
+    async def client():
+        return SimpleNamespace(get_workflow_handle=lambda value: SimpleNamespace(cancel=cancel))
+
+    monkeypatch.setattr("katcha.orchestration.client.get_temporal_client", client)
+    result = await run_native_tool(
+        goal, "cancel_workflow", {"workflow_id": "observed-fixture-workflow"}, uuid.uuid4()
+    )
+    assert result["cancellation_requested"]
+    assert cancelled == ["observed-fixture-workflow"]
+    assert TOOLS["cancel_workflow"].confirm

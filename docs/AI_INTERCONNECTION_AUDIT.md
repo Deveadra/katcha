@@ -101,3 +101,114 @@ tests channel isolation, unstated dates, seven candidates, topic alternatives,
 active retained research, current trends, terminal failure feedback, first-round
 context/permissions, and prevention of observation-round authority expansion.
 Full PostgreSQL CI and live provider evaluation are separate acceptance layers.
+
+## Follow-through: durable goal execution (2026-10-02)
+
+The sections above describe the accepted-main baseline and the first repairs.
+This follow-through implements the general continuation path rather than leaving
+those connections as recommendations. The existing `/v1/ai/command` remains the
+compatibility/offline route. Live Command Center sessions now use `/v1/ai/goals`.
+
+### What prevented fuller LLM use
+
+The main constraints were architectural: a small intent/action vocabulary, partial
+channel context, a single observation/binding round, heuristic identity selection,
+and no persisted goal that could wake up after background work. Prompt wording or
+a stronger model could not add the missing execution paths. A separate activation
+condition also matters: this workspace currently reports `ai_enabled=False` and
+`fixture` execution mode. This is an observation about this checkout's settings,
+not proof of the user's deployed runtime configuration. Offline routing cannot
+provide real language inference.
+
+### Connected execution path
+
+```mermaid
+flowchart TD
+    R["Operator request"] --> G["Saved goal and authority"]
+    G --> P["Semantic next decision"]
+    P --> V["Scope and argument checks"]
+    V --> C{"Confirmation needed?"}
+    C -->|Yes| A["Frozen action review"]
+    A --> T["Native operation"]
+    C -->|No| T
+    T --> O["Saved result or workflow state"]
+    O --> P
+    P --> F["Completed, blocked, or needs input"]
+```
+
+The runner persists the original instruction and client identity before inference.
+The actor/client identity pair is unique; retries must contain the identical request.
+Temporal runs one saved decision at a time on the intelligence queue. It waits for
+actual child workflow results, then supplies them to the next model decision.
+The goal has a one-hour deadline and a 16-decision limit; existing per-channel
+budget enforcement and provider preferences still apply. Paid fallback stays opt-in.
+
+Initial semantic interpretation freezes inspect/propose/run mode, allowed mutation
+capabilities and completion criteria. Observations cannot expand that authority.
+Every operation revalidates current credentials, expiry, scopes and channel access
+against captured authority. Receipts store credential identity/fingerprint, never
+bearer secrets. Registered resource identities must be selected or observed, and
+native resource ownership is checked independently of the model, including for
+wildcard operators executing a channel goal.
+
+| System | Connected capabilities | Native enforcement |
+| --- | --- | --- |
+| Discovery | Source catalog/configuration, bounded source search, web scout, source results | Source identity, current channel, typed media/query arguments |
+| Trends | Profiles, channel watches, one-shot collection, ongoing scheduling, ranked candidates | Channel watch ownership, adapter validation, original recurring authorization |
+| Retrieval | Semantic clip search with additional 250-row pools, paged retained research, native clip library | Channel lineage, date/topic/count arguments, bounded paging |
+| Editing | Recipe templates, staged recipes, activation, single/ranked short production | Recipe/production validation and existing rendering workflow |
+| Branding and voice | Brand read/staging/activation, voice catalog/settings/enabled state | Existing native request schemas and provider checks |
+| Retention | Read/update retention configuration | Existing configuration validation; no direct purge tool added |
+| Review and publication | Production/episode review, gated publishing, publication/analytics reads | Frozen confirmation plus existing approval, rights and upload gates |
+| Recovery and cancellation | Exact failed-render target, saved goal cancellation, observed workflow status/cancellation | Goal stops future planning; workflow cancellation uses an exact observed target and explicit confirmation |
+
+Native argument schemas come from the real OpenAPI operations; model-supplied URLs,
+HTTP methods and credentials are unsupported. Deterministic source/recipe/recovery
+heuristics in the older compatibility route are bypassed by semantic tool selection
+on the live goal path. The model can choose reads, inspect schemas, refine queries,
+page results, and select a subsequent operation from observed identities.
+
+Each mutation becomes a frozen, durable action proposal before execution. Completed
+identical mutations are not repeated as new steps. A potentially non-idempotent
+operation with an uncertain result requires state inspection rather than blind
+replay. Idempotency keys are injected only where native APIs support them. Publication
+and manual analytics refresh are conservatively treated as unsafe to replay.
+Native actions and existing production/scout actions both obey stopped-goal and
+captured-authority checks before confirmation/execution.
+
+Command Center preserves the same request identity after a lost response, polls
+saved progress, restores pending receipts on reconnect and loads active server
+receipts if browser storage is absent. Pending confirmation uses the existing action
+review UI. “Stop planning” explicitly leaves already-started work with its own
+status; cancelling such work is a separate confirmed workflow operation. Progress
+restoration follows thread loading so history rendering cannot erase it.
+
+### Evidence and limits
+
+Execution tests use isolated saved data and real in-process native API calls with
+scripted model decisions. They verify request retries, changed-request rejection,
+a real channel watch write followed by observation-driven replanning, immutable
+permissions, stopped-goal checks, review/publish confirmation, unknown-result replay
+prevention, credential rotation/revocation, scoped native channel access, and pending
+and terminal background feedback. They do **not** establish live comprehension.
+
+The browser suite additionally exercises a lost goal response, identical retry,
+refresh during pending work, restored progress, stopping planning, keyboard operation
+and the existing mobile-width checks. PostgreSQL CI covers fresh migration application
+and the complete Python suite. Launcher/renderer acceptance remain separate checks.
+
+`scripts/evaluate_goal_language.py` adds an opt-in real-provider first-decision suite
+for paraphrases, negation, hypothetical work, proposals and preparation/publication
+boundaries. It writes measured decisions and pass/fail results and executes no native
+mutations. It refuses to substitute fixtures when Live AI is disabled. It could not
+run live here because this workspace has AI disabled in fixture mode. There is no
+live comprehension score or claim of a real production/upload in this pass.
+
+Residual acceptance work is to run that suite against the configured live provider
+and perform supervised end-to-end media tasks with actual integrations. The harness
+currently measures initial semantic authorization; it does not yet measure the full
+multi-round language trajectory. The server verifies operational outcomes and
+prevents a mutating goal from claiming success with no observed successful operation;
+free-form completion criteria still require the model's semantic judgment. This is
+bounded goal execution, not unlimited autonomy or a guarantee that every natural
+language request will be understood correctly.

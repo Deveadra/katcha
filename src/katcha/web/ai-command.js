@@ -952,7 +952,6 @@ async function connect(event) {
         try {
             const readiness = await api("/v1/ai/readiness");
             state.durableGoals = readiness.live && readiness.durable_goals === true;
-            if (state.durableGoals) resumeSavedGoals();
             $("ai-readiness").textContent = readiness.message;
             $("ai-readiness").className = "ai-readiness" + (readiness.live ? " live" : " unavailable");
             $("ai-readiness").hidden = false;
@@ -967,6 +966,7 @@ async function connect(event) {
         await loadThreads({ openLatest: !hasTypedDeepLink });
         applyDeepLinkContext();
         renderControlSession();
+        if (state.durableGoals) resumeSavedGoals();
         await refreshObservability();
         const active = state.channels.find((row) => row.id === state.channelId);
         const permissionLabel = capability("ai_command")

@@ -8,7 +8,7 @@ import uuid
 from contextlib import suppress
 from dataclasses import dataclass
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, Literal
 
 import httpx
 from pydantic import BaseModel, Field
@@ -68,6 +68,17 @@ TOOLS = {
             "ai:write",
             "POST",
             "/v1/ai/goals/{goal_id}/cancel",
+            retry_safe=True,
+        ),
+        GoalTool(
+            "workflow_status", "Inspect an observed workflow's actual execution state", "ai:read"
+        ),
+        GoalTool(
+            "cancel_workflow",
+            "Request cancellation of an exact observed workflow",
+            "workflows:cancel",
+            action_type="native_tool",
+            confirm=True,
             retry_safe=True,
         ),
         GoalTool("research", "Retained research and current trend evidence", "ai:read"),
@@ -415,7 +426,9 @@ class SourceSearch(BaseModel):
 
 class WebScout(BaseModel):
     query: str = Field(min_length=1, max_length=320)
-    platforms: list[str] = Field(default_factory=list, max_length=8)
+    platforms: list[Literal["youtube", "tiktok", "instagram", "x", "bluesky"]] = Field(
+        default_factory=list, max_length=8
+    )
     prepare: bool = False
     media_kind: str = Field(default="any", pattern="^(any|trailer|teaser)$")
 
@@ -479,6 +492,12 @@ def tool_schema(name: str) -> dict:
                     "terms": {"type": "array", "items": {"type": "string"}},
                     "offset": {"type": "integer", "minimum": 0},
                 },
+            }
+        if name in {"workflow_status", "cancel_workflow"}:
+            return {
+                "type": "object",
+                "properties": {"workflow_id": {"type": "string", "minLength": 1, "maxLength": 255}},
+                "required": ["workflow_id"],
             }
         if name == "recover_render":
             return {
@@ -589,6 +608,8 @@ def validate_resource_arguments(goal: CommandGoal, arguments: dict) -> None:
 def action_spec(goal: CommandGoal, name: str, args: dict, step_id: uuid.UUID) -> ActionProposalSpec:
     tool = TOOLS[name]
     validate_resource_arguments(goal, args)
+    if name == "cancel_workflow":
+        observed_workflow_id(goal, args)
     if name == "search_source":
         selection = SourceSearch.model_validate(args)
         with session_scope() as session:
@@ -675,6 +696,13 @@ def _redact(value):
 
 
 async def run_read_tool(goal: CommandGoal, name: str, args: dict) -> dict:
+    if name == "workflow_status":
+        from katcha.orchestration.client import get_temporal_client
+
+        workflow_id = observed_workflow_id(goal, args)
+        client = await get_temporal_client()
+        description = await client.get_workflow_handle(workflow_id).describe()
+        return {"workflow_id": workflow_id, "workflow_state": description.status.name}
     if name == "inspect_tool":
         return {"name": args["name"], "schema": tool_schema(args["name"])}
     if name == "channel_state":
@@ -715,6 +743,13 @@ async def run_native_tool(goal: CommandGoal, name: str, args: dict, step_id: uui
     if "*" not in scopes and tool.scope not in scopes:
         raise ValueError(f"This request no longer has {tool.scope} permission")
     validate_resource_arguments(goal, args)
+    if name == "cancel_workflow":
+        from katcha.orchestration.client import get_temporal_client
+
+        workflow_id = observed_workflow_id(goal, args)
+        client = await get_temporal_client()
+        await client.get_workflow_handle(workflow_id).cancel()
+        return {"workflow_id": workflow_id, "cancellation_requested": True}
     path_args, query, body = (
         dict(args.get("path", {})),
         dict(args.get("query", {})),
@@ -845,3 +880,27 @@ def require_native_resource_channels(request, tool: GoalTool) -> None:
                 require_control_channel(request, row.channel_profile_id)
             elif tool.mutates or tool.name in {"source_history", "source_results", "watch_results"}:
                 raise ValueError("Shared resource details require a wildcard principal")
+
+
+def observed_workflow_id(goal: CommandGoal, args: dict) -> str:
+    from katcha.services.command_history import list_thread_proposals
+
+    requested = args.get("workflow_id")
+    known = set()
+
+    def visit(value):
+        if isinstance(value, dict):
+            if isinstance(value.get("workflow_id"), str):
+                known.add(value["workflow_id"])
+            for item in value.values():
+                visit(item)
+        elif isinstance(value, list):
+            for item in value:
+                visit(item)
+
+    visit(goal.observations)
+    for proposal in list_thread_proposals(goal.thread_id):
+        visit(proposal.result)
+    if not requested or requested not in known:
+        raise ValueError("The workflow was not observed in this goal or channel conversation")
+    return requested

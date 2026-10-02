@@ -2068,6 +2068,9 @@ async def execute_action(
     require_control_scope(http_request, required_scope)
 
     try:
+        from katcha.services.goal_runner import validate_goal_proposal
+
+        validate_goal_proposal(current, actor)
         claim = claim_action_proposal(
             proposal_id,
             actor=actor,

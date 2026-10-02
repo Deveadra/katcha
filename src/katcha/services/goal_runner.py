@@ -153,12 +153,24 @@ async def _observe_background(goal, step):
                     "Work is running; I will continue when its result arrives.",
                 )
         return
+    if (
+        step.decision.get("tool") == "cancel_workflow"
+        and description.status == WorkflowExecutionStatus.CANCELED
+    ):
+        _save_result(goal.id, step.id, {**step.result, "workflow_state": "CANCELED"})
+        return
     try:
         result = await handle.result()
         from katcha.services.command_activity import get_action_activity
 
         activity = get_action_activity(step.proposal_id) if step.proposal_id else None
         error = None
+        if isinstance(result, dict) and (
+            result.get("status") in {"failed", "blocked"}
+            or result.get("success") is False
+            or result.get("error")
+        ):
+            error = str(result.get("error") or "Background work reported an unsuccessful result")
         if activity and activity.state == "failed":
             error = str(activity.workflow_detail.get("error") or "Background preparation failed")
         _save_result(
