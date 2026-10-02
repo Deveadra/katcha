@@ -10,7 +10,8 @@ from katcha.db import session_scope
 from katcha.domain import ChannelStatus, ProductionStatus, ReviewDecision
 from katcha.editorial.personas import get_persona
 from katcha.intelligence_models import ChannelProfile
-from katcha.models import Clip, ClipFeature, DomainEvent
+from katcha.integrations.storage import ObjectStore
+from katcha.models import Clip, ClipFeature, DomainEvent, SourceItem
 from katcha.production_models import (
     Production,
     ProductionAsset,
@@ -171,6 +172,199 @@ def register_short_production(
                 },
             )
         )
+        session.refresh(production)
+        session.expunge(production)
+        return production
+
+
+def _passthrough_workflow_id(
+    clip_id: uuid.UUID,
+    channel_profile_id: uuid.UUID,
+    idempotency_key: str | None,
+) -> str:
+    token = idempotency_key.strip() if idempotency_key and idempotency_key.strip() else uuid.uuid4().hex
+    digest = hashlib.sha256(
+        f"{channel_profile_id}:source_passthrough:{token}".encode()
+    ).hexdigest()[:20]
+    return f"passthrough-prod-{clip_id}-{digest}"
+
+
+def _passthrough_source_snapshot(
+    session: object,
+    clip_id: uuid.UUID,
+    channel_profile_id: uuid.UUID,
+) -> dict[str, object]:
+    rows = list(
+        session.scalars(
+            select(SourceItem)
+            .where(SourceItem.clip_id == clip_id)
+            .order_by(SourceItem.discovered_at.asc(), SourceItem.id.asc())
+        )
+    )
+    channel_value = str(channel_profile_id)
+    matching = [
+        row
+        for row in rows
+        if str((row.source_metadata or {}).get("channel_profile_id") or "") == channel_value
+    ]
+    source = matching[0] if matching else rows[0] if rows else None
+    if source is None:
+        return {"grounding_facts": []}
+
+    facts: list[str] = []
+    if source.title:
+        facts.append(f"Official source title: {source.title}")
+    if source.creator:
+        facts.append(f"Official source creator: {source.creator}")
+    if source.platform:
+        facts.append(f"Source platform: {source.platform}")
+    if source.source_url:
+        facts.append(f"Official source URL: {source.source_url}")
+
+    metadata = dict(source.source_metadata or {})
+    intelligence_summary = str(metadata.get("intelligence_summary") or "").strip()
+    if intelligence_summary:
+        facts.append(intelligence_summary)
+    intelligence_title = str(metadata.get("intelligence_title") or "").strip()
+    if intelligence_title:
+        facts.append(intelligence_title)
+
+    return {
+        "source_item_id": str(source.id),
+        "source_url": source.source_url,
+        "canonical_url": source.canonical_url,
+        "title": source.title,
+        "creator": source.creator,
+        "platform": source.platform,
+        "source_metadata": metadata,
+        "grounding_facts": list(dict.fromkeys(facts)),
+    }
+
+
+def register_source_passthrough_production(
+    clip_id: uuid.UUID,
+    *,
+    channel_profile_id: uuid.UUID,
+    idempotency_key: str | None = None,
+    actor: str = "operator",
+) -> Production:
+    """Create a publication-ready production that reuses verified source media.
+
+    This intentionally performs no script, TTS, edit, or render work. It exists for
+    channel-scoped source-preserving workflows such as time-sensitive official
+    trailers. Rights qualification remains mandatory.
+    """
+
+    workflow_id = _passthrough_workflow_id(
+        clip_id,
+        channel_profile_id,
+        idempotency_key,
+    )
+    actor_value = actor.strip()
+    if not actor_value:
+        raise ValueError("actor must not be blank")
+
+    store = ObjectStore()
+    with session_scope() as session:
+        existing = session.scalar(
+            select(Production).where(Production.workflow_id == workflow_id)
+        )
+        if existing is not None:
+            if existing.channel_profile_id != channel_profile_id:
+                raise ValueError("passthrough idempotency key belongs to another channel")
+            session.expunge(existing)
+            return existing
+
+        _validate_channel_scope(session, channel_profile_id)
+        clip = session.get(Clip, clip_id)
+        if clip is None:
+            raise ValueError(f"clip not found: {clip_id}")
+        if not store.exists(clip.storage_key):
+            raise ValueError("clip source object is missing from storage")
+
+        acquisition_state = assert_clip_production_eligible(clip_id)
+        brand, brand_version = brand_for_channel(session, channel_profile_id)
+        persona = get_persona(brand.persona.key, brand.persona.version)
+        source_snapshot = _passthrough_source_snapshot(
+            session,
+            clip_id,
+            channel_profile_id,
+        )
+        analysis_snapshot = {
+            "clip_sha256": clip.sha256,
+            "duration_seconds": float(clip.duration_seconds or 0),
+            "source_passthrough": True,
+            "source": source_snapshot,
+            "grounding_facts": list(source_snapshot.get("grounding_facts") or []),
+            "acquisition": _acquisition_snapshot(acquisition_state),
+        }
+        render_manifest = {
+            "version": "source-passthrough-v1",
+            "mode": "source_passthrough",
+            "source_storage_key": clip.storage_key,
+            "source_sha256": clip.sha256,
+        }
+        production = Production(
+            clip_id=clip_id,
+            channel_profile_id=channel_profile_id,
+            parent_production_id=None,
+            generation=1,
+            regenerate_from=None,
+            workflow_id=workflow_id,
+            kind="source_passthrough",
+            status=ProductionStatus.APPROVED.value,
+            stage="source_passthrough_approved",
+            persona_key=persona.key,
+            persona_version=persona.version,
+            prompt_version="source-passthrough-v1",
+            brand_key=brand.brand_key,
+            brand_version=brand_version,
+            brand_snapshot=brand.model_dump(mode="json"),
+            edit_blueprint_key=None,
+            edit_blueprint_version=None,
+            edit_blueprint_snapshot=None,
+            analysis_snapshot=analysis_snapshot,
+            render_manifest=render_manifest,
+            estimated_cost_usd=Decimal("0"),
+        )
+        session.add(production)
+        session.flush()
+        session.add(
+            ProductionAsset(
+                production_id=production.id,
+                kind="render",
+                generation=1,
+                storage_key=clip.storage_key,
+                content_type="video/mp4",
+                provider="source_passthrough",
+                model="original_source",
+                asset_metadata={
+                    "verified": True,
+                    "passthrough": True,
+                    "source_sha256": clip.sha256,
+                    "source_item_id": source_snapshot.get("source_item_id"),
+                },
+            )
+        )
+        session.add(
+            DomainEvent(
+                aggregate_type="production",
+                aggregate_id=str(production.id),
+                event_type="production.source_passthrough_created",
+                payload={
+                    "production_id": str(production.id),
+                    "clip_id": str(clip_id),
+                    "channel_profile_id": str(channel_profile_id),
+                    "workflow_id": production.workflow_id,
+                    "brand_key": production.brand_key,
+                    "brand_version": production.brand_version,
+                    "rights_lane": acquisition_state.rights_lane,
+                    "source_item_id": source_snapshot.get("source_item_id"),
+                    "actor": actor_value,
+                },
+            )
+        )
+        session.flush()
         session.refresh(production)
         session.expunge(production)
         return production
