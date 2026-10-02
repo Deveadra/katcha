@@ -121,6 +121,7 @@ from katcha.publishing_models import (
     YouTubeConnection,
 )
 from katcha.services.analysis import register_analysis
+from katcha.services.intelligence_automation import advance_processed_handoff_receipt
 from katcha.services.intelligence_handoff import process_handoff_inbox
 from katcha.services.compilations import (
     register_compilation,
@@ -150,7 +151,10 @@ _logger = logging.getLogger(__name__)
 async def _process_pending_handoffs_on_startup() -> None:
     """Drain manually dropped handoff files after the API database is available."""
     try:
-        await asyncio.to_thread(process_handoff_inbox, limit=50)
+        items = await asyncio.to_thread(process_handoff_inbox, limit=50)
+        for item in items:
+            if item.status == "processed":
+                await advance_processed_handoff_receipt(item.receipt)
     except Exception:
         # Handoff failures must never prevent Katcha itself from starting. Individual
         # file validation failures are already moved to the failed queue by the
