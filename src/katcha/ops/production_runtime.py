@@ -43,6 +43,34 @@ def validate(values: dict[str, str]) -> list[str]:
     if values.get("KATCHA_ENV", "").casefold() != "production":
         errors.append("KATCHA_ENV must be production")
 
+
+    if values.get("KATCHA_LEADERSHIP_FENCE_MODE", "").casefold() != "http":
+        errors.append("KATCHA_LEADERSHIP_FENCE_MODE must be http in hosted production")
+
+    fence_url = require(values, "KATCHA_LEADERSHIP_FENCE_URL", errors)
+    if fence_url:
+        parsed = urlsplit(fence_url)
+        if parsed.scheme != "https" or not parsed.hostname:
+            errors.append("KATCHA_LEADERSHIP_FENCE_URL must be a public HTTPS coordinator endpoint")
+
+    fence_token = require(values, "KATCHA_LEADERSHIP_FENCE_TOKEN", errors)
+    if fence_token and not is_placeholder(fence_token) and len(fence_token) < 32:
+        errors.append("KATCHA_LEADERSHIP_FENCE_TOKEN must contain at least 32 characters")
+
+    deployment_id = require(values, "KATCHA_DEPLOYMENT_ID", errors)
+    if deployment_id and deployment_id.casefold() in {"local", "development", "dev"}:
+        errors.append("KATCHA_DEPLOYMENT_ID must identify the hosted deployment")
+
+    raw_epoch = require(values, "KATCHA_DEPLOYMENT_EPOCH", errors)
+    if raw_epoch and not is_placeholder(raw_epoch):
+        try:
+            epoch = int(raw_epoch)
+        except ValueError:
+            errors.append("KATCHA_DEPLOYMENT_EPOCH must be an integer")
+        else:
+            if epoch < 1:
+                errors.append("KATCHA_DEPLOYMENT_EPOCH must be at least 1")
+
     release = require(values, "KATCHA_RELEASE_SHA", errors)
     if release and not SHA.fullmatch(release):
         errors.append("KATCHA_RELEASE_SHA must be an exact 40-character lowercase git SHA")

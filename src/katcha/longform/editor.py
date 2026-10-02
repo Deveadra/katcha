@@ -31,6 +31,7 @@ from katcha.longform.schemas import (
     LongformEditorPlan,
 )
 from katcha.longform_models import Compilation
+from katcha.runtime_fence import assert_mutation_authority
 
 
 class LongformProviderUnavailable(RuntimeError):
@@ -209,6 +210,10 @@ def _openai_structured(
 ) -> LongformAIResult:
     if not settings.openai_api_key:
         raise LongformProviderUnavailable("OpenAI API key is not configured")
+    assert_mutation_authority(
+        f"ai.longform.{stage}.openai",
+        settings=settings,
+    )
     from openai import OpenAI
 
     client = OpenAI(api_key=settings.openai_api_key)
@@ -256,6 +261,10 @@ def _gemini_structured(
 ) -> LongformAIResult:
     if not settings.gemini_api_key:
         raise LongformProviderUnavailable("Gemini API key is not configured")
+    assert_mutation_authority(
+        f"ai.longform.{stage}.gemini",
+        settings=settings,
+    )
     from google import genai
     from google.genai import types
 

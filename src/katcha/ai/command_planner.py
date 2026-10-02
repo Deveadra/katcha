@@ -21,6 +21,7 @@ from katcha.config import Settings, get_settings
 from katcha.domain import AITask
 from katcha.integrations.chatgpt import invoke_json as invoke_chatgpt_json
 from katcha.integrations.codex import invoke_json as invoke_codex_json
+from katcha.runtime_fence import assert_mutation_authority
 
 CommandIntent = Literal[
     "best_clips",
@@ -234,6 +235,10 @@ def _openai(
     request_id: uuid.UUID,
     reservation_id: uuid.UUID | None,
 ) -> CommandPlanResult:
+    assert_mutation_authority(
+        "ai.command_planner.openai",
+        settings=settings,
+    )
     from openai import OpenAI
 
     response = OpenAI(
@@ -334,6 +339,10 @@ def _gemini(
     request_id: uuid.UUID,
     reservation_id: uuid.UUID | None,
 ) -> CommandPlanResult:
+    assert_mutation_authority(
+        "ai.command_planner.gemini",
+        settings=settings,
+    )
     from google import genai
     from google.genai import types
 

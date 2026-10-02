@@ -15,6 +15,7 @@ from katcha.ai.schemas import ClipVisionResult, DeepVideoResult
 from katcha.ai.subscription import generate_subscription_json
 from katcha.config import Settings, get_settings
 from katcha.domain import AITask
+from katcha.runtime_fence import assert_mutation_authority
 
 
 class ProviderUnavailable(RuntimeError):
@@ -84,6 +85,10 @@ def _openai_contact_sheet(
 ) -> AIResult:
     if not settings.openai_api_key:
         raise ProviderUnavailable("OpenAI API key is not configured")
+    assert_mutation_authority(
+        "ai.analysis.openai",
+        settings=settings,
+    )
     from openai import OpenAI
 
     client = OpenAI(api_key=settings.openai_api_key)
@@ -134,6 +139,10 @@ def _gemini_contact_sheet(
 ) -> AIResult:
     if not settings.gemini_api_key:
         raise ProviderUnavailable("Gemini API key is not configured")
+    assert_mutation_authority(
+        "ai.analysis.gemini",
+        settings=settings,
+    )
     from google import genai
     from google.genai import types
 
@@ -247,6 +256,10 @@ def analyze_full_video(
     if target.provider != "gemini" or not settings.gemini_api_key:
         raise ProviderUnavailable("Gemini is required for native full-video escalation")
 
+    assert_mutation_authority(
+        "ai.analysis.gemini_full_video",
+        settings=settings,
+    )
     from google import genai
     from google.genai import types
 

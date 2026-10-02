@@ -6,6 +6,7 @@ from typing import Any
 import httpx
 
 from katcha.config import Settings, get_settings
+from katcha.runtime_fence import assert_mutation_authority
 from katcha.services.provider_settings import get_channel_provider_setting
 
 
@@ -267,6 +268,10 @@ def generate_elevenlabs_preview(
     if not voice_id.strip():
         raise ValueError("voice_id is required")
 
+    assert_mutation_authority(
+        "tts.elevenlabs_preview",
+        settings=settings,
+    )
     payload = {
         "text": text,
         "model_id": model_id,

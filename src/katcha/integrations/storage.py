@@ -9,6 +9,7 @@ from botocore.config import Config
 from botocore.exceptions import ClientError
 
 from katcha.config import Settings, get_settings
+from katcha.runtime_fence import assert_mutation_authority
 
 
 class ObjectStore:
@@ -40,6 +41,10 @@ class ObjectStore:
             status = int(exc.response.get("ResponseMetadata", {}).get("HTTPStatusCode") or 0)
             if code not in {"404", "NoSuchBucket", "NotFound"} and status != 404:
                 raise
+        assert_mutation_authority(
+            "storage.create_bucket",
+            settings=self.settings,
+        )
         kwargs: dict[str, object] = {"Bucket": self.settings.s3_bucket}
         if self.settings.s3_region not in {"auto", "us-east-1"}:
             kwargs["CreateBucketConfiguration"] = {
@@ -66,6 +71,10 @@ class ObjectStore:
         }
 
     def put_file(self, path: Path, key: str, content_type: str | None = None) -> None:
+        assert_mutation_authority(
+            "storage.put_file",
+            settings=self.settings,
+        )
         extra = {"ContentType": content_type} if content_type else None
         if extra:
             self.client.upload_file(str(path), self.settings.s3_bucket, key, ExtraArgs=extra)
@@ -73,6 +82,10 @@ class ObjectStore:
             self.client.upload_file(str(path), self.settings.s3_bucket, key)
 
     def put_bytes(self, data: bytes, key: str, content_type: str | None = None) -> None:
+        assert_mutation_authority(
+            "storage.put_bytes",
+            settings=self.settings,
+        )
         kwargs: dict[str, object] = {
             "Bucket": self.settings.s3_bucket,
             "Key": key,
@@ -119,12 +132,20 @@ class ObjectStore:
         )
 
     def delete(self, key: str) -> None:
+        assert_mutation_authority(
+            "storage.delete",
+            settings=self.settings,
+        )
         self.client.delete_object(Bucket=self.settings.s3_bucket, Key=key)
 
     def delete_many(self, keys: list[str]) -> None:
         unique = [key for key in dict.fromkeys(keys) if key]
         if not unique:
             return
+        assert_mutation_authority(
+            "storage.delete_many",
+            settings=self.settings,
+        )
         for index in range(0, len(unique), 1000):
             batch = unique[index : index + 1000]
             self.client.delete_objects(
@@ -135,6 +156,10 @@ class ObjectStore:
     def move(self, source_key: str, destination_key: str) -> None:
         if source_key == destination_key:
             return
+        assert_mutation_authority(
+            "storage.move",
+            settings=self.settings,
+        )
         self.client.copy_object(
             Bucket=self.settings.s3_bucket,
             Key=destination_key,

@@ -25,6 +25,7 @@ from katcha.domain import AITask
 from katcha.editorial.personas import HostPersona
 from katcha.editorial.schemas import ShortScriptSet
 from katcha.production_models import Production
+from katcha.runtime_fence import assert_mutation_authority
 
 
 class ScriptProviderUnavailable(RuntimeError):
@@ -163,6 +164,10 @@ def _openai_generate(
 ) -> ScriptGenerationResult:
     if not settings.openai_api_key:
         raise ScriptProviderUnavailable("OpenAI API key is not configured")
+    assert_mutation_authority(
+        "ai.short_script.openai",
+        settings=settings,
+    )
     from openai import OpenAI
 
     client = OpenAI(api_key=settings.openai_api_key)
@@ -204,6 +209,10 @@ def _gemini_generate(
 ) -> ScriptGenerationResult:
     if not settings.gemini_api_key:
         raise ScriptProviderUnavailable("Gemini API key is not configured")
+    assert_mutation_authority(
+        "ai.short_script.gemini",
+        settings=settings,
+    )
     from google import genai
     from google.genai import types
 
