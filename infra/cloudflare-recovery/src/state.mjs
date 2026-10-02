@@ -75,6 +75,8 @@ export function prepareAuthority(
     epoch,
     health_url: healthUrl,
     prepared_at: nowIso(nowMs),
+    ready_at: null,
+    readiness: null,
   };
   let next = {
     ...state,
@@ -88,6 +90,45 @@ export function prepareAuthority(
   });
   return { state: next, pending, reused: false };
 }
+
+export function markCandidateReady(
+  current,
+  { deploymentId, deploymentEpoch, readiness },
+  nowMs = Date.now(),
+) {
+  const state = normalizeState(current);
+  const pending = state.pending;
+  if (
+    !pending ||
+    pending.deployment_id !== deploymentId ||
+    pending.epoch !== deploymentEpoch
+  ) {
+    throw new StateConflict("pending authority does not match candidate readiness");
+  }
+  const checks = readiness && typeof readiness === "object" ? readiness : {};
+  for (const name of [
+    "runtime_ready",
+    "durable_state_ready",
+    "fence_probe_ready",
+  ]) {
+    if (checks[name] !== true) {
+      throw new StateConflict(`candidate readiness check failed: ${name}`, 422);
+    }
+  }
+  const readyAt = nowIso(nowMs);
+  const nextPending = {
+    ...pending,
+    ready_at: readyAt,
+    readiness: checks,
+  };
+  let next = { ...state, pending: nextPending };
+  next = event(next, "authority.candidate_ready", nowMs, {
+    deployment_id: deploymentId,
+    epoch: deploymentEpoch,
+  });
+  return { state: next, pending: nextPending };
+}
+
 
 export function commitAuthority(
   current,
@@ -108,6 +149,12 @@ export function commitAuthority(
     pending.epoch !== deploymentEpoch
   ) {
     throw new StateConflict("pending authority does not match the requested commit");
+  }
+  if (!pending.ready_at) {
+    throw new StateConflict(
+      "pending deployment has not passed candidate readiness checks",
+      422,
+    );
   }
 
   const active = {
