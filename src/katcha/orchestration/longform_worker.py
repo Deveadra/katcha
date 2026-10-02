@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import concurrent.futures
 import logging
+from contextlib import suppress
 
 from sqlalchemy import select
 from temporalio.client import Client
@@ -13,6 +14,9 @@ from temporalio.worker import Worker
 from katcha.config import get_settings
 from katcha.db import session_scope
 from katcha.longform_models import Compilation
+from katcha.orchestration.editorial_activities import EDITORIAL_ACTIVITIES
+from katcha.orchestration.editorial_dispatch import editorial_reconciler
+from katcha.orchestration.editorial_workflows import EditorialProjectWorkflow
 from katcha.orchestration.longform_activities import (
     build_longform_manifest_activity,
     critique_longform_plan_activity,
@@ -101,7 +105,7 @@ async def main() -> None:
         worker = Worker(
             client,
             task_queue=settings.temporal_longform_task_queue,
-            workflows=[LongformCompilationWorkflow],
+            workflows=[LongformCompilationWorkflow, EditorialProjectWorkflow],
             activities=[
                 select_compilation_candidates_activity,
                 generate_longform_editor_plan_activity,
@@ -111,10 +115,17 @@ async def main() -> None:
                 build_longform_manifest_activity,
                 render_longform_activity,
                 mark_compilation_failed,
+                *EDITORIAL_ACTIVITIES,
             ],
             activity_executor=activity_executor,
         )
-        await worker.run()
+        reconciler = asyncio.create_task(editorial_reconciler(client))
+        try:
+            await worker.run()
+        finally:
+            reconciler.cancel()
+            with suppress(asyncio.CancelledError):
+                await reconciler
 
 
 if __name__ == "__main__":

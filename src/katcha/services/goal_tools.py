@@ -43,6 +43,67 @@ TOOLS = {
     tool.name: tool
     for tool in [
         GoalTool(
+            "start_editorial_analysis",
+            "Acquire brief sources and prepare sampled frames/transcript in a durable run. "
+            "Does not yet perform native-video interpretation or research.",
+            "production:create", "POST",
+            "/v1/channels/{channel_profile_id}/editorial-projects/{project_id}/runs",
+            retry_safe=True,
+        ),
+        GoalTool(
+            "editorial_runs", "List editorial execution progress and saved blockers",
+            "ai:read", "GET",
+            "/v1/channels/{channel_profile_id}/editorial-projects/{project_id}/runs",
+        ),
+        GoalTool(
+            "editorial_run", "Inspect exact editorial receipts, source coverage and progress",
+            "ai:read", "GET",
+            "/v1/channels/{channel_profile_id}/editorial-projects/{project_id}"
+            "/runs/{editorial_run_id}",
+        ),
+        GoalTool(
+            "resume_editorial_run", "Resume failed work from saved checkpoints",
+            "production:create", "POST",
+            "/v1/channels/{channel_profile_id}/editorial-projects/{project_id}"
+            "/runs/{editorial_run_id}/resume", retry_safe=True,
+        ),
+        GoalTool(
+            "cancel_editorial_run", "Stop further editorial stages; retain saved work",
+            "production:create", "POST",
+            "/v1/channels/{channel_profile_id}/editorial-projects/{project_id}"
+            "/runs/{editorial_run_id}/cancel", retry_safe=True,
+        ),
+        GoalTool(
+            "create_editorial_project",
+            "Save a researched-original brief and source URLs. Draft storage only; "
+            "does not start analysis, research, generation or rendering.",
+            "production:create", "POST",
+            "/v1/channels/{channel_profile_id}/editorial-projects",
+            retry_safe=True,
+        ),
+        GoalTool(
+            "list_editorial_projects", "Browse saved original-episode drafts in this channel",
+            "ai:read", "GET", "/v1/channels/{channel_profile_id}/editorial-projects",
+        ),
+        GoalTool(
+            "editorial_project", "Read a saved editorial project's brief and capabilities",
+            "ai:read", "GET",
+            "/v1/channels/{channel_profile_id}/editorial-projects/{project_id}",
+        ),
+        GoalTool(
+            "editorial_revisions", "Read saved evidence and script revisions; latest first",
+            "ai:read", "GET",
+            "/v1/channels/{channel_profile_id}/editorial-projects/{project_id}/revisions",
+        ),
+        GoalTool(
+            "save_editorial_draft",
+            "Save structurally validated evidence/script with expected_revision. "
+            "Does not independently verify claims, approve rights or publish.",
+            "production:create", "POST",
+            "/v1/channels/{channel_profile_id}/editorial-projects/{project_id}/revisions",
+            retry_safe=True,
+        ),
+        GoalTool(
             "inspect_tool", "Get exact argument schema for a registered capability", "ai:read"
         ),
         GoalTool(
@@ -599,6 +660,8 @@ def validate_resource_arguments(goal: CommandGoal, arguments: dict) -> None:
                 "proposal_id",
                 "goal_id",
                 "topic_watch_id",
+                "project_id",
+                "editorial_run_id",
             }
             and value is not None
         ):
@@ -868,6 +931,7 @@ def require_native_resource_channels(request, tool: GoalTool) -> None:
     """Also guard direct scoped API access, not only goal callers."""
     from katcha.acquisition_models import TopicWatchVersion
     from katcha.api.control_auth import require_control_channel
+    from katcha.editorial_models import EditorialProject, EditorialRun
     from katcha.intelligence_models import ChannelProfile
     from katcha.models import Clip
     from katcha.production_models import Production
@@ -876,6 +940,8 @@ def require_native_resource_channels(request, tool: GoalTool) -> None:
     from katcha.short_episode_models import ShortEpisode
 
     mapping = {
+        "project_id": EditorialProject,
+        "editorial_run_id": EditorialRun,
         "source_id": IngestionSource,
         "production_id": Production,
         "short_episode_id": ShortEpisode,

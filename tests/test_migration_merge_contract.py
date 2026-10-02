@@ -4,7 +4,11 @@ from alembic.script import ScriptDirectory
 
 def test_ranked_trend_editing_activation_and_render_revisions_share_one_history() -> None:
     script = ScriptDirectory.from_config(Config("alembic.ini"))
-    assert script.get_heads() == ["0049_automation_schedules"]
+    assert script.get_heads() == ["0051_editorial_runs"]
+    assert script.get_revision("0051_editorial_runs").down_revision == "0050_editorial_projects"
+    assert (
+        script.get_revision("0050_editorial_projects").down_revision == "0049_automation_schedules"
+    )
     assert script.get_revision("0049_automation_schedules").down_revision == "0048_manual_content"
     assert script.get_revision("0048_manual_content").down_revision == "0047_packaging_seo_fields"
     assert (
