@@ -23,6 +23,19 @@ const assert = require('node:assert/strict');
         await page.goto('http://localhost:8765');
         await page.waitForFunction(()=>document.getElementById('phase').textContent==='IDLE');
         assert.equal(await page.locator('#open').getAttribute('aria-disabled'),'false');
+        await page.locator('input[name="KATCHA_OPENAI_API_KEY"]').fill('unsaved-fixture-value');
+        let consoleStatusRequests = 0;
+        await page.route('**/runtime/status', async route => {
+            consoleStatusRequests += 1;
+            if (consoleStatusRequests === 1) return;
+            await route.continue();
+        });
+        await page.waitForFunction(() => document.getElementById('notice').textContent.includes('Retrying'),
+            null, {timeout: 22000});
+        await page.waitForFunction(() => document.getElementById('notice').textContent.includes('Reconnected'),
+            null, {timeout: 10000});
+        assert.equal(await page.locator('input[name="KATCHA_OPENAI_API_KEY"]').inputValue(),
+            'unsaved-fixture-value');
         const workspace=await browser.newPage({viewport:{width:1440,height:1100}});
         await workspace.goto('http://localhost:8765/home');
         await workspace.getByRole('heading',{name:/What needs you now/}).waitFor();
@@ -51,6 +64,27 @@ const assert = require('node:assert/strict');
             await workspace.locator('#connection-state').getAttribute('title'),
             /background services need attention/i,
         );
+
+        // A status request that never replies must expire and allow a new poll.
+        await workspace.unroute('**/runtime/status');
+        let statusRequests = 0;
+        await workspace.route('**/runtime/status', async route => {
+            statusRequests += 1;
+            if (statusRequests === 1) return; // deliberately stalled transport
+            await route.fulfill({status: 200, contentType: 'application/json', body: JSON.stringify({
+                session: 'fixture-session', workspace_ready: true, desired_running: true,
+                phase: 'degraded', services: [], events: [], settings: {},
+            })});
+        });
+        await workspace.waitForFunction(() =>
+            document.getElementById('connection-state').textContent === 'RECONNECTING',
+            null, {timeout: 15000},
+        );
+        await workspace.waitForFunction(() =>
+            document.getElementById('connection-state').textContent.includes('DEGRADED'),
+            null, {timeout: 10000},
+        );
+        assert(statusRequests >= 2);
 
         // Handoff browser requests must receive a controlled HTTP response even
         // when the upstream API is unavailable; they must never become Failed to fetch.
