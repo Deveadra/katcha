@@ -77,7 +77,10 @@
                                 <div class="eyebrow">ADD SOURCE</div>
                                 <h2 id="builder-title">Choose what Katcha should watch</h2>
                             </div>
-                            <span id="step-label" class="tag">1 OF 3</span>
+                            <div class="builder-head-actions">
+                                <button id="cancel-source-edit" type="button" class="text-button" hidden>Cancel edit</button>
+                                <span id="step-label" class="tag">1 OF 3</span>
+                            </div>
                         </div>
 
                         <ol class="steps" aria-label="Setup progress">
@@ -319,6 +322,7 @@
                                         </div>
                                         <div class="source-actions">
                                             <button id="run" type="button" class="button primary">Check now</button>
+                                            <button id="edit-source" type="button" class="button secondary">Edit source</button>
                                             <button id="pause-source" type="button" class="button secondary">Pause</button>
                                         </div>
                                     </header>
@@ -349,11 +353,23 @@
                                         <button class="button primary">Add links & check now</button>
                                     </form>
 
-                                    <section class="source-inspector-section">
+                                    <section class="source-inspector-section source-finds-section">
                                         <div class="source-section-head">
-                                            <div><span class="section-kicker">RECENT FINDS</span><h3>What Katcha found</h3></div>
+                                            <div><span class="section-kicker">ALL FINDS</span><h3>Everything Katcha found</h3></div>
+                                            <span id="finds-count" class="source-find-count">0 finds</span>
                                         </div>
-                                        <div id="recent-finds" class="recent-finds"></div>
+                                        <div class="source-finds-toolbar">
+                                            <label class="source-search">
+                                                <span>Search finds</span>
+                                                <input id="finds-search" type="search" placeholder="Search title, creator, or URL…">
+                                            </label>
+                                        </div>
+                                        <div id="all-finds" class="recent-finds" aria-live="polite"></div>
+                                        <div class="source-pagination source-finds-pagination">
+                                            <button id="finds-prev" type="button" class="button secondary">← Previous</button>
+                                            <span id="finds-page-label">0–0</span>
+                                            <button id="finds-next" type="button" class="button secondary">Next →</button>
+                                        </div>
                                     </section>
 
                                     <section class="source-inspector-section">
