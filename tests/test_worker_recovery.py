@@ -8,6 +8,7 @@ import pytest
 from katcha.orchestration import (
     analysis_worker,
     intelligence_worker,
+    longform_worker,
     production_worker,
     worker,
 )
@@ -86,6 +87,43 @@ async def test_intelligence_worker_reconciles_persisted_discovery_runs(
         call[2]["id_reuse_policy"]
         == intelligence_worker.WorkflowIDReusePolicy.REJECT_DUPLICATE
         for call in client.calls
+    )
+
+
+@pytest.mark.asyncio
+async def test_standalone_longform_worker_reconciles_persisted_compilation(
+    monkeypatch,
+) -> None:
+    compilation = SimpleNamespace(
+        id="comp-standalone",
+        workflow_id="compilation-standalone",
+        status="voicing",
+    )
+    monkeypatch.setattr(
+        longform_worker,
+        "session_scope",
+        _scope_for([compilation]),
+    )
+    monkeypatch.setattr(
+        longform_worker,
+        "WorkflowAlreadyStartedError",
+        _AlreadyStarted,
+    )
+    client = _FakeClient()
+    settings = SimpleNamespace(temporal_longform_task_queue="longform")
+
+    resumed, present = await longform_worker._resume_persisted_longform_work(
+        client,
+        settings,
+    )
+
+    assert resumed == 1
+    assert present == 0
+    assert client.calls[0][2]["id"] == "compilation-standalone"
+    assert client.calls[0][2]["args"] == ["comp-standalone", "voice"]
+    assert (
+        client.calls[0][2]["id_reuse_policy"]
+        == longform_worker.WorkflowIDReusePolicy.REJECT_DUPLICATE
     )
 
 
