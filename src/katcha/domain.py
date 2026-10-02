@@ -36,6 +36,7 @@ class SourceUsageMode(StrEnum):
 
 class RightsBasis(StrEnum):
     OWNED = "owned"
+    OPERATOR_AUTHORIZED = "operator_authorized"
     DIRECT_PERMISSION = "direct_permission"
     LICENSED = "licensed"
     CC0 = "cc0"
