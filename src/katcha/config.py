@@ -168,6 +168,15 @@ class Settings(BaseSettings):
     env: str = "development"
     api_host: str = "0.0.0.0"
     api_port: int = 8000
+
+    # Multi-host production safety. Development remains unfenced so the local
+    # launcher and fixture tests do not depend on cloud recovery infrastructure.
+    leadership_fence_mode: Literal["disabled", "http"] = "disabled"
+    leadership_fence_url: str | None = None
+    leadership_fence_token: SecretStr | None = None
+    leadership_fence_timeout_seconds: float = Field(default=5.0, ge=0.5, le=30.0)
+    deployment_id: str = "local"
+    deployment_epoch: int = Field(default=0, ge=0)
     control_api_token: SecretStr | None = None
     control_api_scopes: str = "*"
     control_principals: list[ControlPrincipalSettings] = Field(default_factory=list)
