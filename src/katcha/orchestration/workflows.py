@@ -41,4 +41,13 @@ class ClipIngestWorkflow:
                 start_to_close_timeout=timedelta(minutes=1),
                 retry_policy=retry_policy,
             )
+        if workflow.patched("authorized-trailer-passthrough-v1") and result.get("clip_id"):
+            prepared = await workflow.execute_activity(
+                "prepare_authorized_passthrough_activity",
+                source_id,
+                start_to_close_timeout=timedelta(minutes=5),
+                retry_policy=RetryPolicy(maximum_attempts=2),
+                result_type=dict[str, object],
+            )
+            result = {**result, "post_ingest": prepared}
         return result
