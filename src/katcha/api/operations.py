@@ -9,9 +9,9 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 from sqlalchemy import and_, func, or_, select
 
+from katcha.acquisition_models import DiscoveryCandidate, IntelligenceRecord
 from katcha.api.control_auth import control_allowed_channel_ids, require_control_channel
 from katcha.db import session_scope
-from katcha.acquisition_models import DiscoveryCandidate, IntelligenceRecord
 from katcha.intelligence_models import ChannelProfile
 from katcha.longform_models import Compilation, CompilationAsset
 from katcha.models import DomainEvent, SourceItem
