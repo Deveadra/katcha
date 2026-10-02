@@ -9,7 +9,6 @@ import pytest
 
 from katcha.ops import oci_recovery
 
-
 ROOT = Path(__file__).resolve().parents[1]
 
 
