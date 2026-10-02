@@ -5,6 +5,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from types import SimpleNamespace
 
 import pytest
 from sqlalchemy import create_engine, select
@@ -16,7 +17,7 @@ from katcha.api.main import app
 from katcha.intelligence_models import ChannelProfile
 from katcha.models import Clip, SourceItem
 from katcha.production_models import ProductionAsset
-from katcha.publishing_models import YouTubeConnection
+from katcha.publishing_models import Publication, YouTubeConnection
 from katcha.services import productions
 
 
@@ -111,6 +112,19 @@ def _seed_forescene(scope) -> tuple[uuid.UUID, uuid.UUID]:
                     "channel_profile_id": str(profile_id),
                     "intelligence_title": "VisionQuest Final Trailer",
                     "intelligence_summary": "Official Marvel trailer retained for urgent release.",
+                    "intelligence_record_id": "00000000-0000-0000-0000-000000000123",
+                    "discovery_metadata": {
+                        "operator_authorized": True,
+                        "authorization_scope": "official_trailer_repost",
+                        "official_source_verified": True,
+                        "intelligence_record_id": "00000000-0000-0000-0000-000000000123",
+                        "intelligence_tags": ["visionquest", "official_trailer"],
+                        "intelligence_payload": {
+                            "production_intent": "source_passthrough",
+                            "preupload_packaging_required": True,
+                            "privacy_status": "public",
+                        },
+                    },
                 },
             )
         )
@@ -158,6 +172,60 @@ def test_source_passthrough_reuses_source_media_without_rendering(
         assert asset.provider == "source_passthrough"
         assert asset.asset_metadata["verified"] is True
         assert asset.asset_metadata["passthrough"] is True
+
+
+def test_post_ingest_activity_creates_visible_held_publication(
+    passthrough_scope,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from katcha.orchestration.activities import prepare_authorized_passthrough_activity
+    from katcha.services import packaging_generation
+
+    profile_id, clip_id = _seed_forescene(passthrough_scope)
+    with passthrough_scope() as session:
+        source = session.scalar(select(SourceItem).where(SourceItem.clip_id == clip_id))
+        assert source is not None
+        source_id = source.id
+
+    generation_id = uuid.uuid4()
+
+    def fake_generate(publication_id, *, generation_key, candidate_count):
+        return SimpleNamespace(
+            generation=SimpleNamespace(
+                id=generation_id,
+                status="completed",
+            ),
+            variants=(),
+        )
+
+    monkeypatch.setattr(
+        packaging_generation,
+        "generate_packaging_candidates",
+        fake_generate,
+    )
+
+    result = prepare_authorized_passthrough_activity(str(source_id))
+
+    assert result["action"] == "prepared"
+    assert result["clip_id"] == str(clip_id)
+    assert result["packaging_status"] == "completed"
+    assert result["packaging_generation_id"] == str(generation_id)
+
+    with passthrough_scope() as session:
+        publication = session.get(Publication, uuid.UUID(str(result["publication_id"])))
+        assert publication is not None
+        assert publication.stage == "metadata_hold"
+        assert publication.status == "queued"
+        assert publication.privacy_status == "public"
+        assert publication.publish_at is None
+        assert publication.title == "VisionQuest Final Trailer"
+        production = session.get(
+            __import__("katcha.production_models", fromlist=["Production"]).Production,
+            publication.production_id,
+        )
+        assert production is not None
+        assert production.channel_profile_id == profile_id
+        assert production.kind == "source_passthrough"
 
 
 def test_passthrough_route_is_mounted_and_channel_scoped() -> None:
