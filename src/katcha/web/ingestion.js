@@ -22,9 +22,11 @@ let token = sessionStorage.getItem("katcha.controlToken") || '', adapters = [], 
 let sourceView = 'library';
 let handoffInbox = {counts: {incoming: 0, processed: 0, failed: 0}, items: [], incoming_path: 'handoff/incoming'};
 let sourcePage = {total: 0, limit: 50, offset: 0, items: []};
+let findsPage = {total: 0, limit: 25, offset: 0, items: []};
 let selectedOverview = null;
-let channelsReady = false, historyEpoch = 0, connectionEpoch = 0, libraryEpoch = 0, detailEpoch = 0, busy = false;
-let searchTimer = null;
+let editingSource = null;
+let channelsReady = false, historyEpoch = 0, connectionEpoch = 0, libraryEpoch = 0, detailEpoch = 0, findsEpoch = 0, busy = false;
+let searchTimer = null, findsSearchTimer = null;
 const intents = new Map();
 const runIntents = new Map();
 const linkDrafts = new Map();
