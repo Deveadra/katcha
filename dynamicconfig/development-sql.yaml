@@ -3,5 +3,7 @@ limit.maxIDLength:
     constraints: {}
 
 system.forceSearchAttributesCacheRefreshOnRead:
-  - value: true
+  # This testing-only override bypasses the cache and queries PostgreSQL on
+  # every read. Keep Temporal's production cache behavior on the local stack.
+  - value: false
     constraints: {}
