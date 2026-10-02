@@ -3,13 +3,13 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shlex
 import subprocess
 import tempfile
 import time
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from string import Template
 from typing import Any
 
 import httpx
@@ -572,20 +572,33 @@ def render_bootstrap(
     deployment_id: str,
     deployment_epoch: int,
 ) -> Path:
-    template = Template(config.bootstrap_template.read_text(encoding="utf-8"))
-    content = template.safe_substitute(
-        {
-            "DEPLOYMENT_ID": deployment_id,
-            "DEPLOYMENT_EPOCH": str(deployment_epoch),
-            "RELEASE_SHA": config.release_sha,
-            "DATA_VOLUME_FS_UUID": config.data_volume_fs_uuid,
-            "PRODUCTION_ENV_SECRET_ID": config.production_env_secret_id,
-            "AWS_BUNDLE_SECRET_ID": config.aws_bundle_secret_id,
-            "RECOVERY_COORDINATOR_URL": config.coordinator_url,
-            "RECOVERY_CANDIDATE_TOKEN": config.candidate_token,
-            "PUBLIC_HEALTH_URL": config.public_health_url,
-        }
-    )
+    content = config.bootstrap_template.read_text(encoding="utf-8")
+    replacements = {
+        "DEPLOYMENT_ID": deployment_id,
+        "DEPLOYMENT_EPOCH": str(deployment_epoch),
+        "RELEASE_SHA": config.release_sha,
+        "DATA_VOLUME_FS_UUID": config.data_volume_fs_uuid,
+        "PRODUCTION_ENV_SECRET_ID": config.production_env_secret_id,
+        "AWS_BUNDLE_SECRET_ID": config.aws_bundle_secret_id,
+        "RECOVERY_COORDINATOR_URL": config.coordinator_url,
+        "RECOVERY_CANDIDATE_TOKEN": config.candidate_token,
+        "PUBLIC_HEALTH_URL": config.public_health_url,
+    }
+    for name, value in replacements.items():
+        placeholder = f"__{name}__"
+        if placeholder not in content:
+            raise RecoveryError(f"bootstrap template is missing {placeholder}")
+        content = content.replace(placeholder, shlex.quote(value))
+    if "__" in content:
+        unresolved = sorted(
+            {
+                token.split("__", 1)[0]
+                for token in content.split("__")[1::2]
+                if token
+            }
+        )
+        if unresolved:
+            raise RecoveryError("bootstrap template has unresolved placeholders")
     handle = tempfile.NamedTemporaryFile(
         mode="w",
         encoding="utf-8",
