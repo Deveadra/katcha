@@ -7,6 +7,7 @@ import {
   commitAuthority,
   configureWatchdog,
   fenceResult,
+  markCandidateReady,
   markIncidentDispatchFailed,
   markIncidentDispatched,
   normalizeState,
@@ -193,6 +194,29 @@ export class RecoveryAuthority extends DurableObject {
         }, result.reused ? 200 : 201);
       }
 
+      if (request.method === "POST" && path === "/v1/authority/candidate-ready") {
+        requireSecret(
+          request,
+          this.env.RECOVERY_CANDIDATE_TOKEN,
+          "RECOVERY_CANDIDATE_TOKEN",
+        );
+        const body = await requestJson(request);
+        const result = await this.updateState((current) =>
+          markCandidateReady(current, {
+            deploymentId: deploymentId(body.deployment_id),
+            deploymentEpoch: positiveInt(
+              body.deployment_epoch,
+              "deployment_epoch",
+            ),
+            readiness: requireObject(body.readiness),
+          }),
+        );
+        return json({
+          pending: result.pending,
+          ready: true,
+        });
+      }
+
       if (request.method === "POST" && path === "/v1/authority/commit") {
         requireSecret(
           request,
@@ -268,9 +292,20 @@ export class RecoveryAuthority extends DurableObject {
             "failure_threshold",
             20,
           ),
+          recoveryRetrySeconds: positiveInt(
+            body.recovery_retry_seconds ?? 900,
+            "recovery_retry_seconds",
+            86400,
+          ),
         };
         if (config.intervalSeconds < 30) {
           throw new HttpError(400, "interval_seconds must be at least 30");
+        }
+        if (config.recoveryRetrySeconds < 300) {
+          throw new HttpError(
+            400,
+            "recovery_retry_seconds must be at least 300",
+          );
         }
         const state = await this.updateState((current) =>
           configureWatchdog(current, config),
@@ -396,22 +431,39 @@ export class RecoveryAuthority extends DurableObject {
     if (!token) {
       throw new Error("RECOVERY_DISPATCH_TOKEN is not configured");
     }
+    const payload = {
+      incident_id: incident.id,
+      reason: "active_control_plane_health_threshold_exceeded",
+      observed_at: new Date().toISOString(),
+      active_deployment: state.active,
+      expected_active_epoch: state.active?.epoch ?? 0,
+      failure_count: incident.failure_count,
+      last_error: incident.last_error,
+    };
+    const provider = String(
+      this.env.RECOVERY_DISPATCH_PROVIDER || "generic",
+    ).trim().toLowerCase();
+    const headers = {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+      "Idempotency-Key": incident.id,
+    };
+    let body = payload;
+    if (provider === "github") {
+      headers.Accept = "application/vnd.github+json";
+      headers["X-GitHub-Api-Version"] = "2026-03-10";
+      body = {
+        event_type: "katcha-recovery",
+        client_payload: payload,
+      };
+    } else if (provider !== "generic") {
+      throw new Error(`unsupported recovery dispatch provider: ${provider}`);
+    }
+
     const response = await fetch(endpoint, {
       method: "POST",
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json",
-        "Idempotency-Key": incident.id,
-      },
-      body: JSON.stringify({
-        incident_id: incident.id,
-        reason: "active_control_plane_health_threshold_exceeded",
-        observed_at: new Date().toISOString(),
-        active_deployment: state.active,
-        expected_active_epoch: state.active?.epoch ?? 0,
-        failure_count: incident.failure_count,
-        last_error: incident.last_error,
-      }),
+      headers,
+      body: JSON.stringify(body),
       signal: AbortSignal.timeout(15_000),
     });
     if (!response.ok) {

@@ -61,6 +61,8 @@ def validate(values: dict[str, str]) -> list[str]:
     if deployment_id and deployment_id.casefold() in {"local", "development", "dev"}:
         errors.append("KATCHA_DEPLOYMENT_ID must identify the hosted deployment")
 
+    require(values, "KATCHA_CLOUDFLARE_TUNNEL_TOKEN", errors)
+
     raw_epoch = require(values, "KATCHA_DEPLOYMENT_EPOCH", errors)
     if raw_epoch and not is_placeholder(raw_epoch):
         try:
