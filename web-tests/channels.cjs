@@ -866,6 +866,10 @@ const analytics = [
         request.path === "/v1/publications/publication-3/plan" &&
         request.body?.publish_mode === "scheduled"
     ));
+    await page.locator('[data-publication="publication-1"]').click();
+    await page.waitForFunction(() =>
+        document.querySelector("#video-detail")?.textContent.includes("74.2%")
+    );
     await page.locator('[data-channel-tab="overview"]').click();
     assert.match(await page.locator("#metric-views").innerText(), /12\.5K|12K/);
     assert.match(await page.locator("#metric-margin").innerText(), /18\.35/);
