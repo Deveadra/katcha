@@ -419,7 +419,7 @@ async def require_native_channel_body(request: Request) -> None:
         if not channel:
             raise HTTPException(403, "A channel is required for scoped resource retrieval")
         require_control_channel(request, channel)
-    if tool.name in {"save_source", "save_watch"}:
+    if tool.name == "save_source":
         body = await request.json()
         channel = body.get("channel_profile_id")
         if not channel:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import re
 import uuid
 from contextlib import suppress
@@ -165,7 +166,7 @@ TOOLS = {
             "Create a version of an ongoing discovery topic watch",
             "trends:write",
             "POST",
-            "/v1/trends/watches",
+            "/v1/channels/{channel_profile_id}/trends/watches",
         ),
         GoalTool(
             "trend_opportunities",
@@ -332,7 +333,6 @@ TOOLS = {
             "POST",
             "/v1/productions/{production_id}/publications",
             confirm=True,
-            retry_safe=True,
         ),
         GoalTool(
             "publish_episode",
@@ -341,7 +341,6 @@ TOOLS = {
             "POST",
             "/v1/short-episodes/{short_episode_id}/publications",
             confirm=True,
-            retry_safe=True,
         ),
         GoalTool(
             "publication",
@@ -363,7 +362,6 @@ TOOLS = {
             "intelligence:write",
             "POST",
             "/v1/publications/{publication_id}/analytics/refresh",
-            retry_safe=True,
         ),
     ]
 }
@@ -720,12 +718,15 @@ async def run_native_tool(goal: CommandGoal, name: str, args: dict, step_id: uui
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app), base_url="http://katcha-native"
     ) as client:
-        response = await client.request(
-            tool.method,
-            url,
-            params=query,
-            json=body if tool.mutates else None,
-            headers=headers,
+        response = await asyncio.wait_for(
+            client.request(
+                tool.method,
+                url,
+                params=query,
+                json=body if tool.mutates else None,
+                headers=headers,
+                timeout=90,
+            ),
             timeout=90,
         )
     if response.is_error:

@@ -10,6 +10,7 @@ const state = {
     resourceRefs: [],
     controlSession: null,
     busy: false,
+    durableGoals: false,
     deepLinkApplied: false,
 };
 
@@ -740,6 +741,86 @@ function renderContext(result) {
     });
 }
 
+function savedGoals() {
+    try { return JSON.parse(sessionStorage.getItem("katcha.goalReceipts") || "[]"); }
+    catch { return []; }
+}
+function saveGoal(receipt) {
+    const rows = savedGoals().filter((row) => row.request.command_id !== receipt.request.command_id);
+    sessionStorage.setItem("katcha.goalReceipts", JSON.stringify([...rows, receipt].slice(-20)));
+}
+function forgetGoal(commandId) {
+    sessionStorage.setItem("katcha.goalReceipts", JSON.stringify(savedGoals().filter(
+        (row) => row.request.command_id !== commandId)));
+}
+const finishedGoals = new Set(["completed", "blocked", "needs_input", "failed", "cancelled"]);
+async function followGoal(receipt, { background = false } = {}) {
+    let shownConfirmation = false;
+    while (true) {
+        const goal = await api("/v1/ai/goals/" + receipt.goalId);
+        if (state.channelId !== goal.channel_profile_id) return null;
+        state.threadId = goal.thread_id;
+        let progress = $("goal-progress-" + goal.goal_id);
+        if (!progress) {
+            progress = document.createElement("article");
+            progress.id = "goal-progress-" + goal.goal_id;
+            progress.className = "message katcha-message";
+            progress.innerHTML = '<div class="message-body"><p role="status"></p><button type="button">Stop planning</button></div>';
+            $("thread").append(progress);
+            progress.querySelector("button").onclick = async () => {
+                try { await api("/v1/ai/goals/" + goal.goal_id + "/cancel", {method: "POST"}); }
+                catch (error) { status(error.message, true); }
+            };
+        }
+        progress.querySelector("p").textContent = goal.summary;
+        progress.querySelector("button").disabled = !capability("ai_write") || finishedGoals.has(goal.status);
+        if (finishedGoals.has(goal.status)) {
+            forgetGoal(receipt.request.command_id);
+            progress.querySelector("button").remove();
+            const result = Object.keys(goal.result || {}).length ? goal.result : {
+                answer: goal.summary, thread_id: goal.thread_id, evidence: [], actions: [],
+            };
+            if (background && state.threadId === goal.thread_id) {
+                appendKatcha(result); renderContext(result);
+                await loadThreads({openLatest: false});
+            }
+            return result;
+        }
+        if (goal.status === "waiting_confirmation" && !shownConfirmation) {
+            shownConfirmation = true;
+            if (!background) {
+                setTimeout(() => followGoal(receipt, {background: true}).catch(
+                    (error) => status("Saved work can be resumed after reconnecting. " + error.message, true)), 2000);
+                return goal.result;
+            }
+            appendKatcha(goal.result); renderContext(goal.result);
+        }
+        if (goal.status === "queued") {
+            await api("/v1/ai/goals", {method: "POST", body: JSON.stringify(receipt.request)});
+        }
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+    }
+}
+async function submitDurableGoal(request) {
+    const actor = state.controlSession?.actor || state.controlSession?.principal_name || "current";
+    const serialized = JSON.stringify({...request, thread_id: undefined});
+    const prior = savedGoals().find((row) => row.actor === actor && row.serialized === serialized);
+    const receipt = prior || {actor, serialized, request: {...request, command_id: crypto.randomUUID()}};
+    saveGoal(receipt);
+    const goal = await api("/v1/ai/goals", {method: "POST", body: JSON.stringify(receipt.request)});
+    receipt.goalId = goal.goal_id;
+    saveGoal(receipt);
+    return followGoal(receipt);
+}
+function resumeSavedGoals() {
+    const actor = state.controlSession?.actor || state.controlSession?.principal_name || "current";
+    for (const receipt of savedGoals().filter((row) => row.actor === actor &&
+        row.request.channel_profile_id === state.channelId && row.goalId)) {
+        followGoal(receipt, {background: true}).catch((error) =>
+            status("Saved work can be resumed after reconnecting. " + error.message, true));
+    }
+}
+
 async function sendPrompt(text) {
     const prompt = text.trim();
     if (!prompt || !state.channelId || state.busy) return;
@@ -757,17 +838,17 @@ async function sendPrompt(text) {
     $("prompt").value = "";
     autoResize();
     try {
-        const result = await api("/v1/ai/command", {
-            method: "POST",
-            body: JSON.stringify({
-                channel_profile_id: state.channelId,
-                thread_id: state.threadId || null,
-                prompt,
-                selected_clip_ids: state.selectedClipIds,
-                selected_production_id: state.selectedProductionId,
-                resource_refs: state.resourceRefs,
-            }),
-        });
+        const request = {
+            channel_profile_id: state.channelId,
+            thread_id: state.threadId || null,
+            prompt,
+            selected_clip_ids: [...state.selectedClipIds],
+            selected_production_id: state.selectedProductionId,
+            resource_refs: [...state.resourceRefs],
+        };
+        const result = state.durableGoals ? await submitDurableGoal(request) :
+            await api("/v1/ai/command", {method: "POST", body: JSON.stringify(request)});
+        if (!result) return;
         state.threadId = result.thread_id;
         const resolved = result.resolved_context || {};
         if (Array.isArray(resolved.resource_refs)) {
@@ -853,6 +934,8 @@ async function connect(event) {
         $("connection-state").className = "simulation connected";
         try {
             const readiness = await api("/v1/ai/readiness");
+            state.durableGoals = readiness.live && readiness.durable_goals === true;
+            if (state.durableGoals) resumeSavedGoals();
             $("ai-readiness").textContent = readiness.message;
             $("ai-readiness").className = "ai-readiness" + (readiness.live ? " live" : " unavailable");
             $("ai-readiness").hidden = false;
