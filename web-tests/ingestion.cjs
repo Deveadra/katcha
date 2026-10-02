@@ -556,6 +556,9 @@ function overview(source) {
         assert.equal(marvel.usage_mode, "discovery_only");
         assert.equal(marvel.query_template.channel_reference, "https://www.youtube.com/@marvel");
         assert.equal(runs.filter((row) => row.sourceId === marvel.id).length, 0);
+        await page.waitForFunction(() =>
+            document.querySelector("#message")?.textContent.includes("No check was started")
+        );
         assert.match(await page.locator("#message").innerText(), /No check was started/);
         assert.match(await page.locator("#source-info").innerText(), /Research only/);
         assert.match(await page.locator("#source-info").innerText(), /Saving a source does not create a recurring schedule/);

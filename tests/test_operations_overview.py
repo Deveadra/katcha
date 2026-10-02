@@ -19,6 +19,7 @@ import katcha.db as db
 from katcha.api.main import app
 from katcha.config import Settings
 from katcha.intelligence_models import ChannelProfile
+from katcha.longform_models import Compilation
 from katcha.models import DomainEvent
 from katcha.production_models import Production
 from katcha.publishing_models import Publication, PublicationAnalyticsSnapshot
@@ -433,10 +434,18 @@ def test_operations_limit_is_bounded(data) -> None:
 
 
 def test_operations_recover_resumes_active_production(data, monkeypatch) -> None:
-    calls: list[tuple[str, str, str]] = []
+    calls: list[tuple[str, str, str, bool]] = []
 
-    async def fake_start(production_id, workflow_id, *, start_stage="script"):
-        calls.append((production_id, workflow_id, start_stage))
+    async def fake_start(
+        production_id,
+        workflow_id,
+        *,
+        start_stage="script",
+        allow_failed_reuse=False,
+    ):
+        calls.append(
+            (production_id, workflow_id, start_stage, allow_failed_reuse)
+        )
         return SimpleNamespace(id=workflow_id)
 
     monkeypatch.setattr(operations, "start_production_workflow", fake_start)
@@ -451,8 +460,171 @@ def test_operations_recover_resumes_active_production(data, monkeypatch) -> None
     assert payload["action"] == "resumed"
     assert payload["source_id"] == str(data.active)
     assert payload["replacement_id"] is None
-    assert calls == [(str(data.active), "prod-active", "script")]
+    assert calls == [(str(data.active), "prod-active", "script", True)]
 
+
+def test_operations_stale_error_on_active_work_stays_resume_safe(
+    data,
+    monkeypatch,
+) -> None:
+    with data.factory.begin() as session:
+        row = session.get(Production, data.active)
+        assert row is not None
+        row.error = "Worker disconnected after persisting progress"
+
+    client = TestClient(app)
+    overview = client.get(
+        f"/v1/operations/overview?channel_profile_id={data.channel}&limit=12"
+    )
+    assert overview.status_code == 200
+    payload = overview.json()
+    item = next(
+        row for row in payload["attention"] if row["id"] == str(data.active)
+    )
+    assert item["recovery_action"] == "resume"
+    assert item["recovery_label"] == "Resume"
+
+    calls: list[tuple[str, str, str, bool]] = []
+
+    async def fake_start(
+        production_id,
+        workflow_id,
+        *,
+        start_stage="script",
+        allow_failed_reuse=False,
+    ):
+        calls.append(
+            (production_id, workflow_id, start_stage, allow_failed_reuse)
+        )
+        return SimpleNamespace(id=workflow_id)
+
+    monkeypatch.setattr(operations, "start_production_workflow", fake_start)
+    response = client.post(
+        f"/v1/operations/work/production/{data.active}/recover",
+        json={"actor": "test"},
+    )
+    assert response.status_code == 200
+    assert response.json()["action"] == "resumed"
+    assert calls == [(str(data.active), "prod-active", "script", True)]
+
+
+
+def test_operations_compilation_is_visible_and_resumable(data, monkeypatch) -> None:
+    compilation_id = uuid.uuid4()
+    with data.factory.begin() as session:
+        session.add(
+            Compilation(
+                id=compilation_id,
+                channel_profile_id=data.channel,
+                workflow_id="compilation-resume",
+                status="voicing",
+                stage="voice",
+                theme="Weekly ranked deep dive",
+                target_duration_seconds=600,
+                target_segment_count=8,
+                persona_key="fixture",
+                persona_version="1",
+                prompt_version="1",
+            )
+        )
+
+    client = TestClient(app)
+    overview = client.get(
+        f"/v1/operations/overview?channel_profile_id={data.channel}&limit=12"
+    )
+    assert overview.status_code == 200
+    item = next(
+        row
+        for row in overview.json()["active"]
+        if row["kind"] == "compilation" and row["id"] == str(compilation_id)
+    )
+    assert item["recovery_action"] == "resume"
+    assert item["recovery_label"] == "Resume"
+
+    calls: list[tuple[str, str, str, bool]] = []
+
+    async def fake_start(
+        source_id,
+        workflow_id,
+        *,
+        start_stage="select",
+        allow_failed_reuse=False,
+    ):
+        calls.append((source_id, workflow_id, start_stage, allow_failed_reuse))
+        return SimpleNamespace(id=workflow_id)
+
+    monkeypatch.setattr(operations, "start_longform_workflow", fake_start)
+    response = client.post(
+        f"/v1/operations/work/compilation/{compilation_id}/recover",
+        json={"actor": "test"},
+    )
+    assert response.status_code == 200
+    assert response.json()["action"] == "resumed"
+    assert calls == [
+        (str(compilation_id), "compilation-resume", "voice", True)
+    ]
+
+
+def test_operations_failed_compilation_restarts_new_lineage(data, monkeypatch) -> None:
+    compilation_id = uuid.uuid4()
+    child_id = uuid.uuid4()
+    with data.factory.begin() as session:
+        session.add(
+            Compilation(
+                id=compilation_id,
+                channel_profile_id=data.channel,
+                workflow_id="compilation-failed",
+                status="failed",
+                stage="plan",
+                theme="Failed weekly compilation",
+                target_duration_seconds=600,
+                target_segment_count=8,
+                persona_key="fixture",
+                persona_version="1",
+                prompt_version="1",
+                error="Worker exited",
+            )
+        )
+
+    monkeypatch.setattr(
+        operations,
+        "_compilation_restart_stage",
+        lambda _compilation_id: "plan",
+    )
+    monkeypatch.setattr(
+        operations,
+        "register_compilation_regeneration",
+        lambda compilation_id, **kwargs: SimpleNamespace(
+            id=child_id,
+            workflow_id="compilation-recovery-child",
+            regenerate_from="select",
+        ),
+    )
+    calls: list[tuple[str, str, str, bool]] = []
+
+    async def fake_start(
+        source_id,
+        workflow_id,
+        *,
+        start_stage="select",
+        allow_failed_reuse=False,
+    ):
+        calls.append((source_id, workflow_id, start_stage, allow_failed_reuse))
+        return SimpleNamespace(id=workflow_id)
+
+    monkeypatch.setattr(operations, "start_longform_workflow", fake_start)
+    client = TestClient(app)
+    response = client.post(
+        f"/v1/operations/work/compilation/{compilation_id}/recover",
+        json={"actor": "test"},
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["action"] == "restarted"
+    assert payload["replacement_id"] == str(child_id)
+    assert calls == [
+        (str(child_id), "compilation-recovery-child", "select", False)
+    ]
 
 def test_operations_recover_restarts_failed_publication(data, monkeypatch) -> None:
     new_workflow = "publish-retry-a2"

@@ -885,7 +885,11 @@ async def execute_discovery_run(run_id: uuid.UUID) -> ExecuteDiscoveryRunRespons
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         run_status = run.status
     workflow_id = f"discovery-run-{run_id}"
-    await start_discovery_workflow(str(run_id), workflow_id)
+    await start_discovery_workflow(
+        str(run_id),
+        workflow_id,
+        allow_failed_reuse=True,
+    )
     return ExecuteDiscoveryRunResponse(
         discovery_run_id=run_id,
         workflow_id=workflow_id,
