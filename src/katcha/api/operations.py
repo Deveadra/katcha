@@ -352,6 +352,8 @@ def _event_channel_id(
     episode_channels: dict[uuid.UUID, uuid.UUID],
     compilation_channels: dict[uuid.UUID, uuid.UUID],
     publication_channels: dict[uuid.UUID, uuid.UUID],
+    candidate_channels: dict[uuid.UUID, uuid.UUID],
+    source_channels: dict[uuid.UUID, uuid.UUID],
 ) -> uuid.UUID | None:
     payload = dict(event.payload or {})
     raw = payload.get("channel_profile_id")
@@ -377,6 +379,10 @@ def _event_channel_id(
         return compilation_channels.get(aggregate_id)
     if event.aggregate_type == "publication":
         return publication_channels.get(aggregate_id)
+    if event.aggregate_type == "discovery_candidate":
+        return candidate_channels.get(aggregate_id)
+    if event.aggregate_type == "source":
+        return source_channels.get(aggregate_id)
     return None
 
 
@@ -799,6 +805,22 @@ def operations_overview(
             if len(intake) >= limit:
                 break
 
+        candidate_channels = {
+            candidate.id: uuid.UUID(str((candidate.candidate_metadata or {})["channel_profile_id"]))
+            for candidate in candidate_by_record.values()
+            if (candidate.candidate_metadata or {}).get("channel_profile_id")
+        }
+        source_channels = {
+            source.id: uuid.UUID(str((source.source_metadata or {})["channel_profile_id"]))
+            for source in source_by_record.values()
+            if (source.source_metadata or {}).get("channel_profile_id")
+        }
+        ingest_batch_ids = {
+            batch_id
+            for record in intelligence_records
+            for batch_id in (record.first_batch_id, record.last_batch_id)
+        }
+
         youtube_to_channel = {
             profile.youtube_connection_id: profile.id for profile in profiles
         }
@@ -1154,6 +1176,33 @@ def operations_overview(
                 DomainEvent.aggregate_id.in_([str(value) for value in channel_ids]),
             )
         ]
+        if ingest_batch_ids:
+            event_filters.append(
+                and_(
+                    DomainEvent.aggregate_type == "intelligence_ingest_batch",
+                    DomainEvent.aggregate_id.in_(
+                        [str(value) for value in ingest_batch_ids]
+                    ),
+                )
+            )
+        if candidate_channels:
+            event_filters.append(
+                and_(
+                    DomainEvent.aggregate_type == "discovery_candidate",
+                    DomainEvent.aggregate_id.in_(
+                        [str(value) for value in candidate_channels]
+                    ),
+                )
+            )
+        if source_channels:
+            event_filters.append(
+                and_(
+                    DomainEvent.aggregate_type == "source",
+                    DomainEvent.aggregate_id.in_(
+                        [str(value) for value in source_channels]
+                    ),
+                )
+            )
         if production_channels:
             event_filters.append(
                 and_(
@@ -1207,6 +1256,8 @@ def operations_overview(
                 episode_channels=episode_channels,
                 compilation_channels=compilation_channels,
                 publication_channels=publication_channels,
+                candidate_channels=candidate_channels,
+                source_channels=source_channels,
             )
             if event_channel is None or event_channel not in visible_ids:
                 continue
