@@ -494,3 +494,32 @@ def test_failed_goal_workflow_reconciles_saved_progress(saved, monkeypatch):
     assert response.status_code == 200
     assert response.json()["status"] == "failed"
     assert response.json()["error"] == "FAILED"
+
+
+def test_publication_ownership_uses_channel_connection_for_reads_and_mutations(saved):
+    from katcha.publishing_models import Publication
+    from katcha.services.goal_tools import require_native_resource_channels
+
+    own, outside = uuid.uuid4(), uuid.uuid4()
+    with db.session_scope() as session:
+        profile = session.get(ChannelProfile, saved[0])
+        for identity, connection in [(own, profile.youtube_connection_id), (outside, uuid.uuid4())]:
+            session.add(
+                Publication(
+                    id=identity,
+                    production_id=uuid.uuid4(),
+                    youtube_connection_id=connection,
+                    workflow_id=f"publication-{identity}",
+                    analytics_workflow_id=f"analytics-{identity}",
+                    title="Publication fixture",
+                )
+            )
+    for tool in [TOOLS["publication"], TOOLS["refresh_analytics"]]:
+        request = SimpleNamespace(
+            path_params={"publication_id": str(own)},
+            state=SimpleNamespace(control_channel_profile_ids={str(saved[0])}),
+        )
+        require_native_resource_channels(request, tool)
+        request.path_params["publication_id"] = str(outside)
+        with pytest.raises(ValueError, match="assigned|outside"):
+            require_native_resource_channels(request, tool)

@@ -850,6 +850,7 @@ def require_native_resource_channels(request, tool: GoalTool) -> None:
     """Also guard direct scoped API access, not only goal callers."""
     from katcha.acquisition_models import TopicWatchVersion
     from katcha.api.control_auth import require_control_channel
+    from katcha.intelligence_models import ChannelProfile
     from katcha.models import Clip
     from katcha.production_models import Production
     from katcha.publishing_models import Publication
@@ -872,7 +873,25 @@ def require_native_resource_channels(request, tool: GoalTool) -> None:
             row = session.get(model, uuid.UUID(str(request.path_params[key])))
             if row is None:
                 continue
-            if model is Clip:
+            if model is Publication:
+                channels = list(
+                    session.scalars(
+                        select(ChannelProfile.id).where(
+                            ChannelProfile.youtube_connection_id == row.youtube_connection_id
+                        )
+                    )
+                )
+                if not channels:
+                    raise ValueError("Publication is not assigned to a channel")
+                for channel in channels:
+                    try:
+                        require_control_channel(request, channel)
+                        break
+                    except Exception:
+                        continue
+                else:
+                    raise ValueError("Publication is outside the principal's channels")
+            elif model is Clip:
                 channels = channel_ids_for_clip(session, row.id)
                 if not channels:
                     raise ValueError("Clip is not assigned to a channel")
@@ -886,8 +905,8 @@ def require_native_resource_channels(request, tool: GoalTool) -> None:
                     raise ValueError("Clip is outside the principal's channels")
             elif getattr(row, "channel_profile_id", None):
                 require_control_channel(request, row.channel_profile_id)
-            elif tool.mutates or tool.name in {"source_history", "source_results", "watch_results"}:
-                raise ValueError("Shared resource details require a wildcard principal")
+            else:
+                raise ValueError("Resource does not have channel ownership for this operation")
 
 
 def observed_workflow_id(goal: CommandGoal, args: dict) -> str:
