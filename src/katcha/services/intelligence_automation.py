@@ -4,7 +4,6 @@ import uuid
 from dataclasses import dataclass
 from typing import Any
 
-from sqlalchemy import select
 
 from katcha.acquisition_models import (
     DiscoveryCandidate,
@@ -94,9 +93,7 @@ def prepare_authorized_handoff_record(record_id: uuid.UUID) -> HandoffAdvanceRes
         title = record.title
         payload = dict(record.payload or {})
         provenance = dict(record.provenance or {})
-        tags = list(record.tags or [])
         channel_profile_id = record.channel_profile_id
-        summary = record.summary
         creator = str(payload.get("creator") or payload.get("channel_name") or "").strip() or None
         creator_url = str(payload.get("creator_url") or "").strip() or None
         try:
