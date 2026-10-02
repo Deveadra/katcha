@@ -797,7 +797,13 @@ function renderHistory(overview, row) {
             '<span>' + esc(run.status || 'unknown') + '</span></div>' +
             (run.status === 'failed' && run.error ? '<p class="source-run-error">' + esc(run.error) + '</p>' : '') +
             (run.status === 'completed' ? '<button type="button" class="text-button" data-results="' + esc(run.id) + '">Finds from this check</button><div class="run-results" role="status"></div>' : '') +
-            (run.status === 'queued' && row.enabled && row.usage_mode !== 'blocked' ? '<button type="button" class="button secondary" data-execute="' + esc(run.id) + '">Start now</button>' : '') +
+            (['queued', 'running'].includes(run.status) && row.enabled && row.usage_mode !== 'blocked'
+                ? '<button type="button" class="button secondary" data-execute="' + esc(run.id) + '">' +
+                    (run.status === 'running' ? 'Resume now' : 'Start now') + '</button>'
+                : '') +
+            (run.status === 'failed' && row.enabled && row.usage_mode !== 'blocked'
+                ? '<button type="button" class="button secondary" data-restart="' + esc(run.id) + '">Restart check</button>'
+                : '') +
             (run.error ? '<details class="run-diagnostics"><summary>Technical details</summary><pre>' + esc(diagnostics) + '</pre><button type="button" class="text-button diagnostics-copy" data-copy-diagnostics>Copy diagnostics</button><span class="diagnostics-copy-status" role="status"></span></details>' : '') +
         '</article>';
     }).join('') : '<p class="source-empty-copy">No checks have run yet.</p>';
@@ -843,7 +849,7 @@ function renderSourceOverview() {
     if (latestFailed) {
         $('source-alert').innerHTML =
             '<strong>Latest check failed</strong><p>' + esc(latestFailed.error || 'No provider detail was recorded.') + '</p>' +
-            '<small>Fix the connection or source configuration, then run the check again.</small>';
+            '<small>Edit the source if its configuration is wrong, or restart the failed check after the issue is fixed.</small>';
     } else {
         $('source-alert').textContent = '';
     }
@@ -1047,6 +1053,29 @@ async function handleInspectorClick(e) {
         return;
     }
 
+    const restart = e.target.closest('[data-restart]');
+    if (restart) {
+        e.preventDefault();
+        if (restart.disabled) return;
+        restart.disabled = true;
+        const key = 'restart:' + restart.dataset.restart;
+        try {
+            const result = await api(
+                'discovery/runs/' + encodeURIComponent(restart.dataset.restart) + '/restart',
+                {idempotency_key: intent(key, 'restart')},
+            );
+            intents.delete(key);
+            await loadHistory();
+            message(
+                'Restarted failed check as a new attempt. Previous history was preserved.',
+            );
+        } catch (error) {
+            message(error.message, true);
+            restart.disabled = false;
+        }
+        return;
+    }
+
     const addClip = e.target.closest('[data-add-clip]');
     if (addClip) {
         e.preventDefault();
@@ -1209,7 +1238,12 @@ bind('source', 'change', () => selectSource());
 bind('refresh', 'click', () => refreshSources());
 bind('history-refresh', 'click', loadHistory);
 
-$('header-add-source').addEventListener('click', () => setSourceView('add', {focus: true}));
+$('header-add-source').addEventListener('click', beginAddSource);
+$('cancel-source-edit').addEventListener('click', () => {
+    resetSourceBuilder();
+    setSourceView('library', {focus: true});
+});
+$('edit-source').addEventListener('click', () => beginEditSource(source()));
 $('source-list').addEventListener('click', async event => {
     const row = event.target.closest('[data-source-id]');
     if (!row) return;
@@ -1285,7 +1319,21 @@ bind('setup', 'submit', async () => {
         return;
     }
     const d = details();
-    const shouldRun = !$('after-save-fields').hidden && afterSaveMode() === 'run';
+    const isEdit = Boolean(editingSource);
+    const shouldRun = !isEdit && !$('after-save-fields').hidden && afterSaveMode() === 'run';
+
+    if (isEdit) {
+        const saved = await api('discovery/sources', d);
+        resetLibraryFilters();
+        resetSourceBuilder();
+        await refreshSources({selectId: saved.id, preserveSelection: false});
+        setSourceView('library');
+        message(
+            '“' + saved.name + '” updated. Existing checks and finds were preserved.',
+        );
+        return;
+    }
+
     const signature = JSON.stringify(d);
     const source_key = intent(signature, 'source');
 
@@ -1298,8 +1346,7 @@ bind('setup', 'submit', async () => {
 
     resetLibraryFilters();
     await refreshSources({selectId: saved.id, preserveSelection: false});
-    $('name').value = '';
-    showStep(1);
+    resetSourceBuilder();
     setSourceView('library');
     intents.delete(signature);
 
