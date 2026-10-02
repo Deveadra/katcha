@@ -6,11 +6,13 @@ import {
   applyProbe,
   commitAuthority,
   configureWatchdog,
+  evaluatePaidFallback,
   fenceResult,
   markIncidentDispatchFailed,
   markIncidentDispatched,
   normalizeState,
   prepareAuthority,
+  recordRecoveryOutcome,
 } from "./state.mjs";
 
 const STATE_KEY = "authority-state";
@@ -91,6 +93,96 @@ function httpsUrl(value, name) {
     throw new HttpError(400, `${name} must be a valid HTTPS URL`);
   }
   return parsed.toString();
+}
+
+
+function positiveNumber(value, name) {
+  const number = Number(value);
+  if (!Number.isFinite(number) || number <= 0) {
+    throw new HttpError(400, `${name} must be a positive number`);
+  }
+  return number;
+}
+
+function optionalIdentifier(value, name) {
+  if (value === null || value === undefined || value === "") return null;
+  const text = String(value).trim();
+  if (!/^[A-Za-z0-9_.:-]{1,128}$/.test(text)) {
+    throw new HttpError(400, `${name} is invalid`);
+  }
+  return text;
+}
+
+function configuredPositiveNumber(env, name, fallback) {
+  const raw = String(env[name] ?? fallback).trim();
+  const number = Number(raw);
+  if (!Number.isFinite(number) || number <= 0) {
+    throw new HttpError(503, `${name} must be configured as a positive number`);
+  }
+  return number;
+}
+
+function placementPolicy(body, env, nowMs = Date.now()) {
+  const costClass = String(body.cost_class || "always_free").trim();
+  const recoveryIncidentId = optionalIdentifier(
+    body.recovery_incident_id,
+    "recovery_incident_id",
+  );
+  if (costClass === "always_free") {
+    return {
+      costClass,
+      hourlyEstimateUsd: null,
+      paidExpiresAt: null,
+      recoveryIncidentId,
+    };
+  }
+  if (costClass !== "paid") {
+    throw new HttpError(400, "cost_class must be always_free or paid");
+  }
+  if (String(env.PAID_FALLBACK_ENABLED || "false").toLowerCase() !== "true") {
+    throw new HttpError(409, "paid fallback is disabled by coordinator policy");
+  }
+
+  const hourlyEstimateUsd = positiveNumber(
+    body.hourly_estimate_usd,
+    "hourly_estimate_usd",
+  );
+  const paidExpiresAt = String(body.paid_expires_at || "").trim();
+  const expiresMs = Date.parse(paidExpiresAt);
+  if (!paidExpiresAt || !Number.isFinite(expiresMs) || expiresMs <= nowMs) {
+    throw new HttpError(400, "paid_expires_at must be a future ISO-8601 timestamp");
+  }
+
+  const maxHours = configuredPositiveNumber(
+    env,
+    "MAX_PAID_FALLBACK_HOURS",
+    6,
+  );
+  const maxEstimatedUsd = configuredPositiveNumber(
+    env,
+    "MAX_PAID_FALLBACK_ESTIMATED_USD",
+    5,
+  );
+  const lifetimeHours = (expiresMs - nowMs) / 3_600_000;
+  const estimatedIncidentUsd = lifetimeHours * hourlyEstimateUsd;
+  if (lifetimeHours > maxHours + Number.EPSILON) {
+    throw new HttpError(
+      409,
+      `paid fallback lifetime ${lifetimeHours.toFixed(3)}h exceeds ${maxHours}h policy`,
+    );
+  }
+  if (estimatedIncidentUsd > maxEstimatedUsd + Number.EPSILON) {
+    throw new HttpError(
+      409,
+      `paid fallback estimate ${estimatedIncidentUsd.toFixed(4)} exceeds ${maxEstimatedUsd.toFixed(2)} policy`,
+    );
+  }
+  return {
+    costClass,
+    hourlyEstimateUsd,
+    paidExpiresAt: new Date(expiresMs).toISOString(),
+    recoveryIncidentId,
+  };
 }
 
 class HttpError extends Error {
@@ -182,6 +274,7 @@ export class RecoveryAuthority extends DurableObject {
             body.expected_active_epoch,
             "expected_active_epoch",
           ),
+          ...placementPolicy(body, this.env),
         };
         const result = await this.updateState((current) =>
           prepareAuthority(current, input),
@@ -240,6 +333,29 @@ export class RecoveryAuthority extends DurableObject {
           abortPending(current, input),
         );
         return json({ aborted: result.aborted });
+      }
+
+
+      if (request.method === "POST" && path === "/v1/recovery/outcome") {
+        requireSecret(
+          request,
+          this.env.RECOVERY_ADMIN_TOKEN,
+          "RECOVERY_ADMIN_TOKEN",
+        );
+        const body = await requestJson(request);
+        const incidentId = optionalIdentifier(body.incident_id, "incident_id");
+        if (!incidentId) {
+          throw new HttpError(400, "incident_id is required");
+        }
+        const outcome = String(body.outcome || "").trim();
+        const detail = String(body.detail || "").slice(0, 1000);
+        const state = await this.updateState((current) =>
+          recordRecoveryOutcome(
+            current,
+            { incidentId, outcome, detail },
+          ),
+        );
+        return json({ incident: state.incident });
       }
 
       if (request.method === "POST" && path === "/v1/watchdog/configure") {
@@ -315,13 +431,39 @@ export class RecoveryAuthority extends DurableObject {
   }
 
   async runProbe() {
-    const before = await this.readState();
+    let before = await this.readState();
     if (!before.watchdog.enabled || !before.active) {
       return {
         skipped: true,
         reason: "watchdog is disabled or no active deployment is committed",
       };
     }
+
+    const leadSeconds = positiveInt(
+      this.env.PAID_REPATRIATION_LEAD_SECONDS || 1800,
+      "PAID_REPATRIATION_LEAD_SECONDS",
+      86400,
+    );
+    const paid = await this.updateState((current) =>
+      evaluatePaidFallback(current, { leadSeconds }),
+    );
+    if (paid.shouldDispatch && paid.state.incident?.status === "pending_dispatch") {
+      try {
+        await this.dispatchRecovery(paid.state, paid.state.incident);
+        await this.updateState((current) =>
+          markIncidentDispatched(current, paid.state.incident.id),
+        );
+      } catch (error) {
+        await this.updateState((current) =>
+          markIncidentDispatchFailed(
+            current,
+            paid.state.incident.id,
+            error?.message || String(error),
+          ),
+        );
+      }
+    }
+    before = await this.readState();
 
     const observed = {
       deploymentId: before.active.deployment_id,
@@ -405,12 +547,15 @@ export class RecoveryAuthority extends DurableObject {
       },
       body: JSON.stringify({
         incident_id: incident.id,
-        reason: "active_control_plane_health_threshold_exceeded",
+        reason: incident.reason || "health_probe_failure",
         observed_at: new Date().toISOString(),
         active_deployment: state.active,
         expected_active_epoch: state.active?.epoch ?? 0,
-        failure_count: incident.failure_count,
+        failure_count: incident.failure_count ?? 0,
         last_error: incident.last_error,
+        paid_expires_at: incident.paid_expires_at ?? state.active?.paid_expires_at ?? null,
+        hourly_estimate_usd:
+          incident.hourly_estimate_usd ?? state.active?.hourly_estimate_usd ?? null,
       }),
       signal: AbortSignal.timeout(15_000),
     });
