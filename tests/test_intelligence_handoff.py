@@ -14,8 +14,14 @@ from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from katcha import db
-from katcha.acquisition_models import IntelligenceIngestBatch, IntelligenceRecord
+from katcha.acquisition_models import (
+    DiscoveryCandidate,
+    IntelligenceIngestBatch,
+    IntelligenceRecord,
+    RightsAssessment,
+)
 from katcha.intelligence_models import ChannelProfile
+from katcha.models import SourceItem
 from katcha.publishing_models import YouTubeConnection
 from katcha.services.intelligence_handoff import (
     handoff_inbox_summary,
@@ -359,6 +365,82 @@ async def test_api_startup_drains_pending_handoffs(
     await main._process_pending_handoffs_on_startup()
 
     assert called == {"limit": 50}
+
+
+@pytest.mark.asyncio
+async def test_authorized_official_trailer_handoff_queues_acquisition(
+    handoff_scope,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from katcha.services import intelligence_automation
+
+    channel_id = _create_channel(handoff_scope)
+    payload = _batch(channel_id, batch_key="visionquest-v2")
+    payload["records"][0] = {
+        "record_kind": "video",
+        "record_key": "youtube:video:sXKnmgmbkoE",
+        "title": "Marvel Television's VisionQuest | Official Trailer",
+        "summary": "Urgent official trailer.",
+        "source_url": "https://www.youtube.com/watch?v=sXKnmgmbkoE",
+        "platform": "youtube",
+        "status": "active",
+        "tags": ["visionquest", "official_trailer"],
+        "payload": {
+            "creator": "Marvel Entertainment",
+            "creator_url": "https://www.youtube.com/@marvel",
+            "production_intent": "source_passthrough",
+            "operator_authorized": True,
+            "authorization_scope": "official_trailer_repost",
+            "official_source_verified": True,
+            "preupload_packaging_required": True,
+        },
+        "provenance": {
+            "collector": "orion",
+            "confidence": 0.99,
+            "official_channel_verified": True,
+        },
+        "observed_at": "2026-10-02T10:45:00Z",
+    }
+    root = tmp_path / "handoff"
+    submit_handoff_file("visionquest.json", _encoded(payload), root=root)
+    processed = process_handoff_file("visionquest.json", root=root)
+
+    started: list[tuple[str, str]] = []
+
+    async def fake_start(source_id: str, workflow_id: str) -> str:
+        started.append((source_id, workflow_id))
+        return workflow_id
+
+    monkeypatch.setattr(intelligence_automation, "start_ingest_workflow", fake_start)
+
+    results = await intelligence_automation.advance_processed_handoff_receipt(
+        processed.receipt
+    )
+
+    assert len(results) == 1
+    assert results[0].action == "ingest_queued"
+    assert results[0].candidate_id is not None
+    assert results[0].source_id is not None
+    assert started == [(str(results[0].source_id), str(results[0].workflow_id))]
+
+    with handoff_scope() as session:
+        candidate = session.get(DiscoveryCandidate, results[0].candidate_id)
+        assert candidate is not None
+        assert candidate.status == "promoted"
+        assert candidate.candidate_metadata["operator_authorized"] is True
+        assessment = session.scalar(
+            select(RightsAssessment).where(
+                RightsAssessment.discovery_candidate_id == candidate.id
+            )
+        )
+        assert assessment is not None
+        assert assessment.production_eligible is True
+        source = session.get(SourceItem, results[0].source_id)
+        assert source is not None
+        assert source.status == "registered"
+        assert source.source_metadata["channel_profile_id"] == str(channel_id)
+        assert source.source_metadata["intelligence_record_id"]
 
 
 def test_symlinked_local_drop_is_not_processed(
