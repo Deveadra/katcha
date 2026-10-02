@@ -377,13 +377,16 @@ async def test_intelligence_worker_reconciles_persisted_automation_schedules(
         "list_enabled_automation_schedules",
         lambda: schedules,
     )
-    reconciled = []
+    schedule_rows = {item.id: item for item in schedules}
+
+    @contextmanager
+    def locked_schedule(schedule_id):
+        yield schedule_rows[schedule_id]
+
     monkeypatch.setattr(
         intelligence_worker,
-        "mark_schedule_reconciled",
-        lambda schedule_id, workflow_id: reconciled.append(
-            (schedule_id, workflow_id)
-        ),
+        "locked_schedule_for_reconcile",
+        locked_schedule,
     )
     terminated = []
 
@@ -419,7 +422,5 @@ async def test_intelligence_worker_reconciles_persisted_automation_schedules(
     assert watch[2]["args"] == ["watch-1", 30, 25, 0]
     assert watch[2]["task_queue"] == intelligence_worker.DISCOVERY_TASK_QUEUE
     assert terminated[0][0] == "channel-intelligence-schedule-channel-1"
-    assert reconciled == [
-        ("schedule-1", "channel-intelligence-schedule-channel-1-g1"),
-        ("schedule-2", "topic-watch-schedule-watch-1-g2"),
-    ]
+    assert schedule_rows["schedule-1"].supersedes_workflow_id is None
+    assert schedule_rows["schedule-2"].supersedes_workflow_id is None
