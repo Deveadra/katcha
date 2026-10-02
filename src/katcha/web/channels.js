@@ -5,10 +5,12 @@ const state = {
     connections: [],
     channelId: launchParams.get("channel") || sessionStorage.getItem("katcha.channel") || "",
     summary: null,
+    operations: null,
     publications: [],
     productions: [],
     brands: [],
     analytics: new Map(),
+    packagingVariants: new Map(),
     selectedPublicationId: "",
     goalDraft: [],
     goalChannelId: "",
@@ -822,11 +824,17 @@ async function loadChannel() {
     sessionStorage.setItem("katcha.channel", state.channelId);
     setStatus("Loading channel operations…");
     state.analytics.clear();
+    state.packagingVariants.clear();
     state.selectedPublicationId = "";
     const channel = activeChannel();
     try {
-        const [summary, publications, productions, brands] = await Promise.all([
+        const [summary, operations, publications, productions, brands] = await Promise.all([
             api("/v1/channels/" + state.channelId),
+            api(
+                "/v1/operations/overview?channel_profile_id=" +
+                    encodeURIComponent(state.channelId) +
+                    "&limit=25",
+            ),
             api(
                 "/v1/publications?limit=250&youtube_connection_id=" +
                     encodeURIComponent(channel.youtube_connection_id),
@@ -835,6 +843,7 @@ async function loadChannel() {
             api("/v1/channels/" + state.channelId + "/brands"),
         ]);
         state.summary = summary;
+        state.operations = operations;
         state.publications = publications;
         state.productions = productions;
         state.brands = brands;
@@ -874,6 +883,7 @@ function renderAll() {
     renderFocus();
     renderEconomics();
     renderMonetization();
+    renderChannelActivity();
     renderPublications();
     renderGrowth();
     renderProductions();
@@ -1312,6 +1322,76 @@ async function saveGrowthGoals(event) {
     }
 }
 
+function renderChannelActivity() {
+    const container = $("channel-activity-list");
+    const operations = state.operations || {};
+    const intake = (operations.intake || []).map((item) => ({
+        ...item,
+        lane: "Intake",
+        state: item.stage === "download_failed" || item.stage === "needs_attention"
+            ? "attention"
+            : "active",
+    }));
+    const attention = (operations.attention || []).map((item) => ({
+        ...item,
+        lane: "Needs attention",
+    }));
+    const active = (operations.active || []).map((item) => ({
+        ...item,
+        lane: item.kind === "publication" ? "Publishing" : "Production",
+    }));
+    const rows = [...intake, ...attention, ...active]
+        .sort((a, b) => String(b.updated_at || "").localeCompare(String(a.updated_at || "")))
+        .slice(0, 18);
+
+    if (!rows.length) {
+        container.innerHTML =
+            '<div class="studio-card empty-state">Nothing is queued or running for this channel right now.</div>';
+        return;
+    }
+    container.innerHTML = rows.map((item) => {
+        const link = item.source_url
+            ? '<a target="_blank" rel="noopener noreferrer" href="' +
+                escapeHtml(item.source_url) +
+                '">Source ↗</a>'
+            : item.href
+                ? '<a href="' + escapeHtml(item.href) + '">Open ↗</a>'
+                : "";
+        const message = item.message
+            ? '<small>' + escapeHtml(item.message) + '</small>'
+            : "";
+        return (
+            '<article class="studio-card channel-activity-item ' +
+            (item.state === "attention" ? "is-attention" : "") +
+            '"><div class="channel-activity-head"><span class="eyebrow">' +
+            escapeHtml(item.lane || "Activity") +
+            '</span><span class="status-pill ' +
+            escapeHtml(item.status || "active") +
+            '">' +
+            escapeHtml(friendly(item.stage || item.status || "active")) +
+            '</span></div><strong>' +
+            escapeHtml(item.title || "Untitled work") +
+            '</strong>' +
+            message +
+            '<div class="channel-activity-foot"><span>' +
+            escapeHtml(dateText(item.updated_at)) +
+            '</span>' +
+            link +
+            '</div></article>'
+        );
+    }).join("");
+}
+
+
+function datetimeLocalValue(value) {
+    if (!value) return "";
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return "";
+    const local = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
+    return local.toISOString().slice(0, 16);
+}
+
+
 function filteredPublications() {
     const query = $("content-search").value.trim().toLowerCase();
     const filter = $("content-filter").value;
@@ -1375,6 +1455,15 @@ async function selectPublication(id) {
             if (rows[0]) state.analytics.set(id, rows[0]);
         } catch (error) {
             setStatus("Video loaded, but analytics could not be read: " + error.message, "error");
+        }
+    }
+    if (!state.packagingVariants.has(id)) {
+        try {
+            const variants = await api("/v1/publications/" + id + "/packaging/variants");
+            state.packagingVariants.set(id, variants || []);
+        } catch (error) {
+            state.packagingVariants.set(id, []);
+            setStatus("Video loaded, but packaging options could not be read: " + error.message, "error");
         }
     }
     renderVideoDetail();
@@ -1442,6 +1531,58 @@ function renderVideoDetail() {
         "</p>";
     const refreshButton = $("refresh-video-analytics");
     if (refreshButton) refreshButton.addEventListener("click", refreshVideoAnalytics);
+
+    if (item.stage === "metadata_hold" && !item.youtube_video_id) {
+        const variants = state.packagingVariants.get(item.id) || [];
+        const applied = item.treatment_metadata?.preupload_packaging?.variant_id || "";
+        const variantMarkup = variants.length
+            ? '<div class="prepublish-variants">' +
+                variants.map((variant) =>
+                    '<button type="button" class="seo-variant' +
+                    (String(variant.id) === String(applied) ? " is-selected" : "") +
+                    '" data-apply-packaging="' + escapeHtml(variant.id) + '">' +
+                    '<strong>' + escapeHtml(variant.title) + '</strong>' +
+                    '<small>' + escapeHtml((variant.tags || []).slice(0, 8).join(" · ")) + '</small>' +
+                    '</button>'
+                ).join("") +
+                '</div>'
+            : '<div class="empty-state compact">No SEO options generated yet.</div>';
+        $("video-detail").insertAdjacentHTML(
+            "beforeend",
+            '<div class="prepublish-panel"><span class="eyebrow">PRE-PUBLISH CONTROL</span>' +
+            '<h4>SEO package & publish plan</h4>' +
+            '<p class="detail-note">Nothing has been uploaded yet. Choose the metadata package and timing here.</p>' +
+            variantMarkup +
+            '<div class="prepublish-actions">' +
+            '<button id="generate-packaging-options" class="studio-button secondary small" type="button">Generate SEO options</button>' +
+            '</div><label class="provider-field">SCHEDULED TIME · DEVICE LOCAL TIME' +
+            '<input id="publication-publish-at" type="datetime-local" value="' +
+            escapeHtml(datetimeLocalValue(item.publish_at)) +
+            '"></label>' +
+            '<label class="prepublish-check"><input id="publication-notify" type="checkbox"' +
+            (item.notify_subscribers ? " checked" : "") +
+            '> Notify subscribers</label>' +
+            '<div class="prepublish-actions">' +
+            '<button id="publication-asap" class="studio-button secondary small" type="button">Set ASAP</button>' +
+            '<button id="publication-schedule" class="studio-button secondary small" type="button">Save schedule</button>' +
+            '<button id="publication-start" class="studio-button primary small" type="button"' +
+            (applied ? "" : " disabled") +
+            '>Start upload</button></div>' +
+            '<small class="provider-help">' +
+            (applied
+                ? 'SEO package selected. Start upload when the publish plan is correct.'
+                : 'Select an SEO package before starting the upload.') +
+            '</small></div>'
+        );
+
+        $("video-detail").querySelectorAll("[data-apply-packaging]").forEach((button) => {
+            button.addEventListener("click", () => applyPreuploadPackaging(button.dataset.applyPackaging));
+        });
+        $("generate-packaging-options")?.addEventListener("click", generatePackagingOptions);
+        $("publication-asap")?.addEventListener("click", () => savePublicationPlan("asap"));
+        $("publication-schedule")?.addEventListener("click", () => savePublicationPlan("scheduled"));
+        $("publication-start")?.addEventListener("click", startHeldPublication);
+    }
 }
 
 function videoKpi(label, value) {
@@ -1453,6 +1594,125 @@ function videoKpi(label, value) {
         "</strong></div>"
     );
 }
+
+async function generatePackagingOptions() {
+    const item = state.publications.find((row) => row.id === state.selectedPublicationId);
+    if (!item) return;
+    try {
+        setStatus("Generating grounded SEO options…");
+        const result = await api(
+            "/v1/publications/" + item.id + "/packaging/generations",
+            {
+                method: "POST",
+                body: JSON.stringify({
+                    generation_key: "channel-studio-" + Date.now(),
+                    candidate_count: 3,
+                }),
+            },
+        );
+        state.packagingVariants.set(item.id, result.variants || []);
+        renderVideoDetail();
+        setStatus("SEO options generated. Choose one before upload.", "success");
+    } catch (error) {
+        setStatus(error.message, "error");
+    }
+}
+
+
+async function applyPreuploadPackaging(variantId) {
+    const item = state.publications.find((row) => row.id === state.selectedPublicationId);
+    if (!item) return;
+    try {
+        setStatus("Applying SEO package…");
+        const updated = await api(
+            "/v1/publications/" + item.id + "/packaging/preupload",
+            {
+                method: "POST",
+                body: JSON.stringify({ variant_id: variantId, actor: "channel-studio" }),
+            },
+        );
+        const index = state.publications.findIndex((row) => row.id === item.id);
+        if (index >= 0) state.publications[index] = updated;
+        renderPublications();
+        setStatus("SEO package applied before upload.", "success");
+    } catch (error) {
+        setStatus(error.message, "error");
+    }
+}
+
+
+async function savePublicationPlan(mode) {
+    const item = state.publications.find((row) => row.id === state.selectedPublicationId);
+    if (!item) return;
+    const notify = Boolean($("publication-notify")?.checked);
+    let publishAt = null;
+    if (mode === "scheduled") {
+        const value = $("publication-publish-at")?.value || "";
+        if (!value) {
+            setStatus("Choose a scheduled time first.", "error");
+            return;
+        }
+        const parsed = new Date(value);
+        if (Number.isNaN(parsed.getTime())) {
+            setStatus("The scheduled time is invalid.", "error");
+            return;
+        }
+        publishAt = parsed.toISOString();
+    }
+    try {
+        setStatus(mode === "scheduled" ? "Saving publication schedule…" : "Setting publication to ASAP…");
+        const updated = await api(
+            "/v1/publications/" + item.id + "/plan",
+            {
+                method: "POST",
+                body: JSON.stringify({
+                    publish_mode: mode,
+                    publish_at: publishAt,
+                    notify_subscribers: notify,
+                    actor: "channel-studio",
+                }),
+            },
+        );
+        const index = state.publications.findIndex((row) => row.id === item.id);
+        if (index >= 0) state.publications[index] = updated;
+        renderPublications();
+        setStatus(
+            mode === "scheduled"
+                ? "Publication schedule saved."
+                : "Publication will go public as soon as upload and YouTube processing complete.",
+            "success",
+        );
+    } catch (error) {
+        setStatus(error.message, "error");
+    }
+}
+
+
+async function startHeldPublication() {
+    const item = state.publications.find((row) => row.id === state.selectedPublicationId);
+    if (!item) return;
+    if (!item.treatment_metadata?.preupload_packaging?.variant_id) {
+        setStatus("Choose an SEO package before starting upload.", "error");
+        return;
+    }
+    try {
+        setStatus("Starting resumable private-first YouTube upload…");
+        const updated = await api(
+            "/v1/publications/" + item.id + "/start",
+            {
+                method: "POST",
+                body: JSON.stringify({ actor: "channel-studio" }),
+            },
+        );
+        const index = state.publications.findIndex((row) => row.id === item.id);
+        if (index >= 0) state.publications[index] = updated;
+        await loadChannel();
+        setStatus("Upload started. Channel activity now tracks the publishing workflow.", "success");
+    } catch (error) {
+        setStatus(error.message, "error");
+    }
+}
+
 
 async function refreshVideoAnalytics() {
     const item = state.publications.find((row) => row.id === state.selectedPublicationId);
