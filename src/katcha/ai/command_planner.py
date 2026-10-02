@@ -49,6 +49,7 @@ class ClipLookup(BaseModel):
     period: Literal["all_time", "today", "yesterday", "this_week", "recent"] = "all_time"
     hours: int = Field(default=168, ge=1, le=720)
     limit: int = Field(default=20, ge=1, le=20)
+    pool_offset: int = Field(default=0, ge=0, le=10000)
 
 
 class CommandPlan(BaseModel):

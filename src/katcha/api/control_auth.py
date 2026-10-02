@@ -135,9 +135,7 @@ def _authenticate(
             channel_profile_ids=set(match.principal.channel_profile_ids),
             principal_name=match.principal.name,
             credential_id=match.credential.id,
-            credential_fingerprint=_credential_fingerprint(
-                credentials.credentials
-            ),
+            credential_fingerprint=_credential_fingerprint(credentials.credentials),
             credential_not_before=match.credential.not_before,
             credential_expires_at=match.credential.expires_at,
         )
@@ -177,9 +175,7 @@ def _authenticate(
         channel_profile_ids={"*"},
         principal_name=None,
         credential_id="legacy-control-api-token",
-        credential_fingerprint=_credential_fingerprint(
-            credentials.credentials
-        ),
+        credential_fingerprint=_credential_fingerprint(credentials.credentials),
     )
 
 
@@ -206,6 +202,12 @@ def _require_named_principal_route_access(request: Request) -> None:
         require_control_scope(request, "channels:read")
         return
 
+    if path == "/v1/ai/goals" and method == "POST":
+        require_control_scope(request, "ai:command")
+        return
+    if path.startswith("/v1/ai/goals/") and path.endswith("/cancel"):
+        require_control_scope(request, "ai:write")
+        return
     if path == "/v1/ai/command":
         require_control_scope(request, "ai:command")
         return
@@ -228,6 +230,17 @@ def _require_named_principal_route_access(request: Request) -> None:
             request,
             "channels:read" if method in {"GET", "HEAD"} else "channels:write",
         )
+        return
+
+    from katcha.services.goal_tools import native_route_tool, require_native_resource_channels
+
+    tool = native_route_tool(path, method)
+    if tool is not None:
+        require_control_scope(request, tool.scope)
+        try:
+            require_native_resource_channels(request, tool)
+        except ValueError as exc:
+            raise HTTPException(403, str(exc)) from exc
         return
 
     if path.startswith("/v1/channels/"):
@@ -390,3 +403,39 @@ def require_control_channel(
         status_code=403,
         detail="control principal is not authorized for this channel",
     )
+
+
+async def require_native_channel_body(request: Request) -> None:
+    """Scoped native tools enforce channel ownership for path, query and body."""
+    if control_principal_name(request) is None or "*" in control_scopes(request):
+        return
+    from katcha.services.goal_tools import native_route_tool
+
+    tool = native_route_tool(request.url.path, request.method.upper())
+    if tool is None:
+        return
+    if tool.name in {"list_sources", "clip_library"}:
+        channel = request.query_params.get("channel_profile_id")
+        if not channel:
+            raise HTTPException(403, "A channel is required for scoped resource retrieval")
+        require_control_channel(request, channel)
+    if tool.name in {"save_source", "save_watch"}:
+        body = await request.json()
+        channel = body.get("channel_profile_id")
+        if not channel:
+            raise HTTPException(403, "Shared resource changes require a wildcard principal")
+        require_control_channel(request, channel)
+        if tool.name == "save_source":
+            from sqlalchemy import select
+
+            from katcha.acquisition_models import IngestionSource
+            from katcha.db import session_scope
+
+            with session_scope() as session:
+                source = session.scalar(
+                    select(IngestionSource).where(
+                        IngestionSource.source_key == body.get("source_key")
+                    )
+                )
+                if source and source.channel_profile_id != uuid.UUID(channel):
+                    raise HTTPException(403, "Cannot replace a shared or other channel source")

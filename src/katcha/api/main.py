@@ -20,9 +20,10 @@ from katcha.api.clip_library import router as clip_library_router
 from katcha.api.codex import router as codex_router
 from katcha.api.command_center import router as command_center_router
 from katcha.api.control import router as control_router
-from katcha.api.control_auth import require_control_token
+from katcha.api.control_auth import require_control_token, require_native_channel_body
 from katcha.api.edit_blueprints import router as edit_blueprints_router
 from katcha.api.explorer import router as explorer_router
+from katcha.api.goals import router as goals_router
 from katcha.api.integrations import router as integrations_router
 from katcha.api.intelligence import router as intelligence_router
 from katcha.api.operations import router as operations_router
@@ -139,7 +140,7 @@ from katcha.services.sources import register_source
 
 app = FastAPI(
     title="Katcha API",
-    dependencies=[Depends(require_control_token)],
+    dependencies=[Depends(require_control_token), Depends(require_native_channel_body)],
     version=__version__,
     description="Standalone control plane for Katcha media workflows.",
 )
@@ -149,6 +150,7 @@ app.include_router(chatgpt_router)
 app.include_router(codex_router)
 app.include_router(clip_library_router)
 app.include_router(command_center_router)
+app.include_router(goals_router)
 app.include_router(control_router)
 app.include_router(edit_blueprints_router)
 app.include_router(intelligence_router)

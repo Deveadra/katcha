@@ -1,3 +1,6 @@
+Warning: truncated output (original token count: 20804)
+Total output lines: 2123
+
 from __future__ import annotations
 
 import hashlib
@@ -118,6 +121,7 @@ from katcha.services.short_episodes import register_short_episode
 router = APIRouter(prefix="/v1/ai", tags=["katcha-ai"])
 
 ActionType = Literal[
+    "native_tool",
     "refresh_channel_intelligence",
     "create_short_production",
     "create_ranked_short_episode",
@@ -1099,76 +1103,7 @@ async def command(http_request: Request, request: CommandRequest) -> CommandResp
                 outcomes = []
                 for pending in reused_proposals:
                     pending, outcome = await _run_frozen_command_action(
-                        pending, actor=actor, credential_id=credential_id,
-                        credential_fingerprint=credential_fingerprint,
-                    )
-                    completed.append(pending)
-                    outcomes.append(outcome)
-                reused_proposals = completed
-                deterministic = " ".join(outcomes)
-            elif reused_proposals:
-                deterministic = (
-                    "There is more than one pending action. Choose which action to run."
-                )
-            else:
-                deterministic = "No pending server-issued action was resolved. Nothing was started."
-            evidence = [
-                {"kind": "command_action", "id": str(proposal.id),
-                 "label": proposal.label, "status": proposal.status,
-                 "result": dict(proposal.result or {}), "error": proposal.error}
-                for proposal in reused_proposals
-            ]
-        elif intent == "best_clips":
-            deterministic, evidence = _inspect_command_capability(
-                intent, resolved_request, resolution.effective_prompt, resource_evidence,
-                plan=(planning.value
-                      if live_planning and planning.target.provider != "katcha" else None),
-            )
-        elif intent == "failures":
-            deterministic, evidence = failures(request.channel_profile_id)
-            if resource_evidence:
-                evidence = [*resource_evidence, *evidence]
-        elif intent in {"clip_rejection", "clip_explanation"}:
-            clip_id = (
-                resolved_selected_clip_ids[0]
-                if resolved_selected_clip_ids
-                else _uuid_from_prompt(request.prompt)
-            )
-            if clip_id is None:
-                deterministic = (
-                    "Select a clip or include its clip ID so I can explain the "
-                    "stored scoring, analysis, and review evidence for that exact clip."
-                )
-                evidence = []
-            else:
-                deterministic, evidence = clip_explanation(
-                    request.channel_profile_id,
-                    clip_id,
-                )
-        elif intent == "performance_advice":
-            deterministic, evidence = performance_advice(
-                request.channel_profile_id,
-                resolution.effective_prompt,
-            )
-            if resource_evidence:
-                evidence = [*resource_evidence, *evidence]
-        elif intent == "resource_context":
-            deterministic = resource_context_summary(resource_evidence)
-            evidence = list(resource_evidence)
-        elif intent == "research_context":
-            deterministic, evidence = research_context(
-                request.channel_profile_id, planning.value.research_terms,
-            )
-        elif intent == "source_discovery":
-            deterministic, evidence = source_discovery_plan(
-                request.channel_profile_id,
-                resolution.effective_prompt,
-            )
-            if resource_evidence:
-                evidence = [*resource_evidence, *evidence]
-        elif intent == "create_content":
-            blueprint_key = infer_edit_blueprint_key(request.prompt)
-            if not resolved_selected_clip_ids:
+                        pending, actor=actor, credential_id=cr…804 tokens truncated… resolved_selected_clip_ids:
                 deterministic = (
                     "Select the clip or clips you want to use first. I will not "
                     "silently substitute Katcha-selected media for a request that "
@@ -1676,7 +1611,14 @@ async def _execute_proposal(
     *,
     actor: str,
 ) -> dict[str, object]:
+    from katcha.services.goal_runner import validate_goal_proposal
+
+    validate_goal_proposal(proposal, actor)
     payload = dict(proposal.payload or {})
+
+    if proposal.action_type == "native_tool":
+        from katcha.services.goal_runner import execute_native_goal_proposal
+        return await execute_native_goal_proposal(proposal, actor)
 
     if proposal.action_type == "refresh_channel_intelligence":
         run_key = f"command-proposal-{proposal.id}"

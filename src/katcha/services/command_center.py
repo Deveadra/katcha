@@ -1045,6 +1045,7 @@ def best_clips(
                     desc(SourceItem.discovered_at),
                 )
                 .limit(250)
+                .offset(lookup.pool_offset if lookup else 0)
             )
         )
         for source, clip, features in rows:

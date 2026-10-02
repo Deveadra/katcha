@@ -27,6 +27,8 @@ from katcha.orchestration.discovery_workflows import (
     TopicWatchScheduleWorkflow,
     TopicWatchWorkflow,
 )
+from katcha.orchestration.goal_activities import advance_command_goal_activity
+from katcha.orchestration.goal_workflows import CommandGoalWorkflow
 from katcha.orchestration.intelligence_activities import (
     apply_channel_safety_demotion_activity,
     compute_channel_economics_activity,
@@ -117,6 +119,7 @@ async def main() -> None:
             client,
             task_queue=INTELLIGENCE_TASK_QUEUE,
             workflows=[
+                CommandGoalWorkflow,
                 ChannelIntelligenceRefreshWorkflow,
                 ChannelIntelligenceScheduleWorkflow,
                 ChannelTrendActivationWorkflow,
@@ -124,6 +127,7 @@ async def main() -> None:
                 ChannelTrendActivationScheduleWorkflow,
             ],
             activities=[
+                advance_command_goal_activity,
                 derive_channel_observations_activity,
                 record_command_intelligence_workflow_lifecycle_activity,
                 refresh_channel_growth_activity,

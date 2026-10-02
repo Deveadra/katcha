@@ -253,6 +253,8 @@ def _intelligence_record_evidence(
 def research_context(
     channel_profile_id: uuid.UUID,
     terms: list[str],
+    *,
+    offset: int = 0,
 ) -> tuple[str, list[dict[str, object]]]:
     """Connect existing retained research/trends to planning without manual attachments."""
     terms = list(dict.fromkeys(term.strip().casefold()[:120] for term in terms if term.strip()))[:8]
@@ -279,11 +281,11 @@ def research_context(
             ]))
         records = list(session.scalars(record_query.order_by(
             IntelligenceRecord.observed_at.desc(), IntelligenceRecord.id,
-        ).limit(4)))
+        ).limit(4).offset(offset)))
         trends = list(session.scalars(trend_query.order_by(
             TrendOpportunity.created_at.desc(), TrendOpportunity.opportunity_score.desc(),
             TrendOpportunity.id,
-        ).limit(4)))
+        ).limit(4).offset(offset)))
         evidence = [
             _intelligence_record_evidence(session, channel_profile_id, row.id)
             for row in records
