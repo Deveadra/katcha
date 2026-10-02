@@ -62,11 +62,11 @@ from katcha.api.schemas import (
     RetentionPointResponse,
     RetryPublicationRequest,
     ReviewActionResponse,
-    StartPublicationRequest,
     ReviewCompilationRequest,
     ReviewCompilationResponse,
     ReviewProductionRequest,
     SourceResponse,
+    StartPublicationRequest,
     YouTubeConnectionResponse,
     YouTubeOAuthStartResponse,
 )
