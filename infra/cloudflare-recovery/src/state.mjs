@@ -16,6 +16,7 @@ export function defaultAuthorityState() {
       enabled: false,
       interval_seconds: 60,
       failure_threshold: 3,
+      recovery_retry_seconds: 900,
     },
     incident: null,
     events: [],
@@ -75,6 +76,8 @@ export function prepareAuthority(
     epoch,
     health_url: healthUrl,
     prepared_at: nowIso(nowMs),
+    ready_at: null,
+    readiness: null,
   };
   let next = {
     ...state,
@@ -88,6 +91,46 @@ export function prepareAuthority(
   });
   return { state: next, pending, reused: false };
 }
+
+export function markCandidateReady(
+  current,
+  { deploymentId, deploymentEpoch, readiness },
+  nowMs = Date.now(),
+) {
+  const state = normalizeState(current);
+  const pending = state.pending;
+  if (
+    !pending ||
+    pending.deployment_id !== deploymentId ||
+    pending.epoch !== deploymentEpoch
+  ) {
+    throw new StateConflict("pending authority does not match candidate readiness");
+  }
+  const checks = readiness && typeof readiness === "object" ? readiness : {};
+  for (const name of [
+    "runtime_ready",
+    "durable_state_ready",
+    "fence_probe_ready",
+    "public_route_ready",
+  ]) {
+    if (checks[name] !== true) {
+      throw new StateConflict(`candidate readiness check failed: ${name}`, 422);
+    }
+  }
+  const readyAt = nowIso(nowMs);
+  const nextPending = {
+    ...pending,
+    ready_at: readyAt,
+    readiness: checks,
+  };
+  let next = { ...state, pending: nextPending };
+  next = event(next, "authority.candidate_ready", nowMs, {
+    deployment_id: deploymentId,
+    epoch: deploymentEpoch,
+  });
+  return { state: next, pending: nextPending };
+}
+
 
 export function commitAuthority(
   current,
@@ -108,6 +151,12 @@ export function commitAuthority(
     pending.epoch !== deploymentEpoch
   ) {
     throw new StateConflict("pending authority does not match the requested commit");
+  }
+  if (!pending.ready_at) {
+    throw new StateConflict(
+      "pending deployment has not passed candidate readiness checks",
+      422,
+    );
   }
 
   const active = {
@@ -158,7 +207,12 @@ export function abortPending(
 
 export function configureWatchdog(
   current,
-  { enabled, intervalSeconds, failureThreshold },
+  {
+    enabled,
+    intervalSeconds,
+    failureThreshold,
+    recoveryRetrySeconds = 900,
+  },
   nowMs = Date.now(),
 ) {
   const state = normalizeState(current);
@@ -168,12 +222,14 @@ export function configureWatchdog(
       enabled,
       interval_seconds: intervalSeconds,
       failure_threshold: failureThreshold,
+      recovery_retry_seconds: recoveryRetrySeconds,
     },
   };
   next = event(next, "watchdog.configured", nowMs, {
     enabled,
     interval_seconds: intervalSeconds,
     failure_threshold: failureThreshold,
+    recovery_retry_seconds: recoveryRetrySeconds,
   });
   return next;
 }
@@ -243,6 +299,19 @@ export function applyProbe(
       failure_count: failures,
       last_error: String(detail || "health probe failed").slice(0, 1000),
     };
+    if (
+      incident.status === "dispatched" &&
+      incident.dispatched_at &&
+      nowMs - Date.parse(incident.dispatched_at) >=
+        state.watchdog.recovery_retry_seconds * 1000
+    ) {
+      incident = {
+        ...incident,
+        status: "pending_dispatch",
+        retry_queued_at: probeAt,
+      };
+      shouldDispatch = true;
+    }
   }
 
   let next = {

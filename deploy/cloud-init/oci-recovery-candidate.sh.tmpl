@@ -1,0 +1,168 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+DEPLOYMENT_ID=__DEPLOYMENT_ID__
+DEPLOYMENT_EPOCH=__DEPLOYMENT_EPOCH__
+RELEASE_SHA=__RELEASE_SHA__
+DATA_VOLUME_FS_UUID=__DATA_VOLUME_FS_UUID__
+PRODUCTION_ENV_SECRET_ID=__PRODUCTION_ENV_SECRET_ID__
+AWS_BUNDLE_SECRET_ID=__AWS_BUNDLE_SECRET_ID__
+RECOVERY_COORDINATOR_URL=__RECOVERY_COORDINATOR_URL__
+RECOVERY_CANDIDATE_TOKEN=__RECOVERY_CANDIDATE_TOKEN__
+PUBLIC_HEALTH_URL=__PUBLIC_HEALTH_URL__
+
+log() {
+  printf '[katcha-recovery] %s\n' "$1"
+}
+
+install_runtime() {
+  if command -v apt-get >/dev/null 2>&1; then
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get update -qq
+    apt-get install -y -qq \
+      ca-certificates curl git python3 python3-pip python3-venv \
+      docker.io docker-compose-v2
+  elif command -v dnf >/dev/null 2>&1; then
+    dnf install -y \
+      ca-certificates curl git python3 python3-pip docker docker-compose-plugin
+  else
+    log "Unsupported recovery image: apt-get/dnf missing"
+    exit 30
+  fi
+  systemctl enable --now docker
+  if ! docker compose version >/dev/null 2>&1; then
+    log "Docker Compose v2 is required in the recovery image"
+    exit 31
+  fi
+  if ! command -v oci >/dev/null 2>&1; then
+    python3 -m venv /opt/katcha-oci-cli
+    /opt/katcha-oci-cli/bin/pip install --quiet 'oci-cli==3.94.1'
+    ln -sf /opt/katcha-oci-cli/bin/oci /usr/local/bin/oci
+  fi
+}
+
+vault_bytes() {
+  local secret_id="$1"
+  oci secrets secret-bundle get \
+    --secret-id "$secret_id" \
+    --stage CURRENT \
+    --auth instance_principal \
+    --query 'data."secret-bundle-content".content' \
+    --raw-output | base64 -d
+}
+
+install_runtime
+
+log "Waiting for durable volume UUID"
+device=""
+for _ in $(seq 1 120); do
+  device="$(blkid -U "$DATA_VOLUME_FS_UUID" 2>/dev/null || true)"
+  if [[ -n "$device" ]]; then
+    break
+  fi
+  sleep 5
+done
+if [[ -z "$device" ]]; then
+  log "Durable volume UUID did not appear"
+  exit 32
+fi
+
+mkdir -p /srv/katcha
+if ! mountpoint -q /srv/katcha; then
+  mount "$device" /srv/katcha
+fi
+for directory in postgres handoff recovery backups-local; do
+  mkdir -p "/srv/katcha/$directory"
+done
+
+mkdir -p /etc/katcha/aws
+umask 077
+vault_bytes "$PRODUCTION_ENV_SECRET_ID" > /etc/katcha/katcha.env
+vault_bytes "$AWS_BUNDLE_SECRET_ID" > /tmp/katcha-aws.tgz
+tar -xzf /tmp/katcha-aws.tgz -C /etc/katcha/aws
+rm -f /tmp/katcha-aws.tgz
+
+sed -i \
+  -e '/^KATCHA_RELEASE_SHA=/d' \
+  -e '/^KATCHA_DEPLOYMENT_ID=/d' \
+  -e '/^KATCHA_DEPLOYMENT_EPOCH=/d' \
+  /etc/katcha/katcha.env
+cat >> /etc/katcha/katcha.env <<EOF
+KATCHA_RELEASE_SHA=$RELEASE_SHA
+KATCHA_DEPLOYMENT_ID=$DEPLOYMENT_ID
+KATCHA_DEPLOYMENT_EPOCH=$DEPLOYMENT_EPOCH
+EOF
+
+if [[ ! -d /opt/katcha/.git ]]; then
+  git clone https://github.com/Deveadra/katcha.git /opt/katcha
+fi
+git -C /opt/katcha fetch --force origin "$RELEASE_SHA"
+git -C /opt/katcha checkout --detach "$RELEASE_SHA"
+
+install -m 0644 /opt/katcha/deploy/systemd/katcha.service /etc/systemd/system/katcha.service
+systemctl daemon-reload
+systemctl enable --now katcha.service
+
+log "Waiting for local Katcha readiness"
+for _ in $(seq 1 180); do
+  if curl -fsS --max-time 5 http://127.0.0.1:8000/v1/health/ready >/dev/null; then
+    break
+  fi
+  sleep 5
+done
+curl -fsS --max-time 5 http://127.0.0.1:8000/v1/health/ready >/dev/null
+
+log "Verifying the candidate can reach the fence and is still non-authoritative"
+mapfile -t fence_values < <(
+  python3 - /etc/katcha/katcha.env <<'PY'
+import sys
+
+values = {}
+for raw in open(sys.argv[1], encoding="utf-8"):
+    line = raw.strip()
+    if not line or line.startswith("#") or "=" not in line:
+        continue
+    key, value = line.split("=", 1)
+    value = value.strip()
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
+        value = value[1:-1]
+    values[key.strip()] = value
+print(values["KATCHA_LEADERSHIP_FENCE_URL"])
+print(values["KATCHA_LEADERSHIP_FENCE_TOKEN"])
+PY
+)
+KATCHA_LEADERSHIP_FENCE_URL="${fence_values[0]}"
+KATCHA_LEADERSHIP_FENCE_TOKEN="${fence_values[1]}"
+fence_json="$(
+  curl -fsS --max-time 10 \
+    -H "Authorization: Bearer $KATCHA_LEADERSHIP_FENCE_TOKEN" \
+    -H 'Content-Type: application/json' \
+    -d "{\"deployment_id\":\"$DEPLOYMENT_ID\",\"deployment_epoch\":$DEPLOYMENT_EPOCH,\"operation\":\"recovery.candidate_probe\"}" \
+    "$KATCHA_LEADERSHIP_FENCE_URL"
+)"
+python3 - "$fence_json" <<'PY'
+import json
+import sys
+
+payload = json.loads(sys.argv[1])
+if payload.get("authorized") is not False:
+    raise SystemExit("candidate unexpectedly has mutation authority before commit")
+PY
+
+log "Waiting for Cloudflare Tunnel public route"
+for _ in $(seq 1 120); do
+  if curl -fsS --max-time 10 "$PUBLIC_HEALTH_URL" >/dev/null; then
+    break
+  fi
+  sleep 5
+done
+curl -fsS --max-time 10 "$PUBLIC_HEALTH_URL" >/dev/null
+
+log "Reporting candidate readiness"
+curl -fsS --max-time 15 \
+  -H "Authorization: Bearer $RECOVERY_CANDIDATE_TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d "{\"deployment_id\":\"$DEPLOYMENT_ID\",\"deployment_epoch\":$DEPLOYMENT_EPOCH,\"readiness\":{\"runtime_ready\":true,\"durable_state_ready\":true,\"fence_probe_ready\":true,\"public_route_ready\":true}}" \
+  "$RECOVERY_COORDINATOR_URL/v1/authority/candidate-ready" >/dev/null
+
+log "Candidate acceptance reported"

@@ -1,0 +1,202 @@
+name: OCI production recovery
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/oci-recovery.yml
+      - src/katcha/ops/oci_recovery.py
+      - deploy/cloud-init/oci-recovery-candidate.sh.tmpl
+      - infra/cloudflare-recovery/**
+      - deploy/docker-compose.production.yml
+      - src/katcha/ops/production_runtime.py
+      - tests/test_oci_recovery.py
+      - tests/test_cloud_runtime_contract.py
+  repository_dispatch:
+    types: [katcha-recovery]
+  workflow_dispatch:
+    inputs:
+      incident_id:
+        description: Recovery incident UUID from the coordinator
+        required: true
+        type: string
+      expected_active_epoch:
+        description: Active epoch observed when recovery began
+        required: true
+        type: string
+      active_deployment_id:
+        description: Active deployment ID observed when recovery began
+        required: true
+        type: string
+  schedule:
+    - cron: "7,22,37,52 * * * *"
+
+permissions:
+  contents: read
+
+env:
+  KATCHA_EXTERNAL_COMPUTE_ENABLED: ${{ vars.KATCHA_EXTERNAL_COMPUTE_ENABLED }}
+  KATCHA_RECOVERY_COORDINATOR_URL: ${{ vars.KATCHA_RECOVERY_COORDINATOR_URL }}
+  KATCHA_RECOVERY_ADMIN_TOKEN: ${{ secrets.KATCHA_RECOVERY_ADMIN_TOKEN }}
+  KATCHA_RECOVERY_CANDIDATE_TOKEN: ${{ secrets.KATCHA_RECOVERY_CANDIDATE_TOKEN }}
+  KATCHA_PUBLIC_HEALTH_URL: ${{ vars.KATCHA_PUBLIC_HEALTH_URL }}
+  KATCHA_RELEASE_SHA: ${{ github.sha }}
+  KATCHA_OCI_AVAILABILITY_DOMAIN: ${{ vars.KATCHA_OCI_AVAILABILITY_DOMAIN }}
+  KATCHA_OCI_COMPARTMENT_ID: ${{ vars.KATCHA_OCI_COMPARTMENT_ID }}
+  KATCHA_OCI_SUBNET_ID: ${{ vars.KATCHA_OCI_SUBNET_ID }}
+  KATCHA_OCI_DATA_VOLUME_ID: ${{ vars.KATCHA_OCI_DATA_VOLUME_ID }}
+  KATCHA_OCI_DATA_VOLUME_FS_UUID: ${{ vars.KATCHA_OCI_DATA_VOLUME_FS_UUID }}
+  KATCHA_OCI_PRODUCTION_ENV_SECRET_ID: ${{ vars.KATCHA_OCI_PRODUCTION_ENV_SECRET_ID }}
+  KATCHA_OCI_AWS_BUNDLE_SECRET_ID: ${{ vars.KATCHA_OCI_AWS_BUNDLE_SECRET_ID }}
+  KATCHA_OCI_ASSIGN_PUBLIC_IP: ${{ vars.KATCHA_OCI_ASSIGN_PUBLIC_IP }}
+  KATCHA_OCI_PRIMARY_SHAPE: ${{ vars.KATCHA_OCI_PRIMARY_SHAPE }}
+  KATCHA_OCI_PRIMARY_IMAGE_ID: ${{ vars.KATCHA_OCI_PRIMARY_IMAGE_ID }}
+  KATCHA_OCI_PRIMARY_OCPUS: ${{ vars.KATCHA_OCI_PRIMARY_OCPUS }}
+  KATCHA_OCI_PRIMARY_MEMORY_GB: ${{ vars.KATCHA_OCI_PRIMARY_MEMORY_GB }}
+  KATCHA_OCI_PAID_FALLBACK_ENABLED: ${{ vars.KATCHA_OCI_PAID_FALLBACK_ENABLED }}
+  KATCHA_OCI_PAID_FALLBACK_SHAPE: ${{ vars.KATCHA_OCI_PAID_FALLBACK_SHAPE }}
+  KATCHA_OCI_PAID_FALLBACK_IMAGE_ID: ${{ vars.KATCHA_OCI_PAID_FALLBACK_IMAGE_ID }}
+  KATCHA_OCI_PAID_FALLBACK_OCPUS: ${{ vars.KATCHA_OCI_PAID_FALLBACK_OCPUS }}
+  KATCHA_OCI_PAID_FALLBACK_MEMORY_GB: ${{ vars.KATCHA_OCI_PAID_FALLBACK_MEMORY_GB }}
+  KATCHA_OCI_PAID_FALLBACK_TTL_HOURS: ${{ vars.KATCHA_OCI_PAID_FALLBACK_TTL_HOURS }}
+  KATCHA_OCI_PAID_FALLBACK_ESTIMATED_HOURLY_USD: ${{ vars.KATCHA_OCI_PAID_FALLBACK_ESTIMATED_HOURLY_USD }}
+  KATCHA_OCI_PAID_FALLBACK_MAX_INCIDENT_USD: ${{ vars.KATCHA_OCI_PAID_FALLBACK_MAX_INCIDENT_USD }}
+  KATCHA_OCI_PAID_FALLBACK_MAX_CONCURRENT: "1"
+  KATCHA_RECOVERY_CANDIDATE_TIMEOUT_SECONDS: ${{ vars.KATCHA_RECOVERY_CANDIDATE_TIMEOUT_SECONDS }}
+
+jobs:
+  validate:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Katcha
+        run: python -m pip install -e '.[dev]'
+
+      - name: Validate dispatcher and bootstrap
+        run: |
+          python -m py_compile src/katcha/ops/oci_recovery.py
+          bash -n deploy/cloud-init/oci-recovery-candidate.sh.tmpl
+          pytest -q tests/test_oci_recovery.py tests/test_cloud_runtime_contract.py
+
+  recover:
+    if: github.event_name == 'repository_dispatch' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    concurrency:
+      group: katcha-production-recovery
+      cancel-in-progress: false
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install recovery runtime
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e .
+          python -m pip install 'oci-cli==3.94.1'
+
+      - name: Configure OCI API authentication
+        shell: bash
+        env:
+          OCI_TENANCY_OCID: ${{ secrets.OCI_TENANCY_OCID }}
+          OCI_USER_OCID: ${{ secrets.OCI_USER_OCID }}
+          OCI_FINGERPRINT: ${{ secrets.OCI_FINGERPRINT }}
+          OCI_API_PRIVATE_KEY: ${{ secrets.OCI_API_PRIVATE_KEY }}
+          OCI_REGION: ${{ vars.OCI_REGION }}
+        run: |
+          set -euo pipefail
+          umask 077
+          mkdir -p "$HOME/.oci"
+          printf '%s\n' "$OCI_API_PRIVATE_KEY" > "$HOME/.oci/oci_api_key.pem"
+          cat > "$HOME/.oci/config" <<EOF
+          [DEFAULT]
+          user=$OCI_USER_OCID
+          fingerprint=$OCI_FINGERPRINT
+          tenancy=$OCI_TENANCY_OCID
+          region=$OCI_REGION
+          key_file=$HOME/.oci/oci_api_key.pem
+          EOF
+          oci iam region-subscription list --query 'data[0]."region-name"' --raw-output >/dev/null
+
+      - name: Build recovery event
+        if: github.event_name == 'workflow_dispatch'
+        shell: bash
+        run: |
+          jq -n \
+            --arg incident_id "${{ inputs.incident_id }}" \
+            --arg active_deployment_id "${{ inputs.active_deployment_id }}" \
+            --argjson expected_active_epoch "${{ inputs.expected_active_epoch }}" \
+            '{
+              client_payload: {
+                incident_id: $incident_id,
+                expected_active_epoch: $expected_active_epoch,
+                active_deployment: {
+                  deployment_id: $active_deployment_id,
+                  epoch: $expected_active_epoch
+                }
+              }
+            }' > /tmp/katcha-recovery-event.json
+
+      - name: Recover Katcha control plane
+        shell: bash
+        run: |
+          set -euo pipefail
+          event_path="$GITHUB_EVENT_PATH"
+          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
+            event_path=/tmp/katcha-recovery-event.json
+          fi
+          python -m katcha.ops.oci_recovery recover --event "$event_path"
+
+  paid-fallback-expiry:
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    concurrency:
+      group: katcha-production-recovery
+      cancel-in-progress: false
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install cleanup runtime
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e .
+          python -m pip install 'oci-cli==3.94.1'
+
+      - name: Configure OCI API authentication
+        shell: bash
+        env:
+          OCI_TENANCY_OCID: ${{ secrets.OCI_TENANCY_OCID }}
+          OCI_USER_OCID: ${{ secrets.OCI_USER_OCID }}
+          OCI_FINGERPRINT: ${{ secrets.OCI_FINGERPRINT }}
+          OCI_API_PRIVATE_KEY: ${{ secrets.OCI_API_PRIVATE_KEY }}
+          OCI_REGION: ${{ vars.OCI_REGION }}
+        run: |
+          set -euo pipefail
+          umask 077
+          mkdir -p "$HOME/.oci"
+          printf '%s\n' "$OCI_API_PRIVATE_KEY" > "$HOME/.oci/oci_api_key.pem"
+          cat > "$HOME/.oci/config" <<EOF
+          [DEFAULT]
+          user=$OCI_USER_OCID
+          fingerprint=$OCI_FINGERPRINT
+          tenancy=$OCI_TENANCY_OCID
+          region=$OCI_REGION
+          key_file=$HOME/.oci/oci_api_key.pem
+          EOF
+
+      - name: Enforce paid fallback TTL
+        run: python -m katcha.ops.oci_recovery cleanup
