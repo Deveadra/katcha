@@ -20,7 +20,7 @@ from katcha.acquisition_models import (
     IntelligenceRecord,
 )
 from katcha.db import session_scope
-from katcha.domain import SourceUsageMode
+from katcha.domain import DiscoveryRunStatus, SourceUsageMode
 from katcha.intelligence_models import ChannelProfile
 from katcha.models import DomainEvent
 from katcha.services.acquisition import register_discovery_run
@@ -681,6 +681,92 @@ def list_source_runs(source_id: uuid.UUID, *, limit: int = 50) -> list[Discovery
         for row in rows:
             session.expunge(row)
         return rows
+
+def restart_source_run(
+    run_id: uuid.UUID,
+    *,
+    idempotency_key: str | None = None,
+) -> DiscoveryRun:
+    with session_scope() as session:
+        run = session.get(DiscoveryRun, run_id)
+        if run is None:
+            raise ValueError("discovery run not found")
+        if run.status != DiscoveryRunStatus.FAILED.value:
+            raise ValueError("only failed discovery runs can be restarted")
+        metadata = dict(run.run_metadata or {})
+        raw_source_id = metadata.get("ingestion_source_id")
+        if not raw_source_id:
+            raise ValueError("discovery run is not attached to an ingestion source")
+        try:
+            source_id = uuid.UUID(str(raw_source_id))
+        except ValueError as exc:
+            raise ValueError("discovery run has an invalid ingestion source ID") from exc
+        source = session.get(IngestionSource, source_id)
+        if source is None:
+            raise ValueError("ingestion source not found")
+        if not source.enabled:
+            raise ValueError("ingestion source is disabled")
+        if source.usage_mode == SourceUsageMode.BLOCKED.value:
+            raise ValueError("ingestion source is blocked")
+        adapter_key = run.adapter_key
+        adapter_version = run.adapter_version
+        query = dict(run.query or {})
+        metadata.update(
+            {
+                "restarted_from_run_id": str(run.id),
+                "recovery_mode": "manual_restart",
+            }
+        )
+
+    return register_discovery_run(
+        adapter_key=adapter_key,
+        adapter_version=adapter_version,
+        query=query,
+        idempotency_key=idempotency_key,
+        metadata=metadata,
+    )
+
+
+def list_resumable_source_runs(*, limit: int = 500) -> list[DiscoveryRun]:
+    if limit < 1 or limit > 5000:
+        raise ValueError("limit must be between 1 and 5000")
+    with session_scope() as session:
+        rows = list(
+            session.scalars(
+                select(DiscoveryRun)
+                .where(
+                    DiscoveryRun.status.in_(
+                        [
+                            DiscoveryRunStatus.QUEUED.value,
+                            DiscoveryRunStatus.RUNNING.value,
+                        ]
+                    )
+                )
+                .order_by(DiscoveryRun.created_at.asc(), DiscoveryRun.id.asc())
+                .limit(limit)
+            )
+        )
+        resumable: list[DiscoveryRun] = []
+        for run in rows:
+            metadata = dict(run.run_metadata or {})
+            raw_source_id = metadata.get("ingestion_source_id")
+            if not raw_source_id:
+                continue
+            try:
+                source_id = uuid.UUID(str(raw_source_id))
+            except ValueError:
+                continue
+            source = session.get(IngestionSource, source_id)
+            if (
+                source is None
+                or not source.enabled
+                or source.usage_mode == SourceUsageMode.BLOCKED.value
+            ):
+                continue
+            session.expunge(run)
+            resumable.append(run)
+        return resumable
+
 
 def _clean_intelligence_slug(value: str, *, field: str, max_length: int) -> str:
     cleaned = value.strip().casefold()
