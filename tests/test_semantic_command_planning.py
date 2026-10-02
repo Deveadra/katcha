@@ -108,6 +108,11 @@ def command_harness(monkeypatch):
     monkeypatch.setattr(api, "get_settings", lambda: settings)
     monkeypatch.setattr(api, "require_control_channel", lambda *args: None)
     monkeypatch.setattr(api, "require_control_scope", lambda *args: None)
+    monkeypatch.setattr(api, "control_scopes", lambda *args: {"*"})
+    monkeypatch.setattr(
+        api, "command_environment", lambda channel: {"channel": {"id": str(channel)}},
+    )
+    monkeypatch.setattr(api, "workflow_observations", lambda *args: [])
     monkeypatch.setattr(api, "control_actor", lambda request: "fixture-operator")
     monkeypatch.setattr(api, "control_credential_id", lambda request: None)
     monkeypatch.setattr(api, "control_credential_fingerprint", lambda request: None)
@@ -387,7 +392,7 @@ async def test_observation_round_binds_newly_found_clips_to_ranked_production(
     monkeypatch.setattr(
         api,
         "best_clips",
-        lambda *args: (
+        lambda *args, **kwargs: (
             "Fixture candidate clips",
             [{"kind": "clip", "id": str(clip)} for clip in clips],
         ),
@@ -428,6 +433,68 @@ async def test_unavailable_secondary_inspection_keeps_other_evidence(command_har
     monkeypatch.setattr(api, "performance_advice", unavailable)
     result = await state.send("Compare our failures and performance")
     assert {row["kind"] for row in result.evidence} == {"render_attempt", "capability_error"}
+    state.execute.assert_not_awaited()
+
+
+async def test_first_plan_receives_current_channel_permissions_and_background_feedback(
+    command_harness, monkeypatch,
+):
+    state = command_harness
+    state.plan = CommandPlan(intent="channel_status", confidence=0.99, reason="Inspect progress")
+    environment = {"channel": {"name": "RankSnaxx"}, "constraints": {"ranked_item_counts": [5]}}
+    feedback = [{"kind": "workflow_observation", "id": "fixture", "state": "failed"}]
+    monkeypatch.setattr(api, "command_environment", lambda *args: environment)
+    monkeypatch.setattr(api, "workflow_observations", lambda *args: feedback)
+    monkeypatch.setattr(api, "control_scopes", lambda *args: {"ai:read"})
+    result = await state.send("How did that search turn out?")
+    assert state.captured_context["environment"] == environment
+    assert state.captured_context["workflow_observations"] == feedback
+    assert state.captured_context["action_permissions"]["start_source_scout"]["allowed"] is False
+    assert state.captured_context["ai_write_allowed"] is False
+    assert result.evidence == feedback
+    state.execute.assert_not_awaited()
+
+
+async def test_model_can_inspect_retained_research_without_manual_attachment(
+    command_harness, monkeypatch,
+):
+    state = command_harness
+    state.plan = CommandPlan(
+        intent="research_context", confidence=0.99, reason="Inspect what research already knows",
+        research_terms=["visionquest"],
+    )
+    calls = []
+
+    def research(channel, terms):
+        calls.append((channel, terms))
+        return "Fixture retained research", [{"kind": "intelligence_record", "id": "fixture"}]
+
+    monkeypatch.setattr(api, "research_context", research)
+    result = await state.send("What have we already learned about that series?")
+    assert calls == [(state.channel, ["visionquest"])]
+    assert result.evidence[0]["kind"] == "intelligence_record"
+    assert result.actions == []
+    state.execute.assert_not_awaited()
+
+
+async def test_observation_round_cannot_authorize_preview(command_harness, monkeypatch):
+    state = command_harness
+    initial = CommandPlan(
+        intent="performance_advice", confidence=0.99, reason="Preview refresh",
+        requested_actions=["refresh_channel_intelligence"], execution="propose",
+    )
+
+    def plan(**kwargs):
+        value = (
+            initial.model_copy(update={"execution": "run"})
+            if kwargs["context"].get("phase") else initial
+        )
+        return CommandPlanResult(value, "ai", ModelTarget("codex", "fixture"), 0, 0)
+
+    monkeypatch.setattr(api, "plan_ambiguous_command", plan)
+    monkeypatch.setattr(api, "performance_advice", lambda *args: ("Fixture performance", []))
+    with pytest.raises(HTTPException, match="cannot turn a proposal"):
+        await state.send("Show me the proposed refresh first")
     state.execute.assert_not_awaited()
 
 
@@ -507,7 +574,7 @@ async def test_missing_observed_clip_selection_never_substitutes_top_clip(
     monkeypatch.setattr(
         api,
         "best_clips",
-        lambda *args: (
+        lambda *args, **kwargs: (
             "Fixture clip options",
             [{"kind": "clip", "id": str(uuid.uuid4())}],
         ),
@@ -524,7 +591,8 @@ def test_action_schema_and_permission_registry_cannot_drift():
     from katcha.control_contract import COMMAND_ACTION_SCOPES
 
     action_literal = get_args(CommandPlan.model_fields["requested_actions"].annotation)[0]
-    assert set(get_args(action_literal)) == set(COMMAND_ACTION_SCOPES)
+    assert set(get_args(action_literal)) == set(COMMAND_ACTION_SCOPES) - {"native_tool"}
+    # Native tools require a frozen durable goal step, outside the legacy plan schema.
     assert set(get_args(api.ActionType)) == set(COMMAND_ACTION_SCOPES)
 
 
@@ -537,7 +605,9 @@ def test_planning_rounds_reserve_budget_independently(monkeypatch):
         gemini_api_key="fixture-key",
         resolved_ai_execution_mode=lambda: "live",
     )
-    monkeypatch.setattr(command_planner, "planner_provider_order", lambda settings: ["gemini"])
+    monkeypatch.setattr(
+        command_planner, "planner_provider_order", lambda settings, **kwargs: ["gemini"],
+    )
 
     def route(*args, **kwargs):
         reservations.append(kwargs["reservation_key"])

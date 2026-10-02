@@ -34,6 +34,10 @@ def _now() -> datetime:
     return datetime.now(UTC)
 
 
+def _utc(value: datetime) -> datetime:
+    return value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
+
+
 def create_action_proposals(
     *,
     request_id: uuid.UUID,
@@ -124,7 +128,7 @@ def get_action_proposal(proposal_id: uuid.UUID) -> CommandActionProposal:
         proposal = session.get(CommandActionProposal, proposal_id)
         if proposal is None:
             raise ValueError(f"command action proposal not found: {proposal_id}")
-        if proposal.status in {"proposed", "failed"} and proposal.expires_at <= _now():
+        if proposal.status in {"proposed", "failed"} and _utc(proposal.expires_at) <= _now():
             proposal.status = "expired"
             session.add(
                 DomainEvent(
@@ -168,7 +172,7 @@ def claim_action_proposal(
         if proposal is None:
             raise ValueError(f"command action proposal not found: {proposal_id}")
         now = _now()
-        if proposal.expires_at <= now and proposal.status not in {"executed"}:
+        if _utc(proposal.expires_at) <= now and proposal.status not in {"executed"}:
             proposal.status = "expired"
             raise ValueError("command action proposal has expired")
         if proposal.status == "executed":
@@ -178,7 +182,7 @@ def claim_action_proposal(
             stale_before = now - timedelta(minutes=5)
             if (
                 proposal.execution_started_at is not None
-                and proposal.execution_started_at > stale_before
+                and _utc(proposal.execution_started_at) > stale_before
             ):
                 session.expunge(proposal)
                 return ProposalClaim(proposal=proposal, should_execute=False)

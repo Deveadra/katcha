@@ -12,6 +12,7 @@ from typing import Any
 from katcha.ai.command_planner import CommandPlan
 from katcha.command_center_models import CommandActionProposal, CommandTurn
 from katcha.control_contract import COMMAND_ACTION_SCOPES
+from katcha.services.command_activity import get_action_activity
 
 
 def planning_context(
@@ -69,6 +70,51 @@ def resolve_planned_clip_ids(
     if any(str(value) not in allowed for value in selected):
         raise ValueError("AI selected a clip outside the grounded conversation context")
     return selected
+
+
+def workflow_observations(
+    proposals: list[CommandActionProposal],
+    channel_profile_id: uuid.UUID,
+) -> list[dict[str, Any]]:
+    """Read fresh lifecycle feedback instead of treating startup as completion."""
+    observations = []
+    for proposal in proposals[-20:]:
+        if proposal.channel_profile_id != channel_profile_id:
+            raise ValueError("workflow feedback belongs to a different channel")
+        if proposal.status != "executed":
+            continue
+        try:
+            activity = get_action_activity(proposal.id, limit=5)
+            if activity.proposal.channel_profile_id != channel_profile_id:
+                raise ValueError("workflow feedback belongs to a different channel")
+        except ValueError as exc:
+            observations.append({"kind": "capability_error", "id": str(proposal.id),
+                                 "status": "unavailable", "error": str(exc)})
+            continue
+        resource = activity.resource
+        observations.append({
+            "kind": "workflow_observation", "id": str(proposal.id),
+            "workflow_id": activity.workflow_id, "state": activity.state,
+            "settled": activity.settled,
+            "detail": activity.workflow_detail,
+            "resource": ({"kind": resource.kind, "id": str(resource.id),
+                          "status": resource.status, "stage": resource.stage,
+                          "error": resource.error} if resource else None),
+            "events": list(activity.events),
+        })
+    return observations
+
+
+def validate_bound_plan(initial: CommandPlan, bound: CommandPlan) -> None:
+    """Observation can bind/reduce requested work, never expand authorization."""
+    if set(bound.requested_actions) - set(initial.requested_actions):
+        raise ValueError("Observation planning added an operation outside the original request")
+    if initial.execution != "run" and bound.execution == "run":
+        raise ValueError("Observation planning cannot turn a proposal into authorization")
+    if not initial.recurring and bound.recurring:
+        raise ValueError("Observation planning cannot turn a one-time request into recurring work")
+    if not initial.prepare_for_production and bound.prepare_for_production:
+        raise ValueError("Observation planning cannot add unrequested production preparation")
 
 
 def resolve_planned_proposals(

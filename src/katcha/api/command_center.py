@@ -27,6 +27,7 @@ from katcha.api.control_auth import (
     control_actor,
     control_credential_fingerprint,
     control_credential_id,
+    control_scopes,
     require_control_channel,
     require_control_scope,
 )
@@ -36,7 +37,7 @@ from katcha.command_center_models import (
     CommandTurn,
 )
 from katcha.config import get_settings
-from katcha.control_contract import COMMAND_ACTION_SCOPES
+from katcha.control_contract import COMMAND_ACTION_SCOPES, command_action_permissions
 from katcha.db import session_scope
 from katcha.domain import ProductionStatus
 from katcha.integrations.chatgpt import (
@@ -78,6 +79,7 @@ from katcha.services.command_center import (
     resolve_command_follow_up,
     source_discovery_plan,
 )
+from katcha.services.command_environment import command_environment
 from katcha.services.command_history import (
     archive_command_thread,
     create_command_thread,
@@ -96,8 +98,11 @@ from katcha.services.command_planning import (
     planning_context,
     resolve_planned_clip_ids,
     resolve_planned_proposals,
+    validate_bound_plan,
+    workflow_observations,
 )
 from katcha.services.command_resources import (
+    research_context,
     resolve_command_resources,
     resource_context_summary,
 )
@@ -113,6 +118,7 @@ from katcha.services.short_episodes import register_short_episode
 router = APIRouter(prefix="/v1/ai", tags=["katcha-ai"])
 
 ActionType = Literal[
+    "native_tool",
     "refresh_channel_intelligence",
     "create_short_production",
     "create_ranked_short_episode",
@@ -226,6 +232,7 @@ class CommandObservabilityResponse(BaseModel):
 
 
 class CommandReadinessResponse(BaseModel):
+    durable_goals: bool = True
     live: bool
     message: str
 
@@ -805,8 +812,12 @@ def _inspect_command_capability(
     request: CommandRequest,
     prompt: str,
     resource_evidence: list[dict[str, object]],
+    *,
+    plan: CommandPlan | None = None,
 ) -> tuple[str, list[dict[str, object]]]:
     if intent == "best_clips":
+        if plan is not None:
+            return best_clips(request.channel_profile_id, prompt, lookup=plan.clip_lookup)
         return best_clips(request.channel_profile_id, prompt)
     if intent == "failures":
         return failures(request.channel_profile_id)
@@ -816,6 +827,8 @@ def _inspect_command_capability(
         return source_discovery_plan(request.channel_profile_id, prompt)
     if intent == "resource_context":
         return resource_context_summary(resource_evidence), resource_evidence
+    if intent == "research_context":
+        return research_context(request.channel_profile_id, plan.research_terms if plan else [])
     return channel_status(request.channel_profile_id)
 
 
@@ -988,6 +1001,15 @@ async def command(http_request: Request, request: CommandRequest) -> CommandResp
         prior_turns, prior_proposals, explicit_clip_ids, resource_evidence,
     )
     if live_planning:
+        context["environment"] = await run_in_threadpool(
+            command_environment, request.channel_profile_id,
+        )
+        scopes = control_scopes(http_request)
+        context["action_permissions"] = command_action_permissions(scopes)
+        context["ai_write_allowed"] = "*" in scopes or "ai:write" in scopes
+        context["workflow_observations"] = await run_in_threadpool(
+            workflow_observations, prior_proposals, request.channel_profile_id,
+        )
         # Phrase/ordinal heuristics are a labelled offline route, not live model authority.
         resolution = replace(
             resolution, effective_prompt=request.prompt,
@@ -1099,9 +1121,10 @@ async def command(http_request: Request, request: CommandRequest) -> CommandResp
                 for proposal in reused_proposals
             ]
         elif intent == "best_clips":
-            deterministic, evidence = best_clips(
-                request.channel_profile_id,
-                resolution.effective_prompt,
+            deterministic, evidence = _inspect_command_capability(
+                intent, resolved_request, resolution.effective_prompt, resource_evidence,
+                plan=(planning.value
+                      if live_planning and planning.target.provider != "katcha" else None),
             )
         elif intent == "failures":
             deterministic, evidence = failures(request.channel_profile_id)
@@ -1134,6 +1157,10 @@ async def command(http_request: Request, request: CommandRequest) -> CommandResp
         elif intent == "resource_context":
             deterministic = resource_context_summary(resource_evidence)
             evidence = list(resource_evidence)
+        elif intent == "research_context":
+            deterministic, evidence = research_context(
+                request.channel_profile_id, planning.value.research_terms,
+            )
         elif intent == "source_discovery":
             deterministic, evidence = source_discovery_plan(
                 request.channel_profile_id,
@@ -1225,6 +1252,8 @@ async def command(http_request: Request, request: CommandRequest) -> CommandResp
 
     observations = {intent: list(evidence)}
     semantic = live_planning and planning.target.provider != "katcha"
+    if live_planning:
+        evidence.extend(context.get("workflow_observations") or [])
     if intent not in {"confirm_action", "clarification", "unsupported"}:
         for inspection in dict.fromkeys(planning.value.inspections):
             if inspection == intent:
@@ -1232,6 +1261,7 @@ async def command(http_request: Request, request: CommandRequest) -> CommandResp
             try:
                 summary, inspected = _inspect_command_capability(
                     inspection, resolved_request, request.prompt, resource_evidence,
+                    plan=planning.value if semantic else None,
                 )
                 deterministic += f"\n{summary}"
                 observations[inspection] = inspected
@@ -1262,6 +1292,11 @@ async def command(http_request: Request, request: CommandRequest) -> CommandResp
                 previous_intent=intent, deterministic_intent="channel_status",
                 settings=settings, context=context,
             )
+            if bound.target.provider == "katcha":
+                raise CommandPlanningUnavailable(
+                    "Live action binding is unavailable; nothing was started"
+                )
+            validate_bound_plan(planning.value, bound.value)
             selected = resolve_planned_clip_ids(bound.value, context)
         except (CommandPlanningUnavailable, ValueError) as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
@@ -1643,7 +1678,14 @@ async def _execute_proposal(
     *,
     actor: str,
 ) -> dict[str, object]:
+    from katcha.services.goal_runner import validate_goal_proposal
+
+    validate_goal_proposal(proposal, actor)
     payload = dict(proposal.payload or {})
+
+    if proposal.action_type == "native_tool":
+        from katcha.services.goal_runner import execute_native_goal_proposal
+        return await execute_native_goal_proposal(proposal, actor)
 
     if proposal.action_type == "refresh_channel_intelligence":
         run_key = f"command-proposal-{proposal.id}"
@@ -2026,6 +2068,9 @@ async def execute_action(
     require_control_scope(http_request, required_scope)
 
     try:
+        from katcha.services.goal_runner import validate_goal_proposal
+
+        validate_goal_proposal(current, actor)
         claim = claim_action_proposal(
             proposal_id,
             actor=actor,

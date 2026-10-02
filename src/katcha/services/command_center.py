@@ -10,6 +10,7 @@ from sqlalchemy import desc, or_, select
 
 from katcha.acquisition.adapters import available_adapters
 from katcha.acquisition_models import IngestionSource, TopicWatchVersion
+from katcha.ai.command_planner import ClipLookup
 from katcha.command_center_models import CommandTurn
 from katcha.config import get_settings
 from katcha.db import session_scope
@@ -29,6 +30,7 @@ from katcha.render_models import RenderAttempt
 from katcha.services.channel_brands import brand_for_channel
 from katcha.services.channel_editorial import score_clip_for_channel
 from katcha.services.channel_profiles import ensure_active_profile
+from katcha.services.clip_lifecycle import clip_ids_for_channel
 from katcha.services.short_episodes import ShortEpisodeCandidateInput
 from katcha.short_episode_models import ShortEpisode
 
@@ -999,25 +1001,43 @@ def best_clips(
     prompt: str,
     *,
     limit: int = 5,
+    lookup: ClipLookup | None = None,
 ) -> tuple[str, list[dict[str, object]]]:
     profile = _profile(channel_profile_id)
-    window = resolve_time_window(prompt, profile.timezone, default_today=True)
-    assert window is not None
-    terms = _search_terms(prompt)
+    if lookup is None:
+        window = resolve_time_window(prompt, profile.timezone, default_today=True)
+        terms = _search_terms(prompt)
+        match_all = True
+    else:
+        period = (
+            f"last {lookup.hours} hours" if lookup.period == "recent"
+            else lookup.period.replace("_", " ")
+        )
+        window = resolve_time_window(period, profile.timezone)
+        terms = list(dict.fromkeys(value.strip().casefold()[:120]
+                                  for value in lookup.terms if value.strip()))
+        match_all = lookup.match == "all"
+        limit = lookup.limit
+    window_label = window.label if window else "all stored discovery dates"
 
     candidates: list[
         tuple[float, Clip, ClipFeature, SourceItem, dict[str, object]]
     ] = []
     seen: set[uuid.UUID] = set()
     with session_scope() as session:
+        channel_clip_ids = clip_ids_for_channel(session, channel_profile_id)
+        time_constraints = (
+            [SourceItem.discovered_at >= window.start, SourceItem.discovered_at < window.end]
+            if window else []
+        )
         rows = list(
             session.execute(
                 select(SourceItem, Clip, ClipFeature)
                 .join(Clip, Clip.id == SourceItem.clip_id)
                 .join(ClipFeature, ClipFeature.clip_id == Clip.id)
                 .where(
-                    SourceItem.discovered_at >= window.start,
-                    SourceItem.discovered_at < window.end,
+                    Clip.id.in_(channel_clip_ids),
+                    *time_constraints,
                     ClipFeature.candidate_score.is_not(None),
                 )
                 .order_by(
@@ -1025,6 +1045,7 @@ def best_clips(
                     desc(SourceItem.discovered_at),
                 )
                 .limit(250)
+                .offset(lookup.pool_offset if lookup else 0)
             )
         )
         for source, clip, features in rows:
@@ -1032,7 +1053,8 @@ def best_clips(
                 continue
             seen.add(clip.id)
             haystack = _clip_haystack(clip, features, source)
-            if terms and not all(term in haystack for term in terms):
+            matches = [term in haystack for term in terms]
+            if terms and not (all(matches) if match_all else any(matches)):
                 continue
             try:
                 learned = score_clip_for_channel(channel_profile_id, clip.id)
@@ -1063,24 +1085,26 @@ def best_clips(
                 "source_url": source.canonical_url,
                 "discovered_at": source.discovered_at.isoformat(),
                 "time_window": {
-                    "label": window.label,
-                    "start": window.start.isoformat(),
-                    "end": window.end.isoformat(),
+                    "label": window_label,
+                    "start": window.start.isoformat() if window else None,
+                    "end": window.end.isoformat() if window else None,
                 },
+                "retrieval": {"pool_limit": 250, "returned_limit": limit,
+                              "match": "all" if match_all else "any"},
                 "details": learned.get("details") if learned else {},
             }
         )
     topic = ", ".join(terms) if terms else "the requested topic"
     if not evidence:
         return (
-            f"I do not have any scored clips discovered in {window.label} "
+            f"I do not have any scored clips discovered in {window_label} "
             f"matching {topic} in this channel's stored data.",
             [],
         )
     lead = evidence[0]
     return (
         f"I found {len(evidence)} strong clip{'s' if len(evidence) != 1 else ''} "
-        f"for {topic} in {window.label}. The highest-ranked item is "
+        f"for {topic} in {window_label}. The highest-ranked item is "
         f"{lead['title']} with a channel score of "
         f"{float(lead['channel_score']) * 100:.1f}/100. "
         "The evidence cards show the stored score drivers and discovery times.",

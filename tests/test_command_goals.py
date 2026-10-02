@@ -1,0 +1,621 @@
+"""Saved-data and API integration. Scripted decisions do not prove live comprehension."""
+
+import hashlib
+import uuid
+from types import SimpleNamespace
+
+import pytest
+from fastapi.testclient import TestClient
+from pydantic import SecretStr
+from sqlalchemy import create_engine, select
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
+
+from katcha import db
+from katcha.ai.goal_planner import GoalDecision
+from katcha.api import goals as goal_api
+from katcha.api.main import app
+from katcha.command_center_models import CommandActionProposal
+from katcha.config import Settings
+from katcha.goal_models import CommandGoal, CommandGoalStep
+from katcha.intelligence_models import ChannelProfile
+from katcha.services import goal_receipts, goal_runner
+from katcha.services.goal_receipts import get_goal, register_goal, resolve_goal_authority
+from katcha.services.goal_tools import TOOLS, tool_schema
+
+
+@pytest.fixture
+def saved(monkeypatch):
+    db.load_model_metadata()
+    engine = create_engine(
+        "sqlite://", poolclass=StaticPool, connect_args={"check_same_thread": False}
+    )
+    db.Base.metadata.create_all(engine)
+    monkeypatch.setattr(db, "SessionLocal", sessionmaker(bind=engine, expire_on_commit=False))
+    settings = Settings(_env_file=None, env="test", control_api_token=None, control_principals=[])
+    monkeypatch.setattr(goal_receipts, "get_settings", lambda: settings)
+    monkeypatch.setattr("katcha.api.control_auth.get_settings", lambda: settings)
+    channel = uuid.uuid4()
+    with db.session_scope() as session:
+        session.add(
+            ChannelProfile(
+                id=channel,
+                youtube_connection_id=uuid.uuid4(),
+                status="active",
+                timezone="UTC",
+                profile_metadata={},
+            )
+        )
+    yield channel, settings
+    engine.dispose()
+
+
+def receipt(channel, prompt="Set up an ongoing watch for Xbox releases", scopes=None):
+    return register_goal(
+        uuid.uuid4(),
+        {
+            "channel_profile_id": str(channel),
+            "prompt": prompt,
+            "thread_id": None,
+            "selected_clip_ids": [],
+            "resource_refs": [],
+            "selected_production_id": None,
+        },
+        {
+            "actor": "local-development",
+            "scopes": scopes or ["*"],
+            "channel_ids": ["*"],
+            "principal_name": None,
+            "credential_id": None,
+            "credential_fingerprint": None,
+        },
+    )
+
+
+def decision(tool=None, arguments=None, *, outcome="tool", allowed=None, mode="run"):
+    return GoalDecision(
+        outcome=outcome,
+        reason="Resolve the requested operation",
+        answer="Observed work is complete" if outcome == "complete" else "",
+        tool=tool,
+        arguments=arguments or {},
+        mode=mode,
+        allowed_mutations=allowed or [],
+        completion_criteria="Watch saved",
+        confidence=0.99,
+    )
+
+
+def test_retry_receipt_reuses_identity_and_rejects_changed_instruction(saved):
+    goal = receipt(saved[0])
+    assert register_goal(goal.command_id, goal.request, goal.authority).id == goal.id
+    with pytest.raises(ValueError, match="different instruction"):
+        register_goal(goal.command_id, {**goal.request, "prompt": "Different work"}, goal.authority)
+    with db.session_scope() as session:
+        assert len(list(session.scalars(select(CommandGoal)))) == 1
+
+
+def test_catalog_native_schemas_resolve_registered_operations():
+    for name in TOOLS:
+        assert tool_schema(name)["type"] == "object"
+    assert TOOLS["publish_production"].confirm
+    assert not TOOLS["publish_production"].retry_safe
+    assert "path" in tool_schema("save_watch")["properties"]
+
+
+async def test_native_write_then_replan_uses_saved_observation(saved, monkeypatch):
+    goal = receipt(saved[0])
+    seen = []
+    choices = [
+        decision("channel_state", allowed=["save_watch"]),
+        decision(
+            "save_watch",
+            {"body": {"watch_key": "xbox", "name": "Xbox releases", "include_terms": ["Xbox"]}},
+        ),
+        decision(outcome="complete"),
+    ]
+
+    def planner(**kwargs):
+        seen.append(kwargs["context"])
+        return choices.pop(0)
+
+    monkeypatch.setattr(goal_runner, "decide_goal", planner)
+    assert await goal_runner.advance_goal(goal.id) == "running"
+    assert await goal_runner.advance_goal(goal.id) == "running"
+    current = get_goal(goal.id)
+    assert current.observations[-1]["error"] is None, current.observations[-1]
+    assert current.observations[-1]["result"]["name"] == "Xbox releases"
+    assert current.observations[-1]["result"]["channel_profile_id"] == str(saved[0])
+    assert await goal_runner.advance_goal(goal.id) == "completed"
+    assert seen[-1]["observations"][-1]["result"]["name"] == "Xbox releases"
+    assert current.authorization["allowed_mutations"] == ["save_watch"]
+
+
+async def test_observations_cannot_expand_authorized_mutations(saved, monkeypatch):
+    goal = receipt(saved[0])
+    choices = [decision("channel_state"), decision("save_watch", allowed=["save_watch"])]
+    monkeypatch.setattr(goal_runner, "decide_goal", lambda **kwargs: choices.pop(0))
+    assert await goal_runner.advance_goal(goal.id) == "running"
+    assert await goal_runner.advance_goal(goal.id) == "blocked"
+    assert "frozen" in get_goal(goal.id).summary
+
+
+async def test_proposal_mode_and_cancel_stop_frozen_action(saved, monkeypatch):
+    goal = receipt(saved[0])
+    monkeypatch.setattr(
+        goal_runner,
+        "decide_goal",
+        lambda **kwargs: decision(
+            "save_watch",
+            {"body": {"watch_key": "xbox", "name": "Xbox"}},
+            allowed=["save_watch"],
+            mode="propose",
+        ),
+    )
+    assert await goal_runner.advance_goal(goal.id) == "waiting_confirmation"
+    with db.session_scope() as session:
+        step = session.scalar(select(CommandGoalStep).where(CommandGoalStep.goal_id == goal.id))
+        proposal = session.get(CommandActionProposal, step.proposal_id)
+        session.expunge(proposal)
+        current = session.get(CommandGoal, goal.id)
+        current.status = "cancelled"
+    with pytest.raises(ValueError, match="stopped"):
+        goal_runner.validate_goal_proposal(proposal, "local-development")
+    assert await goal_runner.advance_goal(goal.id) == "cancelled"
+
+
+async def test_uncertain_mutation_is_not_repeated(saved, monkeypatch):
+    goal = receipt(saved[0])
+    args = {"body": {"watch_key": "xbox", "name": "Xbox"}}
+    with db.session_scope() as session:
+        current = session.get(CommandGoal, goal.id)
+        current.authorization = {"mode": "run", "allowed_mutations": ["save_watch"]}
+        current.observations = [
+            {
+                "step": 0,
+                "tool": "save_watch",
+                "arguments": args,
+                "result": {"uncertain": True},
+                "error": "connection lost",
+            }
+        ]
+        current.step_count = 1
+    monkeypatch.setattr(goal_runner, "decide_goal", lambda **kwargs: decision("save_watch", args))
+    assert await goal_runner.advance_goal(goal.id) == "blocked"
+    assert "uncertain" in get_goal(goal.id).summary
+
+
+def test_legacy_secret_revalidation_and_revocation(saved):
+    goal = receipt(saved[0])
+    token = "fixture-token-for-durable-goals"
+    saved[1].control_api_token = SecretStr(token)
+    digest = hashlib.sha256(token.encode()).hexdigest()[:12]
+    goal.authority = {
+        **goal.authority,
+        "actor": f"control-token:{digest}",
+        "credential_fingerprint": digest,
+    }
+    scopes, resolved = resolve_goal_authority(goal)
+    assert resolved == token
+    assert scopes
+    saved[1].control_api_token = SecretStr("rotated-fixture-token")
+    with pytest.raises(ValueError, match="changed"):
+        resolve_goal_authority(goal)
+
+
+def test_saved_api_retry_dispatches_same_workflow_and_cancel(saved, monkeypatch):
+    starts = []
+
+    async def start(*args, **kwargs):
+        starts.append(kwargs["id"])
+
+    async def client():
+        return SimpleNamespace(start_workflow=start)
+
+    monkeypatch.setattr(goal_api, "get_temporal_client", client)
+    request = {
+        "command_id": str(uuid.uuid4()),
+        "channel_profile_id": str(saved[0]),
+        "prompt": "Please inspect my channel",
+    }
+    with TestClient(app) as api:
+        first = api.post("/v1/ai/goals", json=request)
+        second = api.post("/v1/ai/goals", json=request)
+        assert first.status_code == second.status_code == 202
+        assert first.json()["goal_id"] == second.json()["goal_id"]
+        assert starts[0] == starts[1]
+        goal_id = first.json()["goal_id"]
+        assert api.post(f"/v1/ai/goals/{goal_id}/cancel").json()["status"] == "cancelled"
+        assert api.get(f"/v1/ai/goals/{goal_id}").json()["status"] == "cancelled"
+
+
+async def test_background_running_waits_before_next_model_decision(saved, monkeypatch):
+    from temporalio.client import WorkflowExecutionStatus
+
+    goal = receipt(saved[0])
+    with db.session_scope() as session:
+        session.add(
+            CommandGoalStep(
+                id=uuid.uuid4(),
+                goal_id=goal.id,
+                number=0,
+                decision=decision(
+                    "refresh_intelligence", allowed=["refresh_intelligence"]
+                ).model_dump(),
+                status="waiting_workflow",
+                result={"workflow_id": "fixture-workflow"},
+            )
+        )
+
+    async def describe():
+        return SimpleNamespace(status=WorkflowExecutionStatus.RUNNING)
+
+    async def client():
+        return SimpleNamespace(get_workflow_handle=lambda _: SimpleNamespace(describe=describe))
+
+    monkeypatch.setattr("katcha.orchestration.client.get_temporal_client", client)
+    monkeypatch.setattr(goal_runner, "decide_goal", lambda **kwargs: pytest.fail("Too early"))
+    assert await goal_runner.advance_goal(goal.id) == "waiting_workflow"
+    assert get_goal(goal.id).step_count == 0
+
+
+async def test_publish_always_waits_for_exact_confirmation(saved, monkeypatch):
+    goal = receipt(saved[0], "Publish the prepared short")
+    monkeypatch.setattr(
+        goal_runner,
+        "decide_goal",
+        lambda **kwargs: decision("publish_production", {}, allowed=["publish_production"]),
+    )
+    assert await goal_runner.advance_goal(goal.id) == "waiting_confirmation"
+    assert get_goal(goal.id).result["actions"][0]["requires_confirmation"]
+
+
+async def test_mutating_goal_cannot_claim_success_without_observed_execution(saved, monkeypatch):
+    goal = receipt(saved[0])
+    monkeypatch.setattr(
+        goal_runner,
+        "decide_goal",
+        lambda **kwargs: decision(outcome="complete", allowed=["save_watch"]),
+    )
+    assert await goal_runner.advance_goal(goal.id) == "blocked"
+    assert "no observed" in get_goal(goal.id).summary
+
+
+def test_named_native_channel_boundaries_and_revocation(saved, monkeypatch):
+    from katcha.config import ControlPrincipalSettings
+
+    token = "named-goal-fixture-token-1234"
+    principal = ControlPrincipalSettings(
+        name="goal-operator",
+        token=token,
+        scopes=["ai:read", "ai:command", "ai:write", "trends:read", "trends:write"],
+        channel_profile_ids=[str(saved[0])],
+    )
+    saved[1].control_principals = [principal]
+    with TestClient(app) as api:
+        headers = {"Authorization": f"Bearer {token}"}
+        blocked = api.post(
+            f"/v1/channels/{uuid.uuid4()}/trends/watches",
+            headers=headers,
+            json={"watch_key": "blocked", "name": "Outside channel"},
+        )
+        assert blocked.status_code == 403
+        allowed = api.post(
+            f"/v1/channels/{saved[0]}/trends/watches",
+            headers=headers,
+            json={"watch_key": "allowed", "name": "Own channel"},
+        )
+        assert allowed.status_code == 201
+        unfiltered = api.get("/v1/discovery/sources", headers=headers)
+        assert unfiltered.status_code == 403
+    credential = principal.resolved_credentials()[0]
+    goal = receipt(saved[0])
+    goal.authority = {
+        "actor": "control-principal:goal-operator",
+        "scopes": principal.scopes,
+        "principal_name": principal.name,
+        "credential_id": credential.id,
+        "credential_fingerprint": hashlib.sha256(token.encode()).hexdigest()[:12],
+        "channel_ids": [str(saved[0])],
+    }
+    assert "trends:write" in resolve_goal_authority(goal)[0]
+    principal.scopes = ["ai:read"]
+    with pytest.raises(ValueError, match="permissions"):
+        resolve_goal_authority(goal)
+
+
+async def test_completed_background_outcome_is_available_to_next_decision(saved, monkeypatch):
+    from temporalio.client import WorkflowExecutionStatus
+
+    goal = receipt(saved[0], "Refresh learning then explain its result")
+    with db.session_scope() as session:
+        session.add(
+            CommandGoalStep(
+                id=uuid.uuid4(),
+                goal_id=goal.id,
+                number=0,
+                decision=decision("refresh_intelligence").model_dump(),
+                status="waiting_workflow",
+                result={"workflow_id": "fixture-completed-workflow"},
+            )
+        )
+
+    async def describe():
+        return SimpleNamespace(status=WorkflowExecutionStatus.COMPLETED)
+
+    async def result():
+        return {"records": 7, "completed": True}
+
+    async def client():
+        return SimpleNamespace(
+            get_workflow_handle=lambda _: SimpleNamespace(describe=describe, result=result)
+        )
+
+    monkeypatch.setattr("katcha.orchestration.client.get_temporal_client", client)
+    assert await goal_runner.advance_goal(goal.id) == "running"
+    contexts = []
+
+    def planner(**kwargs):
+        contexts.append(kwargs["context"])
+        return decision(outcome="complete")
+
+    monkeypatch.setattr(goal_runner, "decide_goal", planner)
+    assert await goal_runner.advance_goal(goal.id) == "completed"
+    assert contexts[0]["observations"][0]["result"]["workflow_result"]["records"] == 7
+
+
+async def test_pending_decision_survives_retry_without_new_inference(saved, monkeypatch):
+    goal = receipt(saved[0])
+    with db.session_scope() as session:
+        session.add(
+            CommandGoalStep(
+                id=uuid.uuid4(),
+                goal_id=goal.id,
+                number=0,
+                decision=decision("channel_state").model_dump(),
+                status="planned",
+                result={},
+            )
+        )
+    monkeypatch.setattr(goal_runner, "decide_goal", lambda **kwargs: pytest.fail("Already saved"))
+    assert await goal_runner.advance_goal(goal.id) == "running"
+    assert get_goal(goal.id).step_count == 1
+
+
+def test_workflow_cancellation_rejects_unobserved_target(saved):
+    from katcha.services.goal_tools import action_spec
+
+    goal = receipt(saved[0], "Stop that workflow")
+    with pytest.raises(ValueError, match="not observed"):
+        action_spec(
+            goal, "cancel_workflow", {"workflow_id": "another-channel-workflow"}, uuid.uuid4()
+        )
+
+
+async def test_workflow_cancellation_is_confirmed_then_uses_exact_saved_target(saved, monkeypatch):
+    from katcha.services.goal_tools import run_native_tool
+
+    goal = receipt(saved[0], "Cancel this work")
+    with db.session_scope() as session:
+        current = session.get(CommandGoal, goal.id)
+        current.observations = [
+            {
+                "step": 0,
+                "tool": "refresh_intelligence",
+                "result": {"workflow_id": "observed-fixture-workflow"},
+            }
+        ]
+    goal = get_goal(goal.id)
+    cancelled = []
+
+    async def cancel():
+        cancelled.append("observed-fixture-workflow")
+
+    async def client():
+        return SimpleNamespace(get_workflow_handle=lambda value: SimpleNamespace(cancel=cancel))
+
+    monkeypatch.setattr("katcha.orchestration.client.get_temporal_client", client)
+    result = await run_native_tool(
+        goal, "cancel_workflow", {"workflow_id": "observed-fixture-workflow"}, uuid.uuid4()
+    )
+    assert result["cancellation_requested"]
+    assert cancelled == ["observed-fixture-workflow"]
+    assert TOOLS["cancel_workflow"].confirm
+
+
+async def test_background_connection_outage_keeps_saved_goal_resumable(saved, monkeypatch):
+    goal = receipt(saved[0])
+    with db.session_scope() as session:
+        session.add(
+            CommandGoalStep(
+                id=uuid.uuid4(),
+                goal_id=goal.id,
+                number=0,
+                decision=decision("refresh_intelligence").model_dump(),
+                status="waiting_workflow",
+                result={"workflow_id": "offline-fixture-workflow"},
+            )
+        )
+
+    async def client():
+        raise ConnectionError("Temporary Temporal outage")
+
+    monkeypatch.setattr("katcha.orchestration.client.get_temporal_client", client)
+    assert await goal_runner.advance_goal(goal.id) == "waiting_workflow"
+    assert get_goal(goal.id).step_count == 0
+
+
+async def test_completed_workflow_with_failed_native_result_is_not_success(saved, monkeypatch):
+    from temporalio.client import WorkflowExecutionStatus
+
+    goal = receipt(saved[0])
+    with db.session_scope() as session:
+        session.add(
+            CommandGoalStep(
+                id=uuid.uuid4(),
+                goal_id=goal.id,
+                number=0,
+                decision=decision("refresh_intelligence").model_dump(),
+                status="waiting_workflow",
+                result={"workflow_id": "failed-fixture-workflow"},
+            )
+        )
+
+    async def describe():
+        return SimpleNamespace(status=WorkflowExecutionStatus.COMPLETED)
+
+    async def result():
+        return {"status": "failed", "error": "Native stage failed"}
+
+    async def client():
+        return SimpleNamespace(
+            get_workflow_handle=lambda _: SimpleNamespace(describe=describe, result=result)
+        )
+
+    monkeypatch.setattr("katcha.orchestration.client.get_temporal_client", client)
+    assert await goal_runner.advance_goal(goal.id) == "running"
+    assert get_goal(goal.id).observations[0]["error"] == "Native stage failed"
+
+
+def test_failed_goal_workflow_reconciles_saved_progress(saved, monkeypatch):
+    from temporalio.client import WorkflowExecutionStatus
+
+    goal = receipt(saved[0])
+
+    async def describe():
+        return SimpleNamespace(status=WorkflowExecutionStatus.FAILED)
+
+    async def client():
+        return SimpleNamespace(get_workflow_handle=lambda _: SimpleNamespace(describe=describe))
+
+    monkeypatch.setattr(goal_api, "get_temporal_client", client)
+    with TestClient(app) as api:
+        response = api.get(f"/v1/ai/goals/{goal.id}")
+    assert response.status_code == 200
+    assert response.json()["status"] == "failed"
+    assert response.json()["error"] == "FAILED"
+
+
+def test_publication_ownership_uses_channel_connection_for_reads_and_mutations(saved):
+    from katcha.publishing_models import Publication
+    from katcha.services.goal_tools import require_native_resource_channels
+
+    own, outside = uuid.uuid4(), uuid.uuid4()
+    with db.session_scope() as session:
+        profile = session.get(ChannelProfile, saved[0])
+        for identity, connection in [(own, profile.youtube_connection_id), (outside, uuid.uuid4())]:
+            session.add(
+                Publication(
+                    id=identity,
+                    production_id=uuid.uuid4(),
+                    youtube_connection_id=connection,
+                    workflow_id=f"publication-{identity}",
+                    analytics_workflow_id=f"analytics-{identity}",
+                    title="Publication fixture",
+                )
+            )
+    for tool in [TOOLS["publication"], TOOLS["refresh_analytics"]]:
+        request = SimpleNamespace(
+            path_params={"publication_id": str(own)},
+            state=SimpleNamespace(control_channel_profile_ids={str(saved[0])}),
+        )
+        require_native_resource_channels(request, tool)
+        request.path_params["publication_id"] = str(outside)
+        with pytest.raises(ValueError, match="assigned|outside"):
+            require_native_resource_channels(request, tool)
+
+
+async def test_semantic_source_search_uses_native_query_and_channel_boundary(saved):
+    from katcha.acquisition_models import IngestionSource
+    from katcha.services.goal_tools import run_read_tool
+
+    goal = receipt(saved[0], "Find Marvel's official channel")
+    expected = uuid.uuid4()
+    with db.session_scope() as session:
+        for index in range(80):
+            session.add(
+                IngestionSource(
+                    source_key=f"unrelated-{index}",
+                    name=f"Source {index}",
+                    channel_profile_id=saved[0],
+                    adapter_key="youtube",
+                    adapter_version="v1",
+                    platform="youtube",
+                )
+            )
+        session.add(
+            IngestionSource(
+                id=expected,
+                source_key="marvel",
+                name="Marvel Entertainment",
+                channel_profile_id=saved[0],
+                adapter_key="youtube",
+                adapter_version="v1",
+                platform="youtube",
+            )
+        )
+        session.add(
+            IngestionSource(
+                source_key="other-marvel",
+                name="Marvel Entertainment",
+                channel_profile_id=uuid.uuid4(),
+                adapter_key="youtube",
+                adapter_version="v1",
+                platform="youtube",
+            )
+        )
+    result = await run_read_tool(goal, "source_library", {"query": {"q": "Marvel", "limit": 5}})
+    assert result["total"] == 1
+    assert [item["id"] for item in result["items"]] == [str(expected)]
+
+
+def test_native_evidence_redacts_credentials_and_discloses_truncation():
+    from katcha.services.goal_tools import _redact
+
+    result = _redact(
+        {
+            "headers": {"Authorization": "Bearer fixture-secret", "Cookie": "session=fixture"},
+            "api_key": "fixture-key",
+            "items": list(range(60)),
+        }
+    )
+    assert result["headers"] == {}
+    assert "api_key" not in result
+    assert result["_truncated_fields"] == ["items"]
+
+
+async def test_selected_clip_details_enter_first_decision_and_answer_evidence(saved, monkeypatch):
+    from katcha.models import Clip, ClipFeature, SourceItem
+
+    identity = uuid.uuid4()
+    with db.session_scope() as session:
+        session.add(Clip(id=identity, sha256="a" * 64, storage_key="fixture.mp4"))
+        session.add(
+            ClipFeature(clip_id=identity, candidate_score=80, score_breakdown={"novelty": 0.9})
+        )
+        session.add(
+            SourceItem(
+                clip_id=identity,
+                source_url="https://example.test/clip",
+                canonical_url="https://example.test/clip",
+                platform="youtube",
+                title="Xbox comeback",
+                source_metadata={"channel_profile_id": str(saved[0])},
+            )
+        )
+    original = receipt(saved[0], "Why is this selected clip promising?")
+    goal = register_goal(
+        uuid.uuid4(), {**original.request, "selected_clip_ids": [str(identity)]}, original.authority
+    )
+    seen = []
+
+    def planner(**kwargs):
+        seen.append(kwargs["context"])
+        return decision(outcome="complete", mode="inspect")
+
+    monkeypatch.setattr(goal_runner, "decide_goal", planner)
+    assert await goal_runner.advance_goal(goal.id) == "completed"
+    evidence = seen[0]["selected_resources"][0]
+    assert evidence["title"] == "Xbox comeback"
+    assert evidence["candidate_score"] == 80
+    assert get_goal(goal.id).result["evidence"][0]["id"] == str(identity)

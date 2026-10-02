@@ -19,6 +19,7 @@ CONTROL_CAPABILITY_SCOPES: dict[str, str] = {
 }
 
 COMMAND_ACTION_SCOPES: dict[str, str] = {
+    "native_tool": "ai:write",
     "refresh_channel_intelligence": "intelligence:write",
     "create_short_production": "production:create",
     "create_ranked_short_episode": "production:create",

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 
 from sqlalchemy import select
@@ -54,6 +54,7 @@ class ActionActivity:
     state: str
     settled: bool
     events: tuple[dict[str, object], ...]
+    workflow_detail: dict[str, object] = field(default_factory=dict)
 
 
 def _uuid_result(
@@ -282,6 +283,9 @@ def get_action_activity(
             _WORKFLOW_TERMINAL_EVENTS,
         )
         state, settled = _state(proposal, resource, terminal_event)
+        terminal_payload = dict(terminal_event.payload or {}) if terminal_event else {}
+        raw_detail = terminal_payload.get("detail")
+        workflow_detail = dict(raw_detail) if isinstance(raw_detail, dict) else {}
         result = dict(proposal.result or {})
         workflow_id = (
             str(result["workflow_id"]) if result.get("workflow_id") else None
@@ -300,4 +304,5 @@ def get_action_activity(
             state=state,
             settled=settled,
             events=events,
+            workflow_detail=workflow_detail,
         )
