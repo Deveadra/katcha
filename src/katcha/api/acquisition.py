@@ -282,6 +282,13 @@ class SourceRecentFindResponse(BaseModel):
     observed_at: datetime
 
 
+class SourceFindPageResponse(BaseModel):
+    total: int
+    limit: int
+    offset: int
+    items: list[SourceRecentFindResponse]
+
+
 class SourceOverviewResponse(BaseModel):
     source: IngestionSourceResponse
     channel_name: str | None
@@ -481,6 +488,41 @@ def get_source_library(
         items=[
             IngestionSourceResponse.model_validate(row)
             for row in result.items
+        ],
+    )
+
+
+@router.get(
+    "/discovery/sources/{source_id}/finds",
+    response_model=SourceFindPageResponse,
+)
+def get_source_finds(
+    source_id: uuid.UUID,
+    q: str | None = Query(default=None, max_length=200),
+    candidate_status: str | None = Query(default=None, alias="status", max_length=32),
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+) -> SourceFindPageResponse:
+    try:
+        page = list_source_finds(
+            source_id,
+            query=q,
+            status=candidate_status,
+            limit=limit,
+            offset=offset,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return SourceFindPageResponse(
+        total=page.total,
+        limit=page.limit,
+        offset=page.offset,
+        items=[
+            SourceRecentFindResponse(
+                candidate=DiscoveryCandidateResponse.model_validate(item.candidate),
+                observed_at=item.observed_at,
+            )
+            for item in page.items
         ],
     )
 
