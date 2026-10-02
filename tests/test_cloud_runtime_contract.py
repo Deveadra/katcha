@@ -90,6 +90,7 @@ def test_production_compose_is_remote_and_immutable() -> None:
     assert "\n  minio:" not in compose
     assert 'profiles: ["local-heavy-analysis"]' in compose
     assert "/srv/katcha/postgres:/var/lib/postgresql/data" in compose
+    assert "/etc/katcha/aws:/home/katcha/.aws:ro" in compose
 
 
 def test_oracle_control_plane_images_are_multiarch() -> None:
@@ -108,6 +109,10 @@ def test_oracle_control_plane_images_are_multiarch() -> None:
 
 def test_systemd_requires_durable_mount_and_restarts_supervisor() -> None:
     unit = (ROOT / "deploy" / "systemd" / "katcha.service").read_text()
+    supervisor = (ROOT / "deploy" / "scripts" / "production-supervisor.sh").read_text()
     assert "RequiresMountsFor=/srv/katcha" in unit
     assert "Restart=on-failure" in unit
     assert "production-supervisor.sh" in unit
+    assert "mountpoint -q" in supervisor
+    assert "/etc/katcha/aws/config" in supervisor
+    assert "docker-compose.aws-roles-anywhere.yml" not in supervisor

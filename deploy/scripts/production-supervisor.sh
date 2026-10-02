@@ -19,6 +19,11 @@ for directory in postgres handoff recovery backups-local; do
   fi
 done
 
+if [[ ! -r /etc/katcha/aws/config ]]; then
+  echo "Missing readable hosted AWS profile at /etc/katcha/aws/config; refusing to start." >&2
+  exit 22
+fi
+
 python3 scripts/validate_production_runtime.py --env-file "${ENV_FILE}"
 
 compose=(
@@ -27,10 +32,6 @@ compose=(
   --env-file "${ENV_FILE}"
   -f deploy/docker-compose.production.yml
 )
-
-if [[ -n "${KATCHA_AWS_SIGNING_HELPER_PATH:-}" ]]; then
-  compose+=(-f docker-compose.aws-roles-anywhere.yml)
-fi
 
 "${compose[@]}" config --quiet
 "${compose[@]}" pull

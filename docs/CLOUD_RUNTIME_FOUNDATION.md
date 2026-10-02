@@ -15,7 +15,8 @@ This document is the implementation checkpoint for moving Katcha away from a loc
 - MinIO is not part of hosted production. Katcha uses its existing S3-compatible storage abstraction against Cloudflare R2.
 - Rendering is required to use the existing Remotion Lambda backend. The bounded renderer container remains a dispatch/poll gateway; video encoding is not allowed to run locally in hosted production.
 - Heavy local analysis is behind the explicit `local-heavy-analysis` profile and is disabled by default until the on-demand external-analysis backend is implemented.
-- A systemd service starts the production compose supervisor at boot and requires the durable volume.
+- Hosted AWS authentication is normalized under `/etc/katcha/aws`, mounted read-only into the renderer gateway. This avoids depending on the local launcher's host-specific AWS paths.
+- A systemd service starts the production compose supervisor at boot and requires both the durable volume and a readable hosted AWS profile.
 - Production configuration is fail-closed against known local defaults and placeholders.
 
 ## Current runtime inventory
@@ -100,10 +101,11 @@ The supervisor:
 
 1. refuses startup unless `/srv/katcha` is a real mount,
 2. refuses startup when durable subdirectories are missing,
-3. validates the production environment without printing secrets,
-4. validates the compose graph,
-5. pulls exact release-SHA images,
-6. starts Compose in the foreground so systemd can supervise it.
+3. requires a readable hosted AWS profile at `/etc/katcha/aws/config`,
+4. validates the production environment without printing secrets,
+5. validates the compose graph,
+6. pulls exact release-SHA images,
+7. starts Compose in the foreground so systemd can supervise it.
 
 Docker restart policies recover individual services. systemd recovers the compose supervisor. The later external watchdog recovers the VM itself.
 

@@ -170,6 +170,11 @@ services:
       AWS_SDK_LOAD_CONFIG: "1"
       AWS_REGION: ${KATCHA_REMOTION_LAMBDA_REGION:-us-east-1}
       AWS_DEFAULT_REGION: ${KATCHA_REMOTION_LAMBDA_REGION:-us-east-1}
+    volumes:
+      # Hosted AWS auth is normalized under /etc/katcha/aws. The profile may
+      # use Roles Anywhere credential_process with cert/key/helper files kept
+      # in this directory and referenced by their container paths.
+      - /etc/katcha/aws:/home/katcha/.aws:ro
     healthcheck:
       test:
         [
