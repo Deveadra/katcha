@@ -90,9 +90,9 @@ async def test_production_worker_reconciles_persisted_execution_stages(
         call[2]["id"]: call
         for call in client.calls
     }
-    assert calls["production-prod-1"][1][0] == ["prod-1", "voice"]
-    assert calls["episode-base-editorial-render"][1][0] == ["episode-1", "render"]
-    assert calls["compilation-comp-1"][1][0] == ["comp-1", "render"]
+    assert calls["production-prod-1"][2]["args"] == ["prod-1", "voice"]
+    assert calls["episode-base-editorial-render"][2]["args"] == ["episode-1", "render"]
+    assert calls["compilation-comp-1"][2]["args"] == ["comp-1", "render"]
 
 
 @pytest.mark.asyncio
@@ -133,7 +133,7 @@ async def test_ingest_worker_reconciles_ingest_and_publication(
     assert present == 1
     calls = {call[2]["id"]: call for call in client.calls}
     assert calls["ingest-source-1"][1][0] == "source-1"
-    assert calls["publish-publication-1"][1][0] == [
+    assert calls["publish-publication-1"][2]["args"] == [
         "publication-1",
         20,
         10,
@@ -176,4 +176,4 @@ async def test_analysis_worker_reconciles_queued_and_running_analysis(
         "analysis-workflow-1",
         "analysis-workflow-2",
     ]
-    assert all(call[1][0][1] is True for call in client.calls)
+    assert all(call[2]["args"][1] is True for call in client.calls)
