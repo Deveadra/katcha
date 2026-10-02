@@ -869,15 +869,21 @@ def test_launcher_serves_workspace_shell_without_api(tmp_path):
         response = connection.getresponse()
         body = response.read()
         assert response.status == 200
-        assert b'href="styles.css"' in body
-        assert b'href="pages/trends-aerith.css"' in body
-        assert b'src="explorer.js"' in body
-        connection.request("GET", "/explorer/assets/pages/trends-aerith.css")
-        response = connection.getresponse()
-        body = response.read()
-        assert response.status == 200
-        assert response.getheader("Content-Type").startswith("text/css")
-        assert b".trends-workspace-header" in body
+        assert b'href="/styles.css"' in body
+        assert b'href="/pages/trends-aerith.css"' in body
+        assert b'src="/explorer.js"' in body
+        for asset in (
+            "/styles.css",
+            "/explorer-refresh.css",
+            "/system/aerith-base.css",
+            "/pages/trends-aerith.css",
+        ):
+            connection.request("GET", asset)
+            response = connection.getresponse()
+            asset_body = response.read()
+            assert response.status == 200, asset
+            assert response.getheader("Content-Type").startswith("text/css"), asset
+            assert asset_body, asset
         connection.request("GET", "/launcher-bridge.js")
         response = connection.getresponse()
         body = response.read()
@@ -957,6 +963,30 @@ def test_launcher_serves_workspace_shell_without_api(tmp_path):
         assert response.status == 200
         assert b"Continue with ChatGPT" in body
         connection.close()
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_workspace_css_mime_does_not_depend_on_host_mime_database(tmp_path):
+    app = instance(tmp_path)
+    server = runtime.ThreadingHTTPServer(("127.0.0.1", 0), runtime.Handler)
+    server.runtime = app
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        with patch.object(runtime.mimetypes, "guess_type", return_value=(None, None)):
+            connection = http.client.HTTPConnection("127.0.0.1", server.server_port)
+            for asset in (
+                "/styles.css",
+                "/pages/trends-aerith.css",
+                "/explorer/assets/styles.css",
+            ):
+                connection.request("GET", asset)
+                response = connection.getresponse()
+                response.read()
+                assert response.status == 200, asset
+                assert response.getheader("Content-Type") == "text/css; charset=utf-8", asset
+            connection.close()
     finally:
         server.shutdown()
         server.server_close()
