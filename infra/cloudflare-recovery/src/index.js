@@ -440,7 +440,7 @@ export class RecoveryAuthority extends DurableObject {
     let body = payload;
     if (provider === "github") {
       headers.Accept = "application/vnd.github+json";
-      headers["X-GitHub-Api-Version"] = "2022-11-28";
+      headers["X-GitHub-Api-Version"] = "2026-03-10";
       body = {
         event_type: "katcha-recovery",
         client_payload: payload,
