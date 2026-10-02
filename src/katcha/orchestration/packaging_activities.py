@@ -282,6 +282,8 @@ def finalize_packaging_activation_activity(activation_id: str) -> dict[str, obje
             "variant_key": variant.variant_key,
             "version": variant.version,
             "title": variant.title,
+            "tags": list(variant.tags or []),
+            "hashtags": list(variant.hashtags or []),
             "thumbnail_storage_key": variant.thumbnail_storage_key,
             "thumbnail_sha256": variant.thumbnail_sha256,
             "activated_at": now.isoformat(),
