@@ -950,7 +950,7 @@ function renderHandoffInbox() {
             '<div><span class="handoff-status">' + esc(state) + '</span><small>' + esc(formatWhen(item.modified_at)) + '</small></div></div>' +
             error +
         '</article>';
-    }).join('') : '<div class="empty-state handoff-empty"><span aria-hidden="true">⇢</span><h3>No handoffs yet</h3><p>Import a batch file here, or drop one into the local inbox folder.</p></div>';
+    }).join('') : '<div class="empty-state handoff-empty"><span aria-hidden="true">✓</span><h3>Inbox clear</h3><p>No pending or failed handoffs need attention. Successful imports are archived automatically.</p></div>';
 }
 
 async function refreshHandoffInbox() {
