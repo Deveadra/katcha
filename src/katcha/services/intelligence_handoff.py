@@ -134,16 +134,50 @@ def list_handoff_inbox(
     root: Path | None = None,
     limit: int = 100,
 ) -> list[HandoffInboxItem]:
+    """Return only actionable handoffs.
+
+    Successfully processed files are archived under the processed directory and
+    intentionally excluded from the active inbox. Durable receipts and database
+    records remain available for audit/history.
+    """
     if limit < 1 or limit > 500:
         raise ValueError("limit must be between 1 and 500")
     paths = _paths(root)
     items: list[HandoffInboxItem] = []
-    for status in ("incoming", "failed", "processed"):
+    for status in ("incoming", "failed"):
         for path in paths[status].glob("*.json"):
             if _is_regular_handoff_file(path):
                 items.append(_file_item(path, status, paths))
     items.sort(key=lambda item: (item.modified_at, item.filename), reverse=True)
     return items[:limit]
+
+
+def _archive_destination(
+    paths: dict[str, Path],
+    filename: str,
+    *,
+    batch_key: str,
+    content_sha256: str,
+) -> Path:
+    """Return a collision-safe processed archive path."""
+    direct = paths["processed"] / filename
+    if not direct.exists():
+        return direct
+    stem = Path(filename).stem
+    suffix = Path(filename).suffix
+    safe_batch = re.sub(r"[^A-Za-z0-9._-]+", "-", batch_key).strip("-._")[:80]
+    digest = content_sha256[:12]
+    candidate = paths["processed"] / f"{stem}.{safe_batch or 'batch'}.{digest}{suffix}"
+    if not candidate.exists():
+        return candidate
+    counter = 2
+    while True:
+        alternate = paths["processed"] / (
+            f"{stem}.{safe_batch or 'batch'}.{digest}.{counter}{suffix}"
+        )
+        if not alternate.exists():
+            return alternate
+        counter += 1
 
 
 def submit_handoff_file(
@@ -158,16 +192,14 @@ def submit_handoff_file(
     if len(content) > _MAX_HANDOFF_BYTES:
         raise ValueError("handoff file exceeds the 10 MiB limit")
     paths = _paths(root)
-    for status in ("incoming", "processed", "failed"):
-        existing = paths[status] / safe_name
-        if not existing.exists():
-            continue
+    existing = paths["incoming"] / safe_name
+    if existing.exists():
         existing_bytes = _read_limited(existing)
         if hashlib.sha256(existing_bytes).digest() != hashlib.sha256(content).digest():
             raise ValueError(
-                "a handoff file with this name already exists with different content"
+                "a pending handoff file with this name already exists with different content"
             )
-        return _file_item(existing, status, paths)
+        return _file_item(existing, "incoming", paths)
     target = paths["incoming"] / safe_name
     _write_atomic(target, content)
     return _file_item(target, "incoming", paths)
@@ -253,11 +285,19 @@ def process_handoff_file(
             batch_metadata=parsed.batch_metadata,
             records=[item.model_dump(mode="python") for item in parsed.records],
         )
-        receipt = _write_receipt(
+        destination = _archive_destination(
             paths,
             safe_name,
+            batch_key=result.batch.batch_key,
+            content_sha256=result.batch.content_sha256,
+        )
+        archive_name = destination.name
+        receipt = _write_receipt(
+            paths,
+            archive_name,
             {
                 "filename": safe_name,
+                "archive_filename": archive_name,
                 "status": "processed",
                 "channel_profile_id": str(result.batch.channel_profile_id),
                 "batch_id": str(result.batch.id),
@@ -273,7 +313,6 @@ def process_handoff_file(
                 "processed_at": datetime.now(UTC).isoformat(),
             },
         )
-        destination = paths["processed"] / safe_name
         os.replace(source, destination)
         return HandoffInboxItem(
             filename=safe_name,
