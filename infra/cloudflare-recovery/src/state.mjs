@@ -110,6 +110,7 @@ export function markCandidateReady(
     "runtime_ready",
     "durable_state_ready",
     "fence_probe_ready",
+    "public_route_ready",
   ]) {
     if (checks[name] !== true) {
       throw new StateConflict(`candidate readiness check failed: ${name}`, 422);
