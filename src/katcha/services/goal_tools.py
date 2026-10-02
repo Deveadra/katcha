@@ -44,8 +44,9 @@ TOOLS = {
     for tool in [
         GoalTool(
             "start_editorial_analysis",
-            "Acquire brief sources and prepare sampled frames/transcript in a durable run. "
-            "Does not yet perform native-video interpretation or research.",
+            "Start durable editorial work: target=analysis prepares sampled frames/transcript; "
+            "target=script interprets sources, researches evidence and drafts a cited script. "
+            "Research requires a live eligible provider; generation is not publication approval.",
             "production:create", "POST",
             "/v1/channels/{channel_profile_id}/editorial-projects/{project_id}/runs",
             retry_safe=True,

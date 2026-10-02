@@ -8,6 +8,7 @@ import uuid
 
 from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import Session
 
 from katcha.db import session_scope
 from katcha.editorial.project_schemas import CreateEditorialProject, SaveEditorialDraft
@@ -87,66 +88,78 @@ def create_project(
 def save_draft(
     channel_id: uuid.UUID, project_id: uuid.UUID, request: SaveEditorialDraft, *, actor: str
 ) -> EditorialRevision:
+    with session_scope() as session:
+        return save_draft_in_session(session, channel_id, project_id, request, actor=actor)
+
+
+def save_draft_in_session(
+    session: Session,
+    channel_id: uuid.UUID,
+    project_id: uuid.UUID,
+    request: SaveEditorialDraft,
+    *,
+    actor: str,
+) -> EditorialRevision:
+    """Shared transaction boundary for draft storage and workflow completion."""
     draft = request.draft.model_dump(mode="json")
     digest = _digest(draft)
     request_digest = _digest(request.model_dump(mode="json"))
     request_id = uuid.uuid5(project_id, f"editorial-save:{request.idempotency_key}")
-    with session_scope() as session:
-        ensure_active_profile(session, channel_id)
-        project = session.get(EditorialProject, project_id)
-        if project is None or project.channel_profile_id != channel_id:
-            raise EditorialNotFound("Editorial project not found in this channel")
-        observed_urls = {str(item.source_url) for item in request.draft.observations}
-        if not observed_urls <= set(project.brief["source_urls"]):
-            raise EditorialConflict("Observations must reference a source URL in the project brief")
-        # Acquire the project row before checking replay, including concurrent retries.
-        session.execute(
-            update(EditorialProject)
-            .where(EditorialProject.id == project_id)
-            .values(revision=EditorialProject.revision, updated_at=EditorialProject.updated_at)
+    ensure_active_profile(session, channel_id)
+    project = session.get(EditorialProject, project_id)
+    if project is None or project.channel_profile_id != channel_id:
+        raise EditorialNotFound("Editorial project not found in this channel")
+    observed_urls = {str(item.source_url) for item in request.draft.observations}
+    if not observed_urls <= set(project.brief["source_urls"]):
+        raise EditorialConflict("Observations must reference a source URL in the project brief")
+    # Acquire the project row before checking replay, including concurrent retries.
+    session.execute(
+        update(EditorialProject)
+        .where(EditorialProject.id == project_id)
+        .values(revision=EditorialProject.revision, updated_at=EditorialProject.updated_at)
+    )
+    previous = session.scalar(
+        select(EditorialRevision).where(EditorialRevision.request_id == request_id)
+    )
+    if previous is not None:
+        if previous.request_digest != request_digest:
+            raise EditorialConflict("Save identity was already used for a different revision")
+        session.expunge(previous)
+        return previous
+    result = session.execute(
+        update(EditorialProject)
+        .where(
+            EditorialProject.id == project_id,
+            EditorialProject.revision == request.expected_revision,
         )
-        previous = session.scalar(
-            select(EditorialRevision).where(EditorialRevision.request_id == request_id)
+        .values(revision=request.expected_revision + 1)
+    )
+    if result.rowcount != 1:
+        raise EditorialConflict("Draft changed; reload the current revision before saving")
+    row = EditorialRevision(
+        project_id=project_id,
+        revision=request.expected_revision + 1,
+        request_id=request_id,
+        request_digest=request_digest,
+        digest=digest,
+        draft=draft,
+        actor=actor,
+    )
+    session.add(row)
+    session.add(
+        DomainEvent(
+            aggregate_type="editorial_project",
+            aggregate_id=str(project_id),
+            event_type="editorial.draft_saved",
+            payload={
+                "channel_profile_id": str(channel_id),
+                "revision": row.revision,
+                "digest": digest,
+                "actor": actor,
+            },
         )
-        if previous is not None:
-            if previous.request_digest != request_digest:
-                raise EditorialConflict("Save identity was already used for a different revision")
-            session.expunge(previous)
-            return previous
-        result = session.execute(
-            update(EditorialProject)
-            .where(
-                EditorialProject.id == project_id,
-                EditorialProject.revision == request.expected_revision,
-            )
-            .values(revision=request.expected_revision + 1)
-        )
-        if result.rowcount != 1:
-            raise EditorialConflict("Draft changed; reload the current revision before saving")
-        row = EditorialRevision(
-            project_id=project_id,
-            revision=request.expected_revision + 1,
-            request_id=request_id,
-            request_digest=request_digest,
-            digest=digest,
-            draft=draft,
-            actor=actor,
-        )
-        session.add(row)
-        session.add(
-            DomainEvent(
-                aggregate_type="editorial_project",
-                aggregate_id=str(project_id),
-                event_type="editorial.draft_saved",
-                payload={
-                    "channel_profile_id": str(channel_id),
-                    "revision": row.revision,
-                    "digest": digest,
-                    "actor": actor,
-                },
-            )
-        )
-        session.flush()
-        session.refresh(row)
-        session.expunge(row)
-        return row
+    )
+    session.flush()
+    session.refresh(row)
+    session.expunge(row)
+    return row

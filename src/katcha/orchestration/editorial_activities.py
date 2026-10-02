@@ -18,6 +18,7 @@ def editorial_begin(run_id: str, attempt: int) -> dict:
     row = checkpoint(run_id, attempt)
     settings = get_settings()
     return {
+        "target": row.options.get("target", "analysis"),
         "source_count": len(row.artifacts["brief"]["source_urls"]),
         "ingest_queue": settings.temporal_task_queue,
         "analysis_queue": settings.temporal_analysis_task_queue,
@@ -133,8 +134,9 @@ def editorial_finish_intake(run_id: str, attempt: int) -> dict:
     row = checkpoint(run_id, attempt)
     if len(row.artifacts.get("source_snapshots", {})) != len(row.artifacts["brief"]["source_urls"]):
         raise ValueError("Source analysis is incomplete")
-    checkpoint(run_id, attempt, stage="analysis_ready", status="completed")
-    return {"editorial_run_id": run_id, "status": "completed", "stage": "analysis_ready"}
+    status = "completed" if row.options.get("target", "analysis") == "analysis" else "running"
+    checkpoint(run_id, attempt, stage="analysis_ready", status=status)
+    return {"editorial_run_id": run_id, "status": status, "stage": "analysis_ready"}
 
 
 @activity.defn
@@ -144,11 +146,41 @@ def editorial_fail(run_id: str, attempt: int, reason: str) -> None:
         checkpoint(run_id, attempt, status="failed", error=reason[:2000])
 
 
+@activity.defn
+def editorial_research_script(run_id: str, attempt: int) -> dict:
+    from katcha.editorial.provider import EditorialBlocked
+    from katcha.editorial.research import investigate_and_write
+
+    try:
+        return investigate_and_write(run_id, attempt)
+    except EditorialBlocked as exc:
+        # Only locally authored actionable messages; provider bodies never enter public errors.
+        with contextlib.suppress(EditorialStopped):
+            checkpoint(run_id, attempt, status="blocked", error=str(exc)[:2000])
+        return {"editorial_run_id": run_id, "status": "blocked"}
+    except EditorialStopped:
+        return {"editorial_run_id": run_id, "status": "stopped"}
+    except Exception:
+        with contextlib.suppress(EditorialStopped):
+            checkpoint(
+                run_id,
+                attempt,
+                status="blocked",
+                error=(
+                    "Research could not validate a result. Saved evidence and provider receipts "
+                    "are retained. Inspect incomplete calls before resuming; uncertain requests "
+                    "will not be repeated automatically."
+                ),
+            )
+        raise
+
+
 EDITORIAL_ACTIVITIES = [
     editorial_begin,
     editorial_prepare_source,
     editorial_prepare_analysis,
     editorial_capture_source,
     editorial_finish_intake,
+    editorial_research_script,
     editorial_fail,
 ]

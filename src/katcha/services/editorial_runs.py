@@ -267,3 +267,56 @@ def control_run(
         session.flush()
         session.expunge(row)
         return row
+
+
+def finish_script(run_id: str, attempt: int, draft) -> dict:
+    """Commit the immutable revision and completion together, with cancellation fencing."""
+    from katcha.editorial.project_schemas import SaveEditorialDraft
+    from katcha.services.editorial_projects import save_draft_in_session
+
+    with session_scope() as session:
+        identity = session.get(EditorialRun, uuid.UUID(run_id))
+        if identity is None:
+            raise EditorialStopped("Editorial run no longer exists")
+        # Same lock order as start/resume/cancel: project, then run.
+        session.execute(
+            update(EditorialProject)
+            .where(EditorialProject.id == identity.project_id)
+            .values(revision=EditorialProject.revision, updated_at=EditorialProject.updated_at)
+        )
+        row = session.scalar(
+            select(EditorialRun)
+            .where(EditorialRun.id == identity.id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+        if row.attempt != attempt or row.status not in ACTIVE:
+            raise EditorialStopped("Editorial work was stopped before draft promotion")
+        revision = save_draft_in_session(
+            session,
+            row.channel_profile_id,
+            row.project_id,
+            SaveEditorialDraft(
+                expected_revision=row.input_revision,
+                idempotency_key=f"editorial-run:{run_id}",
+                draft=draft,
+            ),
+            actor=row.actor,
+        )
+        row.status = "completed"
+        row.stage = "script_ready"
+        row.error = None
+        row.artifacts = {
+            **row.artifacts,
+            "saved_revision": revision.revision,
+            "draft_digest": revision.digest,
+            "requires_editorial_review": True,
+        }
+        _event(session, row, "run_completed")
+        return {
+            "editorial_run_id": run_id,
+            "status": row.status,
+            "stage": row.stage,
+            "revision": revision.revision,
+            "project_id": str(row.project_id),
+        }

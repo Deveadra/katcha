@@ -165,12 +165,18 @@ class EditorialProjectResponse(Contract):
     revision: int
     status: Literal["draft"] = "draft"
     capabilities: list[str] = Field(
-        default_factory=lambda: ["draft_storage", "evidence_validation", "source_intake"]
+        default_factory=lambda: [
+            "draft_storage",
+            "evidence_validation",
+            "source_intake",
+            "research",
+            "script_generation",
+        ]
     )
     limitation: str = (
-        "Source runs acquire media and prepare sampled frames/transcripts. Native-video "
-        "interpretation, research, script generation and rendering are not connected yet. "
-        "Saved claims are not independently verified."
+        "Research/script runs require an eligible live provider. Coverage is recorded as "
+        "native video or sampled frames. Generated claims require editorial review. "
+        "Asset clearance, rendering and publication are not connected yet."
     )
     created_at: datetime
     updated_at: datetime

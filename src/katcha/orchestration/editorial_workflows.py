@@ -56,7 +56,15 @@ class EditorialProjectWorkflow:
                             retry_policy=local,
                         )
                     await step("editorial_capture_source", position)
-            return await step("editorial_finish_intake")
+            result = await step("editorial_finish_intake")
+            if context.get("target", "analysis") == "script":
+                return await workflow.execute_activity(
+                    "editorial_research_script",
+                    args=[run_id, attempt],
+                    start_to_close_timeout=timedelta(hours=2),
+                    retry_policy=RetryPolicy(maximum_attempts=1),
+                )
+            return result
         except Exception:
             await workflow.execute_activity(
                 "editorial_fail",

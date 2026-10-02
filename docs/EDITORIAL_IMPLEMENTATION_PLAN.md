@@ -41,8 +41,8 @@ as API credit. Verify supported account capabilities when enabling each live rou
 | --- | --- | --- | --- |
 | E1 | Durable projects, evidence/script contracts, revision concurrency, authenticated APIs, native AI tool registration | Baseline | Implemented; CI passed on 6c55ae4 |
 | E2 | URL/managed asset intake and measured video analysis attached to project | E1 | Intake/local-analysis implemented; richer interpretation pending |
-| E3 | Durable specialist research, evidence verification and cost-bounded recursion | E1–E2 | Planned |
-| E4 | Story selection, writer/critic/revision loop and cited script review | E3 | Planned |
+| E3 | Durable specialist research, evidence verification and cost-bounded recursion | E1–E2 | Implemented; synthetic integration verified |
+| E4 | Story selection, writer/critic/revision loop and cited script review | E3 | Implemented; live editorial acceptance pending |
 | E5 | Claim-directed supplementary asset scout and acquisition/rights gate | E3–E4 | Planned |
 | E6 | Visual director, timing, compiler and editorial Remotion composition | E4–E5 | Planned |
 | E7 | Integrated editorial workspace, recovery/status and publication handoff | E1–E6 | Planned |
@@ -384,3 +384,47 @@ Local checkpoint: 81 tests passed including interrupted dispatch/reconciliation,
 attempt fencing, cancellation, managed-source reuse and unsupported URL rejection.
 Repository Ruff, compileall, longform-worker import and whitespace checks passed.
 Live media/Temporal acceptance and the remaining research/render stages are pending.
+
+
+### E3–E4 research and scripting checkpoint
+
+Continued from merged PR #257 / main `47d8a80`, retaining the reviewed workflow
+recovery contract. `target=script` now connects source intake to observation,
+specialist question planning, grounded discovery, HTTPS retrieval, exact excerpt
+extraction, claim verification and a writer/critic loop with at most two revisions.
+The existing start/status/resume/cancel API and native tool expose this target.
+The registered longform-worker activity persists progress and actionable blockers.
+
+Evidence snippets have immutable content-derived IDs: another question about the
+same page cannot replace an earlier claim's quotation. Questions, documents,
+observations, sources, claims, depth, calls, reserved tokens and elapsed time are
+bounded. Retrieval pins a validated public IP while retaining TLS hostname checks;
+redirects are revalidated and response bytes are limited. Ungrounded model URLs
+never become retrieval targets. Script completion and immutable revision saving
+share one transaction, fenced against cancellation and concurrent draft edits.
+
+Provider calls reserve durable receipts before dispatch. Validated results are
+reused without requiring the provider to remain connected. Ambiguous calls are
+blocked rather than resubmitted; a typed Gemini quota rejection may retry only
+on an explicit new run attempt. No automatic paid fallback exists. Gemini requires
+both `KATCHA_EDITORIAL_GEMINI_BILLING_MODE=free` and an operator-selected
+`KATCHA_EDITORIAL_GEMINI_MODEL`, in addition to the key/live execution setting.
+This is an operator declaration, not independent verification of account billing.
+Otherwise supported connected subscription routes are used. Native Gemini video
+input and subscription contact sheets retain different coverage labels.
+
+Validation: **102 focused tests passed** across research, projects/runs, native
+tools, control authorization, long-form contracts, migration graph and recovery
+registry. Includes injected failure before final commit, cancelled/stale promotion,
+full resume without repeating research, immutable excerpts across two questions,
+unsupported quotes, critic exhaustion, SSRF/redirect rejection, quota rejection,
+call/token budgets and ambiguous requests. Whole-repository Ruff and source
+compilation passed. These tests use synthetic provider responses, not live factual
+verification. No new migration was required for E3–E4.
+
+Remaining boundaries: live source/provider acceptance, human evidence review,
+supplementary asset acquisition and rights decisions, visual compilation/render,
+workspace integration and publication handoff. Output is a reviewable script, not
+an approved or publishable video. Unknown subscription transport failures remain
+ambiguous; no automatic reconciliation endpoint is claimed. Token reservations
+are conservative estimates and provider-reported usage is recorded on completion.
