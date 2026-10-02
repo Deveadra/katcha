@@ -8,9 +8,11 @@ import {
   commitAuthority,
   configureWatchdog,
   defaultAuthorityState,
+  evaluatePaidFallback,
   fenceResult,
   markIncidentDispatched,
   prepareAuthority,
+  recordRecoveryOutcome,
 } from "../src/state.mjs";
 
 test("prepare allocates a monotonic epoch without fencing the active leader", () => {
@@ -171,4 +173,160 @@ test("probe results for a superseded deployment are ignored", () => {
   });
   assert.equal(probe.ignored, true);
   assert.deepEqual(probe.state.active, state.active);
+});
+
+
+test("paid fallback carries expiry and is hard-fenced at expiry", () => {
+  const now = Date.parse("2026-10-02T16:00:00Z");
+  const expires = "2026-10-02T18:00:00.000Z";
+  let state = prepareAuthority(defaultAuthorityState(), {
+    deploymentId: "oci-paid",
+    healthUrl: "https://paid.example.test/v1/health/ready",
+    expectedActiveEpoch: 0,
+    costClass: "paid",
+    hourlyEstimateUsd: 0.12,
+    paidExpiresAt: expires,
+    recoveryIncidentId: "incident-paid",
+  }, now).state;
+  state = commitAuthority(state, {
+    deploymentId: "oci-paid",
+    deploymentEpoch: 1,
+    expectedActiveEpoch: 0,
+  }, now + 1000).state;
+
+  assert.equal(state.active.cost_class, "paid");
+  assert.equal(state.active.paid_expires_at, expires);
+  assert.equal(fenceResult(state, "oci-paid", 1, now + 60_000).authorized, true);
+
+  const expired = fenceResult(state, "oci-paid", 1, Date.parse(expires));
+  assert.equal(expired.authorized, false);
+  assert.equal(expired.reason, "paid_fallback_expired");
+});
+
+test("malformed paid expiry fails closed", () => {
+  const state = {
+    ...defaultAuthorityState(),
+    active: {
+      deployment_id: "oci-paid",
+      epoch: 4,
+      cost_class: "paid",
+      paid_expires_at: "not-a-date",
+    },
+  };
+  const result = fenceResult(state, "oci-paid", 4, 1000);
+  assert.equal(result.authorized, false);
+  assert.equal(result.reason, "paid_fallback_expiry_invalid");
+});
+
+test("paid fallback opens one repatriation incident before hard expiry", () => {
+  const now = Date.parse("2026-10-02T16:00:00Z");
+  let state = prepareAuthority(defaultAuthorityState(), {
+    deploymentId: "oci-paid",
+    healthUrl: "https://paid.example.test/v1/health/ready",
+    expectedActiveEpoch: 0,
+    costClass: "paid",
+    hourlyEstimateUsd: 0.2,
+    paidExpiresAt: "2026-10-02T17:00:00.000Z",
+  }, now).state;
+  state = commitAuthority(state, {
+    deploymentId: "oci-paid",
+    deploymentEpoch: 1,
+    expectedActiveEpoch: 0,
+  }, now + 1000).state;
+
+  let result = evaluatePaidFallback(state, { leadSeconds: 1800 }, now);
+  assert.equal(result.shouldDispatch, false);
+
+  result = evaluatePaidFallback(
+    state,
+    { leadSeconds: 1800 },
+    Date.parse("2026-10-02T16:31:00Z"),
+  );
+  assert.equal(result.shouldDispatch, true);
+  assert.equal(result.state.incident.reason, "paid_fallback_repatriation");
+  const incidentId = result.state.incident.id;
+
+  const replay = evaluatePaidFallback(
+    result.state,
+    { leadSeconds: 1800 },
+    Date.parse("2026-10-02T16:32:00Z"),
+  );
+  assert.equal(replay.state.incident.id, incidentId);
+  assert.equal(replay.shouldDispatch, true);
+});
+
+test("healthy probes do not resolve a paid repatriation incident", () => {
+  const state = {
+    ...defaultAuthorityState(),
+    active: {
+      deployment_id: "oci-paid",
+      epoch: 3,
+      cost_class: "paid",
+      paid_expires_at: "2026-10-02T17:00:00.000Z",
+      consecutive_failures: 2,
+    },
+    incident: {
+      id: "repatriate-1",
+      reason: "paid_fallback_repatriation",
+      status: "dispatched",
+    },
+  };
+  const result = applyProbe(
+    state,
+    {
+      deploymentId: "oci-paid",
+      deploymentEpoch: 3,
+      healthy: true,
+    },
+    Date.parse("2026-10-02T16:45:00Z"),
+  );
+  assert.equal(result.state.incident.status, "dispatched");
+  assert.equal(result.state.active.consecutive_failures, 0);
+});
+
+test("retryable recovery outcome re-arms the same incident", () => {
+  const state = {
+    ...defaultAuthorityState(),
+    incident: {
+      id: "incident-1",
+      reason: "health_probe_failure",
+      status: "dispatched",
+    },
+  };
+  const retry = recordRecoveryOutcome(state, {
+    incidentId: "incident-1",
+    outcome: "retryable",
+    detail: "A1 host capacity unavailable",
+  }, 1000);
+  assert.equal(retry.incident.status, "pending_dispatch");
+  assert.equal(retry.incident.id, "incident-1");
+  assert.match(retry.incident.outcome_detail, /capacity unavailable/);
+});
+
+test("replacement commit resolves its recovery incident and records receipt", () => {
+  const incident = {
+    id: "incident-2",
+    reason: "health_probe_failure",
+    status: "dispatched",
+  };
+  let state = {
+    ...defaultAuthorityState(),
+    incident,
+  };
+  state = prepareAuthority(state, {
+    deploymentId: "replacement",
+    healthUrl: "https://replacement.example.test/v1/health/ready",
+    expectedActiveEpoch: 0,
+    recoveryIncidentId: incident.id,
+  }, 1000).state;
+  state = commitAuthority(state, {
+    deploymentId: "replacement",
+    deploymentEpoch: 1,
+    expectedActiveEpoch: 0,
+  }, 2000).state;
+
+  assert.equal(state.incident.status, "resolved");
+  assert.equal(state.incident.last_outcome, "succeeded");
+  assert.equal(state.last_recovery.incident_id, "incident-2");
+  assert.equal(state.last_recovery.deployment_id, "replacement");
 });
