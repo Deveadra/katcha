@@ -43,6 +43,7 @@ from katcha.api.schemas import (
     CompilationReviewResponse,
     CompilationSegmentResponse,
     CreateCompilationRequest,
+    CreatePassthroughProductionRequest,
     CreateProductionRequest,
     CreatePublicationRequest,
     HealthResponse,
@@ -65,6 +66,7 @@ from katcha.api.schemas import (
     ReviewCompilationResponse,
     ReviewProductionRequest,
     SourceResponse,
+    StartPublicationRequest,
     YouTubeConnectionResponse,
     YouTubeOAuthStartResponse,
 )
@@ -126,12 +128,14 @@ from katcha.services.compilations import (
 from katcha.services.productions import (
     register_regeneration,
     register_short_production,
+    register_source_passthrough_production,
     review_production,
 )
 from katcha.services.publications import (
     analytics_refresh_workflow_id,
     register_compilation_publication,
     register_publication,
+    release_publication_for_upload,
     retry_publication,
 )
 from katcha.services.render_automation import advance_render_automation
@@ -450,6 +454,7 @@ async def create_production(
             clip_id,
             persona_key=request.persona_key,
             idempotency_key=request.idempotency_key,
+            channel_profile_id=request.channel_profile_id,
             edit_blueprint_key=request.edit_blueprint_key,
         )
     except ValueError as exc:
@@ -458,6 +463,27 @@ async def create_production(
     if production.status == ProductionStatus.QUEUED.value:
         await start_production_workflow(str(production.id), production.workflow_id)
     return production
+
+
+@app.post(
+    "/v1/clips/{clip_id}/passthrough-productions",
+    response_model=ProductionResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_passthrough_production(
+    clip_id: uuid.UUID,
+    request: CreatePassthroughProductionRequest,
+) -> Production:
+    try:
+        return register_source_passthrough_production(
+            clip_id,
+            channel_profile_id=request.channel_profile_id,
+            idempotency_key=request.idempotency_key,
+            actor=request.actor,
+        )
+    except ValueError as exc:
+        code = 404 if "not found" in str(exc) else 409
+        raise HTTPException(status_code=code, detail=str(exc)) from exc
 
 
 @app.get("/v1/productions", response_model=list[ProductionResponse])
@@ -634,11 +660,12 @@ async def create_publication(
             notify_subscribers=request.notify_subscribers,
             made_for_kids=request.made_for_kids,
             contains_synthetic_media=request.contains_synthetic_media,
+            hold_for_packaging=request.hold_for_packaging,
         )
     except ValueError as exc:
         code = 404 if "not found" in str(exc) else 409
         raise HTTPException(status_code=code, detail=str(exc)) from exc
-    if publication.status == "queued":
+    if publication.status == "queued" and publication.stage != "metadata_hold":
         await start_publication_workflow(str(publication.id), publication.workflow_id)
     return publication
 
@@ -786,12 +813,35 @@ async def create_compilation_publication(
             notify_subscribers=request.notify_subscribers,
             made_for_kids=request.made_for_kids,
             contains_synthetic_media=request.contains_synthetic_media,
+            hold_for_packaging=request.hold_for_packaging,
         )
     except ValueError as exc:
         code = 404 if "not found" in str(exc) else 409
         raise HTTPException(status_code=code, detail=str(exc)) from exc
-    if publication.status == "queued":
+    if publication.status == "queued" and publication.stage != "metadata_hold":
         await start_publication_workflow(str(publication.id), publication.workflow_id)
+    return publication
+
+
+@app.post(
+    "/v1/publications/{publication_id}/start",
+    response_model=PublicationResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def start_held_publication(
+    publication_id: uuid.UUID,
+    request: StartPublicationRequest,
+) -> Publication:
+    _require_youtube_execution()
+    try:
+        publication = release_publication_for_upload(
+            publication_id,
+            actor=request.actor,
+        )
+    except ValueError as exc:
+        code = 404 if "not found" in str(exc) else 409
+        raise HTTPException(status_code=code, detail=str(exc)) from exc
+    await start_publication_workflow(str(publication.id), publication.workflow_id)
     return publication
 
 

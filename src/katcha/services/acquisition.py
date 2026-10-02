@@ -428,7 +428,8 @@ def promote_discovery_candidate(
             raise RuntimeError("candidate/source disappeared during promotion")
         if candidate.source_item_id is not None and candidate.source_item_id != managed_source.id:
             raise RuntimeError("candidate was concurrently promoted to a different source")
-        candidate_channel_id = (candidate.candidate_metadata or {}).get("channel_profile_id")
+        candidate_metadata = dict(candidate.candidate_metadata or {})
+        candidate_channel_id = candidate_metadata.get("channel_profile_id")
         managed_source.source_metadata = {
             **dict(managed_source.source_metadata or {}),
             "acquisition_managed": True,
@@ -438,6 +439,22 @@ def promote_discovery_candidate(
             "rights_basis": rights_basis,
             "rights_lane": rights_lane,
             "acquisition_purpose": "review" if for_review else "production",
+            "discovery_metadata": candidate_metadata,
+            **(
+                {"intelligence_record_id": candidate_metadata["intelligence_record_id"]}
+                if candidate_metadata.get("intelligence_record_id")
+                else {}
+            ),
+            **(
+                {"intelligence_title": candidate_metadata["intelligence_title"]}
+                if candidate_metadata.get("intelligence_title")
+                else {}
+            ),
+            **(
+                {"intelligence_summary": candidate_metadata["intelligence_summary"]}
+                if candidate_metadata.get("intelligence_summary")
+                else {}
+            ),
             **({"channel_profile_id": str(candidate_channel_id)} if candidate_channel_id else {}),
         }
         candidate.source_item_id = managed_source.id

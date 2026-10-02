@@ -680,7 +680,7 @@ def test_source_find_library_returns_all_unique_finds_with_search_and_pagination
     import uuid
     from datetime import UTC, datetime, timedelta
 
-    from katcha.acquisition_models import DiscoveryObservation, DiscoveryRun
+    from katcha.acquisition_models import DiscoveryObservation
 
     source = upsert_ingestion_source(
         source_key="all-finds",
