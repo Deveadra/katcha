@@ -80,7 +80,7 @@ jobs:
           python-version: "3.12"
 
       - name: Install Katcha
-        run: python -m pip install -e .
+        run: python -m pip install -e '.[dev]'
 
       - name: Validate dispatcher and bootstrap
         run: |
