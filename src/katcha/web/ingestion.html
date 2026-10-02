@@ -336,7 +336,7 @@
                                         <div><span>Last check</span><strong id="stat-last">—</strong><small id="stat-last-note">No checks yet</small></div>
                                     </div>
 
-                                    <section class="source-inspector-section">
+                                    <section id="source-polling" class="source-inspector-section" hidden><h3>Recurring checks</h3><label><input id="polling-enabled" type="checkbox"> Check this source automatically</label><label>Interval in minutes<input id="polling-interval" type="number" min="15" max="10080" value="60"></label><button id="save-polling" type="button" class="button secondary">Save recurring checks</button><p id="polling-status" role="status"></p><p>Checks discover finds for review; they do not authorize downloads or publishing. A running check may finish after pausing.</p></section><section class="source-inspector-section">
                                         <div class="source-section-head">
                                             <div><span class="section-kicker">SCOPE & BEHAVIOR</span><h3>What this source does</h3></div>
                                         </div>
@@ -429,7 +429,7 @@
                             <div class="source-section-head">
                                 <div><span class="section-kicker">ACTIVE HANDOFFS</span><h3>Needs attention</h3></div>
                             </div>
-                            <div id="handoff-list" class="handoff-list"></div>
+                            <p><a id="handoff-history" href="/content">View content and successful import history</a></p><div id="handoff-list" class="handoff-list"></div>
                         </section>
                     </section>
                 </div>

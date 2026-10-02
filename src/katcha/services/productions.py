@@ -270,9 +270,7 @@ def register_source_passthrough_production(
 
     store = ObjectStore()
     with session_scope() as session:
-        existing = session.scalar(
-            select(Production).where(Production.workflow_id == workflow_id)
-        )
+        existing = session.scalar(select(Production).where(Production.workflow_id == workflow_id))
         if existing is not None:
             if existing.channel_profile_id != channel_profile_id:
                 raise ValueError("passthrough idempotency key belongs to another channel")
@@ -339,7 +337,11 @@ def register_source_passthrough_production(
                 kind="render",
                 generation=1,
                 storage_key=clip.storage_key,
-                content_type="video/mp4",
+                content_type={
+                    "webm": "video/webm",
+                    "mov": "video/quicktime",
+                    "mkv": "video/x-matroska",
+                }.get(clip.extension, "video/mp4"),
                 provider="source_passthrough",
                 model="original_source",
                 asset_metadata={

@@ -182,7 +182,10 @@ def upsert_ingestion_source(
             row.usage_mode = usage_mode.value
             row.query_template = dict(query_template or {})
             row.default_candidate_metadata = dict(default_candidate_metadata or {})
+            polling = (row.source_metadata or {}).get("automatic_research")
             row.source_metadata = dict(source_metadata or {})
+            if polling is not None:
+                row.source_metadata = {**row.source_metadata, "automatic_research": polling}
             row.enabled = enabled
             row.poll_interval_minutes = poll_interval_minutes
             event_type = "ingestion_source.updated"
@@ -681,6 +684,7 @@ def list_source_runs(source_id: uuid.UUID, *, limit: int = 50) -> list[Discovery
         for row in rows:
             session.expunge(row)
         return rows
+
 
 def restart_source_run(
     run_id: uuid.UUID,

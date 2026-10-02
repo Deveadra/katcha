@@ -248,7 +248,7 @@
                             <div><span>NOW</span><h2>Channel activity & queue</h2></div>
                             <small>Handoffs, downloads, preparation, packaging, publishing, and recent events</small>
                         </div>
-                        <div id="channel-activity-list" class="channel-activity-list">
+                        <p><a class="studio-button secondary small" href="/content" id="content-history-link">Add content / full content history</a></p><div id="channel-activity-list" class="channel-activity-list">
                             <div class="studio-card empty-state">No channel activity loaded.</div>
                         </div>
                     </section>
@@ -269,7 +269,7 @@
                                         <option value="failed">Needs attention</option>
                                     </select>
                                 </div>
-                                <div id="publication-list" class="publication-list"><div class="empty-state">No publications loaded.</div></div>
+                                <button id="more-publications" class="studio-button secondary small" type="button" hidden>Load older videos</button><div id="publication-list" class="publication-list"><div class="empty-state">No publications loaded.</div></div>
                             </div>
                             <aside id="video-detail" class="studio-card video-detail">
                                 <div class="empty-state">Select a video to inspect its details.</div>
@@ -303,7 +303,7 @@
                             <div><span>IN FLIGHT</span><h2>Work moving through Katcha</h2></div>
                             <a class="studio-button secondary small" href="/editing#editorial-pipeline">Open full editing queue ↗</a>
                         </div>
-                        <div id="production-list" class="production-grid"><div class="studio-card empty-state">No productions loaded.</div></div>
+                        <button id="more-productions" class="studio-button secondary small" type="button" hidden>Load older productions</button><div id="production-list" class="production-grid"><div class="studio-card empty-state">No productions loaded.</div></div>
                     </section>
 
                     <section id="identity" class="studio-section channel-view-section" data-studio-group="settings">

@@ -18,7 +18,7 @@ function workspaceKeyFromPath(path = location.pathname) {
     if (path.startsWith('/channels') || path.endsWith('/channels.html')) return 'channel';
     if (path.startsWith('/ai') || path.endsWith('/ai.html')) return 'ai';
     if (path.endsWith('/studio.html') || path.startsWith('/studio')) return 'studio';
-    if (path.startsWith('/editing') || path.endsWith('/editing.html')) return 'production';
+    if (path.startsWith('/content') || path.endsWith('/content.html') || path.startsWith('/editing') || path.endsWith('/editing.html')) return 'production';
     if (path.startsWith('/settings') || path.endsWith('/settings.html')) return 'settings';
     return 'trends';
 }

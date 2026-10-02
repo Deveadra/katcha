@@ -6,6 +6,7 @@ const state = {
     clips: [],
     total: 0,
     selectedId: null,
+    linkedClip: launchParams.get("clip") || "",
     features: new Map(),
     sources: new Map(),
     bucket: "all",
@@ -140,6 +141,7 @@ function queryString(extra = {}) {
     if (channelId && channelId !== "all") {
         params.set("channel_profile_id", channelId);
     }
+    if (state.linkedClip) params.set("clip_id", state.linkedClip);
     const search = $("search").value.trim();
     if (search) params.set("q", search);
     const status = $("status-filter").value;
@@ -251,7 +253,7 @@ function renderDetail(clip, features, sources) {
 
     const sourceLinks = sources.length ? sources.map((row) => `
         <div>
-            <a class="source-link" href="${escapeHTML(row.source_url)}" target="_blank" rel="noopener">${escapeHTML(row.title || row.source_url)}</a>
+            ${/^https?:\/\//i.test(row.source_url) ? `<a class="source-link" href="${escapeHTML(row.source_url)}" target="_blank" rel="noopener">${escapeHTML(row.title || row.source_url)}</a>` : `<span>${escapeHTML(row.title || "Uploaded video file")}</span>`}
             <small>${escapeHTML(row.platform)}${row.creator ? ` · ${escapeHTML(row.creator)}` : ""} · ${escapeHTML(date(row.discovered_at))}</small>
         </div>
     `).join("") : '<span class="empty">No source lineage is attached.</span>';
@@ -291,6 +293,8 @@ function renderDetail(clip, features, sources) {
                 <p>${escapeHTML(clip.creator || "Unknown creator")} · ${escapeHTML(clip.platform || "stored media")} · ${escapeHTML(channels)}</p>
             </div>
             <div class="detail-actions">
+                ${canPreview ? `<a class="mini" href="/content?channel=${encodeURIComponent(state.selectedChannel)}&clip=${encodeURIComponent(clip.id)}&title=${encodeURIComponent(clipTitle(clip))}">Create video</a>` : ""}
+
                 ${lifecycleChip(clip)}
                 ${canPreview ? `<button class="mini" type="button" data-load-preview="${escapeHTML(clip.id)}">Load preview</button>` : ""}
                 ${canAnalyze ? `<button class="mini ${analysisFailed ? "danger" : ""}" type="button" data-analyze="${escapeHTML(clip.id)}" data-force-retry="${analysisFailed ? "true" : "false"}">${analysisFailed ? "Retry analysis" : "Analyze"}</button>` : ""}
@@ -913,3 +917,9 @@ document.querySelectorAll("[data-close-dialog]").forEach((button) => {
         if (dialog?.open) dialog.close();
     });
 });
+
+if(state.linkedClip){
+    const button=document.createElement('button');button.type='button';button.className='button secondary';button.textContent='Showing linked clip · Show all clips';
+    document.querySelector('.clip-toolbar').append(button);
+    button.onclick=()=>{state.linkedClip='';state.selectedId=null;launchParams.delete('clip');history.replaceState(null,'','/clips?'+launchParams.toString());button.remove();refreshLibrary();};
+}

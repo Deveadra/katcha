@@ -453,11 +453,25 @@ def finalize_publication_activity(publication_id: str) -> dict[str, object]:
         video_id = publication.youtube_video_id
         connection_id = publication.youtube_connection_id
         publish_at = publication.publish_at
+        if publish_at is not None and publish_at.tzinfo is None:
+            publish_at = publish_at.replace(tzinfo=UTC)
         privacy_status = publication.privacy_status
         made_for_kids = publication.made_for_kids
         synthetic = publication.contains_synthetic_media
+        thumbnail = (publication.raw_status or {}).get("manual_thumbnail")
+        late_hold = (
+            (publication.raw_status or {}).get("late_policy") == "hold"
+            and publish_at is not None
+            and publish_at <= now
+        )
 
     client = YouTubeClient(connection_id, settings=settings)
+    if thumbnail:
+        client.set_thumbnail(
+            video_id,
+            data=ObjectStore().get_bytes(thumbnail["key"]),
+            mime_type=thumbnail["content_type"],
+        )
     if publish_at is not None and publish_at > now:
         response = client.schedule_video(
             video_id,
@@ -469,6 +483,17 @@ def finalize_publication_activity(publication_id: str) -> dict[str, object]:
         stage = "scheduled"
         published_at = None
         analytics_anchor = publish_at
+    elif late_hold:
+        response = client.set_privacy(
+            video_id,
+            privacy_status="private",
+            made_for_kids=made_for_kids,
+            contains_synthetic_media=synthetic,
+        )
+        final_status = PublicationStatus.PRIVATE.value
+        stage = "schedule_missed"
+        published_at = None
+        analytics_anchor = now
     elif privacy_status == "public" or publish_at is not None:
         response = client.set_privacy(
             video_id,
@@ -505,7 +530,12 @@ def finalize_publication_activity(publication_id: str) -> dict[str, object]:
         publication.status = final_status
         publication.stage = stage
         publication.published_at = published_at
-        publication.error = None
+        publication.error = (
+            "Scheduled time passed during processing. Video remains private; "
+            "choose a new release plan."
+            if late_hold
+            else None
+        )
         publication.raw_status = {
             **dict(publication.raw_status or {}),
             "finalize_response": response,

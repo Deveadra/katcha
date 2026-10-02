@@ -311,7 +311,9 @@ def apply_preupload_packaging_variant(
     if not actor_value:
         raise ValueError("actor must not be blank")
     with session_scope() as session:
-        publication = session.get(Publication, publication_id)
+        publication = session.scalar(
+            select(Publication).where(Publication.id == publication_id).with_for_update()
+        )
         if publication is None:
             raise ValueError(f"publication not found: {publication_id}")
         if publication.youtube_video_id is not None:
@@ -326,6 +328,13 @@ def apply_preupload_packaging_variant(
         if variant is None or variant.publication_id != publication_id:
             raise ValueError("packaging variant does not belong to this publication")
 
+        publication.raw_status = {
+            **dict(publication.raw_status or {}),
+            "manual_plan_version": int(
+                (publication.raw_status or {}).get("manual_plan_version") or 0
+            )
+            + 1,
+        }
         publication.title = variant.title
         publication.description = description_with_hashtags(
             variant.description,

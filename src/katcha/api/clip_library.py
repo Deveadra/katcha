@@ -247,6 +247,7 @@ def clip_library_summary(
 def list_clip_library(
     q: str | None = Query(default=None, max_length=500),
     channel_profile_id: uuid.UUID | None = Query(default=None),
+    clip_id: uuid.UUID | None = Query(default=None),
     clip_status: str | None = Query(default=None, alias="status", max_length=32),
     lifecycle_state: Literal["hot", "archived", "purged"] | None = Query(default=None),
     limit: int = Query(default=80, ge=1, le=250),
@@ -261,6 +262,8 @@ def list_clip_library(
                 return ClipLibraryPage(items=[], total=0, offset=offset, limit=limit)
             stmt = stmt.where(Clip.id.in_(channel_ids))
 
+        if clip_id is not None:
+            stmt = stmt.where(Clip.id == clip_id)
         if clip_status:
             stmt = stmt.where(Clip.status == clip_status)
         if lifecycle_state == "hot":
