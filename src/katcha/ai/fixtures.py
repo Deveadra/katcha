@@ -180,6 +180,9 @@ def fixture_packaging_candidates(
                 "description": (
                     "Development fixture packaging generated without an external AI provider."
                 ),
+                "tags": ["development fixture", "youtube packaging"],
+                "hashtags": ["DevelopmentFixture"],
+                "search_intents": ["development fixture video"],
                 "supporting_facts": [facts[index % len(facts)]],
                 "thumbnail": {
                     "concept": f"Development fixture thumbnail concept {index + 1}",
