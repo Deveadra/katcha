@@ -70,7 +70,9 @@ export function prepareAuthority(
       state.pending.deployment_id === deploymentId &&
       state.pending.health_url === healthUrl &&
       state.pending.cost_class === costClass &&
-      state.pending.paid_expires_at === paidExpiresAt
+      state.pending.hourly_estimate_usd === hourlyEstimateUsd &&
+      state.pending.paid_expires_at === paidExpiresAt &&
+      state.pending.recovery_incident_id === recoveryIncidentId
     ) {
       return { state, pending: state.pending, reused: true };
     }
@@ -137,11 +139,34 @@ export function commitAuthority(
     last_healthy_at: null,
     consecutive_failures: 0,
   };
+  const resolvesIncident =
+    Boolean(pending.recovery_incident_id) &&
+    state.incident?.id === pending.recovery_incident_id;
+  const incident = resolvesIncident
+    ? {
+        ...state.incident,
+        status: "resolved",
+        resolved_at: nowIso(nowMs),
+        last_outcome: "succeeded",
+        last_outcome_at: nowIso(nowMs),
+        outcome_detail: "replacement authority committed",
+      }
+    : state.incident;
+  const lastRecovery = resolvesIncident
+    ? {
+        incident_id: pending.recovery_incident_id,
+        deployment_id: active.deployment_id,
+        epoch: active.epoch,
+        completed_at: nowIso(nowMs),
+        outcome: "succeeded",
+      }
+    : state.last_recovery ?? null;
   let next = {
     ...state,
     active,
     pending: null,
-    incident: null,
+    incident,
+    last_recovery: lastRecovery,
   };
   next = event(next, "authority.committed", nowMs, {
     deployment_id: active.deployment_id,
@@ -260,7 +285,11 @@ export function applyProbe(
       last_error: String(detail || "health probe failed").slice(0, 1000),
     };
     shouldDispatch = true;
-  } else if (incident && !["recovered", "resolved"].includes(incident.status)) {
+  } else if (
+    incident &&
+    incident.reason === "health_probe_failure" &&
+    !["recovered", "resolved"].includes(incident.status)
+  ) {
     incident = {
       ...incident,
       failure_count: failures,
@@ -434,10 +463,16 @@ export function fenceResult(
 ) {
   const state = normalizeState(current);
   const active = state.active;
+  const paidExpiryMs =
+    active?.cost_class === "paid" && active?.paid_expires_at
+      ? Date.parse(active.paid_expires_at)
+      : null;
+  const paidExpiryInvalid =
+    active?.cost_class === "paid" &&
+    (!active?.paid_expires_at || !Number.isFinite(paidExpiryMs));
   const paidExpired =
     active?.cost_class === "paid" &&
-    active?.paid_expires_at &&
-    nowMs >= Date.parse(active.paid_expires_at);
+    (paidExpiryInvalid || nowMs >= paidExpiryMs);
   return {
     authorized:
       Boolean(active) &&
@@ -446,6 +481,10 @@ export function fenceResult(
       active.epoch === deploymentEpoch,
     active_epoch: active?.epoch ?? 0,
     leader_id: active?.deployment_id ?? "",
-    reason: paidExpired ? "paid_fallback_expired" : null,
+    reason: paidExpiryInvalid
+      ? "paid_fallback_expiry_invalid"
+      : paidExpired
+        ? "paid_fallback_expired"
+        : null,
   };
 }
