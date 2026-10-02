@@ -24,6 +24,7 @@ from katcha.services.goal_receipts import (
     TERMINAL_GOAL_STATES,
     get_goal,
     resolve_goal_authority,
+    selected_resource_evidence,
     utc,
 )
 from katcha.services.goal_tools import (
@@ -79,7 +80,15 @@ def _finish(goal_id, state, answer, error=None):
         if goal.status in TERMINAL_GOAL_STATES:
             return
         goal.status, goal.summary, goal.error = state, answer[:6000], error
-        evidence = []
+        latest_step = session.scalar(
+            select(CommandGoalStep)
+            .where(CommandGoalStep.goal_id == goal_id)
+            .order_by(CommandGoalStep.number.desc())
+            .limit(1)
+        )
+        evidence = (
+            list(latest_step.decision.get("_selected_resource_evidence", [])) if latest_step else []
+        )
         for observation in goal.observations:
             result = observation.get("result") or {}
             evidence.extend(result.get("evidence", []) if isinstance(result, dict) else [])
@@ -293,7 +302,9 @@ async def advance_goal(goal_id: uuid.UUID) -> str:
         if step is None:
             history = list_command_turns(goal.thread_id)[-12:]
             proposals = list_thread_proposals(goal.thread_id)[-20:]
+            selected_resources = _redact(selected_resource_evidence(goal.request))
             context = {
+                "selected_resources": selected_resources,
                 "original_request": goal.request,
                 "environment": command_environment(goal.channel_profile_id),
                 "history": [
@@ -348,7 +359,10 @@ async def advance_goal(goal_id: uuid.UUID) -> str:
                     id=uuid.uuid5(goal.id, f"step:{goal.step_count}"),
                     goal_id=goal.id,
                     number=goal.step_count,
-                    decision=decision.model_dump(mode="json"),
+                    decision={
+                        **decision.model_dump(mode="json"),
+                        "_selected_resource_evidence": selected_resources,
+                    },
                     status="planned",
                     result={},
                 )

@@ -582,3 +582,40 @@ def test_native_evidence_redacts_credentials_and_discloses_truncation():
     assert result["headers"] == {}
     assert "api_key" not in result
     assert result["_truncated_fields"] == ["items"]
+
+
+async def test_selected_clip_details_enter_first_decision_and_answer_evidence(saved, monkeypatch):
+    from katcha.models import Clip, ClipFeature, SourceItem
+
+    identity = uuid.uuid4()
+    with db.session_scope() as session:
+        session.add(Clip(id=identity, sha256="a" * 64, storage_key="fixture.mp4"))
+        session.add(
+            ClipFeature(clip_id=identity, candidate_score=80, score_breakdown={"novelty": 0.9})
+        )
+        session.add(
+            SourceItem(
+                clip_id=identity,
+                source_url="https://example.test/clip",
+                canonical_url="https://example.test/clip",
+                platform="youtube",
+                title="Xbox comeback",
+                source_metadata={"channel_profile_id": str(saved[0])},
+            )
+        )
+    original = receipt(saved[0], "Why is this selected clip promising?")
+    goal = register_goal(
+        uuid.uuid4(), {**original.request, "selected_clip_ids": [str(identity)]}, original.authority
+    )
+    seen = []
+
+    def planner(**kwargs):
+        seen.append(kwargs["context"])
+        return decision(outcome="complete", mode="inspect")
+
+    monkeypatch.setattr(goal_runner, "decide_goal", planner)
+    assert await goal_runner.advance_goal(goal.id) == "completed"
+    evidence = seen[0]["selected_resources"][0]
+    assert evidence["title"] == "Xbox comeback"
+    assert evidence["candidate_score"] == 80
+    assert get_goal(goal.id).result["evidence"][0]["id"] == str(identity)

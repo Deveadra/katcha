@@ -136,6 +136,11 @@ flowchart TD
     P --> F["Completed, blocked, or needs input"]
 ```
 
+The first decision receives saved details for selected clips and typed resources,
+including titles, scores and current status. The final answer retains that evidence
+snapshot. Native source-library search also supplies server-side text filtering
+and pagination for large catalogs.
+
 The runner persists the original instruction and client identity before inference.
 The actor/client identity pair is unique; retries must contain the identical request.
 Temporal runs one saved decision at a time on the intelligence queue. It waits for
