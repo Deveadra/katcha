@@ -203,6 +203,47 @@ def test_handoff_upload_rejects_conflicting_filename_content(tmp_path):
         server.server_close()
 
 
+def test_handoff_upload_allows_filename_reuse_after_archive(tmp_path):
+    app = instance(tmp_path)
+    archived = tmp_path / "handoff" / "processed" / "batch.json"
+    archived.write_bytes(b"old")
+    server = runtime.ThreadingHTTPServer(("127.0.0.1", 0), runtime.Handler)
+    server.runtime = app
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    result = [{
+        "filename": "batch.json",
+        "status": "processed",
+        "record_count": 2,
+    }]
+    try:
+        with patch.object(
+            runtime.Handler,
+            "_api_json_request",
+            return_value=(200, result),
+        ) as api:
+            connection = http.client.HTTPConnection(
+                "127.0.0.1",
+                server.server_port,
+            )
+            connection.request(
+                "POST",
+                "/runtime/handoff/upload?filename=batch.json",
+                b"new",
+                {"Content-Type": "application/octet-stream"},
+            )
+            response = connection.getresponse()
+            assert response.status == 200
+            response.read()
+            connection.close()
+
+        assert archived.read_bytes() == b"old"
+        assert (tmp_path / "handoff" / "incoming" / "batch.json").read_bytes() == b"new"
+        api.assert_called_once()
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
 def test_handoff_upload_rejects_path_traversal(tmp_path):
     app = instance(tmp_path)
     server = runtime.ThreadingHTTPServer(("127.0.0.1", 0), runtime.Handler)
