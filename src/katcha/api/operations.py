@@ -216,26 +216,25 @@ def _work_recovery(
     stage: str,
     state: WorkState,
     row: Production | ShortEpisode | Publication,
+    render_dead_letter: bool = False,
 ) -> tuple[str | None, str | None]:
+    del state  # Recovery is determined by durable execution state, not display severity.
     normalized_status = str(status or "").lower()
     normalized_stage = str(stage or "").lower()
-    if kind == "publication" and (
-        normalized_status == "failed" or normalized_stage == "processing_timeout"
-    ):
-        return "restart", "Restart"
-    if state == "attention":
+
+    if kind == "publication":
+        if normalized_status == "failed" or normalized_stage == "processing_timeout":
+            return "restart", "Restart"
+        if normalized_status in {"queued", "uploading", "uploaded", "processing"}:
+            return "resume", "Resume"
+        return None, None
+
+    if normalized_status == "failed" or render_dead_letter:
         return "restart", "Restart"
     if kind == "production" and isinstance(row, Production):
         return ("resume", "Resume") if _production_resume_stage(row) else (None, None)
     if kind == "short_episode" and isinstance(row, ShortEpisode):
         return ("resume", "Resume") if _short_episode_resume_stage(row) else (None, None)
-    if kind == "publication" and normalized_status in {
-        "queued",
-        "uploading",
-        "uploaded",
-        "processing",
-    }:
-        return "resume", "Resume"
     return None, None
 
 
@@ -373,7 +372,7 @@ async def recover_work_item(
                 latest_attempt is not None and latest_attempt.status == "dead_letter"
             )
 
-        if status_value == "failed" or error or render_dead_letter:
+        if status_value == "failed" or render_dead_letter:
             try:
                 stage = _production_restart_stage(source_id)
                 child = register_regeneration(
@@ -434,7 +433,7 @@ async def recover_work_item(
                 latest_attempt is not None and latest_attempt.status == "dead_letter"
             )
 
-        if status_value == "failed" or error or render_dead_letter:
+        if status_value == "failed" or render_dead_letter:
             try:
                 stage = _short_episode_restart_stage(source_id)
                 child = register_short_episode_regeneration(
@@ -636,6 +635,9 @@ def operations_overview(
                 stage=row.stage,
                 state=state,
                 row=row,
+                render_dead_letter=bool(
+                    attempt is not None and attempt.status == "dead_letter"
+                ),
             )
             work_items.append(
                 OperationsWorkItem(
@@ -676,6 +678,9 @@ def operations_overview(
                 stage=row.stage,
                 state=state,
                 row=row,
+                render_dead_letter=bool(
+                    attempt is not None and attempt.status == "dead_letter"
+                ),
             )
             work_items.append(
                 OperationsWorkItem(
