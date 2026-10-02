@@ -98,6 +98,7 @@ class RecoveryConfig:
         *,
         require_external_compute: bool = True,
     ) -> "RecoveryConfig":
+        paid_enabled = _bool_env("KATCHA_OCI_PAID_FALLBACK_ENABLED", False)
         paid_ttl = int(_env("KATCHA_OCI_PAID_FALLBACK_TTL_HOURS", default="24"))
         paid_hourly = float(
             _env("KATCHA_OCI_PAID_FALLBACK_ESTIMATED_HOURLY_USD", default="0")
@@ -107,6 +108,17 @@ class RecoveryConfig:
         )
         paid_concurrent = int(
             _env("KATCHA_OCI_PAID_FALLBACK_MAX_CONCURRENT", default="1")
+        )
+        primary_image = _env("KATCHA_OCI_PRIMARY_IMAGE_ID")
+        fallback_shape = (
+            _env("KATCHA_OCI_PAID_FALLBACK_SHAPE")
+            if paid_enabled
+            else "disabled"
+        )
+        fallback_image = (
+            _env("KATCHA_OCI_PAID_FALLBACK_IMAGE_ID")
+            if paid_enabled
+            else primary_image
         )
         config = cls(
             coordinator_url=_env("KATCHA_RECOVERY_COORDINATOR_URL").rstrip("/"),
@@ -125,22 +137,22 @@ class RecoveryConfig:
             primary=ShapePlan(
                 mode="always-free-a1",
                 shape=_env("KATCHA_OCI_PRIMARY_SHAPE", default="VM.Standard.A1.Flex"),
-                image_id=_env("KATCHA_OCI_PRIMARY_IMAGE_ID"),
+                image_id=primary_image,
                 ocpus=float(_env("KATCHA_OCI_PRIMARY_OCPUS", default="2")),
                 memory_gb=float(_env("KATCHA_OCI_PRIMARY_MEMORY_GB", default="12")),
                 paid=False,
             ),
             fallback=ShapePlan(
                 mode="paid-fallback",
-                shape=_env("KATCHA_OCI_PAID_FALLBACK_SHAPE"),
-                image_id=_env("KATCHA_OCI_PAID_FALLBACK_IMAGE_ID"),
+                shape=fallback_shape,
+                image_id=fallback_image,
                 ocpus=float(_env("KATCHA_OCI_PAID_FALLBACK_OCPUS", default="1")),
                 memory_gb=float(
                     _env("KATCHA_OCI_PAID_FALLBACK_MEMORY_GB", default="8")
                 ),
                 paid=True,
             ),
-            paid_enabled=_bool_env("KATCHA_OCI_PAID_FALLBACK_ENABLED", False),
+            paid_enabled=paid_enabled,
             paid_ttl_hours=paid_ttl,
             paid_estimated_hourly_usd=paid_hourly,
             paid_max_incident_usd=paid_max,
