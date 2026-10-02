@@ -54,6 +54,21 @@ def test_fair_use_candidate_never_becomes_green_lane() -> None:
     assert "fair_use_authorization_is_not_a_legal_determination" in reviewed.advisories
 
 
+def test_explicit_operator_authorization_clears_without_license_evidence() -> None:
+    result = evaluate_acquisition_policy(
+        rights_basis=RightsBasis.OPERATOR_AUTHORIZED,
+        audio_status=AudioRightsStatus.ORIGINAL,
+        originality_gate=GateStatus.CLEARED,
+        operator_authorized=True,
+        evidence_present=False,
+    )
+
+    assert result.rights_lane == RightsLane.GREEN
+    assert result.rights_gate == GateStatus.CLEARED
+    assert result.production_eligible is True
+    assert "operator_authorization_recorded" in result.advisories
+
+
 def test_audio_and_originality_are_independent_fail_closed_gates() -> None:
     audio = evaluate_acquisition_policy(
         rights_basis=RightsBasis.OWNED,
