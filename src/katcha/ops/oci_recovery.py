@@ -758,18 +758,28 @@ def recover(event_path: Path, config: RecoveryConfig, oci: OciCli) -> dict[str, 
                     candidate_id=candidate_id,
                     previous_instance_id=previous_instance_id,
                 )
-            finally:
-                try:
-                    oci.terminate(candidate_id)
-                except Exception:
-                    pass
+            except Exception as rollback_error:
+                print(
+                    "RECOVERY_ROLLBACK_WARNING: "
+                    f"{type(rollback_error).__name__}: {rollback_error}"
+                )
+            try:
+                oci.terminate(candidate_id)
+            except Exception as terminate_error:
+                print(
+                    "RECOVERY_TERMINATE_WARNING: "
+                    f"{type(terminate_error).__name__}: {terminate_error}"
+                )
         try:
             coordinator.abort(
                 deployment_id=deployment_id,
                 deployment_epoch=deployment_epoch,
             )
-        except Exception:
-            pass
+        except Exception as abort_error:
+            print(
+                "RECOVERY_ABORT_WARNING: "
+                f"{type(abort_error).__name__}: {abort_error}"
+            )
         raise
     finally:
         if user_data_path is not None:
