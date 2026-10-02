@@ -428,3 +428,28 @@ workspace integration and publication handoff. Output is a reviewable script, no
 an approved or publishable video. Unknown subscription transport failures remain
 ambiguous; no automatic reconciliation endpoint is claimed. Token reservations
 are conservative estimates and provider-reported usage is recorded on completion.
+
+### E7 partial workspace checkpoint
+
+Production now includes an **Editorial projects** tab in the existing shared shell.
+Operators can save a brief, start source analysis or research/script work, inspect
+source observations and linked evidence, resume blocked work, stop active work and
+edit narration/visual direction into a new immutable revision. Provider receipts
+and research gaps are available behind a disclosure. Unavailable rendering and
+publication capabilities remain explicitly identified.
+
+Briefs and unsaved script text persist per channel in the browser tab. Uncertain
+create/start/save requests reuse their identity. Channel switching fences stale
+responses. A concurrent newer revision retains the operator's unsaved draft and
+requires an explicit discard before loading the latest script; it cannot silently
+overwrite either version. Active work refreshes progress without replacing typed
+script text. This is the research/script portion of E7, not its publication handoff.
+
+Browser validation: new synthetic editorial journey passed, including failed-create
+replay, blocked-run resume, evidence links, failed-save replay, concurrent revision
+preservation, channel isolation, keyboard tab navigation and 390px overflow checks.
+Existing Production browser tests passed. Desktop/mobile screenshots were inspected.
+Local browser downloads for pinned Playwright failed, so these local tests used a
+separate Chromium 134 executable without changing repository dependency versions.
+The research backend checkpoint `09de036` passed all GitHub CI, launcher and
+Cloudflare recovery coordinator workflows. UI changes require their own CI run.
