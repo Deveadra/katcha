@@ -433,10 +433,18 @@ def test_operations_limit_is_bounded(data) -> None:
 
 
 def test_operations_recover_resumes_active_production(data, monkeypatch) -> None:
-    calls: list[tuple[str, str, str]] = []
+    calls: list[tuple[str, str, str, bool]] = []
 
-    async def fake_start(production_id, workflow_id, *, start_stage="script"):
-        calls.append((production_id, workflow_id, start_stage))
+    async def fake_start(
+        production_id,
+        workflow_id,
+        *,
+        start_stage="script",
+        allow_failed_reuse=False,
+    ):
+        calls.append(
+            (production_id, workflow_id, start_stage, allow_failed_reuse)
+        )
         return SimpleNamespace(id=workflow_id)
 
     monkeypatch.setattr(operations, "start_production_workflow", fake_start)
@@ -451,7 +459,7 @@ def test_operations_recover_resumes_active_production(data, monkeypatch) -> None
     assert payload["action"] == "resumed"
     assert payload["source_id"] == str(data.active)
     assert payload["replacement_id"] is None
-    assert calls == [(str(data.active), "prod-active", "script")]
+    assert calls == [(str(data.active), "prod-active", "script", True)]
 
 
 def test_operations_stale_error_on_active_work_stays_resume_safe(
@@ -475,10 +483,18 @@ def test_operations_stale_error_on_active_work_stays_resume_safe(
     assert item["recovery_action"] == "resume"
     assert item["recovery_label"] == "Resume"
 
-    calls: list[tuple[str, str, str]] = []
+    calls: list[tuple[str, str, str, bool]] = []
 
-    async def fake_start(production_id, workflow_id, *, start_stage="script"):
-        calls.append((production_id, workflow_id, start_stage))
+    async def fake_start(
+        production_id,
+        workflow_id,
+        *,
+        start_stage="script",
+        allow_failed_reuse=False,
+    ):
+        calls.append(
+            (production_id, workflow_id, start_stage, allow_failed_reuse)
+        )
         return SimpleNamespace(id=workflow_id)
 
     monkeypatch.setattr(operations, "start_production_workflow", fake_start)
@@ -488,7 +504,7 @@ def test_operations_stale_error_on_active_work_stays_resume_safe(
     )
     assert response.status_code == 200
     assert response.json()["action"] == "resumed"
-    assert calls == [(str(data.active), "prod-active", "script")]
+    assert calls == [(str(data.active), "prod-active", "script", True)]
 
 
 def test_operations_recover_restarts_failed_publication(data, monkeypatch) -> None:
