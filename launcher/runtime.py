@@ -1246,14 +1246,15 @@ class Handler(BaseHTTPRequestHandler):
         return filename
 
     def _existing_handoff_path(self, filename):
-        root = self.server.runtime.root / "handoff"
-        for status in ("incoming", "processed", "failed"):
-            path = root / status / filename
-            if path.exists():
-                if path.is_symlink() or not path.is_file():
-                    raise ValueError("Existing handoff path is not a regular file.")
-                return path
-        return None
+        # Only a currently pending file can conflict with a same-name upload.
+        # Processed/failed files are history and must not block a corrected or
+        # revised handoff that intentionally reuses the original filename.
+        path = self.server.runtime.root / "handoff" / "incoming" / filename
+        if not path.exists():
+            return None
+        if path.is_symlink() or not path.is_file():
+            raise ValueError("Existing handoff path is not a regular file.")
+        return path
 
     def _handle_handoff_upload(self):
         runtime = self.server.runtime
