@@ -236,7 +236,11 @@ function aiResult(features) {
 function renderDetail(clip, features, sources) {
     clearPreview();
     const ai = aiResult(features);
-    const canAnalyze = !features && clip.status !== "failed" && clip.lifecycle_state === "hot";
+    const analysisFailed = clip.analysis_status === "failed";
+    const canAnalyze = !features &&
+        clip.status !== "failed" &&
+        clip.lifecycle_state === "hot" &&
+        (!clip.analysis_status || analysisFailed);
     const canPreview = clip.lifecycle_state !== "purged";
     const channels = (clip.channels || []).map((channel) => channel.name).join(", ") || "Unassigned";
     const refs = clip.active_reference_count
@@ -289,7 +293,7 @@ function renderDetail(clip, features, sources) {
             <div class="detail-actions">
                 ${lifecycleChip(clip)}
                 ${canPreview ? `<button class="mini" type="button" data-load-preview="${escapeHTML(clip.id)}">Load preview</button>` : ""}
-                ${canAnalyze ? `<button class="mini" type="button" data-analyze="${escapeHTML(clip.id)}">Analyze</button>` : ""}
+                ${canAnalyze ? `<button class="mini ${analysisFailed ? "danger" : ""}" type="button" data-analyze="${escapeHTML(clip.id)}" data-force-retry="${analysisFailed ? "true" : "false"}">${analysisFailed ? "Retry analysis" : "Analyze"}</button>` : ""}
                 ${askAction}
                 ${lifecycleActions}
             </div>
@@ -357,6 +361,8 @@ function renderDetail(clip, features, sources) {
 
             <section class="detail-block wide" data-clip-detail-view="analysis">
                 <h3>AI & SCORE</h3>
+                ${analysisFailed ? `<div class="empty error"><strong>Latest analysis failed</strong><br>${escapeHTML(clip.analysis_error || "No failure detail was recorded.")}</div>` : ""}
+
                 ${features ? `
                     <p class="ai-summary">${escapeHTML(ai?.event_summary || "Local analysis exists; no AI event summary is stored.")}</p>
                     <div class="ai-tags">
@@ -549,13 +555,17 @@ async function loadPreview(id, button) {
 
 async function analyze(id, button) {
     button.disabled = true;
+    const forceRetry = button.dataset.forceRetry === "true";
     try {
         const result = await api(`/v1/clips/${encodeURIComponent(id)}/analyze`, {
             method: "POST",
-            body: JSON.stringify({ force_retry: false }),
+            body: JSON.stringify({ force_retry: forceRetry }),
         });
-        message(`Analysis queued · ${result.stage.replaceAll("_", " ")}.`);
-        button.textContent = "Analysis queued";
+        message(
+            (forceRetry ? "Analysis restarted" : "Analysis queued") +
+            ` · ${result.stage.replaceAll("_", " ")}.`
+        );
+        button.textContent = forceRetry ? "Analysis restarted" : "Analysis queued";
     } catch (error) {
         message(error.message, true);
         button.disabled = false;
