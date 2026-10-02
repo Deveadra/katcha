@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from scripts.validate_production_runtime import validate
+from katcha.ops.production_runtime import validate
 
 ROOT = Path(__file__).resolve().parents[1]
 
