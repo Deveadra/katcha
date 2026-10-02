@@ -77,7 +77,13 @@ vault_bytes "$AWS_BUNDLE_SECRET_ID" > /tmp/katcha-aws.tgz
 tar -xzf /tmp/katcha-aws.tgz -C /etc/katcha/aws
 rm -f /tmp/katcha-aws.tgz
 
+sed -i \
+  -e '/^KATCHA_RELEASE_SHA=/d' \
+  -e '/^KATCHA_DEPLOYMENT_ID=/d' \
+  -e '/^KATCHA_DEPLOYMENT_EPOCH=/d' \
+  /etc/katcha/katcha.env
 cat >> /etc/katcha/katcha.env <<EOF
+KATCHA_RELEASE_SHA=$RELEASE_SHA
 KATCHA_DEPLOYMENT_ID=$DEPLOYMENT_ID
 KATCHA_DEPLOYMENT_EPOCH=$DEPLOYMENT_EPOCH
 EOF
