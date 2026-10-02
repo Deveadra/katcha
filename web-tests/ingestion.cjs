@@ -259,6 +259,29 @@ function overview(source) {
             return reply(overview(source));
         }
 
+        if (source && url.pathname.endsWith("/finds") && req.method() === "GET") {
+            let sourceFinds = [...(finds.get(sourceId) || [])];
+            const q = (url.searchParams.get("q") || "").toLowerCase();
+            const limit = Number(url.searchParams.get("limit") || 25);
+            const offset = Number(url.searchParams.get("offset") || 0);
+            if (q) {
+                sourceFinds = sourceFinds.filter((item) => {
+                    const candidate = item.candidate || {};
+                    return [
+                        candidate.title,
+                        candidate.creator,
+                        candidate.source_url,
+                    ].some((value) => String(value || "").toLowerCase().includes(q));
+                });
+            }
+            return reply({
+                total: sourceFinds.length,
+                limit,
+                offset,
+                items: clone(sourceFinds.slice(offset, offset + limit)),
+            });
+        }
+
         if (source && url.pathname.endsWith("/runs") && req.method() === "POST") {
             const key = body.idempotency_key;
             let run = runs.find((row) => row.sourceId === sourceId && row.run_key === key);
@@ -307,6 +330,43 @@ function overview(source) {
                 runs.push(run);
             }
             return reply({ discovery_run: clone(run), batch_key: key, item_count: body.urls.length }, 201);
+        }
+
+        const restartMatch = url.pathname.match(/^\/v1\/discovery\/runs\/([^/]+)\/restart$/);
+        if (restartMatch && req.method() === "POST") {
+            const failed = runs.find((row) => row.id === restartMatch[1]);
+            if (!failed) return reply({ detail: "not found" }, 404);
+            if (failed.status !== "failed") return reply({ detail: "only failed discovery runs can be restarted" }, 409);
+            let run = runs.find((row) =>
+                row.run_metadata?.restarted_from_run_id === failed.id &&
+                row.run_key === body.idempotency_key
+            );
+            if (!run) {
+                run = {
+                    ...clone(failed),
+                    id: "run-" + (runs.length + 1),
+                    run_key: body.idempotency_key,
+                    status: "queued",
+                    cursor: {},
+                    error: null,
+                    started_at: null,
+                    completed_at: null,
+                    created_at: new Date().toISOString(),
+                    updated_at: new Date().toISOString(),
+                    run_metadata: {
+                        ...clone(failed.run_metadata || {}),
+                        restarted_from_run_id: failed.id,
+                        recovery_mode: "manual_restart",
+                    },
+                };
+                runs.push(run);
+            }
+            return reply({
+                previous_run_id: failed.id,
+                discovery_run_id: run.id,
+                workflow_id: "discovery-run-" + run.id,
+                status: run.status,
+            }, 202);
         }
 
         const executeMatch = url.pathname.match(/^\/v1\/discovery\/runs\/([^/]+)\/execute$/);
@@ -500,6 +560,31 @@ function overview(source) {
         assert.match(await page.locator("#source-info").innerText(), /Research only/);
         assert.match(await page.locator("#source-info").innerText(), /Saving a source does not create a recurring schedule/);
 
+        // Saved sources can be edited in place without losing their identity/history.
+        const marvelSourceKey = marvel.source_key;
+        await page.locator("#edit-source").click();
+        await page.locator('[data-source-view="add"]').waitFor({ state: "visible" });
+        assert.equal(await page.locator("#name").inputValue(), "Marvel Entertainment");
+        assert.equal(
+            await page.locator("#youtube-channel").inputValue(),
+            "https://www.youtube.com/@marvel",
+        );
+        await page.locator("#youtube-channel").fill("@marvel");
+        await page.locator("#next").click();
+        assert.equal(await page.locator("#save").innerText(), "Save changes");
+        assert.match(await page.locator("#save-explanation").innerText(), /history are preserved/i);
+        await page.locator("#save").click();
+        await page.waitForFunction(() => document.querySelector("#source-name")?.textContent === "Marvel Entertainment");
+        assert.equal(marvel.source_key, marvelSourceKey);
+        assert.equal(marvel.query_template.channel_reference, "@marvel");
+        const marvelEdit = [...requests].reverse().find((row) =>
+            row.path === "/v1/discovery/sources" &&
+            row.method === "POST" &&
+            row.body?.source_key === marvelSourceKey &&
+            row.body?.create_only === false
+        );
+        assert(marvelEdit);
+
         // Exact provider failure is visible in the inspector instead of only a generic wrapper.
         runs.push({
             id: "run-marvel-failed",
@@ -517,22 +602,43 @@ function overview(source) {
             created_at: "2026-10-01T12:29:23.104054Z",
             updated_at: "2026-10-01T12:29:23.104054Z",
         });
-        finds.set(marvel.id, [{
-            observed_at: now,
+        finds.set(marvel.id, Array.from({ length: 30 }, (_, index) => ({
+            observed_at: new Date(Date.parse(now) - index * 60000).toISOString(),
             candidate: {
-                id: "candidate-marvel",
-                source_url: "https://www.youtube.com/watch?v=abc",
-                title: "Marvel trailer",
+                id: "candidate-marvel-" + index,
+                source_url: "https://www.youtube.com/watch?v=marvel-" + index,
+                title: index === 29 ? "VisionQuest Official Trailer" : "Marvel trailer " + index,
                 creator: "Marvel Entertainment",
                 platform: "youtube",
+                status: "discovered",
             },
-        }]);
+        })));
         await page.locator("#history-refresh").click();
         await page.waitForFunction(() => !document.querySelector("#source-alert").hidden);
         assert.match(await page.locator("#source-alert").innerText(), /status 403/);
         assert.match(await page.locator("#history").innerText(), /quota or credential denied/);
-        assert.match(await page.locator("#recent-finds").innerText(), /Marvel trailer/);
-        assert.equal(await page.locator("#recent-finds [data-add-clip]").count(), 0);
+        assert.match(await page.locator("#finds-count").innerText(), /30 finds/);
+        assert.equal(await page.locator("#all-finds .source-find").count(), 25);
+        assert.equal(await page.locator("#finds-next").isDisabled(), false);
+        assert.equal(await page.locator("#all-finds [data-add-clip]").count(), 0);
+
+        // An older find outside the former Recent Finds window is searchable and reachable.
+        await page.locator("#finds-search").fill("VisionQuest");
+        await page.waitForFunction(() => document.querySelectorAll("#all-finds .source-find").length === 1);
+        assert.match(await page.locator("#all-finds").innerText(), /VisionQuest Official Trailer/);
+        await page.locator("#finds-search").fill("");
+        await page.waitForFunction(() => document.querySelectorAll("#all-finds .source-find").length === 25);
+
+        // Failed checks restart as a new attempt while preserving the failed history.
+        await page.locator('[data-restart="run-marvel-failed"]').click();
+        await page.waitForFunction(() =>
+            document.querySelector("#message")?.textContent.includes("Previous history was preserved")
+        );
+        assert(runs.some((row) =>
+            row.run_metadata?.restarted_from_run_id === "run-marvel-failed" &&
+            row.id !== "run-marvel-failed"
+        ));
+        assert.equal(runs.find((row) => row.id === "run-marvel-failed").status, "failed");
 
         // Candidate-review sources can send finds to Clips.
         finds.set(xbox.id, [{
@@ -550,8 +656,21 @@ function overview(source) {
         await page.waitForFunction(() => document.querySelectorAll(".source-row").length === 1);
         await page.locator(".source-row").click();
         await page.waitForFunction(() => document.querySelector("#source-name")?.textContent === "Xbox Launch Watch");
-        assert.equal(await page.locator("#recent-finds [data-add-clip]").count(), 1);
-        await page.locator("#recent-finds [data-add-clip]").click();
+        assert.equal(await page.locator("#all-finds [data-add-clip]").count(), 1);
+        assert.match(await page.locator("#history").innerText(), /Resume now/);
+        const executeCountBeforeResume = requests.filter((row) =>
+            row.path.endsWith("/execute") && row.method === "POST"
+        ).length;
+        await page.locator("#history [data-execute]").click();
+        await page.waitForFunction(
+            (count) => window.__unused === undefined || true,
+            executeCountBeforeResume,
+        );
+        assert(
+            requests.filter((row) => row.path.endsWith("/execute") && row.method === "POST").length >
+                executeCountBeforeResume
+        );
+        await page.locator("#all-finds [data-add-clip]").click();
         assert(requests.some((row) => row.path.endsWith("/promote") && row.body.for_review === true));
 
         // Filtering is server-driven and the list stays bounded.
@@ -574,7 +693,7 @@ function overview(source) {
 
         assert.deepEqual(pageErrors, []);
         console.log(
-            "PASS: scalable Source Library, intelligence handoff import, explicit save/run semantics, source health inspector, research-only isolation, provider failure visibility and mobile width"
+            "PASS: editable Source Library, complete searchable finds, safe run resume/restart, handoff import, source health, research isolation and mobile width"
         );
     } finally {
         await browser.close();
