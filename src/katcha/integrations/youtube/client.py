@@ -10,6 +10,7 @@ import httpx
 
 from katcha.config import Settings, get_settings
 from katcha.integrations.youtube.tokens import get_valid_access_token
+from katcha.runtime_fence import assert_mutation_authority
 
 DATA_API_BASE = "https://www.googleapis.com/youtube/v3"
 UPLOAD_URL = "https://www.googleapis.com/upload/youtube/v3/videos"
@@ -67,6 +68,10 @@ class YouTubeClient:
         made_for_kids: bool,
         contains_synthetic_media: bool,
     ) -> str:
+        assert_mutation_authority(
+            "youtube.initiate_resumable_upload",
+            settings=self.settings,
+        )
         body = {
             "snippet": {
                 "title": title,
@@ -136,6 +141,10 @@ class YouTubeClient:
     ) -> UploadProgress:
         if not data:
             raise ValueError("upload chunk cannot be empty")
+        assert_mutation_authority(
+            "youtube.upload_chunk",
+            settings=self.settings,
+        )
         end = start + len(data) - 1
         response = httpx.put(
             upload_url,
@@ -165,6 +174,10 @@ class YouTubeClient:
         tags: list[str],
         category_id: str,
     ) -> dict[str, Any]:
+        assert_mutation_authority(
+            "youtube.update_snippet",
+            settings=self.settings,
+        )
         response = httpx.put(
             f"{DATA_API_BASE}/videos",
             params={"part": "snippet"},
@@ -195,6 +208,10 @@ class YouTubeClient:
             raise ValueError("thumbnail data cannot be empty")
         if mime_type not in {"image/png", "image/jpeg"}:
             raise ValueError(f"unsupported YouTube thumbnail MIME type: {mime_type}")
+        assert_mutation_authority(
+            "youtube.set_thumbnail",
+            settings=self.settings,
+        )
         response = httpx.post(
             THUMBNAIL_UPLOAD_URL,
             params={"videoId": video_id, "uploadType": "media"},
@@ -378,6 +395,10 @@ class YouTubeClient:
         }
         if publish_at is not None:
             video_status["publishAt"] = _iso_z(publish_at)
+        assert_mutation_authority(
+            "youtube.update_status",
+            settings=self.settings,
+        )
         response = httpx.put(
             f"{DATA_API_BASE}/videos",
             params={"part": "status"},
