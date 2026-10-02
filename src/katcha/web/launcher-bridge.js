@@ -54,6 +54,37 @@ function installAerithSystem() {
 
 installAerithSystem();
 
+function installTrendsStyleRecovery() {
+    if (location.port !== '8765' || currentWorkspace().key !== 'trends') return;
+    const shell = document.querySelector('.app-shell');
+    if (!shell) return;
+    const recover = () => {
+        if (getComputedStyle(shell).display === 'grid') return;
+        const assets = [
+            'styles.css',
+            'explorer-refresh.css',
+            'system/aerith-tokens.css',
+            'system/aerith-base.css',
+            'system/aerith-shell.css',
+            'system/aerith-components.css',
+            'system/aerith-motion.css',
+            'pages/trends-aerith.css',
+        ];
+        for (const asset of assets) {
+            if (document.querySelector('link[data-katcha-style-recovery="' + asset + '"]')) continue;
+            const link = document.createElement('link');
+            link.rel = 'stylesheet';
+            link.href = '/explorer/assets/' + asset;
+            link.dataset.katchaStyleRecovery = asset;
+            document.head.append(link);
+        }
+    };
+    if (document.readyState === 'complete') setTimeout(recover, 0);
+    else window.addEventListener('load', recover, { once: true });
+}
+
+installTrendsStyleRecovery();
+
 function installSkipLink() {
     if (document.querySelector('.ae-skip-link')) return;
     const main = document.querySelector('main');
