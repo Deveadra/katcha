@@ -716,25 +716,70 @@ function renderSourceList() {
     $('source-controls').hidden = sourcePage.total === 0;
 }
 
-function renderRecentFinds(overview, row) {
-    const findings = overview.recent_finds || [];
+function renderFinds(page, row) {
+    const findings = page.items || [];
+    const startIndex = page.total ? page.offset + 1 : 0;
+    const finish = Math.min(page.offset + findings.length, page.total);
+    $('finds-count').textContent =
+        page.total + ' find' + (page.total === 1 ? '' : 's');
+    $('finds-page-label').textContent = startIndex + '–' + finish;
+    $('finds-prev').disabled = page.offset <= 0;
+    $('finds-next').disabled = page.offset + page.limit >= page.total;
+
     if (!findings.length) {
-        $('recent-finds').innerHTML = '<p class="source-empty-copy">Nothing found yet. Run a check to start building source history.</p>';
+        $('all-finds').innerHTML =
+            '<p class="source-empty-copy">' +
+            ($('finds-search').value.trim()
+                ? 'No finds match this search.'
+                : 'Nothing found yet. Run a check to start building source history.') +
+            '</p>';
         return;
     }
     const canPromote = !['discovery_only', 'blocked'].includes(row.usage_mode);
-    $('recent-finds').innerHTML = findings.map(item => {
+    $('all-finds').innerHTML = findings.map(item => {
         const candidate = item.candidate || {};
         const url = safeExternalUrl(candidate.source_url);
         return '<article class="source-find">' +
-            '<div><strong>' + esc(candidate.title || candidate.source_url || 'Untitled find') + '</strong>' +
-            '<small>' + esc(candidate.creator || candidate.platform || 'Unknown creator') + ' · ' + esc(formatWhen(item.observed_at)) + '</small></div>' +
+            '<div class="source-find-copy"><strong>' +
+                esc(candidate.title || candidate.source_url || 'Untitled find') +
+            '</strong><small>' +
+                esc(candidate.creator || candidate.platform || 'Unknown creator') +
+                ' · ' + esc(formatWhen(item.observed_at)) +
+            '</small><span>' + esc(candidate.status || 'discovered') + '</span></div>' +
             '<div class="source-find-actions">' +
-                (url ? '<a class="text-button" href="' + esc(url) + '" target="_blank" rel="noopener noreferrer">Open ↗</a>' : '') +
-                (canPromote && candidate.id ? '<button type="button" class="text-button" data-add-clip="' + esc(candidate.id) + '">Add to Clips</button>' : '') +
+                (url ? '<a class="text-button" href="' + esc(url) +
+                    '" target="_blank" rel="noopener noreferrer">Open ↗</a>' : '') +
+                (canPromote && candidate.id
+                    ? '<button type="button" class="text-button" data-add-clip="' +
+                        esc(candidate.id) + '">Add to Clips</button>'
+                    : '') +
             '</div>' +
         '</article>';
     }).join('');
+}
+
+async function loadFinds({reset = false} = {}) {
+    const row = source();
+    if (!row) return;
+    if (reset) {
+        findsPage.offset = 0;
+        $('finds-search').value = '';
+    }
+    const epoch = ++findsEpoch;
+    const params = new URLSearchParams({
+        limit: String(findsPage.limit),
+        offset: String(findsPage.offset),
+    });
+    const q = $('finds-search').value.trim();
+    if (q) params.set('q', q);
+    $('all-finds').innerHTML = '<p class="source-empty-copy">Loading finds…</p>';
+    const page = await api(
+        'discovery/sources/' + encodeURIComponent(row.id) +
+        '/finds?' + params.toString(),
+    );
+    if (epoch !== findsEpoch || source()?.id !== row.id) return;
+    findsPage = page;
+    renderFinds(page, row);
 }
 
 function renderHistory(overview, row) {
@@ -819,7 +864,6 @@ function renderSourceOverview() {
             ? 'Paste known links below when you want Katcha to inspect them.'
             : 'This source checks only when you choose the action above. Recurring source schedules are configured separately.';
 
-    renderRecentFinds(overview, row);
     renderHistory(overview, row);
 }
 
@@ -932,10 +976,12 @@ async function selectSource(sourceId = $('source').value) {
     if (next) sessionStorage.setItem('katcha.sourceId', next);
     renderSourceList();
     await loadOverview();
+    await loadFinds({reset: true});
 }
 
 async function loadHistory() {
     await loadOverview();
+    await loadFinds();
 }
 async function start(run) {
     try { await api(`discovery/runs/${encodeURIComponent(run.id)}/execute`, {}); }
@@ -1191,6 +1237,24 @@ for (const id of [
         catch (error) { message(error.message, true); }
     });
 }
+$('finds-search').addEventListener('input', () => {
+    clearTimeout(findsSearchTimer);
+    findsSearchTimer = setTimeout(async () => {
+        findsPage.offset = 0;
+        try { await loadFinds(); }
+        catch (error) { message(error.message, true); }
+    }, 250);
+});
+$('finds-prev').addEventListener('click', async () => {
+    findsPage.offset = Math.max(0, findsPage.offset - findsPage.limit);
+    await loadFinds();
+});
+$('finds-next').addEventListener('click', async () => {
+    if (findsPage.offset + findsPage.limit >= findsPage.total) return;
+    findsPage.offset += findsPage.limit;
+    await loadFinds();
+});
+
 $('source-prev').addEventListener('click', async () => {
     sourcePage.offset = Math.max(0, sourcePage.offset - sourcePage.limit);
     await refreshSources({preserveSelection: false});
@@ -1276,7 +1340,7 @@ bind('import', 'submit', async () => {
 });
 
 $('history').addEventListener('click', handleInspectorClick);
-$('recent-finds').addEventListener('click', handleInspectorClick);
+$('all-finds').addEventListener('click', handleInspectorClick);
 
 $('usage-help').textContent = '';
 // The launcher bridge connects after startup. Direct API users connect automatically.
