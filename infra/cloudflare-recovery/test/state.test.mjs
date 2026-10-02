@@ -9,6 +9,7 @@ import {
   configureWatchdog,
   defaultAuthorityState,
   fenceResult,
+  markCandidateReady,
   markIncidentDispatched,
   prepareAuthority,
 } from "../src/state.mjs";
@@ -22,7 +23,16 @@ test("prepare allocates a monotonic epoch without fencing the active leader", ()
   assert.equal(first.pending.epoch, 1);
   assert.equal(first.state.active, null);
 
-  const committed = commitAuthority(first.state, {
+  const ready = markCandidateReady(first.state, {
+    deploymentId: "oci-a1",
+    deploymentEpoch: 1,
+    readiness: {
+      runtime_ready: true,
+      durable_state_ready: true,
+      fence_probe_ready: true,
+    },
+  }, 1500);
+  const committed = commitAuthority(ready.state, {
     deploymentId: "oci-a1",
     deploymentEpoch: 1,
     expectedActiveEpoch: 0,
@@ -44,7 +54,16 @@ test("commit atomically transfers authority to the prepared deployment", () => {
     healthUrl: "https://a1.example.test/v1/health/ready",
     expectedActiveEpoch: 0,
   });
-  const committed = commitAuthority(prepared.state, {
+  const ready = markCandidateReady(prepared.state, {
+    deploymentId: "oci-a1",
+    deploymentEpoch: 1,
+    readiness: {
+      runtime_ready: true,
+      durable_state_ready: true,
+      fence_probe_ready: true,
+    },
+  });
+  const committed = commitAuthority(ready.state, {
     deploymentId: "oci-a1",
     deploymentEpoch: 1,
     expectedActiveEpoch: 0,
@@ -61,7 +80,16 @@ test("stale expected epochs cannot prepare or commit authority", () => {
     healthUrl: "https://a1.example.test/v1/health/ready",
     expectedActiveEpoch: 0,
   });
-  const committed = commitAuthority(prepared.state, {
+  const ready = markCandidateReady(prepared.state, {
+    deploymentId: "oci-a1",
+    deploymentEpoch: 1,
+    readiness: {
+      runtime_ready: true,
+      durable_state_ready: true,
+      fence_probe_ready: true,
+    },
+  });
+  const committed = commitAuthority(ready.state, {
     deploymentId: "oci-a1",
     deploymentEpoch: 1,
     expectedActiveEpoch: 0,
@@ -171,4 +199,56 @@ test("probe results for a superseded deployment are ignored", () => {
   });
   assert.equal(probe.ignored, true);
   assert.deepEqual(probe.state.active, state.active);
+});
+
+
+test("commit refuses a candidate that has not proven readiness", () => {
+  const prepared = prepareAuthority(defaultAuthorityState(), {
+    deploymentId: "candidate",
+    healthUrl: "https://candidate.example.test/v1/health/ready",
+    expectedActiveEpoch: 0,
+  });
+
+  assert.throws(
+    () => commitAuthority(prepared.state, {
+      deploymentId: "candidate",
+      deploymentEpoch: 1,
+      expectedActiveEpoch: 0,
+    }),
+    /has not passed candidate readiness checks/,
+  );
+});
+
+test("candidate readiness requires all mandatory checks", () => {
+  const prepared = prepareAuthority(defaultAuthorityState(), {
+    deploymentId: "candidate",
+    healthUrl: "https://candidate.example.test/v1/health/ready",
+    expectedActiveEpoch: 0,
+  });
+
+  assert.throws(
+    () => markCandidateReady(prepared.state, {
+      deploymentId: "candidate",
+      deploymentEpoch: 1,
+      readiness: {
+        runtime_ready: true,
+        durable_state_ready: true,
+        fence_probe_ready: false,
+      },
+    }),
+    /fence_probe_ready/,
+  );
+
+  const ready = markCandidateReady(prepared.state, {
+    deploymentId: "candidate",
+    deploymentEpoch: 1,
+    readiness: {
+      runtime_ready: true,
+      durable_state_ready: true,
+      fence_probe_ready: true,
+      detail: "local acceptance passed",
+    },
+  });
+  assert.ok(ready.pending.ready_at);
+  assert.equal(ready.pending.readiness.detail, "local acceptance passed");
 });
