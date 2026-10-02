@@ -17,6 +17,7 @@ from katcha.orchestration.activities import (
     enqueue_ingested_analysis_activity,
     ingest_source,
     mark_source_failed,
+    prepare_authorized_passthrough_activity,
 )
 from katcha.orchestration.packaging_activities import (
     apply_packaging_text_activity,
@@ -136,7 +137,12 @@ async def main() -> None:
             client,
             task_queue=settings.temporal_task_queue,
             workflows=[ClipIngestWorkflow],
-            activities=[ingest_source, mark_source_failed, enqueue_ingested_analysis_activity],
+            activities=[
+                ingest_source,
+                mark_source_failed,
+                enqueue_ingested_analysis_activity,
+                prepare_authorized_passthrough_activity,
+            ],
             activity_executor=activity_executor,
         )
         publishing_worker = Worker(

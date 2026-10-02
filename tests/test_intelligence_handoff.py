@@ -14,9 +14,16 @@ from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from katcha import db
-from katcha.acquisition_models import IntelligenceIngestBatch, IntelligenceRecord
+from katcha.acquisition_models import (
+    DiscoveryCandidate,
+    IntelligenceIngestBatch,
+    IntelligenceRecord,
+    RightsAssessment,
+)
 from katcha.intelligence_models import ChannelProfile
+from katcha.models import SourceItem
 from katcha.publishing_models import YouTubeConnection
+from katcha.services.ingestion_sources import ingest_intelligence_batch
 from katcha.services.intelligence_handoff import (
     handoff_inbox_summary,
     list_handoff_inbox,
@@ -244,7 +251,8 @@ def test_folder_scan_processes_manually_dropped_files(
     assert [item.status for item in results] == ["processed", "processed"]
     assert {item.batch_key for item in results} == {"drop-a", "drop-b"}
     items = list_handoff_inbox(root=root)
-    assert [item.status for item in items].count("processed") == 2
+    assert items == []
+    assert handoff_inbox_summary(root=root)["counts"]["processed"] == 2
 
     with handoff_scope() as session:
         assert session.scalar(
@@ -311,7 +319,193 @@ async def test_handoff_api_upload_processes_file(
     assert result.batch_key == "api-batch"
     inbox = acquisition.get_intelligence_handoff_inbox(limit=100)
     assert inbox.counts["processed"] == 1
-    assert inbox.items[0].filename == "api-batch.json"
+    assert inbox.items == []
+
+
+def test_same_filename_new_revision_archives_without_overwriting(
+    handoff_scope,
+    tmp_path: Path,
+) -> None:
+    channel_id = _create_channel(handoff_scope)
+    root = tmp_path / "handoff"
+    first_payload = _batch(channel_id, batch_key="revision-v1")
+    first_content = _encoded(first_payload)
+    submit_handoff_file("visionquest.json", first_content, root=root)
+    first = process_handoff_file("visionquest.json", root=root)
+    assert first.status == "processed"
+
+    second_payload = _batch(channel_id, batch_key="revision-v2")
+    second_payload["records"][0]["record_key"] = "youtube:video:visionquest-v2"
+    second_content = _encoded(second_payload)
+    queued = submit_handoff_file("visionquest.json", second_content, root=root)
+    assert queued.status == "incoming"
+    second = process_handoff_file("visionquest.json", root=root)
+    assert second.status == "processed"
+
+    archived = sorted((root / "processed").glob("visionquest*.json"))
+    assert len(archived) == 2
+    assert archived[0].read_bytes() != archived[1].read_bytes()
+    assert list_handoff_inbox(root=root) == []
+    assert handoff_inbox_summary(root=root)["counts"]["processed"] == 2
+
+
+@pytest.mark.asyncio
+async def test_api_startup_drains_pending_handoffs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from katcha.api import main
+
+    called: dict[str, int] = {}
+
+    def fake_process_handoff_inbox(*, limit: int = 50):
+        called["limit"] = limit
+        return []
+
+    async def fake_reconcile(*, limit: int = 200):
+        called["reconcile_limit"] = limit
+        return []
+
+    monkeypatch.setattr(main, "process_handoff_inbox", fake_process_handoff_inbox)
+    monkeypatch.setattr(main, "reconcile_authorized_handoff_records", fake_reconcile)
+
+    await main._process_pending_handoffs_on_startup()
+
+    assert called == {"limit": 50, "reconcile_limit": 200}
+
+
+@pytest.mark.asyncio
+async def test_authorized_official_trailer_handoff_queues_acquisition(
+    handoff_scope,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from katcha.services import intelligence_automation
+
+    channel_id = _create_channel(handoff_scope)
+    payload = _batch(channel_id, batch_key="visionquest-v2")
+    payload["records"][0] = {
+        "record_kind": "video",
+        "record_key": "youtube:video:sXKnmgmbkoE",
+        "title": "Marvel Television's VisionQuest | Official Trailer",
+        "summary": "Urgent official trailer.",
+        "source_url": "https://www.youtube.com/watch?v=sXKnmgmbkoE",
+        "platform": "youtube",
+        "status": "active",
+        "tags": ["visionquest", "official_trailer"],
+        "payload": {
+            "creator": "Marvel Entertainment",
+            "creator_url": "https://www.youtube.com/@marvel",
+            "production_intent": "source_passthrough",
+            "operator_authorized": True,
+            "authorization_scope": "official_trailer_repost",
+            "official_source_verified": True,
+            "preupload_packaging_required": True,
+        },
+        "provenance": {
+            "collector": "orion",
+            "confidence": 0.99,
+            "official_channel_verified": True,
+        },
+        "observed_at": "2026-10-02T10:45:00Z",
+    }
+    root = tmp_path / "handoff"
+    submit_handoff_file("visionquest.json", _encoded(payload), root=root)
+    processed = process_handoff_file("visionquest.json", root=root)
+
+    started: list[tuple[str, str]] = []
+
+    async def fake_start(source_id: str, workflow_id: str) -> str:
+        started.append((source_id, workflow_id))
+        return workflow_id
+
+    monkeypatch.setattr(intelligence_automation, "start_ingest_workflow", fake_start)
+
+    results = await intelligence_automation.advance_processed_handoff_receipt(
+        processed.receipt
+    )
+
+    assert len(results) == 1
+    assert results[0].action == "ingest_queued"
+    assert results[0].candidate_id is not None
+    assert results[0].source_id is not None
+    assert started == [(str(results[0].source_id), str(results[0].workflow_id))]
+
+    with handoff_scope() as session:
+        candidate = session.get(DiscoveryCandidate, results[0].candidate_id)
+        assert candidate is not None
+        assert candidate.status == "promoted"
+        assert candidate.candidate_metadata["operator_authorized"] is True
+        assessment = session.scalar(
+            select(RightsAssessment).where(
+                RightsAssessment.discovery_candidate_id == candidate.id
+            )
+        )
+        assert assessment is not None
+        assert assessment.production_eligible is True
+        source = session.get(SourceItem, results[0].source_id)
+        assert source is not None
+        assert source.status == "registered"
+        assert source.source_metadata["channel_profile_id"] == str(channel_id)
+        assert source.source_metadata["intelligence_record_id"]
+
+
+@pytest.mark.asyncio
+async def test_startup_reconciles_previously_stored_authorized_handoff(
+    handoff_scope,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from katcha.services import intelligence_automation
+
+    channel_id = _create_channel(handoff_scope)
+    result = ingest_intelligence_batch(
+        channel_profile_id=channel_id,
+        batch_key="stored-before-automation",
+        producer="orion",
+        source_type="assistant",
+        records=[
+            {
+                "record_kind": "video",
+                "record_key": "youtube:video:stored-trailer",
+                "title": "Stored Official Trailer",
+                "summary": "Already ingested intelligence awaiting automation.",
+                "source_url": "https://www.youtube.com/watch?v=stored-trailer",
+                "platform": "youtube",
+                "tags": ["official_trailer"],
+                "payload": {
+                    "creator": "Official Studio",
+                    "production_intent": "source_passthrough",
+                    "operator_authorized": True,
+                    "authorization_scope": "official_trailer_repost",
+                    "official_source_verified": True,
+                    "preupload_packaging_required": True,
+                },
+                "provenance": {
+                    "collector": "orion",
+                    "confidence": 1.0,
+                    "official_channel_verified": True,
+                },
+                "observed_at": "2026-10-02T10:45:00Z",
+            }
+        ],
+    )
+    assert result.records
+
+    started: list[tuple[str, str]] = []
+
+    async def fake_start(source_id: str, workflow_id: str) -> str:
+        started.append((source_id, workflow_id))
+        return workflow_id
+
+    monkeypatch.setattr(intelligence_automation, "start_ingest_workflow", fake_start)
+
+    reconciled = await intelligence_automation.reconcile_authorized_handoff_records()
+
+    assert len(reconciled) == 1
+    assert reconciled[0].record_id == result.records[0].id
+    assert reconciled[0].action == "ingest_queued"
+    assert started == [
+        (str(reconciled[0].source_id), str(reconciled[0].workflow_id))
+    ]
 
 
 def test_symlinked_local_drop_is_not_processed(

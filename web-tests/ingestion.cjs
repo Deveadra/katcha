@@ -54,6 +54,7 @@ const runs = [];
 const finds = new Map();
 const requests = [];
 let handoffItems = [];
+let handoffArchived = 0;
 let loseSaveResponse = false;
 let executeFails = false;
 
@@ -166,7 +167,7 @@ function overview(source) {
         if (url.pathname === "/v1/channels") return reply(channels);
 
         if (url.pathname === "/v1/intelligence-ingest/inbox" && req.method() === "GET") {
-            const counts = { incoming: 0, processed: 0, failed: 0 };
+            const counts = { incoming: 0, processed: handoffArchived, failed: 0 };
             for (const item of handoffItems) counts[item.status] += 1;
             return reply({
                 incoming_path: "handoff/incoming",
@@ -192,24 +193,14 @@ function overview(source) {
                     replayed: false,
                 },
             };
-            handoffItems = [item, ...handoffItems];
+            handoffArchived += 1;
             return reply(clone(item), 201);
         }
 
         if (url.pathname === "/v1/intelligence-ingest/inbox/process" && req.method() === "POST") {
             const pending = handoffItems.filter((item) => item.status === "incoming");
-            handoffItems = handoffItems.map((item) => item.status === "incoming"
-                ? {
-                    ...item,
-                    status: "processed",
-                    receipt: {
-                        created_count: item.record_count || 0,
-                        updated_count: 0,
-                        replayed: false,
-                    },
-                }
-                : item
-            );
+            handoffItems = handoffItems.filter((item) => item.status !== "incoming");
+            handoffArchived += pending.length;
             return reply(pending.map((item) => ({
                 ...item,
                 status: "processed",
@@ -435,8 +426,7 @@ function overview(source) {
         await page.waitForFunction(() =>
             document.querySelector("#handoff-count-processed")?.textContent === "1"
         );
-        assert.match(await page.locator("#handoff-list").innerText(), /rank-snaxx-first-run\.json/);
-        assert.match(await page.locator("#handoff-list").innerText(), /RankSnaxx/);
+        assert.match(await page.locator("#handoff-list").innerText(), /Inbox clear/);
         assert.match(await page.locator("#message").innerText(), /4 intelligence records/);
         assert.match(await page.locator("#handoff-progress-title").innerText(), /Batch imported/);
         assert.equal(await page.locator("#handoff-progress-bar").getAttribute("value"), "100");

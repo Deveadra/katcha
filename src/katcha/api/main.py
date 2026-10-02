@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import mimetypes
 import uuid
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from pathlib import Path
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
@@ -67,6 +70,7 @@ from katcha.api.schemas import (
     ReviewProductionRequest,
     SourceResponse,
     StartPublicationRequest,
+    UpdatePublicationPlanRequest,
     YouTubeConnectionResponse,
     YouTubeOAuthStartResponse,
 )
@@ -125,6 +129,11 @@ from katcha.services.compilations import (
     register_compilation_regeneration,
     review_compilation,
 )
+from katcha.services.intelligence_automation import (
+    advance_processed_handoff_receipt,
+    reconcile_authorized_handoff_records,
+)
+from katcha.services.intelligence_handoff import process_handoff_inbox
 from katcha.services.productions import (
     register_regeneration,
     register_short_production,
@@ -137,16 +146,42 @@ from katcha.services.publications import (
     register_publication,
     release_publication_for_upload,
     retry_publication,
+    update_publication_plan,
 )
 from katcha.services.render_automation import advance_render_automation
 from katcha.services.render_recovery import render_attempts_for_source
 from katcha.services.sources import register_source
+
+_logger = logging.getLogger(__name__)
+
+
+async def _process_pending_handoffs_on_startup() -> None:
+    """Drain manually dropped handoff files after the API database is available."""
+    try:
+        items = await asyncio.to_thread(process_handoff_inbox, limit=50)
+        for item in items:
+            if item.status == "processed":
+                await advance_processed_handoff_receipt(item.receipt)
+        await reconcile_authorized_handoff_records(limit=200)
+    except Exception:
+        # Handoff failures must never prevent Katcha itself from starting. Individual
+        # file validation failures are already moved to the failed queue by the
+        # handoff service; this guard covers broader storage/database problems.
+        _logger.exception("automatic handoff inbox processing failed during startup")
+
+
+@asynccontextmanager
+async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
+    await _process_pending_handoffs_on_startup()
+    yield
+
 
 app = FastAPI(
     title="Katcha API",
     dependencies=[Depends(require_control_token), Depends(require_native_channel_body)],
     version=__version__,
     description="Standalone control plane for Katcha media workflows.",
+    lifespan=_lifespan,
 )
 app.include_router(acquisition_router)
 app.include_router(brands_router)
@@ -821,6 +856,27 @@ async def create_compilation_publication(
     if publication.status == "queued" and publication.stage != "metadata_hold":
         await start_publication_workflow(str(publication.id), publication.workflow_id)
     return publication
+
+
+@app.post(
+    "/v1/publications/{publication_id}/plan",
+    response_model=PublicationResponse,
+)
+def update_held_publication_plan(
+    publication_id: uuid.UUID,
+    request: UpdatePublicationPlanRequest,
+) -> Publication:
+    try:
+        return update_publication_plan(
+            publication_id,
+            publish_mode=request.publish_mode,
+            publish_at=request.publish_at,
+            notify_subscribers=request.notify_subscribers,
+            actor=request.actor,
+        )
+    except ValueError as exc:
+        code = 404 if "not found" in str(exc) else 409
+        raise HTTPException(status_code=code, detail=str(exc)) from exc
 
 
 @app.post(

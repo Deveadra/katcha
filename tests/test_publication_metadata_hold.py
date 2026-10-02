@@ -142,3 +142,42 @@ def test_publication_can_hold_for_seo_before_upload(publication_scope) -> None:
     )
     assert replay.id == row.id
     assert replay.stage == "queued"
+
+def test_held_publication_plan_can_switch_between_schedule_and_asap(
+    publication_scope,
+) -> None:
+    production_id, connection_id = _seed(publication_scope)
+    row = publications.register_publication(
+        production_id,
+        youtube_connection_id=connection_id,
+        title="VisionQuest",
+        privacy_status="public",
+        hold_for_packaging=True,
+    )
+    future = datetime.now(UTC) + timedelta(hours=2)
+
+    scheduled = publications.update_publication_plan(
+        row.id,
+        publish_mode="scheduled",
+        publish_at=future,
+        notify_subscribers=True,
+        actor="test",
+    )
+    assert scheduled.stage == "metadata_hold"
+    assert scheduled.privacy_status == "public"
+    assert scheduled.publish_at is not None
+    assert scheduled.notify_subscribers is True
+
+    asap = publications.update_publication_plan(
+        row.id,
+        publish_mode="asap",
+        actor="test",
+    )
+    assert asap.publish_at is None
+    assert asap.raw_status["publication_plan"]["mode"] == "asap"
+
+
+def test_publication_plan_route_is_exposed() -> None:
+    from katcha.api.main import app
+
+    assert "/v1/publications/{publication_id}/plan" in app.openapi()["paths"]

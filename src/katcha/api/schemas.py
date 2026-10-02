@@ -352,6 +352,13 @@ class StartPublicationRequest(BaseModel):
     actor: str = Field(default="operator", min_length=1, max_length=128)
 
 
+class UpdatePublicationPlanRequest(BaseModel):
+    publish_mode: Literal["asap", "scheduled"] = "asap"
+    publish_at: datetime | None = None
+    notify_subscribers: bool | None = None
+    actor: str = Field(default="operator", min_length=1, max_length=128)
+
+
 class PublicationResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

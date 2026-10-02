@@ -266,6 +266,72 @@ const publications = [
         created_at: now,
         updated_at: now,
     },
+    {
+        id: "publication-3",
+        production_id: "production-3",
+        compilation_id: null,
+        short_episode_id: null,
+        youtube_connection_id: "youtube-1",
+        workflow_id: "publish-3",
+        workflow_attempt: 1,
+        analytics_workflow_id: "analytics-3",
+        status: "queued",
+        stage: "metadata_hold",
+        title: "VisionQuest Final Trailer",
+        description: "Official VisionQuest trailer.",
+        tags: ["visionquest", "marvel"],
+        category_id: "24",
+        privacy_status: "public",
+        publish_at: null,
+        notify_subscribers: false,
+        made_for_kids: false,
+        contains_synthetic_media: false,
+        treatment_metadata: {},
+        youtube_video_id: null,
+        upload_offset: 0,
+        upload_size: null,
+        processing_status: null,
+        failure_reason: null,
+        rejection_reason: null,
+        raw_status: {},
+        published_at: null,
+        error: null,
+        created_at: now,
+        updated_at: now,
+    },
+];
+
+let packagingVariants = [
+    {
+        id: "variant-visionquest-1",
+        publication_id: "publication-3",
+        variant_key: "search-first",
+        version: 1,
+        title: "VISIONQUEST Final Trailer (2026) | Marvel",
+        description: "Watch the official VisionQuest final trailer.",
+        tags: ["VisionQuest", "Marvel", "Vision Quest"],
+        hashtags: ["VisionQuest", "Marvel"],
+        thumbnail_storage_key: null,
+        frozen_thumbnail: {},
+        created_by: "katcha-ai",
+        variant_metadata: { search_intents: ["VisionQuest final trailer"] },
+        created_at: now,
+    },
+    {
+        id: "variant-visionquest-2",
+        publication_id: "publication-3",
+        variant_key: "character-first",
+        version: 1,
+        title: "VISIONQUEST Trailer | Vision & Ultron Return",
+        description: "Vision and Ultron return in Marvel Television's VisionQuest.",
+        tags: ["VisionQuest", "Ultron", "Vision"],
+        hashtags: ["VisionQuest"],
+        thumbnail_storage_key: null,
+        frozen_thumbnail: {},
+        created_by: "katcha-ai",
+        variant_metadata: { search_intents: ["VisionQuest Ultron trailer"] },
+        created_at: now,
+    },
 ];
 
 const analytics = [
@@ -584,6 +650,57 @@ const analytics = [
                     ],
                 },
             };
+        } else if (url.pathname === "/v1/operations/overview") {
+            data = {
+                generated_at: now,
+                summary: {
+                    active_channels: 1,
+                    active_work: 2,
+                    needs_attention: 1,
+                    fresh_opportunities: 0,
+                    published_last_7d: 1,
+                },
+                channels: [{
+                    id: "channel-1",
+                    title: "Fixture Gaming",
+                    status: "active",
+                    timezone: "America/Chicago",
+                    active_work: 2,
+                    needs_attention: 1,
+                    fresh_opportunities: 0,
+                    published_last_7d: 1,
+                    href: "/channels?channel=channel-1",
+                }],
+                intake: [{
+                    id: "intel-visionquest",
+                    channel_profile_id: "channel-1",
+                    title: "VisionQuest Final Trailer",
+                    status: "ingesting",
+                    stage: "downloading",
+                    message: "Source acquisition is moving through Katcha.",
+                    source_url: "https://www.youtube.com/watch?v=sXKnmgmbkoE",
+                    updated_at: now,
+                    href: "/channels?channel=channel-1#content",
+                }],
+                attention: [],
+                active: [{
+                    kind: "publication",
+                    id: "publication-3",
+                    channel_profile_id: "channel-1",
+                    title: "VisionQuest Final Trailer",
+                    status: "queued",
+                    stage: "metadata_hold",
+                    state: "active",
+                    message: "metadata_hold · queued",
+                    updated_at: now,
+                    href: "/channels?channel=channel-1#content",
+                    recovery_action: null,
+                    recovery_label: null,
+                }],
+                opportunities: [],
+                publications: [],
+                activity: [],
+            };
         } else if (url.pathname === "/v1/publications") {
             data = publications;
         } else if (url.pathname === "/v1/productions") {
@@ -629,8 +746,53 @@ const analytics = [
                     created_at: now,
                 },
             ];
-        } else if (url.pathname === "/v1/publications/publication-1/analytics" && req.method() === "GET") {
-            data = analytics;
+        } else if (/^\/v1\/publications\/[^/]+\/analytics$/.test(url.pathname) && req.method() === "GET") {
+            data = url.pathname.includes("publication-1") ? analytics : [];
+        } else if (url.pathname === "/v1/publications/publication-3/packaging/variants" && req.method() === "GET") {
+            data = packagingVariants;
+        } else if (url.pathname === "/v1/publications/publication-3/packaging/generations" && req.method() === "POST") {
+            data = {
+                generation: {
+                    id: "generation-visionquest",
+                    publication_id: "publication-3",
+                    generation_key: body.generation_key,
+                    status: "completed",
+                    stage: "candidates_ready",
+                    provider: "fixture",
+                    model: "fixture",
+                    prompt_version: "packaging-candidates-v2",
+                    context_sha256: "a".repeat(64),
+                    candidate_payload: [],
+                    variant_ids: packagingVariants.map((row) => row.id),
+                    generation_metadata: { candidate_count: 3 },
+                    error: null,
+                    created_at: now,
+                    updated_at: now,
+                },
+                variants: packagingVariants,
+            };
+        } else if (url.pathname === "/v1/publications/publication-3/packaging/preupload" && req.method() === "POST") {
+            const selected = packagingVariants.find((row) => row.id === body.variant_id);
+            assert(selected);
+            const item = publications.find((row) => row.id === "publication-3");
+            item.title = selected.title;
+            item.description = selected.description + "\n\n#" + selected.hashtags.join(" #");
+            item.tags = selected.tags;
+            item.treatment_metadata = {
+                ...item.treatment_metadata,
+                preupload_packaging: { variant_id: selected.id },
+            };
+            data = item;
+        } else if (url.pathname === "/v1/publications/publication-3/plan" && req.method() === "POST") {
+            const item = publications.find((row) => row.id === "publication-3");
+            item.publish_at = body.publish_mode === "scheduled" ? body.publish_at : null;
+            item.privacy_status = "public";
+            item.notify_subscribers = Boolean(body.notify_subscribers);
+            data = item;
+        } else if (url.pathname === "/v1/publications/publication-3/start" && req.method() === "POST") {
+            const item = publications.find((row) => row.id === "publication-3");
+            item.stage = "queued";
+            data = item;
         } else if (url.pathname === "/v1/publications/publication-1/analytics/refresh" && req.method() === "POST") {
             data = {
                 publication_id: "publication-1",
@@ -655,7 +817,7 @@ const analytics = [
     await page.locator("#connect-form button").click();
     await page.locator("#studio:not([hidden])").waitFor();
     await page.waitForFunction(
-        () => document.querySelector("#metric-videos")?.textContent === "2",
+        () => document.querySelector("#metric-videos")?.textContent === "3",
     );
     assert.equal(await page.locator("#channel").inputValue(), "channel-1");
     assert.match(await page.locator("#channel").innerText(), /Fixture Gaming/);
@@ -687,7 +849,28 @@ const analytics = [
 
     assert.equal(await page.locator("#token").inputValue(), "");
     assert.equal(await page.evaluate(() => localStorage.length), 0);
-    assert.match(await page.locator("#metric-videos").innerText(), /2/);
+    assert.match(await page.locator("#metric-videos").innerText(), /3/);
+    assert.equal(await page.locator("#channel-activity").isHidden(), false);
+    assert.match(await page.locator("#channel-activity-list").innerText(), /VisionQuest Final Trailer/);
+    assert.match(await page.locator("#channel-activity-list").innerText(), /downloading/i);
+    await page.locator('[data-channel-tab="content"]').click();
+    await page.locator('[data-publication="publication-3"]').click();
+    await page.waitForFunction(() => document.querySelectorAll("[data-apply-packaging]").length > 0);
+    assert.match(await page.locator("#video-detail").innerText(), /SEO package & publish plan/);
+    await page.locator('[data-apply-packaging="variant-visionquest-1"]').click();
+    await page.getByText(/SEO package applied before upload/).waitFor();
+    await page.locator("#publication-publish-at").fill("2026-10-03T09:30");
+    await page.locator("#publication-schedule").click();
+    await page.getByText(/Publication schedule saved/).waitFor();
+    assert(requests.some((request) =>
+        request.path === "/v1/publications/publication-3/plan" &&
+        request.body?.publish_mode === "scheduled"
+    ));
+    await page.locator('[data-publication="publication-1"]').click();
+    await page.waitForFunction(() =>
+        document.querySelector("#video-detail")?.textContent.includes("74.2%")
+    );
+    await page.locator('[data-channel-tab="overview"]').click();
     assert.match(await page.locator("#metric-views").innerText(), /12\.5K|12K/);
     assert.match(await page.locator("#metric-margin").innerText(), /18\.35/);
     assert.match(await page.locator("#milestone-grid").innerText(), /Early YPP access/);

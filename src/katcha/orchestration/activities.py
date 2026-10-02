@@ -150,6 +150,15 @@ def mark_source_failed(source_id: str, message: str) -> None:
 
 
 @activity.defn
+def prepare_authorized_passthrough_activity(source_id: str) -> dict[str, object]:
+    from katcha.services.trailer_passthrough import (
+        prepare_authorized_passthrough_source,
+    )
+
+    return prepare_authorized_passthrough_source(uuid.UUID(source_id))
+
+
+@activity.defn
 async def enqueue_ingested_analysis_activity(clip_id: str) -> dict[str, str]:
     from katcha.orchestration.client import start_analysis_workflow
     from katcha.services.analysis import register_analysis

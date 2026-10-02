@@ -9,11 +9,12 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 from sqlalchemy import and_, func, or_, select
 
+from katcha.acquisition_models import DiscoveryCandidate, IntelligenceRecord
 from katcha.api.control_auth import control_allowed_channel_ids, require_control_channel
 from katcha.db import session_scope
 from katcha.intelligence_models import ChannelProfile
 from katcha.longform_models import Compilation, CompilationAsset
-from katcha.models import DomainEvent
+from katcha.models import DomainEvent, SourceItem
 from katcha.orchestration.client import (
     start_longform_workflow,
     start_production_workflow,
@@ -65,6 +66,18 @@ class OperationsChannelSummary(BaseModel):
     needs_attention: int
     fresh_opportunities: int
     published_last_7d: int
+    href: str
+
+
+class OperationsIntakeItem(BaseModel):
+    id: uuid.UUID
+    channel_profile_id: uuid.UUID
+    title: str
+    status: str
+    stage: str
+    message: str | None = None
+    source_url: str | None = None
+    updated_at: datetime
     href: str
 
 
@@ -135,6 +148,7 @@ class OperationsOverviewResponse(BaseModel):
     generated_at: datetime
     summary: OperationsSummary
     channels: list[OperationsChannelSummary]
+    intake: list[OperationsIntakeItem]
     attention: list[OperationsWorkItem]
     active: list[OperationsWorkItem]
     opportunities: list[OperationsOpportunity]
@@ -338,6 +352,8 @@ def _event_channel_id(
     episode_channels: dict[uuid.UUID, uuid.UUID],
     compilation_channels: dict[uuid.UUID, uuid.UUID],
     publication_channels: dict[uuid.UUID, uuid.UUID],
+    candidate_channels: dict[uuid.UUID, uuid.UUID],
+    source_channels: dict[uuid.UUID, uuid.UUID],
 ) -> uuid.UUID | None:
     payload = dict(event.payload or {})
     raw = payload.get("channel_profile_id")
@@ -363,6 +379,10 @@ def _event_channel_id(
         return compilation_channels.get(aggregate_id)
     if event.aggregate_type == "publication":
         return publication_channels.get(aggregate_id)
+    if event.aggregate_type == "discovery_candidate":
+        return candidate_channels.get(aggregate_id)
+    if event.aggregate_type == "source":
+        return source_channels.get(aggregate_id)
     return None
 
 
@@ -662,6 +682,7 @@ def operations_overview(
                 generated_at=now,
                 summary=empty,
                 channels=[],
+                intake=[],
                 attention=[],
                 active=[],
                 opportunities=[],
@@ -670,6 +691,136 @@ def operations_overview(
             )
 
         profile_by_id = {profile.id: profile for profile in profiles}
+
+        intelligence_records = list(
+            session.scalars(
+                select(IntelligenceRecord)
+                .where(IntelligenceRecord.channel_profile_id.in_(channel_ids))
+                .order_by(IntelligenceRecord.updated_at.desc())
+                .limit(max(limit * 8, 80))
+            )
+        )
+        record_ids = {str(row.id) for row in intelligence_records}
+        candidate_by_record: dict[str, DiscoveryCandidate] = {}
+        source_by_record: dict[str, SourceItem] = {}
+        if record_ids:
+            candidate_rows = list(
+                session.scalars(
+                    select(DiscoveryCandidate)
+                    .order_by(DiscoveryCandidate.updated_at.desc())
+                    .limit(max(limit * 20, 200))
+                )
+            )
+            for candidate in candidate_rows:
+                metadata = dict(candidate.candidate_metadata or {})
+                record_id = str(metadata.get("intelligence_record_id") or "")
+                channel_value = str(metadata.get("channel_profile_id") or "")
+                if (
+                    record_id in record_ids
+                    and channel_value in {str(value) for value in channel_ids}
+                    and record_id not in candidate_by_record
+                ):
+                    candidate_by_record[record_id] = candidate
+            source_rows = list(
+                session.scalars(
+                    select(SourceItem)
+                    .order_by(SourceItem.updated_at.desc())
+                    .limit(max(limit * 20, 200))
+                )
+            )
+            for source in source_rows:
+                metadata = dict(source.source_metadata or {})
+                record_id = str(metadata.get("intelligence_record_id") or "")
+                channel_value = str(metadata.get("channel_profile_id") or "")
+                if (
+                    record_id in record_ids
+                    and channel_value in {str(value) for value in channel_ids}
+                    and record_id not in source_by_record
+                ):
+                    source_by_record[record_id] = source
+
+        intake: list[OperationsIntakeItem] = []
+        for record in intelligence_records:
+            record_id = str(record.id)
+            candidate = candidate_by_record.get(record_id)
+            source = source_by_record.get(record_id)
+            payload = dict(record.payload or {})
+            if source is not None:
+                normalized = str(source.status or "").lower()
+                if normalized == "registered":
+                    stage = "queued_download"
+                elif normalized == "ingesting":
+                    stage = "downloading"
+                elif normalized == "ready" and source.clip_id is not None:
+                    stage = "downloaded"
+                elif normalized == "failed":
+                    stage = "download_failed"
+                else:
+                    stage = normalized or "acquisition"
+                status_value = source.status
+                message = source.error or (
+                    "Source media acquired and ready for preparation."
+                    if stage == "downloaded"
+                    else "Source acquisition is moving through Katcha."
+                )
+                updated_at = source.updated_at
+            elif candidate is not None:
+                normalized = str(candidate.status or "").lower()
+                stage = {
+                    "discovered": "candidate_created",
+                    "qualified": "qualified_for_acquisition",
+                    "promoted": "queued_download",
+                    "review": "needs_attention",
+                    "rejected": "rejected",
+                }.get(normalized, normalized or "candidate")
+                status_value = candidate.status
+                message = (
+                    "Verified candidate is ready for acquisition."
+                    if normalized == "qualified"
+                    else "Discovery candidate created from retained intelligence."
+                )
+                updated_at = candidate.updated_at
+            else:
+                stage = "handoff_received"
+                status_value = record.status
+                message = (
+                    "Handoff stored; waiting for automation to create the acquisition candidate."
+                    if payload.get("production_intent")
+                    else record.summary
+                )
+                updated_at = record.updated_at
+            intake.append(
+                OperationsIntakeItem(
+                    id=record.id,
+                    channel_profile_id=record.channel_profile_id,
+                    title=record.title or record.record_key,
+                    status=str(status_value or "active"),
+                    stage=stage,
+                    message=message,
+                    source_url=record.source_url,
+                    updated_at=updated_at,
+                    href=f"/channels?channel={record.channel_profile_id}#content",
+                )
+            )
+            if len(intake) >= limit:
+                break
+
+        candidate_channels = {
+            candidate.id: uuid.UUID(str((candidate.candidate_metadata or {})["channel_profile_id"]))
+            for candidate in candidate_by_record.values()
+            if (candidate.candidate_metadata or {}).get("channel_profile_id")
+        }
+        source_channels = {
+            source.id: uuid.UUID(str((source.source_metadata or {})["channel_profile_id"]))
+            for source in source_by_record.values()
+            if (source.source_metadata or {}).get("channel_profile_id")
+        }
+        ingest_batch_ids = {
+            batch_id
+            for record in intelligence_records
+            for batch_id in (record.first_batch_id, record.last_batch_id)
+        }
+
         youtube_to_channel = {
             profile.youtube_connection_id: profile.id for profile in profiles
         }
@@ -1025,6 +1176,33 @@ def operations_overview(
                 DomainEvent.aggregate_id.in_([str(value) for value in channel_ids]),
             )
         ]
+        if ingest_batch_ids:
+            event_filters.append(
+                and_(
+                    DomainEvent.aggregate_type == "intelligence_ingest_batch",
+                    DomainEvent.aggregate_id.in_(
+                        [str(value) for value in ingest_batch_ids]
+                    ),
+                )
+            )
+        if candidate_channels:
+            event_filters.append(
+                and_(
+                    DomainEvent.aggregate_type == "discovery_candidate",
+                    DomainEvent.aggregate_id.in_(
+                        [str(value) for value in candidate_channels]
+                    ),
+                )
+            )
+        if source_channels:
+            event_filters.append(
+                and_(
+                    DomainEvent.aggregate_type == "source",
+                    DomainEvent.aggregate_id.in_(
+                        [str(value) for value in source_channels]
+                    ),
+                )
+            )
         if production_channels:
             event_filters.append(
                 and_(
@@ -1078,6 +1256,8 @@ def operations_overview(
                 episode_channels=episode_channels,
                 compilation_channels=compilation_channels,
                 publication_channels=publication_channels,
+                candidate_channels=candidate_channels,
+                source_channels=source_channels,
             )
             if event_channel is None or event_channel not in visible_ids:
                 continue
@@ -1147,6 +1327,7 @@ def operations_overview(
                 published_last_7d=len(published_last_7d),
             ),
             channels=channel_summaries,
+            intake=intake,
             attention=attention,
             active=active,
             opportunities=opportunities,
