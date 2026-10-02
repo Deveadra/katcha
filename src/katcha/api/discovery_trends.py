@@ -22,7 +22,7 @@ from katcha.orchestration.trend_client import (
     start_topic_watch_workflow,
 )
 from katcha.services.automation_schedules import (
-    mark_schedule_reconciled,
+    locked_schedule_for_reconcile,
     register_topic_watch_schedule,
 )
 from katcha.services.discovery_trends import (
@@ -273,22 +273,26 @@ async def schedule_topic_watch(
         interval_minutes=request.interval_minutes,
         top_n=request.top_n,
     )
-    await start_topic_watch_schedule(
-        str(topic_watch_id),
-        registration.schedule.workflow_id,
-        interval_minutes=request.interval_minutes,
-        top_n=request.top_n,
-        supersedes_workflow_id=registration.supersedes_workflow_id,
-    )
-    mark_schedule_reconciled(
-        registration.schedule.id,
-        registration.schedule.workflow_id,
-    )
+    with locked_schedule_for_reconcile(registration.schedule.id) as current:
+        if current.workflow_id != registration.schedule.workflow_id:
+            raise HTTPException(
+                status_code=409,
+                detail="topic watch schedule was superseded by another update",
+            )
+        await start_topic_watch_schedule(
+            str(topic_watch_id),
+            current.workflow_id,
+            interval_minutes=int(current.schedule_config["interval_minutes"]),
+            top_n=int(current.schedule_config["top_n"]),
+            supersedes_workflow_id=current.supersedes_workflow_id,
+        )
+        current.supersedes_workflow_id = None
+        workflow_id = current.workflow_id
     return ScheduleTopicWatchResponse(
         topic_watch_id=topic_watch_id,
         watch_key=watch_key,
         version=watch_version,
-        workflow_id=registration.schedule.workflow_id,
+        workflow_id=workflow_id,
         interval_minutes=request.interval_minutes,
         top_n=request.top_n,
     )
