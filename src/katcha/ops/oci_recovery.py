@@ -6,7 +6,6 @@ import os
 import subprocess
 import tempfile
 import time
-import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
