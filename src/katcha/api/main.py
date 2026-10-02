@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import mimetypes
 import uuid
 from pathlib import Path
@@ -120,6 +121,7 @@ from katcha.publishing_models import (
     YouTubeConnection,
 )
 from katcha.services.analysis import register_analysis
+from katcha.services.intelligence_handoff import process_handoff_inbox
 from katcha.services.compilations import (
     register_compilation,
     register_compilation_regeneration,
@@ -142,12 +144,27 @@ from katcha.services.render_automation import advance_render_automation
 from katcha.services.render_recovery import render_attempts_for_source
 from katcha.services.sources import register_source
 
+_logger = logging.getLogger(__name__)
+
+
+async def _process_pending_handoffs_on_startup() -> None:
+    """Drain manually dropped handoff files after the API database is available."""
+    try:
+        await asyncio.to_thread(process_handoff_inbox, limit=50)
+    except Exception:
+        # Handoff failures must never prevent Katcha itself from starting. Individual
+        # file validation failures are already moved to the failed queue by the
+        # handoff service; this guard covers broader storage/database problems.
+        _logger.exception("automatic handoff inbox processing failed during startup")
+
+
 app = FastAPI(
     title="Katcha API",
     dependencies=[Depends(require_control_token), Depends(require_native_channel_body)],
     version=__version__,
     description="Standalone control plane for Katcha media workflows.",
 )
+app.add_event_handler("startup", _process_pending_handoffs_on_startup)
 app.include_router(acquisition_router)
 app.include_router(brands_router)
 app.include_router(chatgpt_router)
