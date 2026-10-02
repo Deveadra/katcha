@@ -25,8 +25,11 @@ A replacement is a two-phase handoff:
    the current leader.
 2. Start the replacement with the returned deployment ID/epoch and restore or
    attach durable state.
-3. Verify read-only health/reconciliation.
-4. `POST /v1/authority/commit` atomically makes the prepared deployment active.
+3. The candidate proves local runtime health, durable-state attachment, fence
+   reachability and the public Tunnel route, then calls
+   `POST /v1/authority/candidate-ready`.
+4. `POST /v1/authority/commit` refuses unready candidates and atomically makes
+   a ready deployment active.
    The old deployment immediately fails Katcha's application-side fence.
 5. Use `POST /v1/authority/abort` if the candidate cannot become healthy.
 
@@ -49,6 +52,10 @@ Recovery-admin token:
 - `POST /v1/authority/prepare`
 - `POST /v1/authority/commit`
 - `POST /v1/authority/abort`
+
+Candidate token:
+
+- `POST /v1/authority/candidate-ready`
 - `POST /v1/watchdog/configure`
 - `POST /v1/watchdog/probe-now`
 
@@ -68,6 +75,7 @@ Install with Wrangler; never commit values:
 ```bash
 wrangler secret put FENCE_TOKEN
 wrangler secret put RECOVERY_ADMIN_TOKEN
+wrangler secret put RECOVERY_CANDIDATE_TOKEN
 wrangler secret put RECOVERY_DISPATCH_TOKEN
 ```
 
@@ -121,3 +129,16 @@ The request carries `Authorization: Bearer <RECOVERY_DISPATCH_TOKEN>` and
 The dispatcher is responsible for acquiring replacement compute, restoring
 durable state, calling prepare, configuring the returned epoch on the candidate,
 running recovery acceptance, and only then calling commit.
+
+
+## GitHub recovery dispatch
+
+The checked-in Worker configuration sends watchdog incidents to the GitHub
+repository-dispatch endpoint using event type `katcha-recovery`. The
+`RECOVERY_DISPATCH_TOKEN` should be a fine-grained GitHub token scoped only to
+this repository with **Contents: write**, which is the permission GitHub requires
+for repository-dispatch creation.
+
+The resulting workflow is serialized with a single
+`katcha-production-recovery` concurrency group, so concurrent watchdog/manual
+recovery requests cannot provision two replacements.
