@@ -18,6 +18,7 @@ from katcha.acquisition_models import (
 from katcha.config import get_settings
 from katcha.db import session_scope
 from katcha.discovery_trend_models import TrendReviewQueueItem
+from katcha.services.trend_bridge import topic_for_discovery
 from katcha.services.trends import register_signal
 
 
@@ -157,9 +158,9 @@ def bridge_topic_watch_queue_to_trend_signals(
         metadata = dict(observation.observation_metadata or {})
         metrics = _float_metrics(metadata, candidate.adapter_key)
         external_id = candidate.external_id or candidate.canonical_url
-        label = str(queue_metadata.get("cluster_label") or candidate.title or watch.name).strip()
-        if not label:
-            continue
+        label = topic_for_discovery(
+            candidate, queue_metadata=queue_metadata, watch=watch, run=run
+        )
         topic_labels.add(label)
         shared_tokens = [
             str(value)

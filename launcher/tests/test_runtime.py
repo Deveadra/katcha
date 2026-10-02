@@ -1448,3 +1448,46 @@ def test_workspace_recovers_before_next_container_health_check(tmp_path):
     probe.assert_called_once()
     check.assert_not_called()
     operate.assert_not_called()
+
+
+def test_replaced_pollers_stop_only_within_katcha_project(tmp_path):
+    app = instance(tmp_path)
+    calls = []
+
+    def fake_run(args, **kwargs):
+        calls.append(args)
+        if "ps" in args and args[-1].endswith("=discovery-worker"):
+            return "old-discovery-1\nold-discovery-2\n"
+        return ""
+
+    with patch.object(app, "run", side_effect=fake_run):
+        app.stop_retired_workers()
+    searches = [call for call in calls if "ps" in call]
+    assert len(searches) == 4
+    assert all("label=com.docker.compose.project=katcha" in call for call in searches)
+    assert [call for call in calls if "stop" in call] == [
+        ["docker", "stop", "--time", "30", "old-discovery-1", "old-discovery-2"]
+    ]
+    assert not any("rm" in call or "down" in call for call in calls)
+
+
+@pytest.mark.parametrize("retired_state", ["running", "exited"])
+def test_reattach_ignores_retired_worker_health(tmp_path, retired_state):
+    app = instance(tmp_path)
+    rows = [
+        {"Service": service, "State": "running", "Health": "healthy", "ExitCode": 0}
+        for service in runtime.REQUIRED_SERVICES
+    ]
+    rows.append({"Service": "discovery-worker", "State": retired_state, "ExitCode": 1})
+    connection = MagicMock()
+    connection.getresponse.return_value.status = 200
+    with (
+        patch.object(app, "run", return_value=json.dumps(rows)),
+        patch.object(app, "stop_retired_workers") as retire,
+        patch.object(app, "start_logs"),
+        patch.object(runtime.http.client, "HTTPConnection", return_value=connection),
+    ):
+        assert app.reconcile_existing()
+    assert retire.call_count == int(retired_state == "running")
+    assert app.phase == "ready"
+    assert not any(row["Service"] == "discovery-worker" for row in app.services)
