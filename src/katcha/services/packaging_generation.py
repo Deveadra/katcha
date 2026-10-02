@@ -23,6 +23,7 @@ from katcha.ai.router import (
 )
 from katcha.ai.schemas import PackagingCandidate, PackagingCandidateSet
 from katcha.ai.subscription import generate_subscription_json, subscription_connected
+from katcha.acquisition_models import IntelligenceRecord
 from katcha.config import Settings, get_settings
 from katcha.db import session_scope
 from katcha.domain import AITask
@@ -37,7 +38,7 @@ from katcha.services.packaging import create_packaging_variant
 from katcha.services.packaging_intelligence import latest_packaging_intelligence
 from katcha.short_episode_models import ShortEpisode, ShortEpisodeItem, ShortEpisodeScript
 
-_PROMPT_VERSION = "packaging-candidates-v1"
+_PROMPT_VERSION = "packaging-candidates-v2"
 _ESTIMATED_INCREMENT_USD = Decimal("0.02")
 _TITLE_NORMALIZE_RE = re.compile(r"[^a-z0-9]+")
 _MAX_CONTEXT_TRANSCRIPT_CHARS = 1600
@@ -105,7 +106,15 @@ def _source_lineage(
                 "analysis": dict(production.analysis_snapshot or {}),
             }
         )
-        ai = _active_ai_features(dict(production.analysis_snapshot or {}))
+        analysis_snapshot = dict(production.analysis_snapshot or {})
+        source_context = dict(analysis_snapshot.get("source") or {})
+        if source_context:
+            context["source"] = source_context
+        for value in analysis_snapshot.get("grounding_facts") or []:
+            fact = str(value).strip()
+            if fact:
+                facts.append(fact)
+        ai = _active_ai_features(analysis_snapshot)
         for key in ("event_summary", "setup", "payoff"):
             value = str(ai.get(key) or "").strip()
             if value:
@@ -226,6 +235,37 @@ def compile_packaging_context(
         context["channel_profile_id"] = str(profile.id)
         context["channel_timezone"] = profile.timezone
         context["channel_metadata"] = dict(profile.profile_metadata or {})
+        recent_intelligence = list(
+            session.scalars(
+                select(IntelligenceRecord)
+                .where(
+                    IntelligenceRecord.channel_profile_id == profile.id,
+                    IntelligenceRecord.status == "active",
+                )
+                .order_by(
+                    IntelligenceRecord.observed_at.desc(),
+                    IntelligenceRecord.updated_at.desc(),
+                )
+                .limit(20)
+            )
+        )
+        context["recent_channel_intelligence"] = [
+            {
+                "record_kind": row.record_kind,
+                "record_key": row.record_key,
+                "title": row.title,
+                "summary": row.summary,
+                "platform": row.platform,
+                "tags": list(row.tags or []),
+                "observed_at": row.observed_at.isoformat(),
+            }
+            for row in recent_intelligence
+        ]
+        for row in recent_intelligence:
+            if row.title and row.title.strip():
+                facts.append(row.title.strip())
+            if row.summary and row.summary.strip():
+                facts.append(row.summary.strip())
         context["grounding_facts"] = list(dict.fromkeys(fact for fact in facts if fact))
 
     intelligence = latest_packaging_intelligence(profile_id)
@@ -248,14 +288,22 @@ def _prompt(context: dict[str, Any], *, candidate_count: int) -> str:
         "You create YouTube packaging candidates for one channel-scoped publication. "
         "Generate differentiated, compelling packaging without clickbait or invented facts. "
         f"Return exactly {candidate_count} candidates. Each candidate must use a distinct "
-        "variation_family and angle. The title must be <=100 characters. Descriptions must "
-        "remain factual. Thumbnail briefs are creative instructions only; do not claim an "
-        "image exists. supporting_facts MUST be copied verbatim from the supplied "
-        "grounding_facts array and must directly support the candidate. Do not introduce "
-        "named people, places, products, counts, outcomes, quotations, or claims that are not "
-        "established by those grounding facts. Preserve the channel brand/persona cues in the "
-        "context while keeping packaging concise and native to YouTube. Existing titles are "
-        "negative examples for duplication: create meaningfully different alternatives.\n\n"
+        "variation_family and angle. The title must be <=100 characters, accurate, succinct, "
+        "and put the strongest likely search terms near the beginning when the context supports "
+        "them. Descriptions must remain factual, unique to this video, and put the primary one "
+        "or two supported search phrases naturally in the opening lines. search_intents must "
+        "describe concrete viewer queries the package targets. Tags are supplemental: use them "
+        "for exact entities, close query variants, synonyms, and likely misspellings rather "
+        "than keyword stuffing; stay within YouTube's aggregate tag budget. Return 1-3 concise "
+        "hashtags when useful and do not insert them into the description text yourself. "
+        "Thumbnail briefs are creative instructions only; do not claim an image exists. "
+        "supporting_facts MUST be copied verbatim from the supplied grounding_facts array and "
+        "must directly support the candidate. Do not introduce named people, places, products, "
+        "counts, outcomes, quotations, or claims that are not established by those grounding "
+        "facts. Recent channel intelligence is supporting context, not permission to invent "
+        "facts. Preserve the channel brand/persona cues while keeping packaging native to "
+        "YouTube. Existing titles are negative examples for duplication: create meaningfully "
+        "different alternatives.\n\n"
         f"CONTEXT_JSON:\n{payload}"
     )
 
@@ -395,6 +443,8 @@ def _validate_candidates(
         if normalized in existing_titles or normalized in generated_titles:
             raise ValueError("packaging candidate duplicates an existing/generated title")
         generated_titles.add(normalized)
+        if not candidate.search_intents:
+            raise ValueError("packaging candidate requires at least one search intent")
         if not candidate.supporting_facts:
             raise ValueError("packaging candidate requires supporting facts")
         for fact in candidate.supporting_facts:
@@ -678,6 +728,8 @@ def generate_packaging_candidates(
             version=1,
             title=candidate.title,
             description=candidate.description,
+            tags=list(candidate.tags),
+            hashtags=list(candidate.hashtags),
             created_by="katcha-ai",
             metadata={
                 "source": "automated_packaging_generation",
@@ -686,6 +738,7 @@ def generate_packaging_candidates(
                 "candidate_index": index,
                 "variation_family": candidate.variation_family,
                 "angle": candidate.angle,
+                "search_intents": list(candidate.search_intents),
                 "supporting_facts": list(candidate.supporting_facts),
                 "thumbnail_brief": candidate.thumbnail.model_dump(mode="json"),
                 "prompt_version": _PROMPT_VERSION,
