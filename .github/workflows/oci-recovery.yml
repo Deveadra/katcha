@@ -33,10 +33,6 @@ on:
 permissions:
   contents: read
 
-concurrency:
-  group: katcha-production-recovery
-  cancel-in-progress: false
-
 env:
   KATCHA_EXTERNAL_COMPUTE_ENABLED: ${{ vars.KATCHA_EXTERNAL_COMPUTE_ENABLED }}
   KATCHA_RECOVERY_COORDINATOR_URL: ${{ vars.KATCHA_RECOVERY_COORDINATOR_URL }}
@@ -91,6 +87,9 @@ jobs:
   recover:
     if: github.event_name == 'repository_dispatch' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
+    concurrency:
+      group: katcha-production-recovery
+      cancel-in-progress: false
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
@@ -160,6 +159,9 @@ jobs:
   paid-fallback-expiry:
     if: github.event_name == 'schedule'
     runs-on: ubuntu-latest
+    concurrency:
+      group: katcha-production-recovery
+      cancel-in-progress: false
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
