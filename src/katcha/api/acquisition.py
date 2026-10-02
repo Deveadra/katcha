@@ -217,6 +217,7 @@ class IngestIntelligenceBatchResponse(BaseModel):
 class MaterializeIntelligenceCandidateRequest(BaseModel):
     adapter_key: str = Field(default="operator_feed", min_length=1, max_length=64)
     provenance_confidence: float | None = Field(default=None, ge=0, le=1)
+    honor_operator_authorization: bool = True
 
 
 class HandoffInboxItemResponse(BaseModel):
@@ -820,8 +821,20 @@ def materialize_intelligence_candidate(
     creator = str(payload.get("creator") or payload.get("channel_name") or "").strip() or None
     creator_url = str(payload.get("creator_url") or "").strip() or None
 
+    authorization_scope = str(payload.get("authorization_scope") or "").strip()
+    official_source_verified = bool(
+        provenance.get("official_channel_verified")
+        or payload.get("official_source_verified")
+    )
+    standing_authorized = (
+        request.honor_operator_authorization
+        and bool(payload.get("operator_authorized"))
+        and official_source_verified
+        and authorization_scope == "official_trailer_repost"
+    )
+
     try:
-        return observe_discovery_candidate(
+        candidate = observe_discovery_candidate(
             source_url=record.source_url,
             adapter_key=request.adapter_key,
             external_id=record.record_key,
@@ -843,8 +856,38 @@ def materialize_intelligence_candidate(
                 "intelligence_tags": list(record.tags or []),
                 "intelligence_payload": payload,
                 "source_type": "intelligence_handoff",
+                "operator_authorized": standing_authorized,
+                "authorization_scope": authorization_scope or None,
+                "official_source_verified": official_source_verified,
             },
         )
+        if standing_authorized:
+            assess_discovery_candidate(
+                candidate.id,
+                rights_basis=RightsBasis.OPERATOR_AUTHORIZED,
+                audio_status=AudioRightsStatus.ORIGINAL,
+                originality_gate=GateStatus.CLEARED,
+                risk_flags=[],
+                operator_authorized=True,
+                metadata={
+                    "authorization_source": "intelligence_handoff",
+                    "authorization_scope": authorization_scope,
+                    "official_source_verified": True,
+                    "intelligence_record_id": str(record.id),
+                },
+                actor="operator",
+                reason=(
+                    "Standing operator authorization for verified official-trailer "
+                    "republication"
+                ),
+            )
+            with session_scope() as session:
+                refreshed = session.get(DiscoveryCandidate, candidate.id)
+                if refreshed is None:
+                    raise RuntimeError("materialized discovery candidate disappeared")
+                session.expunge(refreshed)
+                candidate = refreshed
+        return candidate
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
