@@ -443,8 +443,6 @@ def _validate_candidates(
         if normalized in existing_titles or normalized in generated_titles:
             raise ValueError("packaging candidate duplicates an existing/generated title")
         generated_titles.add(normalized)
-        if not candidate.search_intents:
-            raise ValueError("packaging candidate requires at least one search intent")
         if not candidate.supporting_facts:
             raise ValueError("packaging candidate requires supporting facts")
         for fact in candidate.supporting_facts:
