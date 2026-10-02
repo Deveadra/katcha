@@ -68,6 +68,7 @@ from katcha.api.schemas import (
     ReviewProductionRequest,
     SourceResponse,
     StartPublicationRequest,
+    UpdatePublicationPlanRequest,
     YouTubeConnectionResponse,
     YouTubeOAuthStartResponse,
 )
@@ -140,6 +141,7 @@ from katcha.services.publications import (
     register_publication,
     release_publication_for_upload,
     retry_publication,
+    update_publication_plan,
 )
 from katcha.services.render_automation import advance_render_automation
 from katcha.services.render_recovery import render_attempts_for_source
@@ -842,6 +844,27 @@ async def create_compilation_publication(
     if publication.status == "queued" and publication.stage != "metadata_hold":
         await start_publication_workflow(str(publication.id), publication.workflow_id)
     return publication
+
+
+@app.post(
+    "/v1/publications/{publication_id}/plan",
+    response_model=PublicationResponse,
+)
+def update_held_publication_plan(
+    publication_id: uuid.UUID,
+    request: UpdatePublicationPlanRequest,
+) -> Publication:
+    try:
+        return update_publication_plan(
+            publication_id,
+            publish_mode=request.publish_mode,
+            publish_at=request.publish_at,
+            notify_subscribers=request.notify_subscribers,
+            actor=request.actor,
+        )
+    except ValueError as exc:
+        code = 404 if "not found" in str(exc) else 409
+        raise HTTPException(status_code=code, detail=str(exc)) from exc
 
 
 @app.post(
