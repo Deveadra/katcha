@@ -542,20 +542,28 @@ export class RecoveryAuthority extends DurableObject {
       method: "POST",
       headers: {
         Authorization: `Bearer ${token}`,
+        "Accept": "application/vnd.github+json",
         "Content-Type": "application/json",
         "Idempotency-Key": incident.id,
+        "X-GitHub-Api-Version": "2022-11-28",
       },
       body: JSON.stringify({
-        incident_id: incident.id,
-        reason: incident.reason || "health_probe_failure",
-        observed_at: new Date().toISOString(),
-        active_deployment: state.active,
-        expected_active_epoch: state.active?.epoch ?? 0,
-        failure_count: incident.failure_count ?? 0,
-        last_error: incident.last_error,
-        paid_expires_at: incident.paid_expires_at ?? state.active?.paid_expires_at ?? null,
-        hourly_estimate_usd:
-          incident.hourly_estimate_usd ?? state.active?.hourly_estimate_usd ?? null,
+        event_type: "katcha_recovery",
+        client_payload: {
+          incident_id: incident.id,
+          reason: incident.reason || "health_probe_failure",
+          observed_at: new Date().toISOString(),
+          active_deployment: state.active,
+          expected_active_epoch: state.active?.epoch ?? 0,
+          failure_count: incident.failure_count ?? 0,
+          last_error: incident.last_error,
+          paid_expires_at:
+            incident.paid_expires_at ?? state.active?.paid_expires_at ?? null,
+          hourly_estimate_usd:
+            incident.hourly_estimate_usd ??
+            state.active?.hourly_estimate_usd ??
+            null,
+        },
       }),
       signal: AbortSignal.timeout(15_000),
     });
