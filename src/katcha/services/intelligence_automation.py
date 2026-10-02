@@ -13,6 +13,7 @@ from katcha.db import session_scope
 from katcha.domain import AudioRightsStatus, GateStatus, RightsBasis
 from katcha.models import DomainEvent, SourceItem
 from katcha.orchestration.client import start_ingest_workflow
+from katcha.services.trailer_passthrough import prepare_authorized_passthrough_source
 from katcha.services.acquisition import (
     assess_discovery_candidate,
     latest_rights_assessment,
@@ -208,6 +209,37 @@ async def advance_processed_handoff_receipt(
         results.append(result)
         if result.source_id is not None and result.workflow_id and result.action == "ingest_queued":
             await start_ingest_workflow(str(result.source_id), result.workflow_id)
+    return results
+
+
+async def reconcile_authorized_handoff_records(
+    *,
+    limit: int = 200,
+) -> list[HandoffAdvanceResult]:
+    """Resume authorized trailer handoffs already persisted before this automation existed."""
+    if limit < 1 or limit > 1000:
+        raise ValueError("limit must be between 1 and 1000")
+    with session_scope() as session:
+        records = list(
+            session.scalars(
+                __import__("sqlalchemy", fromlist=["select"]).select(IntelligenceRecord)
+                .where(IntelligenceRecord.status == "active")
+                .order_by(IntelligenceRecord.updated_at.desc())
+                .limit(limit)
+            )
+        )
+        record_ids = [row.id for row in records if _authorized_passthrough(row)[0]]
+
+    results: list[HandoffAdvanceResult] = []
+    for record_id in record_ids:
+        result = prepare_authorized_handoff_record(record_id)
+        results.append(result)
+        if result.source_id is None:
+            continue
+        if result.action == "ingest_queued" and result.workflow_id:
+            await start_ingest_workflow(str(result.source_id), result.workflow_id)
+        elif result.action == "already_ingested":
+            prepare_authorized_passthrough_source(result.source_id)
     return results
 
 
