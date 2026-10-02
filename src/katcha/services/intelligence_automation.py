@@ -222,7 +222,7 @@ async def reconcile_authorized_handoff_records(
     with session_scope() as session:
         records = list(
             session.scalars(
-                __import__("sqlalchemy", fromlist=["select"]).select(IntelligenceRecord)
+                select(IntelligenceRecord)
                 .where(IntelligenceRecord.status == "active")
                 .order_by(IntelligenceRecord.updated_at.desc())
                 .limit(limit)
