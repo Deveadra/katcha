@@ -5,7 +5,9 @@ from alembic.script import ScriptDirectory
 def test_ranked_trend_editing_activation_and_render_revisions_share_one_history() -> None:
     script = ScriptDirectory.from_config(Config("alembic.ini"))
     assert script.get_heads() == ["0046_command_goals"]
-    assert script.get_revision("0046_command_goals").down_revision == "0045_merge_codex_interim_heads"
+    assert (
+        script.get_revision("0046_command_goals").down_revision == "0045_merge_codex_interim_heads"
+    )
 
     merged_heads = script.get_revision("0045_merge_codex_interim_heads")
     assert set(merged_heads.down_revision) == {

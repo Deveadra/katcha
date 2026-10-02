@@ -60,6 +60,14 @@ def register_goal(command_id: uuid.UUID, request: dict, authority: dict) -> Comm
         return row
     with session_scope() as session:
         ensure_active_profile(session, channel_id)
+    from katcha.services.command_resources import resolve_command_resources
+
+    refs = [(row["kind"], uuid.UUID(row["id"])) for row in request.get("resource_refs", [])]
+    refs.extend(("clip", uuid.UUID(value)) for value in request.get("selected_clip_ids", []))
+    if request.get("selected_production_id"):
+        refs.append(("production", uuid.UUID(request["selected_production_id"])))
+    for offset in range(0, len(refs), 8):
+        resolve_command_resources(channel_id, refs[offset : offset + 8])
     thread_id = request.get("thread_id")
     if thread_id:
         thread = get_command_thread(uuid.UUID(thread_id), channel_profile_id=channel_id)

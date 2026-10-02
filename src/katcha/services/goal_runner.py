@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import select
 from starlette.concurrency import run_in_threadpool
@@ -28,6 +28,7 @@ from katcha.services.goal_receipts import (
 )
 from katcha.services.goal_tools import (
     TOOLS,
+    _redact,
     action_spec,
     run_native_tool,
     run_read_tool,
@@ -137,6 +138,13 @@ async def _observe_background(goal, step):
     handle = client.get_workflow_handle(str(workflow_id))
     description = await handle.describe()
     if description.status == WorkflowExecutionStatus.RUNNING:
+        if step.decision.get("tool") == "schedule_watch":
+            _save_result(
+                goal.id,
+                step.id,
+                {**step.result, "workflow_state": "RUNNING", "ongoing_collection_started": True},
+            )
+            return
         with session_scope() as session:
             current = session.get(CommandGoal, goal.id)
             if current.status != "cancelled":
@@ -159,7 +167,7 @@ async def _observe_background(goal, step):
             {
                 **step.result,
                 "workflow_state": description.status.name,
-                "workflow_result": result,
+                "workflow_result": _redact(result),
                 "lifecycle_state": activity.state if activity else None,
             },
             error,
@@ -281,8 +289,8 @@ async def advance_goal(goal_id: uuid.UUID) -> str:
                         "proposal_id": str(p.id),
                         "label": p.label,
                         "status": p.status,
-                        "payload": p.payload,
-                        "result": p.result,
+                        "payload": _redact(p.payload),
+                        "result": _redact(p.result),
                     }
                     for p in proposals
                 ],
@@ -334,6 +342,19 @@ async def advance_goal(goal_id: uuid.UUID) -> str:
             await _observe_background(goal, step)
             return get_goal(goal.id).status
         if decision.outcome != "tool":
+            if (
+                decision.outcome == "complete"
+                and goal.authorization.get("mode") == "run"
+                and goal.authorization.get("allowed_mutations")
+                and not any(
+                    TOOLS.get(o.get("tool"))
+                    and TOOLS[o["tool"]].mutates
+                    and not o.get("error")
+                    and o.get("result")
+                    for o in goal.observations
+                )
+            ):
+                raise ValueError("The requested operation has no observed successful result")
             state = {"complete": "completed", "clarify": "needs_input", "blocked": "blocked"}[
                 decision.outcome
             ]
@@ -396,7 +417,23 @@ async def advance_goal(goal_id: uuid.UUID) -> str:
                 }
             return "waiting_confirmation"
         if proposal.status == "executing":
-            return "waiting_confirmation"
+            if proposal.execution_started_at is not None and utc(
+                proposal.execution_started_at
+            ) > datetime.now(UTC) - timedelta(minutes=5):
+                with session_scope() as session:
+                    current = session.get(CommandGoal, goal.id)
+                    if current.status != "cancelled":
+                        current.status = "waiting_workflow"
+                        current.summary = "Waiting for the saved operation's execution result."
+                return "waiting_workflow"
+            if not tool.retry_safe:
+                _save_result(
+                    goal.id,
+                    step.id,
+                    {"uncertain": True},
+                    "The operation's result is uncertain; inspect current state",
+                )
+                return "running"
         if proposal.status != "executed":
             try:
                 proposal, _ = await _run_frozen_command_action(

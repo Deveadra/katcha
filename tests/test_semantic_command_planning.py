@@ -591,7 +591,8 @@ def test_action_schema_and_permission_registry_cannot_drift():
     from katcha.control_contract import COMMAND_ACTION_SCOPES
 
     action_literal = get_args(CommandPlan.model_fields["requested_actions"].annotation)[0]
-    assert set(get_args(action_literal)) == set(COMMAND_ACTION_SCOPES)
+    assert set(get_args(action_literal)) == set(COMMAND_ACTION_SCOPES) - {"native_tool"}
+    # Native tools require a frozen durable goal step, outside the legacy plan schema.
     assert set(get_args(api.ActionType)) == set(COMMAND_ACTION_SCOPES)
 
 

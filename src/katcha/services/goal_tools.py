@@ -7,6 +7,7 @@ import re
 import uuid
 from contextlib import suppress
 from dataclasses import dataclass
+from types import SimpleNamespace
 from typing import Any
 
 import httpx
@@ -53,6 +54,21 @@ TOOLS = {
             "find_clips",
             "Search scored channel clips using semantic topic/date arguments",
             "ai:read",
+        ),
+        GoalTool(
+            "list_goals",
+            "Read saved goals and their current status",
+            "ai:read",
+            "GET",
+            "/v1/ai/goals",
+        ),
+        GoalTool(
+            "cancel_goal",
+            "Stop planning an exact saved goal; started work keeps its status",
+            "ai:write",
+            "POST",
+            "/v1/ai/goals/{goal_id}/cancel",
+            retry_safe=True,
         ),
         GoalTool("research", "Retained research and current trend evidence", "ai:read"),
         GoalTool("failures", "Inspect current channel failures and recovery targets", "ai:read"),
@@ -167,6 +183,29 @@ TOOLS = {
             "trends:write",
             "POST",
             "/v1/channels/{channel_profile_id}/trends/watches",
+        ),
+        GoalTool(
+            "run_watch",
+            "Run an exact channel topic watch once",
+            "trends:write",
+            "POST",
+            "/v1/trends/watches/{topic_watch_id}/execute",
+            retry_safe=True,
+        ),
+        GoalTool(
+            "schedule_watch",
+            "Start continuing collection for an exact channel topic watch",
+            "trends:write",
+            "POST",
+            "/v1/trends/watches/{topic_watch_id}/schedule",
+            retry_safe=True,
+        ),
+        GoalTool(
+            "watch_results",
+            "Read ranked candidates from an exact channel watch",
+            "trends:read",
+            "GET",
+            "/v1/trends/watches/{topic_watch_id}/ranked",
         ),
         GoalTool(
             "trend_opportunities",
@@ -532,6 +571,8 @@ def validate_resource_arguments(goal: CommandGoal, arguments: dict) -> None:
                 "candidate_id",
                 "preview_id",
                 "proposal_id",
+                "goal_id",
+                "topic_watch_id",
             }
             and value is not None
         ):
@@ -680,6 +721,13 @@ async def run_native_tool(goal: CommandGoal, name: str, args: dict, step_id: uui
         dict(args.get("body", {})),
     )
     path_args["channel_profile_id"] = str(goal.channel_profile_id)
+    require_native_resource_channels(
+        SimpleNamespace(
+            path_params=path_args,
+            state=SimpleNamespace(control_channel_profile_ids={str(goal.channel_profile_id)}),
+        ),
+        tool,
+    )
     schema = tool_schema(name)
     if "channel_profile_id" in schema["properties"]["query"]["properties"]:
         query["channel_profile_id"] = str(goal.channel_profile_id)
@@ -757,6 +805,7 @@ def native_route_tool(path: str, method: str) -> GoalTool | None:
 
 def require_native_resource_channels(request, tool: GoalTool) -> None:
     """Also guard direct scoped API access, not only goal callers."""
+    from katcha.acquisition_models import TopicWatchVersion
     from katcha.api.control_auth import require_control_channel
     from katcha.models import Clip
     from katcha.production_models import Production
@@ -771,6 +820,7 @@ def require_native_resource_channels(request, tool: GoalTool) -> None:
         "publication_id": Publication,
         "candidate_id": DiscoveryCandidate,
         "clip_id": Clip,
+        "topic_watch_id": TopicWatchVersion,
     }
     with session_scope() as session:
         for key, model in mapping.items():
@@ -793,5 +843,5 @@ def require_native_resource_channels(request, tool: GoalTool) -> None:
                     raise ValueError("Clip is outside the principal's channels")
             elif getattr(row, "channel_profile_id", None):
                 require_control_channel(request, row.channel_profile_id)
-            elif tool.mutates or tool.name in {"source_history", "source_results"}:
+            elif tool.mutates or tool.name in {"source_history", "source_results", "watch_results"}:
                 raise ValueError("Shared resource details require a wildcard principal")

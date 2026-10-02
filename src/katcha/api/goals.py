@@ -5,6 +5,7 @@ from __future__ import annotations
 import uuid
 
 from fastapi import APIRouter, HTTPException, Request
+from sqlalchemy import select
 from temporalio.common import WorkflowIDReusePolicy
 from temporalio.exceptions import WorkflowAlreadyStartedError
 
@@ -35,6 +36,7 @@ def snapshot(goal: CommandGoal) -> dict:
         "command_id": str(goal.command_id),
         "thread_id": str(goal.thread_id),
         "channel_profile_id": str(goal.channel_profile_id),
+        "request": goal.request,
         "status": goal.status,
         "summary": goal.summary,
         "step_count": goal.step_count,
@@ -94,6 +96,23 @@ async def submit_goal(http_request: Request, request: GoalRequest) -> dict:
             response["summary"] = "Request saved. Reconnect and retry to start it."
             return response
     return snapshot(get_goal(goal.id))
+
+
+@router.get("")
+def list_goals(http_request: Request, channel_profile_id: uuid.UUID) -> list[dict]:
+    require_control_scope(http_request, "ai:read")
+    require_control_channel(http_request, channel_profile_id)
+    with session_scope() as session:
+        rows = session.scalars(
+            select(CommandGoal)
+            .where(
+                CommandGoal.channel_profile_id == channel_profile_id,
+                CommandGoal.actor == control_actor(http_request),
+            )
+            .order_by(CommandGoal.created_at.desc())
+            .limit(100)
+        )
+        return [snapshot(row) for row in rows]
 
 
 @router.get("/{goal_id}")

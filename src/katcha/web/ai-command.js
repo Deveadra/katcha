@@ -758,7 +758,8 @@ async function followGoal(receipt, { background = false } = {}) {
     let shownConfirmation = false;
     while (true) {
         const goal = await api("/v1/ai/goals/" + receipt.goalId);
-        if (state.channelId !== goal.channel_profile_id) return null;
+        if (state.channelId !== goal.channel_profile_id ||
+            (background && state.threadId && state.threadId !== goal.thread_id)) return null;
         state.threadId = goal.thread_id;
         let progress = $("goal-progress-" + goal.goal_id);
         if (!progress) {
@@ -812,12 +813,28 @@ async function submitDurableGoal(request) {
     saveGoal(receipt);
     return followGoal(receipt);
 }
-function resumeSavedGoals() {
+async function resumeSavedGoals() {
     const actor = state.controlSession?.actor || state.controlSession?.principal_name || "current";
-    for (const receipt of savedGoals().filter((row) => row.actor === actor &&
-        row.request.channel_profile_id === state.channelId && row.goalId)) {
-        followGoal(receipt, {background: true}).catch((error) =>
-            status("Saved work can be resumed after reconnecting. " + error.message, true));
+    try {
+        const remote = await api("/v1/ai/goals?channel_profile_id=" + encodeURIComponent(state.channelId));
+        for (const goal of remote.filter((row) => !finishedGoals.has(row.status))) {
+            if (!savedGoals().some((row) => row.request.command_id === goal.command_id)) {
+                saveGoal({actor, goalId: goal.goal_id,
+                    request: {...goal.request, command_id: goal.command_id}});
+            }
+        }
+        for (const receipt of savedGoals().filter((row) => row.actor === actor &&
+            row.request.channel_profile_id === state.channelId)) {
+            if (!receipt.goalId) {
+                const goal = await api("/v1/ai/goals", {method: "POST", body: JSON.stringify(receipt.request)});
+                receipt.goalId = goal.goal_id;
+                saveGoal(receipt);
+            }
+            followGoal(receipt, {background: true}).catch((error) =>
+                status("Saved work can be resumed after reconnecting. " + error.message, true));
+        }
+    } catch (error) {
+        status("Saved work can be resumed after reconnecting. " + error.message, true);
     }
 }
 

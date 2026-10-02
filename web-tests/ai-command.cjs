@@ -26,6 +26,11 @@ const storedTurns = [];
 let threadExists = false;
 let commandCount = 0;
 let restrictedSession = false;
+let durableMode = false;
+let failGoalOnce = true;
+let goalPhase = "completed";
+const goalBodies = [];
+const goalId = "88888888-8888-4888-8888-888888888888";
 let browser;
 
 (async () => {
@@ -202,8 +207,31 @@ let browser;
                           consumer_cursor_is_principal_bound: true,
                       },
                   };
+        } else if (url.pathname === "/v1/ai/goals" && req.method() === "GET") {
+            data = [];
+        } else if (url.pathname === "/v1/ai/goals" && req.method() === "POST") {
+            goalBodies.push(body);
+            if (failGoalOnce) {
+                failGoalOnce = false;
+                await route.fulfill({status: 503, contentType: "application/json",
+                    body: JSON.stringify({detail: "Saved request response was interrupted"})});
+                return;
+            }
+            data = {goal_id: goalId, thread_id: threadId, channel_profile_id: channelId,
+                status: goalPhase, summary: "Saved goal status", result: {}};
+        } else if (url.pathname === "/v1/ai/goals/" + goalId + "/cancel") {
+            goalPhase = "cancelled";
+            data = {status: goalPhase};
+        } else if (url.pathname === "/v1/ai/goals/" + goalId) {
+            data = {goal_id: goalId, thread_id: threadId, channel_profile_id: channelId,
+                status: goalPhase, summary: goalPhase === "cancelled" ? "Planning stopped" :
+                    "Saved workflow result received", result: goalPhase === "completed" ? {
+                    thread_id: threadId, answer: "Durable goal completed from its saved result",
+                    intent: "goal_completed", evidence: [], actions: [],
+                } : {}};
         } else if (url.pathname === "/v1/ai/readiness") {
-            data = {live: false, message: "Katcha is in fixture mode. Select Live AI in the launch console."};
+            data = durableMode ? {live: true, durable_goals: true, message: "Live goals ready"} :
+                {live: false, message: "Katcha is in fixture mode. Select Live AI in the launch console."};
         } else if (url.pathname === "/v1/ai/observability") {
             data = {
                 channel_profile_id: channelId,
@@ -640,6 +668,30 @@ let browser;
             .filter((request) => request.auth)
             .every((request) => request.auth === "Bearer fixture-token"),
     );
+
+    durableMode = true;
+    await page.reload();
+    await page.getByText("Live goals ready").waitFor();
+    await page.locator("#prompt").fill("Please keep looking until the saved result arrives");
+    await page.locator("#command-form").evaluate((form) => form.requestSubmit());
+    await page.getByText("Saved request response was interrupted").first().waitFor();
+    assert.equal(await page.locator("#prompt").inputValue(),
+        "Please keep looking until the saved result arrives");
+    await page.locator("#command-form").evaluate((form) => form.requestSubmit());
+    await page.getByText("Durable goal completed from its saved result").waitFor();
+    assert.equal(goalBodies[0].command_id, goalBodies[1].command_id);
+    assert.deepEqual(goalBodies[0], goalBodies[1]);
+    goalPhase = "waiting_workflow";
+    await page.locator("#prompt").fill("Keep checking this pending work");
+    await page.locator("#command-form").evaluate((form) => form.requestSubmit());
+    await page.getByRole("button", {name: "Stop planning"}).last().waitFor();
+    await page.reload();
+    await page.getByRole("button", {name: "Stop planning"}).last().waitFor();
+    await page.getByRole("button", {name: "Stop planning"}).last().click();
+    await page.getByText("Planning stopped").first().waitFor();
+    assert.equal(await page.evaluate(() =>
+        JSON.parse(sessionStorage.getItem("katcha.goalReceipts")).length), 0);
+    durableMode = false;
 
     fs.mkdirSync(path.join(__dirname, "test-results"), { recursive: true });
     await page.screenshot({
