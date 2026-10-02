@@ -444,6 +444,13 @@ def operations_overview(
                 or row.error
                 or f"{row.stage} · {row.status}"
             )
+            recovery_action, recovery_label = _work_recovery(
+                kind="short_episode",
+                status=row.status,
+                stage=row.stage,
+                state=state,
+                row=row,
+            )
             work_items.append(
                 OperationsWorkItem(
                     kind="short_episode",
@@ -456,6 +463,8 @@ def operations_overview(
                     message=message,
                     updated_at=row.updated_at,
                     href=_item_href(row.channel_profile_id),
+                    recovery_action=recovery_action,
+                    recovery_label=recovery_label,
                 )
             )
 
@@ -475,6 +484,13 @@ def operations_overview(
                 or row.error
                 or f"{row.stage} · {row.status}"
             )
+            recovery_action, recovery_label = _work_recovery(
+                kind="production",
+                status=row.status,
+                stage=row.stage,
+                state=state,
+                row=row,
+            )
             work_items.append(
                 OperationsWorkItem(
                     kind="production",
@@ -487,6 +503,8 @@ def operations_overview(
                     message=message,
                     updated_at=row.updated_at,
                     href=_item_href(row.channel_profile_id),
+                    recovery_action=recovery_action,
+                    recovery_label=recovery_label,
                 )
             )
 
@@ -513,6 +531,13 @@ def operations_overview(
                 state = "active"
             if state is None:
                 continue
+            recovery_action, recovery_label = _work_recovery(
+                kind="publication",
+                status=row.status,
+                stage=row.stage,
+                state=state,
+                row=row,
+            )
             work_items.append(
                 OperationsWorkItem(
                     kind="publication",
@@ -525,6 +550,8 @@ def operations_overview(
                     message=row.failure_reason or row.error or f"{row.stage} · {row.status}",
                     updated_at=row.updated_at,
                     href=_publication_href(channel_id),
+                    recovery_action=recovery_action,
+                    recovery_label=recovery_label,
                 )
             )
 
