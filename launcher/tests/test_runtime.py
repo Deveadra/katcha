@@ -860,6 +860,24 @@ def test_launcher_serves_workspace_shell_without_api(tmp_path):
             ("text/javascript", "application/javascript")
         )
         assert b'loadChannel' in body
+        connection.request("GET", "/explorer")
+        response = connection.getresponse()
+        assert response.status == 302
+        assert response.getheader("Location") == "/explorer/assets/index.html"
+        response.read()
+        connection.request("GET", "/explorer/assets/index.html")
+        response = connection.getresponse()
+        body = response.read()
+        assert response.status == 200
+        assert b'href="styles.css"' in body
+        assert b'href="pages/trends-aerith.css"' in body
+        assert b'src="explorer.js"' in body
+        connection.request("GET", "/explorer/assets/pages/trends-aerith.css")
+        response = connection.getresponse()
+        body = response.read()
+        assert response.status == 200
+        assert response.getheader("Content-Type").startswith("text/css")
+        assert b".trends-workspace-header" in body
         connection.request("GET", "/launcher-bridge.js")
         response = connection.getresponse()
         body = response.read()
