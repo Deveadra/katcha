@@ -4,8 +4,8 @@ import ast
 from pathlib import Path
 
 from katcha.orchestration.recovery_registry import (
-    RecoveryMode,
     WORKFLOW_RECOVERY_CONTRACTS,
+    RecoveryMode,
 )
 
 ROOT = Path(__file__).resolve().parents[1]

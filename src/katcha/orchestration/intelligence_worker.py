@@ -6,7 +6,6 @@ import logging
 from contextlib import suppress
 
 from sqlalchemy import select
-
 from temporalio.client import Client
 from temporalio.common import WorkflowIDReusePolicy
 from temporalio.exceptions import WorkflowAlreadyStartedError

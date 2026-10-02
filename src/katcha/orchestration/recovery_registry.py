@@ -91,31 +91,36 @@ WORKFLOW_RECOVERY_CONTRACTS: dict[str, WorkflowRecoveryContract] = {
         "TopicWatchScheduleWorkflow",
         RecoveryMode.TEMPORAL_SCHEDULE,
         "intelligence-worker",
-        "Long-running schedule is durable in Temporal; schedule config persistence is a cutover gate.",
+        "Long-running schedule is durable in Temporal; schedule config "
+        "persistence is a cutover gate.",
     ),
     "ChannelIntelligenceScheduleWorkflow": WorkflowRecoveryContract(
         "ChannelIntelligenceScheduleWorkflow",
         RecoveryMode.TEMPORAL_SCHEDULE,
         "intelligence-worker",
-        "Long-running schedule is durable in Temporal; active-channel schedule reconstruction is a cutover gate.",
+        "Long-running schedule is durable in Temporal; active-channel schedule "
+        "reconstruction is a cutover gate.",
     ),
     "ChannelTrendActivationScheduleWorkflow": WorkflowRecoveryContract(
         "ChannelTrendActivationScheduleWorkflow",
         RecoveryMode.TEMPORAL_SCHEDULE,
         "intelligence-worker",
-        "Long-running schedule is durable in Temporal; activation schedule config persistence is a cutover gate.",
+        "Long-running schedule is durable in Temporal; activation schedule config "
+        "persistence is a cutover gate.",
     ),
     "CommandSourcePrepareWorkflow": WorkflowRecoveryContract(
         "CommandSourcePrepareWorkflow",
         RecoveryMode.PARENT_OWNED,
         "intelligence-worker",
-        "Command goal/action lifecycle owns the request while child discovery/ingest work is independently durable.",
+        "Command goal/action lifecycle owns the request while child discovery/ingest "
+        "work is independently durable.",
     ),
     "TopicWatchWorkflow": WorkflowRecoveryContract(
         "TopicWatchWorkflow",
         RecoveryMode.PARENT_OWNED,
         "intelligence-worker",
-        "Manual/scheduled parent owns execution identity; child discovery runs are independently durable.",
+        "Manual/scheduled parent owns execution identity; child discovery runs are "
+        "independently durable.",
     ),
     "YouTubeAnalyticsWorkflow": WorkflowRecoveryContract(
         "YouTubeAnalyticsWorkflow",
