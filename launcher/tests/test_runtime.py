@@ -1,14 +1,122 @@
 import http.client
 import importlib.util
 import json
+import socket
+import struct
 import sys
 import threading
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 SPEC = importlib.util.spec_from_file_location("runtime", Path(__file__).parents[1] / "runtime.py")
 runtime = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(runtime)
+
+
+@pytest.mark.parametrize("error", [BrokenPipeError, ConnectionResetError, ConnectionAbortedError])
+@pytest.mark.parametrize("stage", ["headers", "body"])
+def test_browser_socket_failures_are_identified_at_response_boundary(error, stage):
+    handler = runtime.Handler.__new__(runtime.Handler)
+    handler.wfile = MagicMock()
+    if stage == "headers":
+        with (
+            patch.object(runtime.BaseHTTPRequestHandler, "end_headers", side_effect=error()),
+            pytest.raises(runtime.ClientDisconnected),
+        ):
+            handler.end_headers()
+    else:
+        handler.wfile.write.side_effect = error()
+        with pytest.raises(runtime.ClientDisconnected):
+            handler.write_response(b"response")
+
+
+def test_closed_browser_request_does_not_traceback_or_stop_status_server(tmp_path):
+    app = instance(tmp_path)
+    entered = threading.Event()
+    release = threading.Event()
+    finished = threading.Event()
+
+    class ObservedHandler(runtime.Handler):
+        def handle(self):
+            try:
+                super().handle()
+            finally:
+                finished.set()
+
+    def delayed_snapshot():
+        entered.set()
+        assert release.wait(3)
+        return {"workspace_ready": True}
+
+    server = runtime.ThreadingHTTPServer(("127.0.0.1", 0), ObservedHandler)
+    server.runtime = app
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        with patch.object(server, "handle_error") as errors:
+            with patch.object(app, "snapshot", side_effect=delayed_snapshot):
+                client = socket.create_connection(("127.0.0.1", server.server_port), timeout=3)
+                client.sendall(
+                    (
+                        "GET /runtime/status HTTP/1.0\r\n"
+                        f"Host: 127.0.0.1:{server.server_port}\r\n\r\n"
+                    ).encode()
+                )
+                assert entered.wait(3)
+                client.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("ii", 1, 0))
+                client.close()
+                release.set()
+                assert finished.wait(3)
+            connection = http.client.HTTPConnection("127.0.0.1", server.server_port, timeout=3)
+            connection.request("GET", "/runtime/status")
+            response = connection.getresponse()
+            assert response.status == 200
+            assert "workspace_ready" in json.loads(response.read())
+            connection.close()
+            errors.assert_not_called()
+    finally:
+        release.set()
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=3)
+
+
+def test_proxy_browser_disconnect_closes_upstream_without_gateway_failure():
+    handler = runtime.Handler.__new__(runtime.Handler)
+    handler.path = "/v1/fixture"
+    handler.command = "GET"
+    handler.headers = {}
+    handler.rfile = MagicMock()
+    handler.wfile = MagicMock()
+    handler.wfile.write.side_effect = BrokenPipeError()
+    handler.server = MagicMock()
+    handler.server.runtime.values = {"KATCHA_CONTROL_API_TOKEN": "fixture"}
+    handler.send_response = MagicMock()
+    handler.send_header = MagicMock()
+    handler.end_headers = MagicMock()
+    connection = MagicMock()
+    response = connection.getresponse.return_value
+    response.status = 200
+    response.getheaders.return_value = []
+    response.read.side_effect = [b"media", b""]
+    with (
+        patch.object(runtime.http.client, "HTTPConnection", return_value=connection),
+        pytest.raises(runtime.ClientDisconnected),
+    ):
+        handler.proxy()
+    connection.close.assert_called_once()
+    handler.server.runtime.event.assert_not_called()
+
+
+def test_handler_preserves_unexpected_application_errors():
+    handler = runtime.Handler.__new__(runtime.Handler)
+    with (
+        patch.object(runtime.BaseHTTPRequestHandler, "handle", side_effect=ValueError("bug")),
+        pytest.raises(ValueError, match="bug"),
+    ):
+        handler.handle()
 
 
 def instance(tmp_path):
@@ -267,7 +375,8 @@ def test_handoff_process_pending_uses_control_plane_api(tmp_path):
         server.server_close()
 
 
-def test_proxy_exception_returns_controlled_gateway_error(tmp_path):
+@pytest.mark.parametrize("error", [RuntimeError, ConnectionResetError])
+def test_proxy_exception_returns_controlled_gateway_error(tmp_path, error):
     app = instance(tmp_path)
     server = runtime.ThreadingHTTPServer(("127.0.0.1", 0), runtime.Handler)
     server.runtime = app
@@ -278,7 +387,7 @@ def test_proxy_exception_returns_controlled_gateway_error(tmp_path):
         with patch.object(
             runtime.http.client,
             "HTTPConnection",
-            side_effect=RuntimeError("fixture proxy failure"),
+            side_effect=error("fixture proxy failure"),
         ):
             connection.request("POST", "/v1/fixture", b"{}", {"Content-Type": "application/json"})
             response = connection.getresponse()
@@ -288,7 +397,7 @@ def test_proxy_exception_returns_controlled_gateway_error(tmp_path):
         assert "gateway" in body["error"].lower()
         assert any(
             event["component"] == "gateway"
-            and "RuntimeError" in event["message"]
+            and error.__name__ in event["message"]
             for event in app.events
         )
     finally:
