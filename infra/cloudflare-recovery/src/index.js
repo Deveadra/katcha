@@ -292,9 +292,20 @@ export class RecoveryAuthority extends DurableObject {
             "failure_threshold",
             20,
           ),
+          recoveryRetrySeconds: positiveInt(
+            body.recovery_retry_seconds ?? 900,
+            "recovery_retry_seconds",
+            86400,
+          ),
         };
         if (config.intervalSeconds < 30) {
           throw new HttpError(400, "interval_seconds must be at least 30");
+        }
+        if (config.recoveryRetrySeconds < 300) {
+          throw new HttpError(
+            400,
+            "recovery_retry_seconds must be at least 300",
+          );
         }
         const state = await this.updateState((current) =>
           configureWatchdog(current, config),
