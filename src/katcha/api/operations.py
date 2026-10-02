@@ -363,8 +363,17 @@ async def recover_work_item(
             error = str(row.error or "").strip()
             workflow_id = row.workflow_id
             resume_stage = _production_resume_stage(row)
+            latest_attempt = session.scalar(
+                select(RenderAttempt)
+                .where(RenderAttempt.production_id == source_id)
+                .order_by(RenderAttempt.attempt_number.desc())
+                .limit(1)
+            )
+            render_dead_letter = bool(
+                latest_attempt is not None and latest_attempt.status == "dead_letter"
+            )
 
-        if status_value == "failed" or error:
+        if status_value == "failed" or error or render_dead_letter:
             try:
                 stage = _production_restart_stage(source_id)
                 child = register_regeneration(
@@ -415,8 +424,17 @@ async def recover_work_item(
             error = str(row.error or "").strip()
             base_workflow_id = row.workflow_id
             resume_stage = _short_episode_resume_stage(row)
+            latest_attempt = session.scalar(
+                select(RenderAttempt)
+                .where(RenderAttempt.short_episode_id == source_id)
+                .order_by(RenderAttempt.attempt_number.desc())
+                .limit(1)
+            )
+            render_dead_letter = bool(
+                latest_attempt is not None and latest_attempt.status == "dead_letter"
+            )
 
-        if status_value == "failed" or error:
+        if status_value == "failed" or error or render_dead_letter:
             try:
                 stage = _short_episode_restart_stage(source_id)
                 child = register_short_episode_regeneration(
