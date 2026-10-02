@@ -5,6 +5,8 @@ import concurrent.futures
 import logging
 
 from temporalio.client import Client
+from temporalio.common import WorkflowIDReusePolicy
+from temporalio.exceptions import WorkflowAlreadyStartedError
 from temporalio.worker import Worker
 
 from katcha.acquisition.runtime import DISCOVERY_TASK_QUEUE
@@ -24,6 +26,28 @@ from katcha.orchestration.discovery_workflows import (
     TopicWatchScheduleWorkflow,
     TopicWatchWorkflow,
 )
+from katcha.services.ingestion_sources import list_resumable_source_runs
+
+
+async def _resume_incomplete_source_runs(client: Client) -> tuple[int, int]:
+    resumed = 0
+    already_present = 0
+    for run in list_resumable_source_runs():
+        workflow_id = f"discovery-run-{run.id}"
+        try:
+            await client.start_workflow(
+                DiscoveryRunWorkflow.run,
+                str(run.id),
+                id=workflow_id,
+                id_reuse_policy=WorkflowIDReusePolicy.REJECT_DUPLICATE,
+                task_queue=DISCOVERY_TASK_QUEUE,
+            )
+            resumed += 1
+        except WorkflowAlreadyStartedError:
+            # Existing Temporal history means the durable workflow already owns
+            # recovery. REJECT_DUPLICATE prevents replaying a closed execution.
+            already_present += 1
+    return resumed, already_present
 
 
 async def main() -> None:
@@ -35,6 +59,12 @@ async def main() -> None:
     client = await Client.connect(
         settings.temporal_host,
         namespace=settings.temporal_namespace,
+    )
+    resumed, already_present = await _resume_incomplete_source_runs(client)
+    logging.getLogger(__name__).info(
+        "discovery recovery reconciled source runs resumed=%s temporal_present=%s",
+        resumed,
+        already_present,
     )
     with concurrent.futures.ThreadPoolExecutor(max_workers=6) as activity_executor:
         worker = Worker(
