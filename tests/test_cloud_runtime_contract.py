@@ -11,6 +11,13 @@ def valid_production_env() -> dict[str, str]:
     return {
         "KATCHA_ENV": "production",
         "KATCHA_RELEASE_SHA": "a" * 40,
+        "KATCHA_LEADERSHIP_FENCE_MODE": "http",
+        "KATCHA_LEADERSHIP_FENCE_URL": (
+            "https://recovery.katcha.test/v1/fence/assert"
+        ),
+        "KATCHA_LEADERSHIP_FENCE_TOKEN": "fence-token-with-more-than-32-characters",
+        "KATCHA_DEPLOYMENT_ID": "oci-a1-primary",
+        "KATCHA_DEPLOYMENT_EPOCH": "7",
         "KATCHA_POSTGRES_PASSWORD": "database-secret-with-enough-entropy",
         "KATCHA_DATABASE_URL": (
             "postgresql+psycopg://katcha:database-secret-with-enough-entropy"
@@ -39,6 +46,26 @@ def valid_production_env() -> dict[str, str]:
 
 def test_production_validator_accepts_safe_hosted_settings() -> None:
     assert validate(valid_production_env()) == []
+
+
+
+def test_production_validator_requires_external_leadership_fence() -> None:
+    values = valid_production_env()
+    values.update(
+        {
+            "KATCHA_LEADERSHIP_FENCE_MODE": "disabled",
+            "KATCHA_LEADERSHIP_FENCE_URL": "http://localhost:8788/v1/fence/assert",
+            "KATCHA_LEADERSHIP_FENCE_TOKEN": "short",
+            "KATCHA_DEPLOYMENT_ID": "local",
+            "KATCHA_DEPLOYMENT_EPOCH": "0",
+        }
+    )
+    errors = validate(values)
+    assert any("FENCE_MODE" in error for error in errors)
+    assert any("public HTTPS coordinator" in error for error in errors)
+    assert any("32 characters" in error for error in errors)
+    assert any("hosted deployment" in error for error in errors)
+    assert any("at least 1" in error for error in errors)
 
 
 def test_production_validator_requires_real_control_credential() -> None:
