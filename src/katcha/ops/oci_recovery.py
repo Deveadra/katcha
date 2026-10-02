@@ -46,7 +46,7 @@ class Incident:
     active_deployment_id: str
 
     @classmethod
-    def from_event(cls, path: Path) -> "Incident":
+    def from_event(cls, path: Path) -> Incident:
         payload = json.loads(path.read_text(encoding="utf-8"))
         body = payload.get("client_payload", payload)
         active = body.get("active_deployment") or {}
@@ -97,7 +97,7 @@ class RecoveryConfig:
         cls,
         *,
         require_external_compute: bool = True,
-    ) -> "RecoveryConfig":
+    ) -> RecoveryConfig:
         paid_enabled = _bool_env("KATCHA_OCI_PAID_FALLBACK_ENABLED", False)
         paid_ttl = int(_env("KATCHA_OCI_PAID_FALLBACK_TTL_HOURS", default="24"))
         paid_hourly = float(
@@ -599,17 +599,16 @@ def render_bootstrap(
         )
         if unresolved:
             raise RecoveryError("bootstrap template has unresolved placeholders")
-    handle = tempfile.NamedTemporaryFile(
+    with tempfile.NamedTemporaryFile(
         mode="w",
         encoding="utf-8",
         prefix="katcha-recovery-",
         suffix=".sh",
         delete=False,
-    )
-    handle.write(content)
-    handle.flush()
-    handle.close()
-    path = Path(handle.name)
+    ) as handle:
+        handle.write(content)
+        handle.flush()
+        path = Path(handle.name)
     path.chmod(0o600)
     return path
 
@@ -736,13 +735,15 @@ def recover(event_path: Path, config: RecoveryConfig, oci: OciCli) -> dict[str, 
                     user_data_path=user_data_path,
                 )
                 mode = config.primary.mode
-            except CapacityUnavailable:
+            except CapacityUnavailable as exc:
                 if not config.paid_enabled:
                     raise RecoveryError(
                         "A1 capacity unavailable and paid fallback is disabled"
-                    )
+                    ) from exc
                 if paid_instance_count(rows) >= config.paid_max_concurrent:
-                    raise RecoveryError("paid fallback concurrency limit reached")
+                    raise RecoveryError(
+                        "paid fallback concurrency limit reached"
+                    ) from exc
                 candidate_id = oci.launch(
                     config,
                     incident,
