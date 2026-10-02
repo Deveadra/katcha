@@ -493,16 +493,74 @@ def test_browser_open_reports_manual_recovery_when_all_methods_fail(tmp_path, ca
     with (
         patch.object(runtime, "_is_wsl", return_value=True),
         patch.object(runtime.subprocess, "run", return_value=failed),
-        patch.object(runtime.webbrowser, "open", return_value=False),
+        patch.object(runtime.webbrowser, "open") as browser,
     ):
         assert runtime._open_browser("http://127.0.0.1:8765", app) is False
 
+    browser.assert_not_called()
     assert "Open http://127.0.0.1:8765" in capsys.readouterr().out
     assert any(
         event["component"] == "browser" and event.get("recovery")
         for event in app.events
     )
 
+
+
+def test_linux_browser_open_uses_xdg_open(tmp_path):
+    app = instance(tmp_path)
+    with (
+        patch.object(runtime, "_is_wsl", return_value=False),
+        patch.object(runtime.sys, "platform", "linux"),
+        patch.object(runtime.shutil, "which", return_value="/usr/bin/xdg-open"),
+        patch.object(runtime.subprocess, "run", return_value=MagicMock(returncode=0)) as run,
+        patch.object(runtime.webbrowser, "open") as browser,
+    ):
+        assert runtime._open_browser("http://127.0.0.1:8765", app) is True
+
+    assert run.call_args.args[0] == ["/usr/bin/xdg-open", "http://127.0.0.1:8765"]
+    assert "Opened Katcha in the desktop browser." in [e["message"] for e in app.events]
+    browser.assert_not_called()
+
+
+def test_linux_gio_failure_is_suppressed_and_manual_url_is_actionable(tmp_path, capsys):
+    app = instance(tmp_path)
+    failure = MagicMock(returncode=1, stderr="gio: Operation not supported")
+    with (
+        patch.object(runtime, "_is_wsl", return_value=False),
+        patch.object(runtime.sys, "platform", "linux"),
+        patch.object(runtime.shutil, "which", return_value="/usr/bin/xdg-open"),
+        patch.object(runtime.subprocess, "run", return_value=failure),
+        patch.object(runtime.webbrowser, "open") as browser,
+    ):
+        assert runtime._open_browser("http://127.0.0.1:8765", app) is False
+
+    browser.assert_not_called()
+    output = capsys.readouterr().out
+    assert "gio:" not in output
+    assert "Open http://127.0.0.1:8765" in output
+    event = next(e for e in app.events if e["component"] == "browser")
+    assert "Operation not supported" in event["attempts"][0]
+
+
+def test_launcher_page_remains_available_when_browser_open_fails(tmp_path):
+    app = instance(tmp_path)
+    server = runtime.ThreadingHTTPServer(("127.0.0.1", 0), runtime.Handler)
+    server.runtime = app
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        address, port = server.server_address
+        connection = http.client.HTTPConnection(address, port, timeout=2)
+        connection.request("GET", "/")
+        response = connection.getresponse()
+        page = response.read()
+        assert response.status == 200
+        assert b"Start Katcha" in page
+        connection.close()
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
 
 def test_stop_logs_reaps_launcher_follower_without_stopping_services(tmp_path):
     app = instance(tmp_path)
