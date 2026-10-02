@@ -92,7 +92,11 @@ class RecoveryConfig:
     bootstrap_template: Path
 
     @classmethod
-    def from_env(cls) -> "RecoveryConfig":
+    def from_env(
+        cls,
+        *,
+        require_external_compute: bool = True,
+    ) -> "RecoveryConfig":
         paid_ttl = int(_env("KATCHA_OCI_PAID_FALLBACK_TTL_HOURS", default="24"))
         paid_hourly = float(
             _env("KATCHA_OCI_PAID_FALLBACK_ESTIMATED_HOURLY_USD", default="0")
@@ -150,11 +154,14 @@ class RecoveryConfig:
                 )
             ),
         )
-        config.validate()
+        config.validate(require_external_compute=require_external_compute)
         return config
 
-    def validate(self) -> None:
-        if not _bool_env("KATCHA_EXTERNAL_COMPUTE_ENABLED", False):
+    def validate(self, *, require_external_compute: bool = True) -> None:
+        if (
+            require_external_compute
+            and not _bool_env("KATCHA_EXTERNAL_COMPUTE_ENABLED", False)
+        ):
             raise RecoveryError("external compute kill switch is disabled")
         if self.paid_ttl_hours < 1 or self.paid_ttl_hours > 72:
             raise RecoveryError("paid fallback TTL must be between 1 and 72 hours")
@@ -511,6 +518,20 @@ def _instance_id(row: dict[str, Any]) -> str:
     return str(row.get("id") or "")
 
 
+def find_deployment_instance(
+    rows: list[dict[str, Any]],
+    deployment_id: str,
+) -> dict[str, Any] | None:
+    if not deployment_id:
+        return None
+    for row in rows:
+        if _state(row) in {"TERMINATED", "TERMINATING"}:
+            continue
+        if _tags(row).get("KatchaDeploymentId") == deployment_id:
+            return row
+    return None
+
+
 def find_existing_candidate(
     rows: list[dict[str, Any]],
     incident_id: str,
@@ -666,6 +687,11 @@ def recover(event_path: Path, config: RecoveryConfig, oci: OciCli) -> dict[str, 
     mode = _tags(existing).get("KatchaRecoveryMode", "") if existing else ""
     user_data_path: Path | None = None
     previous_instance_id: str | None = None
+    active_instance = find_deployment_instance(
+        rows,
+        incident.active_deployment_id,
+    )
+    rollback_instance_id = _instance_id(active_instance) if active_instance else None
 
     try:
         if not candidate_id:
@@ -702,6 +728,8 @@ def recover(event_path: Path, config: RecoveryConfig, oci: OciCli) -> dict[str, 
                 mode = config.fallback.mode
 
         previous_instance_id = switch_volume(oci, config, candidate_id)
+        if previous_instance_id is None:
+            previous_instance_id = rollback_instance_id
         wait_for_candidate_ready(
             coordinator,
             deployment_id=deployment_id,
@@ -788,7 +816,9 @@ def main() -> int:
     parser.add_argument("--event", type=Path)
     args = parser.parse_args()
     try:
-        config = RecoveryConfig.from_env()
+        config = RecoveryConfig.from_env(
+            require_external_compute=args.action != "cleanup"
+        )
         oci = OciCli()
         if args.action == "cleanup":
             result: object = {
