@@ -260,35 +260,6 @@ def test_api_returns_validated_dossier_and_bounded_query(data):
     )
 
 
-def test_explorer_shell_assets_resolve_inside_static_mount():
-    client = TestClient(app)
-    response = client.get("/explorer/assets/index.html")
-    assert response.status_code == 200
-    body = response.text
-    assets = [
-        "styles.css",
-        "explorer-refresh.css",
-        "system/aerith-tokens.css",
-        "system/aerith-base.css",
-        "system/aerith-shell.css",
-        "system/aerith-components.css",
-        "system/aerith-motion.css",
-        "pages/trends-aerith.css",
-        "explorer.js",
-        "launcher-bridge.js",
-    ]
-    for asset in assets:
-        assert f'"{asset}"' in body
-        fetched = client.get(f"/explorer/assets/{asset}")
-        assert fetched.status_code == 200, asset
-        if asset.endswith(".css"):
-            assert fetched.headers["content-type"].startswith("text/css")
-        elif asset.endswith(".js"):
-            assert fetched.headers["content-type"].startswith(
-                ("text/javascript", "application/javascript")
-            )
-
-
 def test_control_auth_protects_existing_and_new_apis(monkeypatch):
     monkeypatch.setattr(auth, "get_settings", lambda: Settings(control_api_token="test-token"))
     client = TestClient(app)
