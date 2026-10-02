@@ -238,6 +238,18 @@ function targetSummary(row) {
     if (row.adapter_key === 'operator_feed') return 'Link collection';
     return row.platform || row.adapter_key;
 }
+function askFindHref(candidate, row) {
+    if (!candidate?.id) return '';
+    const params = new URLSearchParams({
+        resource_kind: 'discovery_candidate',
+        resource_id: candidate.id,
+        prompt: 'Explain why this source find matters, how it fits this channel, and what Katcha can do with it next.',
+        focus: 'chat',
+    });
+    if (row?.channel_profile_id) params.set('channel', row.channel_profile_id);
+    return '/ai?' + params.toString();
+}
+
 function safeExternalUrl(value) {
     try {
         const url = new URL(value);
@@ -749,6 +761,11 @@ function renderFinds(page, row) {
             '<div class="source-find-actions">' +
                 (url ? '<a class="text-button" href="' + esc(url) +
                     '" target="_blank" rel="noopener noreferrer">Open ↗</a>' : '') +
+                (candidate.id
+                    ? '<a class="text-button" href="' +
+                        esc(askFindHref(candidate, row)) +
+                        '">Ask Katcha ✦</a>'
+                    : '') +
                 (canPromote && candidate.id
                     ? '<button type="button" class="text-button" data-add-clip="' +
                         esc(candidate.id) + '">Add to Clips</button>'
