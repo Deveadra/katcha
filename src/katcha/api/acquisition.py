@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime
 from decimal import Decimal
 
-from fastapi import APIRouter, HTTPException, Query, UploadFile, status
+from fastapi import APIRouter, HTTPException, Query, Request, UploadFile, status
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import and_, func, select
 
@@ -19,6 +19,7 @@ from katcha.acquisition_models import (
     RightsAssessment,
     RightsEvidence,
 )
+from katcha.config import get_settings
 from katcha.db import session_scope
 from katcha.domain import (
     AudioRightsStatus,
@@ -310,6 +311,7 @@ class SourceFindPageResponse(BaseModel):
 
 
 class SourceOverviewResponse(BaseModel):
+    automatic_checks_available: bool = True
     source: IngestionSourceResponse
     channel_name: str | None
     channel_status: str | None
@@ -565,22 +567,16 @@ def get_source_overview(source_id: uuid.UUID) -> SourceOverviewResponse:
         source=IngestionSourceResponse.model_validate(overview.source),
         channel_name=overview.channel_name,
         channel_status=overview.channel_status,
+        automatic_checks_available=get_settings().research_enabled,
         run_count=overview.run_count,
         completed_runs=completed,
         failed_runs=failed,
-        running_runs=int(
-            overview.status_counts.get(DiscoveryRunStatus.RUNNING.value, 0)
-        ),
-        queued_runs=int(
-            overview.status_counts.get(DiscoveryRunStatus.QUEUED.value, 0)
-        ),
+        running_runs=int(overview.status_counts.get(DiscoveryRunStatus.RUNNING.value, 0)),
+        queued_runs=int(overview.status_counts.get(DiscoveryRunStatus.QUEUED.value, 0)),
         success_rate=success_rate,
         discovery_count=overview.discovery_count,
         unique_candidate_count=overview.unique_candidate_count,
-        recent_runs=[
-            DiscoveryRunResponse.model_validate(row)
-            for row in overview.recent_runs
-        ],
+        recent_runs=[DiscoveryRunResponse.model_validate(row) for row in overview.recent_runs],
         recent_finds=[
             SourceRecentFindResponse(
                 candidate=DiscoveryCandidateResponse.model_validate(item.candidate),
@@ -836,8 +832,7 @@ def materialize_intelligence_candidate(
 
     authorization_scope = str(payload.get("authorization_scope") or "").strip()
     official_source_verified = bool(
-        provenance.get("official_channel_verified")
-        or payload.get("official_source_verified")
+        provenance.get("official_channel_verified") or payload.get("official_source_verified")
     )
     standing_authorized = (
         request.honor_operator_authorization
@@ -878,20 +873,22 @@ def materialize_intelligence_candidate(
             assess_discovery_candidate(
                 candidate.id,
                 rights_basis=RightsBasis.OPERATOR_AUTHORIZED,
-                audio_status=AudioRightsStatus.ORIGINAL,
+                audio_status=AudioRightsStatus.CLEARED,
                 originality_gate=GateStatus.CLEARED,
                 risk_flags=[],
                 operator_authorized=True,
                 metadata={
                     "authorization_source": "intelligence_handoff",
+                    "originality_evidence_status": "not_verified",
+                    "monetization_eligibility": "unknown",
+                    "authorization_is_not_originality_evidence": True,
                     "authorization_scope": authorization_scope,
                     "official_source_verified": True,
                     "intelligence_record_id": str(record.id),
                 },
                 actor="operator",
                 reason=(
-                    "Standing operator authorization for verified official-trailer "
-                    "republication"
+                    "Standing operator authorization for verified official-trailer republication"
                 ),
             )
             with session_scope() as session:
@@ -1222,3 +1219,51 @@ def source_run_results(source_id: uuid.UUID, run_id: uuid.UUID) -> SourceRunResu
             total=total,
             candidates=[DiscoveryCandidateResponse.model_validate(row) for row in rows],
         )
+
+
+class SourcePollingRequest(BaseModel):
+    enabled: bool
+    interval_minutes: int = Field(default=60, ge=15, le=10080)
+
+
+@router.post("/discovery/sources/{source_id}/polling")
+async def configure_source_polling(
+    source_id: uuid.UUID, request: Request, body: SourcePollingRequest
+):
+    from katcha.api.control_auth import (
+        control_actor,
+        require_control_channel,
+        require_control_scope,
+    )
+    from katcha.orchestration.client import start_automatic_research_workflow
+    from katcha.services.source_polling import configure_polling
+
+    require_control_scope(request, "discovery:write")
+    with session_scope() as session:
+        row = session.get(IngestionSource, source_id)
+        if row is None:
+            raise HTTPException(404, "Source not found")
+        if row.channel_profile_id:
+            require_control_channel(request, row.channel_profile_id)
+        else:
+            require_control_scope(request, "*")
+    try:
+        config = configure_polling(
+            source_id,
+            enabled=body.enabled,
+            interval_minutes=body.interval_minutes,
+            actor=control_actor(request),
+        )
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    if body.enabled:
+        try:
+            await start_automatic_research_workflow()
+        except Exception:
+            return {
+                **config,
+                "dispatch_confirmed": False,
+                "message": "Settings saved. Worker dispatch could not be confirmed; retry Save. "
+                "The research worker also resumes enabled schedules on startup.",
+            }
+    return {**config, "dispatch_confirmed": True}

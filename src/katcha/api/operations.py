@@ -11,6 +11,7 @@ from sqlalchemy import and_, func, or_, select
 
 from katcha.acquisition_models import DiscoveryCandidate, IntelligenceRecord
 from katcha.api.control_auth import control_allowed_channel_ids, require_control_channel
+from katcha.content_models import ContentItem
 from katcha.db import session_scope
 from katcha.intelligence_models import ChannelProfile
 from katcha.longform_models import Compilation, CompilationAsset
@@ -45,6 +46,7 @@ async def check_systems(request: Request) -> dict[str, object]:
 
     require_control_scope(request, "ai:read")
     return await system_check()
+
 
 WorkState = Literal["attention", "active"]
 
@@ -193,8 +195,11 @@ def _item_href(channel_profile_id: uuid.UUID) -> str:
     return f"/editing?channel={channel_profile_id}#editorial-pipeline"
 
 
-def _publication_href(channel_profile_id: uuid.UUID) -> str:
-    return f"/channels?channel={channel_profile_id}#content"
+def _publication_href(
+    channel_profile_id: uuid.UUID, publication_id: uuid.UUID | str | None = None
+) -> str:
+    selected = f"&publication={publication_id}" if publication_id else ""
+    return f"/channels?channel={channel_profile_id}{selected}#content"
 
 
 def _production_resume_stage(row: Production) -> str | None:
@@ -395,7 +400,9 @@ def _event_href(
     if event.aggregate_type in {"production", "short_episode", "compilation", "render_attempt"}:
         return _item_href(channel_profile_id)
     if event.aggregate_type == "publication":
-        return _publication_href(channel_profile_id)
+        return _publication_href(channel_profile_id, event.aggregate_id)
+    if event.aggregate_type == "content":
+        return f"/content?channel={channel_profile_id}&item={event.aggregate_id}"
     if event.aggregate_type == "channel_profile":
         return f"/channels?channel={channel_profile_id}"
     return None
@@ -739,7 +746,46 @@ def operations_overview(
                 ):
                     source_by_record[record_id] = source
 
+        content_rows = list(
+            session.scalars(
+                select(ContentItem)
+                .where(ContentItem.channel_profile_id.in_(channel_ids))
+                .order_by(ContentItem.updated_at.desc())
+                .limit(limit)
+            )
+        )
+        content_channels = {row.id: row.channel_profile_id for row in content_rows}
+        content_sources = {
+            row.source_id: row.channel_profile_id for row in content_rows if row.source_id
+        }
         intake: list[OperationsIntakeItem] = []
+        for row in content_rows:
+            source = session.get(SourceItem, row.source_id) if row.source_id else None
+            status_value = source.status if source else row.status
+            message = source.error if source and source.error else row.error
+            if row.input_kind == "file" and row.status == "uploading":
+                message = (
+                    message
+                    or f"Received {row.upload_offset:,} of {row.size_bytes:,} bytes. "
+                    "Reselect the same file to resume."
+                )
+            intake.append(
+                OperationsIntakeItem(
+                    id=row.id,
+                    channel_profile_id=row.channel_profile_id,
+                    title=row.title,
+                    status=status_value,
+                    stage={
+                        "registered": "queued_download",
+                        "ingesting": "downloading",
+                        "ready": "downloaded",
+                        "failed": "download_failed",
+                    }.get(status_value, status_value),
+                    message=message,
+                    updated_at=source.updated_at if source else row.updated_at,
+                    href=f"/content?channel={row.channel_profile_id}&item={row.id}",
+                )
+            )
         for record in intelligence_records:
             record_id = str(record.id)
             candidate = candidate_by_record.get(record_id)
@@ -815,15 +861,14 @@ def operations_overview(
             for source in source_by_record.values()
             if (source.source_metadata or {}).get("channel_profile_id")
         }
+        source_channels.update(content_sources)
         ingest_batch_ids = {
             batch_id
             for record in intelligence_records
             for batch_id in (record.first_batch_id, record.last_batch_id)
         }
 
-        youtube_to_channel = {
-            profile.youtube_connection_id: profile.id for profile in profiles
-        }
+        youtube_to_channel = {profile.youtube_connection_id: profile.id for profile in profiles}
 
         episodes = list(
             session.scalars(
@@ -897,9 +942,7 @@ def operations_overview(
                 stage=row.stage,
                 state=state,
                 row=row,
-                render_dead_letter=bool(
-                    attempt is not None and attempt.status == "dead_letter"
-                ),
+                render_dead_letter=bool(attempt is not None and attempt.status == "dead_letter"),
             )
             work_items.append(
                 OperationsWorkItem(
@@ -940,9 +983,7 @@ def operations_overview(
                 stage=row.stage,
                 state=state,
                 row=row,
-                render_dead_letter=bool(
-                    attempt is not None and attempt.status == "dead_letter"
-                ),
+                render_dead_letter=bool(attempt is not None and attempt.status == "dead_letter"),
             )
             work_items.append(
                 OperationsWorkItem(
@@ -1000,7 +1041,8 @@ def operations_overview(
                 select(Publication)
                 .where(
                     Publication.youtube_connection_id.in_(list(youtube_to_channel)),
-                    ~Publication.status.in_(_DONE_PUBLICATION_STATUSES),
+                    or_(~Publication.status.in_(_DONE_PUBLICATION_STATUSES),
+                        Publication.error.is_not(None)),
                 )
                 .order_by(Publication.updated_at.desc())
             )
@@ -1036,7 +1078,7 @@ def operations_overview(
                     state=state,
                     message=row.failure_reason or row.error or f"{row.stage} · {row.status}",
                     updated_at=row.updated_at,
-                    href=_publication_href(channel_id),
+                    href=_publication_href(channel_id, row.id),
                     recovery_action=recovery_action,
                     recovery_label=recovery_label,
                 )
@@ -1074,8 +1116,7 @@ def operations_overview(
             .join(
                 latest_watch,
                 and_(
-                    TrendOpportunity.channel_profile_id
-                    == latest_watch.c.channel_profile_id,
+                    TrendOpportunity.channel_profile_id == latest_watch.c.channel_profile_id,
                     TrendOpportunity.watch_version == latest_watch.c.version,
                 ),
             )
@@ -1158,10 +1199,8 @@ def operations_overview(
                     average_view_percentage=(
                         snapshot.average_view_percentage if snapshot else None
                     ),
-                    estimated_revenue=(
-                        snapshot.estimated_revenue if snapshot else None
-                    ),
-                    href=_publication_href(channel_id),
+                    estimated_revenue=(snapshot.estimated_revenue if snapshot else None),
+                    href=_publication_href(channel_id, row.id),
                 )
             )
 
@@ -1176,67 +1215,60 @@ def operations_overview(
                 DomainEvent.aggregate_id.in_([str(value) for value in channel_ids]),
             )
         ]
+        if content_channels:
+            event_filters.append(
+                and_(
+                    DomainEvent.aggregate_type == "content",
+                    DomainEvent.aggregate_id.in_([str(value) for value in content_channels]),
+                )
+            )
         if ingest_batch_ids:
             event_filters.append(
                 and_(
                     DomainEvent.aggregate_type == "intelligence_ingest_batch",
-                    DomainEvent.aggregate_id.in_(
-                        [str(value) for value in ingest_batch_ids]
-                    ),
+                    DomainEvent.aggregate_id.in_([str(value) for value in ingest_batch_ids]),
                 )
             )
         if candidate_channels:
             event_filters.append(
                 and_(
                     DomainEvent.aggregate_type == "discovery_candidate",
-                    DomainEvent.aggregate_id.in_(
-                        [str(value) for value in candidate_channels]
-                    ),
+                    DomainEvent.aggregate_id.in_([str(value) for value in candidate_channels]),
                 )
             )
         if source_channels:
             event_filters.append(
                 and_(
                     DomainEvent.aggregate_type == "source",
-                    DomainEvent.aggregate_id.in_(
-                        [str(value) for value in source_channels]
-                    ),
+                    DomainEvent.aggregate_id.in_([str(value) for value in source_channels]),
                 )
             )
         if production_channels:
             event_filters.append(
                 and_(
                     DomainEvent.aggregate_type == "production",
-                    DomainEvent.aggregate_id.in_(
-                        [str(value) for value in production_channels]
-                    ),
+                    DomainEvent.aggregate_id.in_([str(value) for value in production_channels]),
                 )
             )
         if episode_channels:
             event_filters.append(
                 and_(
                     DomainEvent.aggregate_type == "short_episode",
-                    DomainEvent.aggregate_id.in_(
-                        [str(value) for value in episode_channels]
-                    ),
+                    DomainEvent.aggregate_id.in_([str(value) for value in episode_channels]),
                 )
             )
         if compilation_channels:
             event_filters.append(
                 and_(
                     DomainEvent.aggregate_type == "compilation",
-                    DomainEvent.aggregate_id.in_(
-                        [str(value) for value in compilation_channels]
-                    ),
+                    DomainEvent.aggregate_id.in_([str(value) for value in compilation_channels]),
                 )
             )
         if publication_channels:
             event_filters.append(
                 and_(
                     DomainEvent.aggregate_type == "publication",
-                    DomainEvent.aggregate_id.in_(
-                        [str(value) for value in publication_channels]
-                    ),
+                    DomainEvent.aggregate_id.in_([str(value) for value in publication_channels]),
                 )
             )
         recent_events = list(
@@ -1259,6 +1291,8 @@ def operations_overview(
                 candidate_channels=candidate_channels,
                 source_channels=source_channels,
             )
+            if event.aggregate_type == "content":
+                event_channel = content_channels.get(uuid.UUID(event.aggregate_id))
             if event_channel is None or event_channel not in visible_ids:
                 continue
             activity.append(

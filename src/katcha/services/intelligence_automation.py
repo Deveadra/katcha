@@ -165,12 +165,15 @@ def prepare_authorized_handoff_record(record_id: uuid.UUID) -> HandoffAdvanceRes
         assess_discovery_candidate(
             candidate.id,
             rights_basis=RightsBasis.OPERATOR_AUTHORIZED,
-            audio_status=AudioRightsStatus.ORIGINAL,
+            audio_status=AudioRightsStatus.CLEARED,
             originality_gate=GateStatus.CLEARED,
             risk_flags=[],
             operator_authorized=True,
             metadata={
                 "authorization_source": "intelligence_handoff",
+                "originality_evidence_status": "not_verified",
+                "monetization_eligibility": "unknown",
+                "authorization_is_not_originality_evidence": True,
                 "authorization_scope": "official_trailer_repost",
                 "official_source_verified": True,
                 "intelligence_record_id": str(record_id),

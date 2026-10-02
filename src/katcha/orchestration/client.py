@@ -438,3 +438,17 @@ async def start_channel_trend_activation_performance(
     except WorkflowAlreadyStartedError:
         handle = client.get_workflow_handle(workflow_id)
     return handle.id
+
+
+async def start_automatic_research_workflow() -> str:
+    from katcha.orchestration.research_workflows import AutomaticResearchWorkflow
+    from katcha.services.research import RESEARCH_WORKFLOW_ID
+
+    client = await get_temporal_client()
+    try:
+        handle = await client.start_workflow(AutomaticResearchWorkflow.run,
+                                             id=RESEARCH_WORKFLOW_ID,
+                                             task_queue=DISCOVERY_TASK_QUEUE)
+    except WorkflowAlreadyStartedError:
+        handle = client.get_workflow_handle(RESEARCH_WORKFLOW_ID)
+    return handle.id

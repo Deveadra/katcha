@@ -124,14 +124,22 @@ def channel_ids_for_clip(session: Session, clip_id: uuid.UUID) -> set[uuid.UUID]
         if value is not None
     )
 
-    sources = list(
-        session.scalars(select(SourceItem).where(SourceItem.clip_id == clip_id))
+    from katcha.content_models import ContentItem
+
+    ids.update(
+        session.scalars(
+            select(ContentItem.channel_profile_id).where(
+                (ContentItem.clip_id == clip_id)
+                | ContentItem.source_id.in_(
+                    select(SourceItem.id).where(SourceItem.clip_id == clip_id)
+                )
+            )
+        )
     )
+    sources = list(session.scalars(select(SourceItem).where(SourceItem.clip_id == clip_id)))
     for source in sources:
         candidate_id = (source.source_metadata or {}).get("discovery_candidate_id")
-        channel_id = _metadata_channel_id(
-            (source.source_metadata or {}).get("channel_profile_id")
-        )
+        channel_id = _metadata_channel_id((source.source_metadata or {}).get("channel_profile_id"))
         if channel_id is not None:
             ids.add(channel_id)
         if candidate_id:
@@ -226,6 +234,14 @@ def clip_ids_for_channel(
         )
         if value is not None
     )
+    from katcha.content_models import ContentItem
+    ids.update(value for value in session.scalars(select(ContentItem.clip_id).where(
+        ContentItem.channel_profile_id == channel_profile_id, ContentItem.clip_id.is_not(None)
+    )) if value is not None)
+    ids.update(value for value in session.scalars(select(SourceItem.clip_id).join(
+        ContentItem, ContentItem.source_id == SourceItem.id
+    ).where(ContentItem.channel_profile_id == channel_profile_id, SourceItem.clip_id.is_not(None)))
+        if value is not None)
     return ids
 
 

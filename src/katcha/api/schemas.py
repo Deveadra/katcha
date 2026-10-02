@@ -349,6 +349,7 @@ class CreatePublicationRequest(BaseModel):
 
 
 class StartPublicationRequest(BaseModel):
+    expected_version: int | None = Field(default=None, ge=0)
     actor: str = Field(default="operator", min_length=1, max_length=128)
 
 

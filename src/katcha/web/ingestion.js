@@ -545,6 +545,7 @@ function details() {
         poll_interval_minutes: editingSource?.poll_interval_minutes || 60,
         source_metadata: {
             ...(editingSource?.source_metadata || {}),
+            automatic_research: editingSource?.source_metadata?.automatic_research ?? (editingSource ? true : false),
             execution_mode: 'manual',
         },
         enabled: editingSource?.enabled ?? true,
@@ -839,6 +840,11 @@ function renderSourceOverview() {
     $('source-inspector-empty').hidden = true;
     $('source-inspector-content').hidden = false;
     $('source-name').textContent = row.name;
+    const pollingEnabled=row.source_metadata?.automatic_research !== false;
+    $('source-polling').hidden=!['youtube','reddit','rss_atom','web_scout'].includes(row.adapter_key);
+    $('polling-enabled').checked=pollingEnabled;
+    $('polling-interval').value=row.poll_interval_minutes || 60;
+    $('polling-status').textContent=overview.automatic_checks_available === false ? 'Automatic research is disabled in runtime settings.' : pollingEnabled ? (usable ? 'Recurring checks enabled. Inspect check history below for execution and errors.' : 'Recurring checks paused with this source.') : 'Recurring checks off. Check manually when ready.';
     $('source-subtitle').textContent = connectionName(row) + ' · ' + targetSummary(row);
     $('source-platform-badge').textContent = String(row.platform || row.adapter_key || 'source').toUpperCase();
     $('source-state-badge').textContent = row.enabled ? 'Active' : 'Paused';
@@ -922,6 +928,7 @@ async function loadOverview() {
 }
 
 function renderHandoffInbox() {
+    $("handoff-history").href="/content?channel="+encodeURIComponent(requestedChannel || $("source-channel-filter").value.replace(/^all$/, ""));
     const counts = handoffInbox.counts || {};
     $('handoff-count-incoming').textContent = String(counts.incoming || 0);
     $('handoff-count-processed').textContent = String(counts.processed || 0);
@@ -1103,8 +1110,8 @@ async function handleInspectorClick(e) {
                 'discovery/candidates/' + encodeURIComponent(addClip.dataset.addClip) + '/promote',
                 {actor: 'operator', for_review: true},
             );
-            addClip.textContent = 'Added to Clips';
-            message('Find added to Clips for review. Nothing has been published.');
+            addClip.textContent = 'Download queued';
+            message('Download queued. Check channel activity or content history for completion; nothing has been published.');
         } catch (error) {
             message(error.message, true);
             addClip.disabled = false;
@@ -1432,4 +1439,14 @@ $('pause-source').onclick = async () => {
     } finally {
         button.disabled = false;
     }
+};
+
+$('save-polling').onclick=async()=>{
+    const selected=source();if(!selected)return;
+    const button=$('save-polling');button.disabled=true;
+    try{
+        const result=await api('discovery/sources/'+selected.id+'/polling',{enabled:$('polling-enabled').checked,interval_minutes:Number($('polling-interval').value)});
+        await refreshSources({selectId:selected.id});
+        message(result.message || 'Recurring check settings saved. Inspect the last started time and check history for progress.', !result.dispatch_confirmed);
+    }catch(error){message(error.message,true);}finally{button.disabled=false;}
 };

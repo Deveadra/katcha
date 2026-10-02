@@ -1144,6 +1144,7 @@ class Handler(BaseHTTPRequestHandler):
             "/explorer": "/explorer/assets/index.html",
             "/ingestion": "/editing/assets/ingestion.html",
             "/clips": "/editing/assets/clips.html",
+            "/content": "/editing/assets/content.html",
             "/channels": "/channels/assets/channels.html",
             "/studio": "/studio/assets/studio.html",
             "/ai": "/ai/assets/ai.html",

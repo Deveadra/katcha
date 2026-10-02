@@ -703,6 +703,8 @@ const analytics = [
             };
         } else if (url.pathname === "/v1/publications") {
             data = publications;
+        } else if (/^\/v1\/publications\/[^/]+$/.test(url.pathname) && req.method() === 'GET') {
+            data=publications.find(p=>p.id===url.pathname.split('/').pop());
         } else if (url.pathname === "/v1/productions") {
             data = [
                 {
@@ -783,11 +785,14 @@ const analytics = [
                 preupload_packaging: { variant_id: selected.id },
             };
             data = item;
-        } else if (url.pathname === "/v1/publications/publication-3/plan" && req.method() === "POST") {
+        } else if (url.pathname === "/v1/publications/publication-3/draft" && req.method() === "POST") {
             const item = publications.find((row) => row.id === "publication-3");
-            item.publish_at = body.publish_mode === "scheduled" ? body.publish_at : null;
-            item.privacy_status = "public";
-            item.notify_subscribers = Boolean(body.notify_subscribers);
+            assert.equal(body.expected_version, item.raw_status?.manual_plan_version || 0);
+            Object.assign(item, {title:body.title,description:body.description,tags:body.tags,
+                privacy_status:['scheduled','asap'].includes(body.publish_mode)?'public':body.publish_mode,
+                publish_at:body.publish_mode==='scheduled'?'2026-10-03T14:30:00Z':null,
+                notify_subscribers:body.notify_subscribers,
+                raw_status:{...item.raw_status,manual_plan_version:body.expected_version+1,late_policy:body.late_policy}});
             data = item;
         } else if (url.pathname === "/v1/publications/publication-3/start" && req.method() === "POST") {
             const item = publications.find((row) => row.id === "publication-3");
@@ -856,16 +861,29 @@ const analytics = [
     await page.locator('[data-channel-tab="content"]').click();
     await page.locator('[data-publication="publication-3"]').click();
     await page.waitForFunction(() => document.querySelectorAll("[data-apply-packaging]").length > 0);
-    assert.match(await page.locator("#video-detail").innerText(), /SEO package & publish plan/);
-    await page.locator('[data-apply-packaging="variant-visionquest-1"]').click();
-    await page.getByText(/SEO package applied before upload/).waitFor();
+    assert.match(await page.locator("#video-detail").innerText(), /Metadata and release plan/);
+    assert.equal(await page.locator('#publication-start').isEnabled(), true);
+    await page.locator('#publication-title').fill('Manually prepared trailer');
+    await page.locator('#publication-description').fill('A description written by the operator.');
+    await page.locator('#publication-tags').fill('trailer, news');
+    await page.locator('#reload').click();
+    await page.waitForTimeout(300);
+    assert.equal(await page.locator('#publication-title').inputValue(), 'Manually prepared trailer');
+    await page.locator('#publication-mode').selectOption('scheduled');
     await page.locator("#publication-publish-at").fill("2026-10-03T09:30");
-    await page.locator("#publication-schedule").click();
-    await page.getByText(/Publication schedule saved/).waitFor();
-    assert(requests.some((request) =>
-        request.path === "/v1/publications/publication-3/plan" &&
-        request.body?.publish_mode === "scheduled"
-    ));
+    await page.locator("#publication-save").click();
+    await page.getByText(/Metadata and release plan saved/).waitFor();
+    const draftRequest=requests.find(request=>request.path==='/v1/publications/publication-3/draft');
+    assert.equal(draftRequest.body.publish_mode, 'scheduled');
+    assert.equal(draftRequest.body.channel_local_time, '2026-10-03T09:30');
+    assert.equal(draftRequest.body.title, 'Manually prepared trailer');
+    assert.equal(draftRequest.body.late_policy, 'hold');
+    assert.match(await page.locator('#video-detail').innerText(), /America\/Chicago/);
+    await page.locator('#publication-start').click();
+    await page.getByText(/Upload started/).waitFor();
+    const startRequest=requests.find(request=>request.path==='/v1/publications/publication-3/start');
+    assert.equal(startRequest.body.expected_version, 2);
+    assert(!requests.some(request=>request.path.endsWith('/packaging/generations')));
     await page.locator('[data-publication="publication-1"]').click();
     await page.waitForFunction(() =>
         document.querySelector("#video-detail")?.textContent.includes("74.2%")

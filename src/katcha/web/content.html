@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#090b12">
+    <title>Katcha · Add content</title>
+    <link rel="stylesheet" href="/editing.css">
+    <link rel="stylesheet" href="/clips.css">
+    <link id="aerith-tokens" rel="stylesheet" href="/system/aerith-tokens.css">
+    <link id="aerith-base" rel="stylesheet" href="/system/aerith-base.css">
+    <link id="aerith-shell" rel="stylesheet" href="/system/aerith-shell.css">
+    <link id="aerith-components" rel="stylesheet" href="/system/aerith-components.css">
+    <link id="aerith-motion" rel="stylesheet" href="/system/aerith-motion.css">
+    <link rel="stylesheet" href="/pages/clip-library-aerith.css">
+    <link rel="stylesheet" href="/content.css"><script src="/content.js" defer></script>
+    <script src="/launcher-bridge.js" defer></script>
+</head>
+<body data-katcha-page="production"><div class="shell">
+<aside class="sidebar"><a class="logo" href="/home">✦ katcha.</a><nav aria-label="Workspace"><a href="/ingestion">Sources</a><a href="/clips">Clips</a><a href="/channels">Channel Studio</a><a href="/editing">Production</a></nav></aside>
+<main><header class="topbar"><strong>Add content</strong><a href="/channels" id="channel-link">Channel Studio</a></header><div class="content">
+<h1>From source to published video.</h1><p>Supply your media, follow its progress, and review the release before upload.</p>
+<form id="connect-form" class="card connect"><label>Control-plane token<input id="token" type="password" autocomplete="off"></label><button class="button primary">Connect</button></form>
+<div id="message" role="status" aria-live="polite"></div>
+<label>Channel<select id="channel"><option value="">Connect to load channels</option></select></label>
+<section class="card intake"><h2>Add content</h2><form id="intake-form">
+<label>Content title<input id="title" required maxlength="500" placeholder="Working title"></label>
+<label>Input method<select id="input-kind"><option value="file">Video file / finished export</option><option value="url">Public video link</option><option value="clip">Existing clip</option></select></label>
+<div id="file-input"><label>Video file<input id="file" type="file" accept=".mp4,.webm,.mov,.mkv"></label><p>MP4, WebM, MOV or MKV, up to 4 GiB. Interrupted uploads retain their progress. Reselect the same file to resume.</p></div>
+<div id="url-input" hidden><label>Video link<input id="url" type="url" placeholder="https://…"></label><p>Public links supported by the configured downloader. A link being accepted does not mean the download succeeded. For authenticated or unsupported sources, export an authorized video file.</p></div>
+<div id="clip-input" hidden><input id="clip-id" type="hidden"><p id="selected-clip">Choose a clip in Clips, then select Create video.</p><a id="browse-clips" href="/clips">Browse Clips</a></div>
+<label class="acknowledgement"><input id="rights" type="checkbox" required> I am authorized to use and publish this media, including its audio.</label>
+<button id="add" class="button primary">Add content</button><button id="pause" class="button secondary" type="button" hidden>Pause after this chunk</button><progress id="upload-progress" max="100" value="0" hidden></progress>
+</form><details><summary>Other ways to supply content</summary><p>Use Sources for intelligence packages, discovered finds, or InVideo exports. Recordings, podcasts, external editor projects, cloud drives, and authenticated sources can enter through an exported video file. Project files, still images, and audio alone must be rendered to video first. Folder sync, cloud connectors, are not provided by this intake form. Sources provides opt-in recurring discovery checks.</p><a href="/ingestion?view=handoff">Open package handoff</a></details></section>
+<section class="content-grid"><div class="card"><h2>Content history</h2><form id="search-form"><label>Search<input id="search" type="search"></label><button class="button secondary">Search</button></form><div id="items"></div><div class="pager"><button id="previous" class="button secondary" type="button">Previous</button><span id="range"></span><button id="next" class="button secondary" type="button">Next</button></div></div><section id="detail" class="card" aria-label="Content details"><p>Select content to see its progress and next action.</p></section></section><section class="card intake"><h2>Package import history</h2><p>Successful package imports remain here after leaving the pending inbox. A stored package may contain research only; video download and release progress appear in the content records.</p><button id="load-packages" class="button secondary" type="button">Load import history</button><div id="packages"></div><button id="more-packages" class="button secondary" type="button" hidden>Load older imports</button></section>
+</div></main></div></body></html>
