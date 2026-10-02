@@ -188,6 +188,8 @@ def build_packaging_thumbnail(
         version=next_version,
         title=parent.title,
         description=parent.description,
+        tags=(list(parent.tags) if parent.tags is not None else None),
+        hashtags=(list(parent.hashtags) if parent.hashtags is not None else None),
         thumbnail_storage_key=result.output_key,
         created_by="katcha-thumbnail-renderer",
         metadata={
