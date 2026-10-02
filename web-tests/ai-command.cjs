@@ -686,10 +686,18 @@ let browser;
     goalPhase = "waiting_workflow";
     await page.locator("#prompt").fill("Keep checking this pending work");
     await page.locator("#command-form").evaluate((form) => form.requestSubmit());
-    await page.getByRole("button", {name: "Stop planning"}).last().waitFor();
+    await page.getByRole("button", {name: "Stop work"}).last().waitFor();
+    const goalProgress = page.locator(".goal-progress-message").last();
+    assert.equal(await goalProgress.locator(".message-avatar").innerText(), "K");
+    assert.equal(
+        await goalProgress.locator(".goal-progress-body").evaluate(
+            (element) => element.getBoundingClientRect().width > 240,
+        ),
+        true,
+    );
     await page.reload();
-    await page.getByRole("button", {name: "Stop planning"}).last().waitFor();
-    await page.getByRole("button", {name: "Stop planning"}).last().click();
+    await page.getByRole("button", {name: "Stop work"}).last().waitFor();
+    await page.getByRole("button", {name: "Stop work"}).last().click();
     await page.getByText("Planning stopped").first().waitFor();
     assert.equal(await page.evaluate(() =>
         JSON.parse(sessionStorage.getItem("katcha.goalReceipts")).length), 0);
