@@ -17,7 +17,11 @@
     }
   },
   "vars": {
-    "AUTHORITY_OBJECT_NAME": "production"
+    "AUTHORITY_OBJECT_NAME": "production",
+    "PAID_FALLBACK_ENABLED": "false",
+    "MAX_PAID_FALLBACK_HOURS": "6",
+    "MAX_PAID_FALLBACK_ESTIMATED_USD": "5",
+    "PAID_REPATRIATION_LEAD_SECONDS": "1800"
   },
   "observability": {
     "enabled": true
