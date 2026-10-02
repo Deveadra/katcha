@@ -296,3 +296,77 @@ def test_free_recovery_does_not_require_paid_shape_or_image(
     assert config.paid_enabled is False
     assert config.fallback.shape == "disabled"
     assert config.fallback.image_id == config.primary.image_id
+
+
+def test_commit_reconciles_success_when_response_is_lost() -> None:
+    class Coordinator:
+        def commit(self, **_kwargs):
+            raise OSError("response lost after commit")
+
+        def status(self):
+            return {
+                "active": {
+                    "deployment_id": "candidate",
+                    "epoch": 8,
+                },
+                "pending": None,
+            }
+
+    result = oci_recovery.commit_authority_safely(
+        Coordinator(),
+        deployment_id="candidate",
+        deployment_epoch=8,
+        expected_active_epoch=7,
+    )
+
+    assert result["leader_id"] == "candidate"
+    assert result["reconciled_after_commit_error"] is True
+
+
+def test_commit_unknown_never_claims_safe_rollback() -> None:
+    class Coordinator:
+        def commit(self, **_kwargs):
+            raise OSError("response lost")
+
+        def status(self):
+            raise OSError("coordinator unreachable")
+
+    with pytest.raises(
+        oci_recovery.CommitOutcomeUnknown,
+        match="must not be rolled back automatically",
+    ):
+        oci_recovery.commit_authority_safely(
+            Coordinator(),
+            deployment_id="candidate",
+            deployment_epoch=8,
+            expected_active_epoch=7,
+        )
+
+
+def test_confirmed_pending_commit_failure_is_rollback_safe() -> None:
+    class Coordinator:
+        def commit(self, **_kwargs):
+            raise OSError("commit rejected")
+
+        def status(self):
+            return {
+                "active": {
+                    "deployment_id": "old",
+                    "epoch": 7,
+                },
+                "pending": {
+                    "deployment_id": "candidate",
+                    "epoch": 8,
+                },
+            }
+
+    with pytest.raises(
+        oci_recovery.RecoveryError,
+        match="still pending",
+    ):
+        oci_recovery.commit_authority_safely(
+            Coordinator(),
+            deployment_id="candidate",
+            deployment_epoch=8,
+            expected_active_epoch=7,
+        )
