@@ -997,3 +997,110 @@
         width: 100%;
     }
 }
+
+.channel-activity-list {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 9px;
+}
+.channel-activity-item {
+    padding: 14px;
+    min-width: 0;
+}
+.channel-activity-item.is-attention {
+    border-color: #73483f;
+}
+.channel-activity-head,
+.channel-activity-foot {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+}
+.channel-activity-item > strong {
+    display: block;
+    margin: 9px 0 5px;
+    overflow: hidden;
+    font-size: 11px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.channel-activity-item > small {
+    display: block;
+    min-height: 28px;
+    color: var(--muted);
+    font-size: 9px;
+    line-height: 1.5;
+}
+.channel-activity-foot {
+    margin-top: 9px;
+    color: #7f92a1;
+    font-size: 8px;
+}
+.channel-activity-foot a {
+    color: #b6d987;
+}
+.prepublish-panel {
+    margin-top: 16px;
+    padding-top: 15px;
+    border-top: 1px solid var(--line);
+}
+.prepublish-panel h4 {
+    margin: 5px 0;
+    font-size: 14px;
+}
+.prepublish-variants {
+    display: grid;
+    gap: 6px;
+    margin: 10px 0;
+}
+.seo-variant {
+    width: 100%;
+    padding: 10px;
+    border: 1px solid #2f404d;
+    border-radius: 8px;
+    background: #111c27;
+    color: var(--text);
+    text-align: left;
+    cursor: pointer;
+}
+.seo-variant:hover,
+.seo-variant.is-selected {
+    border-color: #6f954a;
+    background: #182820;
+}
+.seo-variant strong {
+    display: block;
+    font-size: 10px;
+    line-height: 1.4;
+}
+.seo-variant small {
+    display: block;
+    margin-top: 4px;
+    color: var(--muted);
+    font-size: 8px;
+    line-height: 1.45;
+}
+.prepublish-actions {
+    display: flex;
+    gap: 7px;
+    flex-wrap: wrap;
+    margin-top: 10px;
+}
+.prepublish-check {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    margin-top: 10px;
+    color: #98aab6;
+    font-size: 9px;
+}
+.empty-state.compact {
+    padding: 8px 0;
+}
+
+@media (max-width: 950px) {
+    .channel-activity-list {
+        grid-template-columns: 1fr;
+    }
+}
