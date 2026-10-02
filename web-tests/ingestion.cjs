@@ -661,11 +661,11 @@ function overview(source) {
         const executeCountBeforeResume = requests.filter((row) =>
             row.path.endsWith("/execute") && row.method === "POST"
         ).length;
-        await page.locator("#history [data-execute]").click();
-        await page.waitForFunction(
-            (count) => window.__unused === undefined || true,
-            executeCountBeforeResume,
+        const resumedResponse = page.waitForResponse((response) =>
+            response.url().endsWith("/execute") && response.status() === 202
         );
+        await page.locator("#history [data-execute]").click();
+        await resumedResponse;
         assert(
             requests.filter((row) => row.path.endsWith("/execute") && row.method === "POST").length >
                 executeCountBeforeResume
