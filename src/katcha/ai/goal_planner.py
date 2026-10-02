@@ -46,6 +46,8 @@ def decide_goal(
         "and prerequisites. "
         "Returned IDs and selected resource IDs are authoritative; never invent resource IDs. "
         "Fetch additional pages or refine searches when the returned pool is incomplete. "
+        "Never replace configuration arrays from a truncated snapshot; obtain exact data "
+        "or report the missing prerequisite. "
         "Saved research is not downloaded media. A workflow start is not completion; the runner "
         "will wait and give you its real result. Empty search results may call for "
         "query refinement, "

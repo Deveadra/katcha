@@ -30,7 +30,7 @@ let durableMode = false;
 let failGoalOnce = true;
 let goalPhase = "completed";
 const goalBodies = [];
-const goalId = "88888888-8888-4888-8888-888888888888";
+let goalId = "88888888-8888-4888-8888-888888888888";
 let browser;
 
 (async () => {
@@ -682,6 +682,7 @@ let browser;
     assert.equal(goalBodies[0].command_id, goalBodies[1].command_id);
     assert.deepEqual(goalBodies[0], goalBodies[1]);
     await page.waitForFunction(() => !document.getElementById("send").disabled);
+    goalId = "99999999-9999-4999-8999-999999999999";
     goalPhase = "waiting_workflow";
     await page.locator("#prompt").fill("Keep checking this pending work");
     await page.locator("#command-form").evaluate((form) => form.requestSubmit());

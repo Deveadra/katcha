@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 
 from fastapi import APIRouter, HTTPException, Request
 from sqlalchemy import select
+from temporalio.client import WorkflowExecutionStatus
 from temporalio.common import WorkflowIDReusePolicy
 from temporalio.exceptions import WorkflowAlreadyStartedError
 
@@ -95,6 +97,11 @@ async def submit_goal(http_request: Request, request: GoalRequest) -> dict:
             response["dispatch_pending"] = True
             response["summary"] = "Request saved. Reconnect and retry to start it."
             return response
+        with session_scope() as session:
+            current = session.get(CommandGoal, goal.id)
+            if current.status == "queued":
+                current.status = "running"
+                current.summary = "Request saved; deciding the first step."
     return snapshot(get_goal(goal.id))
 
 
@@ -116,8 +123,34 @@ def list_goals(http_request: Request, channel_profile_id: uuid.UUID) -> list[dic
 
 
 @router.get("/{goal_id}")
-def read_goal(http_request: Request, goal_id: uuid.UUID) -> dict:
-    return snapshot(accessible_goal(http_request, goal_id))
+async def read_goal(http_request: Request, goal_id: uuid.UUID) -> dict:
+    goal = accessible_goal(http_request, goal_id)
+    if goal.status not in TERMINAL_GOAL_STATES:
+
+        async def describe():
+            client = await get_temporal_client()
+            return await client.get_workflow_handle(f"command-goal-{goal.id}").describe()
+
+        try:
+            description = await asyncio.wait_for(describe(), timeout=5)
+        except Exception:
+            return snapshot(goal)
+        if description.status in {
+            WorkflowExecutionStatus.FAILED,
+            WorkflowExecutionStatus.TIMED_OUT,
+            WorkflowExecutionStatus.TERMINATED,
+            WorkflowExecutionStatus.CANCELED,
+        }:
+            from katcha.services.goal_runner import _finish
+
+            _finish(
+                goal.id,
+                "failed",
+                "The goal runner stopped. Its saved work remains available.",
+                description.status.name,
+            )
+            goal = get_goal(goal.id)
+    return snapshot(goal)
 
 
 @router.post("/{goal_id}/cancel")

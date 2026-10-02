@@ -683,11 +683,19 @@ def action_spec(goal: CommandGoal, name: str, args: dict, step_id: uuid.UUID) ->
 
 def _redact(value):
     if isinstance(value, dict):
-        return {
+        result = {
             k: _redact(v)
             for k, v in value.items()
             if not any(part in k.casefold() for part in ("token", "secret", "password", "api_key"))
         }
+        truncated = [
+            k
+            for k, v in value.items()
+            if (isinstance(v, list) and len(v) > 50) or (isinstance(v, str) and len(v) > 4000)
+        ]
+        if truncated:
+            result["_truncated_fields"] = truncated
+        return result
     if isinstance(value, list):
         return [_redact(item) for item in value[:50]]
     if isinstance(value, str):

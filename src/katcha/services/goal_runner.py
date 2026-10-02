@@ -134,9 +134,17 @@ async def _observe_background(goal, step):
         return
     from katcha.orchestration.client import get_temporal_client
 
-    client = await get_temporal_client()
-    handle = client.get_workflow_handle(str(workflow_id))
-    description = await handle.describe()
+    try:
+        client = await get_temporal_client()
+        handle = client.get_workflow_handle(str(workflow_id))
+        description = await handle.describe()
+    except Exception:
+        with session_scope() as session:
+            current = session.get(CommandGoal, goal.id)
+            if current.status not in TERMINAL_GOAL_STATES:
+                current.status = "waiting_workflow"
+                current.summary = "Waiting to reconnect to saved work; its result is retained."
+        return
     if description.status == WorkflowExecutionStatus.RUNNING:
         if step.decision.get("tool") == "schedule_watch":
             _save_result(

@@ -421,3 +421,76 @@ async def test_workflow_cancellation_is_confirmed_then_uses_exact_saved_target(s
     assert result["cancellation_requested"]
     assert cancelled == ["observed-fixture-workflow"]
     assert TOOLS["cancel_workflow"].confirm
+
+
+async def test_background_connection_outage_keeps_saved_goal_resumable(saved, monkeypatch):
+    goal = receipt(saved[0])
+    with db.session_scope() as session:
+        session.add(
+            CommandGoalStep(
+                id=uuid.uuid4(),
+                goal_id=goal.id,
+                number=0,
+                decision=decision("refresh_intelligence").model_dump(),
+                status="waiting_workflow",
+                result={"workflow_id": "offline-fixture-workflow"},
+            )
+        )
+
+    async def client():
+        raise ConnectionError("Temporary Temporal outage")
+
+    monkeypatch.setattr("katcha.orchestration.client.get_temporal_client", client)
+    assert await goal_runner.advance_goal(goal.id) == "waiting_workflow"
+    assert get_goal(goal.id).step_count == 0
+
+
+async def test_completed_workflow_with_failed_native_result_is_not_success(saved, monkeypatch):
+    from temporalio.client import WorkflowExecutionStatus
+
+    goal = receipt(saved[0])
+    with db.session_scope() as session:
+        session.add(
+            CommandGoalStep(
+                id=uuid.uuid4(),
+                goal_id=goal.id,
+                number=0,
+                decision=decision("refresh_intelligence").model_dump(),
+                status="waiting_workflow",
+                result={"workflow_id": "failed-fixture-workflow"},
+            )
+        )
+
+    async def describe():
+        return SimpleNamespace(status=WorkflowExecutionStatus.COMPLETED)
+
+    async def result():
+        return {"status": "failed", "error": "Native stage failed"}
+
+    async def client():
+        return SimpleNamespace(
+            get_workflow_handle=lambda _: SimpleNamespace(describe=describe, result=result)
+        )
+
+    monkeypatch.setattr("katcha.orchestration.client.get_temporal_client", client)
+    assert await goal_runner.advance_goal(goal.id) == "running"
+    assert get_goal(goal.id).observations[0]["error"] == "Native stage failed"
+
+
+def test_failed_goal_workflow_reconciles_saved_progress(saved, monkeypatch):
+    from temporalio.client import WorkflowExecutionStatus
+
+    goal = receipt(saved[0])
+
+    async def describe():
+        return SimpleNamespace(status=WorkflowExecutionStatus.FAILED)
+
+    async def client():
+        return SimpleNamespace(get_workflow_handle=lambda _: SimpleNamespace(describe=describe))
+
+    monkeypatch.setattr(goal_api, "get_temporal_client", client)
+    with TestClient(app) as api:
+        response = api.get(f"/v1/ai/goals/{goal.id}")
+    assert response.status_code == 200
+    assert response.json()["status"] == "failed"
+    assert response.json()["error"] == "FAILED"
