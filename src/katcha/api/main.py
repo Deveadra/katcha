@@ -122,7 +122,10 @@ from katcha.publishing_models import (
     YouTubeConnection,
 )
 from katcha.services.analysis import register_analysis
-from katcha.services.intelligence_automation import advance_processed_handoff_receipt
+from katcha.services.intelligence_automation import (
+    advance_processed_handoff_receipt,
+    reconcile_authorized_handoff_records,
+)
 from katcha.services.intelligence_handoff import process_handoff_inbox
 from katcha.services.compilations import (
     register_compilation,
@@ -157,6 +160,7 @@ async def _process_pending_handoffs_on_startup() -> None:
         for item in items:
             if item.status == "processed":
                 await advance_processed_handoff_receipt(item.receipt)
+        await reconcile_authorized_handoff_records(limit=200)
     except Exception:
         # Handoff failures must never prevent Katcha itself from starting. Individual
         # file validation failures are already moved to the failed queue by the
