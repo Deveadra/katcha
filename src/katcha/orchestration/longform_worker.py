@@ -71,7 +71,7 @@ async def _resume_persisted_longform_work(client: Client, settings) -> tuple[int
                 LongformCompilationWorkflow.run,
                 args=[str(row.id), stage],
                 id=row.workflow_id,
-                id_reuse_policy=WorkflowIDReusePolicy.REJECT_DUPLICATE,
+                id_reuse_policy=WorkflowIDReusePolicy.ALLOW_DUPLICATE_FAILED_ONLY,
                 task_queue=settings.temporal_longform_task_queue,
             )
             resumed += 1
