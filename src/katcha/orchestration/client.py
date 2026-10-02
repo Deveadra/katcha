@@ -281,7 +281,9 @@ async def start_publication_workflow(
                 settings.analytics_offsets_hours(),
             ],
             id=workflow_id,
-            id_reuse_policy=WorkflowIDReusePolicy.REJECT_DUPLICATE,
+            id_reuse_policy=_workflow_reuse_policy(
+                allow_failed_reuse=allow_failed_reuse,
+            ),
             task_queue=settings.temporal_publishing_task_queue,
         )
     except WorkflowAlreadyStartedError:
