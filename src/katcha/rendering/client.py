@@ -11,6 +11,7 @@ from katcha.rendering.longform_manifest import LongformRenderManifest
 from katcha.rendering.manifest import ShortRenderManifest
 from katcha.rendering.ranked_episode_manifest import RankedEpisodeRenderManifest
 from katcha.rendering.thumbnail_manifest import ThumbnailRenderManifest
+from katcha.runtime_fence import assert_mutation_authority
 
 
 @dataclass(frozen=True, slots=True)
@@ -60,6 +61,10 @@ def _render(
     *,
     settings: Settings,
 ) -> RenderResult:
+    assert_mutation_authority(
+        "render.dispatch",
+        settings=settings,
+    )
     url = f"{settings.renderer_url.rstrip('/')}/render"
     with httpx.Client(timeout=httpx.Timeout(1800.0, connect=10.0)) as client:
         response = client.post(url, json=manifest.model_dump(mode="json"))
@@ -113,6 +118,10 @@ def render_thumbnail(
     settings: Settings | None = None,
 ) -> ThumbnailRenderResult:
     resolved = settings or get_settings()
+    assert_mutation_authority(
+        "render.thumbnail_dispatch",
+        settings=resolved,
+    )
     url = f"{resolved.renderer_url.rstrip('/')}/thumbnail"
     with httpx.Client(timeout=httpx.Timeout(300.0, connect=10.0)) as client:
         response = client.post(url, json=manifest.model_dump(mode="json"))
