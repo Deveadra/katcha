@@ -24,6 +24,7 @@ from katcha.ai.router import (
 )
 from katcha.config import Settings, get_settings
 from katcha.domain import AITask
+from katcha.runtime_fence import assert_mutation_authority
 from katcha.services.elevenlabs_integration import resolve_elevenlabs_voice
 
 
@@ -330,6 +331,10 @@ def _fixture_tts(text: str) -> TTSResult:
 def _openai_tts(text: str, profile: VoiceProfile, settings: Settings) -> TTSResult:
     if not settings.openai_api_key:
         raise TTSUnavailable("OpenAI API key is not configured")
+    assert_mutation_authority(
+        "tts.openai",
+        settings=settings,
+    )
     from openai import OpenAI
 
     client = OpenAI(api_key=settings.openai_api_key)
@@ -367,6 +372,10 @@ def _openai_tts(text: str, profile: VoiceProfile, settings: Settings) -> TTSResu
 def _gemini_tts(text: str, profile: VoiceProfile, settings: Settings) -> TTSResult:
     if not settings.gemini_api_key:
         raise TTSUnavailable("Gemini API key is not configured")
+    assert_mutation_authority(
+        "tts.gemini",
+        settings=settings,
+    )
     from google import genai
 
     client = genai.Client(api_key=settings.gemini_api_key)
@@ -412,6 +421,10 @@ def _elevenlabs_tts(
 ) -> TTSResult:
     if not settings.elevenlabs_api_key or not profile.voice:
         raise TTSUnavailable("ElevenLabs API key and channel voice are required")
+    assert_mutation_authority(
+        "tts.elevenlabs",
+        settings=settings,
+    )
     output_format = settings.elevenlabs_output_format
     if not output_format.startswith("pcm_"):
         raise TTSUnavailable(
