@@ -180,6 +180,28 @@ def _archive_destination(
         counter += 1
 
 
+def _matching_archived_file(
+    paths: dict[str, Path],
+    filename: str,
+    content: bytes,
+) -> Path | None:
+    expected = hashlib.sha256(content).digest()
+    direct = paths["processed"] / filename
+    stem = Path(filename).stem
+    suffix = Path(filename).suffix
+    candidates = [direct, *paths["processed"].glob(f"{stem}.*{suffix}")]
+    seen: set[Path] = set()
+    for candidate in candidates:
+        if candidate in seen or not candidate.exists():
+            continue
+        seen.add(candidate)
+        if not _is_regular_handoff_file(candidate):
+            continue
+        if hashlib.sha256(_read_limited(candidate)).digest() == expected:
+            return candidate
+    return None
+
+
 def submit_handoff_file(
     filename: str,
     content: bytes,
@@ -200,6 +222,11 @@ def submit_handoff_file(
                 "a pending handoff file with this name already exists with different content"
             )
         return _file_item(existing, "incoming", paths)
+
+    archived = _matching_archived_file(paths, safe_name, content)
+    if archived is not None:
+        return _file_item(archived, "processed", paths)
+
     target = paths["incoming"] / safe_name
     _write_atomic(target, content)
     return _file_item(target, "incoming", paths)
