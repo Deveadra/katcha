@@ -8,7 +8,7 @@ from typing import Any
 from sqlalchemy import select
 
 from katcha.db import session_scope
-from katcha.domain import YouTubeConnectionStatus
+from katcha.domain import PublicationStatus, YouTubeConnectionStatus
 from katcha.integrations.storage import ObjectStore
 from katcha.models import DomainEvent
 from katcha.packaging_models import (
@@ -37,6 +37,63 @@ def _validate_publication_text(title: str, description: str) -> tuple[str, str]:
     if "<" in cleaned_description or ">" in cleaned_description:
         raise ValueError("packaging description cannot contain '<' or '>'")
     return cleaned_title, cleaned_description
+
+
+def _clean_variant_tags(tags: list[str] | None) -> list[str] | None:
+    if tags is None:
+        return None
+    result: list[str] = []
+    seen: set[str] = set()
+    for raw in tags:
+        value = str(raw).strip()
+        if not value or value.casefold() in seen:
+            continue
+        seen.add(value.casefold())
+        result.append(value)
+    if len(result) > 50:
+        raise ValueError("packaging tags cannot exceed 50 entries")
+    budget = sum(len(tag) + (2 if " " in tag else 0) for tag in result)
+    budget += max(0, len(result) - 1)
+    if budget > 500:
+        raise ValueError("packaging tags exceed YouTube's 500-character aggregate limit")
+    return result
+
+
+def _clean_variant_hashtags(hashtags: list[str] | None) -> list[str] | None:
+    if hashtags is None:
+        return None
+    result: list[str] = []
+    seen: set[str] = set()
+    for raw in hashtags:
+        value = str(raw).strip().lstrip("#")
+        if not value:
+            continue
+        if any(char.isspace() for char in value):
+            raise ValueError("packaging hashtags cannot contain whitespace")
+        if len(value) > 60:
+            raise ValueError("packaging hashtag cannot exceed 60 characters")
+        if value.casefold() in seen:
+            continue
+        seen.add(value.casefold())
+        result.append(value)
+    if len(result) > 5:
+        raise ValueError("packaging hashtags cannot exceed 5 entries")
+    return result
+
+
+def description_with_hashtags(
+    description: str,
+    hashtags: list[str] | None,
+) -> str:
+    cleaned = description.strip()
+    normalized = _clean_variant_hashtags(hashtags) or []
+    if not normalized:
+        return cleaned
+    suffix = " ".join(f"#{value}" for value in normalized)
+    combined = f"{cleaned}\n\n{suffix}" if cleaned else suffix
+    if len(combined.encode("utf-8")) > 5000:
+        raise ValueError("description plus hashtags exceeds 5000 UTF-8 bytes")
+    return combined
 
 
 def _validate_variant_identity(variant_key: str, version: int) -> str:
@@ -107,12 +164,16 @@ def _variant_matches(
     title: str,
     description: str,
     frozen_thumbnail: dict[str, object | None],
+    tags: list[str] | None,
+    hashtags: list[str] | None,
     created_by: str,
     metadata: dict[str, Any],
 ) -> bool:
     return (
         variant.title == title
         and variant.description == description
+        and variant.tags == tags
+        and variant.hashtags == hashtags
         and variant.thumbnail_storage_key == frozen_thumbnail["thumbnail_storage_key"]
         and variant.thumbnail_content_type == frozen_thumbnail["thumbnail_content_type"]
         and variant.thumbnail_size_bytes == frozen_thumbnail["thumbnail_size_bytes"]
@@ -129,6 +190,8 @@ def create_packaging_variant(
     version: int,
     title: str,
     description: str = "",
+    tags: list[str] | None = None,
+    hashtags: list[str] | None = None,
     thumbnail_storage_key: str | None = None,
     created_by: str = "operator",
     metadata: dict[str, Any] | None = None,
@@ -136,6 +199,9 @@ def create_packaging_variant(
 ) -> PublicationPackagingVariant:
     key = _validate_variant_identity(variant_key, version)
     clean_title, clean_description = _validate_publication_text(title, description)
+    clean_tags = _clean_variant_tags(tags)
+    clean_hashtags = _clean_variant_hashtags(hashtags)
+    description_with_hashtags(clean_description, clean_hashtags)
     actor = created_by.strip()
     if not actor or len(actor) > 128:
         raise ValueError("created_by must be between 1 and 128 characters")
@@ -169,6 +235,8 @@ def create_packaging_variant(
                 title=clean_title,
                 description=clean_description,
                 frozen_thumbnail=frozen,
+                tags=clean_tags,
+                hashtags=clean_hashtags,
                 created_by=actor,
                 metadata=payload,
             ):
@@ -184,6 +252,8 @@ def create_packaging_variant(
             version=version,
             title=clean_title,
             description=clean_description,
+            tags=clean_tags,
+            hashtags=clean_hashtags,
             created_by=actor,
             variant_metadata=payload,
             **frozen,
@@ -229,6 +299,71 @@ def list_packaging_variants(
         for row in rows:
             session.expunge(row)
         return rows
+
+
+def apply_preupload_packaging_variant(
+    publication_id: uuid.UUID,
+    *,
+    variant_id: uuid.UUID,
+    actor: str = "operator",
+) -> Publication:
+    actor_value = actor.strip()
+    if not actor_value:
+        raise ValueError("actor must not be blank")
+    with session_scope() as session:
+        publication = session.get(Publication, publication_id)
+        if publication is None:
+            raise ValueError(f"publication not found: {publication_id}")
+        if publication.youtube_video_id is not None:
+            raise ValueError(
+                "publication already entered YouTube upload; pre-upload packaging is locked"
+            )
+        if publication.status != PublicationStatus.QUEUED.value:
+            raise ValueError("pre-upload packaging requires a queued publication")
+        if publication.stage != "metadata_hold":
+            raise ValueError("publication must be held for packaging before pre-upload activation")
+        variant = session.get(PublicationPackagingVariant, variant_id)
+        if variant is None or variant.publication_id != publication_id:
+            raise ValueError("packaging variant does not belong to this publication")
+
+        publication.title = variant.title
+        publication.description = description_with_hashtags(
+            variant.description,
+            variant.hashtags,
+        )
+        if variant.tags is not None:
+            publication.tags = list(variant.tags)
+        publication.treatment_metadata = {
+            **dict(publication.treatment_metadata or {}),
+            "preupload_packaging": {
+                "variant_id": str(variant.id),
+                "variant_key": variant.variant_key,
+                "version": variant.version,
+                "tags": list(variant.tags or []),
+                "hashtags": list(variant.hashtags or []),
+                "applied_by": actor_value,
+            },
+        }
+        session.add(
+            DomainEvent(
+                aggregate_type="publication",
+                aggregate_id=str(publication.id),
+                event_type="publication.preupload_packaging_applied",
+                payload={
+                    "publication_id": str(publication.id),
+                    "packaging_variant_id": str(variant.id),
+                    "variant_key": variant.variant_key,
+                    "version": variant.version,
+                    "tag_count": len(variant.tags or []),
+                    "hashtag_count": len(variant.hashtags or []),
+                    "actor": actor_value,
+                },
+            )
+        )
+        session.flush()
+        session.refresh(publication)
+        session.expunge(publication)
+        return publication
 
 
 def register_packaging_activation(

@@ -308,6 +308,7 @@ def _register_source_publication(
     notify_subscribers: bool = False,
     made_for_kids: bool = False,
     contains_synthetic_media: bool = False,
+    hold_for_packaging: bool = False,
 ) -> Publication:
     settings = get_settings()
     title, description, tags, privacy_status, publish_at = _normalize_publication_metadata(
@@ -370,7 +371,7 @@ def _register_source_publication(
             workflow_attempt=1,
             analytics_workflow_id=analytics_workflow_id,
             status=PublicationStatus.QUEUED.value,
-            stage="queued",
+            stage="metadata_hold" if hold_for_packaging else "queued",
             title=title,
             description=description,
             tags=tags,
@@ -413,6 +414,7 @@ def _register_source_publication(
                     "workflow_id": workflow_id,
                     "privacy_status": privacy_status,
                     "publish_at": publish_at.isoformat() if publish_at else None,
+                    "hold_for_packaging": hold_for_packaging,
                     "treatment_metadata": treatment_metadata,
                 },
             )
@@ -435,6 +437,7 @@ def register_publication(
     notify_subscribers: bool = False,
     made_for_kids: bool = False,
     contains_synthetic_media: bool = False,
+    hold_for_packaging: bool = False,
 ) -> Publication:
     return _register_source_publication(
         source_kind="production",
@@ -449,6 +452,7 @@ def register_publication(
         notify_subscribers=notify_subscribers,
         made_for_kids=made_for_kids,
         contains_synthetic_media=contains_synthetic_media,
+        hold_for_packaging=hold_for_packaging,
     )
 
 
@@ -465,6 +469,7 @@ def register_compilation_publication(
     notify_subscribers: bool = False,
     made_for_kids: bool = False,
     contains_synthetic_media: bool = False,
+    hold_for_packaging: bool = False,
 ) -> Publication:
     return _register_source_publication(
         source_kind="compilation",
@@ -479,6 +484,7 @@ def register_compilation_publication(
         notify_subscribers=notify_subscribers,
         made_for_kids=made_for_kids,
         contains_synthetic_media=contains_synthetic_media,
+        hold_for_packaging=hold_for_packaging,
     )
 
 
@@ -495,6 +501,7 @@ def register_short_episode_publication(
     notify_subscribers: bool = False,
     made_for_kids: bool = False,
     contains_synthetic_media: bool = False,
+    hold_for_packaging: bool = False,
 ) -> Publication:
     return _register_source_publication(
         source_kind="short_episode",
@@ -509,7 +516,52 @@ def register_short_episode_publication(
         notify_subscribers=notify_subscribers,
         made_for_kids=made_for_kids,
         contains_synthetic_media=contains_synthetic_media,
+        hold_for_packaging=hold_for_packaging,
     )
+
+
+def release_publication_for_upload(
+    publication_id: uuid.UUID,
+    *,
+    actor: str = "operator",
+) -> Publication:
+    actor_value = actor.strip()
+    if not actor_value:
+        raise ValueError("actor must not be blank")
+    with session_scope() as session:
+        publication = session.get(Publication, publication_id)
+        if publication is None:
+            raise ValueError(f"publication not found: {publication_id}")
+        if publication.youtube_video_id is not None:
+            raise ValueError("publication has already entered YouTube upload")
+        if publication.status != PublicationStatus.QUEUED.value:
+            raise ValueError("only queued publications can be released for upload")
+        if publication.stage == "queued":
+            session.expunge(publication)
+            return publication
+        if publication.stage != "metadata_hold":
+            raise ValueError("publication is not held for pre-upload packaging")
+        publication.stage = "queued"
+        publication.raw_status = {
+            **dict(publication.raw_status or {}),
+            "metadata_hold_released_by": actor_value,
+            "metadata_hold_released_at": datetime.now(UTC).isoformat(),
+        }
+        session.add(
+            DomainEvent(
+                aggregate_type="publication",
+                aggregate_id=str(publication.id),
+                event_type="publication.metadata_hold_released",
+                payload={
+                    "publication_id": str(publication.id),
+                    "actor": actor_value,
+                },
+            )
+        )
+        session.flush()
+        session.refresh(publication)
+        session.expunge(publication)
+        return publication
 
 
 def retry_publication(

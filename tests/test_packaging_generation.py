@@ -81,6 +81,9 @@ def _candidate(index: int) -> PackagingCandidate:
         angle=f"Angle {index}",
         title=f"Cat jump angle {index}",
         description=f"A factual description for angle {index}.",
+        tags=["cat jump", "funny cat"],
+        hashtags=["Cats"],
+        search_intents=["cat jump video"],
         supporting_facts=["A cat jumps over the couch."],
         thumbnail=PackagingThumbnailBrief(
             concept=f"Freeze the jump at angle {index}",
@@ -197,6 +200,9 @@ def test_generation_key_replay_does_not_call_provider_twice(
     assert len(first.variants) == 3
     assert all(row.created_by == "katcha-ai" for row in first.variants)
     assert first.variants[0].variant_metadata["thumbnail_brief"]["concept"]
+    assert first.variants[0].tags == ["cat jump", "funny cat"]
+    assert first.variants[0].hashtags == ["Cats"]
+    assert first.variants[0].variant_metadata["search_intents"] == ["cat jump video"]
 
 
 def test_generation_model_has_publication_key_idempotency() -> None:

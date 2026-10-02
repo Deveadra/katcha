@@ -68,7 +68,14 @@ class ClipFeatureResponse(BaseModel):
 class CreateProductionRequest(BaseModel):
     persona_key: str = "youth_host"
     idempotency_key: str | None = Field(default=None, max_length=256)
+    channel_profile_id: UUID | None = None
     edit_blueprint_key: str | None = Field(default=None, min_length=1, max_length=96)
+
+
+class CreatePassthroughProductionRequest(BaseModel):
+    channel_profile_id: UUID
+    idempotency_key: str | None = Field(default=None, max_length=256)
+    actor: str = Field(default="operator", min_length=1, max_length=128)
 
 
 class ProductionResponse(BaseModel):
@@ -76,6 +83,7 @@ class ProductionResponse(BaseModel):
 
     id: UUID
     clip_id: UUID
+    channel_profile_id: UUID | None
     parent_production_id: UUID | None
     generation: int
     regenerate_from: str | None
@@ -337,6 +345,11 @@ class CreatePublicationRequest(BaseModel):
     notify_subscribers: bool = False
     made_for_kids: bool = False
     contains_synthetic_media: bool = False
+    hold_for_packaging: bool = False
+
+
+class StartPublicationRequest(BaseModel):
+    actor: str = Field(default="operator", min_length=1, max_length=128)
 
 
 class PublicationResponse(BaseModel):

@@ -7,7 +7,7 @@ immutable; activating it is a separate durable operation.
 
 This slice supports:
 
-- a title and description;
+- a title and description, plus optional versioned tags and hashtags;
 - an optional PNG or JPEG thumbnail stored under a publication/version namespace;
 - immutable thumbnail size, MIME type and SHA-256;
 - manual, idempotent activation on a publication that already has a YouTube video ID;
@@ -71,7 +71,8 @@ Activation uses the existing publishing Temporal task queue and the publication'
 YouTube OAuth connection.
 
 1. Validate publication, channel connection, frozen variant and video ID.
-2. Update the YouTube snippet while preserving the publication's tags and category.
+2. Update the YouTube snippet using the variant's tags when supplied, otherwise preserving
+   the publication's tags; always preserve the publication category.
 3. If present, verify the stored thumbnail still matches the frozen size/hash and upload it.
 4. Mark the activation applied and freeze the active packaging lineage into
    `Publication.treatment_metadata.active_packaging`.
@@ -352,3 +353,33 @@ POST /v1/publications/{publication_id}/packaging/thumbnails
 
 This stage still performs no YouTube mutation; P9.1 remains the only packaging activation
 path.
+
+## P10.4 pre-upload SEO packaging
+
+Time-sensitive source-preserving publications can now be registered with
+`hold_for_packaging=true`. The publication is validated and retained as
+`queued / metadata_hold`, but the YouTube upload workflow is not started.
+
+Packaging variants may include optional `tags` and `hashtags` in addition to the
+existing title, description and thumbnail. Automated packaging generation also
+emits search-intent targets and grounds candidates in recent channel intelligence.
+
+Apply an immutable package before upload with:
+
+```http
+POST /v1/publications/{publication_id}/packaging/preupload
+```
+
+Then release the held publication with:
+
+```http
+POST /v1/publications/{publication_id}/start
+```
+
+After upload, the normal packaging activation path can update title, description,
+tags and the rendered hashtag block together. Thumbnail-derived variant versions
+inherit their parent's tags and hashtags instead of silently dropping SEO metadata.
+
+This path deliberately does not present tags as a primary ranking mechanism. Tags
+are supplemental query/misspelling metadata; title, description, thumbnail appeal,
+viewer engagement and satisfaction remain the higher-value optimization targets.

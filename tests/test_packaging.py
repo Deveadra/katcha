@@ -189,7 +189,59 @@ def test_activation_is_idempotent_and_cannot_cross_publications(packaging_scope)
         )
 
 
+def test_preupload_variant_applies_title_description_tags_and_hashtags(
+    packaging_scope,
+) -> None:
+    publication = _publication(packaging_scope, suffix="preupload")
+    with packaging_scope() as session:
+        row = session.get(Publication, publication.id)
+        row.youtube_video_id = None
+        row.stage = "metadata_hold"
+        row.tags = ["old-tag"]
+
+    variant = packaging_service.create_packaging_variant(
+        publication.id,
+        variant_key="search-first",
+        version=1,
+        title="VISIONQUEST Final Trailer (2026) | Marvel",
+        description="Watch the official VisionQuest final trailer.",
+        tags=["VisionQuest", "Vision Quest", "Marvel Television"],
+        hashtags=["VisionQuest", "#Marvel"],
+        created_by="test",
+        store=FakeStore(b"unused"),
+    )
+    updated = packaging_service.apply_preupload_packaging_variant(
+        publication.id,
+        variant_id=variant.id,
+        actor="test",
+    )
+
+    assert updated.title.startswith("VISIONQUEST Final Trailer")
+    assert updated.description.endswith("#VisionQuest #Marvel")
+    assert updated.tags == ["VisionQuest", "Vision Quest", "Marvel Television"]
+    assert updated.treatment_metadata["preupload_packaging"]["variant_id"] == str(
+        variant.id
+    )
+
+
+def test_preupload_variant_refuses_uploaded_publication(packaging_scope) -> None:
+    publication = _publication(packaging_scope, suffix="already-uploaded")
+    variant = packaging_service.create_packaging_variant(
+        publication.id,
+        variant_key="candidate",
+        version=1,
+        title="Candidate title",
+        store=FakeStore(b"unused"),
+    )
+    with pytest.raises(ValueError, match="already entered YouTube upload"):
+        packaging_service.apply_preupload_packaging_variant(
+            publication.id,
+            variant_id=variant.id,
+        )
+
+
 def test_packaging_routes_are_mounted() -> None:
     paths = set(app.openapi()["paths"])
     assert "/v1/publications/{publication_id}/packaging/variants" in paths
     assert "/v1/publications/{publication_id}/packaging/activations" in paths
+    assert "/v1/publications/{publication_id}/packaging/preupload" in paths

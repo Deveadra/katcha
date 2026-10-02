@@ -373,12 +373,13 @@ async def create_short_episode_publication(
             notify_subscribers=request.notify_subscribers,
             made_for_kids=request.made_for_kids,
             contains_synthetic_media=request.contains_synthetic_media,
+            hold_for_packaging=request.hold_for_packaging,
         )
     except ValueError as exc:
         message = str(exc)
         code = 404 if "not found" in message else 409
         raise HTTPException(status_code=code, detail=message) from exc
-    if publication.status == "queued":
+    if publication.status == "queued" and publication.stage != "metadata_hold":
         await start_publication_workflow(str(publication.id), publication.workflow_id)
     return publication
 

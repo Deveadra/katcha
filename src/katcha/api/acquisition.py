@@ -214,6 +214,11 @@ class IngestIntelligenceBatchResponse(BaseModel):
     records: list[IntelligenceRecordResponse]
 
 
+class MaterializeIntelligenceCandidateRequest(BaseModel):
+    adapter_key: str = Field(default="operator_feed", min_length=1, max_length=64)
+    provenance_confidence: float | None = Field(default=None, ge=0, le=1)
+
+
 class HandoffInboxItemResponse(BaseModel):
     filename: str
     status: str
@@ -781,6 +786,67 @@ def get_channel_intelligence_record(
         return get_intelligence_record(channel_profile_id, record_id)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.post(
+    "/channels/{channel_profile_id}/intelligence-records/{record_id}/discovery-candidate",
+    response_model=DiscoveryCandidateResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def materialize_intelligence_candidate(
+    channel_profile_id: uuid.UUID,
+    record_id: uuid.UUID,
+    request: MaterializeIntelligenceCandidateRequest,
+) -> DiscoveryCandidate:
+    try:
+        record = get_intelligence_record(channel_profile_id, record_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    if not record.source_url:
+        raise HTTPException(
+            status_code=409,
+            detail="intelligence record has no source_url to materialize",
+        )
+
+    provenance = dict(record.provenance or {})
+    confidence = request.provenance_confidence
+    if confidence is None:
+        try:
+            confidence = float(provenance.get("confidence", 0.0) or 0.0)
+        except (TypeError, ValueError):
+            confidence = 0.0
+    confidence = max(0.0, min(float(confidence), 1.0))
+    payload = dict(record.payload or {})
+    creator = str(payload.get("creator") or payload.get("channel_name") or "").strip() or None
+    creator_url = str(payload.get("creator_url") or "").strip() or None
+
+    try:
+        return observe_discovery_candidate(
+            source_url=record.source_url,
+            adapter_key=request.adapter_key,
+            external_id=record.record_key,
+            title=record.title,
+            creator=creator,
+            creator_url=creator_url,
+            provenance_confidence=confidence,
+            provenance_claims={
+                **provenance,
+                "intelligence_record_id": str(record.id),
+                "intelligence_record_kind": record.record_kind,
+            },
+            metadata={
+                "channel_profile_id": str(channel_profile_id),
+                "intelligence_record_id": str(record.id),
+                "intelligence_record_kind": record.record_kind,
+                "intelligence_title": record.title,
+                "intelligence_summary": record.summary,
+                "intelligence_tags": list(record.tags or []),
+                "intelligence_payload": payload,
+                "source_type": "intelligence_handoff",
+            },
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 @router.post(
