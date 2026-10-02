@@ -12,7 +12,6 @@ from temporalio.worker import Worker
 
 from katcha.config import get_settings
 from katcha.db import session_scope
-from katcha.publishing_models import Publication
 from katcha.orchestration.packaging_activities import (
     apply_packaging_text_activity,
     apply_packaging_thumbnail_activity,
@@ -43,6 +42,7 @@ from katcha.orchestration.reach_activities import (
     sync_reach_reports_activity,
 )
 from katcha.orchestration.reach_workflows import YouTubeReachSyncWorkflow
+from katcha.publishing_models import Publication
 
 
 async def _resume_persisted_publications(client: Client, settings) -> tuple[int, int]:
