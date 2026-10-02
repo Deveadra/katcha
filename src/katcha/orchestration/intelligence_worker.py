@@ -16,6 +16,7 @@ from katcha.config import get_settings
 from katcha.db import session_scope
 from katcha.goal_models import CommandGoal
 from katcha.intelligence.runtime import INTELLIGENCE_TASK_QUEUE
+from katcha.orchestration.client import terminate_workflow_if_running
 from katcha.orchestration.discovery_activities import (
     execute_discovery_page_activity,
     finalize_topic_watch_execution_activity,
@@ -57,7 +58,6 @@ from katcha.orchestration.intelligence_workflows import (
     ChannelTrendActivationScheduleWorkflow,
     ChannelTrendActivationWorkflow,
 )
-from katcha.orchestration.client import terminate_workflow_if_running
 from katcha.orchestration.research_activities import prepare_research_jobs_activity
 from katcha.orchestration.research_workflows import AutomaticResearchWorkflow
 from katcha.orchestration.trend_activities import (
