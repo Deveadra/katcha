@@ -14,6 +14,10 @@ from katcha.orchestration.client import (
     start_channel_trend_activation_performance,
     start_channel_trend_activation_schedule,
 )
+from katcha.services.automation_schedules import (
+    mark_schedule_reconciled,
+    register_channel_trend_activation_schedule,
+)
 from katcha.services.trend_activation_performance import (
     latest_activation_performance,
     list_activation_performance,
@@ -228,15 +232,23 @@ async def schedule_trend_activation(
             status_code=409,
             detail="trend activation policy is not configured",
         )
-    workflow_id = f"trend-auto-activation-schedule-{channel_profile_id}"
+    registration = register_channel_trend_activation_schedule(
+        channel_profile_id,
+        interval_hours=request.interval_hours,
+    )
     await start_channel_trend_activation_schedule(
         str(channel_profile_id),
-        workflow_id,
+        registration.schedule.workflow_id,
         interval_hours=request.interval_hours,
+        supersedes_workflow_id=registration.supersedes_workflow_id,
+    )
+    mark_schedule_reconciled(
+        registration.schedule.id,
+        registration.schedule.workflow_id,
     )
     return TrendActivationScheduleResponse(
         channel_profile_id=channel_profile_id,
-        workflow_id=workflow_id,
+        workflow_id=registration.schedule.workflow_id,
         interval_hours=request.interval_hours,
     )
 
