@@ -46,6 +46,7 @@ def test_persisted_user_work_is_reconciled() -> None:
         "ShortProductionWorkflow",
         "RankedShortEpisodeEditorialWorkflow",
         "LongformCompilationWorkflow",
+        "EditorialProjectWorkflow",
         "StagedBrandPreviewWorkflow",
         "YouTubePublicationWorkflow",
         "YouTubePackagingActivationWorkflow",
