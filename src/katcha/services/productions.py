@@ -9,8 +9,8 @@ from sqlalchemy import select
 from katcha.db import session_scope
 from katcha.domain import ChannelStatus, ProductionStatus, ReviewDecision
 from katcha.editorial.personas import get_persona
-from katcha.intelligence_models import ChannelProfile
 from katcha.integrations.storage import ObjectStore
+from katcha.intelligence_models import ChannelProfile
 from katcha.models import Clip, ClipFeature, DomainEvent, SourceItem
 from katcha.production_models import (
     Production,
@@ -182,7 +182,11 @@ def _passthrough_workflow_id(
     channel_profile_id: uuid.UUID,
     idempotency_key: str | None,
 ) -> str:
-    token = idempotency_key.strip() if idempotency_key and idempotency_key.strip() else uuid.uuid4().hex
+    token = (
+        idempotency_key.strip()
+        if idempotency_key and idempotency_key.strip()
+        else uuid.uuid4().hex
+    )
     digest = hashlib.sha256(
         f"{channel_profile_id}:source_passthrough:{token}".encode()
     ).hexdigest()[:20]
