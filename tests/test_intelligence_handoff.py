@@ -360,11 +360,16 @@ async def test_api_startup_drains_pending_handoffs(
         called["limit"] = limit
         return []
 
+    async def fake_reconcile(*, limit: int = 200):
+        called["reconcile_limit"] = limit
+        return []
+
     monkeypatch.setattr(main, "process_handoff_inbox", fake_process_handoff_inbox)
+    monkeypatch.setattr(main, "reconcile_authorized_handoff_records", fake_reconcile)
 
     await main._process_pending_handoffs_on_startup()
 
-    assert called == {"limit": 50}
+    assert called == {"limit": 50, "reconcile_limit": 200}
 
 
 @pytest.mark.asyncio
@@ -441,6 +446,65 @@ async def test_authorized_official_trailer_handoff_queues_acquisition(
         assert source.status == "registered"
         assert source.source_metadata["channel_profile_id"] == str(channel_id)
         assert source.source_metadata["intelligence_record_id"]
+
+
+@pytest.mark.asyncio
+async def test_startup_reconciles_previously_stored_authorized_handoff(
+    handoff_scope,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from katcha.services import intelligence_automation
+
+    channel_id = _create_channel(handoff_scope)
+    result = ingest_intelligence_batch(
+        channel_profile_id=channel_id,
+        batch_key="stored-before-automation",
+        producer="orion",
+        source_type="assistant",
+        records=[
+            {
+                "record_kind": "video",
+                "record_key": "youtube:video:stored-trailer",
+                "title": "Stored Official Trailer",
+                "summary": "Already ingested intelligence awaiting automation.",
+                "source_url": "https://www.youtube.com/watch?v=stored-trailer",
+                "platform": "youtube",
+                "tags": ["official_trailer"],
+                "payload": {
+                    "creator": "Official Studio",
+                    "production_intent": "source_passthrough",
+                    "operator_authorized": True,
+                    "authorization_scope": "official_trailer_repost",
+                    "official_source_verified": True,
+                    "preupload_packaging_required": True,
+                },
+                "provenance": {
+                    "collector": "orion",
+                    "confidence": 1.0,
+                    "official_channel_verified": True,
+                },
+                "observed_at": "2026-10-02T10:45:00Z",
+            }
+        ],
+    )
+    assert result.records
+
+    started: list[tuple[str, str]] = []
+
+    async def fake_start(source_id: str, workflow_id: str) -> str:
+        started.append((source_id, workflow_id))
+        return workflow_id
+
+    monkeypatch.setattr(intelligence_automation, "start_ingest_workflow", fake_start)
+
+    reconciled = await intelligence_automation.reconcile_authorized_handoff_records()
+
+    assert len(reconciled) == 1
+    assert reconciled[0].record_id == result.records[0].id
+    assert reconciled[0].action == "ingest_queued"
+    assert started == [
+        (str(reconciled[0].source_id), str(reconciled[0].workflow_id))
+    ]
 
 
 def test_symlinked_local_drop_is_not_processed(
