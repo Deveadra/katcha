@@ -24,6 +24,7 @@ from katcha.models import DomainEvent
 from katcha.production_models import Production
 from katcha.publishing_models import Publication, PublicationAnalyticsSnapshot
 from katcha.render_models import RenderAttempt
+from katcha.services.ingestion_sources import ingest_intelligence_batch
 from katcha.trend_models import (
     ChannelTrendWatchVersion,
     TrendOpportunity,
@@ -278,6 +279,30 @@ def data(monkeypatch):
             ]
         )
 
+    ingest_intelligence_batch(
+        channel_profile_id=channel,
+        batch_key="ops-visionquest-handoff",
+        producer="orion",
+        source_type="assistant",
+        records=[
+            {
+                "record_kind": "video",
+                "record_key": "youtube:video:visionquest-fixture",
+                "title": "VisionQuest Final Trailer",
+                "summary": "Urgent FORSCENE trailer handoff.",
+                "source_url": "https://www.youtube.com/watch?v=visionquest-fixture",
+                "platform": "youtube",
+                "tags": ["visionquest", "official_trailer"],
+                "payload": {
+                    "production_intent": "source_passthrough",
+                    "operator_authorized": True,
+                },
+                "provenance": {"collector": "orion", "confidence": 0.99},
+                "observed_at": now,
+            }
+        ],
+    )
+
     yield SimpleNamespace(
         factory=factory,
         channel=channel,
@@ -316,6 +341,8 @@ def test_operations_overview_returns_actionable_channel_state(data) -> None:
     assert payload["channels"][0]["title"] == "RankSnaxx"
     assert payload["channels"][0]["needs_attention"] == 2
     assert payload["channels"][0]["active_work"] == 1
+    assert payload["intake"][0]["title"] == "VisionQuest Final Trailer"
+    assert payload["intake"][0]["stage"] == "handoff_received"
 
     attention_ids = {row["id"] for row in payload["attention"]}
     assert str(data.attention) in attention_ids
@@ -392,6 +419,7 @@ def test_operations_overview_empty_state_is_stable(monkeypatch) -> None:
     assert response.status_code == 200
     payload = response.json()
     assert payload["summary"]["active_channels"] == 0
+    assert payload["intake"] == []
     assert payload["attention"] == []
     assert payload["active"] == []
     assert payload["opportunities"] == []
