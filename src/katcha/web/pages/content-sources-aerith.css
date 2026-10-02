@@ -146,6 +146,12 @@ body[data-katcha-page="sources"] .panel-head h2 {
     font-size: 20px;
     letter-spacing: -.025em;
 }
+.builder-head-actions {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+}
+
 
 body[data-katcha-page="sources"] .steps {
     display: flex;
@@ -825,6 +831,52 @@ body[data-katcha-page="sources"] .wizard-actions {
     color: var(--ae-text-tertiary);
     font-size: 8px;
     line-height: 1.5;
+}
+
+.source-find-count,
+#finds-page-label {
+    color: var(--ae-text-tertiary);
+    font-size: 8px;
+    white-space: nowrap;
+}
+
+.source-finds-toolbar {
+    margin-bottom: 9px;
+}
+
+.source-finds-toolbar .source-search {
+    width: 100%;
+    margin: 0;
+}
+
+.source-finds-toolbar .source-search span {
+    display: block;
+    margin-bottom: 5px;
+    color: var(--ae-text-tertiary);
+    font-size: 8px;
+    font-weight: 760;
+}
+
+.source-finds-pagination {
+    align-items: center;
+    margin: 8px -13px -13px;
+    padding: 8px 13px;
+    border-top: 1px solid rgba(224,229,255,.065);
+}
+
+.source-find-copy {
+    min-width: 0;
+}
+
+.source-find-copy span {
+    display: inline-flex;
+    margin-top: 5px;
+    padding: 3px 5px;
+    border: 1px solid var(--ae-line);
+    border-radius: 999px;
+    color: var(--ae-text-tertiary);
+    font-size: 7px;
+    text-transform: uppercase;
 }
 
 .recent-finds,

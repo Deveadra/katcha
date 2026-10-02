@@ -22,9 +22,11 @@ let token = sessionStorage.getItem("katcha.controlToken") || '', adapters = [], 
 let sourceView = 'library';
 let handoffInbox = {counts: {incoming: 0, processed: 0, failed: 0}, items: [], incoming_path: 'handoff/incoming'};
 let sourcePage = {total: 0, limit: 50, offset: 0, items: []};
+let findsPage = {total: 0, limit: 25, offset: 0, items: []};
 let selectedOverview = null;
-let channelsReady = false, historyEpoch = 0, connectionEpoch = 0, libraryEpoch = 0, detailEpoch = 0, busy = false;
-let searchTimer = null;
+let editingSource = null;
+let channelsReady = false, historyEpoch = 0, connectionEpoch = 0, libraryEpoch = 0, detailEpoch = 0, findsEpoch = 0, busy = false;
+let searchTimer = null, findsSearchTimer = null;
 const intents = new Map();
 const runIntents = new Map();
 const linkDrafts = new Map();
@@ -236,6 +238,18 @@ function targetSummary(row) {
     if (row.adapter_key === 'operator_feed') return 'Link collection';
     return row.platform || row.adapter_key;
 }
+function askFindHref(candidate, row) {
+    if (!candidate?.id) return '';
+    const params = new URLSearchParams({
+        resource_kind: 'discovery_candidate',
+        resource_id: candidate.id,
+        prompt: 'Explain why this source find matters, how it fits this channel, and what Katcha can do with it next.',
+        focus: 'chat',
+    });
+    if (row?.channel_profile_id) params.set('channel', row.channel_profile_id);
+    return '/ai?' + params.toString();
+}
+
 function safeExternalUrl(value) {
     try {
         const url = new URL(value);
@@ -343,7 +357,10 @@ function showStep(next) {
         else li.removeAttribute('aria-current');
     });
     $('step-label').textContent = `${next} OF 3`;
-    $('builder-title').textContent = ['Choose a source', 'Source details', 'Review source'][next - 1];
+    $('builder-title').textContent = editingSource
+        ? ['Edit source', 'Edit source', 'Review changes'][next - 1]
+        : ['Choose a source', 'Source details', 'Review source'][next - 1];
+    $('cancel-source-edit').hidden = !editingSource;
     $('wizard-actions').hidden = next === 1;
     $('next').hidden = next !== 2;
     $('save').hidden = next !== 3;
@@ -376,6 +393,96 @@ function choose(method) {
     if (after) after.checked = true;
     showStep(2);
 }
+function sourceMethod(row) {
+    if (!row) return '';
+    if (row.adapter_key === 'operator_feed') return 'links';
+    if (row.adapter_key === 'web_scout') return 'scout';
+    if (row.adapter_key === 'rss_atom') return 'feed';
+    if (row.adapter_key === 'reddit') return 'reddit';
+    if (row.adapter_key === 'youtube') {
+        return row.query_template?.channel_reference ? 'youtube_channel' : 'youtube';
+    }
+    return 'custom';
+}
+
+function resetSourceBuilder() {
+    editingSource = null;
+    selectedMethod = '';
+    $('name').value = '';
+    $('search').value = '';
+    $('youtube-channel').value = '';
+    $('community').value = '';
+    $('feed').value = '';
+    $('custom-query').value = '{}';
+    $('scout-platforms').value = 'all';
+    $('usage').value = '';
+    const purpose = document.querySelector('input[name="source-purpose"][value="candidate_review"]');
+    if (purpose) purpose.checked = true;
+    const after = document.querySelector('input[name="after-save"][value="run"]');
+    if (after) after.checked = true;
+    $('cancel-source-edit').hidden = true;
+    showStep(1);
+}
+
+function beginAddSource() {
+    resetSourceBuilder();
+    setSourceView('add', {focus: true});
+}
+
+function beginEditSource(row) {
+    if (!row) return;
+    editingSource = {
+        ...row,
+        query_template: {...(row.query_template || {})},
+        source_metadata: {...(row.source_metadata || {})},
+        default_candidate_metadata: {...(row.default_candidate_metadata || {})},
+    };
+    const method = sourceMethod(row);
+    if (method === 'custom') {
+        $('custom-adapter').value = row.adapter_key + '@' + row.adapter_version;
+    }
+    choose(method);
+    $('name').value = row.name || '';
+    $('channel').value = row.channel_profile_id || '';
+
+    if (['candidate_review', 'discovery_only'].includes(row.usage_mode)) {
+        const purpose = document.querySelector(
+            'input[name="source-purpose"][value="' + row.usage_mode + '"]',
+        );
+        if (purpose) purpose.checked = true;
+        $('usage').value = '';
+    } else {
+        const purpose = document.querySelector(
+            'input[name="source-purpose"][value="candidate_review"]',
+        );
+        if (purpose) purpose.checked = true;
+        $('usage').value = row.usage_mode || '';
+    }
+    $('usage-help').textContent = usage[row.usage_mode]?.[1] || '';
+
+    const query = row.query_template || {};
+    $('search').value = query.q || '';
+    $('youtube-channel').value = query.channel_reference || '';
+    $('community').value = query.subreddit ? 'r/' + query.subreddit : '';
+    $('feed').value = query.feed_url || '';
+    $('custom-query').value = JSON.stringify(query, null, 2);
+
+    const platforms = Array.isArray(query.platforms) ? query.platforms : [];
+    if (platforms.length === 1 && ['tiktok', 'instagram', 'x', 'bluesky'].includes(platforms[0])) {
+        $('scout-platforms').value = platforms[0];
+    } else if (
+        ['tiktok', 'instagram', 'x', 'bluesky'].every(value => platforms.includes(value))
+    ) {
+        $('scout-platforms').value = 'social';
+    } else {
+        $('scout-platforms').value = 'all';
+    }
+
+    $('after-save-fields').hidden = true;
+    showStep(2);
+    setSourceView('add', {focus: true});
+}
+
 function intent(key, prefix) {
     if (!intents.has(key)) intents.set(key, `${prefix}-${crypto.randomUUID()}`);
     return intents.get(key);
@@ -423,8 +530,8 @@ function details() {
         if (!query || Array.isArray(query) || typeof query !== 'object') throw new Error('Custom connection settings must be a JSON object.');
         platform = a.supported_platforms[0] || 'custom';
     }
-    return {
-        create_only: true,
+    const payload = {
+        create_only: !editingSource,
         name,
         adapter_key: a.key,
         adapter_version: a.version,
@@ -432,9 +539,18 @@ function details() {
         channel_profile_id: $('channel').value || null,
         usage_mode: selectedUsage(),
         query_template: query,
-        poll_interval_minutes: 60,
-        source_metadata: {execution_mode: 'manual'},
+        default_candidate_metadata: editingSource
+            ? {...(editingSource.default_candidate_metadata || {})}
+            : {},
+        poll_interval_minutes: editingSource?.poll_interval_minutes || 60,
+        source_metadata: {
+            ...(editingSource?.source_metadata || {}),
+            execution_mode: 'manual',
+        },
+        enabled: editingSource?.enabled ?? true,
     };
+    if (editingSource) payload.source_key = editingSource.source_key;
+    return payload;
 }
 function review() {
     const d = details();
@@ -452,12 +568,18 @@ function review() {
     if (d.query_template.feed_url) rows.push(['Website feed', d.query_template.feed_url]);
     rows.push(['After saving', selectedMethod === 'links' ? 'Save the collection, then paste links.' : immediate ? 'Save the source and run one check immediately.' : 'Save the source only. No search starts.']);
     $('review').innerHTML = rows.map(([label, value]) => '<dt>' + esc(label) + '</dt><dd>' + esc(value) + '</dd>').join('');
-    $('save').textContent = selectedMethod === 'links' || !immediate ? 'Save source' : 'Save & check now';
-    $('save-explanation').textContent = selectedMethod === 'links'
-        ? 'Saving creates the source only. Add links from the Source Library when you are ready.'
-        : immediate
-            ? 'Katcha will save this source, then start one check. This does not create a recurring schedule.'
-            : 'Katcha will save this source without starting a search or recurring schedule.';
+    $('save').textContent = editingSource
+        ? 'Save changes'
+        : selectedMethod === 'links' || !immediate
+            ? 'Save source'
+            : 'Save & check now';
+    $('save-explanation').textContent = editingSource
+        ? 'Katcha will update this source in place. Existing checks, finds, and source history are preserved.'
+        : selectedMethod === 'links'
+            ? 'Saving creates the source only. Add links from the Source Library when you are ready.'
+            : immediate
+                ? 'Katcha will save this source, then start one check. This does not create a recurring schedule.'
+                : 'Katcha will save this source without starting a search or recurring schedule.';
     if (selectedMethod === 'scout') $('save-explanation').textContent += ' Web scouting can use live AI and public web search; provider charges may apply when API fallback is used.';
     showStep(3);
 }
@@ -606,25 +728,75 @@ function renderSourceList() {
     $('source-controls').hidden = sourcePage.total === 0;
 }
 
-function renderRecentFinds(overview, row) {
-    const findings = overview.recent_finds || [];
+function renderFinds(page, row) {
+    const findings = page.items || [];
+    const startIndex = page.total ? page.offset + 1 : 0;
+    const finish = Math.min(page.offset + findings.length, page.total);
+    $('finds-count').textContent =
+        page.total + ' find' + (page.total === 1 ? '' : 's');
+    $('finds-page-label').textContent = startIndex + '–' + finish;
+    $('finds-prev').disabled = page.offset <= 0;
+    $('finds-next').disabled = page.offset + page.limit >= page.total;
+
     if (!findings.length) {
-        $('recent-finds').innerHTML = '<p class="source-empty-copy">Nothing found yet. Run a check to start building source history.</p>';
+        $('all-finds').innerHTML =
+            '<p class="source-empty-copy">' +
+            ($('finds-search').value.trim()
+                ? 'No finds match this search.'
+                : 'Nothing found yet. Run a check to start building source history.') +
+            '</p>';
         return;
     }
     const canPromote = !['discovery_only', 'blocked'].includes(row.usage_mode);
-    $('recent-finds').innerHTML = findings.map(item => {
+    $('all-finds').innerHTML = findings.map(item => {
         const candidate = item.candidate || {};
         const url = safeExternalUrl(candidate.source_url);
         return '<article class="source-find">' +
-            '<div><strong>' + esc(candidate.title || candidate.source_url || 'Untitled find') + '</strong>' +
-            '<small>' + esc(candidate.creator || candidate.platform || 'Unknown creator') + ' · ' + esc(formatWhen(item.observed_at)) + '</small></div>' +
+            '<div class="source-find-copy"><strong>' +
+                esc(candidate.title || candidate.source_url || 'Untitled find') +
+            '</strong><small>' +
+                esc(candidate.creator || candidate.platform || 'Unknown creator') +
+                ' · ' + esc(formatWhen(item.observed_at)) +
+            '</small><span>' + esc(candidate.status || 'discovered') + '</span></div>' +
             '<div class="source-find-actions">' +
-                (url ? '<a class="text-button" href="' + esc(url) + '" target="_blank" rel="noopener noreferrer">Open ↗</a>' : '') +
-                (canPromote && candidate.id ? '<button type="button" class="text-button" data-add-clip="' + esc(candidate.id) + '">Add to Clips</button>' : '') +
+                (url ? '<a class="text-button" href="' + esc(url) +
+                    '" target="_blank" rel="noopener noreferrer">Open ↗</a>' : '') +
+                (candidate.id
+                    ? '<a class="text-button" href="' +
+                        esc(askFindHref(candidate, row)) +
+                        '">Ask Katcha ✦</a>'
+                    : '') +
+                (canPromote && candidate.id
+                    ? '<button type="button" class="text-button" data-add-clip="' +
+                        esc(candidate.id) + '">Add to Clips</button>'
+                    : '') +
             '</div>' +
         '</article>';
     }).join('');
+}
+
+async function loadFinds({reset = false} = {}) {
+    const row = source();
+    if (!row) return;
+    if (reset) {
+        findsPage.offset = 0;
+        $('finds-search').value = '';
+    }
+    const epoch = ++findsEpoch;
+    const params = new URLSearchParams({
+        limit: String(findsPage.limit),
+        offset: String(findsPage.offset),
+    });
+    const q = $('finds-search').value.trim();
+    if (q) params.set('q', q);
+    $('all-finds').innerHTML = '<p class="source-empty-copy">Loading finds…</p>';
+    const page = await api(
+        'discovery/sources/' + encodeURIComponent(row.id) +
+        '/finds?' + params.toString(),
+    );
+    if (epoch !== findsEpoch || source()?.id !== row.id) return;
+    findsPage = page;
+    renderFinds(page, row);
 }
 
 function renderHistory(overview, row) {
@@ -642,7 +814,13 @@ function renderHistory(overview, row) {
             '<span>' + esc(run.status || 'unknown') + '</span></div>' +
             (run.status === 'failed' && run.error ? '<p class="source-run-error">' + esc(run.error) + '</p>' : '') +
             (run.status === 'completed' ? '<button type="button" class="text-button" data-results="' + esc(run.id) + '">Finds from this check</button><div class="run-results" role="status"></div>' : '') +
-            (run.status === 'queued' && row.enabled && row.usage_mode !== 'blocked' ? '<button type="button" class="button secondary" data-execute="' + esc(run.id) + '">Start now</button>' : '') +
+            (['queued', 'running'].includes(run.status) && row.enabled && row.usage_mode !== 'blocked'
+                ? '<button type="button" class="button secondary" data-execute="' + esc(run.id) + '">' +
+                    (run.status === 'running' ? 'Resume now' : 'Start now') + '</button>'
+                : '') +
+            (run.status === 'failed' && row.enabled && row.usage_mode !== 'blocked'
+                ? '<button type="button" class="button secondary" data-restart="' + esc(run.id) + '">Restart check</button>'
+                : '') +
             (run.error ? '<details class="run-diagnostics"><summary>Technical details</summary><pre>' + esc(diagnostics) + '</pre><button type="button" class="text-button diagnostics-copy" data-copy-diagnostics>Copy diagnostics</button><span class="diagnostics-copy-status" role="status"></span></details>' : '') +
         '</article>';
     }).join('') : '<p class="source-empty-copy">No checks have run yet.</p>';
@@ -688,7 +866,7 @@ function renderSourceOverview() {
     if (latestFailed) {
         $('source-alert').innerHTML =
             '<strong>Latest check failed</strong><p>' + esc(latestFailed.error || 'No provider detail was recorded.') + '</p>' +
-            '<small>Fix the connection or source configuration, then run the check again.</small>';
+            '<small>Edit the source if its configuration is wrong, or restart the failed check after the issue is fixed.</small>';
     } else {
         $('source-alert').textContent = '';
     }
@@ -709,7 +887,6 @@ function renderSourceOverview() {
             ? 'Paste known links below when you want Katcha to inspect them.'
             : 'This source checks only when you choose the action above. Recurring source schedules are configured separately.';
 
-    renderRecentFinds(overview, row);
     renderHistory(overview, row);
 }
 
@@ -822,10 +999,12 @@ async function selectSource(sourceId = $('source').value) {
     if (next) sessionStorage.setItem('katcha.sourceId', next);
     renderSourceList();
     await loadOverview();
+    await loadFinds({reset: true});
 }
 
 async function loadHistory() {
     await loadOverview();
+    await loadFinds();
 }
 async function start(run) {
     try { await api(`discovery/runs/${encodeURIComponent(run.id)}/execute`, {}); }
@@ -888,6 +1067,29 @@ async function handleInspectorClick(e) {
         try { await start({id: execute.dataset.execute}); }
         catch (error) { message(error.message, true); }
         finally { if (execute.isConnected) execute.disabled = false; }
+        return;
+    }
+
+    const restart = e.target.closest('[data-restart]');
+    if (restart) {
+        e.preventDefault();
+        if (restart.disabled) return;
+        restart.disabled = true;
+        const key = 'restart:' + restart.dataset.restart;
+        try {
+            const result = await api(
+                'discovery/runs/' + encodeURIComponent(restart.dataset.restart) + '/restart',
+                {idempotency_key: intent(key, 'restart')},
+            );
+            intents.delete(key);
+            await loadHistory();
+            message(
+                'Restarted failed check as a new attempt. Previous history was preserved.',
+            );
+        } catch (error) {
+            message(error.message, true);
+            restart.disabled = false;
+        }
         return;
     }
 
@@ -1053,7 +1255,12 @@ bind('source', 'change', () => selectSource());
 bind('refresh', 'click', () => refreshSources());
 bind('history-refresh', 'click', loadHistory);
 
-$('header-add-source').addEventListener('click', () => setSourceView('add', {focus: true}));
+$('header-add-source').addEventListener('click', beginAddSource);
+$('cancel-source-edit').addEventListener('click', () => {
+    resetSourceBuilder();
+    setSourceView('library', {focus: true});
+});
+$('edit-source').addEventListener('click', () => beginEditSource(source()));
 $('source-list').addEventListener('click', async event => {
     const row = event.target.closest('[data-source-id]');
     if (!row) return;
@@ -1081,6 +1288,24 @@ for (const id of [
         catch (error) { message(error.message, true); }
     });
 }
+$('finds-search').addEventListener('input', () => {
+    clearTimeout(findsSearchTimer);
+    findsSearchTimer = setTimeout(async () => {
+        findsPage.offset = 0;
+        try { await loadFinds(); }
+        catch (error) { message(error.message, true); }
+    }, 250);
+});
+$('finds-prev').addEventListener('click', async () => {
+    findsPage.offset = Math.max(0, findsPage.offset - findsPage.limit);
+    await loadFinds();
+});
+$('finds-next').addEventListener('click', async () => {
+    if (findsPage.offset + findsPage.limit >= findsPage.total) return;
+    findsPage.offset += findsPage.limit;
+    await loadFinds();
+});
+
 $('source-prev').addEventListener('click', async () => {
     sourcePage.offset = Math.max(0, sourcePage.offset - sourcePage.limit);
     await refreshSources({preserveSelection: false});
@@ -1111,7 +1336,21 @@ bind('setup', 'submit', async () => {
         return;
     }
     const d = details();
-    const shouldRun = !$('after-save-fields').hidden && afterSaveMode() === 'run';
+    const isEdit = Boolean(editingSource);
+    const shouldRun = !isEdit && !$('after-save-fields').hidden && afterSaveMode() === 'run';
+
+    if (isEdit) {
+        const saved = await api('discovery/sources', d);
+        resetLibraryFilters();
+        resetSourceBuilder();
+        await refreshSources({selectId: saved.id, preserveSelection: false});
+        setSourceView('library');
+        message(
+            '“' + saved.name + '” updated. Existing checks and finds were preserved.',
+        );
+        return;
+    }
+
     const signature = JSON.stringify(d);
     const source_key = intent(signature, 'source');
 
@@ -1124,8 +1363,7 @@ bind('setup', 'submit', async () => {
 
     resetLibraryFilters();
     await refreshSources({selectId: saved.id, preserveSelection: false});
-    $('name').value = '';
-    showStep(1);
+    resetSourceBuilder();
     setSourceView('library');
     intents.delete(signature);
 
@@ -1166,7 +1404,7 @@ bind('import', 'submit', async () => {
 });
 
 $('history').addEventListener('click', handleInspectorClick);
-$('recent-finds').addEventListener('click', handleInspectorClick);
+$('all-finds').addEventListener('click', handleInspectorClick);
 
 $('usage-help').textContent = '';
 // The launcher bridge connects after startup. Direct API users connect automatically.

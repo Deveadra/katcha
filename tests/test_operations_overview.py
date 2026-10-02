@@ -293,6 +293,8 @@ def test_operations_routes_are_registered() -> None:
     paths = app.openapi()["paths"]
     assert "/v1/operations/overview" in paths
     assert "get" in paths["/v1/operations/overview"]
+    assert "/v1/operations/work/{kind}/{source_id}/recover" in paths
+    assert "post" in paths["/v1/operations/work/{kind}/{source_id}/recover"]
 
 
 def test_operations_overview_returns_actionable_channel_state(data) -> None:
@@ -322,8 +324,19 @@ def test_operations_overview_returns_actionable_channel_state(data) -> None:
     )
     assert render_failure["message"] == "Renderer exhausted retries"
     assert render_failure["href"].startswith("/editing?channel=")
+    assert render_failure["recovery_action"] == "restart"
+    assert render_failure["recovery_label"] == "Restart"
+
+    failed_publication = next(
+        row
+        for row in payload["attention"]
+        if row["id"] == str(data.failed_publication)
+    )
+    assert failed_publication["recovery_action"] == "restart"
 
     assert [row["id"] for row in payload["active"]] == [str(data.active)]
+    assert payload["active"][0]["recovery_action"] == "resume"
+    assert payload["active"][0]["recovery_label"] == "Resume"
     assert payload["opportunities"][0]["topic"] == "Xbox showcase surprise"
     assert payload["opportunities"][0]["opportunity_score"] == "0.910000"
     assert payload["summary"]["fresh_opportunities"] == 1
@@ -416,3 +429,97 @@ def test_operations_limit_is_bounded(data) -> None:
     client = TestClient(app)
     assert client.get("/v1/operations/overview?limit=2").status_code == 422
     assert client.get("/v1/operations/overview?limit=51").status_code == 422
+
+
+
+def test_operations_recover_resumes_active_production(data, monkeypatch) -> None:
+    calls: list[tuple[str, str, str]] = []
+
+    async def fake_start(production_id, workflow_id, *, start_stage="script"):
+        calls.append((production_id, workflow_id, start_stage))
+        return SimpleNamespace(id=workflow_id)
+
+    monkeypatch.setattr(operations, "start_production_workflow", fake_start)
+    client = TestClient(app)
+    response = client.post(
+        f"/v1/operations/work/production/{data.active}/recover",
+        json={"actor": "test"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["action"] == "resumed"
+    assert payload["source_id"] == str(data.active)
+    assert payload["replacement_id"] is None
+    assert calls == [(str(data.active), "prod-active", "script")]
+
+
+def test_operations_recover_restarts_failed_publication(data, monkeypatch) -> None:
+    new_workflow = "publish-retry-a2"
+    calls: list[tuple[str, str]] = []
+
+    monkeypatch.setattr(
+        operations,
+        "retry_publication",
+        lambda publication_id, allow_new_upload_session=False: SimpleNamespace(
+            id=publication_id,
+            workflow_id=new_workflow,
+        ),
+    )
+
+    async def fake_start(publication_id, workflow_id):
+        calls.append((publication_id, workflow_id))
+        return SimpleNamespace(id=workflow_id)
+
+    monkeypatch.setattr(operations, "start_publication_workflow", fake_start)
+    client = TestClient(app)
+    response = client.post(
+        f"/v1/operations/work/publication/{data.failed_publication}/recover",
+        json={"actor": "test"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["action"] == "restarted"
+    assert payload["workflow_id"] == new_workflow
+    assert calls == [(str(data.failed_publication), new_workflow)]
+
+
+def test_operations_dead_letter_restarts_as_new_production_lineage(
+    data,
+    monkeypatch,
+) -> None:
+    child_id = uuid.uuid4()
+    calls: list[tuple[str, str, str]] = []
+    monkeypatch.setattr(
+        operations,
+        "_production_restart_stage",
+        lambda _production_id: "render",
+    )
+    monkeypatch.setattr(
+        operations,
+        "register_regeneration",
+        lambda production_id, **kwargs: SimpleNamespace(
+            id=child_id,
+            workflow_id="production-recovery-child",
+        ),
+    )
+
+    async def fake_start(production_id, workflow_id, *, start_stage="script"):
+        calls.append((production_id, workflow_id, start_stage))
+        return SimpleNamespace(id=workflow_id)
+
+    monkeypatch.setattr(operations, "start_production_workflow", fake_start)
+    client = TestClient(app)
+    response = client.post(
+        f"/v1/operations/work/production/{data.attention}/recover",
+        json={"actor": "test"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["action"] == "restarted"
+    assert payload["replacement_id"] == str(child_id)
+    assert calls == [
+        (str(child_id), "production-recovery-child", "render")
+    ]

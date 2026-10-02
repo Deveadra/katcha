@@ -242,6 +242,17 @@ class ExecuteDiscoveryRunResponse(BaseModel):
     status: str
 
 
+class RestartDiscoveryRunRequest(BaseModel):
+    idempotency_key: str | None = Field(default=None, max_length=160)
+
+
+class RestartDiscoveryRunResponse(BaseModel):
+    previous_run_id: uuid.UUID
+    discovery_run_id: uuid.UUID
+    workflow_id: str
+    status: str
+
+
 class CreateDiscoveryCandidateRequest(BaseModel):
     source_url: str = Field(min_length=1, max_length=4000)
     adapter_key: str = Field(min_length=1, max_length=64)
@@ -280,6 +291,13 @@ class DiscoveryCandidateResponse(BaseModel):
 class SourceRecentFindResponse(BaseModel):
     candidate: DiscoveryCandidateResponse
     observed_at: datetime
+
+
+class SourceFindPageResponse(BaseModel):
+    total: int
+    limit: int
+    offset: int
+    items: list[SourceRecentFindResponse]
 
 
 class SourceOverviewResponse(BaseModel):
@@ -481,6 +499,41 @@ def get_source_library(
         items=[
             IngestionSourceResponse.model_validate(row)
             for row in result.items
+        ],
+    )
+
+
+@router.get(
+    "/discovery/sources/{source_id}/finds",
+    response_model=SourceFindPageResponse,
+)
+def get_source_finds(
+    source_id: uuid.UUID,
+    q: str | None = Query(default=None, max_length=200),
+    candidate_status: str | None = Query(default=None, alias="status", max_length=32),
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+) -> SourceFindPageResponse:
+    try:
+        page = list_source_finds(
+            source_id,
+            query=q,
+            status=candidate_status,
+            limit=limit,
+            offset=offset,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return SourceFindPageResponse(
+        total=page.total,
+        limit=page.limit,
+        offset=page.offset,
+        items=[
+            SourceRecentFindResponse(
+                candidate=DiscoveryCandidateResponse.model_validate(item.candidate),
+                observed_at=item.observed_at,
+            )
+            for item in page.items
         ],
     )
 
@@ -769,6 +822,35 @@ async def execute_discovery_run(run_id: uuid.UUID) -> ExecuteDiscoveryRunRespons
         discovery_run_id=run_id,
         workflow_id=workflow_id,
         status=run_status,
+    )
+
+
+@router.post(
+    "/discovery/runs/{run_id}/restart",
+    response_model=RestartDiscoveryRunResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def restart_failed_discovery_run(
+    run_id: uuid.UUID,
+    request: RestartDiscoveryRunRequest,
+) -> RestartDiscoveryRunResponse:
+    try:
+        run = restart_source_run(
+            run_id,
+            idempotency_key=request.idempotency_key,
+        )
+    except ValueError as exc:
+        message = str(exc)
+        code = 404 if "not found" in message else 409
+        raise HTTPException(status_code=code, detail=message) from exc
+
+    workflow_id = f"discovery-run-{run.id}"
+    await start_discovery_workflow(str(run.id), workflow_id)
+    return RestartDiscoveryRunResponse(
+        previous_run_id=run_id,
+        discovery_run_id=run.id,
+        workflow_id=workflow_id,
+        status=run.status,
     )
 
 

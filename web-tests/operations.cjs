@@ -74,6 +74,8 @@ function payload(selected = "") {
                       state: "attention",
                       message: "Renderer exhausted retries",
                       updated_at: now,
+                      recovery_action: "restart",
+                      recovery_label: "Restart",
                       href:
                           "/editing?channel=" +
                           channelOne +
@@ -89,6 +91,8 @@ function payload(selected = "") {
                       state: "attention",
                       message: "YouTube upload failed",
                       updated_at: "2026-09-29T17:55:00Z",
+                      recovery_action: "restart",
+                      recovery_label: "Restart",
                       href: "/channels?channel=" + channelOne + "#content",
                   },
               ]
@@ -104,6 +108,8 @@ function payload(selected = "") {
                 state: "active",
                 message: "render · rendering",
                 updated_at: "2026-09-29T17:50:00Z",
+                recovery_action: "resume",
+                recovery_label: "Resume",
                 href:
                     "/editing?channel=" +
                     (selected || channelOne) +
@@ -177,6 +183,41 @@ function payload(selected = "") {
     let failRefresh = false;
     page.on("pageerror", (error) => errors.push(error.message));
 
+    await page.route("**/v1/operations/work/**", async (route) => {
+        const request = route.request();
+        if (request.headers().authorization !== "Bearer fixture-token") {
+            return route.fulfill({status: 401, json: {detail: "Token required"}});
+        }
+        const url = new URL(request.url());
+        const match = url.pathname.match(
+            /^\/v1\/operations\/work\/(short_episode|production|publication)\/([^/]+)\/recover$/
+        );
+        if (!match || request.method() !== "POST") {
+            return route.fulfill({status: 404, json: {detail: "Not found"}});
+        }
+        const body = request.postDataJSON();
+        requests.push({
+            channel: "",
+            auth: request.headers().authorization,
+            recovery: {
+                kind: match[1],
+                id: match[2],
+                body,
+            },
+        });
+        const restarted = match[2] !== "55555555-5555-4555-8555-555555555555";
+        await route.fulfill({
+            status: 200,
+            json: {
+                kind: match[1],
+                source_id: match[2],
+                action: restarted ? "restarted" : "resumed",
+                workflow_id: restarted ? "replacement-workflow" : "existing-workflow",
+                replacement_id: restarted ? "88888888-8888-4888-8888-888888888888" : null,
+            },
+        });
+    });
+
     await page.route("**/v1/operations/overview**", async (route) => {
         const request = route.request();
         const url = new URL(request.url());
@@ -219,6 +260,37 @@ function payload(selected = "") {
         assert.equal(await page.locator("#attention-list .ops-row").count(), 2);
         assert.match(await page.locator("#attention-list").innerText(), /Renderer exhausted retries/);
         assert.match(await page.locator("#active-list").innerText(), /Ranking clips/);
+        assert.equal(await page.locator("#attention-list .ops-recover.restart").count(), 2);
+        assert.equal(await page.locator("#active-list .ops-recover").count(), 1);
+        assert.equal(await page.locator("#active-list .ops-recover").innerText(), "Resume");
+
+        const resumeResponse = page.waitForResponse((response) =>
+            response.url().includes("/v1/operations/work/production/") &&
+            response.url().endsWith("/recover") &&
+            response.status() === 200
+        );
+        await page.locator("#active-list .ops-recover").click();
+        await resumeResponse;
+        await page.getByText(/Resume request accepted/).waitFor();
+        assert(requests.some((request) =>
+            request.recovery?.kind === "production" &&
+            request.recovery?.id === "55555555-5555-4555-8555-555555555555" &&
+            request.recovery?.body?.actor === "operations-ui"
+        ));
+
+        const restartResponse = page.waitForResponse((response) =>
+            response.url().includes("/v1/operations/work/short_episode/") &&
+            response.url().endsWith("/recover") &&
+            response.status() === 200
+        );
+        await page.locator("#attention-list .ops-recover.restart").first().click();
+        await restartResponse;
+        await page.getByText(/previous failure history was preserved/i).waitFor();
+        assert(requests.some((request) =>
+            request.recovery?.kind === "short_episode" &&
+            request.recovery?.body?.actor === "operations-ui"
+        ));
+
         assert.match(await page.locator("#opportunity-list").innerText(), /Xbox showcase surprise/);
         assert.match(await page.locator("#publication-list").innerText(), /125K views/);
         assert.match(await page.locator("#publication-list").innerText(), /72\.5% avg viewed/);
@@ -271,7 +343,7 @@ function payload(selected = "") {
         );
         assert.deepEqual(errors, []);
         console.log(
-            "PASS: Operations prioritization, channel drill-down, performance evidence, stale-view recovery, secure auth and mobile width",
+            "PASS: Operations prioritization, safe resume/restart controls, channel drill-down, performance evidence, stale-view recovery, secure auth and mobile width",
         );
     } finally {
         await browser.close();

@@ -20,7 +20,7 @@ from katcha.acquisition_models import (
     IntelligenceRecord,
 )
 from katcha.db import session_scope
-from katcha.domain import SourceUsageMode
+from katcha.domain import DiscoveryRunStatus, SourceUsageMode
 from katcha.intelligence_models import ChannelProfile
 from katcha.models import DomainEvent
 from katcha.services.acquisition import register_discovery_run
@@ -38,6 +38,14 @@ class SourceLibraryPage:
 class SourceRecentFind:
     candidate: DiscoveryCandidate
     observed_at: datetime
+
+
+@dataclass(frozen=True, slots=True)
+class SourceFindPage:
+    items: list[SourceRecentFind]
+    total: int
+    limit: int
+    offset: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -300,6 +308,100 @@ def list_ingestion_source_library(
             session.expunge(row)
         return SourceLibraryPage(
             items=rows,
+            total=total,
+            limit=limit,
+            offset=offset,
+        )
+
+
+def list_source_finds(
+    source_id: uuid.UUID,
+    *,
+    query: str | None = None,
+    status: str | None = None,
+    limit: int = 50,
+    offset: int = 0,
+) -> SourceFindPage:
+    cleaned_query = (query or "").strip().casefold()
+    cleaned_status = (status or "").strip().casefold()
+    if limit < 1 or limit > 200:
+        raise ValueError("limit must be between 1 and 200")
+    if offset < 0:
+        raise ValueError("offset must be non-negative")
+
+    with session_scope() as session:
+        if session.get(IngestionSource, source_id) is None:
+            raise ValueError("ingestion source not found")
+
+        source_filter = (
+            DiscoveryRun.run_metadata["ingestion_source_id"].as_string()
+            == str(source_id)
+        )
+        latest_observation = (
+            select(
+                DiscoveryObservation.discovery_candidate_id.label("candidate_id"),
+                func.max(DiscoveryObservation.observed_at).label("observed_at"),
+            )
+            .join(
+                DiscoveryRun,
+                DiscoveryObservation.discovery_run_id == DiscoveryRun.id,
+            )
+            .where(source_filter)
+            .group_by(DiscoveryObservation.discovery_candidate_id)
+            .subquery()
+        )
+
+        filters = []
+        if cleaned_query:
+            pattern = f"%{cleaned_query}%"
+            filters.append(
+                or_(
+                    func.lower(func.coalesce(DiscoveryCandidate.title, "")).like(pattern),
+                    func.lower(func.coalesce(DiscoveryCandidate.creator, "")).like(pattern),
+                    func.lower(DiscoveryCandidate.source_url).like(pattern),
+                )
+            )
+        if cleaned_status:
+            filters.append(DiscoveryCandidate.status == cleaned_status)
+
+        total = int(
+            session.scalar(
+                select(func.count())
+                .select_from(DiscoveryCandidate)
+                .join(
+                    latest_observation,
+                    latest_observation.c.candidate_id == DiscoveryCandidate.id,
+                )
+                .where(*filters)
+            )
+            or 0
+        )
+        rows = session.execute(
+            select(
+                DiscoveryCandidate,
+                latest_observation.c.observed_at,
+            )
+            .join(
+                latest_observation,
+                latest_observation.c.candidate_id == DiscoveryCandidate.id,
+            )
+            .where(*filters)
+            .order_by(
+                latest_observation.c.observed_at.desc(),
+                DiscoveryCandidate.id.desc(),
+            )
+            .offset(offset)
+            .limit(limit)
+        ).all()
+
+        items = [
+            SourceRecentFind(candidate=candidate, observed_at=observed_at)
+            for candidate, observed_at in rows
+        ]
+        for item in items:
+            session.expunge(item.candidate)
+        return SourceFindPage(
+            items=items,
             total=total,
             limit=limit,
             offset=offset,
@@ -579,6 +681,92 @@ def list_source_runs(source_id: uuid.UUID, *, limit: int = 50) -> list[Discovery
         for row in rows:
             session.expunge(row)
         return rows
+
+def restart_source_run(
+    run_id: uuid.UUID,
+    *,
+    idempotency_key: str | None = None,
+) -> DiscoveryRun:
+    with session_scope() as session:
+        run = session.get(DiscoveryRun, run_id)
+        if run is None:
+            raise ValueError("discovery run not found")
+        if run.status != DiscoveryRunStatus.FAILED.value:
+            raise ValueError("only failed discovery runs can be restarted")
+        metadata = dict(run.run_metadata or {})
+        raw_source_id = metadata.get("ingestion_source_id")
+        if not raw_source_id:
+            raise ValueError("discovery run is not attached to an ingestion source")
+        try:
+            source_id = uuid.UUID(str(raw_source_id))
+        except ValueError as exc:
+            raise ValueError("discovery run has an invalid ingestion source ID") from exc
+        source = session.get(IngestionSource, source_id)
+        if source is None:
+            raise ValueError("ingestion source not found")
+        if not source.enabled:
+            raise ValueError("ingestion source is disabled")
+        if source.usage_mode == SourceUsageMode.BLOCKED.value:
+            raise ValueError("ingestion source is blocked")
+        adapter_key = run.adapter_key
+        adapter_version = run.adapter_version
+        query = dict(run.query or {})
+        metadata.update(
+            {
+                "restarted_from_run_id": str(run.id),
+                "recovery_mode": "manual_restart",
+            }
+        )
+
+    return register_discovery_run(
+        adapter_key=adapter_key,
+        adapter_version=adapter_version,
+        query=query,
+        idempotency_key=idempotency_key,
+        metadata=metadata,
+    )
+
+
+def list_resumable_source_runs(*, limit: int = 500) -> list[DiscoveryRun]:
+    if limit < 1 or limit > 5000:
+        raise ValueError("limit must be between 1 and 5000")
+    with session_scope() as session:
+        rows = list(
+            session.scalars(
+                select(DiscoveryRun)
+                .where(
+                    DiscoveryRun.status.in_(
+                        [
+                            DiscoveryRunStatus.QUEUED.value,
+                            DiscoveryRunStatus.RUNNING.value,
+                        ]
+                    )
+                )
+                .order_by(DiscoveryRun.created_at.asc(), DiscoveryRun.id.asc())
+                .limit(limit)
+            )
+        )
+        resumable: list[DiscoveryRun] = []
+        for run in rows:
+            metadata = dict(run.run_metadata or {})
+            raw_source_id = metadata.get("ingestion_source_id")
+            if not raw_source_id:
+                continue
+            try:
+                source_id = uuid.UUID(str(raw_source_id))
+            except ValueError:
+                continue
+            source = session.get(IngestionSource, source_id)
+            if (
+                source is None
+                or not source.enabled
+                or source.usage_mode == SourceUsageMode.BLOCKED.value
+            ):
+                continue
+            session.expunge(run)
+            resumable.append(run)
+        return resumable
+
 
 def _clean_intelligence_slug(value: str, *, field: str, max_length: int) -> str:
     cleaned = value.strip().casefold()

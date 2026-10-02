@@ -67,6 +67,7 @@ async def start_ingest_workflow(source_id: str, workflow_id: str) -> str:
             ClipIngestWorkflow.run,
             source_id,
             id=workflow_id,
+            id_reuse_policy=WorkflowIDReusePolicy.REJECT_DUPLICATE,
             task_queue=settings.temporal_task_queue,
         )
     except WorkflowAlreadyStartedError:
@@ -81,6 +82,7 @@ async def start_discovery_workflow(run_id: str, workflow_id: str) -> str:
             DiscoveryRunWorkflow.run,
             run_id,
             id=workflow_id,
+            id_reuse_policy=WorkflowIDReusePolicy.REJECT_DUPLICATE,
             task_queue=DISCOVERY_TASK_QUEUE,
         )
     except WorkflowAlreadyStartedError:
@@ -115,6 +117,7 @@ async def start_analysis_workflow(run_id: str, workflow_id: str) -> str:
             ClipAnalysisWorkflow.run,
             args=[run_id, settings.ai_enabled],
             id=workflow_id,
+            id_reuse_policy=WorkflowIDReusePolicy.REJECT_DUPLICATE,
             task_queue=settings.temporal_analysis_task_queue,
         )
     except WorkflowAlreadyStartedError:
@@ -151,6 +154,7 @@ async def start_production_workflow(
             ShortProductionWorkflow.run,
             args=[production_id, start_stage],
             id=workflow_id,
+            id_reuse_policy=WorkflowIDReusePolicy.REJECT_DUPLICATE,
             task_queue=settings.temporal_production_task_queue,
         )
     except WorkflowAlreadyStartedError:
@@ -192,6 +196,7 @@ async def start_longform_workflow(
             LongformCompilationWorkflow.run,
             args=[compilation_id, start_stage],
             id=workflow_id,
+            id_reuse_policy=WorkflowIDReusePolicy.REJECT_DUPLICATE,
             task_queue=settings.temporal_longform_task_queue,
         )
     except WorkflowAlreadyStartedError:
@@ -247,6 +252,7 @@ async def start_publication_workflow(publication_id: str, workflow_id: str) -> s
                 settings.analytics_offsets_hours(),
             ],
             id=workflow_id,
+            id_reuse_policy=WorkflowIDReusePolicy.REJECT_DUPLICATE,
             task_queue=settings.temporal_publishing_task_queue,
         )
     except WorkflowAlreadyStartedError:
