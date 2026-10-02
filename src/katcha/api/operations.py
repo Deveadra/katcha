@@ -1275,7 +1275,7 @@ def operations_overview(
             session.scalars(
                 select(DomainEvent)
                 .where(or_(*event_filters))
-                .order_by(DomainEvent.created_at.desc())
+                .order_by(DomainEvent.created_at.desc(), DomainEvent.id.desc())
                 .limit(limit)
             )
         )
