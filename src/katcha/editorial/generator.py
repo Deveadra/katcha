@@ -22,10 +22,10 @@ from katcha.ai.subscription import generate_subscription_json
 from katcha.config import Settings, get_settings
 from katcha.db import session_scope
 from katcha.domain import AITask
-from katcha.runtime_fence import assert_mutation_authority
 from katcha.editorial.personas import HostPersona
 from katcha.editorial.schemas import ShortScriptSet
 from katcha.production_models import Production
+from katcha.runtime_fence import assert_mutation_authority
 
 
 class ScriptProviderUnavailable(RuntimeError):
