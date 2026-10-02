@@ -244,7 +244,8 @@ def test_folder_scan_processes_manually_dropped_files(
     assert [item.status for item in results] == ["processed", "processed"]
     assert {item.batch_key for item in results} == {"drop-a", "drop-b"}
     items = list_handoff_inbox(root=root)
-    assert [item.status for item in items].count("processed") == 2
+    assert items == []
+    assert handoff_inbox_summary(root=root)["counts"]["processed"] == 2
 
     with handoff_scope() as session:
         assert session.scalar(
@@ -311,7 +312,53 @@ async def test_handoff_api_upload_processes_file(
     assert result.batch_key == "api-batch"
     inbox = acquisition.get_intelligence_handoff_inbox(limit=100)
     assert inbox.counts["processed"] == 1
-    assert inbox.items[0].filename == "api-batch.json"
+    assert inbox.items == []
+
+
+def test_same_filename_new_revision_archives_without_overwriting(
+    handoff_scope,
+    tmp_path: Path,
+) -> None:
+    channel_id = _create_channel(handoff_scope)
+    root = tmp_path / "handoff"
+    first_payload = _batch(channel_id, batch_key="revision-v1")
+    first_content = _encoded(first_payload)
+    submit_handoff_file("visionquest.json", first_content, root=root)
+    first = process_handoff_file("visionquest.json", root=root)
+    assert first.status == "processed"
+
+    second_payload = _batch(channel_id, batch_key="revision-v2")
+    second_payload["records"][0]["record_key"] = "youtube:video:visionquest-v2"
+    second_content = _encoded(second_payload)
+    queued = submit_handoff_file("visionquest.json", second_content, root=root)
+    assert queued.status == "incoming"
+    second = process_handoff_file("visionquest.json", root=root)
+    assert second.status == "processed"
+
+    archived = sorted((root / "processed").glob("visionquest*.json"))
+    assert len(archived) == 2
+    assert archived[0].read_bytes() != archived[1].read_bytes()
+    assert list_handoff_inbox(root=root) == []
+    assert handoff_inbox_summary(root=root)["counts"]["processed"] == 2
+
+
+@pytest.mark.asyncio
+async def test_api_startup_drains_pending_handoffs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from katcha.api import main
+
+    called: dict[str, int] = {}
+
+    def fake_process_handoff_inbox(*, limit: int = 50):
+        called["limit"] = limit
+        return []
+
+    monkeypatch.setattr(main, "process_handoff_inbox", fake_process_handoff_inbox)
+
+    await main._process_pending_handoffs_on_startup()
+
+    assert called == {"limit": 50}
 
 
 def test_symlinked_local_drop_is_not_processed(
