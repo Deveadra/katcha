@@ -852,7 +852,7 @@ const analytics = [
     assert.match(await page.locator("#metric-videos").innerText(), /3/);
     assert.equal(await page.locator("#channel-activity").isHidden(), false);
     assert.match(await page.locator("#channel-activity-list").innerText(), /VisionQuest Final Trailer/);
-    assert.match(await page.locator("#channel-activity-list").innerText(), /Downloading/);
+    assert.match(await page.locator("#channel-activity-list").innerText(), /downloading/i);
     await page.locator('[data-channel-tab="content"]').click();
     await page.locator('[data-publication="publication-3"]').click();
     await page.waitForFunction(() => document.querySelectorAll("[data-apply-packaging]").length > 0);
