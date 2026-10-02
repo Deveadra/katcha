@@ -45,6 +45,14 @@ _client: Client | None = None
 _client_lock = asyncio.Lock()
 
 
+def _workflow_reuse_policy(*, allow_failed_reuse: bool) -> WorkflowIDReusePolicy:
+    return (
+        WorkflowIDReusePolicy.ALLOW_DUPLICATE_FAILED_ONLY
+        if allow_failed_reuse
+        else WorkflowIDReusePolicy.REJECT_DUPLICATE
+    )
+
+
 async def get_temporal_client() -> Client:
     global _client
     if _client is not None:
@@ -75,14 +83,21 @@ async def start_ingest_workflow(source_id: str, workflow_id: str) -> str:
     return handle.id
 
 
-async def start_discovery_workflow(run_id: str, workflow_id: str) -> str:
+async def start_discovery_workflow(
+    run_id: str,
+    workflow_id: str,
+    *,
+    allow_failed_reuse: bool = False,
+) -> str:
     client = await get_temporal_client()
     try:
         handle = await client.start_workflow(
             DiscoveryRunWorkflow.run,
             run_id,
             id=workflow_id,
-            id_reuse_policy=WorkflowIDReusePolicy.REJECT_DUPLICATE,
+            id_reuse_policy=_workflow_reuse_policy(
+                allow_failed_reuse=allow_failed_reuse,
+            ),
             task_queue=DISCOVERY_TASK_QUEUE,
         )
     except WorkflowAlreadyStartedError:
@@ -146,6 +161,7 @@ async def start_production_workflow(
     workflow_id: str,
     *,
     start_stage: str = "script",
+    allow_failed_reuse: bool = False,
 ) -> str:
     settings = get_settings()
     client = await get_temporal_client()
@@ -154,7 +170,9 @@ async def start_production_workflow(
             ShortProductionWorkflow.run,
             args=[production_id, start_stage],
             id=workflow_id,
-            id_reuse_policy=WorkflowIDReusePolicy.REJECT_DUPLICATE,
+            id_reuse_policy=_workflow_reuse_policy(
+                allow_failed_reuse=allow_failed_reuse,
+            ),
             task_queue=settings.temporal_production_task_queue,
         )
     except WorkflowAlreadyStartedError:
@@ -167,6 +185,7 @@ async def start_short_episode_editorial_workflow(
     workflow_id: str,
     *,
     start_stage: str = "script",
+    allow_failed_reuse: bool = False,
 ) -> str:
     settings = get_settings()
     client = await get_temporal_client()
@@ -175,7 +194,9 @@ async def start_short_episode_editorial_workflow(
             RankedShortEpisodeEditorialWorkflow.run,
             args=[episode_id, start_stage],
             id=workflow_id,
-            id_reuse_policy=WorkflowIDReusePolicy.REJECT_DUPLICATE,
+            id_reuse_policy=_workflow_reuse_policy(
+                allow_failed_reuse=allow_failed_reuse,
+            ),
             task_queue=settings.temporal_production_task_queue,
         )
     except WorkflowAlreadyStartedError:
@@ -188,6 +209,7 @@ async def start_longform_workflow(
     workflow_id: str,
     *,
     start_stage: str = "select",
+    allow_failed_reuse: bool = False,
 ) -> str:
     settings = get_settings()
     client = await get_temporal_client()
@@ -196,7 +218,9 @@ async def start_longform_workflow(
             LongformCompilationWorkflow.run,
             args=[compilation_id, start_stage],
             id=workflow_id,
-            id_reuse_policy=WorkflowIDReusePolicy.REJECT_DUPLICATE,
+            id_reuse_policy=_workflow_reuse_policy(
+                allow_failed_reuse=allow_failed_reuse,
+            ),
             task_queue=settings.temporal_longform_task_queue,
         )
     except WorkflowAlreadyStartedError:
@@ -239,7 +263,12 @@ async def start_reach_sync_workflow(connection_id: str, workflow_id: str) -> str
     return handle.id
 
 
-async def start_publication_workflow(publication_id: str, workflow_id: str) -> str:
+async def start_publication_workflow(
+    publication_id: str,
+    workflow_id: str,
+    *,
+    allow_failed_reuse: bool = False,
+) -> str:
     settings = get_settings()
     client = await get_temporal_client()
     try:
