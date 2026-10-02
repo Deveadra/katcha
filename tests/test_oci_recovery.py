@@ -3,15 +3,18 @@ from __future__ import annotations
 import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+import subprocess
 
 import pytest
 
 from katcha.ops import oci_recovery
 
 
+ROOT = Path(__file__).resolve().parents[1]
+
+
 def _base_env(monkeypatch, tmp_path: Path) -> None:
-    template = tmp_path / "bootstrap.sh"
-    template.write_text("#!/bin/sh\necho $DEPLOYMENT_ID\n", encoding="utf-8")
+    template = ROOT / "deploy" / "cloud-init" / "oci-recovery-candidate.sh.tmpl"
     values = {
         "KATCHA_EXTERNAL_COMPUTE_ENABLED": "true",
         "KATCHA_RECOVERY_COORDINATOR_URL": "https://recovery.katcha.test",
@@ -251,3 +254,45 @@ def test_stale_incident_is_rejected_before_compute() -> None:
                 active_deployment_id="old",
             ),
         )
+
+
+def test_real_bootstrap_template_renders_without_touching_shell_syntax(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    _base_env(monkeypatch, tmp_path)
+    monkeypatch.setenv(
+        "KATCHA_RECOVERY_CANDIDATE_TOKEN",
+        "candidate-token-with-'quote",
+    )
+    config = oci_recovery.RecoveryConfig.from_env()
+
+    rendered = oci_recovery.render_bootstrap(
+        config,
+        deployment_id="oci-recovery-test",
+        deployment_epoch=9,
+    )
+    try:
+        content = rendered.read_text(encoding="utf-8")
+        assert "__DEPLOYMENT_ID__" not in content
+        assert "oci-recovery-test" in content
+        assert 'printf \'[katcha-recovery] %s\\n\' "$1"' in content
+        subprocess.run(["bash", "-n", str(rendered)], check=True)
+    finally:
+        rendered.unlink(missing_ok=True)
+
+
+def test_free_recovery_does_not_require_paid_shape_or_image(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    _base_env(monkeypatch, tmp_path)
+    monkeypatch.setenv("KATCHA_OCI_PAID_FALLBACK_ENABLED", "false")
+    monkeypatch.delenv("KATCHA_OCI_PAID_FALLBACK_SHAPE", raising=False)
+    monkeypatch.delenv("KATCHA_OCI_PAID_FALLBACK_IMAGE_ID", raising=False)
+
+    config = oci_recovery.RecoveryConfig.from_env()
+
+    assert config.paid_enabled is False
+    assert config.fallback.shape == "disabled"
+    assert config.fallback.image_id == config.primary.image_id
