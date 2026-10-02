@@ -68,6 +68,8 @@ class PublicationPackagingVariant(Base):
     version: Mapped[int] = mapped_column(Integer)
     title: Mapped[str] = mapped_column(String(100))
     description: Mapped[str] = mapped_column(Text, default="")
+    tags: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
+    hashtags: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
     thumbnail_storage_key: Mapped[str | None] = mapped_column(Text, nullable=True)
     thumbnail_content_type: Mapped[str | None] = mapped_column(String(64), nullable=True)
     thumbnail_size_bytes: Mapped[int | None] = mapped_column(BigInteger, nullable=True)

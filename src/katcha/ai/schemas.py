@@ -40,6 +40,9 @@ class PackagingCandidate(BaseModel):
     angle: str = Field(min_length=1, max_length=220)
     title: str = Field(min_length=1, max_length=100)
     description: str = Field(default="", max_length=5000)
+    tags: list[str] = Field(default_factory=list, max_length=50)
+    hashtags: list[str] = Field(default_factory=list, max_length=5)
+    search_intents: list[str] = Field(default_factory=list, max_length=8)
     supporting_facts: list[str] = Field(min_length=1, max_length=8)
     thumbnail: PackagingThumbnailBrief
 

@@ -45,6 +45,8 @@ def record_initial_packaging(publication_id: uuid.UUID) -> uuid.UUID | None:
             version=1,
             title=publication.title,
             description=publication.description or "",
+            tags=list(publication.tags or []),
+            hashtags=None,
             created_by="katcha-publication",
             variant_metadata={"source": "recorded_publication_state", "thumbnail_unverified": True},
         )

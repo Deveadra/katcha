@@ -19,6 +19,7 @@ from katcha.packaging_models import (
     PublicationPackagingVariant,
 )
 from katcha.publishing_models import Publication, YouTubeConnection
+from katcha.services.packaging import description_with_hashtags
 
 
 def _require_automatic_experiment_policy(
@@ -135,13 +136,26 @@ def apply_packaging_text_activity(activation_id: str) -> dict[str, object]:
         raise RuntimeError("packaging activation is not running")
     _require_automatic_experiment_policy(activation)
 
-    if publication.title != variant.title or publication.description != variant.description:
+    target_description = description_with_hashtags(
+        variant.description,
+        variant.hashtags,
+    )
+    target_tags = (
+        list(variant.tags)
+        if variant.tags is not None
+        else list(publication.tags or [])
+    )
+    if (
+        publication.title != variant.title
+        or publication.description != target_description
+        or list(publication.tags or []) != target_tags
+    ):
         client = YouTubeClient(publication.youtube_connection_id)
         client.update_snippet(
             activation.youtube_video_id,
             title=variant.title,
-            description=variant.description,
-            tags=list(publication.tags or []),
+            description=target_description,
+            tags=target_tags,
             category_id=publication.category_id,
         )
 
@@ -151,11 +165,14 @@ def apply_packaging_text_activity(activation_id: str) -> dict[str, object]:
         if stored is None or publication_row is None:
             raise RuntimeError("packaging activation disappeared after snippet update")
         publication_row.title = variant.title
-        publication_row.description = variant.description
+        publication_row.description = target_description
+        publication_row.tags = target_tags
         stored.stage = "text_applied"
         stored.activation_metadata = {
             **dict(stored.activation_metadata or {}),
             "text_applied": True,
+            "tag_count": len(target_tags),
+            "hashtag_count": len(variant.hashtags or []),
         }
         session.add(
             DomainEvent(
@@ -265,6 +282,8 @@ def finalize_packaging_activation_activity(activation_id: str) -> dict[str, obje
             "variant_key": variant.variant_key,
             "version": variant.version,
             "title": variant.title,
+            "tags": list(variant.tags or []),
+            "hashtags": list(variant.hashtags or []),
             "thumbnail_storage_key": variant.thumbnail_storage_key,
             "thumbnail_sha256": variant.thumbnail_sha256,
             "activated_at": now.isoformat(),

@@ -278,3 +278,53 @@ def test_intelligence_batch_rejects_duplicate_record_identity(intelligence_scope
             source_type="assistant",
             records=[_competitor_record(), _competitor_record()],
         )
+
+def test_intelligence_record_materializes_as_channel_scoped_discovery_candidate(
+    intelligence_scope,
+) -> None:
+    from katcha.api.acquisition import (
+        MaterializeIntelligenceCandidateRequest,
+        materialize_intelligence_candidate,
+    )
+
+    channel_id = _create_channel(
+        intelligence_scope,
+        suffix="forescene",
+        title="FORESCENE",
+    )
+    result = ingest_intelligence_batch(
+        channel_profile_id=channel_id,
+        batch_key="visionquest-trailer-handoff",
+        producer="orion",
+        source_type="assistant",
+        records=[
+            {
+                "record_kind": "video",
+                "record_key": "youtube:video:visionquest-final",
+                "title": "Marvel Television's VisionQuest | Official Trailer",
+                "summary": "Official Marvel trailer for urgent FORSCENE publication.",
+                "source_url": "https://www.youtube.com/watch?v=visionquest-final",
+                "platform": "youtube",
+                "tags": ["visionquest", "official_trailer"],
+                "payload": {"creator": "Marvel Entertainment"},
+                "provenance": {"confidence": 0.99, "collector": "orion"},
+                "observed_at": "2026-10-02T04:00:00Z",
+            }
+        ],
+    )
+    record = result.records[0]
+
+    candidate = materialize_intelligence_candidate(
+        channel_id,
+        record.id,
+        MaterializeIntelligenceCandidateRequest(),
+    )
+
+    assert candidate.source_url == record.source_url
+    assert candidate.external_id == record.record_key
+    assert candidate.creator == "Marvel Entertainment"
+    assert candidate.candidate_metadata["channel_profile_id"] == str(channel_id)
+    assert candidate.candidate_metadata["intelligence_record_id"] == str(record.id)
+    assert candidate.candidate_metadata["intelligence_summary"] == record.summary
+    assert float(candidate.provenance_confidence) == pytest.approx(0.99)
+

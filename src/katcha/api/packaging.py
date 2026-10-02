@@ -7,6 +7,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel, ConfigDict, Field
 
+from katcha.api.schemas import PublicationResponse
 from katcha.orchestration.client import start_packaging_activation_workflow
 from katcha.packaging_models import (
     PackagingCandidateGeneration,
@@ -15,6 +16,7 @@ from katcha.packaging_models import (
     PublicationPackagingVariant,
 )
 from katcha.services.packaging import (
+    apply_preupload_packaging_variant,
     create_packaging_variant,
     list_packaging_activations,
     list_packaging_variants,
@@ -43,6 +45,8 @@ class CreatePackagingVariantRequest(BaseModel):
     version: int = Field(ge=1)
     title: str = Field(min_length=1, max_length=100)
     description: str = ""
+    tags: list[str] | None = Field(default=None, max_length=50)
+    hashtags: list[str] | None = Field(default=None, max_length=5)
     thumbnail_storage_key: str | None = None
     created_by: str = Field(default="operator", min_length=1, max_length=128)
     metadata: dict[str, Any] = Field(default_factory=dict)
@@ -57,6 +61,8 @@ class PackagingVariantResponse(BaseModel):
     version: int
     title: str
     description: str
+    tags: list[str] | None
+    hashtags: list[str] | None
     thumbnail_storage_key: str | None
     thumbnail_content_type: str | None
     thumbnail_size_bytes: int | None
@@ -240,9 +246,35 @@ def create_variant(
             version=request.version,
             title=request.title,
             description=request.description,
+            tags=request.tags,
+            hashtags=request.hashtags,
             thumbnail_storage_key=request.thumbnail_storage_key,
             created_by=request.created_by,
             metadata=request.metadata,
+        )
+    except ValueError as exc:
+        code = 404 if "publication not found" in str(exc) else 409
+        raise HTTPException(status_code=code, detail=str(exc)) from exc
+
+
+class ApplyPreuploadPackagingRequest(BaseModel):
+    variant_id: uuid.UUID
+    actor: str = Field(default="operator", min_length=1, max_length=128)
+
+
+@router.post(
+    "/{publication_id}/packaging/preupload",
+    response_model=PublicationResponse,
+)
+def apply_preupload_variant(
+    publication_id: uuid.UUID,
+    request: ApplyPreuploadPackagingRequest,
+):
+    try:
+        return apply_preupload_packaging_variant(
+            publication_id,
+            variant_id=request.variant_id,
+            actor=request.actor,
         )
     except ValueError as exc:
         code = 404 if "publication not found" in str(exc) else 409
