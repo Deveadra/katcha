@@ -4,10 +4,15 @@ import asyncio
 import concurrent.futures
 import logging
 
+from sqlalchemy import select
 from temporalio.client import Client
+from temporalio.common import WorkflowIDReusePolicy
+from temporalio.exceptions import WorkflowAlreadyStartedError
 from temporalio.worker import Worker
 
 from katcha.config import get_settings
+from katcha.db import session_scope
+from katcha.publishing_models import Publication
 from katcha.orchestration.packaging_activities import (
     apply_packaging_text_activity,
     apply_packaging_thumbnail_activity,
@@ -40,6 +45,40 @@ from katcha.orchestration.reach_activities import (
 from katcha.orchestration.reach_workflows import YouTubeReachSyncWorkflow
 
 
+async def _resume_persisted_publications(client: Client, settings) -> tuple[int, int]:
+    with session_scope() as session:
+        rows = list(
+            session.scalars(
+                select(Publication).where(
+                    Publication.status.in_(
+                        ["queued", "uploading", "uploaded", "processing"]
+                    )
+                )
+            )
+        )
+
+    resumed = 0
+    present = 0
+    for row in rows:
+        try:
+            await client.start_workflow(
+                YouTubePublicationWorkflow.run,
+                args=[
+                    str(row.id),
+                    settings.youtube_processing_poll_seconds,
+                    settings.youtube_processing_max_polls,
+                    settings.analytics_offsets_hours(),
+                ],
+                id=row.workflow_id,
+                id_reuse_policy=WorkflowIDReusePolicy.REJECT_DUPLICATE,
+                task_queue=settings.temporal_publishing_task_queue,
+            )
+            resumed += 1
+        except WorkflowAlreadyStartedError:
+            present += 1
+    return resumed, present
+
+
 async def main() -> None:
     settings = get_settings()
     logging.basicConfig(
@@ -49,6 +88,12 @@ async def main() -> None:
     client = await Client.connect(
         settings.temporal_host,
         namespace=settings.temporal_namespace,
+    )
+    resumed, present = await _resume_persisted_publications(client, settings)
+    logging.getLogger(__name__).info(
+        "publication recovery reconciled work resumed=%s temporal_present=%s",
+        resumed,
+        present,
     )
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=4) as activity_executor:
