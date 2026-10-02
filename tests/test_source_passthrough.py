@@ -16,7 +16,7 @@ from katcha import db
 from katcha.api.main import app
 from katcha.intelligence_models import ChannelProfile
 from katcha.models import Clip, SourceItem
-from katcha.production_models import ProductionAsset
+from katcha.production_models import Production, ProductionAsset
 from katcha.publishing_models import Publication, YouTubeConnection
 from katcha.services import productions
 
@@ -179,7 +179,7 @@ def test_post_ingest_activity_creates_visible_held_publication(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from katcha.orchestration.activities import prepare_authorized_passthrough_activity
-    from katcha.services import packaging_generation
+    from katcha.services import trailer_passthrough
 
     profile_id, clip_id = _seed_forescene(passthrough_scope)
     with passthrough_scope() as session:
@@ -199,7 +199,7 @@ def test_post_ingest_activity_creates_visible_held_publication(
         )
 
     monkeypatch.setattr(
-        packaging_generation,
+        trailer_passthrough,
         "generate_packaging_candidates",
         fake_generate,
     )
@@ -219,10 +219,7 @@ def test_post_ingest_activity_creates_visible_held_publication(
         assert publication.privacy_status == "public"
         assert publication.publish_at is None
         assert publication.title == "VisionQuest Final Trailer"
-        production = session.get(
-            __import__("katcha.production_models", fromlist=["Production"]).Production,
-            publication.production_id,
-        )
+        production = session.get(Production, publication.production_id)
         assert production is not None
         assert production.channel_profile_id == profile_id
         assert production.kind == "source_passthrough"
