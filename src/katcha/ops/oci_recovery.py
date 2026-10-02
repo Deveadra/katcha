@@ -24,8 +24,10 @@ class CapacityUnavailable(RecoveryError):
 
 
 def _env(name: str, *, default: str | None = None) -> str:
-    value = os.environ.get(name, default)
+    value = os.environ.get(name)
     if value is None or not str(value).strip():
+        if default is not None and str(default).strip():
+            return str(default).strip()
         raise RecoveryError(f"missing required recovery setting: {name}")
     return str(value).strip()
 
