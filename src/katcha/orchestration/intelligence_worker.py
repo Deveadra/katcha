@@ -80,7 +80,7 @@ async def _resume_persisted_discovery_work(client: Client) -> tuple[int, int]:
                 DiscoveryRunWorkflow.run,
                 str(run.id),
                 id=workflow_id,
-                id_reuse_policy=WorkflowIDReusePolicy.REJECT_DUPLICATE,
+                id_reuse_policy=WorkflowIDReusePolicy.ALLOW_DUPLICATE_FAILED_ONLY,
                 task_queue=DISCOVERY_TASK_QUEUE,
             )
             resumed += 1
