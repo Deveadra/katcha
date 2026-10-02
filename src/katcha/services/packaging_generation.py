@@ -12,6 +12,7 @@ from typing import Any
 from pydantic import ValidationError
 from sqlalchemy import select
 
+from katcha.acquisition_models import IntelligenceRecord
 from katcha.ai.fixtures import fixture_packaging_candidates
 from katcha.ai.pricing import estimate_token_cost
 from katcha.ai.router import (
@@ -23,7 +24,6 @@ from katcha.ai.router import (
 )
 from katcha.ai.schemas import PackagingCandidate, PackagingCandidateSet
 from katcha.ai.subscription import generate_subscription_json, subscription_connected
-from katcha.acquisition_models import IntelligenceRecord
 from katcha.config import Settings, get_settings
 from katcha.db import session_scope
 from katcha.domain import AITask
