@@ -12,8 +12,10 @@ from sqlalchemy import and_, func, or_, select
 from katcha.api.control_auth import control_allowed_channel_ids, require_control_channel
 from katcha.db import session_scope
 from katcha.intelligence_models import ChannelProfile
+from katcha.longform_models import Compilation, CompilationAsset
 from katcha.models import DomainEvent
 from katcha.orchestration.client import (
+    start_longform_workflow,
     start_production_workflow,
     start_publication_workflow,
     start_short_episode_editorial_workflow,
@@ -21,6 +23,7 @@ from katcha.orchestration.client import (
 from katcha.production_models import Production, ProductionAsset
 from katcha.publishing_models import Publication, PublicationAnalyticsSnapshot
 from katcha.render_models import RenderAttempt
+from katcha.services.compilations import register_compilation_regeneration
 from katcha.services.productions import register_regeneration
 from katcha.services.publications import retry_publication
 from katcha.services.short_episode_reviews import register_short_episode_regeneration
@@ -66,7 +69,7 @@ class OperationsChannelSummary(BaseModel):
 
 
 class OperationsWorkItem(BaseModel):
-    kind: Literal["short_episode", "production", "publication"]
+    kind: Literal["short_episode", "production", "compilation", "publication"]
     id: uuid.UUID
     channel_profile_id: uuid.UUID
     title: str
@@ -86,7 +89,7 @@ class RecoverWorkRequest(BaseModel):
 
 
 class RecoverWorkResponse(BaseModel):
-    kind: Literal["short_episode", "production", "publication"]
+    kind: Literal["short_episode", "production", "compilation", "publication"]
     source_id: uuid.UUID
     action: Literal["resumed", "restarted"]
     workflow_id: str
@@ -191,6 +194,19 @@ def _production_resume_stage(row: Production) -> str | None:
     return None
 
 
+def _compilation_resume_stage(row: Compilation) -> str | None:
+    status = str(row.status or "").lower()
+    if status in {"queued", "selecting"}:
+        return "select"
+    if status in {"planning", "critiquing"}:
+        return "plan"
+    if status in {"scripted", "voicing"}:
+        return "voice"
+    if status in {"voiced", "rendering"}:
+        return "render"
+    return None
+
+
 def _short_episode_resume_stage(row: ShortEpisode) -> str | None:
     status = str(row.status or "").lower()
     stage = str(row.stage or "").lower()
@@ -215,7 +231,7 @@ def _work_recovery(
     status: str,
     stage: str,
     state: WorkState,
-    row: Production | ShortEpisode | Publication,
+    row: Production | ShortEpisode | Compilation | Publication,
     render_dead_letter: bool = False,
 ) -> tuple[str | None, str | None]:
     del state  # Recovery is determined by durable execution state, not display severity.
@@ -235,6 +251,8 @@ def _work_recovery(
         return ("resume", "Resume") if _production_resume_stage(row) else (None, None)
     if kind == "short_episode" and isinstance(row, ShortEpisode):
         return ("resume", "Resume") if _short_episode_resume_stage(row) else (None, None)
+    if kind == "compilation" and isinstance(row, Compilation):
+        return ("resume", "Resume") if _compilation_resume_stage(row) else (None, None)
     return None, None
 
 
@@ -268,6 +286,24 @@ def _short_episode_restart_stage(episode_id: uuid.UUID) -> str:
             .where(
                 ShortEpisodeAsset.short_episode_id == episode_id,
                 ShortEpisodeAsset.kind.like("narration_%"),
+            )
+            .limit(1)
+        )
+        return "render" if narration is not None else "voice"
+
+
+def _compilation_restart_stage(compilation_id: uuid.UUID) -> str:
+    with session_scope() as session:
+        row = session.get(Compilation, compilation_id)
+        if row is None:
+            raise ValueError("compilation not found")
+        if not row.final_plan:
+            return "plan"
+        narration = session.scalar(
+            select(CompilationAsset.id)
+            .where(
+                CompilationAsset.compilation_id == compilation_id,
+                CompilationAsset.kind.like("narration_%"),
             )
             .limit(1)
         )
