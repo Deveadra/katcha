@@ -401,13 +401,12 @@ async function recoverWork(event) {
                 body: { actor: "operations-ui" },
             },
         );
-        setStatus(
+        const successMessage =
             result.action === "restarted"
                 ? "Restart created a new attempt; previous failure history was preserved."
-                : "Resume request accepted. Existing workflow history will continue from its durable state.",
-            "success",
-        );
+                : "Resume request accepted. Existing workflow history will continue from its durable state.";
         await loadOverview($("channel-filter").value, { preserveStatus: true });
+        setStatus(successMessage, "success");
     } catch (error) {
         setStatus(error.message, "error");
         button.disabled = false;
