@@ -10,11 +10,66 @@ import subprocess
 import urllib.request
 from pathlib import Path
 
+# Aggregate evidence only: never export SQL text, connection addresses or users.
+# The transaction is read-only and bounded independently of Docker's timeout.
+POSTGRES_SNAPSHOT_SQL = """
+BEGIN READ ONLY;
+SET LOCAL statement_timeout = '3s';
+SELECT json_build_object(
+    'max_connections', current_setting('max_connections')::int,
+    'connections', (SELECT count(*) FROM pg_stat_activity),
+    'active_connections', (SELECT count(*) FROM pg_stat_activity
+        WHERE state = 'active' AND pid <> pg_backend_pid()),
+    'idle_in_transaction', (SELECT count(*) FROM pg_stat_activity
+        WHERE state LIKE 'idle in transaction%'),
+    'lock_waiters', (SELECT count(*) FROM pg_stat_activity WHERE wait_event_type = 'Lock'),
+    'blocked_connections', (SELECT count(*) FROM pg_stat_activity
+        WHERE cardinality(pg_blocking_pids(pid)) > 0)
+);
+ROLLBACK;
+"""
+
 
 def docker(*args: str) -> str:
     return subprocess.run(
         ["docker", *args], check=True, capture_output=True, text=True, timeout=10
     ).stdout
+
+
+def postgres_snapshot(containers: list[dict]) -> dict:
+    postgres = next(
+        (
+            row
+            for row in containers
+            if row.get("Config", {}).get("Labels", {}).get("com.docker.compose.service")
+            == "postgres"
+        ),
+        None,
+    )
+    if postgres is None or postgres.get("State", {}).get("Status") != "running":
+        return {"available": False, "hint": "PostgreSQL container is not running."}
+    try:
+        output = docker(
+            "exec",
+            postgres["Id"],
+            "psql",
+            "-X",
+            "-qAt",
+            "-v",
+            "ON_ERROR_STOP=1",
+            "-U",
+            "katcha",
+            "-d",
+            "katcha",
+            "-c",
+            POSTGRES_SNAPSHOT_SQL,
+        )
+        return {"available": True, **json.loads(output)}
+    except Exception:
+        return {
+            "available": False,
+            "hint": "PostgreSQL read-only probe failed or timed out; inspect database health.",
+        }
 
 
 def collect() -> dict:
@@ -73,6 +128,7 @@ def collect() -> dict:
             if ids
             else []
         )
+        snapshot["postgres"] = postgres_snapshot(containers)
     except Exception:
         snapshot["docker"] = {
             "available": False,
