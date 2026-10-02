@@ -13,6 +13,9 @@ from katcha.orchestration.discovery_activities import execute_discovery_page_act
 from katcha.services.ingestion_sources import (
     create_discovery_run_from_source,
     create_source_import_run,
+    list_resumable_source_runs,
+    list_source_finds,
+    restart_source_run,
     upsert_ingestion_source,
 )
 
@@ -667,4 +670,233 @@ def test_specific_discovery_failure_message_prefers_provider_cause() -> None:
 
     assert _specific_failure_message(workflow).startswith(
         "YouTube discovery is not configured."
+    )
+
+
+
+def test_source_find_library_returns_all_unique_finds_with_search_and_pagination(
+    source_scope,
+) -> None:
+    import uuid
+    from datetime import UTC, datetime, timedelta
+
+    from katcha.acquisition_models import DiscoveryObservation, DiscoveryRun
+
+    source = upsert_ingestion_source(
+        source_key="all-finds",
+        name="All Finds",
+        adapter_key="manifest",
+        adapter_version="v1",
+        platform="web",
+    )
+    first_run = create_discovery_run_from_source(
+        source.id,
+        idempotency_key="all-finds-first",
+    )
+    second_run = create_discovery_run_from_source(
+        source.id,
+        idempotency_key="all-finds-second",
+    )
+    base = datetime.now(UTC)
+    with source_scope() as session:
+        for index in range(30):
+            candidate = DiscoveryCandidate(
+                id=uuid.uuid4(),
+                discovery_run_id=first_run.id,
+                adapter_key="manifest",
+                external_id=f"find-{index}",
+                source_url=f"https://example.com/find/{index}",
+                canonical_url=f"https://example.com/find/{index}",
+                platform="web",
+                status="discovered",
+                title=(
+                    "VisionQuest Official Trailer"
+                    if index == 29
+                    else f"Find {index:02d}"
+                ),
+                creator="Marvel Entertainment",
+                provenance_confidence=0.9,
+                provenance_claims={},
+                candidate_metadata={},
+            )
+            session.add(candidate)
+            session.flush()
+            session.add(
+                DiscoveryObservation(
+                    discovery_run_id=first_run.id,
+                    discovery_candidate_id=candidate.id,
+                    observed_at=base - timedelta(minutes=index + 1),
+                )
+            )
+            if index == 0:
+                session.add(
+                    DiscoveryObservation(
+                        discovery_run_id=second_run.id,
+                        discovery_candidate_id=candidate.id,
+                        observed_at=base,
+                    )
+                )
+
+    first_page = list_source_finds(source.id, limit=25, offset=0)
+    assert first_page.total == 30
+    assert len(first_page.items) == 25
+    assert first_page.items[0].candidate.title == "Find 00"
+
+    second_page = list_source_finds(source.id, limit=25, offset=25)
+    assert second_page.total == 30
+    assert len(second_page.items) == 5
+
+    searched = list_source_finds(source.id, query="visionquest", limit=25)
+    assert searched.total == 1
+    assert searched.items[0].candidate.title == "VisionQuest Official Trailer"
+
+
+def test_failed_source_run_restart_preserves_history_and_is_idempotent(
+    source_scope,
+) -> None:
+    from katcha.acquisition_models import DiscoveryRun
+
+    source = upsert_ingestion_source(
+        source_key="restart-source",
+        name="Restart Source",
+        adapter_key="manifest",
+        adapter_version="v1",
+        platform="web",
+        query_template={"items": []},
+    )
+    failed = create_discovery_run_from_source(
+        source.id,
+        idempotency_key="failed-attempt",
+    )
+    with source_scope() as session:
+        row = session.get(DiscoveryRun, failed.id)
+        assert row is not None
+        row.status = "failed"
+        row.error = "provider unavailable"
+
+    restarted = restart_source_run(
+        failed.id,
+        idempotency_key="restart-attempt",
+    )
+    replay = restart_source_run(
+        failed.id,
+        idempotency_key="restart-attempt",
+    )
+
+    assert restarted.id != failed.id
+    assert replay.id == restarted.id
+    assert restarted.status == "queued"
+    assert restarted.query == failed.query
+    assert restarted.run_metadata["restarted_from_run_id"] == str(failed.id)
+    assert restarted.run_metadata["recovery_mode"] == "manual_restart"
+
+    with source_scope() as session:
+        original = session.get(DiscoveryRun, failed.id)
+        assert original is not None
+        assert original.status == "failed"
+        assert original.error == "provider unavailable"
+
+
+def test_only_enabled_source_runs_are_resumable(source_scope) -> None:
+    from katcha.acquisition_models import DiscoveryRun
+
+    active = upsert_ingestion_source(
+        source_key="resume-active",
+        name="Resume Active",
+        adapter_key="manifest",
+        adapter_version="v1",
+        platform="web",
+    )
+    paused = upsert_ingestion_source(
+        source_key="resume-paused",
+        name="Resume Paused",
+        adapter_key="manifest",
+        adapter_version="v1",
+        platform="web",
+        enabled=False,
+    )
+    queued = create_discovery_run_from_source(active.id, idempotency_key="queued-run")
+    running = create_discovery_run_from_source(active.id, idempotency_key="running-run")
+
+    # Temporarily enable the paused source to create a historical run, then pause it.
+    paused_enabled = upsert_ingestion_source(
+        source_key=paused.source_key,
+        name=paused.name,
+        adapter_key=paused.adapter_key,
+        adapter_version=paused.adapter_version,
+        platform=paused.platform,
+        enabled=True,
+    )
+    paused_run = create_discovery_run_from_source(
+        paused_enabled.id,
+        idempotency_key="paused-run",
+    )
+    upsert_ingestion_source(
+        source_key=paused.source_key,
+        name=paused.name,
+        adapter_key=paused.adapter_key,
+        adapter_version=paused.adapter_version,
+        platform=paused.platform,
+        enabled=False,
+    )
+
+    with source_scope() as session:
+        session.get(DiscoveryRun, running.id).status = "running"
+
+    rows = list_resumable_source_runs()
+    ids = {row.id for row in rows}
+    assert queued.id in ids
+    assert running.id in ids
+    assert paused_run.id not in ids
+
+
+@pytest.mark.asyncio
+async def test_discovery_worker_reconciles_orphaned_runs_without_duplicate_replay(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import uuid
+    from types import SimpleNamespace
+
+    from katcha.orchestration import discovery_worker
+
+    class AlreadyStarted(Exception):
+        pass
+
+    run_one = SimpleNamespace(id=uuid.uuid4())
+    run_two = SimpleNamespace(id=uuid.uuid4())
+    monkeypatch.setattr(
+        discovery_worker,
+        "list_resumable_source_runs",
+        lambda: [run_one, run_two],
+    )
+    monkeypatch.setattr(
+        discovery_worker,
+        "WorkflowAlreadyStartedError",
+        AlreadyStarted,
+    )
+
+    class FakeClient:
+        def __init__(self):
+            self.calls = []
+
+        async def start_workflow(self, workflow, run_id, **kwargs):
+            self.calls.append((workflow, run_id, kwargs))
+            if run_id == str(run_two.id):
+                raise AlreadyStarted()
+            return SimpleNamespace(id=kwargs["id"])
+
+    client = FakeClient()
+    resumed, already_present = await discovery_worker._resume_incomplete_source_runs(
+        client
+    )
+
+    assert resumed == 1
+    assert already_present == 1
+    assert [call[1] for call in client.calls] == [
+        str(run_one.id),
+        str(run_two.id),
+    ]
+    assert all(
+        call[2]["id"].startswith("discovery-run-")
+        for call in client.calls
     )
