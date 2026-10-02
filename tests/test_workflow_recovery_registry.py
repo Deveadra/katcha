@@ -58,7 +58,7 @@ def test_persisted_user_work_is_reconciled() -> None:
         )
 
 
-def test_continuous_schedules_are_never_silently_classified_as_request_scoped() -> None:
+def test_continuous_schedules_are_reconstructed_from_persisted_config() -> None:
     for workflow in (
         "TopicWatchScheduleWorkflow",
         "ChannelIntelligenceScheduleWorkflow",
@@ -66,5 +66,5 @@ def test_continuous_schedules_are_never_silently_classified_as_request_scoped() 
     ):
         assert (
             WORKFLOW_RECOVERY_CONTRACTS[workflow].mode
-            == RecoveryMode.TEMPORAL_SCHEDULE
+            == RecoveryMode.PERSISTED_RECONCILE
         )

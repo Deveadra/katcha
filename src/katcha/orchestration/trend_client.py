@@ -3,7 +3,7 @@ from __future__ import annotations
 from temporalio.exceptions import WorkflowAlreadyStartedError
 
 from katcha.acquisition.runtime import DISCOVERY_TASK_QUEUE
-from katcha.orchestration.client import get_temporal_client
+from katcha.orchestration.client import get_temporal_client, terminate_workflow_if_running
 from katcha.orchestration.discovery_workflows import (
     TopicWatchScheduleWorkflow,
     TopicWatchWorkflow,
@@ -36,8 +36,14 @@ async def start_topic_watch_schedule(
     *,
     interval_minutes: int,
     top_n: int,
+    supersedes_workflow_id: str | None = None,
 ) -> str:
     client = await get_temporal_client()
+    await terminate_workflow_if_running(
+        client,
+        supersedes_workflow_id,
+        reason=f"superseded by durable schedule {workflow_id}",
+    )
     try:
         handle = await client.start_workflow(
             TopicWatchScheduleWorkflow.run,

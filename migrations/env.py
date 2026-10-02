@@ -4,6 +4,7 @@ from alembic import context
 from sqlalchemy import engine_from_config, pool, text
 
 from katcha import acquisition_models  # noqa: F401
+from katcha import automation_schedule_models  # noqa: F401
 from katcha import brand_models  # noqa: F401
 from katcha import brand_preview_models  # noqa: F401
 from katcha import chatgpt_models  # noqa: F401

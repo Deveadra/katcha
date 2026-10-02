@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 
-from temporalio.client import Client
+from temporalio.client import Client, RPCError, RPCStatusCode, WorkflowExecutionStatus
 from temporalio.common import WorkflowIDReusePolicy
 from temporalio.exceptions import WorkflowAlreadyStartedError
 
@@ -65,6 +65,27 @@ async def get_temporal_client() -> Client:
                 namespace=settings.temporal_namespace,
             )
     return _client
+
+
+async def terminate_workflow_if_running(
+    client: Client,
+    workflow_id: str | None,
+    *,
+    reason: str,
+) -> bool:
+    if not workflow_id:
+        return False
+    handle = client.get_workflow_handle(workflow_id)
+    try:
+        description = await handle.describe()
+    except RPCError as exc:
+        if exc.status == RPCStatusCode.NOT_FOUND:
+            return False
+        raise
+    if description.status != WorkflowExecutionStatus.RUNNING:
+        return False
+    await handle.terminate(reason=reason)
+    return True
 
 
 async def start_ingest_workflow(source_id: str, workflow_id: str) -> str:
@@ -333,8 +354,14 @@ async def start_channel_intelligence_schedule(
     workflow_id: str,
     *,
     interval_hours: int = DEFAULT_REFRESH_INTERVAL_HOURS,
+    supersedes_workflow_id: str | None = None,
 ) -> str:
     client = await get_temporal_client()
+    await terminate_workflow_if_running(
+        client,
+        supersedes_workflow_id,
+        reason=f"superseded by durable schedule {workflow_id}",
+    )
     try:
         handle = await client.start_workflow(
             ChannelIntelligenceScheduleWorkflow.run,
@@ -408,8 +435,14 @@ async def start_channel_trend_activation_schedule(
     workflow_id: str,
     *,
     interval_hours: int = 1,
+    supersedes_workflow_id: str | None = None,
 ) -> str:
     client = await get_temporal_client()
+    await terminate_workflow_if_running(
+        client,
+        supersedes_workflow_id,
+        reason=f"superseded by durable schedule {workflow_id}",
+    )
     try:
         handle = await client.start_workflow(
             ChannelTrendActivationScheduleWorkflow.run,
