@@ -7,6 +7,7 @@ import pytest
 
 from katcha.orchestration import (
     analysis_worker,
+    client as orchestration_client,
     intelligence_worker,
     longform_worker,
     production_worker,
@@ -45,6 +46,17 @@ class _FakeClient:
 
 class _AlreadyStarted(Exception):
     pass
+
+
+def test_manual_resume_policy_allows_only_failed_temporal_execution() -> None:
+    assert (
+        orchestration_client._workflow_reuse_policy(allow_failed_reuse=False)
+        == orchestration_client.WorkflowIDReusePolicy.REJECT_DUPLICATE
+    )
+    assert (
+        orchestration_client._workflow_reuse_policy(allow_failed_reuse=True)
+        == orchestration_client.WorkflowIDReusePolicy.ALLOW_DUPLICATE_FAILED_ONLY
+    )
 
 
 @pytest.mark.asyncio
