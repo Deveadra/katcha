@@ -765,8 +765,17 @@ async function followGoal(receipt, { background = false } = {}) {
         if (!progress) {
             progress = document.createElement("article");
             progress.id = "goal-progress-" + goal.goal_id;
-            progress.className = "message katcha-message";
-            progress.innerHTML = '<div class="message-body"><p role="status"></p><button type="button">Stop planning</button></div>';
+            progress.className = "message katcha-message goal-progress-message";
+            progress.innerHTML =
+                '<div class="message-avatar" aria-hidden="true">K</div>' +
+                '<div class="message-body goal-progress-body">' +
+                '<span class="message-author">Katcha AI · working</span>' +
+                '<div class="goal-progress-line">' +
+                '<span class="goal-progress-indicator" aria-hidden="true"></span>' +
+                '<p role="status"></p>' +
+                '</div>' +
+                '<button class="goal-stop-button" type="button">Stop work</button>' +
+                '</div>';
             $("thread").append(progress);
             progress.querySelector("button").onclick = async () => {
                 try { await api("/v1/ai/goals/" + goal.goal_id + "/cancel", {method: "POST"}); }
