@@ -7,11 +7,13 @@ import pytest
 
 from katcha.orchestration import (
     analysis_worker,
-    client as orchestration_client,
     intelligence_worker,
     longform_worker,
     production_worker,
     worker,
+)
+from katcha.orchestration import (
+    client as orchestration_client,
 )
 
 

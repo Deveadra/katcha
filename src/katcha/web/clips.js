@@ -307,6 +307,8 @@ function renderDetail(clip, features, sources) {
             <span class="clip-chip ${escapeHTML(clip.lifecycle_state)}">${escapeHTML(clip.lifecycle_state.toUpperCase())}</span>
         </div>
 
+        ${analysisFailed ? `<div class="empty error analysis-failure"><strong>Latest analysis failed</strong><br>${escapeHTML(clip.analysis_error || "No failure detail was recorded.")}</div>` : ""}
+
         <div id="clip-preview" class="clip-preview">
             <div class="empty">${clip.lifecycle_state === "purged" ? "This clip’s source media was purged. Metadata and analysis remain below." : "Video is loaded only when requested so browsing stays fast."}</div>
         </div>
@@ -361,8 +363,6 @@ function renderDetail(clip, features, sources) {
 
             <section class="detail-block wide" data-clip-detail-view="analysis">
                 <h3>AI & SCORE</h3>
-                ${analysisFailed ? `<div class="empty error"><strong>Latest analysis failed</strong><br>${escapeHTML(clip.analysis_error || "No failure detail was recorded.")}</div>` : ""}
-
                 ${features ? `
                     <p class="ai-summary">${escapeHTML(ai?.event_summary || "Local analysis exists; no AI event summary is stored.")}</p>
                     <div class="ai-tags">

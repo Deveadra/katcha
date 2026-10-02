@@ -336,6 +336,7 @@ def _event_channel_id(
     *,
     production_channels: dict[uuid.UUID, uuid.UUID],
     episode_channels: dict[uuid.UUID, uuid.UUID],
+    compilation_channels: dict[uuid.UUID, uuid.UUID],
     publication_channels: dict[uuid.UUID, uuid.UUID],
 ) -> uuid.UUID | None:
     payload = dict(event.payload or {})
@@ -358,6 +359,8 @@ def _event_channel_id(
         return production_channels.get(aggregate_id)
     if event.aggregate_type == "short_episode":
         return episode_channels.get(aggregate_id)
+    if event.aggregate_type == "compilation":
+        return compilation_channels.get(aggregate_id)
     if event.aggregate_type == "publication":
         return publication_channels.get(aggregate_id)
     return None
@@ -369,7 +372,7 @@ def _event_href(
 ) -> str | None:
     if channel_profile_id is None:
         return None
-    if event.aggregate_type in {"production", "short_episode", "render_attempt"}:
+    if event.aggregate_type in {"production", "short_episode", "compilation", "render_attempt"}:
         return _item_href(channel_profile_id)
     if event.aggregate_type == "publication":
         return _publication_href(channel_profile_id)
@@ -383,7 +386,7 @@ def _event_href(
     response_model=RecoverWorkResponse,
 )
 async def recover_work_item(
-    kind: Literal["short_episode", "production", "publication"],
+    kind: Literal["short_episode", "production", "compilation", "publication"],
     source_id: uuid.UUID,
     http_request: Request,
     request: RecoverWorkRequest,
@@ -500,6 +503,59 @@ async def recover_work_item(
             )
         workflow_id = _episode_workflow_id(base_workflow_id, resume_stage)
         await start_short_episode_editorial_workflow(
+            str(source_id),
+            workflow_id,
+            start_stage=resume_stage,
+            allow_failed_reuse=True,
+        )
+        return RecoverWorkResponse(
+            kind=kind,
+            source_id=source_id,
+            action="resumed",
+            workflow_id=workflow_id,
+        )
+
+    if kind == "compilation":
+        with session_scope() as session:
+            row = session.get(Compilation, source_id)
+            if row is None or row.channel_profile_id is None:
+                raise HTTPException(status_code=404, detail="compilation not found")
+            require_control_channel(http_request, row.channel_profile_id)
+            status_value = str(row.status or "").lower()
+            workflow_id = row.workflow_id
+            resume_stage = _compilation_resume_stage(row)
+
+        if status_value == "failed":
+            try:
+                stage = _compilation_restart_stage(source_id)
+                child = register_compilation_regeneration(
+                    source_id,
+                    stage=stage,
+                    note="Restarted from Operations after interrupted or failed work",
+                    actor=request.actor,
+                )
+            except ValueError as exc:
+                raise HTTPException(status_code=409, detail=str(exc)) from exc
+            child_stage = str(child.regenerate_from or stage)
+            await start_longform_workflow(
+                str(child.id),
+                child.workflow_id,
+                start_stage=child_stage,
+            )
+            return RecoverWorkResponse(
+                kind=kind,
+                source_id=source_id,
+                action="restarted",
+                workflow_id=child.workflow_id,
+                replacement_id=child.id,
+            )
+
+        if resume_stage is None:
+            raise HTTPException(
+                status_code=409,
+                detail="compilation is not in a resumable execution stage",
+            )
+        await start_longform_workflow(
             str(source_id),
             workflow_id,
             start_stage=resume_stage,
@@ -638,6 +694,16 @@ def operations_overview(
                 .order_by(Production.updated_at.desc())
             )
         )
+        compilations = list(
+            session.scalars(
+                select(Compilation)
+                .where(
+                    Compilation.channel_profile_id.in_(channel_ids),
+                    ~Compilation.status.in_(_DONE_WORK_STATUSES),
+                )
+                .order_by(Compilation.updated_at.desc())
+            )
+        )
         attempts = list(
             session.scalars(
                 select(RenderAttempt)
@@ -652,6 +718,11 @@ def operations_overview(
         production_channels = {
             row.id: row.channel_profile_id
             for row in productions
+            if row.channel_profile_id is not None
+        }
+        compilation_channels = {
+            row.id: row.channel_profile_id
+            for row in compilations
             if row.channel_profile_id is not None
         }
 
@@ -732,6 +803,40 @@ def operations_overview(
                     stage=row.stage,
                     state=state,
                     message=message,
+                    updated_at=row.updated_at,
+                    href=_item_href(row.channel_profile_id),
+                    recovery_action=recovery_action,
+                    recovery_label=recovery_label,
+                )
+            )
+
+        for row in compilations:
+            if row.channel_profile_id is None:
+                continue
+            state = _work_state(
+                status=row.status,
+                error=row.error,
+                render_status=None,
+            )
+            if state is None:
+                continue
+            recovery_action, recovery_label = _work_recovery(
+                kind="compilation",
+                status=row.status,
+                stage=row.stage,
+                state=state,
+                row=row,
+            )
+            work_items.append(
+                OperationsWorkItem(
+                    kind="compilation",
+                    id=row.id,
+                    channel_profile_id=row.channel_profile_id,
+                    title=f"Long-form compilation · {row.theme}",
+                    status=row.status,
+                    stage=row.stage,
+                    state=state,
+                    message=row.error or f"{row.stage} · {row.status}",
                     updated_at=row.updated_at,
                     href=_item_href(row.channel_profile_id),
                     recovery_action=recovery_action,
@@ -938,6 +1043,15 @@ def operations_overview(
                     ),
                 )
             )
+        if compilation_channels:
+            event_filters.append(
+                and_(
+                    DomainEvent.aggregate_type == "compilation",
+                    DomainEvent.aggregate_id.in_(
+                        [str(value) for value in compilation_channels]
+                    ),
+                )
+            )
         if publication_channels:
             event_filters.append(
                 and_(
@@ -962,6 +1076,7 @@ def operations_overview(
                 event,
                 production_channels=production_channels,
                 episode_channels=episode_channels,
+                compilation_channels=compilation_channels,
                 publication_channels=publication_channels,
             )
             if event_channel is None or event_channel not in visible_ids:
