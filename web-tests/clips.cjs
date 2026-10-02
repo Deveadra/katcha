@@ -56,7 +56,10 @@ const clips = [
         duration_seconds: 7.8,
         width: 1920,
         height: 1080,
-        status: "failed",
+        status: "ingested",
+        analysis_status: "failed",
+        analysis_stage: "failed",
+        analysis_error: "Fixture model analysis failed",
         lifecycle_state: "hot",
         tags: ["funny"],
         library_metadata: { topic: "Weekly fails", content_type: "fail", notes: "" },
@@ -388,6 +391,24 @@ const clips = [
         await page.locator("#search").fill("");
         await page.waitForTimeout(350);
 
+        await page.locator(`[data-clip-id="${clipB}"]`).click();
+        const retryAnalysis = page.getByRole("button", { name: "Retry analysis", exact: true });
+        await retryAnalysis.waitFor();
+        assert.match(await page.locator("#clip-detail").innerText(), /Fixture model analysis failed/);
+        await retryAnalysis.click();
+        await page.waitForFunction(
+            () => document.querySelector("#message").textContent.includes("Analysis restarted"),
+        );
+        assert(
+            requests.some(
+                (row) =>
+                    row.path === `/v1/clips/${clipB}/analyze` &&
+                    row.method === "POST" &&
+                    row.body?.force_retry === true,
+            ),
+            "failed analysis retry must create a new analysis attempt",
+        );
+
         await page.locator(`[data-clip-id="${clipA}"]`).click();
         await page.locator('[data-clip-detail-tab="analysis"]').click();
         await page.getByText(/surprising gameplay moment/).waitFor();
@@ -468,7 +489,7 @@ const clips = [
         );
         assert.deepEqual(errors, []);
         console.log(
-            "Aerith Clip Library bounded workspace, inspector tabs, channel scope, semantic search, metadata, archive, purge, retention confirmations and responsive layout passed",
+            "Aerith Clip Library bounded workspace, failed-analysis retry, inspector tabs, channel scope, semantic search, metadata, archive, purge, retention confirmations and responsive layout passed",
         );
     } finally {
         if (browser) await browser.close();
