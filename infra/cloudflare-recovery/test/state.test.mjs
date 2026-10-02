@@ -277,3 +277,62 @@ test("candidate readiness requires all mandatory checks", () => {
   assert.ok(ready.pending.ready_at);
   assert.equal(ready.pending.readiness.detail, "local acceptance passed");
 });
+
+
+test("unresolved dispatched incident is re-queued after retry interval", () => {
+  let state = prepareAuthority(defaultAuthorityState(), {
+    deploymentId: "oci-a1",
+    healthUrl: "https://a1.example.test/v1/health/ready",
+    expectedActiveEpoch: 0,
+  }, 0).state;
+  state = markCandidateReady(state, {
+    deploymentId: "oci-a1",
+    deploymentEpoch: 1,
+    readiness: {
+      runtime_ready: true,
+      durable_state_ready: true,
+      fence_probe_ready: true,
+      public_route_ready: true,
+    },
+  }, 1000).state;
+  state = commitAuthority(state, {
+    deploymentId: "oci-a1",
+    deploymentEpoch: 1,
+    expectedActiveEpoch: 0,
+  }, 2000).state;
+  state = configureWatchdog(state, {
+    enabled: true,
+    intervalSeconds: 60,
+    failureThreshold: 1,
+    recoveryRetrySeconds: 900,
+  }, 3000);
+
+  let probe = applyProbe(state, {
+    deploymentId: "oci-a1",
+    deploymentEpoch: 1,
+    healthy: false,
+    detail: "down",
+  }, 4000);
+  assert.equal(probe.shouldDispatch, true);
+  const incidentId = probe.state.incident.id;
+  state = markIncidentDispatched(probe.state, incidentId, 5000);
+
+  probe = applyProbe(state, {
+    deploymentId: "oci-a1",
+    deploymentEpoch: 1,
+    healthy: false,
+    detail: "still down",
+  }, 5_000 + 899_000);
+  assert.equal(probe.shouldDispatch, false);
+  assert.equal(probe.state.incident.status, "dispatched");
+
+  probe = applyProbe(probe.state, {
+    deploymentId: "oci-a1",
+    deploymentEpoch: 1,
+    healthy: false,
+    detail: "still down",
+  }, 5_000 + 900_000);
+  assert.equal(probe.shouldDispatch, true);
+  assert.equal(probe.state.incident.status, "pending_dispatch");
+  assert.equal(probe.state.incident.id, incidentId);
+});
