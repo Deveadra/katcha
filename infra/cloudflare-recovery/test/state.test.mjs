@@ -30,6 +30,7 @@ test("prepare allocates a monotonic epoch without fencing the active leader", ()
       runtime_ready: true,
       durable_state_ready: true,
       fence_probe_ready: true,
+      public_route_ready: true,
     },
   }, 1500);
   const committed = commitAuthority(ready.state, {
@@ -61,6 +62,7 @@ test("commit atomically transfers authority to the prepared deployment", () => {
       runtime_ready: true,
       durable_state_ready: true,
       fence_probe_ready: true,
+      public_route_ready: true,
     },
   });
   const committed = commitAuthority(ready.state, {
@@ -87,6 +89,7 @@ test("stale expected epochs cannot prepare or commit authority", () => {
       runtime_ready: true,
       durable_state_ready: true,
       fence_probe_ready: true,
+      public_route_ready: true,
     },
   });
   const committed = commitAuthority(ready.state, {
@@ -140,6 +143,7 @@ test("watchdog opens one incident at threshold and recovers cleanly", () => {
       runtime_ready: true,
       durable_state_ready: true,
       fence_probe_ready: true,
+      public_route_ready: true,
     },
   }).state;
   state = commitAuthority(state, {
@@ -202,6 +206,7 @@ test("probe results for a superseded deployment are ignored", () => {
       runtime_ready: true,
       durable_state_ready: true,
       fence_probe_ready: true,
+      public_route_ready: true,
     },
   }).state;
   state = commitAuthority(state, {
@@ -252,6 +257,7 @@ test("candidate readiness requires all mandatory checks", () => {
         runtime_ready: true,
         durable_state_ready: true,
         fence_probe_ready: false,
+        public_route_ready: true,
       },
     }),
     /fence_probe_ready/,
@@ -264,6 +270,7 @@ test("candidate readiness requires all mandatory checks", () => {
       runtime_ready: true,
       durable_state_ready: true,
       fence_probe_ready: true,
+      public_route_ready: true,
       detail: "local acceptance passed",
     },
   });
