@@ -345,10 +345,15 @@ export function evaluatePaidFallback(
   const existing = state.incident;
   if (
     existing &&
-    existing.reason === "paid_fallback_repatriation" &&
     !["recovered", "resolved", "failed"].includes(existing.status)
   ) {
-    return { state, shouldDispatch: existing.status === "pending_dispatch", expired };
+    return {
+      state,
+      shouldDispatch:
+        existing.reason === "paid_fallback_repatriation" &&
+        existing.status === "pending_dispatch",
+      expired,
+    };
   }
 
   const incident = {
