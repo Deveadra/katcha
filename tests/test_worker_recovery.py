@@ -362,6 +362,7 @@ async def test_intelligence_worker_reconciles_persisted_automation_schedules(
             workflow_id="channel-intelligence-schedule-channel-1-g1",
             supersedes_workflow_id="channel-intelligence-schedule-channel-1",
             schedule_config={"interval_hours": 6},
+            enabled=True,
         ),
         SimpleNamespace(
             id="schedule-2",
@@ -370,6 +371,7 @@ async def test_intelligence_worker_reconciles_persisted_automation_schedules(
             workflow_id="topic-watch-schedule-watch-1-g2",
             supersedes_workflow_id=None,
             schedule_config={"interval_minutes": 30, "top_n": 25},
+            enabled=True,
         ),
     ]
     monkeypatch.setattr(
