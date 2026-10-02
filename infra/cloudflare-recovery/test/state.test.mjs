@@ -133,6 +133,15 @@ test("watchdog opens one incident at threshold and recovers cleanly", () => {
     healthUrl: "https://a1.example.test/v1/health/ready",
     expectedActiveEpoch: 0,
   }).state;
+  state = markCandidateReady(state, {
+    deploymentId: "oci-a1",
+    deploymentEpoch: 1,
+    readiness: {
+      runtime_ready: true,
+      durable_state_ready: true,
+      fence_probe_ready: true,
+    },
+  }).state;
   state = commitAuthority(state, {
     deploymentId: "oci-a1",
     deploymentEpoch: 1,
@@ -185,6 +194,15 @@ test("probe results for a superseded deployment are ignored", () => {
     deploymentId: "new",
     healthUrl: "https://new.example.test/v1/health/ready",
     expectedActiveEpoch: 0,
+  }).state;
+  state = markCandidateReady(state, {
+    deploymentId: "new",
+    deploymentEpoch: 1,
+    readiness: {
+      runtime_ready: true,
+      durable_state_ready: true,
+      fence_probe_ready: true,
+    },
   }).state;
   state = commitAuthority(state, {
     deploymentId: "new",
