@@ -414,7 +414,7 @@ async def require_native_channel_body(request: Request) -> None:
     tool = native_route_tool(request.url.path, request.method.upper())
     if tool is None:
         return
-    if tool.name in {"list_sources", "clip_library"}:
+    if tool.name in {"list_sources", "source_library", "clip_library"}:
         channel = request.query_params.get("channel_profile_id")
         if not channel:
             raise HTTPException(403, "A channel is required for scoped resource retrieval")

@@ -133,6 +133,13 @@ TOOLS = {
             "/v1/discovery/sources",
         ),
         GoalTool(
+            "source_library",
+            "Search and page saved sources by name, topic or platform",
+            "ai:read",
+            "GET",
+            "/v1/discovery/source-library",
+        ),
+        GoalTool(
             "discovery_adapters",
             "Actual adapter capabilities, query fields and credential requirements",
             "ai:read",
@@ -686,7 +693,18 @@ def _redact(value):
         result = {
             k: _redact(v)
             for k, v in value.items()
-            if not any(part in k.casefold() for part in ("token", "secret", "password", "api_key"))
+            if not any(
+                part in k.casefold()
+                for part in (
+                    "token",
+                    "secret",
+                    "password",
+                    "api_key",
+                    "authorization",
+                    "cookie",
+                    "credential",
+                )
+            )
         }
         truncated = [
             k

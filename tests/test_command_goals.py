@@ -523,3 +523,62 @@ def test_publication_ownership_uses_channel_connection_for_reads_and_mutations(s
         request.path_params["publication_id"] = str(outside)
         with pytest.raises(ValueError, match="assigned|outside"):
             require_native_resource_channels(request, tool)
+
+
+async def test_semantic_source_search_uses_native_query_and_channel_boundary(saved):
+    from katcha.acquisition_models import IngestionSource
+    from katcha.services.goal_tools import run_read_tool
+
+    goal = receipt(saved[0], "Find Marvel's official channel")
+    expected = uuid.uuid4()
+    with db.session_scope() as session:
+        for index in range(80):
+            session.add(
+                IngestionSource(
+                    source_key=f"unrelated-{index}",
+                    name=f"Source {index}",
+                    channel_profile_id=saved[0],
+                    adapter_key="youtube",
+                    adapter_version="v1",
+                    platform="youtube",
+                )
+            )
+        session.add(
+            IngestionSource(
+                id=expected,
+                source_key="marvel",
+                name="Marvel Entertainment",
+                channel_profile_id=saved[0],
+                adapter_key="youtube",
+                adapter_version="v1",
+                platform="youtube",
+            )
+        )
+        session.add(
+            IngestionSource(
+                source_key="other-marvel",
+                name="Marvel Entertainment",
+                channel_profile_id=uuid.uuid4(),
+                adapter_key="youtube",
+                adapter_version="v1",
+                platform="youtube",
+            )
+        )
+    result = await run_read_tool(goal, "source_library", {"query": {"q": "Marvel", "limit": 5}})
+    assert result["total"] == 1
+    assert [item["id"] for item in result["items"]] == [str(expected)]
+
+
+def test_native_evidence_redacts_credentials_and_discloses_truncation():
+    from katcha.services.goal_tools import _redact
+
+    result = _redact(
+        {
+            "headers": {"Authorization": "Bearer fixture-secret", "Cookie": "session=fixture"},
+            "api_key": "fixture-key",
+            "items": list(range(60)),
+        }
+    )
+    assert result["headers"] == {}
+    assert "api_key" not in result
+    assert result["_truncated_fields"] == ["items"]
