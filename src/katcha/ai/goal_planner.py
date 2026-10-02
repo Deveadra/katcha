@@ -16,6 +16,7 @@ from katcha.config import get_settings
 from katcha.domain import AITask
 from katcha.integrations.chatgpt import invoke_json as chatgpt_json
 from katcha.integrations.codex import invoke_json as codex_json
+from katcha.runtime_fence import assert_mutation_authority
 
 
 class GoalDecision(BaseModel):
@@ -119,6 +120,10 @@ def decide_goal(
                 )
                 reservation = route.reservation_id
                 if provider == "gemini":
+                    assert_mutation_authority(
+                        "ai.goal_planner.gemini",
+                        settings=settings,
+                    )
                     from google import genai
 
                     client = genai.Client(
@@ -143,6 +148,10 @@ def decide_goal(
                         getattr(usage, "thoughts_token_count", 0) or 0
                     )
                 else:
+                    assert_mutation_authority(
+                        "ai.goal_planner.openai",
+                        settings=settings,
+                    )
                     from openai import OpenAI
 
                     response = OpenAI(
