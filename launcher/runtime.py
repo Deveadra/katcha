@@ -18,8 +18,10 @@ import os
 import queue
 import re
 import secrets
+import shutil
 import signal
 import subprocess
+import sys
 import threading
 import time
 import traceback
@@ -1679,18 +1681,51 @@ def _open_browser(url, runtime):
                 + (f" ({detail})" if detail else "")
             )
 
-    try:
-        if webbrowser.open(url, new=2):
-            runtime.event(
-                "info",
-                "browser",
-                "Opened Katcha in the default browser.",
-                method="python",
-            )
-            return True
-        errors.append("python: no runnable browser was reported")
-    except (OSError, webbrowser.Error) as exc:
-        errors.append(f"python: {exc}")
+    if sys.platform == "linux" and not _is_wsl():
+        opener = shutil.which("xdg-open")
+        if opener:
+            try:
+                result = subprocess.run(
+                    [opener, url],
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    timeout=5,
+                    check=False,
+                )
+            except (OSError, subprocess.SubprocessError) as exc:
+                errors.append(f"xdg-open: {exc}")
+            else:
+                if result.returncode == 0:
+                    runtime.event(
+                        "info",
+                        "browser",
+                        "Opened Katcha in the desktop browser.",
+                        method="xdg-open",
+                    )
+                    return True
+                detail = (result.stderr or "").strip()
+                errors.append(
+                    "xdg-open: exit "
+                    + str(result.returncode)
+                    + (f" ({detail})" if detail else "")
+                )
+        else:
+            errors.append("xdg-open: command is not installed")
+    elif sys.platform != "linux":
+        try:
+            if webbrowser.open(url, new=2):
+                runtime.event(
+                    "info",
+                    "browser",
+                    "Opened Katcha in the default browser.",
+                    method="python",
+                )
+                return True
+            errors.append("python: no runnable browser was reported")
+        except (OSError, webbrowser.Error) as exc:
+            errors.append(f"python: {exc}")
 
     runtime.event(
         "warning",
@@ -1759,7 +1794,10 @@ def main():
 
     if not args.no_browser:
         threading.Thread(target=open_when_listening, daemon=True).start()
-    print("Katcha: " + url + " — close with Ctrl+C; services remain running.")
+    print("Katcha launch console: " + url)
+    print("If the browser does not open, paste that address into your browser.")
+    print("Click Start Katcha in the console to start the services.")
+    print("Ctrl+C closes the launch console; it does not stop running services.")
     interrupted = False
     try:
         server.serve_forever()
