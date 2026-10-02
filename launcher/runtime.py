@@ -90,6 +90,20 @@ FIELDS = {
 SENSITIVE = re.compile(r"KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL", re.I)
 HANDOFF_MAX_BYTES = 10 * 1024 * 1024
 HANDOFF_FILENAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,179}\.json$")
+WORKSPACE_MIME_TYPES = {
+    ".css": "text/css; charset=utf-8",
+    ".html": "text/html; charset=utf-8",
+    ".js": "text/javascript; charset=utf-8",
+}
+
+
+def workspace_asset_mime(path: Path) -> str:
+    """Return browser-safe MIME types without depending on host MIME databases."""
+    return (
+        WORKSPACE_MIME_TYPES.get(path.suffix.lower())
+        or mimetypes.guess_type(path.name)[0]
+        or "application/octet-stream"
+    )
 
 
 def read_env(path):
@@ -1101,7 +1115,7 @@ class Handler(BaseHTTPRequestHandler):
             asset = root / name
             if not asset.is_file():
                 return False
-            mime = mimetypes.guess_type(asset.name)[0] or "application/octet-stream"
+            mime = workspace_asset_mime(asset)
             self.send(200, asset.read_bytes(), mime)
             return True
 
@@ -1116,7 +1130,7 @@ class Handler(BaseHTTPRequestHandler):
                 return False
             if not asset.is_file():
                 return False
-            mime = mimetypes.guess_type(asset.name)[0] or "application/octet-stream"
+            mime = workspace_asset_mime(asset)
             self.send(200, asset.read_bytes(), mime)
             return True
 
@@ -1151,7 +1165,7 @@ class Handler(BaseHTTPRequestHandler):
             return False
         if not asset.is_file():
             return False
-        mime = mimetypes.guess_type(asset.name)[0] or "application/octet-stream"
+        mime = workspace_asset_mime(asset)
         self.send(200, asset.read_bytes(), mime)
         return True
 

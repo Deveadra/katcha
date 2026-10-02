@@ -95,6 +95,47 @@ const assert = require('node:assert/strict');
         }));
         assert.match(panelGlass.backgroundImage,/linear-gradient/);
         assert.match(panelGlass.backdropFilter,/blur/);
+
+        // Trends must render with its complete design system through the real launcher.
+        const trends=await browser.newPage({viewport:{width:1440,height:1000}});
+        const failedTrendAssets=[];
+        trends.on('response',response=>{
+            if (/\.(?:css|js)(?:\?|$)/.test(response.url()) && !response.ok()) {
+                failedTrendAssets.push([response.status(),response.url()]);
+            }
+        });
+        await trends.goto('http://localhost:8765/explorer');
+        await trends.locator('.trends-title').waitFor();
+        assert.equal(
+            await trends.locator('.app-shell').evaluate(node=>getComputedStyle(node).display),
+            'grid',
+        );
+        assert.equal(
+            await trends.locator('.trends-workspace-header').evaluate(node=>getComputedStyle(node).display),
+            'flex',
+        );
+        assert.deepEqual(failedTrendAssets,[]);
+        await trends.close();
+
+        // If canonical root styles are unavailable, the local shell must repair itself
+        // from the already-supported /explorer/assets mount instead of exposing raw HTML.
+        const recoveredTrends=await browser.newPage({viewport:{width:1440,height:1000}});
+        await recoveredTrends.route('**/*.css',async route=>{
+            const url=new URL(route.request().url());
+            if (url.pathname.startsWith('/explorer/assets/')) return route.continue();
+            return route.fulfill({status:503,contentType:'text/plain',body:'fixture stylesheet outage'});
+        });
+        await recoveredTrends.goto('http://localhost:8765/explorer');
+        await recoveredTrends.waitForFunction(()=>
+            getComputedStyle(document.querySelector('.app-shell')).display==='grid'
+        );
+        assert.equal(
+            await recoveredTrends.locator('.trends-workspace-header').evaluate(node=>getComputedStyle(node).display),
+            'flex',
+        );
+        assert.equal(await recoveredTrends.locator('link[data-katcha-style-recovery]').count(),8);
+        await recoveredTrends.close();
+
         const skip=workspace.locator('.ae-skip-link');
         assert.equal(await skip.count(),1);
         assert.notEqual(await skip.evaluate(node=>getComputedStyle(node).position),'static');
