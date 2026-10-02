@@ -95,6 +95,45 @@ const assert = require('node:assert/strict');
         }));
         assert.match(panelGlass.backgroundImage,/linear-gradient/);
         assert.match(panelGlass.backdropFilter,/blur/);
+
+        // Trends must load its complete design system through the same static mount
+        // as index.html. Root-relative asset URLs can be proxied or 404 and leave the
+        // page as unstyled browser-default HTML while JavaScript still runs.
+        const trends=await browser.newPage({viewport:{width:1440,height:1000}});
+        const failedTrendAssets=[];
+        trends.on('response',response=>{
+            if (/\.(?:css|js)(?:\?|$)/.test(response.url()) && !response.ok()) {
+                failedTrendAssets.push([response.status(),response.url()]);
+            }
+        });
+        await trends.goto('http://localhost:8765/explorer');
+        await trends.locator('.trends-title').waitFor();
+        assert.equal(
+            await trends.locator('.app-shell').evaluate(node=>getComputedStyle(node).display),
+            'grid',
+        );
+        assert.equal(
+            await trends.locator('.trends-workspace-header').evaluate(node=>getComputedStyle(node).display),
+            'flex',
+        );
+        const trendStyles=await trends.locator('link[rel="stylesheet"]').evaluateAll(nodes=>
+            nodes.map(node=>node.href)
+        );
+        assert(trendStyles.length>=8);
+        assert(
+            trendStyles.every(href=>href.startsWith('http://localhost:8765/explorer/assets/')),
+            'Trends styles must stay inside /explorer/assets: '+trendStyles.join(', '),
+        );
+        const trendScripts=await trends.locator('script[src]').evaluateAll(nodes=>
+            nodes.map(node=>node.src)
+        );
+        assert(
+            trendScripts.every(src=>src.startsWith('http://localhost:8765/explorer/assets/')),
+            'Trends scripts must stay inside /explorer/assets: '+trendScripts.join(', '),
+        );
+        assert.deepEqual(failedTrendAssets,[]);
+        await trends.close();
+
         const skip=workspace.locator('.ae-skip-link');
         assert.equal(await skip.count(),1);
         assert.notEqual(await skip.evaluate(node=>getComputedStyle(node).position),'static');
