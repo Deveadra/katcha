@@ -13,7 +13,6 @@ from temporalio.worker import Worker
 from katcha.config import get_settings
 from katcha.db import session_scope
 from katcha.models import SourceItem
-from katcha.publishing_models import Publication
 from katcha.orchestration.activities import (
     enqueue_ingested_analysis_activity,
     ingest_source,
@@ -51,6 +50,7 @@ from katcha.orchestration.reach_activities import (
 from katcha.orchestration.reach_workflows import YouTubeReachSyncWorkflow
 from katcha.orchestration.worker_group import run_worker_group
 from katcha.orchestration.workflows import ClipIngestWorkflow
+from katcha.publishing_models import Publication
 
 
 async def _resume_persisted_ingest_and_publication_work(
