@@ -315,7 +315,9 @@ def apply_preupload_packaging_variant(
         if publication is None:
             raise ValueError(f"publication not found: {publication_id}")
         if publication.youtube_video_id is not None:
-            raise ValueError("pre-upload packaging cannot change an uploaded publication")
+            raise ValueError(
+                "publication already entered YouTube upload; pre-upload packaging is locked"
+            )
         if publication.status != PublicationStatus.QUEUED.value:
             raise ValueError("pre-upload packaging requires a queued publication")
         if publication.stage != "metadata_hold":
