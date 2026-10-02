@@ -5,7 +5,12 @@ from types import SimpleNamespace
 
 import pytest
 
-from katcha.orchestration import analysis_worker, production_worker, worker
+from katcha.orchestration import (
+    analysis_worker,
+    intelligence_worker,
+    production_worker,
+    worker,
+)
 
 
 class _FakeSession:
@@ -39,6 +44,49 @@ class _FakeClient:
 
 class _AlreadyStarted(Exception):
     pass
+
+
+@pytest.mark.asyncio
+async def test_intelligence_worker_reconciles_persisted_discovery_runs(
+    monkeypatch,
+) -> None:
+    rows = [
+        SimpleNamespace(id="discovery-1"),
+        SimpleNamespace(id="discovery-2"),
+    ]
+    monkeypatch.setattr(
+        intelligence_worker,
+        "list_resumable_source_runs",
+        lambda: rows,
+    )
+    monkeypatch.setattr(
+        intelligence_worker,
+        "WorkflowAlreadyStartedError",
+        _AlreadyStarted,
+    )
+    client = _FakeClient(
+        already_started_ids={"discovery-run-discovery-2"},
+    )
+
+    resumed, present = await intelligence_worker._resume_persisted_discovery_work(
+        client,
+    )
+
+    assert resumed == 1
+    assert present == 1
+    assert [call[2]["id"] for call in client.calls] == [
+        "discovery-run-discovery-1",
+        "discovery-run-discovery-2",
+    ]
+    assert all(
+        call[2]["task_queue"] == intelligence_worker.DISCOVERY_TASK_QUEUE
+        for call in client.calls
+    )
+    assert all(
+        call[2]["id_reuse_policy"]
+        == intelligence_worker.WorkflowIDReusePolicy.REJECT_DUPLICATE
+        for call in client.calls
+    )
 
 
 @pytest.mark.asyncio
