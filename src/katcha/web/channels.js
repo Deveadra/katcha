@@ -1340,9 +1340,20 @@ function renderChannelActivity() {
         ...item,
         lane: item.kind === "publication" ? "Publishing" : "Production",
     }));
-    const rows = [...intake, ...attention, ...active]
+    const recent = (operations.activity || []).map((item) => ({
+        ...item,
+        id: item.aggregate_id,
+        title: friendly(item.event_type || "Recent activity"),
+        status: "completed",
+        stage: "recent",
+        state: "recent",
+        lane: "Recent",
+        message: friendly(item.aggregate_type || "event"),
+        updated_at: item.created_at,
+    }));
+    const rows = [...intake, ...attention, ...active, ...recent]
         .sort((a, b) => String(b.updated_at || "").localeCompare(String(a.updated_at || "")))
-        .slice(0, 18);
+        .slice(0, 24);
 
     if (!rows.length) {
         container.innerHTML =
