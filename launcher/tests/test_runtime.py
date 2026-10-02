@@ -1231,13 +1231,17 @@ def test_apply_telegram_recreates_only_api_and_telegram_worker(tmp_path):
     assert "renderer" not in command
 
 
-def test_steady_state_monitor_does_not_probe_every_tick(tmp_path):
+def test_steady_state_monitor_bounds_workspace_probe_frequency(tmp_path):
     app = instance(tmp_path)
     app.phase = "ready"
     app.health_check_at = runtime.time.monotonic() + 100
+    app.workspace_check_at = runtime.time.monotonic() + 100
     with patch.object(app, "probe_workspace") as probe:
         app.monitor_once()
-    probe.assert_not_called()
+        probe.assert_not_called()
+        app.workspace_check_at = 0
+        app.monitor_once()
+        probe.assert_called_once()
 
 
 def test_launcher_studio_home_and_shared_styles_are_local_and_keep_context(tmp_path):
@@ -1271,3 +1275,26 @@ def test_launcher_studio_home_and_shared_styles_are_local_and_keep_context(tmp_p
     finally:
         server.shutdown()
         server.server_close()
+
+
+def test_workspace_recovers_before_next_container_health_check(tmp_path):
+    app = instance(tmp_path)
+    app.phase = "degraded"
+    app.desired_running = True
+    app.services = [{"Service": name, "State": "running"} for name in runtime.REQUIRED_SERVICES]
+    app.health_check_at = runtime.time.monotonic() + 100
+
+    def recovered():
+        app.workspace_ready = True
+        return True
+
+    with (
+        patch.object(app, "probe_workspace", side_effect=recovered) as probe,
+        patch.object(app, "check") as check,
+        patch.object(app, "operate") as operate,
+    ):
+        app.monitor_once()
+    assert app.snapshot()["workspace_ready"] is True
+    probe.assert_called_once()
+    check.assert_not_called()
+    operate.assert_not_called()

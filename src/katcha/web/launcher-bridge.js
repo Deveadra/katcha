@@ -222,8 +222,10 @@ installSettingsShortcut();
     };
 
     for (;;) {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 8000);
         try {
-            const response = await fetch('/runtime/status', {cache: 'no-store'});
+            const response = await fetch('/runtime/status', {cache: 'no-store', signal: controller.signal});
             if (!response.ok) throw new Error('launcher unavailable');
             const runtime = await response.json();
             if (!runtime.session) return;
@@ -254,6 +256,8 @@ installSettingsShortcut();
             if (status && !status.textContent.trim()) {
                 status.textContent = 'Reconnecting to the local Katcha supervisor…';
             }
+        } finally {
+            clearTimeout(timeout);
         }
         await new Promise((resolve) => setTimeout(resolve, 3000));
     }

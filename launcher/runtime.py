@@ -130,6 +130,7 @@ class Runtime:
         self.desired_running = (self.directory / "desired-state").exists()
         self.workspace_ready = False
         self.health_check_at = 0.0
+        self.workspace_check_at = 0.0
         self.retry_at = 0.0
         self.retry_delay = 10
         self.phase = "idle"
@@ -994,8 +995,9 @@ class Runtime:
         # intentionally quiet so the supervisor itself does not create idle load.
         now = time.monotonic()
         steady = self.phase in ("ready", "degraded")
-        if not steady:
+        if not steady or now >= self.workspace_check_at:
             self.probe_workspace()
+            self.workspace_check_at = now + (10 if self.workspace_ready else 2)
         if (
             steady
             and now >= self.health_check_at
@@ -1025,7 +1027,10 @@ class Runtime:
 
     def monitor(self):
         while not self.shutdown_event.is_set():
-            delay = 10 if self.phase in ("ready", "idle", "stopped") else 2
+            delay = (
+                10 if self.phase in ("ready", "idle", "stopped") and self.workspace_ready
+                else 2 if self.desired_running else 10
+            )
             if self.shutdown_event.wait(delay):
                 return
             try:
