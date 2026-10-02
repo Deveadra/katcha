@@ -16,6 +16,7 @@ export function defaultAuthorityState() {
       enabled: false,
       interval_seconds: 60,
       failure_threshold: 3,
+      recovery_retry_seconds: 900,
     },
     incident: null,
     events: [],
@@ -206,7 +207,7 @@ export function abortPending(
 
 export function configureWatchdog(
   current,
-  { enabled, intervalSeconds, failureThreshold },
+  { enabled, intervalSeconds, failureThreshold, recoveryRetrySeconds },
   nowMs = Date.now(),
 ) {
   const state = normalizeState(current);
@@ -216,6 +217,8 @@ export function configureWatchdog(
       enabled,
       interval_seconds: intervalSeconds,
       failure_threshold: failureThreshold,
+    recovery_retry_seconds: recoveryRetrySeconds,
+      recovery_retry_seconds: recoveryRetrySeconds,
     },
   };
   next = event(next, "watchdog.configured", nowMs, {
@@ -291,6 +294,19 @@ export function applyProbe(
       failure_count: failures,
       last_error: String(detail || "health probe failed").slice(0, 1000),
     };
+    if (
+      incident.status === "dispatched" &&
+      incident.dispatched_at &&
+      nowMs - Date.parse(incident.dispatched_at) >=
+        state.watchdog.recovery_retry_seconds * 1000
+    ) {
+      incident = {
+        ...incident,
+        status: "pending_dispatch",
+        retry_queued_at: probeAt,
+      };
+      shouldDispatch = true;
+    }
   }
 
   let next = {
