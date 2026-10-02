@@ -23,6 +23,10 @@ class CapacityUnavailable(RecoveryError):
     pass
 
 
+class CommitOutcomeUnknown(RecoveryError):
+    """Authority commit may have succeeded; destructive rollback is unsafe."""
+
+
 def _env(name: str, *, default: str | None = None) -> str:
     value = os.environ.get(name)
     if value is None or not str(value).strip():
@@ -647,6 +651,58 @@ def wait_for_candidate_ready(
     raise RecoveryError("candidate did not pass readiness before timeout")
 
 
+def commit_authority_safely(
+    coordinator: CoordinatorClient,
+    *,
+    deployment_id: str,
+    deployment_epoch: int,
+    expected_active_epoch: int,
+) -> dict[str, Any]:
+    try:
+        return coordinator.commit(
+            deployment_id=deployment_id,
+            deployment_epoch=deployment_epoch,
+            expected_active_epoch=expected_active_epoch,
+        )
+    except Exception as commit_error:
+        try:
+            state = coordinator.status()
+        except Exception as status_error:
+            raise CommitOutcomeUnknown(
+                "authority commit outcome is unknown; candidate remains in place "
+                "and must not be rolled back automatically"
+            ) from status_error
+
+        active = state.get("active") or {}
+        if (
+            str(active.get("deployment_id") or "") == deployment_id
+            and int(active.get("epoch") or 0) == deployment_epoch
+        ):
+            return {
+                "active": active,
+                "active_epoch": deployment_epoch,
+                "leader_id": deployment_id,
+                "reconciled_after_commit_error": True,
+            }
+
+        pending = state.get("pending") or {}
+        active_epoch = int(active.get("epoch") or 0)
+        if (
+            active_epoch == expected_active_epoch
+            and str(pending.get("deployment_id") or "") == deployment_id
+            and int(pending.get("epoch") or 0) == deployment_epoch
+        ):
+            raise RecoveryError(
+                "authority commit failed and coordinator confirms the candidate "
+                "is still pending"
+            ) from commit_error
+
+        raise CommitOutcomeUnknown(
+            "authority changed unexpectedly while commit result was uncertain; "
+            "automatic rollback is unsafe"
+        ) from commit_error
+
+
 def _attachment_instance_id(row: dict[str, Any]) -> str:
     return str(row.get("instance-id") or row.get("instanceId") or "")
 
@@ -763,11 +819,23 @@ def recover(event_path: Path, config: RecoveryConfig, oci: OciCli) -> dict[str, 
             deployment_epoch=deployment_epoch,
             timeout_seconds=config.candidate_timeout_seconds,
         )
-        committed = coordinator.commit(
+        committed = commit_authority_safely(
+            coordinator,
             deployment_id=deployment_id,
             deployment_epoch=deployment_epoch,
             expected_active_epoch=incident.expected_active_epoch,
         )
+        if (
+            previous_instance_id
+            and previous_instance_id != candidate_id
+        ):
+            try:
+                oci.terminate(previous_instance_id)
+            except Exception as retire_error:
+                print(
+                    "RECOVERY_RETIRE_WARNING: "
+                    f"{type(retire_error).__name__}: {retire_error}"
+                )
         return {
             "status": "committed",
             "instance_id": candidate_id,
@@ -776,6 +844,12 @@ def recover(event_path: Path, config: RecoveryConfig, oci: OciCli) -> dict[str, 
             "mode": mode,
             "leader_id": committed.get("leader_id"),
         }
+    except CommitOutcomeUnknown:
+        print(
+            "RECOVERY_COMMIT_UNCERTAIN: leaving candidate and durable volume "
+            "in place for coordinator reconciliation"
+        )
+        raise
     except Exception:
         if candidate_id:
             try:
