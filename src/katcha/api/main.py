@@ -124,16 +124,16 @@ from katcha.publishing_models import (
     YouTubeConnection,
 )
 from katcha.services.analysis import register_analysis
-from katcha.services.intelligence_automation import (
-    advance_processed_handoff_receipt,
-    reconcile_authorized_handoff_records,
-)
-from katcha.services.intelligence_handoff import process_handoff_inbox
 from katcha.services.compilations import (
     register_compilation,
     register_compilation_regeneration,
     review_compilation,
 )
+from katcha.services.intelligence_automation import (
+    advance_processed_handoff_receipt,
+    reconcile_authorized_handoff_records,
+)
+from katcha.services.intelligence_handoff import process_handoff_inbox
 from katcha.services.productions import (
     register_regeneration,
     register_short_production,
