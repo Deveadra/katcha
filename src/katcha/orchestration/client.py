@@ -81,6 +81,7 @@ async def start_discovery_workflow(run_id: str, workflow_id: str) -> str:
             DiscoveryRunWorkflow.run,
             run_id,
             id=workflow_id,
+            id_reuse_policy=WorkflowIDReusePolicy.REJECT_DUPLICATE,
             task_queue=DISCOVERY_TASK_QUEUE,
         )
     except WorkflowAlreadyStartedError:
