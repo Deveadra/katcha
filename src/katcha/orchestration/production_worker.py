@@ -13,8 +13,6 @@ from temporalio.worker import Worker
 from katcha.config import get_settings
 from katcha.db import session_scope
 from katcha.longform_models import Compilation
-from katcha.production_models import Production
-from katcha.short_episode_models import ShortEpisode
 from katcha.orchestration.brand_preview_activities import (
     mark_brand_preview_failed_activity,
     render_brand_preview_activity,
@@ -58,7 +56,9 @@ from katcha.orchestration.short_episode_render_activities import (
 )
 from katcha.orchestration.short_episode_workflows import RankedShortEpisodeEditorialWorkflow
 from katcha.orchestration.worker_group import run_worker_group
+from katcha.production_models import Production
 from katcha.services.brand_assets import seed_builtin_brand_assets
+from katcha.short_episode_models import ShortEpisode
 
 
 def _production_recovery_stage(row: Production) -> str | None:
@@ -118,7 +118,14 @@ async def _resume_persisted_production_work(client: Client, settings) -> tuple[i
             session.scalars(
                 select(ShortEpisode).where(
                     ShortEpisode.status.in_(
-                        ["planned", "scripting", "scripted", "voicing", "editorial_approved", "rendering"]
+                        [
+                            "planned",
+                            "scripting",
+                            "scripted",
+                            "voicing",
+                            "editorial_approved",
+                            "rendering",
+                        ]
                     )
                 )
             )
@@ -127,7 +134,16 @@ async def _resume_persisted_production_work(client: Client, settings) -> tuple[i
             session.scalars(
                 select(Compilation).where(
                     Compilation.status.in_(
-                        ["queued", "selecting", "planning", "critiquing", "scripted", "voicing", "voiced", "rendering"]
+                        [
+                            "queued",
+                            "selecting",
+                            "planning",
+                            "critiquing",
+                            "scripted",
+                            "voicing",
+                            "voiced",
+                            "rendering",
+                        ]
                     )
                 )
             )
@@ -139,16 +155,40 @@ async def _resume_persisted_production_work(client: Client, settings) -> tuple[i
     for row in productions:
         stage = _production_recovery_stage(row)
         if stage:
-            work.append((ShortProductionWorkflow.run, str(row.id), row.workflow_id, settings.temporal_production_task_queue, stage))
+            work.append(
+                (
+                    ShortProductionWorkflow.run,
+                    str(row.id),
+                    row.workflow_id,
+                    settings.temporal_production_task_queue,
+                    stage,
+                )
+            )
     for row in episodes:
         stage = _episode_recovery_stage(row)
         if stage:
             workflow_id = f"{row.workflow_id}-editorial-{stage}"
-            work.append((RankedShortEpisodeEditorialWorkflow.run, str(row.id), workflow_id, settings.temporal_production_task_queue, stage))
+            work.append(
+                (
+                    RankedShortEpisodeEditorialWorkflow.run,
+                    str(row.id),
+                    workflow_id,
+                    settings.temporal_production_task_queue,
+                    stage,
+                )
+            )
     for row in compilations:
         stage = _compilation_recovery_stage(row)
         if stage:
-            work.append((LongformCompilationWorkflow.run, str(row.id), row.workflow_id, settings.temporal_longform_task_queue, stage))
+            work.append(
+                (
+                    LongformCompilationWorkflow.run,
+                    str(row.id),
+                    row.workflow_id,
+                    settings.temporal_longform_task_queue,
+                    stage,
+                )
+            )
 
     for workflow_run, source_id, workflow_id, task_queue, stage in work:
         try:
