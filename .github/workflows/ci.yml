@@ -68,6 +68,11 @@ jobs:
           KATCHA_DATABASE_URL: postgresql+psycopg://katcha:katcha@127.0.0.1:5432/katcha
         run: alembic upgrade head
 
+      - name: Verify media decoder compatibility
+        run: |
+          pip install -e '.[media]'
+          pytest -q tests/test_media_decode.py
+
       - name: Test
         run: pytest -q
 

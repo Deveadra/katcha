@@ -34,6 +34,8 @@ ai = [
 ]
 media = [
   "faster-whisper>=1.1,<2",
+  # PyAV 19 removed metadata_errors, which faster-whisper still passes to av.open.
+  "av>=11,<19",
 ]
 dev = [
   "pytest>=8.3,<9",
