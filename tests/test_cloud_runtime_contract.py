@@ -18,6 +18,7 @@ def valid_production_env() -> dict[str, str]:
         "KATCHA_LEADERSHIP_FENCE_TOKEN": "fence-token-with-more-than-32-characters",
         "KATCHA_DEPLOYMENT_ID": "oci-a1-primary",
         "KATCHA_DEPLOYMENT_EPOCH": "7",
+        "KATCHA_CLOUDFLARE_TUNNEL_TOKEN": "cloudflare-tunnel-token",
         "KATCHA_POSTGRES_PASSWORD": "database-secret-with-enough-entropy",
         "KATCHA_DATABASE_URL": (
             "postgresql+psycopg://katcha:database-secret-with-enough-entropy"
@@ -118,6 +119,8 @@ def test_production_compose_is_remote_and_immutable() -> None:
     assert 'profiles: ["local-heavy-analysis"]' in compose
     assert "/srv/katcha/postgres:/var/lib/postgresql/data" in compose
     assert "/etc/katcha/aws:/home/katcha/.aws:ro" in compose
+    assert "cloudflare/cloudflared:2026.9.2" in compose
+    assert "KATCHA_CLOUDFLARE_TUNNEL_TOKEN" in compose
 
 
 def test_oracle_control_plane_images_are_multiarch() -> None:
