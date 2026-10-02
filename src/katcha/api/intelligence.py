@@ -39,7 +39,7 @@ from katcha.orchestration.client import (
 from katcha.packaging_intelligence_models import PackagingIntelligenceSnapshot
 from katcha.production_models import Production
 from katcha.services.automation_schedules import (
-    mark_schedule_reconciled,
+    locked_schedule_for_reconcile,
     register_channel_intelligence_schedule,
 )
 from katcha.services.channel_automation import (
@@ -416,18 +416,19 @@ async def create_channel(
             interval_hours=request.refresh_interval_hours,
             replace_existing=False,
         )
-        await start_channel_intelligence_schedule(
-            str(profile.id),
-            registration.schedule.workflow_id,
-            interval_hours=int(
-                registration.schedule.schedule_config["interval_hours"]
-            ),
-            supersedes_workflow_id=registration.supersedes_workflow_id,
-        )
-        mark_schedule_reconciled(
-            registration.schedule.id,
-            registration.schedule.workflow_id,
-        )
+        with locked_schedule_for_reconcile(registration.schedule.id) as current:
+            if current.workflow_id != registration.schedule.workflow_id:
+                raise HTTPException(
+                    status_code=409,
+                    detail="intelligence schedule was superseded by another update",
+                )
+            await start_channel_intelligence_schedule(
+                str(profile.id),
+                current.workflow_id,
+                interval_hours=int(current.schedule_config["interval_hours"]),
+                supersedes_workflow_id=current.supersedes_workflow_id,
+            )
+            current.supersedes_workflow_id = None
         return profile
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
@@ -579,21 +580,26 @@ async def schedule_channel_intelligence(
             channel_profile_id,
             interval_hours=request.interval_hours,
         )
-        await start_channel_intelligence_schedule(
-            str(channel_profile_id),
-            registration.schedule.workflow_id,
-            interval_hours=request.interval_hours,
-            supersedes_workflow_id=registration.supersedes_workflow_id,
-        )
-        mark_schedule_reconciled(
-            registration.schedule.id,
-            registration.schedule.workflow_id,
-        )
+        with locked_schedule_for_reconcile(registration.schedule.id) as current:
+            if current.workflow_id != registration.schedule.workflow_id:
+                raise HTTPException(
+                    status_code=409,
+                    detail="intelligence schedule was superseded by another update",
+                )
+            await start_channel_intelligence_schedule(
+                str(channel_profile_id),
+                current.workflow_id,
+                interval_hours=int(current.schedule_config["interval_hours"]),
+                supersedes_workflow_id=current.supersedes_workflow_id,
+            )
+            current.supersedes_workflow_id = None
+            workflow_id = current.workflow_id
+            generation = current.generation
         return IntelligenceScheduleResponse(
             channel_profile_id=channel_profile_id,
-            workflow_id=registration.schedule.workflow_id,
+            workflow_id=workflow_id,
             interval_hours=request.interval_hours,
-            generation=registration.schedule.generation,
+            generation=generation,
         )
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
