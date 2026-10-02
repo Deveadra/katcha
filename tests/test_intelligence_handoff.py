@@ -23,6 +23,7 @@ from katcha.acquisition_models import (
 from katcha.intelligence_models import ChannelProfile
 from katcha.models import SourceItem
 from katcha.publishing_models import YouTubeConnection
+from katcha.services.ingestion_sources import ingest_intelligence_batch
 from katcha.services.intelligence_handoff import (
     handoff_inbox_summary,
     list_handoff_inbox,
