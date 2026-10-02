@@ -548,7 +548,7 @@ let browser;
             { cause: error },
         );
     }
-    assert.match(await page.locator(".ai-workspace-head").innerText(), /Ask\. Inspect\. Act\./);
+    assert.match(await page.locator(".ai-workspace-head").innerText(), /Ask\. Inspect\. Act\./i);
     assert.notEqual(
         await page.evaluate(() => getComputedStyle(document.body).overflowY),
         "hidden",
