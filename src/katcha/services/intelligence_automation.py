@@ -4,6 +4,7 @@ import uuid
 from dataclasses import dataclass
 from typing import Any
 
+from sqlalchemy import select
 
 from katcha.acquisition_models import (
     DiscoveryCandidate,
@@ -13,13 +14,13 @@ from katcha.db import session_scope
 from katcha.domain import AudioRightsStatus, GateStatus, RightsBasis
 from katcha.models import DomainEvent, SourceItem
 from katcha.orchestration.client import start_ingest_workflow
-from katcha.services.trailer_passthrough import prepare_authorized_passthrough_source
 from katcha.services.acquisition import (
     assess_discovery_candidate,
     latest_rights_assessment,
     promote_discovery_candidate,
 )
 from katcha.services.discovery import observe_discovery_candidate
+from katcha.services.trailer_passthrough import prepare_authorized_passthrough_source
 
 
 @dataclass(frozen=True, slots=True)
