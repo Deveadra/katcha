@@ -105,6 +105,48 @@ async def test_intelligence_worker_reconciles_persisted_discovery_runs(
 
 
 @pytest.mark.asyncio
+async def test_intelligence_worker_reconciles_nonterminal_command_goals(
+    monkeypatch,
+) -> None:
+    goals = [
+        SimpleNamespace(id="goal-1", status="running"),
+        SimpleNamespace(id="goal-2", status="waiting_workflow"),
+    ]
+    monkeypatch.setattr(
+        intelligence_worker,
+        "session_scope",
+        _scope_for(goals),
+    )
+    monkeypatch.setattr(
+        intelligence_worker,
+        "WorkflowAlreadyStartedError",
+        _AlreadyStarted,
+    )
+    client = _FakeClient(already_started_ids={"command-goal-goal-2"})
+
+    resumed, present = await intelligence_worker._resume_persisted_command_goals(
+        client,
+    )
+
+    assert resumed == 1
+    assert present == 1
+    assert [call[2]["id"] for call in client.calls] == [
+        "command-goal-goal-1",
+        "command-goal-goal-2",
+    ]
+    assert [call[1][0] for call in client.calls] == ["goal-1", "goal-2"]
+    assert all(
+        call[2]["task_queue"] == intelligence_worker.INTELLIGENCE_TASK_QUEUE
+        for call in client.calls
+    )
+    assert all(
+        call[2]["id_reuse_policy"]
+        == intelligence_worker.WorkflowIDReusePolicy.ALLOW_DUPLICATE_FAILED_ONLY
+        for call in client.calls
+    )
+
+
+@pytest.mark.asyncio
 async def test_standalone_longform_worker_reconciles_persisted_compilation(
     monkeypatch,
 ) -> None:
@@ -163,10 +205,15 @@ async def test_production_worker_reconciles_persisted_execution_stages(
         status="rendering",
         stage="rendering",
     )
+    preview = SimpleNamespace(
+        id="preview-1",
+        workflow_id="brand-preview-1",
+        status="rendering",
+    )
     monkeypatch.setattr(
         production_worker,
         "session_scope",
-        _scope_for([production], [episode], [compilation]),
+        _scope_for([production], [episode], [compilation], [preview]),
     )
     monkeypatch.setattr(
         production_worker,
@@ -184,7 +231,7 @@ async def test_production_worker_reconciles_persisted_execution_stages(
         settings,
     )
 
-    assert resumed == 2
+    assert resumed == 3
     assert present == 1
     calls = {
         call[2]["id"]: call
@@ -193,6 +240,8 @@ async def test_production_worker_reconciles_persisted_execution_stages(
     assert calls["production-prod-1"][2]["args"] == ["prod-1", "voice"]
     assert calls["episode-base-editorial-render"][2]["args"] == ["episode-1", "render"]
     assert calls["compilation-comp-1"][2]["args"] == ["comp-1", "render"]
+    assert calls["brand-preview-1"][1][0] == "preview-1"
+    assert calls["brand-preview-1"][2]["task_queue"] == "production"
     assert all(
         call[2]["id_reuse_policy"]
         == production_worker.WorkflowIDReusePolicy.ALLOW_DUPLICATE_FAILED_ONLY
@@ -214,10 +263,15 @@ async def test_ingest_worker_reconciles_ingest_and_publication(
         workflow_id="publish-publication-1",
         status="processing",
     )
+    packaging = SimpleNamespace(
+        id="packaging-1",
+        workflow_id="packaging-workflow-1",
+        status="running",
+    )
     monkeypatch.setattr(
         worker,
         "session_scope",
-        _scope_for([source], [publication]),
+        _scope_for([source], [publication], [packaging]),
     )
     monkeypatch.setattr(worker, "WorkflowAlreadyStartedError", _AlreadyStarted)
     client = _FakeClient(already_started_ids={"ingest-source-1"})
@@ -234,7 +288,7 @@ async def test_ingest_worker_reconciles_ingest_and_publication(
         settings,
     )
 
-    assert resumed == 1
+    assert resumed == 2
     assert present == 1
     calls = {call[2]["id"]: call for call in client.calls}
     assert calls["ingest-source-1"][1][0] == "source-1"
@@ -244,6 +298,8 @@ async def test_ingest_worker_reconciles_ingest_and_publication(
         10,
         [24, 72],
     ]
+    assert calls["packaging-workflow-1"][1][0] == "packaging-1"
+    assert calls["packaging-workflow-1"][2]["task_queue"] == "publishing"
     assert all(
         call[2]["id_reuse_policy"]
         == worker.WorkflowIDReusePolicy.ALLOW_DUPLICATE_FAILED_ONLY
