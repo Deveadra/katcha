@@ -41,6 +41,14 @@ class SourceRecentFind:
 
 
 @dataclass(frozen=True, slots=True)
+class SourceFindPage:
+    items: list[SourceRecentFind]
+    total: int
+    limit: int
+    offset: int
+
+
+@dataclass(frozen=True, slots=True)
 class SourceOverview:
     source: IngestionSource
     channel_name: str | None
@@ -300,6 +308,100 @@ def list_ingestion_source_library(
             session.expunge(row)
         return SourceLibraryPage(
             items=rows,
+            total=total,
+            limit=limit,
+            offset=offset,
+        )
+
+
+def list_source_finds(
+    source_id: uuid.UUID,
+    *,
+    query: str | None = None,
+    status: str | None = None,
+    limit: int = 50,
+    offset: int = 0,
+) -> SourceFindPage:
+    cleaned_query = (query or "").strip().casefold()
+    cleaned_status = (status or "").strip().casefold()
+    if limit < 1 or limit > 200:
+        raise ValueError("limit must be between 1 and 200")
+    if offset < 0:
+        raise ValueError("offset must be non-negative")
+
+    with session_scope() as session:
+        if session.get(IngestionSource, source_id) is None:
+            raise ValueError("ingestion source not found")
+
+        source_filter = (
+            DiscoveryRun.run_metadata["ingestion_source_id"].as_string()
+            == str(source_id)
+        )
+        latest_observation = (
+            select(
+                DiscoveryObservation.discovery_candidate_id.label("candidate_id"),
+                func.max(DiscoveryObservation.observed_at).label("observed_at"),
+            )
+            .join(
+                DiscoveryRun,
+                DiscoveryObservation.discovery_run_id == DiscoveryRun.id,
+            )
+            .where(source_filter)
+            .group_by(DiscoveryObservation.discovery_candidate_id)
+            .subquery()
+        )
+
+        filters = []
+        if cleaned_query:
+            pattern = f"%{cleaned_query}%"
+            filters.append(
+                or_(
+                    func.lower(func.coalesce(DiscoveryCandidate.title, "")).like(pattern),
+                    func.lower(func.coalesce(DiscoveryCandidate.creator, "")).like(pattern),
+                    func.lower(DiscoveryCandidate.source_url).like(pattern),
+                )
+            )
+        if cleaned_status:
+            filters.append(DiscoveryCandidate.status == cleaned_status)
+
+        total = int(
+            session.scalar(
+                select(func.count())
+                .select_from(DiscoveryCandidate)
+                .join(
+                    latest_observation,
+                    latest_observation.c.candidate_id == DiscoveryCandidate.id,
+                )
+                .where(*filters)
+            )
+            or 0
+        )
+        rows = session.execute(
+            select(
+                DiscoveryCandidate,
+                latest_observation.c.observed_at,
+            )
+            .join(
+                latest_observation,
+                latest_observation.c.candidate_id == DiscoveryCandidate.id,
+            )
+            .where(*filters)
+            .order_by(
+                latest_observation.c.observed_at.desc(),
+                DiscoveryCandidate.id.desc(),
+            )
+            .offset(offset)
+            .limit(limit)
+        ).all()
+
+        items = [
+            SourceRecentFind(candidate=candidate, observed_at=observed_at)
+            for candidate, observed_at in rows
+        ]
+        for item in items:
+            session.expunge(item.candidate)
+        return SourceFindPage(
+            items=items,
             total=total,
             limit=limit,
             offset=offset,
