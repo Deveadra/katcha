@@ -454,6 +454,31 @@ class OciCli:
             ]
         )
 
+    def softstop(self, instance_id: str) -> None:
+        instance = self.get_instance(instance_id)
+        state = str(
+            instance.get("lifecycle-state")
+            or instance.get("lifecycleState")
+            or ""
+        )
+        if state in {"STOPPED", "TERMINATED", "TERMINATING"}:
+            return
+        self.run(
+            [
+                "compute",
+                "instance",
+                "action",
+                "--instance-id",
+                instance_id,
+                "--action",
+                "SOFTSTOP",
+                "--wait-for-state",
+                "STOPPED",
+                "--max-wait-seconds",
+                "1200",
+            ]
+        )
+
     def terminate(self, instance_id: str) -> None:
         self.run(
             [
@@ -723,12 +748,57 @@ def recover(event_path: Path, config: RecoveryConfig, oci: OciCli) -> dict[str, 
             user_data_path.unlink(missing_ok=True)
 
 
+def cleanup_expired_paid(
+    config: RecoveryConfig,
+    oci: OciCli,
+    *,
+    now: datetime | None = None,
+) -> list[str]:
+    current = now or datetime.now(UTC)
+    terminated: list[str] = []
+    for row in oci.list_instances(config):
+        tags = _tags(row)
+        if tags.get("KatchaRecoveryMode") != "paid-fallback":
+            continue
+        if _state(row) in {"TERMINATED", "TERMINATING"}:
+            continue
+        expires_raw = tags.get("KatchaExpiresAt", "")
+        if not expires_raw:
+            raise RecoveryError(
+                f"paid fallback instance {_instance_id(row)} is missing KatchaExpiresAt"
+            )
+        expires = datetime.fromisoformat(expires_raw.replace("Z", "+00:00"))
+        if expires > current:
+            continue
+        instance_id = _instance_id(row)
+        oci.softstop(instance_id)
+        oci.terminate(instance_id)
+        terminated.append(instance_id)
+    return terminated
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--event", type=Path, required=True)
+    parser.add_argument(
+        "action",
+        choices=["recover", "cleanup"],
+        nargs="?",
+        default="recover",
+    )
+    parser.add_argument("--event", type=Path)
     args = parser.parse_args()
     try:
-        result = recover(args.event, RecoveryConfig.from_env(), OciCli())
+        config = RecoveryConfig.from_env()
+        oci = OciCli()
+        if args.action == "cleanup":
+            result: object = {
+                "status": "cleanup_complete",
+                "terminated": cleanup_expired_paid(config, oci),
+            }
+        else:
+            if args.event is None:
+                raise RecoveryError("--event is required for recovery")
+            result = recover(args.event, config, oci)
     except RecoveryError as exc:
         print(f"RECOVERY_FAILED: {exc}")
         return 2
