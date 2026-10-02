@@ -4,6 +4,8 @@ import asyncio
 import logging
 import mimetypes
 import uuid
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from pathlib import Path
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
@@ -168,13 +170,19 @@ async def _process_pending_handoffs_on_startup() -> None:
         _logger.exception("automatic handoff inbox processing failed during startup")
 
 
+@asynccontextmanager
+async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
+    await _process_pending_handoffs_on_startup()
+    yield
+
+
 app = FastAPI(
     title="Katcha API",
     dependencies=[Depends(require_control_token), Depends(require_native_channel_body)],
     version=__version__,
     description="Standalone control plane for Katcha media workflows.",
+    lifespan=_lifespan,
 )
-app.add_event_handler("startup", _process_pending_handoffs_on_startup)
 app.include_router(acquisition_router)
 app.include_router(brands_router)
 app.include_router(chatgpt_router)
