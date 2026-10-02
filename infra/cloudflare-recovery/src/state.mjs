@@ -207,7 +207,12 @@ export function abortPending(
 
 export function configureWatchdog(
   current,
-  { enabled, intervalSeconds, failureThreshold, recoveryRetrySeconds },
+  {
+    enabled,
+    intervalSeconds,
+    failureThreshold,
+    recoveryRetrySeconds = 900,
+  },
   nowMs = Date.now(),
 ) {
   const state = normalizeState(current);
