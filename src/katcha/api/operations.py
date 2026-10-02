@@ -343,6 +343,174 @@ def _event_href(
     return None
 
 
+@router.post(
+    "/work/{kind}/{source_id}/recover",
+    response_model=RecoverWorkResponse,
+)
+async def recover_work_item(
+    kind: Literal["short_episode", "production", "publication"],
+    source_id: uuid.UUID,
+    http_request: Request,
+    request: RecoverWorkRequest,
+) -> RecoverWorkResponse:
+    if kind == "production":
+        with session_scope() as session:
+            row = session.get(Production, source_id)
+            if row is None or row.channel_profile_id is None:
+                raise HTTPException(status_code=404, detail="production not found")
+            require_control_channel(http_request, row.channel_profile_id)
+            status_value = str(row.status or "").lower()
+            error = str(row.error or "").strip()
+            workflow_id = row.workflow_id
+            resume_stage = _production_resume_stage(row)
+
+        if status_value == "failed" or error:
+            try:
+                stage = _production_restart_stage(source_id)
+                child = register_regeneration(
+                    source_id,
+                    stage=stage,
+                    note="Restarted from Operations after interrupted or failed work",
+                    actor=request.actor,
+                )
+            except ValueError as exc:
+                raise HTTPException(status_code=409, detail=str(exc)) from exc
+            await start_production_workflow(
+                str(child.id),
+                child.workflow_id,
+                start_stage=stage,
+            )
+            return RecoverWorkResponse(
+                kind=kind,
+                source_id=source_id,
+                action="restarted",
+                workflow_id=child.workflow_id,
+                replacement_id=child.id,
+            )
+
+        if resume_stage is None:
+            raise HTTPException(
+                status_code=409,
+                detail="production is not in a resumable execution stage",
+            )
+        await start_production_workflow(
+            str(source_id),
+            workflow_id,
+            start_stage=resume_stage,
+        )
+        return RecoverWorkResponse(
+            kind=kind,
+            source_id=source_id,
+            action="resumed",
+            workflow_id=workflow_id,
+        )
+
+    if kind == "short_episode":
+        with session_scope() as session:
+            row = session.get(ShortEpisode, source_id)
+            if row is None:
+                raise HTTPException(status_code=404, detail="short episode not found")
+            require_control_channel(http_request, row.channel_profile_id)
+            status_value = str(row.status or "").lower()
+            error = str(row.error or "").strip()
+            base_workflow_id = row.workflow_id
+            resume_stage = _short_episode_resume_stage(row)
+
+        if status_value == "failed" or error:
+            try:
+                stage = _short_episode_restart_stage(source_id)
+                child = register_short_episode_regeneration(
+                    source_id,
+                    stage=stage,
+                    note="Restarted from Operations after interrupted or failed work",
+                    actor=request.actor,
+                )
+            except ValueError as exc:
+                raise HTTPException(status_code=409, detail=str(exc)) from exc
+            child_workflow_id = _episode_workflow_id(child.workflow_id, stage)
+            await start_short_episode_editorial_workflow(
+                str(child.id),
+                child_workflow_id,
+                start_stage=stage,
+            )
+            return RecoverWorkResponse(
+                kind=kind,
+                source_id=source_id,
+                action="restarted",
+                workflow_id=child_workflow_id,
+                replacement_id=child.id,
+            )
+
+        if resume_stage is None:
+            raise HTTPException(
+                status_code=409,
+                detail="short episode is not in a resumable execution stage",
+            )
+        workflow_id = _episode_workflow_id(base_workflow_id, resume_stage)
+        await start_short_episode_editorial_workflow(
+            str(source_id),
+            workflow_id,
+            start_stage=resume_stage,
+        )
+        return RecoverWorkResponse(
+            kind=kind,
+            source_id=source_id,
+            action="resumed",
+            workflow_id=workflow_id,
+        )
+
+    with session_scope() as session:
+        row = session.get(Publication, source_id)
+        if row is None:
+            raise HTTPException(status_code=404, detail="publication not found")
+        profile = session.scalar(
+            select(ChannelProfile).where(
+                ChannelProfile.youtube_connection_id == row.youtube_connection_id
+            )
+        )
+        if profile is None:
+            raise HTTPException(
+                status_code=409,
+                detail="publication is not attached to an active channel profile",
+            )
+        require_control_channel(http_request, profile.id)
+        status_value = str(row.status or "").lower()
+        stage_value = str(row.stage or "").lower()
+        workflow_id = row.workflow_id
+
+    if status_value == "failed" or stage_value == "processing_timeout":
+        try:
+            publication = retry_publication(
+                source_id,
+                allow_new_upload_session=request.allow_new_upload_session,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        await start_publication_workflow(
+            str(publication.id),
+            publication.workflow_id,
+        )
+        return RecoverWorkResponse(
+            kind=kind,
+            source_id=source_id,
+            action="restarted",
+            workflow_id=publication.workflow_id,
+        )
+
+    if status_value not in {"queued", "uploading", "uploaded", "processing"}:
+        raise HTTPException(
+            status_code=409,
+            detail="publication is not in a resumable execution stage",
+        )
+    await start_publication_workflow(str(source_id), workflow_id)
+    return RecoverWorkResponse(
+        kind=kind,
+        source_id=source_id,
+        action="resumed",
+        workflow_id=workflow_id,
+    )
+
+
 @router.get("/overview", response_model=OperationsOverviewResponse)
 def operations_overview(
     http_request: Request,
