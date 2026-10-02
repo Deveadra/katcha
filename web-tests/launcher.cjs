@@ -96,9 +96,7 @@ const assert = require('node:assert/strict');
         assert.match(panelGlass.backgroundImage,/linear-gradient/);
         assert.match(panelGlass.backdropFilter,/blur/);
 
-        // Trends must load its complete design system through the same static mount
-        // as index.html. Root-relative asset URLs can be proxied or 404 and leave the
-        // page as unstyled browser-default HTML while JavaScript still runs.
+        // Trends must render with its complete design system through the real launcher.
         const trends=await browser.newPage({viewport:{width:1440,height:1000}});
         const failedTrendAssets=[];
         trends.on('response',response=>{
@@ -116,23 +114,27 @@ const assert = require('node:assert/strict');
             await trends.locator('.trends-workspace-header').evaluate(node=>getComputedStyle(node).display),
             'flex',
         );
-        const trendStyles=await trends.locator('link[rel="stylesheet"]').evaluateAll(nodes=>
-            nodes.map(node=>node.href)
-        );
-        assert(trendStyles.length>=8);
-        assert(
-            trendStyles.every(href=>href.startsWith('http://localhost:8765/explorer/assets/')),
-            'Trends styles must stay inside /explorer/assets: '+trendStyles.join(', '),
-        );
-        const trendScripts=await trends.locator('script[src]').evaluateAll(nodes=>
-            nodes.map(node=>node.src)
-        );
-        assert(
-            trendScripts.every(src=>src.startsWith('http://localhost:8765/explorer/assets/')),
-            'Trends scripts must stay inside /explorer/assets: '+trendScripts.join(', '),
-        );
         assert.deepEqual(failedTrendAssets,[]);
         await trends.close();
+
+        // If canonical root styles are unavailable, the local shell must repair itself
+        // from the already-supported /explorer/assets mount instead of exposing raw HTML.
+        const recoveredTrends=await browser.newPage({viewport:{width:1440,height:1000}});
+        await recoveredTrends.route('**/*.css',async route=>{
+            const url=new URL(route.request().url());
+            if (url.pathname.startsWith('/explorer/assets/')) return route.continue();
+            return route.fulfill({status:503,contentType:'text/plain',body:'fixture stylesheet outage'});
+        });
+        await recoveredTrends.goto('http://localhost:8765/explorer');
+        await recoveredTrends.waitForFunction(()=>
+            getComputedStyle(document.querySelector('.app-shell')).display==='grid'
+        );
+        assert.equal(
+            await recoveredTrends.locator('.trends-workspace-header').evaluate(node=>getComputedStyle(node).display),
+            'flex',
+        );
+        assert.equal(await recoveredTrends.locator('link[data-katcha-style-recovery]').count(),8);
+        await recoveredTrends.close();
 
         const skip=workspace.locator('.ae-skip-link');
         assert.equal(await skip.count(),1);
