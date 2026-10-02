@@ -222,7 +222,6 @@ export function configureWatchdog(
       enabled,
       interval_seconds: intervalSeconds,
       failure_threshold: failureThreshold,
-    recovery_retry_seconds: recoveryRetrySeconds,
       recovery_retry_seconds: recoveryRetrySeconds,
     },
   };
@@ -230,6 +229,7 @@ export function configureWatchdog(
     enabled,
     interval_seconds: intervalSeconds,
     failure_threshold: failureThreshold,
+    recovery_retry_seconds: recoveryRetrySeconds,
   });
   return next;
 }
