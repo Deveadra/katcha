@@ -242,6 +242,17 @@ class ExecuteDiscoveryRunResponse(BaseModel):
     status: str
 
 
+class RestartDiscoveryRunRequest(BaseModel):
+    idempotency_key: str | None = Field(default=None, max_length=160)
+
+
+class RestartDiscoveryRunResponse(BaseModel):
+    previous_run_id: uuid.UUID
+    discovery_run_id: uuid.UUID
+    workflow_id: str
+    status: str
+
+
 class CreateDiscoveryCandidateRequest(BaseModel):
     source_url: str = Field(min_length=1, max_length=4000)
     adapter_key: str = Field(min_length=1, max_length=64)
@@ -811,6 +822,35 @@ async def execute_discovery_run(run_id: uuid.UUID) -> ExecuteDiscoveryRunRespons
         discovery_run_id=run_id,
         workflow_id=workflow_id,
         status=run_status,
+    )
+
+
+@router.post(
+    "/discovery/runs/{run_id}/restart",
+    response_model=RestartDiscoveryRunResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def restart_failed_discovery_run(
+    run_id: uuid.UUID,
+    request: RestartDiscoveryRunRequest,
+) -> RestartDiscoveryRunResponse:
+    try:
+        run = restart_source_run(
+            run_id,
+            idempotency_key=request.idempotency_key,
+        )
+    except ValueError as exc:
+        message = str(exc)
+        code = 404 if "not found" in message else 409
+        raise HTTPException(status_code=code, detail=message) from exc
+
+    workflow_id = f"discovery-run-{run.id}"
+    await start_discovery_workflow(str(run.id), workflow_id)
+    return RestartDiscoveryRunResponse(
+        previous_run_id=run_id,
+        discovery_run_id=run.id,
+        workflow_id=workflow_id,
+        status=run.status,
     )
 
 
