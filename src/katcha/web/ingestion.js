@@ -345,7 +345,10 @@ function showStep(next) {
         else li.removeAttribute('aria-current');
     });
     $('step-label').textContent = `${next} OF 3`;
-    $('builder-title').textContent = ['Choose a source', 'Source details', 'Review source'][next - 1];
+    $('builder-title').textContent = editingSource
+        ? ['Edit source', 'Edit source', 'Review changes'][next - 1]
+        : ['Choose a source', 'Source details', 'Review source'][next - 1];
+    $('cancel-source-edit').hidden = !editingSource;
     $('wizard-actions').hidden = next === 1;
     $('next').hidden = next !== 2;
     $('save').hidden = next !== 3;
@@ -378,6 +381,96 @@ function choose(method) {
     if (after) after.checked = true;
     showStep(2);
 }
+function sourceMethod(row) {
+    if (!row) return '';
+    if (row.adapter_key === 'operator_feed') return 'links';
+    if (row.adapter_key === 'web_scout') return 'scout';
+    if (row.adapter_key === 'rss_atom') return 'feed';
+    if (row.adapter_key === 'reddit') return 'reddit';
+    if (row.adapter_key === 'youtube') {
+        return row.query_template?.channel_reference ? 'youtube_channel' : 'youtube';
+    }
+    return 'custom';
+}
+
+function resetSourceBuilder() {
+    editingSource = null;
+    selectedMethod = '';
+    $('name').value = '';
+    $('search').value = '';
+    $('youtube-channel').value = '';
+    $('community').value = '';
+    $('feed').value = '';
+    $('custom-query').value = '{}';
+    $('scout-platforms').value = 'all';
+    $('usage').value = '';
+    const purpose = document.querySelector('input[name="source-purpose"][value="candidate_review"]');
+    if (purpose) purpose.checked = true;
+    const after = document.querySelector('input[name="after-save"][value="run"]');
+    if (after) after.checked = true;
+    $('cancel-source-edit').hidden = true;
+    showStep(1);
+}
+
+function beginAddSource() {
+    resetSourceBuilder();
+    setSourceView('add', {focus: true});
+}
+
+function beginEditSource(row) {
+    if (!row) return;
+    editingSource = {
+        ...row,
+        query_template: {...(row.query_template || {})},
+        source_metadata: {...(row.source_metadata || {})},
+        default_candidate_metadata: {...(row.default_candidate_metadata || {})},
+    };
+    const method = sourceMethod(row);
+    if (method === 'custom') {
+        $('custom-adapter').value = row.adapter_key + '@' + row.adapter_version;
+    }
+    choose(method);
+    $('name').value = row.name || '';
+    $('channel').value = row.channel_profile_id || '';
+
+    if (['candidate_review', 'discovery_only'].includes(row.usage_mode)) {
+        const purpose = document.querySelector(
+            'input[name="source-purpose"][value="' + row.usage_mode + '"]',
+        );
+        if (purpose) purpose.checked = true;
+        $('usage').value = '';
+    } else {
+        const purpose = document.querySelector(
+            'input[name="source-purpose"][value="candidate_review"]',
+        );
+        if (purpose) purpose.checked = true;
+        $('usage').value = row.usage_mode || '';
+    }
+    $('usage-help').textContent = usage[row.usage_mode]?.[1] || '';
+
+    const query = row.query_template || {};
+    $('search').value = query.q || '';
+    $('youtube-channel').value = query.channel_reference || '';
+    $('community').value = query.subreddit ? 'r/' + query.subreddit : '';
+    $('feed').value = query.feed_url || '';
+    $('custom-query').value = JSON.stringify(query, null, 2);
+
+    const platforms = Array.isArray(query.platforms) ? query.platforms : [];
+    if (platforms.length === 1 && ['tiktok', 'instagram', 'x', 'bluesky'].includes(platforms[0])) {
+        $('scout-platforms').value = platforms[0];
+    } else if (
+        ['tiktok', 'instagram', 'x', 'bluesky'].every(value => platforms.includes(value))
+    ) {
+        $('scout-platforms').value = 'social';
+    } else {
+        $('scout-platforms').value = 'all';
+    }
+
+    $('after-save-fields').hidden = true;
+    showStep(2);
+    setSourceView('add', {focus: true});
+}
+
 function intent(key, prefix) {
     if (!intents.has(key)) intents.set(key, `${prefix}-${crypto.randomUUID()}`);
     return intents.get(key);
@@ -425,8 +518,8 @@ function details() {
         if (!query || Array.isArray(query) || typeof query !== 'object') throw new Error('Custom connection settings must be a JSON object.');
         platform = a.supported_platforms[0] || 'custom';
     }
-    return {
-        create_only: true,
+    const payload = {
+        create_only: !editingSource,
         name,
         adapter_key: a.key,
         adapter_version: a.version,
@@ -434,9 +527,18 @@ function details() {
         channel_profile_id: $('channel').value || null,
         usage_mode: selectedUsage(),
         query_template: query,
-        poll_interval_minutes: 60,
-        source_metadata: {execution_mode: 'manual'},
+        default_candidate_metadata: editingSource
+            ? {...(editingSource.default_candidate_metadata || {})}
+            : {},
+        poll_interval_minutes: editingSource?.poll_interval_minutes || 60,
+        source_metadata: {
+            ...(editingSource?.source_metadata || {}),
+            execution_mode: 'manual',
+        },
+        enabled: editingSource?.enabled ?? true,
     };
+    if (editingSource) payload.source_key = editingSource.source_key;
+    return payload;
 }
 function review() {
     const d = details();
@@ -454,12 +556,18 @@ function review() {
     if (d.query_template.feed_url) rows.push(['Website feed', d.query_template.feed_url]);
     rows.push(['After saving', selectedMethod === 'links' ? 'Save the collection, then paste links.' : immediate ? 'Save the source and run one check immediately.' : 'Save the source only. No search starts.']);
     $('review').innerHTML = rows.map(([label, value]) => '<dt>' + esc(label) + '</dt><dd>' + esc(value) + '</dd>').join('');
-    $('save').textContent = selectedMethod === 'links' || !immediate ? 'Save source' : 'Save & check now';
-    $('save-explanation').textContent = selectedMethod === 'links'
-        ? 'Saving creates the source only. Add links from the Source Library when you are ready.'
-        : immediate
-            ? 'Katcha will save this source, then start one check. This does not create a recurring schedule.'
-            : 'Katcha will save this source without starting a search or recurring schedule.';
+    $('save').textContent = editingSource
+        ? 'Save changes'
+        : selectedMethod === 'links' || !immediate
+            ? 'Save source'
+            : 'Save & check now';
+    $('save-explanation').textContent = editingSource
+        ? 'Katcha will update this source in place. Existing checks, finds, and source history are preserved.'
+        : selectedMethod === 'links'
+            ? 'Saving creates the source only. Add links from the Source Library when you are ready.'
+            : immediate
+                ? 'Katcha will save this source, then start one check. This does not create a recurring schedule.'
+                : 'Katcha will save this source without starting a search or recurring schedule.';
     if (selectedMethod === 'scout') $('save-explanation').textContent += ' Web scouting can use live AI and public web search; provider charges may apply when API fallback is used.';
     showStep(3);
 }
