@@ -348,3 +348,78 @@ async def test_analysis_worker_reconciles_queued_and_running_analysis(
         == analysis_worker.WorkflowIDReusePolicy.ALLOW_DUPLICATE_FAILED_ONLY
         for call in client.calls
     )
+
+
+@pytest.mark.asyncio
+async def test_intelligence_worker_reconciles_persisted_automation_schedules(
+    monkeypatch,
+) -> None:
+    schedules = [
+        SimpleNamespace(
+            id="schedule-1",
+            schedule_kind="channel_intelligence",
+            subject_id="channel-1",
+            workflow_id="channel-intelligence-schedule-channel-1-g1",
+            supersedes_workflow_id="channel-intelligence-schedule-channel-1",
+            schedule_config={"interval_hours": 6},
+        ),
+        SimpleNamespace(
+            id="schedule-2",
+            schedule_kind="topic_watch",
+            subject_id="watch-1",
+            workflow_id="topic-watch-schedule-watch-1-g2",
+            supersedes_workflow_id=None,
+            schedule_config={"interval_minutes": 30, "top_n": 25},
+        ),
+    ]
+    monkeypatch.setattr(
+        intelligence_worker,
+        "list_enabled_automation_schedules",
+        lambda: schedules,
+    )
+    reconciled = []
+    monkeypatch.setattr(
+        intelligence_worker,
+        "mark_schedule_reconciled",
+        lambda schedule_id, workflow_id: reconciled.append(
+            (schedule_id, workflow_id)
+        ),
+    )
+    terminated = []
+
+    async def fake_terminate(_client, workflow_id, *, reason):
+        terminated.append((workflow_id, reason))
+        return bool(workflow_id)
+
+    monkeypatch.setattr(
+        intelligence_worker,
+        "terminate_workflow_if_running",
+        fake_terminate,
+    )
+    monkeypatch.setattr(
+        intelligence_worker,
+        "WorkflowAlreadyStartedError",
+        _AlreadyStarted,
+    )
+    client = _FakeClient(
+        already_started_ids={"topic-watch-schedule-watch-1-g2"},
+    )
+
+    resumed, present = await intelligence_worker._resume_persisted_automation_schedules(
+        client,
+    )
+
+    assert resumed == 1
+    assert present == 1
+    calls = {call[2]["id"]: call for call in client.calls}
+    intelligence = calls["channel-intelligence-schedule-channel-1-g1"]
+    assert intelligence[2]["args"] == ["channel-1", 6, 120]
+    assert intelligence[2]["task_queue"] == intelligence_worker.INTELLIGENCE_TASK_QUEUE
+    watch = calls["topic-watch-schedule-watch-1-g2"]
+    assert watch[2]["args"] == ["watch-1", 30, 25, 0]
+    assert watch[2]["task_queue"] == intelligence_worker.DISCOVERY_TASK_QUEUE
+    assert terminated[0][0] == "channel-intelligence-schedule-channel-1"
+    assert reconciled == [
+        ("schedule-1", "channel-intelligence-schedule-channel-1-g1"),
+        ("schedule-2", "topic-watch-schedule-watch-1-g2"),
+    ]
