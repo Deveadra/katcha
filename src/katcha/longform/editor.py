@@ -23,7 +23,6 @@ from katcha.ai.subscription import generate_subscription_json
 from katcha.config import Settings, get_settings
 from katcha.db import session_scope
 from katcha.domain import AITask
-from katcha.runtime_fence import assert_mutation_authority
 from katcha.editorial.personas import HostPersona
 from katcha.longform.schemas import (
     CandidateEvidence,
@@ -32,6 +31,7 @@ from katcha.longform.schemas import (
     LongformEditorPlan,
 )
 from katcha.longform_models import Compilation
+from katcha.runtime_fence import assert_mutation_authority
 
 
 class LongformProviderUnavailable(RuntimeError):
