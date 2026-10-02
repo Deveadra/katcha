@@ -51,6 +51,7 @@ from katcha.orchestration.reach_activities import (
 from katcha.orchestration.reach_workflows import YouTubeReachSyncWorkflow
 from katcha.orchestration.worker_group import run_worker_group
 from katcha.orchestration.workflows import ClipIngestWorkflow
+from katcha.packaging_models import PublicationPackagingActivation
 from katcha.publishing_models import Publication
 
 
@@ -73,6 +74,13 @@ async def _resume_persisted_ingest_and_publication_work(
                     Publication.status.in_(
                         ["queued", "uploading", "uploaded", "processing"]
                     )
+                )
+            )
+        )
+        packaging_activations = list(
+            session.scalars(
+                select(PublicationPackagingActivation).where(
+                    PublicationPackagingActivation.status.in_(["queued", "running"])
                 )
             )
         )
@@ -102,6 +110,19 @@ async def _resume_persisted_ingest_and_publication_work(
                     settings.youtube_processing_max_polls,
                     settings.analytics_offsets_hours(),
                 ],
+                id=row.workflow_id,
+                id_reuse_policy=WorkflowIDReusePolicy.ALLOW_DUPLICATE_FAILED_ONLY,
+                task_queue=settings.temporal_publishing_task_queue,
+            )
+            resumed += 1
+        except WorkflowAlreadyStartedError:
+            present += 1
+
+    for row in packaging_activations:
+        try:
+            await client.start_workflow(
+                YouTubePackagingActivationWorkflow.run,
+                str(row.id),
                 id=row.workflow_id,
                 id_reuse_policy=WorkflowIDReusePolicy.ALLOW_DUPLICATE_FAILED_ONLY,
                 task_queue=settings.temporal_publishing_task_queue,

@@ -5,6 +5,8 @@ import concurrent.futures
 import logging
 from contextlib import suppress
 
+from sqlalchemy import select
+
 from temporalio.client import Client
 from temporalio.common import WorkflowIDReusePolicy
 from temporalio.exceptions import WorkflowAlreadyStartedError
@@ -12,6 +14,8 @@ from temporalio.worker import Worker
 
 from katcha.acquisition.runtime import DISCOVERY_TASK_QUEUE
 from katcha.config import get_settings
+from katcha.db import session_scope
+from katcha.goal_models import CommandGoal
 from katcha.intelligence.runtime import INTELLIGENCE_TASK_QUEUE
 from katcha.orchestration.discovery_activities import (
     execute_discovery_page_activity,
@@ -89,6 +93,36 @@ async def _resume_persisted_discovery_work(client: Client) -> tuple[int, int]:
     return resumed, present
 
 
+async def _resume_persisted_command_goals(client: Client) -> tuple[int, int]:
+    with session_scope() as session:
+        goals = list(
+            session.scalars(
+                select(CommandGoal).where(
+                    CommandGoal.status.in_(
+                        ["queued", "running", "waiting_workflow", "waiting_confirmation"]
+                    )
+                )
+            )
+        )
+
+    resumed = 0
+    present = 0
+    for goal in goals:
+        workflow_id = f"command-goal-{goal.id}"
+        try:
+            await client.start_workflow(
+                CommandGoalWorkflow.run,
+                str(goal.id),
+                id=workflow_id,
+                id_reuse_policy=WorkflowIDReusePolicy.ALLOW_DUPLICATE_FAILED_ONLY,
+                task_queue=INTELLIGENCE_TASK_QUEUE,
+            )
+            resumed += 1
+        except WorkflowAlreadyStartedError:
+            present += 1
+    return resumed, present
+
+
 async def main() -> None:
     settings = get_settings()
     logging.basicConfig(
@@ -99,11 +133,15 @@ async def main() -> None:
         settings.temporal_host,
         namespace=settings.temporal_namespace,
     )
-    resumed, present = await _resume_persisted_discovery_work(client)
+    discovery_resumed, discovery_present = await _resume_persisted_discovery_work(client)
+    goal_resumed, goal_present = await _resume_persisted_command_goals(client)
     logging.getLogger(__name__).info(
-        "discovery recovery reconciled work resumed=%s temporal_present=%s",
-        resumed,
-        present,
+        "intelligence recovery reconciled discovery resumed=%s present=%s; "
+        "command goals resumed=%s present=%s",
+        discovery_resumed,
+        discovery_present,
+        goal_resumed,
+        goal_present,
     )
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=8) as activity_executor:
