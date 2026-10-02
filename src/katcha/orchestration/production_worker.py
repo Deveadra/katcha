@@ -196,7 +196,7 @@ async def _resume_persisted_production_work(client: Client, settings) -> tuple[i
                 workflow_run,
                 args=[source_id, stage],
                 id=workflow_id,
-                id_reuse_policy=WorkflowIDReusePolicy.REJECT_DUPLICATE,
+                id_reuse_policy=WorkflowIDReusePolicy.ALLOW_DUPLICATE_FAILED_ONLY,
                 task_queue=task_queue,
             )
             resumed += 1
