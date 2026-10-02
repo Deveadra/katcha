@@ -50,7 +50,9 @@ from katcha.services.ingestion_sources import (
     list_ingestion_source_library,
     list_ingestion_sources,
     list_intelligence_records,
+    list_source_finds,
     list_source_runs,
+    restart_source_run,
     upsert_ingestion_source,
 )
 from katcha.services.intelligence_handoff import (
