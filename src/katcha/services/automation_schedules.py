@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import uuid
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from enum import StrEnum
 
@@ -146,9 +148,23 @@ def list_enabled_automation_schedules() -> list[AutomationSchedule]:
         return rows
 
 
-def mark_schedule_reconciled(schedule_id: uuid.UUID, workflow_id: str) -> None:
+@contextmanager
+def locked_schedule_for_reconcile(
+    schedule_id: uuid.UUID,
+) -> Iterator[AutomationSchedule]:
     with session_scope() as session:
-        row = session.get(AutomationSchedule, schedule_id)
-        if row is None or row.workflow_id != workflow_id:
+        row = session.scalar(
+            select(AutomationSchedule)
+            .where(AutomationSchedule.id == schedule_id)
+            .with_for_update()
+        )
+        if row is None:
+            raise RuntimeError(f"automation schedule disappeared: {schedule_id}")
+        yield row
+
+
+def mark_schedule_reconciled(schedule_id: uuid.UUID, workflow_id: str) -> None:
+    with locked_schedule_for_reconcile(schedule_id) as row:
+        if row.workflow_id != workflow_id:
             return
         row.supersedes_workflow_id = None
