@@ -352,3 +352,33 @@ POST /v1/publications/{publication_id}/packaging/thumbnails
 
 This stage still performs no YouTube mutation; P9.1 remains the only packaging activation
 path.
+
+## P10.4 pre-upload SEO packaging
+
+Time-sensitive source-preserving publications can now be registered with
+`hold_for_packaging=true`. The publication is validated and retained as
+`queued / metadata_hold`, but the YouTube upload workflow is not started.
+
+Packaging variants may include optional `tags` and `hashtags` in addition to the
+existing title, description and thumbnail. Automated packaging generation also
+emits search-intent targets and grounds candidates in recent channel intelligence.
+
+Apply an immutable package before upload with:
+
+```http
+POST /v1/publications/{publication_id}/packaging/preupload
+```
+
+Then release the held publication with:
+
+```http
+POST /v1/publications/{publication_id}/start
+```
+
+After upload, the normal packaging activation path can update title, description,
+tags and the rendered hashtag block together. Thumbnail-derived variant versions
+inherit their parent's tags and hashtags instead of silently dropping SEO metadata.
+
+This path deliberately does not present tags as a primary ranking mechanism. Tags
+are supplemental query/misspelling metadata; title, description, thumbnail appeal,
+viewer engagement and satisfaction remain the higher-value optimization targets.
