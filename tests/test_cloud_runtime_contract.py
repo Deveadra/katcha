@@ -144,5 +144,6 @@ def test_systemd_requires_durable_mount_and_restarts_supervisor() -> None:
     assert "Restart=on-failure" in unit
     assert "production-supervisor.sh" in unit
     assert "mountpoint -q" in supervisor
+    assert 'PYTHONPATH="${ROOT}/src' in supervisor
     assert "/etc/katcha/aws/config" in supervisor
     assert "docker-compose.aws-roles-anywhere.yml" not in supervisor
