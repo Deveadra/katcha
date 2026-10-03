@@ -12,6 +12,7 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
+    UniqueConstraint,
     Uuid,
     func,
 )
@@ -77,3 +78,25 @@ class EditorialRun(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
+
+
+class EditorialRenderReview(Base):
+    __tablename__ = "editorial_render_reviews"
+    __table_args__ = (
+        UniqueConstraint("run_id", "sequence", name="uq_editorial_review_sequence"),
+        CheckConstraint("sequence > 0", name="ck_editorial_review_sequence"),
+        CheckConstraint(
+            "decision IN ('approve', 'request_changes')", name="ck_editorial_review_decision"
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
+    run_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("editorial_runs.id"), index=True)
+    sequence: Mapped[int] = mapped_column(Integer)
+    request_digest: Mapped[str] = mapped_column(String(64))
+    manifest_digest: Mapped[str] = mapped_column(String(64))
+    result_digest: Mapped[str] = mapped_column(String(64))
+    decision: Mapped[str] = mapped_column(String(32))
+    note: Mapped[str] = mapped_column(Text)
+    actor: Mapped[str] = mapped_column(String(255))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

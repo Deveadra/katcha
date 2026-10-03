@@ -1,5 +1,6 @@
 import React from 'react';
 import {Composition} from 'remotion';
+import {EditorialVideo} from './editorial-video.jsx';
 import {BlueprintVideo} from './blueprint-video.jsx';
 import {LongformVideo} from './longform-video.jsx';
 import {RankedEpisodeVideo} from './ranked-episode-video.jsx';
@@ -69,6 +70,16 @@ const longformDefaults = {
 
 export const RemotionRoot = () => (
   <>
+    <Composition
+      id="Editorial"
+      component={EditorialVideo}
+      durationInFrames={30}
+      fps={30}
+      width={1920}
+      height={1080}
+      defaultProps={{media: [], timeline: [], output_duration_seconds: 1}}
+      calculateMetadata={({props}) => ({durationInFrames: Math.round(props.output_duration_seconds * 30)})}
+    />
     <Composition
       id="BlueprintVideo"
       component={BlueprintVideo}

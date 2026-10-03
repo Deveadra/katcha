@@ -6,13 +6,16 @@ from typing import Literal, Self
 from pydantic import Field, model_validator
 
 from katcha.editorial.project_schemas import Contract, Identity, RequestKey
+from katcha.editorial.visual_schemas import StoryboardPlan
 
 
 class StartEditorialRun(Contract):
     idempotency_key: RequestKey
     expected_revision: int = Field(ge=0, strict=True)
     # This contract grows only as its actual workers are implemented.
-    target: Literal["analysis", "script", "assets", "acquire_assets"] = "analysis"
+    target: Literal["analysis", "script", "assets", "acquire_assets", "render"] = "analysis"
+    asset_run_id: uuid.UUID | None = None
+    storyboard: StoryboardPlan | None = None
     scout_run_id: uuid.UUID | None = None
     asset_candidate_ids: list[Identity] = Field(default_factory=list, max_length=30)
     clip_bindings: dict[str, uuid.UUID] = Field(default_factory=dict, max_length=20)
@@ -32,6 +35,11 @@ class StartEditorialRun(Contract):
                 raise ValueError("Asset candidate selection must be unique")
         elif self.scout_run_id or self.asset_candidate_ids:
             raise ValueError("Asset selection is only valid for asset acquisition")
+        if self.target == "render":
+            if not self.asset_run_id or self.storyboard is None:
+                raise ValueError("Rendering requires acquired assets and an explicit storyboard")
+        elif self.asset_run_id or self.storyboard is not None:
+            raise ValueError("Storyboard selection is only valid for rendering")
         return self
 
 

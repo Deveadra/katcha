@@ -43,9 +43,9 @@ as API credit. Verify supported account capabilities when enabling each live rou
 | E2 | URL/managed asset intake and measured video analysis attached to project | E1 | Intake/local-analysis implemented; richer interpretation pending |
 | E3 | Durable specialist research, evidence verification and cost-bounded recursion | E1–E2 | Implemented; synthetic integration verified |
 | E4 | Story selection, writer/critic/revision loop and cited script review | E3 | Implemented; live editorial acceptance pending |
-| E5 | Claim-directed supplementary asset scout and acquisition/rights gate | E3–E4 | Video discovery/review acquisition implemented; image acquisition and render-time gate pending |
-| E6 | Visual director, timing, compiler and editorial Remotion composition | E4–E5 | Typed storyboard preflight/compiler implemented; renderer dispatch/composition pending |
-| E7 | Integrated editorial workspace, recovery/status and publication handoff | E1–E6 | Planned |
+| E5 | Claim-directed supplementary asset scout and acquisition/rights gate | E3–E4 | Video discovery/acquisition and render-time rights gate implemented; images pending |
+| E6 | Visual director, timing, compiler and editorial Remotion composition | E4–E5 | Compiler, local renderer and private preview implemented; narration/automatic direction pending |
+| E7 | Integrated editorial workspace, recovery/status and publication handoff | E1–E6 | Workspace, recovery and durable review implemented locally; publication pending |
 | E8 | Fault injection, real authorized trailer acceptance, rollout and analytics | E7 | Planned |
 
 Use substantial PRs with coherent executable boundaries. E1 must explicitly say
@@ -526,3 +526,90 @@ No renderer dispatch, Remotion editorial composition, generated narration, image
 acquisition, preview playback or publication handoff is exposed by this checkpoint.
 Those remaining E6/E7 boundaries require their own wired implementation and actual
 render/media checks; preflight success must never be presented as a finished video.
+
+### E6 local rendering and private preview checkpoint
+
+Accepted PR #258 is merged; all CI, launcher and recovery coordinator checks passed.
+The next implementation now connects the versioned editorial manifest to an actual
+Remotion composition and local renderer. Single footage, split comparisons, held
+frames, push-ins, source-coordinate annotations, evidence quotes, captions and
+uncertainty disclosures use deterministic integer-frame timing. The renderer
+validates managed media and source bounds before cache lookup or dispatch. Cached
+editorial objects require a matching manifest digest and verification receipt.
+Editorial Lambda dispatch is explicitly rejected until cost authorization is wired.
+
+`target=render` accepts a revision-bound acquired asset run and explicit
+`captioned_silent` storyboard. The registered Temporal activity persists its
+manifest and dispatch receipt before requesting compute, fences cancelled/stale
+attempts, and rechecks current script/media/clearance before review readiness.
+Resume reconciles uncertain dispatches through a read-only renderer output check;
+it never starts replacement compute while the previous result is unknown. A
+confirmed pre-dispatch validation/configuration rejection can be retried after a
+configuration fix. Uncertain work with no output stays blocked for inspection.
+
+Production now provides beat-level footage/evidence selection, source start,
+freeze choice, persisted unsaved storyboard choices, explicit silent-preview
+creation, progress/resume and authenticated private preview loading. Preflight is
+performed before submission; script edits must be saved first. Playback again
+validates channel, project, current revision, current rights and verified output.
+The renderer completion receipt is not publication approval. Existing acquisition
+receipts remain discoverable after a render becomes the latest project run.
+
+Validation includes durable lost-response recovery, cancellation, rights revocation
+before promotion and during preview access, same-receipt dispatch exclusion, and
+configuration rejection recovery. The synthetic browser journey covers storyboard
+persistence, preflight/render request identity and authenticated preview transport,
+plus existing mobile, keyboard, script recovery and channel isolation checks.
+Actual Remotion/FFmpeg acceptance produced a 1920x1080, 180-frame, silent MP4 with
+single, comparison/freeze and quote scenes; representative frames were inspected.
+This is synthetic rendering proof, not live trailer/provider/rights acceptance.
+
+Remaining: measured narration and voice policy; automatic visual direction grounded
+in asset frames; approved brand assets; richer visual editing and historical run
+selection; image acquisition/manual replacement; review/publication handoff; and
+real authorized source-to-reviewed-video operational acceptance. The current UI
+uses single footage and quote cards; comparison/annotation plans are available
+through the typed storyboard API. No paid renderer fallback or publication action
+is introduced by this checkpoint.
+
+
+### E7 durable render review checkpoint (local, not published)
+
+Added migration `0052_editorial_render_reviews` with append-only, uniquely sequenced
+render decisions. Reviews bind both the exact manifest and verified output receipt,
+store the authenticated actor, and emit a transactional domain event. Project-row
+serialization shares the draft-save lock: simultaneous reviews cannot overwrite
+each other, and an interrupted response can replay the original decision exactly.
+A replay is a historical receipt, not proof that an old approval remains valid.
+
+Authenticated review/status APIs, native tools and Production controls expose
+approve/request-changes, notes, recent history and invalidation reasons. Native
+AI review requires explicit operator confirmation. Notes and request identity survive
+failed saves. Approval rechecks the current revision, media and rights; subsequent
+status checks invalidate approval when inputs or output receipts change. Preview
+access now also verifies measured duration and composition against the manifest.
+Rights/compiler reads can share the review transaction instead of opening nested
+sessions inside it. Requesting changes remains possible after clearance revocation.
+
+Validation: 134 focused Python tests passed across editorial stages, review replay,
+concurrent reviewers, API/channel scopes, native schemas, exact output checks, real
+compiler rights-revocation integration, migration upgrade/downgrade and existing
+long-form/recovery contracts. Renderer configuration and editorial geometry contract
+tests passed. The browser journey now includes review notes, approval and lost-response
+replay, but execution is blocked in this session: Chromium is absent and both browser
+downloads returned unusable archives. JavaScript syntax checks passed; no new browser
+or live source/provider/YouTube acceptance is claimed. Full-suite execution against a fresh disposable SQLite database reached **940 passed,
+2 skipped and 1 failed**. The source-scout recovery failure reproduced unchanged on
+the starting renderer commit `9f846c5`; it is not introduced by this review change.
+An initial run without a database had 18 connection-refused failures. PostgreSQL
+migration execution remains a CI gate; SQLite results do not establish it.
+
+GitHub publication was blocked by automatic approval review, which said explicit
+publication authorization was missing despite the authorization in the supplied chat
+history. Renderer commit `9f846c5` and this review follow-up remain local until that
+block is resolved. No remote PR or CI result is claimed for these changes.
+
+Still pending: measured narration and voice policy, automatic visual direction,
+image/manual-replacement support, approved brand assets, historical run selection,
+publication-source integration and real operational source-to-reviewed-video acceptance.
+Review approval does not upload, schedule, publish or authorize paid provider calls.

@@ -43,6 +43,20 @@ TOOLS = {
     tool.name: tool
     for tool in [
         GoalTool(
+            "editorial_render_review", "Read current render approval and any invalidation reason",
+            "ai:read", "GET",
+            "/v1/channels/{channel_profile_id}/editorial-projects/{project_id}"
+            "/runs/{editorial_run_id}/review",
+        ),
+        GoalTool(
+            "review_editorial_render",
+            "Record an explicit operator review of this exact render. Approval rechecks current "
+            "script, media and clearance. Requires operator confirmation; does not publish.",
+            "production:create", "POST",
+            "/v1/channels/{channel_profile_id}/editorial-projects/{project_id}"
+            "/runs/{editorial_run_id}/review", confirm=True, retry_safe=True,
+        ),
+        GoalTool(
             "preflight_editorial_storyboard",
             "Validate an explicit caption-only storyboard against the current script and "
             "acquired media, source timing, evidence references and current rights. "
@@ -56,7 +70,9 @@ TOOLS = {
             "Start durable editorial work: target=analysis prepares sampled frames/transcript; "
             "target=script interprets sources, researches evidence and drafts a cited script. "
             "target=assets scouts supporting media; target=acquire_assets downloads selected "
-            "scout candidates for review. Research requires a live "
+            "scout candidates for review. target=render requires an asset_run_id and explicit "
+            "captioned_silent storyboard; uses local rendering with a private review preview. "
+            "Research requires a live "
             "eligible provider; discovery and generation are not rights/publication approval.",
             "production:create", "POST",
             "/v1/channels/{channel_profile_id}/editorial-projects/{project_id}/runs",

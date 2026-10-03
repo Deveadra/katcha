@@ -26,6 +26,13 @@ class EditorialProjectWorkflow:
 
         try:
             context = await step("editorial_begin")
+            if context.get("target") == "render":
+                return await workflow.execute_activity(
+                    "editorial_render",
+                    args=[run_id, attempt],
+                    start_to_close_timeout=timedelta(minutes=35),
+                    retry_policy=RetryPolicy(maximum_attempts=1),
+                )
             if context.get("target") == "assets":
                 return await workflow.execute_activity(
                     "editorial_scout_assets",

@@ -99,6 +99,8 @@ def test_catalog_native_schemas_resolve_registered_operations():
     for name in TOOLS:
         assert tool_schema(name)["type"] == "object"
     assert TOOLS["publish_production"].confirm
+    assert TOOLS["review_editorial_render"].confirm
+    assert TOOLS["review_editorial_render"].retry_safe
     assert not TOOLS["publish_production"].retry_safe
     assert "path" in tool_schema("save_watch")["properties"]
 

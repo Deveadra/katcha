@@ -154,3 +154,21 @@ def preflight_storyboard(
         )
     except ValueError as exc:
         raise _error(exc) from exc
+
+
+@router.get("/{project_id}/runs/{run_id}/preview")
+def preview_render(
+    channel_profile_id: uuid.UUID, project_id: uuid.UUID, run_id: uuid.UUID, request: Request
+):
+    """Authenticated review playback; clearance is checked again at access time."""
+    from katcha.api.studio import _stream_object
+    from katcha.services.editorial_reviews import verified_manifest
+    from katcha.services.editorial_runs import get_run
+
+    _authorize(request, channel_profile_id)
+    try:
+        row = get_run(channel_profile_id, project_id, run_id)
+        manifest = verified_manifest(row)
+        return _stream_object(request, manifest.output_key, f"editorial-{project_id}.mp4")
+    except ValueError as exc:
+        raise _error(exc) from exc

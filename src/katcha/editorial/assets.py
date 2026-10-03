@@ -5,9 +5,11 @@ from __future__ import annotations
 import hashlib
 import json
 import uuid
+from contextlib import nullcontext
 from datetime import UTC, datetime
 
 from sqlalchemy import select
+from sqlalchemy.orm import Session
 
 from katcha.acquisition.web_scout import _normalized_url, _same_grounded_page
 from katcha.acquisition_models import DiscoveryCandidate
@@ -22,7 +24,9 @@ from katcha.services.clip_lifecycle import channel_ids_for_clip
 from katcha.services.editorial_runs import checkpoint
 
 
-def inspect_managed_candidate(url: str, channel_id: uuid.UUID) -> dict:
+def inspect_managed_candidate(
+    url: str, channel_id: uuid.UUID, *, session: Session | None = None
+) -> dict:
     """Do not expose another channel's candidate or treat legacy ingest as rights clearance."""
     unknown = {
         "rights_status": "unreviewed",
@@ -35,7 +39,7 @@ def inspect_managed_candidate(url: str, channel_id: uuid.UUID) -> dict:
         "duration_seconds": None,
         "rights_checked_at": datetime.now(UTC).isoformat(),
     }
-    with session_scope() as session:
+    with (session_scope() if session is None else nullcontext(session)) as session:
         candidate = session.scalar(
             select(DiscoveryCandidate).where(
                 DiscoveryCandidate.canonical_url == canonicalize_url(url)

@@ -1,3 +1,5 @@
+import {createHash} from 'node:crypto';
+import {validateEditorialManifest} from './editorial-contract.mjs';
 import fs from 'node:fs';
 import {execFile} from 'node:child_process';
 import os from 'node:os';
@@ -395,12 +397,42 @@ app.post('/thumbnail', async (request, response) => {
   }
 });
 
+app.post('/editorial-output', async (request, response) => {
+  try {
+    const manifest = validateEditorialManifest(request.body);
+    const digest = createHash('sha256').update(JSON.stringify(manifest)).digest('hex');
+    if (!(await exists(manifest.output_key))) return response.status(404).json({error: 'Editorial output is not available yet'});
+    const stored = await headObject(manifest.output_key);
+    if (!(Number(stored.ContentLength) > 0) || stored.Metadata?.['katcha-editorial-digest'] !== digest || stored.Metadata?.['katcha-verified'] !== 'true') {
+      return response.status(409).json({error: 'Editorial output verification does not match'});
+    }
+    return response.json({output_key: manifest.output_key, duration_seconds: manifest.output_duration_seconds,
+      metadata: {verified: true, reused: true, composition: 'Editorial', verification_mode: 'object-head+manifest-digest', object_size_bytes: Number(stored.ContentLength)}});
+  } catch (error) {
+    return response.status(400).json({error: String(error.message)});
+  }
+});
+
+const activeEditorialOutputs = new Set();
+
 app.post('/render', async (request, response) => {
   const manifest = request.body;
+  const isEditorial = manifest?.version === 'editorial-render-v1';
+  let editorialDigest;
+  if (isEditorial) {
+    try {
+      validateEditorialManifest(manifest);
+      // Until cost authorization is connected to durable runs, editorial is local only.
+      if (renderSettings.backend !== 'local') throw new Error('Editorial rendering requires the local backend');
+      editorialDigest = createHash('sha256').update(JSON.stringify(manifest)).digest('hex');
+    } catch (error) {
+      return response.status(400).json({error: error.message});
+    }
+  }
   const isLongform = manifest?.version === 'longform-render-v1';
   const isRankedEpisode = manifest?.version === 'ranked-episode-render-v1';
   const isBlueprint = manifest?.version === 'blueprint-render-v1';
-  const identity = isLongform
+  const identity = isEditorial ? manifest.project_id : isLongform
     ? manifest?.compilation_id
     : isRankedEpisode
       ? manifest?.short_episode_id
@@ -410,7 +442,7 @@ app.post('/render', async (request, response) => {
   if (!identity || !manifest?.output_key) {
     return response.status(400).json({error: 'invalid render manifest'});
   }
-  if (!isLongform && !isRankedEpisode && !manifest?.source?.storage_key) {
+  if (!isEditorial && !isLongform && !isRankedEpisode && !manifest?.source?.storage_key) {
     return response.status(400).json({error: 'render manifest is missing source'});
   }
   if (isBlueprint && !manifest?.blueprint_key) {
@@ -423,8 +455,12 @@ app.post('/render', async (request, response) => {
     return response.status(400).json({error: 'long-form render manifest is missing timeline'});
   }
 
+  if (isEditorial && activeEditorialOutputs.has(manifest.output_key)) {
+    return response.status(409).json({error: 'Editorial render is already in progress'});
+  }
+  if (isEditorial) activeEditorialOutputs.add(manifest.output_key);
   try {
-    const compositionId = isLongform
+    const compositionId = isEditorial ? 'Editorial' : isLongform
       ? 'Longform'
       : isRankedEpisode
         ? 'RankedEpisode'
@@ -435,6 +471,9 @@ app.post('/render', async (request, response) => {
       const stored = await headObject(manifest.output_key);
       if (!(Number(stored.ContentLength || 0) > 0)) {
         throw new Error('existing render object is empty');
+      }
+      if (isEditorial && (stored.Metadata?.['katcha-editorial-digest'] !== editorialDigest || stored.Metadata?.['katcha-verified'] !== 'true')) {
+        throw new Error('Existing editorial output does not match this verified manifest');
       }
       return response.json({
         output_key: manifest.output_key,
@@ -450,7 +489,12 @@ app.post('/render', async (request, response) => {
       });
     }
 
-    const inputProps = isLongform
+    const inputProps = isEditorial
+      ? {...manifest, media: await Promise.all(manifest.media.map(async asset => {
+          if (!(await exists(asset.storage_key))) throw new Error('Missing editorial media');
+          return {...asset, url: await renderAssetUrl(asset.storage_key)};
+        }))}
+      : isLongform
       ? await hydrateLongformManifest(manifest)
       : isRankedEpisode
         ? await hydrateRankedEpisodeManifest(manifest)
@@ -509,6 +553,7 @@ app.post('/render', async (request, response) => {
           ContentType: 'video/mp4',
           Metadata: {
             'katcha-render-version': String(manifest.version || 'unknown'),
+            ...(isEditorial ? {'katcha-editorial-digest': editorialDigest} : {}),
             'katcha-verified': 'true',
           },
         }),
@@ -545,6 +590,8 @@ app.post('/render', async (request, response) => {
   } catch (error) {
     console.error('render failed', error);
     return response.status(500).json({error: String(error?.message || error)});
+  } finally {
+    if (isEditorial) activeEditorialOutputs.delete(manifest.output_key);
   }
 });
 

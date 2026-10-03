@@ -9,17 +9,45 @@ from sqlalchemy import select
 from katcha.api.control_auth import control_actor
 from katcha.api.editorial_projects import _authorize, _error
 from katcha.db import session_scope
+from katcha.editorial.review_schemas import ReviewEditorialRender
 from katcha.editorial.run_schemas import ResumeEditorialRun, StartEditorialRun
 from katcha.editorial_models import EditorialRun
 from katcha.orchestration.client import get_temporal_client
 from katcha.orchestration.editorial_dispatch import dispatch_editorial_run
 from katcha.services.editorial_projects import get_project
+from katcha.services.editorial_reviews import review_render, review_status
 from katcha.services.editorial_runs import control_run, get_run, start_run, workflow_id
 
 router = APIRouter(
     prefix="/v1/channels/{channel_profile_id}/editorial-projects/{project_id}/runs",
     tags=["editorial-projects"],
 )
+
+
+@router.get("/{editorial_run_id}/review")
+def render_review_status(
+    channel_profile_id: uuid.UUID, project_id: uuid.UUID,
+    editorial_run_id: uuid.UUID, request: Request,
+):
+    _authorize(request, channel_profile_id)
+    try:
+        return review_status(channel_profile_id, project_id, editorial_run_id)
+    except ValueError as exc:
+        raise _error(exc) from exc
+
+
+@router.post("/{editorial_run_id}/review", status_code=201)
+def save_render_review(
+    channel_profile_id: uuid.UUID, project_id: uuid.UUID,
+    editorial_run_id: uuid.UUID, body: ReviewEditorialRender, request: Request,
+):
+    _authorize(request, channel_profile_id, write=True)
+    try:
+        return review_render(
+            channel_profile_id, project_id, editorial_run_id, body, actor=control_actor(request)
+        )
+    except ValueError as exc:
+        raise _error(exc) from exc
 
 
 def run_response(row: EditorialRun, *, include_artifacts: bool = True) -> dict:

@@ -7,6 +7,9 @@ from __future__ import annotations
 
 import math
 import uuid
+from contextlib import nullcontext
+
+from sqlalchemy.orm import Session
 
 from katcha.db import session_scope
 from katcha.editorial.assets import inspect_managed_candidate
@@ -39,6 +42,10 @@ def compile_visuals(
     cursor = 0
     timeline = []
     for beat, visual in zip(draft.script, plan.beats, strict=True):
+        if beat.uncertainty_disclosure and len(beat.uncertainty_disclosure) > 180:
+            raise EditorialConflict(
+                "Shorten the on-screen uncertainty disclosure to 180 characters"
+            )
         frames = max(1, math.ceil(beat.planned_duration_seconds * 30))
         words = beat.narration.split()
         if len(words) / (frames / 30) > 3.5:
@@ -62,7 +69,7 @@ def compile_visuals(
                 raise EditorialConflict("Quote card must cite evidence belonging to this beat")
             source = sources[visual.quote_source_id]
             quote = source.excerpt if len(source.excerpt) <= 280 else source.excerpt[:277] + "…"
-            credit = source.title
+            credit = source.title if len(source.title) <= 200 else source.title[:197] + "…"
         timeline.append(
             EditorialScene(
                 **visual.model_dump(mode="json"),
@@ -102,9 +109,11 @@ def compile_project_visuals(
     expected_revision: int,
     asset_run_id: uuid.UUID,
     plan: StoryboardPlan,
+    *,
+    session: Session | None = None,
 ) -> EditorialRenderManifest:
     """Server-side resolution: storage keys and rights flags never come from a model/client."""
-    with session_scope() as session:
+    with (session_scope() if session is None else nullcontext(session)) as session:
         ensure_active_profile(session, channel_id)
         project = session.get(EditorialProject, project_id)
         if project is None or project.channel_profile_id != channel_id:
@@ -149,7 +158,7 @@ def compile_project_visuals(
         resolved = []
         for identity in sorted(used):
             receipt = receipts[identity]
-            current = inspect_managed_candidate(receipt["source_url"], channel_id)
+            current = inspect_managed_candidate(receipt["source_url"], channel_id, session=session)
             if not current["production_eligible"]:
                 raise EditorialConflict(
                     "Storyboard media needs current rights, audio and originality clearance"

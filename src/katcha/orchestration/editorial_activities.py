@@ -314,7 +314,15 @@ def editorial_finish_assets(run_id: str, attempt: int) -> dict:
     }
 
 
+@activity.defn
+def editorial_render(run_id: str, attempt: int) -> dict:
+    from katcha.editorial.render import render_project
+
+    return render_project(run_id, attempt)
+
+
 EDITORIAL_ACTIVITIES = [
+    editorial_render,
     editorial_begin,
     editorial_prepare_source,
     editorial_prepare_analysis,

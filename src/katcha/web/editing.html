@@ -75,6 +75,21 @@
                         <h3>Supporting assets</h3><p>Download selected YouTube videos for review. Downloads do not grant reuse permission. Images and other sources currently require manual acquisition through Sources.</p><p id="editorial-asset-gaps"></p><div id="editorial-assets"></div>
                         <button id="editorial-acquire-assets" class="button secondary" type="button" disabled>Download selected videos for review</button>
                         <details class="ae-help"><summary>Visual requests and missing material</summary><pre id="editorial-asset-requests"></pre></details>
+                        <h3>Captioned preview</h3><p>Choose footage or an evidence quote for each saved script beat. This preview is silent, with captions. Current media clearance is required; publication remains a separate review.</p>
+                        <div id="editorial-storyboard"></div>
+                        <button id="editorial-render" class="button secondary" type="button" disabled>Create silent captioned preview</button>
+                        <button id="editorial-play" class="mini" type="button" hidden>Load private preview</button>
+                        <video id="editorial-preview" controls playsinline hidden style="width:100%;max-height:70vh"></video>
+                        <section id="editorial-review" hidden aria-label="Render review">
+                            <p id="editorial-review-status" role="status"></p>
+                            <label>Review notes<textarea id="editorial-review-note" rows="3" maxlength="4000"></textarea></label>
+                            <div class="toolbar">
+                                <button id="editorial-approve" class="mini" type="button">Approve reviewed video</button>
+                                <button id="editorial-request-changes" class="mini" type="button">Request changes</button>
+                            </div>
+                            <p>Approval records your review of this exact video. Publishing is not connected yet.</p>
+                            <details class="ae-help"><summary>Review history</summary><div id="editorial-review-history"></div></details>
+                        </section>
                         <details class="ae-help"><summary>Provider receipts and research gaps</summary><pre id="editorial-receipts"></pre></details>
                     </section>
                 </section>

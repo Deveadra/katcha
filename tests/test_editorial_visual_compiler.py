@@ -111,7 +111,7 @@ def test_invalid_annotation_primitives_and_bounds_fail(overlay):
         plan(overlays=[overlay])
 
 
-def test_project_compiler_checks_current_rights_not_old_scout_flags(saved):
+def test_project_compiler_checks_current_rights_not_old_scout_flags(saved, monkeypatch):
     scout = completed_scout(saved)
     run = start_run(
         scout.channel_profile_id,
@@ -201,6 +201,49 @@ def test_project_compiler_checks_current_rights_not_old_scout_flags(saved):
     assert response.status_code == 200, response.text
     assert response.json()["output_key"] == value.output_key
     assert response.json()["requires_editorial_review"] is True
+    from fastapi.responses import Response
+
+    from katcha.editorial.render import render_project
+    from katcha.rendering.client import RenderResult
+
+    rendering = start_run(
+        scout.channel_profile_id,
+        scout.project_id,
+        StartEditorialRun(
+            expected_revision=1,
+            idempotency_key="actual-render-contract",
+            target="render",
+            asset_run_id=run.id,
+            storyboard=plan(),
+        ),
+        actor="test",
+    )
+    monkeypatch.setattr(
+        "katcha.editorial.render.render_editorial",
+        lambda manifest: RenderResult(
+            manifest.output_key,
+            manifest.output_duration_seconds,
+            {"verified": True, "composition": "Editorial"},
+        ),
+    )
+    assert render_project(str(rendering.id), 1)["status"] == "completed"
+    monkeypatch.setattr(
+        "katcha.api.studio._stream_object",
+        lambda request, key, filename: Response(key, media_type="video/mp4"),
+    )
+    preview_url = url.replace("/storyboard/preflight", f"/runs/{rendering.id}/preview")
+    preview = client.get(preview_url)
+    assert preview.status_code == 200
+    assert preview.text == value.output_key
+    review_url = preview_url.removesuffix("/preview") + "/review"
+    review_request = {
+        "idempotency_key": "review-real-manifest",
+        "expected_revision": 1, "expected_review_sequence": 0,
+        "decision": "approve", "note": "Synthetic review of compiled media",
+    }
+    approved = client.post(review_url, json=review_request)
+    assert approved.status_code == 201, approved.text
+    assert client.get(review_url).json()["status"] == "approve"
     with db.session_scope() as session:
         session.add(
             RightsAssessment(
@@ -210,6 +253,11 @@ def test_project_compiler_checks_current_rights_not_old_scout_flags(saved):
                 actor="reviewer",
             )
         )
+    assert client.get(preview_url).status_code == 409
+    assert client.get(review_url).json()["status"] == "invalidated"
+    assert client.post(review_url, json={
+        **review_request, "idempotency_key": "reapprove", "expected_review_sequence": 1,
+    }).status_code == 409
     assert client.post(url, json=body).status_code == 409
     with pytest.raises(EditorialConflict, match="clearance"):
         compile_project_visuals(scout.channel_profile_id, scout.project_id, 1, run.id, plan())
