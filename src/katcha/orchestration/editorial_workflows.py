@@ -26,6 +26,28 @@ class EditorialProjectWorkflow:
 
         try:
             context = await step("editorial_begin")
+            if context.get("target") == "assets":
+                return await workflow.execute_activity(
+                    "editorial_scout_assets",
+                    args=[run_id, attempt],
+                    start_to_close_timeout=timedelta(hours=2),
+                    retry_policy=RetryPolicy(maximum_attempts=1),
+                )
+            if context.get("target") == "acquire_assets":
+                for position in range(context["asset_count"]):
+                    source = await step("editorial_prepare_asset", position)
+                    if source.get("blocked"):
+                        return {"editorial_run_id": run_id, "status": "blocked"}
+                    if not source.get("clip_id"):
+                        source = await workflow.execute_activity(
+                            "ingest_source",
+                            source["source_id"],
+                            task_queue=context["ingest_queue"],
+                            start_to_close_timeout=timedelta(minutes=20),
+                            retry_policy=media,
+                        )
+                    await step("editorial_capture_asset", position, source["clip_id"])
+                return await step("editorial_finish_assets")
             for position in range(context["source_count"]):
                 source = await step("editorial_prepare_source", position)
                 if not source.get("clip_id"):
@@ -56,7 +78,15 @@ class EditorialProjectWorkflow:
                             retry_policy=local,
                         )
                     await step("editorial_capture_source", position)
-            return await step("editorial_finish_intake")
+            result = await step("editorial_finish_intake")
+            if context.get("target", "analysis") == "script":
+                return await workflow.execute_activity(
+                    "editorial_research_script",
+                    args=[run_id, attempt],
+                    start_to_close_timeout=timedelta(hours=2),
+                    retry_policy=RetryPolicy(maximum_attempts=1),
+                )
+            return result
         except Exception:
             await workflow.execute_activity(
                 "editorial_fail",

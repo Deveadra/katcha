@@ -41,10 +41,10 @@ as API credit. Verify supported account capabilities when enabling each live rou
 | --- | --- | --- | --- |
 | E1 | Durable projects, evidence/script contracts, revision concurrency, authenticated APIs, native AI tool registration | Baseline | Implemented; CI passed on 6c55ae4 |
 | E2 | URL/managed asset intake and measured video analysis attached to project | E1 | Intake/local-analysis implemented; richer interpretation pending |
-| E3 | Durable specialist research, evidence verification and cost-bounded recursion | E1–E2 | Planned |
-| E4 | Story selection, writer/critic/revision loop and cited script review | E3 | Planned |
-| E5 | Claim-directed supplementary asset scout and acquisition/rights gate | E3–E4 | Planned |
-| E6 | Visual director, timing, compiler and editorial Remotion composition | E4–E5 | Planned |
+| E3 | Durable specialist research, evidence verification and cost-bounded recursion | E1–E2 | Implemented; synthetic integration verified |
+| E4 | Story selection, writer/critic/revision loop and cited script review | E3 | Implemented; live editorial acceptance pending |
+| E5 | Claim-directed supplementary asset scout and acquisition/rights gate | E3–E4 | Video discovery/review acquisition implemented; image acquisition and render-time gate pending |
+| E6 | Visual director, timing, compiler and editorial Remotion composition | E4–E5 | Typed storyboard preflight/compiler implemented; renderer dispatch/composition pending |
 | E7 | Integrated editorial workspace, recovery/status and publication handoff | E1–E6 | Planned |
 | E8 | Fault injection, real authorized trailer acceptance, rollout and analytics | E7 | Planned |
 
@@ -384,3 +384,145 @@ Local checkpoint: 81 tests passed including interrupted dispatch/reconciliation,
 attempt fencing, cancellation, managed-source reuse and unsupported URL rejection.
 Repository Ruff, compileall, longform-worker import and whitespace checks passed.
 Live media/Temporal acceptance and the remaining research/render stages are pending.
+
+
+### E3–E4 research and scripting checkpoint
+
+Continued from merged PR #257 / main `47d8a80`, retaining the reviewed workflow
+recovery contract. `target=script` now connects source intake to observation,
+specialist question planning, grounded discovery, HTTPS retrieval, exact excerpt
+extraction, claim verification and a writer/critic loop with at most two revisions.
+The existing start/status/resume/cancel API and native tool expose this target.
+The registered longform-worker activity persists progress and actionable blockers.
+
+Evidence snippets have immutable content-derived IDs: another question about the
+same page cannot replace an earlier claim's quotation. Questions, documents,
+observations, sources, claims, depth, calls, reserved tokens and elapsed time are
+bounded. Retrieval pins a validated public IP while retaining TLS hostname checks;
+redirects are revalidated and response bytes are limited. Ungrounded model URLs
+never become retrieval targets. Script completion and immutable revision saving
+share one transaction, fenced against cancellation and concurrent draft edits.
+
+Provider calls reserve durable receipts before dispatch. Validated results are
+reused without requiring the provider to remain connected. Ambiguous calls are
+blocked rather than resubmitted; a typed Gemini quota rejection may retry only
+on an explicit new run attempt. No automatic paid fallback exists. Gemini requires
+both `KATCHA_EDITORIAL_GEMINI_BILLING_MODE=free` and an operator-selected
+`KATCHA_EDITORIAL_GEMINI_MODEL`, in addition to the key/live execution setting.
+This is an operator declaration, not independent verification of account billing.
+Otherwise supported connected subscription routes are used. Native Gemini video
+input and subscription contact sheets retain different coverage labels.
+
+Validation: **102 focused tests passed** across research, projects/runs, native
+tools, control authorization, long-form contracts, migration graph and recovery
+registry. Includes injected failure before final commit, cancelled/stale promotion,
+full resume without repeating research, immutable excerpts across two questions,
+unsupported quotes, critic exhaustion, SSRF/redirect rejection, quota rejection,
+call/token budgets and ambiguous requests. Whole-repository Ruff and source
+compilation passed. These tests use synthetic provider responses, not live factual
+verification. No new migration was required for E3–E4.
+
+Remaining boundaries: live source/provider acceptance, human evidence review,
+supplementary asset acquisition and rights decisions, visual compilation/render,
+workspace integration and publication handoff. Output is a reviewable script, not
+an approved or publishable video. Unknown subscription transport failures remain
+ambiguous; no automatic reconciliation endpoint is claimed. Token reservations
+are conservative estimates and provider-reported usage is recorded on completion.
+
+### E7 partial workspace checkpoint
+
+Production now includes an **Editorial projects** tab in the existing shared shell.
+Operators can save a brief, start source analysis or research/script work, inspect
+source observations and linked evidence, resume blocked work, stop active work and
+edit narration/visual direction into a new immutable revision. Provider receipts
+and research gaps are available behind a disclosure. Unavailable rendering and
+publication capabilities remain explicitly identified.
+
+Briefs and unsaved script text persist per channel in the browser tab. Uncertain
+create/start/save requests reuse their identity. Channel switching fences stale
+responses. A concurrent newer revision retains the operator's unsaved draft and
+requires an explicit discard before loading the latest script; it cannot silently
+overwrite either version. Active work refreshes progress without replacing typed
+script text. This is the research/script portion of E7, not its publication handoff.
+
+Browser validation: new synthetic editorial journey passed, including failed-create
+replay, blocked-run resume, evidence links, failed-save replay, concurrent revision
+preservation, channel isolation, keyboard tab navigation and 390px overflow checks.
+Existing Production browser tests passed. Desktop/mobile screenshots were inspected.
+Local browser downloads for pinned Playwright failed, so these local tests used a
+separate Chromium 134 executable without changing repository dependency versions.
+The research backend checkpoint `09de036` passed all GitHub CI, launcher and
+Cloudflare recovery coordinator workflows. UI changes require their own CI run.
+
+
+### E5 supporting asset checkpoint
+
+Added `target=assets` and `target=acquire_assets` to the existing typed run API,
+native tool and registered workflow. Asset scouting freezes the current saved
+script revision, generates bounded beat/claim-linked visual requests, searches
+for supporting media and retains only provider-grounded leads. Quote/diagram
+requests and missing media remain visible gaps rather than fabricated assets.
+
+Selected YouTube video leads can be downloaded through the existing managed
+acquisition activity. The server requires candidate identities from a completed
+scout belonging to this channel, project and exact script revision. It rejects
+invented selections and unsupported automatic download targets before dispatch.
+The workflow registers/reuses discovery candidates and review-purpose sources,
+persists clip/source/hash/duration receipts, and avoids generic AI or passthrough
+publication side effects. Capture checks the returned clip against its actual
+source binding and channel ownership.
+
+Rights status is read from the latest existing acquisition assessment. Cross-channel
+records are not exposed, unknown/legacy material is not treated as cleared, and
+scouting/downloading creates no rights assessment or permission. Status snapshots
+are explicitly labeled as rights at scout time. A future compiler must recheck
+current assessments; these snapshots are not render authorization. Images and
+non-YouTube material still require existing manual acquisition paths.
+
+Production now lists supporting media, preserves selected candidates across refresh,
+and provides a review-download action with plain-language rights status. Native
+and sampled-frame interpretation also now attach their actual observation coverage
+and limitations to source snapshots. Run replay normalizes newly introduced optional
+defaults, preserving request identity for runs created before an upgrade.
+
+Validation: **110 focused Python tests passed**, repository-wide Ruff and worker
+import passed. The synthetic browser journey passed with scouting, selection
+persistence, review-download request wiring and visible review-required status,
+in addition to its earlier recovery/concurrency/channel/mobile checks. This remains
+synthetic acceptance; no live trailer download, source verification or rights
+clearance is claimed. Prior UI head `9a8bdb2` passed GitHub CI, launcher and recovery
+coordinator checks. The new asset checkpoint awaits its own CI results.
+
+Next boundary: revision-bound asset selection and current-rights checks in the
+visual compiler; narration/timing and deterministic editorial rendering; then
+review/publication handoff and real authorized source-to-render acceptance.
+
+
+### E6 compiler/preflight checkpoint (not renderer completion)
+
+Added inert, versioned storyboard and `editorial-render-v1` manifest contracts,
+with single-video, comparison and evidence-linked quote layouts; bounded circle,
+arrow and highlight annotations; playback, freeze and restrained push-in parameters.
+The compiler preserves script order, uncertainty disclosures and claim/asset
+lineage, builds contiguous integer-frame scene/caption coverage, checks measured
+source bounds, and derives deterministic output identities. Caption-only silent
+presentation requires an explicit choice and enforces a reading-speed limit; it
+is not a fallback for failed narration.
+
+The authenticated channel-scoped `POST .../{project_id}/storyboard/preflight`
+API and `preflight_editorial_storyboard` native tool resolve assets from a
+completed acquisition of the exact script revision. Storage keys, media hashes,
+measured dimensions/durations and current rights assessments are read server-side.
+Revoked clearance, changed media, mismatched revisions and invented evidence/media
+references fail validation. The returned manifest still requires editorial review.
+
+Validation: 119 focused Python tests passed, including real API preflight and
+revoked-rights rejection, deterministic manifests, source freeze/playback bounds,
+quote provenance, annotation validation and all preceding regressions. Ruff,
+compilation and whitespace checks passed. Asset checkpoint `f7ac570` passed GitHub
+CI, launcher and recovery coordinator validation.
+
+No renderer dispatch, Remotion editorial composition, generated narration, image
+acquisition, preview playback or publication handoff is exposed by this checkpoint.
+Those remaining E6/E7 boundaries require their own wired implementation and actual
+render/media checks; preflight success must never be presented as a finished video.

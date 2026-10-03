@@ -261,6 +261,10 @@ class Settings(BaseSettings):
     allow_paid_openai_fallback: bool = False
     ai_budget_usd_monthly: float = Field(default=25.0, ge=0)
     web_scout_model: str = "gpt-5.6-luna"
+    # No paid editorial fallback. "free" is an operator assertion about this API project,
+    # not something a model or a creative brief can enable.
+    editorial_gemini_billing_mode: Literal["disabled", "free"] = "disabled"
+    editorial_gemini_model: str | None = None
 
     tts_profile: str = "openai_youth_v2"
     tts_provider_override: Literal["auto", "openai", "gemini", "elevenlabs"] = "auto"

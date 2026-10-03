@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 
 from katcha.db import session_scope
 from katcha.editorial.run_schemas import StartEditorialRun
-from katcha.editorial_models import EditorialProject, EditorialRun
+from katcha.editorial_models import EditorialProject, EditorialRevision, EditorialRun
 from katcha.models import Clip, DomainEvent
 from katcha.services.channel_profiles import ensure_active_profile
 from katcha.services.clip_lifecycle import channel_ids_for_clip
@@ -86,7 +86,10 @@ def start_run(
         previous = session.get(EditorialRun, run_id)
         if previous is not None:
             if previous.input_digest != digest:
-                raise EditorialConflict("Run identity was already used for different options")
+                # New optional defaults must not break replay of a pre-upgrade request.
+                normalized_previous = StartEditorialRun.model_validate(previous.options)
+                if _digest(normalized_previous.model_dump(mode="json")) != digest:
+                    raise EditorialConflict("Run identity was already used for different options")
             session.expunge(previous)
             return previous
         session.refresh(project)
@@ -99,7 +102,47 @@ def start_run(
         )
         if active is not None:
             raise EditorialConflict("This project already has active work; inspect or cancel it")
-        urls = project.brief["source_urls"]
+        artifacts = {"brief": project.brief}
+        if request.target in {"assets", "acquire_assets"}:
+            revision = session.get(EditorialRevision, (project_id, project.revision))
+            if revision is None or not revision.draft.get("script"):
+                raise EditorialConflict("Save a cited script before scouting supporting assets")
+            artifacts.update(input_draft=revision.draft, input_draft_digest=revision.digest)
+        urls = (
+            project.brief["source_urls"]
+            if request.target not in {"assets", "acquire_assets"}
+            else []
+        )
+        if request.target == "acquire_assets":
+            scout = session.get(EditorialRun, request.scout_run_id)
+            if (
+                scout is None
+                or scout.channel_profile_id != channel_id
+                or scout.project_id != project_id
+            ):
+                raise EditorialNotFound("Asset scout run not found in this project")
+            if (
+                scout.status != "completed"
+                or scout.options.get("target") != "assets"
+                or scout.input_revision != project.revision
+            ):
+                raise EditorialConflict(
+                    "Select a completed asset scout for the current script revision"
+                )
+            candidates = {item["id"]: item for item in scout.artifacts["asset_scout"]["candidates"]}
+            if not set(request.asset_candidate_ids) <= candidates.keys():
+                raise EditorialConflict("Selected assets were not discovered by this scout")
+            selection = [candidates[key] for key in request.asset_candidate_ids]
+            if any(item["medium"] != "video" for item in selection):
+                raise EditorialConflict(
+                    "Automatic asset acquisition currently supports videos only"
+                )
+            artifacts.update(
+                asset_selection=selection,
+                scout_run_id=str(scout.id),
+                asset_scout=scout.artifacts["asset_scout"],
+            )
+            urls = [item["url"] for item in selection]
         if not set(request.clip_bindings) <= set(urls):
             raise EditorialConflict("Clip bindings must match source URLs in this brief")
         for url in urls:
@@ -144,7 +187,7 @@ def start_run(
             stage="intake",
             attempt=1,
             actor=actor,
-            artifacts={"brief": project.brief},
+            artifacts=artifacts,
         )
         session.add(row)
         _event(session, row, "run_queued")
@@ -267,3 +310,56 @@ def control_run(
         session.flush()
         session.expunge(row)
         return row
+
+
+def finish_script(run_id: str, attempt: int, draft) -> dict:
+    """Commit the immutable revision and completion together, with cancellation fencing."""
+    from katcha.editorial.project_schemas import SaveEditorialDraft
+    from katcha.services.editorial_projects import save_draft_in_session
+
+    with session_scope() as session:
+        identity = session.get(EditorialRun, uuid.UUID(run_id))
+        if identity is None:
+            raise EditorialStopped("Editorial run no longer exists")
+        # Same lock order as start/resume/cancel: project, then run.
+        session.execute(
+            update(EditorialProject)
+            .where(EditorialProject.id == identity.project_id)
+            .values(revision=EditorialProject.revision, updated_at=EditorialProject.updated_at)
+        )
+        row = session.scalar(
+            select(EditorialRun)
+            .where(EditorialRun.id == identity.id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+        if row.attempt != attempt or row.status not in ACTIVE:
+            raise EditorialStopped("Editorial work was stopped before draft promotion")
+        revision = save_draft_in_session(
+            session,
+            row.channel_profile_id,
+            row.project_id,
+            SaveEditorialDraft(
+                expected_revision=row.input_revision,
+                idempotency_key=f"editorial-run:{run_id}",
+                draft=draft,
+            ),
+            actor=row.actor,
+        )
+        row.status = "completed"
+        row.stage = "script_ready"
+        row.error = None
+        row.artifacts = {
+            **row.artifacts,
+            "saved_revision": revision.revision,
+            "draft_digest": revision.digest,
+            "requires_editorial_review": True,
+        }
+        _event(session, row, "run_completed")
+        return {
+            "editorial_run_id": run_id,
+            "status": row.status,
+            "stage": row.stage,
+            "revision": revision.revision,
+            "project_id": str(row.project_id),
+        }

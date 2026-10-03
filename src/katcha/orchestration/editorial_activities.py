@@ -8,7 +8,7 @@ from temporalio import activity
 
 from katcha.config import get_settings
 from katcha.db import session_scope
-from katcha.models import Clip, ClipAnalysisRun, ClipFeature
+from katcha.models import Clip, ClipAnalysisRun, ClipFeature, SourceItem
 from katcha.services.editorial_runs import EditorialStopped, checkpoint
 from katcha.services.sources import register_source
 
@@ -18,7 +18,9 @@ def editorial_begin(run_id: str, attempt: int) -> dict:
     row = checkpoint(run_id, attempt)
     settings = get_settings()
     return {
+        "target": row.options.get("target", "analysis"),
         "source_count": len(row.artifacts["brief"]["source_urls"]),
+        "asset_count": len(row.artifacts.get("asset_selection", [])),
         "ingest_queue": settings.temporal_task_queue,
         "analysis_queue": settings.temporal_analysis_task_queue,
     }
@@ -133,8 +135,9 @@ def editorial_finish_intake(run_id: str, attempt: int) -> dict:
     row = checkpoint(run_id, attempt)
     if len(row.artifacts.get("source_snapshots", {})) != len(row.artifacts["brief"]["source_urls"]):
         raise ValueError("Source analysis is incomplete")
-    checkpoint(run_id, attempt, stage="analysis_ready", status="completed")
-    return {"editorial_run_id": run_id, "status": "completed", "stage": "analysis_ready"}
+    status = "completed" if row.options.get("target", "analysis") == "analysis" else "running"
+    checkpoint(run_id, attempt, stage="analysis_ready", status=status)
+    return {"editorial_run_id": run_id, "status": status, "stage": "analysis_ready"}
 
 
 @activity.defn
@@ -144,11 +147,183 @@ def editorial_fail(run_id: str, attempt: int, reason: str) -> None:
         checkpoint(run_id, attempt, status="failed", error=reason[:2000])
 
 
+@activity.defn
+def editorial_research_script(run_id: str, attempt: int) -> dict:
+    from katcha.editorial.provider import EditorialBlocked
+    from katcha.editorial.research import investigate_and_write
+
+    try:
+        return investigate_and_write(run_id, attempt)
+    except EditorialBlocked as exc:
+        # Only locally authored actionable messages; provider bodies never enter public errors.
+        with contextlib.suppress(EditorialStopped):
+            checkpoint(run_id, attempt, status="blocked", error=str(exc)[:2000])
+        return {"editorial_run_id": run_id, "status": "blocked"}
+    except EditorialStopped:
+        return {"editorial_run_id": run_id, "status": "stopped"}
+    except Exception:
+        with contextlib.suppress(EditorialStopped):
+            checkpoint(
+                run_id,
+                attempt,
+                status="blocked",
+                error=(
+                    "Research could not validate a result. Saved evidence and provider receipts "
+                    "are retained. Inspect incomplete calls before resuming; uncertain requests "
+                    "will not be repeated automatically."
+                ),
+            )
+        raise
+
+
+@activity.defn
+def editorial_scout_assets(run_id: str, attempt: int) -> dict:
+    from katcha.editorial.assets import scout_assets
+    from katcha.editorial.provider import EditorialBlocked
+
+    try:
+        return scout_assets(run_id, attempt)
+    except EditorialStopped:
+        return {"editorial_run_id": run_id, "status": "stopped"}
+    except Exception as exc:
+        message = (
+            str(exc)
+            if isinstance(exc, EditorialBlocked)
+            else (
+                "Asset scouting could not validate a result. Saved requests and receipts are "
+                "retained; inspect incomplete calls before resuming."
+            )
+        )
+        with contextlib.suppress(EditorialStopped):
+            checkpoint(run_id, attempt, status="blocked", error=message[:2000])
+        return {"editorial_run_id": run_id, "status": "blocked"}
+
+
+@activity.defn
+def editorial_prepare_asset(run_id: str, attempt: int, position: int) -> dict:
+    from katcha.services.acquisition import (
+        promote_discovery_candidate,
+        register_discovery_candidate,
+    )
+
+    row = checkpoint(run_id, attempt, stage="acquiring_assets")
+    selected = row.artifacts["asset_selection"][position]
+    acquired = dict(row.artifacts.get("asset_sources") or {})
+    if selected["id"] in acquired:
+        return acquired[selected["id"]]
+    candidate = register_discovery_candidate(
+        source_url=selected["url"],
+        adapter_key="editorial_scout",
+        title=selected["title"],
+        metadata={
+            "channel_profile_id": str(row.channel_profile_id),
+            "editorial_project_id": str(row.project_id),
+            "editorial_run_id": run_id,
+        },
+    )
+    if str((candidate.candidate_metadata or {}).get("channel_profile_id")) != str(
+        row.channel_profile_id
+    ):
+        checkpoint(
+            run_id,
+            attempt,
+            status="blocked",
+            error=(
+                "This asset already belongs to another source collection. Select a channel-owned "
+                "asset through Sources before continuing."
+            ),
+        )
+        return {"blocked": True}
+    # This is a review download. No rights, audio or originality decision is invented here.
+    source = promote_discovery_candidate(candidate.id, actor=row.actor, for_review=True)
+    result = {
+        "source_id": str(source.id),
+        "clip_id": str(source.clip_id) if source.clip_id else None,
+        "discovery_candidate_id": str(candidate.id),
+    }
+    acquired[selected["id"]] = result
+    checkpoint(run_id, attempt, artifacts={"asset_sources": acquired})
+    return result
+
+
+@activity.defn
+def editorial_capture_asset(run_id: str, attempt: int, position: int, clip_id: str) -> dict:
+    from katcha.services.clip_lifecycle import channel_ids_for_clip
+
+    row = checkpoint(run_id, attempt, stage="acquiring_assets")
+    selected = row.artifacts["asset_selection"][position]
+    with session_scope() as session:
+        clip = session.get(Clip, uuid.UUID(clip_id))
+        source = session.get(
+            SourceItem, uuid.UUID(row.artifacts["asset_sources"][selected["id"]]["source_id"])
+        )
+        if (
+            source is None
+            or source.clip_id != uuid.UUID(clip_id)
+            or clip is None
+            or not clip.duration_seconds
+            or clip.duration_seconds <= 0
+            or row.channel_profile_id not in channel_ids_for_clip(session, clip.id)
+        ):
+            raise ValueError("Asset media is not measured or not available to this channel")
+        receipt = {
+            "candidate_id": selected["id"],
+            "clip_id": clip_id,
+            "storage_key": clip.storage_key,
+            "sha256": clip.sha256,
+            "duration_seconds": float(clip.duration_seconds),
+            "width": clip.width,
+            "height": clip.height,
+            "source_url": selected["url"],
+            "purpose": "review",
+            "discovery_candidate_id": row.artifacts["asset_sources"][selected["id"]][
+                "discovery_candidate_id"
+            ],
+        }
+    acquired = dict(row.artifacts.get("acquired_assets") or {})
+    acquired[selected["id"]] = receipt
+    checkpoint(run_id, attempt, artifacts={"acquired_assets": acquired})
+    return {"saved": True}
+
+
+@activity.defn
+def editorial_finish_assets(run_id: str, attempt: int) -> dict:
+    from katcha.editorial.assets import inspect_managed_candidate
+
+    row = checkpoint(run_id, attempt)
+    if set(row.artifacts.get("acquired_assets", {})) != {
+        item["id"] for item in row.artifacts["asset_selection"]
+    }:
+        raise ValueError("Asset acquisition is incomplete")
+    scout = dict(row.artifacts["asset_scout"])
+    scout["candidates"] = [
+        {**item, **inspect_managed_candidate(item["url"], row.channel_profile_id)}
+        for item in scout["candidates"]
+    ]
+    checkpoint(
+        run_id,
+        attempt,
+        status="completed",
+        stage="assets_acquired_for_review",
+        artifacts={"asset_scout": scout, "requires_rights_review": True},
+    )
+    return {
+        "editorial_run_id": run_id,
+        "status": "completed",
+        "stage": "assets_acquired_for_review",
+    }
+
+
 EDITORIAL_ACTIVITIES = [
     editorial_begin,
     editorial_prepare_source,
     editorial_prepare_analysis,
     editorial_capture_source,
     editorial_finish_intake,
+    editorial_research_script,
+    editorial_scout_assets,
+    editorial_prepare_asset,
+    editorial_capture_asset,
+    editorial_finish_assets,
     editorial_fail,
 ]
