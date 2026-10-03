@@ -44,7 +44,7 @@ as API credit. Verify supported account capabilities when enabling each live rou
 | E3 | Durable specialist research, evidence verification and cost-bounded recursion | E1–E2 | Implemented; synthetic integration verified |
 | E4 | Story selection, writer/critic/revision loop and cited script review | E3 | Implemented; live editorial acceptance pending |
 | E5 | Claim-directed supplementary asset scout and acquisition/rights gate | E3–E4 | Video discovery/review acquisition implemented; image acquisition and render-time gate pending |
-| E6 | Visual director, timing, compiler and editorial Remotion composition | E4–E5 | Planned |
+| E6 | Visual director, timing, compiler and editorial Remotion composition | E4–E5 | Typed storyboard preflight/compiler implemented; renderer dispatch/composition pending |
 | E7 | Integrated editorial workspace, recovery/status and publication handoff | E1–E6 | Planned |
 | E8 | Fault injection, real authorized trailer acceptance, rollout and analytics | E7 | Planned |
 
@@ -496,3 +496,33 @@ coordinator checks. The new asset checkpoint awaits its own CI results.
 Next boundary: revision-bound asset selection and current-rights checks in the
 visual compiler; narration/timing and deterministic editorial rendering; then
 review/publication handoff and real authorized source-to-render acceptance.
+
+
+### E6 compiler/preflight checkpoint (not renderer completion)
+
+Added inert, versioned storyboard and `editorial-render-v1` manifest contracts,
+with single-video, comparison and evidence-linked quote layouts; bounded circle,
+arrow and highlight annotations; playback, freeze and restrained push-in parameters.
+The compiler preserves script order, uncertainty disclosures and claim/asset
+lineage, builds contiguous integer-frame scene/caption coverage, checks measured
+source bounds, and derives deterministic output identities. Caption-only silent
+presentation requires an explicit choice and enforces a reading-speed limit; it
+is not a fallback for failed narration.
+
+The authenticated channel-scoped `POST .../{project_id}/storyboard/preflight`
+API and `preflight_editorial_storyboard` native tool resolve assets from a
+completed acquisition of the exact script revision. Storage keys, media hashes,
+measured dimensions/durations and current rights assessments are read server-side.
+Revoked clearance, changed media, mismatched revisions and invented evidence/media
+references fail validation. The returned manifest still requires editorial review.
+
+Validation: 119 focused Python tests passed, including real API preflight and
+revoked-rights rejection, deterministic manifests, source freeze/playback bounds,
+quote provenance, annotation validation and all preceding regressions. Ruff,
+compilation and whitespace checks passed. Asset checkpoint `f7ac570` passed GitHub
+CI, launcher and recovery coordinator validation.
+
+No renderer dispatch, Remotion editorial composition, generated narration, image
+acquisition, preview playback or publication handoff is exposed by this checkpoint.
+Those remaining E6/E7 boundaries require their own wired implementation and actual
+render/media checks; preflight success must never be presented as a finished video.

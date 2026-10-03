@@ -173,6 +173,7 @@ class EditorialProjectResponse(Contract):
             "script_generation",
             "asset_scout",
             "asset_review_acquisition",
+            "storyboard_preflight",
         ]
     )
     limitation: str = (

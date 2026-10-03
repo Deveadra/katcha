@@ -43,6 +43,15 @@ TOOLS = {
     tool.name: tool
     for tool in [
         GoalTool(
+            "preflight_editorial_storyboard",
+            "Validate an explicit caption-only storyboard against the current script and "
+            "acquired media, source timing, evidence references and current rights. "
+            "Returns a deterministic manifest; does not render or approve publication.",
+            "production:create", "POST",
+            "/v1/channels/{channel_profile_id}/editorial-projects/{project_id}/storyboard/preflight",
+            retry_safe=True,
+        ),
+        GoalTool(
             "start_editorial_analysis",
             "Start durable editorial work: target=analysis prepares sampled frames/transcript; "
             "target=script interprets sources, researches evidence and drafts a cited script. "
@@ -666,6 +675,7 @@ def validate_resource_arguments(goal: CommandGoal, arguments: dict) -> None:
                 "project_id",
                 "editorial_run_id",
                 "scout_run_id",
+                "asset_run_id",
             }
             and value is not None
         ):
@@ -947,6 +957,7 @@ def require_native_resource_channels(request, tool: GoalTool) -> None:
         "project_id": EditorialProject,
         "editorial_run_id": EditorialRun,
         "scout_run_id": EditorialRun,
+        "asset_run_id": EditorialRun,
         "source_id": IngestionSource,
         "production_id": Production,
         "short_episode_id": ShortEpisode,

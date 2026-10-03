@@ -13,6 +13,8 @@ from katcha.editorial.project_schemas import (
     EditorialRevisionResponse,
     SaveEditorialDraft,
 )
+from katcha.editorial.visual_compiler import compile_project_visuals
+from katcha.editorial.visual_schemas import EditorialRenderManifest, StoryboardPreflightRequest
 from katcha.editorial_models import EditorialProject, EditorialRevision
 from katcha.services.editorial_projects import (
     EditorialConflict,
@@ -135,3 +137,20 @@ def history(
             .limit(limit)
         )
         return [_revision(row) for row in rows]
+
+
+@router.post("/{project_id}/storyboard/preflight")
+def preflight_storyboard(
+    channel_profile_id: uuid.UUID,
+    project_id: uuid.UUID,
+    body: StoryboardPreflightRequest,
+    request: Request,
+) -> EditorialRenderManifest:
+    """Validate a storyboard without rendering, spending or approving publication."""
+    _authorize(request, channel_profile_id, write=True)
+    try:
+        return compile_project_visuals(
+            channel_profile_id, project_id, body.expected_revision, body.asset_run_id, body.plan
+        )
+    except ValueError as exc:
+        raise _error(exc) from exc
