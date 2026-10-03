@@ -42,7 +42,8 @@ def investigate_and_write(run_id: str, attempt: int) -> dict:
     brief = row.artifacts["brief"]
     observations = list(row.artifacts.get("observations") or [])
     if not observations:
-        for position, source in sorted(row.artifacts["source_snapshots"].items()):
+        snapshots = dict(row.artifacts["source_snapshots"])
+        for position, source in sorted(snapshots.items()):
             if not source.get("keyframe_keys") or not source.get("contact_sheet_key"):
                 raise EditorialBlocked("Source analysis has no sampled frames; prepare media again")
             timestamps = sample_timestamps(source["duration_seconds"], len(source["keyframe_keys"]))
@@ -69,6 +70,7 @@ def investigate_and_write(run_id: str, attempt: int) -> dict:
                 image_key=source["contact_sheet_key"],
                 video=source,
             )
+            source_observations = []
             for number, observation in enumerate(result.observations):
                 value = observation.model_dump(mode="json")
                 if (
@@ -85,12 +87,28 @@ def investigate_and_write(run_id: str, attempt: int) -> dict:
                     value["start_seconds"] = nearest
                     value["end_seconds"] = min(nearest + 0.001, source["duration_seconds"])
                 value.update(id=f"o_{position}_{number}", coverage=receipt["coverage"])
-                observations.append(SourceObservation.model_validate(value).model_dump(mode="json"))
+                validated = SourceObservation.model_validate(value).model_dump(mode="json")
+                observations.append(validated)
+                source_observations.append(validated)
                 if len(observations) > 200:
                     raise EditorialBlocked(
                         "Observation budget exceeded; narrow the source selection"
                     )
-        checkpoint(run_id, attempt, artifacts={"observations": observations})
+            snapshots[position] = {
+                **source,
+                "visual_observations": source_observations,
+                "interpretation_coverage": receipt["coverage"],
+                "native_video_analyzed": receipt["coverage"] == "native_video",
+                "interpretation_limitations": result.limitations,
+            }
+        checkpoint(
+            run_id,
+            attempt,
+            artifacts={
+                "observations": observations,
+                "source_snapshots": snapshots,
+            },
+        )
 
     row = checkpoint(run_id, attempt, stage="researching")
     state = dict(row.artifacts.get("research") or {})

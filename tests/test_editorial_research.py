@@ -378,3 +378,47 @@ def test_resume_after_failure_reuses_entire_research_and_script(saved, monkeypat
     assert activities.editorial_research_script(str(row.id), 2)["stage"] == "script_ready"
     assert len(calls) == call_count
     assert fetch.call_count == 1
+
+
+@pytest.mark.parametrize("coverage", ["sampled_frames", "native_video"])
+def test_interpretation_coverage_is_recorded_without_inventing_video_motion(
+    saved, monkeypatch, coverage
+):
+    row = new_run(saved)
+    source = {
+        "source_url": row.artifacts["brief"]["source_urls"][0],
+        "duration_seconds": 90,
+        "keyframe_keys": ["frame"],
+        "contact_sheet_key": "sheet",
+        "transcript": "",
+        "coverage": "sampled_frames",
+    }
+    checkpoint(str(row.id), 1, artifacts={"source_snapshots": {"0": source}})
+
+    def call(run_id, attempt, key, prompt, schema, **kwargs):
+        if key != "observe:0":
+            raise provider.EditorialBlocked("Stop after visual checkpoint")
+        return schema.model_validate(
+            {
+                "observations": [
+                    {
+                        **draft()["observations"][0],
+                        "start_seconds": 45,
+                        "end_seconds": 48,
+                    }
+                ],
+                "limitations": ["Synthetic visual observation"],
+            }
+        ), {"coverage": coverage}
+
+    monkeypatch.setattr(research, "structured_call", call)
+    with pytest.raises(provider.EditorialBlocked, match="visual checkpoint"):
+        research.investigate_and_write(str(row.id), 1)
+    snapshot = get_run(row.channel_profile_id, row.project_id, row.id).artifacts[
+        "source_snapshots"
+    ]["0"]
+    assert snapshot["interpretation_coverage"] == coverage
+    assert snapshot["native_video_analyzed"] == (coverage == "native_video")
+    assert snapshot["visual_observations"][0]["end_seconds"] == (
+        48 if coverage == "native_video" else 45.001
+    )

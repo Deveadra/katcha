@@ -43,7 +43,7 @@ as API credit. Verify supported account capabilities when enabling each live rou
 | E2 | URL/managed asset intake and measured video analysis attached to project | E1 | Intake/local-analysis implemented; richer interpretation pending |
 | E3 | Durable specialist research, evidence verification and cost-bounded recursion | E1–E2 | Implemented; synthetic integration verified |
 | E4 | Story selection, writer/critic/revision loop and cited script review | E3 | Implemented; live editorial acceptance pending |
-| E5 | Claim-directed supplementary asset scout and acquisition/rights gate | E3–E4 | Planned |
+| E5 | Claim-directed supplementary asset scout and acquisition/rights gate | E3–E4 | Video discovery/review acquisition implemented; image acquisition and render-time gate pending |
 | E6 | Visual director, timing, compiler and editorial Remotion composition | E4–E5 | Planned |
 | E7 | Integrated editorial workspace, recovery/status and publication handoff | E1–E6 | Planned |
 | E8 | Fault injection, real authorized trailer acceptance, rollout and analytics | E7 | Planned |
@@ -453,3 +453,46 @@ Local browser downloads for pinned Playwright failed, so these local tests used 
 separate Chromium 134 executable without changing repository dependency versions.
 The research backend checkpoint `09de036` passed all GitHub CI, launcher and
 Cloudflare recovery coordinator workflows. UI changes require their own CI run.
+
+
+### E5 supporting asset checkpoint
+
+Added `target=assets` and `target=acquire_assets` to the existing typed run API,
+native tool and registered workflow. Asset scouting freezes the current saved
+script revision, generates bounded beat/claim-linked visual requests, searches
+for supporting media and retains only provider-grounded leads. Quote/diagram
+requests and missing media remain visible gaps rather than fabricated assets.
+
+Selected YouTube video leads can be downloaded through the existing managed
+acquisition activity. The server requires candidate identities from a completed
+scout belonging to this channel, project and exact script revision. It rejects
+invented selections and unsupported automatic download targets before dispatch.
+The workflow registers/reuses discovery candidates and review-purpose sources,
+persists clip/source/hash/duration receipts, and avoids generic AI or passthrough
+publication side effects. Capture checks the returned clip against its actual
+source binding and channel ownership.
+
+Rights status is read from the latest existing acquisition assessment. Cross-channel
+records are not exposed, unknown/legacy material is not treated as cleared, and
+scouting/downloading creates no rights assessment or permission. Status snapshots
+are explicitly labeled as rights at scout time. A future compiler must recheck
+current assessments; these snapshots are not render authorization. Images and
+non-YouTube material still require existing manual acquisition paths.
+
+Production now lists supporting media, preserves selected candidates across refresh,
+and provides a review-download action with plain-language rights status. Native
+and sampled-frame interpretation also now attach their actual observation coverage
+and limitations to source snapshots. Run replay normalizes newly introduced optional
+defaults, preserving request identity for runs created before an upgrade.
+
+Validation: **110 focused Python tests passed**, repository-wide Ruff and worker
+import passed. The synthetic browser journey passed with scouting, selection
+persistence, review-download request wiring and visible review-required status,
+in addition to its earlier recovery/concurrency/channel/mobile checks. This remains
+synthetic acceptance; no live trailer download, source verification or rights
+clearance is claimed. Prior UI head `9a8bdb2` passed GitHub CI, launcher and recovery
+coordinator checks. The new asset checkpoint awaits its own CI results.
+
+Next boundary: revision-bound asset selection and current-rights checks in the
+visual compiler; narration/timing and deterministic editorial rendering; then
+review/publication handoff and real authorized source-to-render acceptance.

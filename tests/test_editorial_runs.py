@@ -186,3 +186,28 @@ def test_automatic_intake_rejects_unsupported_targets(saved, url):
     assert response.status_code == 409
     with db.session_scope() as session:
         assert session.query(EditorialRun).count() == 0
+
+
+def test_replay_of_pre_upgrade_run_preserves_identity_with_new_default_fields(saved):
+    from katcha.services.editorial_projects import _digest
+
+    row = new_run(saved)
+    with db.session_scope() as session:
+        stored = session.get(EditorialRun, row.id)
+        legacy = {
+            key: value
+            for key, value in stored.options.items()
+            if key in {"idempotency_key", "expected_revision", "target", "clip_bindings"}
+        }
+        stored.options = legacy
+        stored.input_digest = _digest(legacy)
+    replay = start_run(
+        row.channel_profile_id,
+        row.project_id,
+        StartEditorialRun(
+            expected_revision=0,
+            idempotency_key="run-1",
+        ),
+        actor="test",
+    )
+    assert replay.id == row.id

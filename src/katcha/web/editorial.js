@@ -109,6 +109,15 @@ window.KatchaEditorial = (() => {
             }, 10000);
         }
     }
+    function scoutId() { return state.run?.artifacts?.scout_run_id || (state.run?.target === "assets" ? state.run.editorial_run_id : null); }
+    function canDownload(candidate) {
+        try { const url = new URL(candidate.url); return candidate.medium === "video" && url.protocol === "https:" && ["youtube.com", "www.youtube.com", "m.youtube.com", "youtu.be"].includes(url.hostname); } catch { return false; }
+    }
+    function selectedAssets() { return [...el("editorial-assets").querySelectorAll("input:checked")].map((input) => input.value).sort(); }
+    function assetControls() {
+        const active = state.run && ["queued", "running"].includes(state.run.status);
+        el("editorial-acquire-assets").disabled = state.busy || Boolean(active) || state.stale || !scoutId() || !selectedAssets().length;
+    }
     function renderActions() {
         const active = state.run && ["queued", "running"].includes(state.run.status);
         const canResume = state.run && ["failed", "blocked"].includes(state.run.status);
@@ -116,8 +125,10 @@ window.KatchaEditorial = (() => {
             ? '<button class="mini" type="button" data-editorial-action="cancel">Stop work</button>'
             : '<button class="mini" type="button" data-editorial-action="analysis">Analyze sources</button><button class="button primary" type="button" data-editorial-action="script">Research and draft script</button>'
                 + (canResume ? '<button class="mini" type="button" data-editorial-action="resume">Resume saved work</button>' : "");
+        if (!active && state.revision?.draft.script?.length) el("editorial-actions").insertAdjacentHTML("beforeend", '<button class="mini" type="button" data-editorial-action="assets">Find supporting assets</button>');
         el("editorial-detail").querySelectorAll("button").forEach((button) => { button.disabled = state.busy; });
         el("editorial-save-script").disabled = state.busy || !state.revision || Boolean(active) || state.stale;
+        assetControls();
     }
     function renderEvidence() {
         const artifacts = state.run?.artifacts || {};
@@ -130,6 +141,12 @@ window.KatchaEditorial = (() => {
         el("editorial-evidence").innerHTML = claims.length ? claims.map((claim) => `<article class="item editorial-claim"><div><span class="tag">${esc(claim.classification)} · ${esc(claim.verification)}</span><h3>${esc(claim.text)}</h3><p>${esc(claim.verification_note || "Awaiting evidence review")}</p>${(claim.contradictions || []).map((text) => `<p class="error-text">${esc(text)}</p>`).join("")}${(claim.source_ids || []).map((id) => sourceMap.get(id)).filter(Boolean).map((source) => `<blockquote>${esc(source.excerpt)}<footer><a href="${safeLink(source.url)}" target="_blank" rel="noopener noreferrer">${esc(source.title)}</a> · ${esc(source.category)}</footer></blockquote>`).join("")}</div></article>`).join("") : '<p class="empty">No research claims yet. Research requires an eligible live provider.</p>';
         el("editorial-gaps").textContent = (artifacts.research?.gaps?.length || artifacts.research?.limit_reached)
             ? `${artifacts.research?.gaps?.length || 0} research gap(s). ${artifacts.research?.limit_reached ? "The research limit was reached; some questions remain open." : "Some sources could not be retrieved."}` : "";
+        const scout = artifacts.asset_scout || {};
+        const selected = read(storageKey(`assets.${scoutId()}`), []);
+        el("editorial-assets").innerHTML = (scout.candidates || []).length ? scout.candidates.map((candidate) => `<article class="item"><div><h3><a href="${safeLink(candidate.url)}" target="_blank" rel="noopener noreferrer">${esc(candidate.title)}</a></h3><p>${esc(candidate.relevance)}</p><small>${esc(candidate.medium)} · Rights at scout time: ${esc(candidate.rights_status.replaceAll("_", " "))} · ${candidate.acquired ? "Managed media available" : "Not acquired"}</small>${canDownload(candidate) && !candidate.acquired ? `<label class="check-row"><input type="checkbox" value="${esc(candidate.id)}" ${selected.includes(candidate.id) ? "checked" : ""}> Select video for review download</label>` : ""}</div></article>`).join("") : '<p class="empty">No supporting assets discovered yet. A discovery link does not grant reuse permission.</p>';
+        assetControls();
+        el("editorial-asset-gaps").textContent = (scout.gaps || []).length ? `${scout.gaps.length} visual request(s) need manual material or visual composition. Review the requests below.` : "";
+        el("editorial-asset-requests").textContent = JSON.stringify({ requests: scout.requests || [], gaps: scout.gaps || [] }, null, 2);
         const calls = Object.values(artifacts.provider_calls || {});
         el("editorial-receipts").textContent = JSON.stringify({
             calls: calls.map(({ status, provider, model, input_tokens, output_tokens, coverage, billing_basis }) => ({ status, provider, model, input_tokens, output_tokens, coverage, billing_basis })),
@@ -191,6 +208,17 @@ window.KatchaEditorial = (() => {
                 if (channel === state.channel) await open(project, { focus: false });
             });
         });
+        el("editorial-assets").addEventListener("change", () => {
+            remember(storageKey(`assets.${scoutId()}`), selectedAssets()); assetControls();
+        });
+        el("editorial-acquire-assets").addEventListener("click", () => void guarded(async () => {
+            const channel = state.channel; const project = state.project.id;
+            const payload = { target: "acquire_assets", expected_revision: state.project.revision,
+                scout_run_id: scoutId(), asset_candidate_ids: selectedAssets() };
+            payload.idempotency_key = identity(`acquire.${project}`, payload);
+            await api(path(channel, `/${project}/runs`), { method: "POST", body: JSON.stringify(payload) });
+            if (channel === state.channel) await open(project, { focus: false });
+        }));
         el("editorial-script").addEventListener("input", () => {
             if (state.revision) {
                 const beats = editedBeats();

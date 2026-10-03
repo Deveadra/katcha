@@ -42,6 +42,14 @@ const draft = {
                 }
                 if (url.pathname.endsWith("/runs")) {
                     if (!body) return send(run ? [run] : []);
+                    if (body.target === "assets") {
+                        run = { editorial_run_id: "scout", target: "assets", attempt: 1, status: "completed", stage: "asset_candidates_ready", artifacts: { asset_scout: { candidates: [{ id: "candidate", medium: "video", url: "https://www.youtube.com/watch?v=support", title: "Supporting interview", relevance: "Explains the symbol", rights_status: "unreviewed", acquired: false }] } } };
+                        return send(run, 202);
+                    }
+                    if (body.target === "acquire_assets") {
+                        run = { ...run, editorial_run_id: "acquire", target: "acquire_assets", stage: "assets_acquired_for_review", artifacts: { ...run.artifacts, scout_run_id: "scout", asset_scout: { candidates: run.artifacts.asset_scout.candidates.map((candidate) => ({ ...candidate, acquired: true, rights_status: "review_required" })) } } };
+                        return send(run, 202);
+                    }
                     run = { editorial_run_id: "run", attempt: 1, status: "blocked", stage: "researching", error: "Provider quota rejected the request. Resume after quota is available.", artifacts: {} };
                     return send(run, 202);
                 }
@@ -50,7 +58,7 @@ const draft = {
                     revision = { revision: 1, draft }; project.revision = 1;
                     return send(run, 202);
                 }
-                if (url.pathname.endsWith("/runs/run")) return send(run);
+                if (url.pathname.includes("/runs/")) return send(run);
                 return send(project);
             }
             if (url.pathname.endsWith("/performance/latest")) return send(null);
@@ -100,6 +108,18 @@ const draft = {
         await page.getByRole("button", { name: "Discard edits and load latest script", exact: true }).click();
         await page.getByText(/Editing revision 3/).waitFor();
         assert.equal(await page.locator('[data-beat-narration="0"]').inputValue(), "Newer server script.");
+        await page.getByRole("button", { name: "Find supporting assets", exact: true }).click();
+        await page.getByText("Supporting interview", { exact: true }).waitFor();
+        await page.getByLabel("Select video for review download").check();
+        await page.locator("#editorial-refresh").click();
+        await page.getByText("Supporting interview", { exact: true }).waitFor();
+        assert.equal(await page.getByLabel("Select video for review download").isChecked(), true);
+        await page.getByRole("button", { name: "Download selected videos for review", exact: true }).click();
+        await page.getByText(/Managed media available/).waitFor();
+        const acquired = calls.find((call) => call.body?.target === "acquire_assets");
+        assert.equal(acquired.body.scout_run_id, "scout");
+        assert.deepEqual(acquired.body.asset_candidate_ids, ["candidate"]);
+        assert.match(await page.locator("#editorial-assets").innerText(), /review required/);
         await page.screenshot({ path: path.resolve(__dirname, "test-results/editorial-desktop.png"), fullPage: true });
         await page.setViewportSize({ width: 390, height: 844 });
         assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);

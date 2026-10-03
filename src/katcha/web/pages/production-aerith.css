@@ -256,6 +256,6 @@ body[data-katcha-page="production"] footer {
 #editorial-detail h2, #editorial-projects h3 { overflow-wrap: anywhere; }
 #editorial-detail blockquote { margin: 1rem 0; padding-left: 1rem; border-left: 2px solid var(--ae-border, #343947); }
 #editorial-detail footer { margin-top: .5rem; }
-#editorial-receipts { white-space: pre-wrap; overflow-wrap: anywhere; }
+#editorial-receipts, #editorial-asset-requests { white-space: pre-wrap; overflow-wrap: anywhere; }
 #editorial-actions { flex-wrap: wrap; }
 @media (max-width: 600px) { #editorial-projects .item { flex-wrap: wrap; } .editorial-form, .editorial-beat { padding: .75rem; } }

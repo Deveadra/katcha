@@ -46,7 +46,9 @@ TOOLS = {
             "start_editorial_analysis",
             "Start durable editorial work: target=analysis prepares sampled frames/transcript; "
             "target=script interprets sources, researches evidence and drafts a cited script. "
-            "Research requires a live eligible provider; generation is not publication approval.",
+            "target=assets scouts supporting media; target=acquire_assets downloads selected "
+            "scout candidates for review. Research requires a live "
+            "eligible provider; discovery and generation are not rights/publication approval.",
             "production:create", "POST",
             "/v1/channels/{channel_profile_id}/editorial-projects/{project_id}/runs",
             retry_safe=True,
@@ -663,6 +665,7 @@ def validate_resource_arguments(goal: CommandGoal, arguments: dict) -> None:
                 "topic_watch_id",
                 "project_id",
                 "editorial_run_id",
+                "scout_run_id",
             }
             and value is not None
         ):
@@ -943,6 +946,7 @@ def require_native_resource_channels(request, tool: GoalTool) -> None:
     mapping = {
         "project_id": EditorialProject,
         "editorial_run_id": EditorialRun,
+        "scout_run_id": EditorialRun,
         "source_id": IngestionSource,
         "production_id": Production,
         "short_episode_id": ShortEpisode,

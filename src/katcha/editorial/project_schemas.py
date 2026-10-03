@@ -171,6 +171,8 @@ class EditorialProjectResponse(Contract):
             "source_intake",
             "research",
             "script_generation",
+            "asset_scout",
+            "asset_review_acquisition",
         ]
     )
     limitation: str = (
