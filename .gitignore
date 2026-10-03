@@ -19,6 +19,7 @@ build/
 media/
 
 # Renderer
+renderer/test-results/
 renderer/reaction-smoke-previews/
 renderer/package-lock.json
 

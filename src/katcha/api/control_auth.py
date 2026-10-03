@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import re
 import secrets
 import uuid
 from dataclasses import dataclass
@@ -264,6 +265,14 @@ def _require_named_principal_route_access(request: Request) -> None:
             request,
             "channels:read" if method in {"GET", "HEAD"} else "channels:write",
         )
+        return
+
+    if method == "GET" and re.fullmatch(
+        r"/v1/channels/[^/]+/editorial-projects/[^/]+/runs/[^/]+/preview", path
+    ):
+        # Binary playback shares editorial read scope; the router checks channel,
+        # project, frozen revision and current clearance before streaming.
+        require_control_scope(request, "ai:read")
         return
 
     from katcha.services.goal_tools import native_route_tool, require_native_resource_channels

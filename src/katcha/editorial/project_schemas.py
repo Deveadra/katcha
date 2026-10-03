@@ -174,12 +174,15 @@ class EditorialProjectResponse(Contract):
             "asset_scout",
             "asset_review_acquisition",
             "storyboard_preflight",
+            "local_captioned_render",
+            "private_render_preview",
         ]
     )
     limitation: str = (
         "Research/script runs require an eligible live provider. Coverage is recorded as "
         "native video or sampled frames. Generated claims require editorial review. "
-        "Asset clearance, rendering and publication are not connected yet."
+        "Captioned silent previews require cleared acquired media and a local renderer. "
+        "Narration and publication handoff are not connected yet."
     )
     created_at: datetime
     updated_at: datetime

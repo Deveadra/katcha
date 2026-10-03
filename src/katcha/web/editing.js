@@ -894,7 +894,7 @@ function installProductionTabs() {
     setProductionTab(productionTabFromHash(), { updateHash: false });
 }
 
-window.KatchaEditorial.init(api);
+window.KatchaEditorial.init(api, apiBlob);
 installProductionTabs();
 
 $("connect-form").addEventListener("submit", connect);

@@ -5,8 +5,10 @@ const { spawn } = require("node:child_process");
 const path = require("node:path");
 const server = spawn("python3", ["-m", "http.server", "8776", "--bind", "127.0.0.1", "--directory", path.resolve(__dirname, "../src/katcha/web")], { stdio: "ignore" });
 const calls = [];
-let project = null, run = null, revision = null;
+let project = null, run = null, revision = null, acquisitionRun = null;
 let loseCreateResponse = true, loseSaveResponse = true;
+let review = {status: "unreviewed", sequence: 0, can_approve: true, reviews: []};
+let loseReviewResponse = true;
 const draft = {
     version: "editorial-draft-v1", observations: [],
     sources: [{ id: "source", title: "Interview", url: "https://example.com/interview", category: "interview", excerpt: "A synthetic quoted clue." }],
@@ -41,13 +43,21 @@ const draft = {
                     return send(revision, 201);
                 }
                 if (url.pathname.endsWith("/runs")) {
-                    if (!body) return send(run ? [run] : []);
+                    if (!body) return send(run ? [run, ...(acquisitionRun && run !== acquisitionRun ? [acquisitionRun] : [])] : []);
+                    if (body.target === "render") {
+                        run = {editorial_run_id: "render", target: "render", input_revision: 3, attempt: 1, status: "completed", stage: "render_ready_for_review", artifacts: {requires_editorial_review: true}};
+                        return send(run, 202);
+                    }
                     if (body.target === "assets") {
-                        run = { editorial_run_id: "scout", target: "assets", attempt: 1, status: "completed", stage: "asset_candidates_ready", artifacts: { asset_scout: { candidates: [{ id: "candidate", medium: "video", url: "https://www.youtube.com/watch?v=support", title: "Supporting interview", relevance: "Explains the symbol", rights_status: "unreviewed", acquired: false }] } } };
+                        run = { editorial_run_id: "scout", target: "assets", attempt: 1, status: "completed", stage: "asset_candidates_ready", artifacts: { asset_scout: { candidates: [{ id: "candidate", beat_id: "beat", medium: "video", url: "https://www.youtube.com/watch?v=support", title: "Supporting interview", relevance: "Explains the symbol", rights_status: "unreviewed", acquired: false }] } } };
                         return send(run, 202);
                     }
                     if (body.target === "acquire_assets") {
                         run = { ...run, editorial_run_id: "acquire", target: "acquire_assets", stage: "assets_acquired_for_review", artifacts: { ...run.artifacts, scout_run_id: "scout", asset_scout: { candidates: run.artifacts.asset_scout.candidates.map((candidate) => ({ ...candidate, acquired: true, rights_status: "review_required" })) } } };
+                        run.input_revision = 3;
+                        run.artifacts.asset_selection = run.artifacts.asset_scout.candidates;
+                        run.artifacts.acquired_assets = {candidate: {clip_id: "clip"}};
+                        acquisitionRun = run;
                         return send(run, 202);
                     }
                     run = { editorial_run_id: "run", attempt: 1, status: "blocked", stage: "researching", error: "Provider quota rejected the request. Resume after quota is available.", artifacts: {} };
@@ -58,6 +68,15 @@ const draft = {
                     revision = { revision: 1, draft }; project.revision = 1;
                     return send(run, 202);
                 }
+                if (url.pathname.endsWith("/preview")) return route.fulfill({status: 200, contentType: "video/mp4", body: "synthetic-media-transport-only"});
+                if (url.pathname.endsWith("/review")) {
+                    if (!body) return send(review);
+                    review = {status: body.decision, sequence: 1, can_approve: true, reviews: [{decision: body.decision, actor: "editor", note: body.note, created_at: "2026-10-03"}]};
+                    if (loseReviewResponse) { loseReviewResponse = false; return send({detail: "Review response lost. Retry to recover your decision."}, 503); }
+                    return send(review.reviews[0], 201);
+                }
+                if (url.pathname.endsWith("/storyboard/preflight")) return send({version: "editorial-render-v1"});
+                if (url.pathname.endsWith("/runs/acquire")) return send(acquisitionRun);
                 if (url.pathname.includes("/runs/")) return send(run);
                 return send(project);
             }
@@ -120,6 +139,33 @@ const draft = {
         assert.equal(acquired.body.scout_run_id, "scout");
         assert.deepEqual(acquired.body.asset_candidate_ids, ["candidate"]);
         assert.match(await page.locator("#editorial-assets").innerText(), /review required/);
+        await page.locator('#editorial-storyboard select').selectOption('media:candidate');
+        await page.locator('#editorial-storyboard input[type=number]').fill('1.5');
+        await page.locator('#editorial-storyboard input[type=checkbox]').check();
+        await page.locator('#editorial-refresh').click();
+        await page.getByText(/Managed media available/).waitFor();
+        assert.equal(await page.locator('#editorial-storyboard input[type=number]').inputValue(), '1.5');
+        await page.getByRole('button', {name: 'Create silent captioned preview', exact: true}).click();
+        await page.getByRole('button', {name: 'Load private preview', exact: true}).waitFor();
+        const rendering = calls.find(call => call.body?.target === 'render');
+        assert.equal(rendering.body.asset_run_id, 'acquire');
+        assert.equal(rendering.body.storyboard.presentation_mode, 'captioned_silent');
+        assert.equal(rendering.body.storyboard.beats[0].media[0].start_seconds, 1.5);
+        assert.equal(rendering.body.storyboard.beats[0].media[0].freeze, true);
+        assert(calls.find(call => call.path.endsWith('/storyboard/preflight')));
+        assert.equal(await page.locator('#editorial-approve').isDisabled(), true);
+        await page.getByRole('button', {name: 'Load private preview', exact: true}).click();
+        await page.getByText(/Preview loaded/).waitFor();
+        assert.equal(await page.locator('#editorial-preview').isVisible(), true);
+        await page.locator('#editorial-review-note').fill('Evidence and timing checked.');
+        await page.locator('#editorial-approve').click();
+        await page.getByText(/Review response lost/).waitFor();
+        assert.equal(await page.locator('#editorial-review-note').inputValue(), 'Evidence and timing checked.');
+        await page.locator('#editorial-approve').click();
+        await page.getByText(/Review approved for this rendered revision/).waitFor();
+        const reviewCalls = calls.filter(call => call.path.endsWith('/review') && call.body);
+        assert.equal(reviewCalls.length, 2);
+        assert.deepEqual(reviewCalls[0].body, reviewCalls[1].body);
         await page.screenshot({ path: path.resolve(__dirname, "test-results/editorial-desktop.png"), fullPage: true });
         await page.setViewportSize({ width: 390, height: 844 });
         assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);

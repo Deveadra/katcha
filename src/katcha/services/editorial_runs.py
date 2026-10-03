@@ -103,14 +103,14 @@ def start_run(
         if active is not None:
             raise EditorialConflict("This project already has active work; inspect or cancel it")
         artifacts = {"brief": project.brief}
-        if request.target in {"assets", "acquire_assets"}:
+        if request.target in {"assets", "acquire_assets", "render"}:
             revision = session.get(EditorialRevision, (project_id, project.revision))
             if revision is None or not revision.draft.get("script"):
                 raise EditorialConflict("Save a cited script before scouting supporting assets")
             artifacts.update(input_draft=revision.draft, input_draft_digest=revision.digest)
         urls = (
             project.brief["source_urls"]
-            if request.target not in {"assets", "acquire_assets"}
+            if request.target not in {"assets", "acquire_assets", "render"}
             else []
         )
         if request.target == "acquire_assets":
