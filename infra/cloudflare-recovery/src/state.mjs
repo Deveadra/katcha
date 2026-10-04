@@ -33,6 +33,7 @@ export function defaultAuthorityState() {
       monthly_settled_microusd: 0,
       provider_settled_microusd: {},
       retry_settled_microusd: {},
+      retry_attempts: {},
       reservations: [],
     },
     events: [],
@@ -79,6 +80,9 @@ export function normalizeState(value) {
       const migratedRetrySettled = {
         ...(raw.retry_settled_microusd || {}),
       };
+      const migratedRetryAttempts = {
+        ...(raw.retry_attempts || {}),
+      };
       if (raw.provider_settled_microusd === undefined) {
         for (const row of reservations) {
           if (row?.status !== "settled") continue;
@@ -97,6 +101,16 @@ export function normalizeState(value) {
             (migratedRetrySettled[retryGroup] || 0) + value;
         }
       }
+      if (raw.retry_attempts === undefined) {
+        for (const row of reservations) {
+          const retryGroup = String(row?.retry_group || "");
+          if (!retryGroup) continue;
+          migratedRetryAttempts[retryGroup] = Math.max(
+            Number(migratedRetryAttempts[retryGroup] || 0),
+            Number(row?.attempt || 0),
+          );
+        }
+      }
       return {
         ...base.external_compute,
         ...raw,
@@ -107,6 +121,7 @@ export function normalizeState(value) {
         monthly_settled_microusd: migratedMonthlySettled,
         provider_settled_microusd: migratedProviderSettled,
         retry_settled_microusd: migratedRetrySettled,
+        retry_attempts: migratedRetryAttempts,
         reservations,
       };
     })(),
@@ -647,6 +662,7 @@ export function reserveExternalCompute(
   }
   const knownRetryGroups = new Set([
     ...Object.keys(external.retry_settled_microusd || {}),
+    ...Object.keys(external.retry_attempts || {}),
     ...external.reservations.map((row) => String(row.retry_group || "")),
   ]);
   knownRetryGroups.delete("");
@@ -659,12 +675,13 @@ export function reserveExternalCompute(
       429,
     );
   }
-  const retryAttemptsUsed = external.reservations.filter(
-    (row) => row.retry_group === retryGroup,
-  ).length;
+  const retryAttemptsUsed = Number(
+    (external.retry_attempts || {})[retryGroup] || 0,
+  );
   if (
     retryAttemptsUsed >= external.max_retry_attempts ||
-    attempt > external.max_retry_attempts
+    attempt > external.max_retry_attempts ||
+    attempt <= retryAttemptsUsed
   ) {
     throw new StateConflict(
       `external compute retry attempt limit reached: ${retryGroup}`,
@@ -755,6 +772,10 @@ export function reserveExternalCompute(
     ...state,
     external_compute: {
       ...state.external_compute,
+      retry_attempts: {
+        ...(state.external_compute.retry_attempts || {}),
+        [retryGroup]: attempt,
+      },
       reservations: [
         ...state.external_compute.reservations,
         reservation,
@@ -911,6 +932,9 @@ export function externalComputeStatus(current, nowMs = Date.now()) {
       reserved_microusd: summary.reserved_microusd,
       provider_settled_microusd: summary.provider_settled_microusd,
       provider_reserved_microusd: summary.provider_reserved_microusd,
+      retry_attempts: {
+        ...(external.retry_attempts || {}),
+      },
       concurrent_jobs: summary.concurrent_jobs,
       expired_held_microusd: summary.expired_held_microusd,
       reservations: external.reservations.slice(-100),
