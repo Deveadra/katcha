@@ -16,7 +16,8 @@ Recovery order:
 4. acquire leadership only after storage restore, local readiness, public-route readiness, and fencing acceptance,
 5. periodically probe for acceptable Always Free A1 capacity,
 6. migrate authority back only after restore/health/fencing acceptance,
-7. destroy paid fallback compute automatically after the configured grace period.
+7. destroy paid fallback compute automatically after the configured grace period,
+8. retain superseded durable volumes for a bounded rollback window, then delete only those explicitly retirement-tagged, unattached, and proven not to be the active leader's volume.
 
 Paid fallback is bounded by both a maximum lifetime and a maximum infrastructure spend. It is a continuity mechanism, not the normal runtime.
 
