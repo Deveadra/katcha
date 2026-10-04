@@ -5,6 +5,7 @@ on:
     paths:
       - .github/workflows/oci-recovery.yml
       - src/katcha/ops/oci_recovery.py
+      - src/katcha/ops/external_compute_budget.py
       - src/katcha/ops/break_glass.py
       - src/katcha/ops/break_glass_lifecycle.py
       - deploy/cloud-init/oci-recovery-candidate.sh.tmpl
@@ -14,6 +15,7 @@ on:
       - deploy/docker-compose.production.yml
       - src/katcha/ops/production_runtime.py
       - tests/test_oci_recovery.py
+      - tests/test_external_compute_budget.py
       - tests/test_disaster_backup.py
       - tests/test_cloud_runtime_contract.py
   repository_dispatch:
@@ -51,6 +53,7 @@ env:
   KATCHA_RECOVERY_COORDINATOR_URL: ${{ vars.KATCHA_RECOVERY_COORDINATOR_URL }}
   KATCHA_RECOVERY_ADMIN_TOKEN: ${{ secrets.KATCHA_RECOVERY_ADMIN_TOKEN }}
   KATCHA_RECOVERY_CANDIDATE_TOKEN: ${{ secrets.KATCHA_RECOVERY_CANDIDATE_TOKEN }}
+  KATCHA_EXTERNAL_COMPUTE_TOKEN: ${{ secrets.KATCHA_EXTERNAL_COMPUTE_TOKEN }}
   KATCHA_RECOVERY_SECRET_SOURCE: ${{ github.event_name == 'workflow_dispatch' && inputs.secret_source || 'oci-vault' }}
   KATCHA_PUBLIC_HEALTH_URL: ${{ vars.KATCHA_PUBLIC_HEALTH_URL }}
   KATCHA_BREAK_GLASS_R2_ENDPOINT_URL: ${{ vars.KATCHA_BREAK_GLASS_R2_ENDPOINT_URL }}
@@ -109,11 +112,12 @@ jobs:
 
       - name: Validate dispatcher and bootstrap
         run: |
-          python -m py_compile src/katcha/ops/oci_recovery.py src/katcha/ops/disaster_backup.py src/katcha/ops/break_glass.py src/katcha/ops/break_glass_lifecycle.py
+          python -m py_compile src/katcha/ops/oci_recovery.py src/katcha/ops/external_compute_budget.py src/katcha/ops/disaster_backup.py src/katcha/ops/break_glass.py src/katcha/ops/break_glass_lifecycle.py
           bash -n deploy/cloud-init/oci-recovery-candidate.sh.tmpl
           bash -n deploy/scripts/postgres-disaster-restore.sh
           pytest -q \
             tests/test_oci_recovery.py \
+            tests/test_external_compute_budget.py \
             tests/test_disaster_backup.py \
             tests/test_break_glass.py \
             tests/test_break_glass_lifecycle.py \

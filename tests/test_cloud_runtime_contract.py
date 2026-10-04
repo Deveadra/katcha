@@ -38,6 +38,15 @@ def valid_production_env() -> dict[str, str]:
             "https://katcha.test/v1/integrations/youtube/oauth/callback"
         ),
         "KATCHA_RENDER_BACKEND": "lambda",
+        "KATCHA_EXTERNAL_COMPUTE_ENABLED": "true",
+        "KATCHA_EXTERNAL_COMPUTE_COORDINATOR_URL": (
+            "https://recovery.katcha.test"
+        ),
+        "KATCHA_EXTERNAL_COMPUTE_TOKEN": (
+            "compute-token-with-more-than-32-characters"
+        ),
+        "KATCHA_REMOTION_LAMBDA_MAX_RENDER_COST_USD": "0.50",
+        "KATCHA_REMOTION_LAMBDA_BUDGET_TTL_SECONDS": "7200",
         "KATCHA_AWS_EXPECTED_ACCOUNT_ID": "123456789012",
         "KATCHA_AWS_PROFILE": "katcha-automation",
         "KATCHA_REMOTION_LAMBDA_FUNCTION_NAME": "katcha-render",
@@ -272,3 +281,25 @@ def test_local_api_container_healthcheck_uses_public_liveness_not_workspace_auth
 
     assert "http://localhost:8000/v1/health/live" in compose
     assert "http://localhost:8000/v1/health/workspace" not in compose
+
+
+
+def test_production_validator_requires_lambda_budget_fence() -> None:
+    values = valid_production_env()
+    values.update(
+        {
+            "KATCHA_EXTERNAL_COMPUTE_ENABLED": "false",
+            "KATCHA_EXTERNAL_COMPUTE_COORDINATOR_URL": "http://localhost:8788",
+            "KATCHA_EXTERNAL_COMPUTE_TOKEN": "short",
+            "KATCHA_REMOTION_LAMBDA_MAX_RENDER_COST_USD": "0",
+            "KATCHA_REMOTION_LAMBDA_BUDGET_TTL_SECONDS": "60",
+        }
+    )
+
+    errors = validate(values)
+
+    assert any("EXTERNAL_COMPUTE_ENABLED" in error for error in errors)
+    assert any("public HTTPS endpoint" in error for error in errors)
+    assert any("EXTERNAL_COMPUTE_TOKEN" in error for error in errors)
+    assert any("MAX_RENDER_COST_USD must be positive" in error for error in errors)
+    assert any("BUDGET_TTL_SECONDS" in error for error in errors)

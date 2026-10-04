@@ -9,11 +9,14 @@ import tempfile
 import time
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from decimal import ROUND_UP, Decimal
 from pathlib import Path
 from typing import Any
 
 import httpx
 from cryptography.fernet import Fernet
+
+from katcha.ops.external_compute_budget import ExternalComputeBudgetClient
 
 
 class RecoveryError(RuntimeError):
@@ -30,6 +33,18 @@ class CommitOutcomeUnknown(RecoveryError):
 
 class RecoveryCleanupIncomplete(RecoveryError):
     """Recovery cleanup did not fully restore the pre-attempt resource state."""
+
+
+def _usd_to_microusd(value: Decimal | float | str) -> int:
+    amount = Decimal(str(value))
+    if amount < 0:
+        raise RecoveryError("cost cannot be negative")
+    return int(
+        (amount * Decimal("1000000")).quantize(
+            Decimal("1"),
+            rounding=ROUND_UP,
+        )
+    )
 
 
 def _env(name: str, *, default: str | None = None) -> str:
@@ -87,6 +102,7 @@ class RecoveryConfig:
     coordinator_url: str
     coordinator_admin_token: str
     candidate_token: str
+    external_compute_token: str
     public_health_url: str
     release_sha: str
     availability_domain: str
@@ -217,6 +233,7 @@ class RecoveryConfig:
             coordinator_url=_env("KATCHA_RECOVERY_COORDINATOR_URL").rstrip("/"),
             coordinator_admin_token=_env("KATCHA_RECOVERY_ADMIN_TOKEN"),
             candidate_token=_env("KATCHA_RECOVERY_CANDIDATE_TOKEN"),
+            external_compute_token=_env("KATCHA_EXTERNAL_COMPUTE_TOKEN"),
             public_health_url=_env("KATCHA_PUBLIC_HEALTH_URL"),
             release_sha=_env("KATCHA_RELEASE_SHA"),
             availability_domain=_env("KATCHA_OCI_AVAILABILITY_DOMAIN"),
@@ -340,6 +357,10 @@ class CoordinatorClient:
     def __init__(self, config: RecoveryConfig) -> None:
         self.base = config.coordinator_url
         self.admin_token = config.coordinator_admin_token
+        self.compute_budget = ExternalComputeBudgetClient(
+            coordinator_url=config.coordinator_url,
+            token=config.external_compute_token,
+        )
 
     def _request(
         self,
@@ -347,11 +368,14 @@ class CoordinatorClient:
         path: str,
         *,
         payload: dict[str, object] | None = None,
+        token: str | None = None,
     ) -> dict[str, Any]:
         response = httpx.request(
             method,
             f"{self.base}{path}",
-            headers={"Authorization": f"Bearer {self.admin_token}"},
+            headers={
+                "Authorization": f"Bearer {token or self.admin_token}"
+            },
             json=payload,
             timeout=15.0,
         )
@@ -410,6 +434,66 @@ class CoordinatorClient:
                 "deployment_id": deployment_id,
                 "deployment_epoch": deployment_epoch,
             },
+        )
+
+    def reserve_external_compute(
+        self,
+        *,
+        job_key: str,
+        provider: str,
+        operation: str,
+        retry_group: str,
+        attempt: int,
+        estimated_cost_microusd: int,
+        ttl_seconds: int,
+        metadata: dict[str, object] | None = None,
+    ) -> dict[str, Any]:
+        reservation = self.compute_budget.reserve(
+            job_key=job_key,
+            provider=provider,
+            operation=operation,
+            retry_group=retry_group,
+            attempt=attempt,
+            estimated_cost_microusd=estimated_cost_microusd,
+            ttl_seconds=ttl_seconds,
+            metadata=metadata,
+        )
+        return {
+            "reservation": {
+                "id": reservation.id,
+                "status": reservation.status,
+                "provider": reservation.provider,
+                "job_key": reservation.job_key,
+                "retry_group": reservation.retry_group,
+                "estimated_cost_microusd": (
+                    reservation.estimated_cost_microusd
+                ),
+            },
+            "reused": reservation.reused,
+        }
+
+    def settle_external_compute(
+        self,
+        reservation_id: str,
+        *,
+        actual_cost_microusd: int,
+        metadata: dict[str, object] | None = None,
+    ) -> dict[str, Any]:
+        return self.compute_budget.settle(
+            reservation_id,
+            actual_cost_microusd=actual_cost_microusd,
+            metadata=metadata,
+        )
+
+    def release_external_compute(
+        self,
+        reservation_id: str,
+        *,
+        reason: str,
+    ) -> dict[str, Any]:
+        return self.compute_budget.release(
+            reservation_id,
+            reason=reason,
         )
 
 
@@ -472,9 +556,17 @@ class OciCli:
         data_volume_id: str,
         storage_mode: str,
         user_data_path: Path,
+        budget_reservation_id: str | None = None,
+        budget_reserved_microusd: int | None = None,
     ) -> str:
         expires = ""
+        paid_started_at = ""
         if plan.paid:
+            if not budget_reservation_id or not budget_reserved_microusd:
+                raise RecoveryError(
+                    "paid OCI launch requires an external-compute budget reservation"
+                )
+            paid_started_at = datetime.now(UTC).isoformat()
             expires = (
                 datetime.now(UTC) + timedelta(hours=config.paid_ttl_hours)
             ).isoformat()
@@ -491,6 +583,14 @@ class OciCli:
         }
         if expires:
             tags["KatchaExpiresAt"] = expires
+            tags["KatchaPaidStartedAt"] = paid_started_at
+            tags["KatchaBudgetReservationId"] = budget_reservation_id
+            tags["KatchaBudgetReservedMicrousd"] = str(
+                budget_reserved_microusd
+            )
+            tags["KatchaEstimatedHourlyUsd"] = (
+                f"{config.paid_estimated_hourly_usd:.8f}"
+            )
         result = self.run(
             [
                 "compute",
@@ -831,6 +931,130 @@ def paid_instance_count(rows: list[dict[str, Any]]) -> int:
     )
 
 
+def _paid_worst_case_microusd(config: RecoveryConfig) -> int:
+    return _usd_to_microusd(
+        Decimal(str(config.paid_estimated_hourly_usd))
+        * Decimal(config.paid_ttl_hours)
+    )
+
+
+def _reserve_paid_compute(
+    coordinator: CoordinatorClient,
+    config: RecoveryConfig,
+    incident: Incident,
+    *,
+    recovery_mode: str,
+    target: RecoveryTarget,
+    attempt: int,
+) -> tuple[str, int]:
+    estimated = _paid_worst_case_microusd(config)
+    result = coordinator.reserve_external_compute(
+        job_key=(
+            f"recovery:{incident.incident_id}:{recovery_mode}:"
+            f"{target.availability_domain}:attempt-{attempt}"
+        ),
+        provider="oci",
+        operation="paid-control-plane-fallback",
+        retry_group=f"recovery:{incident.incident_id}",
+        attempt=attempt,
+        estimated_cost_microusd=estimated,
+        ttl_seconds=config.paid_ttl_hours * 3600 + 3600,
+        metadata={
+            "recovery_mode": recovery_mode,
+            "availability_domain": target.availability_domain,
+            "shape": config.fallback.shape,
+            "ttl_hours": config.paid_ttl_hours,
+            "estimated_hourly_usd": config.paid_estimated_hourly_usd,
+        },
+    )
+    reservation = result.get("reservation") or {}
+    reservation_id = str(reservation.get("id") or "").strip()
+    if (
+        not reservation_id
+        or str(reservation.get("status") or "") != "reserved"
+    ):
+        raise RecoveryError(
+            "external-compute coordinator did not return an active reservation"
+        )
+    return reservation_id, estimated
+
+
+def _paid_instance_cost_microusd(
+    row: dict[str, Any],
+    *,
+    ended_at: datetime,
+) -> int:
+    tags = _tags(row)
+    reserved_raw = tags.get("KatchaBudgetReservedMicrousd", "").strip()
+    try:
+        reserved = int(reserved_raw)
+    except ValueError:
+        reserved = 0
+    if reserved < 0:
+        reserved = 0
+
+    started_raw = tags.get("KatchaPaidStartedAt", "").strip()
+    hourly_raw = tags.get("KatchaEstimatedHourlyUsd", "").strip()
+    try:
+        started = datetime.fromisoformat(started_raw.replace("Z", "+00:00"))
+        if started.tzinfo is None:
+            raise ValueError("timezone required")
+        hourly = Decimal(hourly_raw)
+        if hourly <= 0:
+            raise ValueError("hourly cost must be positive")
+    except (ValueError, ArithmeticError):
+        if reserved > 0:
+            return reserved
+        raise RecoveryError(
+            f"paid fallback instance {_instance_id(row)} lacks usable budget tags"
+        ) from None
+
+    effective_end = ended_at.astimezone(UTC)
+    expires_raw = tags.get("KatchaExpiresAt", "").strip()
+    if expires_raw:
+        try:
+            expires = datetime.fromisoformat(expires_raw.replace("Z", "+00:00"))
+            if expires.tzinfo is not None:
+                effective_end = min(effective_end, expires.astimezone(UTC))
+        except ValueError:
+            pass
+
+    elapsed_seconds = max(
+        (effective_end - started.astimezone(UTC)).total_seconds(),
+        60.0,
+    )
+    return _usd_to_microusd(
+        hourly * Decimal(str(elapsed_seconds)) / Decimal("3600")
+    )
+
+
+def _settle_paid_instance_budget(
+    coordinator: CoordinatorClient,
+    row: dict[str, Any],
+    *,
+    ended_at: datetime,
+    reason: str,
+) -> None:
+    tags = _tags(row)
+    reservation_id = tags.get("KatchaBudgetReservationId", "").strip()
+    if not reservation_id:
+        raise RecoveryError(
+            f"paid fallback instance {_instance_id(row)} has no budget reservation"
+        )
+    coordinator.settle_external_compute(
+        reservation_id,
+        actual_cost_microusd=_paid_instance_cost_microusd(
+            row,
+            ended_at=ended_at,
+        ),
+        metadata={
+            "settlement_reason": reason,
+            "instance_id": _instance_id(row),
+            "recovery_mode": tags.get("KatchaRecoveryMode", ""),
+        },
+    )
+
+
 def render_bootstrap(
     config: RecoveryConfig,
     *,
@@ -1054,6 +1278,8 @@ class CandidateAttempt:
     recovery_mode: str
     previous_instance_id: str | None
     owns_recovery_volume: bool
+    budget_reservation_id: str | None = None
+    budget_reserved_microusd: int | None = None
 
 
 def _target_for_active(
@@ -1211,6 +1437,8 @@ def _launch_attempt(
     storage_mode: str,
     current_volume_id: str,
     recovery_mode: str,
+    budget_reservation_id: str | None = None,
+    budget_reserved_microusd: int | None = None,
 ) -> CandidateAttempt:
     owns_recovery_volume = storage_mode == "r2-restore"
     volume_id = current_volume_id
@@ -1241,6 +1469,8 @@ def _launch_attempt(
             data_volume_id=volume_id,
             storage_mode=storage_mode,
             user_data_path=user_data_path,
+            budget_reservation_id=budget_reservation_id,
+            budget_reserved_microusd=budget_reserved_microusd,
         )
         attempt = CandidateAttempt(
             instance_id=candidate_id,
@@ -1250,6 +1480,8 @@ def _launch_attempt(
             recovery_mode=recovery_mode,
             previous_instance_id=None,
             owns_recovery_volume=owns_recovery_volume,
+            budget_reservation_id=budget_reservation_id,
+            budget_reserved_microusd=budget_reserved_microusd,
         )
         if storage_mode == "existing-volume":
             attempt.previous_instance_id = switch_volume(
@@ -1318,6 +1550,26 @@ def _resume_existing_candidate(
         availability_domain=_availability_domain(candidate) or config.availability_domain,
         subnet_id=tags.get("KatchaSubnetId", "").strip() or config.subnet_id,
     )
+    budget_reservation_id = tags.get(
+        "KatchaBudgetReservationId",
+        "",
+    ).strip() or None
+    budget_reserved_raw = tags.get(
+        "KatchaBudgetReservedMicrousd",
+        "",
+    ).strip()
+    budget_reserved_microusd = (
+        int(budget_reserved_raw)
+        if budget_reserved_raw.isdigit()
+        else None
+    )
+    if _is_paid_recovery(candidate) and (
+        not budget_reservation_id or not budget_reserved_microusd
+    ):
+        raise RecoveryError(
+            "existing paid recovery candidate has no valid external-compute "
+            "budget reservation tags"
+        )
     attempt = CandidateAttempt(
         instance_id=candidate_id,
         target=target,
@@ -1326,6 +1578,8 @@ def _resume_existing_candidate(
         recovery_mode=tags.get("KatchaRecoveryMode", "existing-candidate"),
         previous_instance_id=None,
         owns_recovery_volume=storage_mode == "r2-restore",
+        budget_reservation_id=budget_reservation_id,
+        budget_reserved_microusd=budget_reserved_microusd,
     )
 
     try:
@@ -1443,15 +1697,38 @@ def recover(event_path: Path, config: RecoveryConfig, oci: OciCli) -> dict[str, 
                         )
                     )
 
+            paid_attempt = 0
             for plan, target, storage_mode, recovery_mode in attempts:
-                if plan.paid and paid_instance_count(oci.list_instances(config)) >= (
-                    config.paid_max_concurrent
-                ):
-                    failures.append(
-                        f"{recovery_mode}@{target.availability_domain}:"
-                        "paid fallback concurrency limit reached"
-                    )
-                    continue
+                budget_reservation_id: str | None = None
+                budget_reserved_microusd: int | None = None
+                if plan.paid:
+                    paid_attempt += 1
+                    if paid_instance_count(oci.list_instances(config)) >= (
+                        config.paid_max_concurrent
+                    ):
+                        failures.append(
+                            f"{recovery_mode}@{target.availability_domain}:"
+                            "paid fallback concurrency limit reached"
+                        )
+                        continue
+                    try:
+                        (
+                            budget_reservation_id,
+                            budget_reserved_microusd,
+                        ) = _reserve_paid_compute(
+                            coordinator,
+                            config,
+                            incident,
+                            recovery_mode=recovery_mode,
+                            target=target,
+                            attempt=paid_attempt,
+                        )
+                    except Exception as exc:
+                        failures.append(
+                            f"{recovery_mode}@{target.availability_domain}:"
+                            f"budget:{type(exc).__name__}:{exc}"
+                        )
+                        continue
                 try:
                     successful_attempt = _launch_attempt(
                         config=config,
@@ -1465,11 +1742,60 @@ def recover(event_path: Path, config: RecoveryConfig, oci: OciCli) -> dict[str, 
                         storage_mode=storage_mode,
                         current_volume_id=current_volume_id,
                         recovery_mode=recovery_mode,
+                        budget_reservation_id=budget_reservation_id,
+                        budget_reserved_microusd=budget_reserved_microusd,
                     )
                     break
+                except CapacityUnavailable as exc:
+                    if budget_reservation_id:
+                        try:
+                            coordinator.release_external_compute(
+                                budget_reservation_id,
+                                reason="OCI reported no host capacity before launch",
+                            )
+                        except Exception as budget_error:
+                            raise RecoveryCleanupIncomplete(
+                                "OCI capacity attempt created no instance, but its "
+                                "external-compute reservation could not be released: "
+                                f"{budget_error}"
+                            ) from budget_error
+                    failures.append(
+                        f"{recovery_mode}@{target.availability_domain}:"
+                        f"{type(exc).__name__}:{exc}"
+                    )
                 except RecoveryCleanupIncomplete:
+                    if budget_reservation_id and budget_reserved_microusd:
+                        try:
+                            coordinator.settle_external_compute(
+                                budget_reservation_id,
+                                actual_cost_microusd=budget_reserved_microusd,
+                                metadata={
+                                    "settlement_reason": (
+                                        "recovery cleanup incomplete after paid attempt"
+                                    )
+                                },
+                            )
+                        except Exception as budget_error:
+                            print(
+                                "RECOVERY_BUDGET_SETTLEMENT_WARNING: "
+                                f"{type(budget_error).__name__}: {budget_error}"
+                            )
                     raise
                 except Exception as exc:
+                    if budget_reservation_id and budget_reserved_microusd:
+                        try:
+                            coordinator.settle_external_compute(
+                                budget_reservation_id,
+                                actual_cost_microusd=budget_reserved_microusd,
+                                metadata={
+                                    "settlement_reason": "paid recovery attempt failed",
+                                },
+                            )
+                        except Exception as budget_error:
+                            raise RecoveryCleanupIncomplete(
+                                "paid recovery attempt failed and its budget "
+                                f"reservation could not settle: {budget_error}"
+                            ) from budget_error
                     failures.append(
                         f"{recovery_mode}@{target.availability_domain}:"
                         f"{type(exc).__name__}:{exc}"
@@ -1494,6 +1820,21 @@ def recover(event_path: Path, config: RecoveryConfig, oci: OciCli) -> dict[str, 
         )
         if retire_instance_id and retire_instance_id != successful_attempt.instance_id:
             try:
+                retire_row = oci.get_instance(retire_instance_id)
+                if _is_paid_recovery(retire_row):
+                    oci.softstop(retire_instance_id)
+                    try:
+                        _settle_paid_instance_budget(
+                            coordinator,
+                            retire_row,
+                            ended_at=datetime.now(UTC),
+                            reason="superseded after authority handoff",
+                        )
+                    except Exception as budget_error:
+                        print(
+                            "RECOVERY_BUDGET_SETTLEMENT_WARNING: "
+                            f"{type(budget_error).__name__}: {budget_error}"
+                        )
                 oci.terminate(retire_instance_id)
             except Exception as retire_error:
                 print(
@@ -1547,6 +1888,27 @@ def recover(event_path: Path, config: RecoveryConfig, oci: OciCli) -> dict[str, 
                     "RECOVERY_ROLLBACK_WARNING: "
                     f"{type(cleanup_error).__name__}: {cleanup_error}"
                 )
+            if (
+                successful_attempt.budget_reservation_id
+                and successful_attempt.budget_reserved_microusd
+            ):
+                try:
+                    coordinator.settle_external_compute(
+                        successful_attempt.budget_reservation_id,
+                        actual_cost_microusd=(
+                            successful_attempt.budget_reserved_microusd
+                        ),
+                        metadata={
+                            "settlement_reason": (
+                                "paid candidate rolled back before authority commit"
+                            )
+                        },
+                    )
+                except Exception as budget_error:
+                    print(
+                        "RECOVERY_BUDGET_SETTLEMENT_WARNING: "
+                        f"{type(budget_error).__name__}: {budget_error}"
+                    )
         try:
             coordinator.abort(
                 deployment_id=deployment_id,
@@ -1683,27 +2045,59 @@ def cleanup_retired_volumes(
 def cleanup_expired_paid(
     config: RecoveryConfig,
     oci: OciCli,
+    coordinator: CoordinatorClient,
     *,
     now: datetime | None = None,
 ) -> list[str]:
-    current = now or datetime.now(UTC)
+    current = (now or datetime.now(UTC)).astimezone(UTC)
     terminated: list[str] = []
     for row in oci.list_instances(config):
         tags = _tags(row)
         if not _is_paid_recovery(row):
             continue
-        if _state(row) in {"TERMINATED", "TERMINATING"}:
+
+        state = _state(row)
+        if state in {"TERMINATED", "TERMINATING"}:
+            if tags.get("KatchaBudgetReservationId", "").strip():
+                _settle_paid_instance_budget(
+                    coordinator,
+                    row,
+                    ended_at=current,
+                    reason="reconciled terminated paid fallback",
+                )
             continue
+
         expires_raw = tags.get("KatchaExpiresAt", "")
         if not expires_raw:
+            oci.softstop(_instance_id(row))
             raise RecoveryError(
                 f"paid fallback instance {_instance_id(row)} is missing KatchaExpiresAt"
             )
-        expires = datetime.fromisoformat(expires_raw.replace("Z", "+00:00"))
-        if expires > current:
+        try:
+            expires = datetime.fromisoformat(
+                expires_raw.replace("Z", "+00:00")
+            )
+        except ValueError as exc:
+            oci.softstop(_instance_id(row))
+            raise RecoveryError(
+                f"paid fallback instance {_instance_id(row)} has invalid KatchaExpiresAt"
+            ) from exc
+        if expires.tzinfo is None:
+            oci.softstop(_instance_id(row))
+            raise RecoveryError(
+                f"paid fallback instance {_instance_id(row)} has timezone-less KatchaExpiresAt"
+            )
+        if expires.astimezone(UTC) > current:
             continue
+
         instance_id = _instance_id(row)
         oci.softstop(instance_id)
+        _settle_paid_instance_budget(
+            coordinator,
+            row,
+            ended_at=current,
+            reason="paid fallback TTL expired",
+        )
         oci.terminate(instance_id)
         terminated.append(instance_id)
     return terminated
@@ -1725,11 +2119,16 @@ def main() -> int:
         )
         oci = OciCli()
         if args.action == "cleanup":
-            terminated = cleanup_expired_paid(config, oci)
+            coordinator = CoordinatorClient(config)
+            terminated = cleanup_expired_paid(
+                config,
+                oci,
+                coordinator,
+            )
             retired_volumes_deleted = cleanup_retired_volumes(
                 config,
                 oci,
-                CoordinatorClient(config),
+                coordinator,
             )
             result: object = {
                 "status": "cleanup_complete",

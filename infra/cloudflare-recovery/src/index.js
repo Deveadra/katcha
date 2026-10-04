@@ -6,12 +6,17 @@ import {
   applyProbe,
   commitAuthority,
   configureWatchdog,
+  configureExternalCompute,
+  externalComputeStatus,
   fenceResult,
   markCandidateReady,
   markIncidentDispatchFailed,
   markIncidentDispatched,
   normalizeState,
   prepareAuthority,
+  releaseExternalCompute,
+  reserveExternalCompute,
+  settleExternalCompute,
 } from "./state.mjs";
 
 const STATE_KEY = "authority-state";
@@ -79,6 +84,26 @@ function positiveInt(value, name, maximum = Number.MAX_SAFE_INTEGER) {
     throw new HttpError(400, `${name} must be an integer from 1 to ${maximum}`);
   }
   return number;
+}
+
+function nonNegativeSafeInt(value, name) {
+  const number = Number(value);
+  if (!Number.isSafeInteger(number) || number < 0) {
+    throw new HttpError(400, `${name} must be a non-negative safe integer`);
+  }
+  return number;
+}
+
+function tokenId(value, name, maximum = 255) {
+  const text = String(value || "").trim();
+  if (
+    !text ||
+    text.length > maximum ||
+    !/^[A-Za-z0-9_.:@/+-]+$/.test(text)
+  ) {
+    throw new HttpError(400, `${name} is invalid`);
+  }
+  return text;
 }
 
 function httpsUrl(value, name) {
@@ -264,6 +289,168 @@ export class RecoveryAuthority extends DurableObject {
           abortPending(current, input),
         );
         return json({ aborted: result.aborted });
+      }
+
+      if (
+        request.method === "POST" &&
+        path === "/v1/external-compute/configure"
+      ) {
+        requireSecret(
+          request,
+          this.env.RECOVERY_ADMIN_TOKEN,
+          "RECOVERY_ADMIN_TOKEN",
+        );
+        const body = await requestJson(request);
+        const rawLimits = requireObject(body.provider_limits_microusd || {});
+        const providerLimitsMicrousd = {};
+        for (const [provider, value] of Object.entries(rawLimits)) {
+          providerLimitsMicrousd[tokenId(provider, "provider", 64)] =
+            nonNegativeSafeInt(value, `provider limit for ${provider}`);
+        }
+        const state = await this.updateState((current) =>
+          configureExternalCompute(current, {
+            enabled: body.enabled === true,
+            monthlyLimitMicrousd: nonNegativeSafeInt(
+              body.monthly_limit_microusd,
+              "monthly_limit_microusd",
+            ),
+            providerLimitsMicrousd,
+            maxConcurrentJobs: positiveInt(
+              body.max_concurrent_jobs ?? 1,
+              "max_concurrent_jobs",
+              100,
+            ),
+            maxRetryAttempts: positiveInt(
+              body.max_retry_attempts ?? 3,
+              "max_retry_attempts",
+              100,
+            ),
+            maxRetrySpendMicrousd: nonNegativeSafeInt(
+              body.max_retry_spend_microusd,
+              "max_retry_spend_microusd",
+            ),
+          }),
+        );
+        const result = externalComputeStatus(state);
+        return json(result.status);
+      }
+
+      if (
+        request.method === "GET" &&
+        path === "/v1/external-compute/status"
+      ) {
+        requireSecret(
+          request,
+          this.env.RECOVERY_ADMIN_TOKEN,
+          "RECOVERY_ADMIN_TOKEN",
+        );
+        const result = await this.updateState((current) =>
+          externalComputeStatus(current),
+        );
+        return json(result.status);
+      }
+
+      if (
+        request.method === "POST" &&
+        path === "/v1/external-compute/reserve"
+      ) {
+        requireSecret(
+          request,
+          this.env.EXTERNAL_COMPUTE_TOKEN,
+          "EXTERNAL_COMPUTE_TOKEN",
+        );
+        const body = await requestJson(request);
+        const result = await this.updateState((current) =>
+          reserveExternalCompute(current, {
+            jobKey: tokenId(body.job_key, "job_key"),
+            provider: tokenId(body.provider, "provider", 64),
+            operation: tokenId(body.operation, "operation", 128),
+            retryGroup: tokenId(body.retry_group, "retry_group"),
+            attempt:
+              body.attempt === undefined || body.attempt === null
+                ? null
+                : positiveInt(body.attempt, "attempt", 100),
+            estimatedCostMicrousd: positiveInt(
+              body.estimated_cost_microusd,
+              "estimated_cost_microusd",
+            ),
+            ttlSeconds: positiveInt(
+              body.ttl_seconds,
+              "ttl_seconds",
+              604800,
+            ),
+            metadata:
+              body.metadata === undefined
+                ? {}
+                : requireObject(body.metadata),
+          }),
+        );
+        return json(
+          {
+            reservation: result.reservation,
+            reused: result.reused,
+          },
+          result.reused ? 200 : 201,
+        );
+      }
+
+      if (
+        request.method === "POST" &&
+        path === "/v1/external-compute/settle"
+      ) {
+        requireSecret(
+          request,
+          this.env.EXTERNAL_COMPUTE_TOKEN,
+          "EXTERNAL_COMPUTE_TOKEN",
+        );
+        const body = await requestJson(request);
+        const result = await this.updateState((current) =>
+          settleExternalCompute(current, {
+            reservationId: tokenId(
+              body.reservation_id,
+              "reservation_id",
+              128,
+            ),
+            actualCostMicrousd: nonNegativeSafeInt(
+              body.actual_cost_microusd,
+              "actual_cost_microusd",
+            ),
+            metadata:
+              body.metadata === undefined
+                ? {}
+                : requireObject(body.metadata),
+          }),
+        );
+        return json({
+          reservation: result.reservation,
+          reused: result.reused,
+        });
+      }
+
+      if (
+        request.method === "POST" &&
+        path === "/v1/external-compute/release"
+      ) {
+        requireSecret(
+          request,
+          this.env.EXTERNAL_COMPUTE_TOKEN,
+          "EXTERNAL_COMPUTE_TOKEN",
+        );
+        const body = await requestJson(request);
+        const result = await this.updateState((current) =>
+          releaseExternalCompute(current, {
+            reservationId: tokenId(
+              body.reservation_id,
+              "reservation_id",
+              128,
+            ),
+            reason: String(body.reason || ""),
+          }),
+        );
+        return json({
+          reservation: result.reservation,
+          reused: result.reused,
+        });
       }
 
       if (request.method === "POST" && path === "/v1/watchdog/configure") {
