@@ -121,6 +121,10 @@ def test_production_compose_is_remote_and_immutable() -> None:
     assert "/etc/katcha/aws:/home/katcha/.aws:ro" in compose
     assert "cloudflare/cloudflared:2026.9.2" in compose
     assert "KATCHA_CLOUDFLARE_TUNNEL_TOKEN" in compose
+    assert "backup-writer:" in compose
+    assert "backup-reader:" in compose
+    assert "KATCHA_BACKUP_ENV_FILE" in compose
+    assert "KATCHA_RESTORE_ENV_FILE" in compose
 
 
 def test_oracle_control_plane_images_are_multiarch() -> None:
@@ -147,3 +151,28 @@ def test_systemd_requires_durable_mount_and_restarts_supervisor() -> None:
     assert 'PYTHONPATH="${ROOT}/src' in supervisor
     assert "/etc/katcha/aws/config" in supervisor
     assert "docker-compose.aws-roles-anywhere.yml" not in supervisor
+
+
+
+def test_disaster_backup_units_are_durable_and_scheduled() -> None:
+    backup_service = (
+        ROOT / "deploy" / "systemd" / "katcha-backup.service"
+    ).read_text()
+    backup_timer = (
+        ROOT / "deploy" / "systemd" / "katcha-backup.timer"
+    ).read_text()
+    restore_service = (
+        ROOT / "deploy" / "systemd" / "katcha-restore-test.service"
+    ).read_text()
+    restore_timer = (
+        ROOT / "deploy" / "systemd" / "katcha-restore-test.timer"
+    ).read_text()
+
+    assert "RequiresMountsFor=/srv/katcha" in backup_service
+    assert "EnvironmentFile=/etc/katcha/katcha.env" in backup_service
+    assert "postgres-backup.sh" in backup_service
+    assert "OnCalendar=hourly" in backup_timer
+    assert "Persistent=true" in backup_timer
+    assert "postgres-restore-test.sh" in restore_service
+    assert "Sun *-*-* 04:15:00 UTC" in restore_timer
+    assert "Persistent=true" in restore_timer
