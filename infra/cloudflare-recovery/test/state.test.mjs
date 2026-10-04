@@ -957,3 +957,40 @@ test("retry groups open their circuit after the configured attempt ceiling", () 
     /retry attempt limit reached/,
   );
 });
+
+
+test("retry-group ledger fails closed instead of evicting spend history", () => {
+  const now = Date.UTC(2026, 9, 4, 12, 0, 0);
+  const configured = configuredComputeState(now);
+  const retrySettled = Object.fromEntries(
+    Array.from({ length: 10000 }, (_, index) => [
+      `historical-group-${index}`,
+      1,
+    ]),
+  );
+  const state = {
+    ...configured,
+    external_compute: {
+      ...configured.external_compute,
+      retry_settled_microusd: retrySettled,
+    },
+  };
+
+  assert.throws(
+    () =>
+      reserveExternalCompute(
+        state,
+        {
+          jobKey: "new-group-job",
+          provider: "oci",
+          operation: "paid-fallback",
+          retryGroup: "brand-new-group",
+          attempt: 1,
+          estimatedCostMicrousd: 1,
+          ttlSeconds: 3600,
+        },
+        now + 1000,
+      ),
+    /retry-group state safety limit reached/,
+  );
+});
