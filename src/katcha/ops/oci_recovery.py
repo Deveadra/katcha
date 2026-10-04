@@ -576,6 +576,43 @@ class OciCli:
             ]
         )
 
+    def list_volumes(self, config: RecoveryConfig) -> list[dict[str, Any]]:
+        data = self.run(
+            [
+                "bv",
+                "volume",
+                "list",
+                "--compartment-id",
+                config.compartment_id,
+                "--all",
+            ]
+        ).get("data", [])
+        return list(data) if isinstance(data, list) else []
+
+    def get_volume(self, volume_id: str) -> dict[str, Any]:
+        data = self.run(
+            ["bv", "volume", "get", "--volume-id", volume_id]
+        ).get("data", {})
+        return dict(data) if isinstance(data, dict) else {}
+
+    def update_volume_tags(
+        self,
+        volume_id: str,
+        tags: dict[str, str],
+    ) -> None:
+        self.run(
+            [
+                "bv",
+                "volume",
+                "update",
+                "--volume-id",
+                volume_id,
+                "--freeform-tags",
+                json.dumps(tags, separators=(",", ":")),
+                "--force",
+            ]
+        )
+
     def create_recovery_volume(
         self,
         config: RecoveryConfig,
