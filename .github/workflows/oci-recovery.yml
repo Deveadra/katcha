@@ -50,6 +50,7 @@ env:
   KATCHA_OCI_CROSS_AD_DATA_VOLUME_SIZE_GB: ${{ vars.KATCHA_OCI_CROSS_AD_DATA_VOLUME_SIZE_GB }}
   KATCHA_OCI_DATA_VOLUME_DEVICE_PATH: ${{ vars.KATCHA_OCI_DATA_VOLUME_DEVICE_PATH }}
   KATCHA_OCI_CROSS_AD_MAX_BACKUP_AGE_SECONDS: ${{ vars.KATCHA_OCI_CROSS_AD_MAX_BACKUP_AGE_SECONDS }}
+  KATCHA_OCI_RETIRED_VOLUME_GRACE_HOURS: ${{ vars.KATCHA_OCI_RETIRED_VOLUME_GRACE_HOURS }}
   KATCHA_OCI_DATA_VOLUME_ID: ${{ vars.KATCHA_OCI_DATA_VOLUME_ID }}
   KATCHA_OCI_DATA_VOLUME_FS_UUID: ${{ vars.KATCHA_OCI_DATA_VOLUME_FS_UUID }}
   KATCHA_OCI_PRODUCTION_ENV_SECRET_ID: ${{ vars.KATCHA_OCI_PRODUCTION_ENV_SECRET_ID }}
@@ -211,5 +212,5 @@ jobs:
           key_file=$HOME/.oci/oci_api_key.pem
           EOF
 
-      - name: Enforce paid fallback TTL
+      - name: Enforce paid fallback TTL and retired-volume cleanup
         run: python -m katcha.ops.oci_recovery cleanup
