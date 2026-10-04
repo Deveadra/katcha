@@ -11,3 +11,7 @@ services:
       temporal:
         condition: service_started
     command: ["python", "-m", "katcha.orchestration.intelligence_worker"]
+    # The process owns three Temporal workers. Give cancellation and thread-backed
+    # activities time to unwind during image/config replacement instead of falling
+    # through Compose's short default stop window and receiving SIGKILL (exit 137).
+    stop_grace_period: 60s
