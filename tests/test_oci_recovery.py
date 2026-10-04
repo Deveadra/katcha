@@ -19,6 +19,7 @@ def _base_env(monkeypatch, tmp_path: Path) -> None:
         "KATCHA_RECOVERY_COORDINATOR_URL": "https://recovery.katcha.test",
         "KATCHA_RECOVERY_ADMIN_TOKEN": "admin-token",
         "KATCHA_RECOVERY_CANDIDATE_TOKEN": "candidate-token",
+        "KATCHA_EXTERNAL_COMPUTE_TOKEN": "external-compute-token",
         "KATCHA_PUBLIC_HEALTH_URL": "https://katcha.test/v1/health/ready",
         "KATCHA_RELEASE_SHA": "a" * 40,
         "KATCHA_OCI_AVAILABILITY_DOMAIN": "TEST:AD-1",
@@ -81,6 +82,9 @@ class FakeCoordinator:
     def __init__(self, _config):
         self.committed = False
         self.aborted = False
+        self.reserved: list[dict[str, object]] = []
+        self.settled: list[tuple[str, int]] = []
+        self.released: list[str] = []
         FakeCoordinator.instance = self
 
     def status(self):
@@ -104,6 +108,46 @@ class FakeCoordinator:
     def abort(self, **_kwargs):
         self.aborted = True
 
+    def reserve_external_compute(self, **kwargs):
+        self.reserved.append(dict(kwargs))
+        return {
+            "reservation": {
+                "id": f"reservation-{len(self.reserved)}",
+                "status": "reserved",
+                "estimated_cost_microusd": kwargs["estimated_cost_microusd"],
+            },
+            "reused": False,
+        }
+
+    def settle_external_compute(
+        self,
+        reservation_id,
+        *,
+        actual_cost_microusd,
+        metadata=None,
+    ):
+        del metadata
+        self.settled.append((reservation_id, actual_cost_microusd))
+        return {
+            "reservation": {
+                "id": reservation_id,
+                "status": "settled",
+                "actual_cost_microusd": actual_cost_microusd,
+            },
+            "reused": False,
+        }
+
+    def release_external_compute(self, reservation_id, *, reason):
+        del reason
+        self.released.append(reservation_id)
+        return {
+            "reservation": {
+                "id": reservation_id,
+                "status": "released",
+            },
+            "reused": False,
+        }
+
 
 class RecoveryOci:
     def __init__(self) -> None:
@@ -122,6 +166,12 @@ class RecoveryOci:
                 },
             }
         ]
+
+    def get_instance(self, instance_id):
+        for row in self.list_instances(None):
+            if row["id"] == instance_id:
+                return row
+        return {"id": instance_id, "lifecycle-state": "RUNNING", "freeform-tags": {}}
 
     def terminate(self, instance_id):
         self.terminated.append(instance_id)
@@ -245,12 +295,64 @@ def test_cleanup_terminates_only_expired_paid_instances(monkeypatch, tmp_path) -
         def terminate(self, instance_id):
             self.terminated.append(instance_id)
 
+    class Coordinator:
+        def __init__(self):
+            self.settled = []
+
+        def settle_external_compute(
+            self,
+            reservation_id,
+            *,
+            actual_cost_microusd,
+            metadata=None,
+        ):
+            del metadata
+            self.settled.append((reservation_id, actual_cost_microusd))
+            return {"reservation": {"status": "settled"}}
+
+    for row in FakeOci().list_instances(config):
+        if row["id"] == "expired":
+            row["freeform-tags"].update(
+                {
+                    "KatchaBudgetReservationId": "reservation-expired",
+                    "KatchaBudgetReservedMicrousd": "1200000",
+                    "KatchaPaidStartedAt": (
+                        now - timedelta(hours=2)
+                    ).isoformat(),
+                    "KatchaEstimatedHourlyUsd": "0.10",
+                }
+            )
+
     oci = FakeOci()
-    terminated = oci_recovery.cleanup_expired_paid(config, oci, now=now)
+    original_list = oci.list_instances
+    def list_instances_with_budget(_config):
+        rows = original_list(_config)
+        for row in rows:
+            if row["id"] == "expired":
+                row["freeform-tags"].update(
+                    {
+                        "KatchaBudgetReservationId": "reservation-expired",
+                        "KatchaBudgetReservedMicrousd": "1200000",
+                        "KatchaPaidStartedAt": (
+                            now - timedelta(hours=2)
+                        ).isoformat(),
+                        "KatchaEstimatedHourlyUsd": "0.10",
+                    }
+                )
+        return rows
+    oci.list_instances = list_instances_with_budget
+    coordinator = Coordinator()
+    terminated = oci_recovery.cleanup_expired_paid(
+        config,
+        oci,
+        coordinator,
+        now=now,
+    )
 
     assert terminated == ["expired"]
     assert oci.softstopped == ["expired"]
     assert oci.terminated == ["expired"]
+    assert coordinator.settled == [("reservation-expired", 200000)]
 
 
 def test_recovery_prefers_cross_ad_free_before_paid(monkeypatch, tmp_path) -> None:
@@ -322,6 +424,8 @@ def test_recovery_uses_paid_only_after_all_free_targets_fail(
                 recovery_mode=mode,
                 previous_instance_id="ocid1.instance.old",
                 owns_recovery_volume=False,
+                budget_reservation_id=kwargs["budget_reservation_id"],
+                budget_reserved_microusd=kwargs["budget_reserved_microusd"],
             )
         raise AssertionError("cross-AD paid fallback should not be needed")
 
@@ -336,6 +440,9 @@ def test_recovery_uses_paid_only_after_all_free_targets_fail(
         "paid-fallback",
     ]
     assert result["mode"] == "paid-fallback"
+    assert len(FakeCoordinator.instance.reserved) == 1
+    assert FakeCoordinator.instance.reserved[0]["provider"] == "oci"
+    assert FakeCoordinator.instance.reserved[0]["estimated_cost_microusd"] == 1_200_000
 
 
 def test_active_cross_ad_instance_becomes_new_same_ad_recovery_home(
