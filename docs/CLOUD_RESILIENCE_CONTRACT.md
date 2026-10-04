@@ -166,9 +166,10 @@ limits.
 Required production controls:
 
 - global external-compute enabled/disabled switch, disabled by default,
-- durable UTC monthly ceiling,
-- explicit per-provider ceilings,
+- durable UTC monthly ceiling whose settled spend cannot be evicted by audit-history trimming,
+- explicit per-provider ceilings with durable settled-spend aggregates,
 - maximum concurrent paid jobs,
+- maximum attempts for one retry group,
 - maximum settled + reserved spend for one retry group,
 - idempotent reservation key before provider creation,
 - settlement/release after provider outcome,
