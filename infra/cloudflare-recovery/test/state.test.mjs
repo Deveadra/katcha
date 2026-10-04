@@ -994,3 +994,118 @@ test("retry-group ledger fails closed instead of evicting spend history", () => 
     /retry-group state safety limit reached/,
   );
 });
+
+
+test("retry attempt ceiling survives UTC month rollover", () => {
+  const january = Date.UTC(2026, 0, 31, 23, 50, 0);
+  let state = configureExternalCompute(
+    defaultAuthorityState(),
+    {
+      enabled: true,
+      monthlyLimitMicrousd: 5_000_000,
+      providerLimitsMicrousd: { oci: 5_000_000 },
+      maxConcurrentJobs: 2,
+      maxRetryAttempts: 1,
+      maxRetrySpendMicrousd: 5_000_000,
+    },
+    january,
+  );
+  const first = reserveExternalCompute(
+    state,
+    {
+      jobKey: "month-attempt-1",
+      provider: "oci",
+      operation: "paid-fallback",
+      retryGroup: "incident-month-attempt",
+      attempt: 1,
+      estimatedCostMicrousd: 100_000,
+      ttlSeconds: 3600,
+    },
+    january,
+  );
+  state = settleExternalCompute(
+    first.state,
+    {
+      reservationId: first.reservation.id,
+      actualCostMicrousd: 50_000,
+    },
+    january + 1000,
+  ).state;
+
+  const february = Date.UTC(2026, 1, 1, 0, 10, 0);
+  const status = externalComputeStatus(state, february).status;
+  assert.equal(status.retry_attempts["incident-month-attempt"], 1);
+
+  assert.throws(
+    () =>
+      reserveExternalCompute(
+        state,
+        {
+          jobKey: "month-attempt-2",
+          provider: "oci",
+          operation: "paid-fallback",
+          retryGroup: "incident-month-attempt",
+          attempt: 2,
+          estimatedCostMicrousd: 100_000,
+          ttlSeconds: 3600,
+        },
+        february,
+      ),
+    /retry attempt limit reached/,
+  );
+});
+
+test("legacy reservation history migrates retry attempt counters", () => {
+  const now = Date.UTC(2026, 9, 4, 12, 0, 0);
+  const legacy = {
+    ...defaultAuthorityState(),
+    external_compute: {
+      enabled: true,
+      month_key: "2026-10",
+      monthly_limit_microusd: 5_000_000,
+      provider_limits_microusd: { oci: 5_000_000 },
+      max_concurrent_jobs: 2,
+      max_retry_attempts: 3,
+      max_retry_spend_microusd: 5_000_000,
+      reservations: [
+        {
+          id: "legacy-attempt-two",
+          job_key: "legacy-attempt-two",
+          provider: "oci",
+          operation: "paid-fallback",
+          retry_group: "legacy-attempt-group",
+          attempt: 2,
+          estimated_cost_microusd: 100_000,
+          actual_cost_microusd: 50_000,
+          status: "settled",
+          reserved_at: new Date(now - 2000).toISOString(),
+          expires_at: new Date(now + 1000).toISOString(),
+          expires_at_ms: now + 1000,
+          settled_at: new Date(now - 1000).toISOString(),
+          metadata: {},
+        },
+      ],
+    },
+  };
+
+  const status = externalComputeStatus(legacy, now).status;
+  assert.equal(status.retry_attempts["legacy-attempt-group"], 2);
+
+  assert.throws(
+    () =>
+      reserveExternalCompute(
+        legacy,
+        {
+          jobKey: "legacy-repeat-two",
+          provider: "oci",
+          operation: "paid-fallback",
+          retryGroup: "legacy-attempt-group",
+          attempt: 2,
+          estimatedCostMicrousd: 100_000,
+          ttlSeconds: 3600,
+        },
+        now + 1000,
+      ),
+    /retry attempt limit reached/,
+  );
+});
