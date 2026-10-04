@@ -208,8 +208,9 @@ retry cap at midnight UTC.
 The global kill switch is evaluated before idempotent reservation reuse. Turning
 external compute off therefore blocks even a replay of an existing reservation
 from authorizing another provider launch. The coordinator also refuses more than
-5,000 reservation records in one UTC month as an independent state-growth
-circuit breaker.
+5,000 reservation records in one UTC month and more than 10,000 durable retry
+groups. These are fail-closed state-growth circuit breakers: Katcha never evicts
+spend history merely to admit another paid job.
 
 The OCI recovery runner reserves the **worst-case configured TTL cost before
 launching any paid fallback instance**. OCI capacity failures that create no
