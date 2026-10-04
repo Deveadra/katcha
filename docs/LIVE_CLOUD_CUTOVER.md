@@ -289,6 +289,12 @@ Configure all current repository variables referenced by
 
 Leave paid external compute disabled until the budget ledger has been configured.
 
+Keep `KATCHA_OCI_RECOVERY_CONFIGURED` unset or `false` while live OCI
+variables/secrets are incomplete. Set it to `true` only after the recovery
+configuration is fully populated and validated; this enables the scheduled
+paid-fallback TTL/retired-volume cleanup job without generating false failures
+during provisioning.
+
 ## Phase 7 — prepare the durable host
 
 Attach and mount the durable volume at `/srv/katcha`.
