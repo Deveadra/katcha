@@ -9,6 +9,7 @@ on:
       - deploy/docker-compose.production.yml
       - deploy/scripts/postgres-backup.sh
       - deploy/scripts/postgres-restore-test.sh
+      - deploy/scripts/postgres-disaster-restore.sh
       - deploy/systemd/katcha-backup.service
       - deploy/systemd/katcha-backup.timer
       - deploy/systemd/katcha-restore-test.service
