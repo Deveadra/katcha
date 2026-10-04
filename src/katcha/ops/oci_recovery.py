@@ -27,6 +27,10 @@ class CommitOutcomeUnknown(RecoveryError):
     """Authority commit may have succeeded; destructive rollback is unsafe."""
 
 
+class RecoveryCleanupIncomplete(RecoveryError):
+    """Recovery cleanup did not fully restore the pre-attempt resource state."""
+
+
 def _env(name: str, *, default: str | None = None) -> str:
     value = os.environ.get(name)
     if value is None or not str(value).strip():
@@ -904,10 +908,10 @@ def switch_volume(
                 )
                 oci.start(previous_instance)
             except Exception as rollback_error:
-                print(
-                    "RECOVERY_SWITCH_ROLLBACK_WARNING: "
-                    f"{type(rollback_error).__name__}: {rollback_error}"
-                )
+                raise RecoveryCleanupIncomplete(
+                    "candidate volume attach failed and restoring the previous "
+                    f"attachment also failed: {rollback_error}"
+                ) from rollback_error
         raise
     return previous_instance
 
@@ -1080,7 +1084,7 @@ def _cleanup_failed_attempt(
             errors.append(f"volume-delete:{type(exc).__name__}:{exc}")
 
     if errors:
-        raise RecoveryError(
+        raise RecoveryCleanupIncomplete(
             "recovery attempt cleanup incomplete: " + " | ".join(errors)
         )
 
@@ -1163,11 +1167,8 @@ def _launch_attempt(
         if attempt is not None:
             try:
                 _cleanup_failed_attempt(oci, config, attempt)
-            except Exception as cleanup_error:
-                print(
-                    "RECOVERY_ATTEMPT_CLEANUP_WARNING: "
-                    f"{type(cleanup_error).__name__}: {cleanup_error}"
-                )
+            except RecoveryCleanupIncomplete:
+                raise
         else:
             if candidate_id:
                 try:
@@ -1246,11 +1247,8 @@ def _resume_existing_candidate(
     except Exception:
         try:
             _cleanup_failed_attempt(oci, config, attempt)
-        except Exception as cleanup_error:
-            print(
-                "RECOVERY_ATTEMPT_CLEANUP_WARNING: "
-                f"{type(cleanup_error).__name__}: {cleanup_error}"
-            )
+        except RecoveryCleanupIncomplete:
+            raise
         raise
 
 
@@ -1291,6 +1289,8 @@ def recover(event_path: Path, config: RecoveryConfig, oci: OciCli) -> dict[str, 
                     deployment_epoch=deployment_epoch,
                     rollback_instance_id=rollback_instance_id,
                 )
+            except RecoveryCleanupIncomplete:
+                raise
             except Exception as exc:
                 failures.append(
                     f"resume-existing:{type(exc).__name__}:{exc}"
@@ -1358,6 +1358,8 @@ def recover(event_path: Path, config: RecoveryConfig, oci: OciCli) -> dict[str, 
                         recovery_mode=recovery_mode,
                     )
                     break
+                except RecoveryCleanupIncomplete:
+                    raise
                 except Exception as exc:
                     failures.append(
                         f"{recovery_mode}@{target.availability_domain}:"
