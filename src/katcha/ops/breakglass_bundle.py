@@ -406,12 +406,10 @@ def extract_bundle(
                         "--decrypt",
                         "-i",
                         str(identity_file.resolve()),
-                        "-o",
-                        str(plain_archive),
                         str(bundle.resolve()),
                     ],
                     check=True,
-                    stdout=subprocess.DEVNULL,
+                    stdout=handle,
                     stderr=subprocess.PIPE,
                     text=False,
                 )
