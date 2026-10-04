@@ -670,6 +670,18 @@ def _instance_id(row: dict[str, Any]) -> str:
     return str(row.get("id") or "")
 
 
+def _availability_domain(row: dict[str, Any]) -> str:
+    return str(row.get("availability-domain") or row.get("availabilityDomain") or "")
+
+
+def _is_paid_recovery(row: dict[str, Any]) -> bool:
+    tags = _tags(row)
+    return (
+        tags.get("KatchaPaidFallback", "").casefold() == "true"
+        or tags.get("KatchaRecoveryMode") == "paid-fallback"
+    )
+
+
 def find_deployment_instance(
     rows: list[dict[str, Any]],
     deployment_id: str,
@@ -701,7 +713,7 @@ def paid_instance_count(rows: list[dict[str, Any]]) -> int:
         1
         for row in rows
         if _state(row) not in {"TERMINATED", "TERMINATING"}
-        and _tags(row).get("KatchaRecoveryMode") == "paid-fallback"
+        and _is_paid_recovery(row)
     )
 
 
@@ -710,6 +722,7 @@ def render_bootstrap(
     *,
     deployment_id: str,
     deployment_epoch: int,
+    storage_mode: str,
 ) -> Path:
     content = config.bootstrap_template.read_text(encoding="utf-8")
     replacements = {
@@ -717,6 +730,11 @@ def render_bootstrap(
         "DEPLOYMENT_EPOCH": str(deployment_epoch),
         "RELEASE_SHA": config.release_sha,
         "DATA_VOLUME_FS_UUID": config.data_volume_fs_uuid,
+        "DATA_VOLUME_DEVICE_PATH": config.cross_ad_device_path,
+        "STORAGE_MODE": storage_mode,
+        "CROSS_AD_MAX_BACKUP_AGE_SECONDS": str(
+            config.cross_ad_max_backup_age_seconds
+        ),
         "PRODUCTION_ENV_SECRET_ID": config.production_env_secret_id,
         "AWS_BUNDLE_SECRET_ID": config.aws_bundle_secret_id,
         "BACKUP_ENV_SECRET_ID": config.backup_env_secret_id,
@@ -852,9 +870,10 @@ def switch_volume(
     oci: OciCli,
     config: RecoveryConfig,
     candidate_id: str,
+    volume_id: str,
 ) -> str | None:
     previous_instance: str | None = None
-    attachments = oci.volume_attachments(config)
+    attachments = oci.volume_attachments(config, volume_id)
     for attachment in attachments:
         state = _state(attachment)
         attached_instance = _attachment_instance_id(attachment)
@@ -865,7 +884,11 @@ def switch_volume(
         previous_instance = attached_instance
         oci.stop(attached_instance)
         oci.detach(_attachment_id(attachment))
-    oci.attach(config, candidate_id)
+    oci.attach(
+        candidate_id,
+        volume_id,
+        device_path=config.cross_ad_device_path,
+    )
     return previous_instance
 
 
@@ -874,13 +897,18 @@ def rollback_volume(
     config: RecoveryConfig,
     *,
     candidate_id: str,
+    volume_id: str,
     previous_instance_id: str | None,
 ) -> None:
-    for attachment in oci.volume_attachments(config):
+    for attachment in oci.volume_attachments(config, volume_id):
         if _attachment_instance_id(attachment) == candidate_id:
             oci.detach(_attachment_id(attachment))
     if previous_instance_id:
-        oci.attach(config, previous_instance_id)
+        oci.attach(
+            previous_instance_id,
+            volume_id,
+            device_path=config.cross_ad_device_path,
+        )
         oci.start(previous_instance_id)
 
 
