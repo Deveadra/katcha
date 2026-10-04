@@ -61,6 +61,7 @@ window.KatchaEditorial = (() => {
         const changed = state.channel !== channel;
         state.channel = channel;
         if (changed) {
+            window.KatchaEditorialHistory.reset();
             clearPreview(); state.boardKey = ""; state.assetRun = null;
             state.project = null; state.revision = null; state.run = null; state.editorKey = ""; state.renderKey = "";
             el("editorial-detail").hidden = true;
@@ -85,6 +86,7 @@ window.KatchaEditorial = (() => {
     }
     async function open(id, { focus = true } = {}) {
         clearTimeout(state.timer);
+        if (state.project?.id !== id) window.KatchaEditorialHistory.reset();
         const epoch = ++state.epoch;
         const channel = state.channel;
         feedback("Loading project evidence and progress…");
@@ -100,6 +102,7 @@ window.KatchaEditorial = (() => {
         const assetRun = acquisition ? (acquisition.editorial_run_id === run?.editorial_run_id ? run : await api(`${base}/runs/${encodeURIComponent(acquisition.editorial_run_id)}`)) : null;
         if (epoch !== state.epoch) return;
         if (state.project?.id !== id || state.run?.editorial_run_id !== run?.editorial_run_id) clearPreview();
+        window.KatchaEditorialHistory.context(channel, id);
         state.assetRun = assetRun; state.review = review; state.narration = narration;
         const pending = read(storageKey(`pending.${id}`), null);
         state.project = project; state.revision = revisions[0] || null; state.run = run;
@@ -259,6 +262,7 @@ window.KatchaEditorial = (() => {
     }
     function init(transport, blobTransport) {
         api = transport; apiBlob = blobTransport;
+        window.KatchaEditorialHistory.init(transport, blobTransport);
         el("editorial-presentation").addEventListener("change", () => { saveNarrationChoices(); renderNarration(); renderActions(); });
         el("editorial-narration").addEventListener("change", saveNarrationChoices);
         el("editorial-narration").addEventListener("click", event => {

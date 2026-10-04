@@ -126,6 +126,11 @@ TOOLS = {
             "/v1/channels/{channel_profile_id}/editorial-projects/{project_id}",
         ),
         GoalTool(
+            "editorial_revision", "Read one immutable saved script and its evidence",
+            "ai:read", "GET",
+            "/v1/channels/{channel_profile_id}/editorial-projects/{project_id}/revisions/{revision}",
+        ),
+        GoalTool(
             "editorial_revisions", "Read saved evidence and script revisions; latest first",
             "ai:read", "GET",
             "/v1/channels/{channel_profile_id}/editorial-projects/{project_id}/revisions",

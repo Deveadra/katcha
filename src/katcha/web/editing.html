@@ -12,6 +12,7 @@
     <link id="aerith-components" rel="stylesheet" href="/system/aerith-components.css">
     <link id="aerith-motion" rel="stylesheet" href="/system/aerith-motion.css">
     <link rel="stylesheet" href="/pages/production-aerith.css">
+    <script src="/editorial-history.js" defer></script>
     <script src="/editorial.js" defer></script>
     <script src="/editing.js" defer></script>
 <script src="/launcher-bridge.js" defer></script></head>
@@ -55,7 +56,7 @@
                 <section class="panel card production-workspace" data-production-group="editorial" hidden>
                     <div class="panel-head"><div><div class="eyebrow">RESEARCHED ORIGINALS</div><h2>From a source to a story</h2></div><button id="editorial-refresh" class="mini" type="button">Refresh projects</button></div>
                     <p>Create a brief, investigate source material, and review a cited script. A single trailer is enough to start.</p>
-                    <p>Research needs an eligible live AI connection. Generated claims need review. Asset clearance, rendering, and publication are not available here yet.</p>
+                    <p>Research needs an eligible live AI connection. Generated claims need review. Clear media for reuse before rendering a private preview. Publishing is not connected yet.</p>
                     <form id="editorial-form"><fieldset id="editorial-form-fields" class="editorial-form" disabled>
                         <legend>New editorial project</legend>
                         <label>What should this story investigate?<textarea id="editorial-prompt" rows="3" maxlength="4000" required placeholder="Find overlooked clues and explain what the evidence supports."></textarea></label>
@@ -95,6 +96,22 @@
                         </section>
                         <details class="ae-help"><summary>Provider receipts and research gaps</summary><pre id="editorial-receipts"></pre></details>
                     </section>
+                    <details id="editorial-history" class="ae-help" hidden>
+                        <summary>Project work history</summary>
+                        <p>Inspect previous work and the script it used. Your current edits stay in place. Preview access checks current clearance; a changed script or removed recording can make an older preview unavailable.</p>
+                        <div class="toolbar"><button id="editorial-history-refresh" class="mini" type="button">Refresh history</button><button id="editorial-history-back" class="mini" type="button" disabled>Newer work</button><button id="editorial-history-next" class="mini" type="button" disabled>Older work</button></div>
+                        <p id="editorial-history-status" role="status" aria-live="polite"></p>
+                        <div id="editorial-history-list"></div>
+                        <section id="editorial-history-detail" hidden aria-label="Selected past work">
+                            <h3 id="editorial-history-title" tabindex="-1"></h3>
+                            <p id="editorial-history-result"></p>
+                            <div id="editorial-history-review"></div>
+                            <button id="editorial-history-play" class="mini" type="button" hidden>Load selected private preview</button>
+                            <video id="editorial-history-preview" controls playsinline hidden style="width:100%;max-height:70vh"></video>
+                            <h4>Saved script and evidence</h4><div id="editorial-history-script"></div>
+                            <details class="ae-help"><summary>Saved receipts and diagnostics</summary><pre id="editorial-history-receipts"></pre></details>
+                        </section>
+                    </details>
                 </section>
                 <div class="grid production-workspace" data-production-group="recipes" hidden>
                     <section class="panel card" id="blueprints-panel">
