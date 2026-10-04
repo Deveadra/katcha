@@ -211,7 +211,9 @@ def _safe_install_aws_bundle(data: bytes, destination: Path) -> None:
                     if not chunk:
                         break
                     handle.write(chunk)
-            target.chmod(0o600)
+            target.chmod(
+                0o700 if member.mode & 0o111 else 0o600
+            )
 
 
 def _file_rows_from_sources(
