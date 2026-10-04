@@ -310,21 +310,9 @@ def test_cleanup_terminates_only_expired_paid_instances(monkeypatch, tmp_path) -
             self.settled.append((reservation_id, actual_cost_microusd))
             return {"reservation": {"status": "settled"}}
 
-    for row in FakeOci().list_instances(config):
-        if row["id"] == "expired":
-            row["freeform-tags"].update(
-                {
-                    "KatchaBudgetReservationId": "reservation-expired",
-                    "KatchaBudgetReservedMicrousd": "1200000",
-                    "KatchaPaidStartedAt": (
-                        now - timedelta(hours=2)
-                    ).isoformat(),
-                    "KatchaEstimatedHourlyUsd": "0.10",
-                }
-            )
-
     oci = FakeOci()
     original_list = oci.list_instances
+
     def list_instances_with_budget(_config):
         rows = original_list(_config)
         for row in rows:
