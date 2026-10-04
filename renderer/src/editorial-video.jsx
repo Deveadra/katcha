@@ -1,5 +1,5 @@
 import React from 'react';
-import {AbsoluteFill, Freeze, OffthreadVideo, Sequence, useCurrentFrame} from 'remotion';
+import {AbsoluteFill, Audio, Freeze, OffthreadVideo, Sequence, useCurrentFrame} from 'remotion';
 import {containRect} from './editorial-contract.mjs';
 
 const Annotation = ({overlay}) => {
@@ -31,7 +31,8 @@ const Scene = ({scene, assets}) => {
   </AbsoluteFill>;
 };
 
-export const EditorialVideo = ({media, timeline}) => {
+export const EditorialVideo = ({media, timeline, narration = []}) => {
   const assets = new Map(media.map(asset => [asset.candidate_id, asset]));
-  return <AbsoluteFill>{timeline.map(scene => <Sequence key={scene.beat_id} from={scene.start_frame} durationInFrames={scene.duration_frames}><Scene scene={scene} assets={assets} /></Sequence>)}</AbsoluteFill>;
+  const audio = new Map(narration.map(item => [item.beat_id, item]));
+  return <AbsoluteFill>{timeline.map(scene => <Sequence key={scene.beat_id} from={scene.start_frame} durationInFrames={scene.duration_frames}><Scene scene={scene} assets={assets} />{audio.has(scene.beat_id) && <Audio src={audio.get(scene.beat_id).url} />}</Sequence>)}</AbsoluteFill>;
 };

@@ -36,3 +36,28 @@ validateEditorialManifest(frozen);
 assert.deepEqual(containRect(1920, 1080, 912, 744), {width: 912, height: 513, left: 0, top: 115.5});
 assert.deepEqual(containRect(1080, 1920, 912, 744), {width: 418.5, height: 744, left: 246.75, top: 0});
 console.log('Editorial manifest and geometry checks passed');
+
+const narrated = structuredClone(fixture);
+narrated.version = 'editorial-render-v2';
+narrated.presentation_mode = 'narrated';
+narrated.narration = [{narration_id: 'audio', beat_id: 'beat', sha256: 'd'.repeat(64), text_digest: 'e'.repeat(64), storage_key: `editorial/test-project/narration/audio/${'d'.repeat(64)}.wav`, sample_rate: 24000, sample_frames: 48000}];
+validateEditorialManifest(narrated);
+for (const mutate of [
+  m => {m.narration = [];},
+  m => {m.narration[0].sample_frames += 1;},
+  m => {m.narration[0].beat_id = 'invented';},
+  m => {m.narration[0].url = 'https://example.com/audio';},
+  m => {m.narration[0].storage_key = 'other/audio.wav';},
+  m => {m.version = 'editorial-render-v1';},
+]) {
+  const value = structuredClone(narrated); mutate(value);
+  assert.throws(() => validateEditorialManifest(value), /invalid editorial manifest/);
+}
+const {verifyNarrationBytes} = await import('../src/editorial-media.mjs');
+const {createHash} = await import('node:crypto');
+const {Readable} = await import('node:stream');
+const bytes = Buffer.from('test audio content');
+await verifyNarrationBytes(Readable.from([bytes]), createHash('sha256').update(bytes).digest('hex'));
+await assert.rejects(() => verifyNarrationBytes(Readable.from([bytes]), '0'.repeat(64)), /checksum/);
+await assert.rejects(() => verifyNarrationBytes(Readable.from([Buffer.alloc(32 * 1024 * 1024 + 1)]), '0'.repeat(64)), /32 MiB/);
+console.log('Narrated manifests and audio checksum bounds passed');

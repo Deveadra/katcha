@@ -95,11 +95,12 @@ window.KatchaEditorial = (() => {
         const run = runs[0] ? await api(`${base}/runs/${encodeURIComponent(runs[0].editorial_run_id)}`) : null;
         const review = run?.target === "render" && run.status === "completed"
             ? await api(`${base}/runs/${encodeURIComponent(run.editorial_run_id)}/review`).catch(error => ({error: error.message})) : null;
+        const narration = project.revision > 0 ? await api(`${base}/narration?revision=${project.revision}`).catch(error => ({error: error.message, recordings: []})) : {voice_enabled: true, recordings: []};
         const acquisition = runs.find(item => item.target === "acquire_assets" && item.status === "completed" && item.input_revision === project.revision);
         const assetRun = acquisition ? (acquisition.editorial_run_id === run?.editorial_run_id ? run : await api(`${base}/runs/${encodeURIComponent(acquisition.editorial_run_id)}`)) : null;
         if (epoch !== state.epoch) return;
         if (state.project?.id !== id || state.run?.editorial_run_id !== run?.editorial_run_id) clearPreview();
-        state.assetRun = assetRun; state.review = review;
+        state.assetRun = assetRun; state.review = review; state.narration = narration;
         const pending = read(storageKey(`pending.${id}`), null);
         state.project = project; state.revision = revisions[0] || null; state.run = run;
         state.stale = Boolean(pending && pending.revision < project.revision);
@@ -111,7 +112,7 @@ window.KatchaEditorial = (() => {
             : "Brief saved. Choose source analysis or research and scripting.";
         el("editorial-discard").hidden = !state.stale;
         feedback(run?.error || "Project loaded. Generated claims and scripts need editorial review.", Boolean(run?.error));
-        renderActions(); renderEvidence(); renderScript(); renderStoryboard(); renderReview();
+        renderActions(); renderEvidence(); renderScript(); renderStoryboard(); renderReview(); renderNarration(); renderActions();
         if (state.stale) feedback("A newer script revision is available. Your unsaved text is retained below. Copy it before discarding edits to load the latest version.", true);
         if (focus) el("editorial-title").focus();
         if (run && ["queued", "running"].includes(run.status)) {
@@ -141,6 +142,8 @@ window.KatchaEditorial = (() => {
         el("editorial-save-script").disabled = state.busy || !state.revision || Boolean(active) || state.stale;
         assetControls();
         el("editorial-render").disabled = state.busy || Boolean(active) || state.stale || !state.assetRun || Boolean(read(storageKey(`pending.${state.project.id}`), null));
+        el("editorial-render").disabled ||= el("editorial-presentation").value === "narrated" && !state.narration?.voice_enabled;
+        el("editorial-render").textContent = el("editorial-presentation").value === "narrated" ? "Create narrated preview" : "Create silent captioned preview";
         el("editorial-play").hidden = state.run?.stage !== "render_ready_for_review" || state.run?.status !== "completed";
         el("editorial-approve").disabled = state.busy || !state.review?.can_approve || !state.previewUrl || state.stale || Boolean(read(storageKey(`pending.${state.project.id}`), null));
         el("editorial-request-changes").disabled = state.busy || !state.review || Boolean(state.review.error);
@@ -155,6 +158,26 @@ window.KatchaEditorial = (() => {
             : `${labels[state.review.status] || "Review required."} ${state.review.blocker || ""}`;
         el("editorial-review-note").value = read(reviewNoteKey(), "");
         el("editorial-review-history").innerHTML = (state.review.reviews || []).map(review => `<article class="item"><div><p>${esc(review.decision === "approve" ? "Approved" : "Changes requested")} · ${esc(review.actor)} · ${esc(review.created_at)}</p><p>${esc(review.note)}</p></div></article>`).join("") || "No saved reviews.";
+    }
+    function narrationKey() { return storageKey(`narration.${state.project.id}.${state.project.revision}`); }
+    function saveNarrationChoices() {
+        const choices = Object.fromEntries([...el("editorial-narration").querySelectorAll("[data-narration-select]")].map(input => [input.dataset.narrationSelect, input.value]));
+        remember(narrationKey(), {mode: el("editorial-presentation").value, choices});
+    }
+    function renderNarration() {
+        const data = state.narration || {};
+        const saved = read(narrationKey(), {mode: "captioned_silent", choices: {}});
+        el("editorial-presentation").value = saved.mode;
+        el("editorial-presentation").querySelector('[value="narrated"]').disabled = !data.voice_enabled;
+        el("editorial-narration-panel").hidden = saved.mode !== "narrated" || !data.voice_enabled;
+        el("editorial-narration-status").textContent = data.error ? `Recordings unavailable: ${data.error}. Refresh projects to retry.` : !data.voice_enabled ? "Voice is off. Enable it in Channel Studio to use narration, or choose Silent with captions." : "";
+        const key = narrationKey() + JSON.stringify(data.recordings);
+        if (key === state.narrationKey) return;
+        state.narrationKey = key;
+        el("editorial-narration").innerHTML = (state.revision?.draft.script || []).map((beat, index) => {
+            const recordings = (data.recordings || []).filter(item => item.beat_id === beat.id && item.status === "active");
+            return `<fieldset class="editorial-beat" data-narration-beat="${esc(beat.id)}"><legend>Beat ${index + 1}</legend><p>${esc(beat.narration)}</p><label>Recording for beat ${index + 1}<select data-narration-select="${esc(beat.id)}"><option value="">Choose a recording</option>${recordings.map(item => `<option value="${esc(item.id)}" ${saved.choices[beat.id] === item.id ? "selected" : ""}>${Number(item.duration_seconds).toFixed(2)}s · ${esc(item.created_at)}</option>`).join("")}</select></label><button type="button" class="mini" data-narration-revoke>Remove selected recording</button><label>WAV recording for beat ${index + 1}<input type="file" accept=".wav,audio/wav" data-narration-file></label><label class="check-row"><input type="checkbox" data-narration-permitted> I have permission to use this recording</label><button type="button" class="mini" data-narration-upload>Upload recording</button></fieldset>`;
+        }).join("");
     }
     function boardStorage() { return storageKey(`board.${state.project.id}.${state.project.revision}.${state.assetRun?.editorial_run_id || "none"}`); }
     function saveStoryboard() {
@@ -187,7 +210,10 @@ window.KatchaEditorial = (() => {
             const [kind, ...parts] = value.split(":"); const id = parts.join(":");
             return kind === "quote" ? {beat_id: row.dataset.boardBeat, layout: "quote", quote_source_id: id, media: []} : {beat_id: row.dataset.boardBeat, layout: "single", media: [{candidate_id: id, start_seconds: Number(row.querySelector("input[type=number]").value), freeze: row.querySelector("input[type=checkbox]").checked}]};
         });
-        return {presentation_mode: "captioned_silent", beats};
+        const mode = el("editorial-presentation").value;
+        const narration_ids = Object.fromEntries([...el("editorial-narration").querySelectorAll("[data-narration-select]")].map(input => [input.dataset.narrationSelect, input.value]));
+        if (mode === "narrated" && (beats.some(beat => !narration_ids[beat.beat_id]) || !state.narration?.voice_enabled)) throw new Error("Enable voice and choose a recording for every beat.");
+        return {presentation_mode: mode, beats, ...(mode === "narrated" ? {narration_ids} : {})};
     }
     function renderEvidence() {
         const artifacts = state.run?.artifacts || {};
@@ -233,6 +259,39 @@ window.KatchaEditorial = (() => {
     }
     function init(transport, blobTransport) {
         api = transport; apiBlob = blobTransport;
+        el("editorial-presentation").addEventListener("change", () => { saveNarrationChoices(); renderNarration(); renderActions(); });
+        el("editorial-narration").addEventListener("change", saveNarrationChoices);
+        el("editorial-narration").addEventListener("click", event => {
+            const button = event.target.closest("[data-narration-upload], [data-narration-revoke]");
+            if (!button) return;
+            const row = button.closest("[data-narration-beat]");
+            void guarded(async () => {
+                const channel = state.channel; const project = state.project.id; const revision = state.project.revision;
+                if (state.stale || read(storageKey(`pending.${project}`), null)) throw new Error("Save or discard script edits before changing recordings.");
+                const base = path(channel, `/${project}/narration`);
+                if (button.hasAttribute("data-narration-revoke")) {
+                    const selected = row.querySelector("select").value;
+                    if (!selected) throw new Error("Choose the recording to remove.");
+                    await api(`${base}/${encodeURIComponent(selected)}/revoke`, {method: "POST"});
+                } else {
+                    const file = row.querySelector("input[type=file]").files[0];
+                    if (!file || file.size > 32 * 1024 * 1024) throw new Error("Choose a PCM WAV recording no larger than 32 MiB.");
+                    if (!row.querySelector("[data-narration-permitted]").checked) throw new Error("Confirm permission to use this recording.");
+                    const audio = await file.arrayBuffer();
+                    const hash = [...new Uint8Array(await crypto.subtle.digest("SHA-256", audio))].map(value => value.toString(16).padStart(2, "0")).join("");
+                    if (channel !== state.channel || project !== state.project?.id) return;
+                    const payload = {revision, beat_id: row.dataset.narrationBeat, sha256: hash};
+                    const key = identity(`upload.${project}.${payload.beat_id}`, payload);
+                    const query = new URLSearchParams({revision, beat_id: payload.beat_id, idempotency_key: key, permitted_use: "true"});
+                    const uploaded = await api(`${base}?${query}`, {method: "POST", body: audio, headers: {"Content-Type": "audio/wav"}});
+                    if (channel === state.channel && project === state.project?.id) {
+                        const saved = read(narrationKey(), {mode: "narrated", choices: {}});
+                        saved.choices[payload.beat_id] = uploaded.id; remember(narrationKey(), saved);
+                    }
+                }
+                if (channel === state.channel) { state.narrationKey = ""; await open(project, {focus: false}); }
+            });
+        });
         el("editorial-review-note").addEventListener("input", () => remember(reviewNoteKey(), el("editorial-review-note").value));
         for (const [id, decision] of [["editorial-approve", "approve"], ["editorial-request-changes", "request_changes"]]) {
             el(id).addEventListener("click", () => void guarded(async () => {

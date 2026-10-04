@@ -9,6 +9,8 @@ let project = null, run = null, revision = null, acquisitionRun = null;
 let loseCreateResponse = true, loseSaveResponse = true;
 let review = {status: "unreviewed", sequence: 0, can_approve: true, reviews: []};
 let loseReviewResponse = true;
+let recordings = [];
+let loseUploadResponse = true;
 const draft = {
     version: "editorial-draft-v1", observations: [],
     sources: [{ id: "source", title: "Interview", url: "https://example.com/interview", category: "interview", excerpt: "A synthetic quoted clue." }],
@@ -20,11 +22,11 @@ const draft = {
     try {
         const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
         const errors = [];
-        page.on("pageerror", (error) => errors.push(error.message));
+        page.on("pageerror", (error) => { errors.push(error.message); console.error("Browser error:", error.message); });
         await page.route("**/v1/**", (route) => {
             const request = route.request();
             const url = new URL(request.url());
-            const body = request.method() === "POST" ? request.postDataJSON() : null;
+            const body = request.method() === "POST" && !url.pathname.endsWith("/narration") ? request.postDataJSON() : null;
             calls.push({ path: url.pathname, method: request.method(), body, auth: request.headers().authorization });
             const send = (value, status = 200) => route.fulfill({ status, contentType: "application/json", body: JSON.stringify(value) });
             if (url.pathname === "/v1/channels") return send([{ id: "one", status: "active", profile_metadata: { name: "FORESCENE" } }, { id: "two", status: "active", profile_metadata: { name: "Other channel" } }]);
@@ -67,6 +69,13 @@ const draft = {
                     run = { ...run, attempt: 2, status: "completed", stage: "script_ready", error: null };
                     revision = { revision: 1, draft }; project.revision = 1;
                     return send(run, 202);
+                }
+                if (url.pathname.endsWith("/narration")) {
+                    if (request.method() === 'GET') return send({voice_enabled: true, recordings});
+                    calls.at(-1).uploadKey = url.searchParams.get('idempotency_key');
+                    recordings = [{id: 'audio-id', beat_id: 'beat', status: 'active', duration_seconds: 2, created_at: '2026-10-04', revision: 3}];
+                    if (loseUploadResponse) { loseUploadResponse = false; return send({detail: 'Upload response lost. Retry the same recording.'}, 503); }
+                    return send(recordings[0], 201);
                 }
                 if (url.pathname.endsWith("/preview")) return route.fulfill({status: 200, contentType: "video/mp4", body: "synthetic-media-transport-only"});
                 if (url.pathname.endsWith("/review")) {
@@ -166,6 +175,21 @@ const draft = {
         const reviewCalls = calls.filter(call => call.path.endsWith('/review') && call.body);
         assert.equal(reviewCalls.length, 2);
         assert.deepEqual(reviewCalls[0].body, reviewCalls[1].body);
+        await page.locator('#editorial-presentation').selectOption('narrated');
+        await page.locator('[data-narration-file]').setInputFiles({name: 'recording.wav', mimeType: 'audio/wav', buffer: Buffer.from('synthetic transport only')});
+        await page.locator('[data-narration-permitted]').check();
+        await page.getByRole('button', {name: 'Upload recording', exact: true}).click();
+        await page.getByText(/Upload response lost/).waitFor();
+        assert.equal(await page.locator('[data-narration-file]').evaluate(input => input.files.length), 1);
+        await page.getByRole('button', {name: 'Upload recording', exact: true}).click();
+        await page.locator('[data-narration-select] option[value="audio-id"]').waitFor({state: 'attached'});
+        const uploads = calls.filter(call => call.uploadKey);
+        assert.equal(uploads.length, 2); assert.equal(uploads[0].uploadKey, uploads[1].uploadKey);
+        assert.equal(await page.locator('[data-narration-select]').inputValue(), 'audio-id');
+        await page.getByRole('button', {name: 'Create narrated preview', exact: true}).click();
+        await page.getByText(/Review approved for this rendered revision/).waitFor();
+        const voiced = calls.find(call => call.body?.storyboard?.presentation_mode === 'narrated');
+        assert.equal(voiced.body.storyboard.narration_ids.beat, 'audio-id');
         await page.screenshot({ path: path.resolve(__dirname, "test-results/editorial-desktop.png"), fullPage: true });
         await page.setViewportSize({ width: 390, height: 844 });
         assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);

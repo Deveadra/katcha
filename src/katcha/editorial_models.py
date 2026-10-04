@@ -100,3 +100,29 @@ class EditorialRenderReview(Base):
     note: Mapped[str] = mapped_column(Text)
     actor: Mapped[str] = mapped_column(String(255))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class EditorialNarration(Base):
+    __tablename__ = "editorial_narration"
+    __table_args__ = (
+        CheckConstraint("revision > 0", name="ck_editorial_narration_revision"),
+        CheckConstraint("sample_frames > 0", name="ck_editorial_narration_frames"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("editorial_projects.id"), index=True
+    )
+    channel_profile_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("channel_profiles.id"), index=True
+    )
+    revision: Mapped[int] = mapped_column(Integer)
+    beat_id: Mapped[str] = mapped_column(String(120))
+    text_digest: Mapped[str] = mapped_column(String(64))
+    sha256: Mapped[str] = mapped_column(String(64))
+    storage_key: Mapped[str] = mapped_column(String(1000))
+    sample_rate: Mapped[int] = mapped_column(Integer)
+    sample_frames: Mapped[int] = mapped_column(Integer)
+    status: Mapped[str] = mapped_column(String(32), default="active")
+    actor: Mapped[str] = mapped_column(String(255))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

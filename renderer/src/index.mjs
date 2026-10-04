@@ -1,5 +1,6 @@
 import {createHash} from 'node:crypto';
 import {validateEditorialManifest} from './editorial-contract.mjs';
+import {verifyNarrationBytes} from './editorial-media.mjs';
 import fs from 'node:fs';
 import {execFile} from 'node:child_process';
 import os from 'node:os';
@@ -91,20 +92,20 @@ const headObject = (key) => s3.send(new HeadObjectCommand({Bucket: bucket, Key: 
 const inspectMedia = async (filePath) => {
   const {stdout} = await exec('ffprobe', [
     '-v', 'error',
-    '-select_streams', 'v:0',
-    '-show_entries', 'stream=width,height,r_frame_rate:format=duration',
+    '-show_entries', 'stream=codec_type,width,height,r_frame_rate:format=duration',
     '-of', 'json',
     filePath,
   ]);
   const payload = JSON.parse(stdout);
-  const stream = payload?.streams?.[0] || {};
+  const stream = payload?.streams?.find(item => item.codec_type === 'video') || {};
   const duration = Number(payload?.format?.duration || 0);
   const width = Number(stream.width || 0);
   const height = Number(stream.height || 0);
   if (!(duration > 0) || !(width > 0) || !(height > 0)) {
     throw new Error('ffprobe could not verify rendered media');
   }
-  return {duration_seconds: duration, width, height, frame_rate: stream.r_frame_rate || null};
+  return {duration_seconds: duration, width, height, frame_rate: stream.r_frame_rate || null,
+    has_audio: payload?.streams?.some(item => item.codec_type === 'audio') || false};
 };
 
 const inspectImage = async (filePath) => {
@@ -126,6 +127,7 @@ const inspectImage = async (filePath) => {
 };
 
 const verifyRender = (probe, manifest) => {
+  if (manifest.version === 'editorial-render-v2' && !probe.has_audio) throw new Error('Narrated editorial output is missing its audio track');
   const tolerance = Math.max(0.35, 2 / Number(manifest.fps || 30));
   if (Math.abs(probe.duration_seconds - Number(manifest.output_duration_seconds)) > tolerance) {
     throw new Error(
@@ -417,7 +419,7 @@ const activeEditorialOutputs = new Set();
 
 app.post('/render', async (request, response) => {
   const manifest = request.body;
-  const isEditorial = manifest?.version === 'editorial-render-v1';
+  const isEditorial = ['editorial-render-v1', 'editorial-render-v2'].includes(manifest?.version);
   let editorialDigest;
   if (isEditorial) {
     try {
@@ -493,7 +495,13 @@ app.post('/render', async (request, response) => {
       ? {...manifest, media: await Promise.all(manifest.media.map(async asset => {
           if (!(await exists(asset.storage_key))) throw new Error('Missing editorial media');
           return {...asset, url: await renderAssetUrl(asset.storage_key)};
-        }))}
+        })), ...(manifest.version === 'editorial-render-v2' ? {narration: await Promise.all(manifest.narration.map(async audio => {
+          const stored = await headObject(audio.storage_key);
+          if (!(Number(stored.ContentLength) > 0) || Number(stored.ContentLength) > 32 * 1024 * 1024) throw new Error('Missing or oversized editorial narration');
+          const object = await s3.send(new GetObjectCommand({Bucket: bucket, Key: audio.storage_key}));
+          await verifyNarrationBytes(object.Body, audio.sha256);
+          return {...audio, url: await renderAssetUrl(audio.storage_key)};
+        }))} : {})}
       : isLongform
       ? await hydrateLongformManifest(manifest)
       : isRankedEpisode

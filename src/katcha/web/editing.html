@@ -75,7 +75,10 @@
                         <h3>Supporting assets</h3><p>Download selected YouTube videos for review. Downloads do not grant reuse permission. Images and other sources currently require manual acquisition through Sources.</p><p id="editorial-asset-gaps"></p><div id="editorial-assets"></div>
                         <button id="editorial-acquire-assets" class="button secondary" type="button" disabled>Download selected videos for review</button>
                         <details class="ae-help"><summary>Visual requests and missing material</summary><pre id="editorial-asset-requests"></pre></details>
-                        <h3>Captioned preview</h3><p>Choose footage or an evidence quote for each saved script beat. This preview is silent, with captions. Current media clearance is required; publication remains a separate review.</p>
+                        <h3>Video preview</h3><p>Choose footage or an evidence quote for each saved script beat. Current media clearance is required; publication remains a separate review.</p>
+                        <label>Presentation<select id="editorial-presentation"><option value="captioned_silent">Silent with captions</option><option value="narrated">Uploaded narration with captions</option></select></label>
+                        <p id="editorial-narration-status" role="status"></p>
+                        <section id="editorial-narration-panel" hidden aria-label="Narration recordings"><p>Upload one PCM WAV recording per saved script beat (32 MiB maximum). Scene timing follows measured audio length. Check the wording and caption timing in the preview; transcription is not verified and caption timing is estimated.</p><div id="editorial-narration"></div></section>
                         <div id="editorial-storyboard"></div>
                         <button id="editorial-render" class="button secondary" type="button" disabled>Create silent captioned preview</button>
                         <button id="editorial-play" class="mini" type="button" hidden>Load private preview</button>

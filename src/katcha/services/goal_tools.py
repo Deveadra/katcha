@@ -43,6 +43,12 @@ TOOLS = {
     tool.name: tool
     for tool in [
         GoalTool(
+            "editorial_narration", "List measured operator recordings for a saved script revision; "
+            "use returned recording IDs in a narrated storyboard. Does not generate speech.",
+            "ai:read", "GET",
+            "/v1/channels/{channel_profile_id}/editorial-projects/{project_id}/narration",
+        ),
+        GoalTool(
             "editorial_render_review", "Read current render approval and any invalidation reason",
             "ai:read", "GET",
             "/v1/channels/{channel_profile_id}/editorial-projects/{project_id}"
@@ -71,7 +77,8 @@ TOOLS = {
             "target=script interprets sources, researches evidence and drafts a cited script. "
             "target=assets scouts supporting media; target=acquire_assets downloads selected "
             "scout candidates for review. target=render requires an asset_run_id and explicit "
-            "captioned_silent storyboard; uses local rendering with a private review preview. "
+            "captioned_silent or narrated storyboard. Narrated requires uploaded recording IDs for "
+            "every beat; uses local rendering with a private review preview. "
             "Research requires a live "
             "eligible provider; discovery and generation are not rights/publication approval.",
             "production:create", "POST",

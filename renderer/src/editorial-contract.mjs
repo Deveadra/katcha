@@ -6,8 +6,18 @@ const text = (value, max) => typeof value === 'string' && value.length > 0 && va
 const key = (value) => text(value, 1000) && !/[:\\\x00-\x1f]/.test(value) && !value.startsWith('/') && !value.split('/').some(part => part === '..' || part === '.');
 
 export const validateEditorialManifest = (manifest) => {
-  check(manifest?.version === 'editorial-render-v1', 'version');
-  check(manifest.presentation_mode === 'captioned_silent' && manifest.requires_editorial_review === true, 'presentation and review');
+  check(['editorial-render-v1', 'editorial-render-v2'].includes(manifest?.version), 'version');
+  const narrated = manifest.version === 'editorial-render-v2';
+  check(manifest.presentation_mode === (narrated ? 'narrated' : 'captioned_silent') && manifest.requires_editorial_review === true, 'presentation and review');
+  check(narrated ? Array.isArray(manifest.narration) && manifest.narration.length > 0 && manifest.narration.length <= 100 : !manifest.narration?.length, 'narration mode');
+  const narration = new Map();
+  for (const audio of manifest.narration || []) {
+    check(text(audio.beat_id, 120) && !narration.has(audio.beat_id) && text(audio.narration_id, 100), 'narration identity');
+    check(/^[a-f0-9]{64}$/.test(audio.sha256) && /^[a-f0-9]{64}$/.test(audio.text_digest), 'narration lineage');
+    check(key(audio.storage_key) && audio.storage_key === `editorial/${manifest.project_id}/narration/${audio.narration_id}/${audio.sha256}.wav` && !('url' in audio), 'managed narration');
+    check(integer(audio.sample_rate, 8000, 96000) && integer(audio.sample_frames, 1, audio.sample_rate * 600), 'measured narration');
+    narration.set(audio.beat_id, audio);
+  }
   check(manifest.width === 1920 && manifest.height === 1080 && manifest.fps === 30, 'dimensions');
   check(text(manifest.project_id, 100) && integer(manifest.revision, 1, Number.MAX_SAFE_INTEGER), 'lineage');
   check(/^[a-f0-9]{64}$/.test(manifest.draft_digest), 'draft digest');
@@ -28,6 +38,10 @@ export const validateEditorialManifest = (manifest) => {
     check(text(scene.beat_id, 120) && !beats.has(scene.beat_id), 'beat identity');
     beats.add(scene.beat_id);
     check(scene.start_frame === cursor && integer(scene.duration_frames, 1), 'frame coverage');
+    if (narrated) {
+      const audio = narration.get(scene.beat_id);
+      check(audio && scene.duration_frames === Math.ceil(audio.sample_frames * 30 / audio.sample_rate), 'narration timing');
+    }
     check(['single', 'comparison', 'quote'].includes(scene.layout), 'layout');
     check(Array.isArray(scene.media) && scene.media.length === {single: 1, comparison: 2, quote: 0}[scene.layout], 'layout media');
     if (scene.layout === 'quote') check(text(scene.quote_source_id, 120) && text(scene.quote_text, 300) && text(scene.source_credit, 200), 'quote provenance');
@@ -54,6 +68,7 @@ export const validateEditorialManifest = (manifest) => {
     check(captionCursor === scene.duration_frames, 'caption end');
     cursor += scene.duration_frames;
   }
+  check(!narrated || (narration.size === beats.size && manifest.narration.every((audio, index) => audio.beat_id === manifest.timeline[index]?.beat_id)), 'narration coverage');
   check(cursor <= 108000 && Math.abs(cursor / 30 - manifest.output_duration_seconds) < 1e-6, 'duration');
   return manifest;
 };

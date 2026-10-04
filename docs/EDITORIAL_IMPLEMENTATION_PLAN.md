@@ -613,3 +613,40 @@ Still pending: measured narration and voice policy, automatic visual direction,
 image/manual-replacement support, approved brand assets, historical run selection,
 publication-source integration and real operational source-to-reviewed-video acceptance.
 Review approval does not upload, schedule, publish or authorize paid provider calls.
+
+### E8 measured uploaded narration checkpoint
+
+The renderer/review checkpoint above is now merged in PR #259 at `44e05be`.
+All four remote workflows passed, including the PostgreSQL CI gate. The earlier
+publication and browser-download blockers are resolved.
+
+Added revision-bound, permission-attested PCM WAV intake, measured sample timing,
+replay-safe uploads, removal with retained history, and channel voice-off checks.
+Migration `0053_editorial_narration` records immutable object/hash receipts and
+transactional audit events. Uploads happen outside the database transaction, then
+revalidate the saved script under the project lock. A failed commit can leave an
+unreferenced object; automatic orphan cleanup remains pending.
+
+Narrated version-2 manifests use measured audio lengths for scene/caption timing,
+verify bounded audio bytes against their checksum before rendering, and require an
+audio stream in the rendered receipt. Version-1 silent serialization is preserved
+so existing frozen manifests and approvals retain their hashes. Removing narration
+invalidates current approval through the existing compiler-backed review checks.
+Production supports per-beat recording selection/upload/removal, retry after an
+uncertain response, and narrated preview creation. Native tools expose recordings.
+
+Validation: 148 focused Python tests passed, including migration roundtrip,
+revision/channel/voice policy, replay, storage failure and review invalidation.
+Renderer contract/configuration checks and lint passed. A real local Chromium /
+Remotion / FFmpeg render produced a 1920x1080, 180-frame narrated MP4 with PCM
+fixture audio; silent footage, comparison, freeze and quote scenes also passed.
+The browser journey passed upload failure/retry, selection, narrated render request,
+existing review recovery, channel isolation and 390px layout. Synthetic fixtures
+and mocked API journeys do not establish live-provider operational acceptance.
+
+This checkpoint accepts operator recordings; automatic TTS remains pending until
+billing ambiguity and voice-profile recovery are handled. Recording text is not
+transcribed or verified, and caption timing is proportional, not word-aligned.
+Remaining: generated narration, automatic visual direction, image/manual replacement,
+approved branding, historical run selection, publication handoff and real authorized
+source-to-reviewed-video acceptance.
