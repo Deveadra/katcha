@@ -185,8 +185,40 @@ Hosted startup fails when any of these are true:
 
 A replacement OCI VM restores the backup and restore environment files from Vault and enables both timers automatically.
 
-The normal same-availability-domain failover path still moves the durable OCI block volume first.
+Recovery is bounded and ordered:
 
-These R2 backups are the separate disaster-recovery path for cases where the block volume cannot be reused, including a future cross-availability-domain or cross-provider restore workflow.
+1. same-AD Always Free A1 using the current durable block volume
+2. alternate-AD Always Free A1 using a fresh block volume restored from the newest verified R2 backup
+3. same-AD paid fallback using the current durable block volume
+4. alternate-AD paid fallback using a fresh block volume restored from R2
 
-The current backup implementation deliberately does not pretend that cross-AD restore is already automated. It produces and continuously validates the recovery points that the cross-AD recovery slice will consume.
+Paid compute is therefore attempted only after every configured free A1 target has failed.
+
+OCI block volumes are availability-domain scoped, so the alternate-AD path never attempts to attach the original volume. It creates a new recovery data volume in the target AD, pins it to the configured consistent device path, formats it only when it is demonstrably blank, restores PostgreSQL/Temporal from R2, and verifies the Katcha schema before the candidate can report ready.
+
+Configure alternate targets in the GitHub Actions variable `KATCHA_OCI_CROSS_AD_TARGETS_JSON`:
+
+```json
+[
+  {
+    "availability_domain": "YOUR_REGION_AD_2",
+    "subnet_id": "ocid1.subnet..."
+  },
+  {
+    "availability_domain": "YOUR_REGION_AD_3",
+    "subnet_id": "ocid1.subnet..."
+  }
+]
+```
+
+Also configure:
+
+- `KATCHA_OCI_CROSS_AD_DATA_VOLUME_SIZE_GB` — minimum 50 GB; default 50
+- `KATCHA_OCI_DATA_VOLUME_DEVICE_PATH` — default `/dev/oracleoci/oraclevdb`
+- `KATCHA_OCI_CROSS_AD_MAX_BACKUP_AGE_SECONDS` — default 7200 seconds
+
+The recovery candidate is tagged with its active subnet and data-volume OCID. If an alternate-AD candidate becomes authoritative, future incidents treat that AD and volume as the current home rather than falling back to stale static primary values.
+
+Failed alternate-AD attempts terminate their candidate and delete the unused fresh recovery volume. A commit with an uncertain outcome is different: the candidate and its volume are deliberately left in place for coordinator reconciliation because destructive cleanup would be unsafe.
+
+The RPO of an alternate-AD restore is bounded by the backup cadence and the maximum accepted backup age. The default hourly backup schedule plus a 7200-second freshness gate targets a practical bootstrap-stage recovery window without pretending to provide synchronous replication.
