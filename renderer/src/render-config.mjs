@@ -11,6 +11,14 @@ const optionalString = (raw) => {
   return value || null;
 };
 
+const enabled = (raw) =>
+  String(raw ?? '').trim().toLowerCase() === 'true';
+
+const nonNegativeNumber = (raw, fallback = 0) => {
+  const parsed = Number(String(raw ?? ''));
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
+};
+
 const backend = (raw) => {
   const value = String(raw ?? 'local').trim().toLowerCase();
   if (!['local', 'lambda'].includes(value)) {
@@ -50,6 +58,22 @@ const supportedLambdaRegions = new Set([
 export const resolveRenderSettings = (env = process.env) => ({
   backend: backend(env.KATCHA_RENDER_BACKEND),
   concurrency: positiveInteger(env.KATCHA_RENDER_CONCURRENCY, 1),
+  externalCompute: {
+    enabled: enabled(env.KATCHA_EXTERNAL_COMPUTE_ENABLED),
+    coordinatorUrl: optionalString(
+      env.KATCHA_EXTERNAL_COMPUTE_COORDINATOR_URL,
+    ),
+    token: optionalString(env.KATCHA_EXTERNAL_COMPUTE_TOKEN),
+    maxRenderCostUsd: nonNegativeNumber(
+      env.KATCHA_REMOTION_LAMBDA_MAX_RENDER_COST_USD,
+      0,
+    ),
+    reservationTtlSeconds: positiveInteger(
+      env.KATCHA_REMOTION_LAMBDA_BUDGET_TTL_SECONDS,
+      0,
+      300,
+    ),
+  },
   timeoutInMilliseconds: positiveInteger(
     env.KATCHA_RENDER_TIMEOUT_MS,
     120000,
@@ -116,6 +140,50 @@ export const validateLambdaSettings = (settings) => {
   }
   if (!settings.lambda.serveUrl) {
     throw new Error('KATCHA_REMOTION_LAMBDA_SERVE_URL is required for lambda rendering');
+  }
+  if (!settings.externalCompute?.enabled) {
+    throw new Error(
+      'KATCHA_EXTERNAL_COMPUTE_ENABLED must be true for lambda rendering',
+    );
+  }
+  let coordinatorUrl;
+  try {
+    coordinatorUrl = new URL(
+      String(settings.externalCompute.coordinatorUrl || ''),
+    );
+  } catch {
+    throw new Error(
+      'KATCHA_EXTERNAL_COMPUTE_COORDINATOR_URL must be an absolute HTTPS URL',
+    );
+  }
+  if (
+    coordinatorUrl.protocol !== 'https:'
+    || ['localhost', '127.0.0.1', '::1'].includes(
+      coordinatorUrl.hostname.toLowerCase(),
+    )
+  ) {
+    throw new Error(
+      'KATCHA_EXTERNAL_COMPUTE_COORDINATOR_URL must be a public HTTPS URL',
+    );
+  }
+  if (String(settings.externalCompute.token || '').length < 32) {
+    throw new Error(
+      'KATCHA_EXTERNAL_COMPUTE_TOKEN must contain at least 32 characters',
+    );
+  }
+  if (!(Number(settings.externalCompute.maxRenderCostUsd) > 0)) {
+    throw new Error(
+      'KATCHA_REMOTION_LAMBDA_MAX_RENDER_COST_USD must be positive',
+    );
+  }
+  if (
+    !Number.isInteger(settings.externalCompute.reservationTtlSeconds)
+    || settings.externalCompute.reservationTtlSeconds < 300
+    || settings.externalCompute.reservationTtlSeconds > 604800
+  ) {
+    throw new Error(
+      'KATCHA_REMOTION_LAMBDA_BUDGET_TTL_SECONDS must be between 300 and 604800',
+    );
   }
   let url;
   try {

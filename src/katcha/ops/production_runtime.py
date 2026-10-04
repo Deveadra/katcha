@@ -134,6 +134,68 @@ def validate(values: dict[str, str]) -> list[str]:
     if values.get("KATCHA_RENDER_BACKEND", "").casefold() != "lambda":
         errors.append("KATCHA_RENDER_BACKEND must be lambda on the low-memory control plane")
 
+    if values.get("KATCHA_EXTERNAL_COMPUTE_ENABLED", "").casefold() != "true":
+        errors.append(
+            "KATCHA_EXTERNAL_COMPUTE_ENABLED must be true when Lambda rendering is enabled"
+        )
+
+    compute_url = require(values, "KATCHA_EXTERNAL_COMPUTE_COORDINATOR_URL", errors)
+    if compute_url:
+        parsed = urlsplit(compute_url)
+        if (
+            parsed.scheme != "https"
+            or not parsed.hostname
+            or parsed.hostname in {"localhost", "127.0.0.1"}
+        ):
+            errors.append(
+                "KATCHA_EXTERNAL_COMPUTE_COORDINATOR_URL must be a public HTTPS endpoint"
+            )
+
+    compute_token = require(values, "KATCHA_EXTERNAL_COMPUTE_TOKEN", errors)
+    if (
+        compute_token
+        and not is_placeholder(compute_token)
+        and len(compute_token) < 32
+    ):
+        errors.append(
+            "KATCHA_EXTERNAL_COMPUTE_TOKEN must contain at least 32 characters"
+        )
+
+    render_ceiling = require(
+        values,
+        "KATCHA_REMOTION_LAMBDA_MAX_RENDER_COST_USD",
+        errors,
+    )
+    if render_ceiling and not is_placeholder(render_ceiling):
+        try:
+            ceiling = float(render_ceiling)
+        except ValueError:
+            errors.append(
+                "KATCHA_REMOTION_LAMBDA_MAX_RENDER_COST_USD must be a number"
+            )
+        else:
+            if ceiling <= 0:
+                errors.append(
+                    "KATCHA_REMOTION_LAMBDA_MAX_RENDER_COST_USD must be positive"
+                )
+
+    raw_budget_ttl = values.get(
+        "KATCHA_REMOTION_LAMBDA_BUDGET_TTL_SECONDS",
+        "7200",
+    ).strip()
+    try:
+        budget_ttl = int(raw_budget_ttl)
+    except ValueError:
+        errors.append(
+            "KATCHA_REMOTION_LAMBDA_BUDGET_TTL_SECONDS must be an integer"
+        )
+    else:
+        if budget_ttl < 300 or budget_ttl > 604800:
+            errors.append(
+                "KATCHA_REMOTION_LAMBDA_BUDGET_TTL_SECONDS must be between "
+                "300 and 604800"
+            )
+
     account = require(values, "KATCHA_AWS_EXPECTED_ACCOUNT_ID", errors)
     if account and not is_placeholder(account) and not AWS_ACCOUNT.fullmatch(account):
         errors.append("KATCHA_AWS_EXPECTED_ACCOUNT_ID must be a 12-digit AWS account ID")

@@ -376,11 +376,15 @@ def test_operations_overview_returns_actionable_channel_state(data) -> None:
     assert publication["average_view_percentage"] == "72.500000"
     assert publication["estimated_revenue"] == "14.25000000"
 
-    assert payload["activity"][0]["event_type"] == "production.render_dead_lettered"
+    activity_types = {row["event_type"] for row in payload["activity"]}
+    assert "production.render_dead_lettered" in activity_types
+    assert "intelligence_ingest.batch_committed" in activity_types
     assert all(
         row["channel_profile_id"] == str(data.channel)
         for row in payload["activity"]
     )
+    activity_times = [row["created_at"] for row in payload["activity"]]
+    assert activity_times == sorted(activity_times, reverse=True)
 
 
 def test_operations_overview_scopes_cross_channel_results(data, monkeypatch) -> None:

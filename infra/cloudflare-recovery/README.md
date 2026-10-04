@@ -14,6 +14,7 @@ A single SQLite-backed Durable Object stores:
 - watchdog configuration and health history
 - one deduplicated recovery incident
 - a bounded authority event trail
+- a strongly consistent external-compute budget ledger
 
 The active epoch is never reused.
 
@@ -49,6 +50,8 @@ Fence token:
 Recovery-admin token:
 
 - `GET /v1/authority/status`
+- `GET /v1/external-compute/status`
+- `POST /v1/external-compute/configure`
 - `POST /v1/authority/prepare`
 - `POST /v1/authority/commit`
 - `POST /v1/authority/abort`
@@ -58,6 +61,12 @@ Candidate token:
 - `POST /v1/authority/candidate-ready`
 - `POST /v1/watchdog/configure`
 - `POST /v1/watchdog/probe-now`
+
+External-compute token:
+
+- `POST /v1/external-compute/reserve`
+- `POST /v1/external-compute/settle`
+- `POST /v1/external-compute/release`
 
 The watchdog probes the committed deployment's exact HTTPS health URL. After the
 configured consecutive-failure threshold it creates one incident and sends one
@@ -77,6 +86,7 @@ wrangler secret put FENCE_TOKEN
 wrangler secret put RECOVERY_ADMIN_TOKEN
 wrangler secret put RECOVERY_CANDIDATE_TOKEN
 wrangler secret put RECOVERY_DISPATCH_TOKEN
+wrangler secret put EXTERNAL_COMPUTE_TOKEN
 ```
 
 `RECOVERY_DISPATCH_URL` is also required before watchdog recovery can be enabled.
@@ -142,3 +152,85 @@ for repository-dispatch creation.
 The resulting workflow is serialized with a single
 `katcha-production-recovery` concurrency group, so concurrent watchdog/manual
 recovery requests cannot provision two replacements.
+
+
+## External-compute budget ledger
+
+Paid infrastructure is disabled by default in the coordinator even if a caller
+has cloud credentials. Enabling it requires an explicit recovery-admin
+configuration.
+
+All money values use integer **micro-USD** (1 USD = 1,000,000 micro-USD) so the
+coordinator never uses floating-point money arithmetic.
+
+Example: allow at most $10/month of external compute, with $5 assigned to OCI
+emergency control-plane fallback and $5 assigned to Remotion Lambda rendering,
+no more than two concurrent paid jobs, and at most $3 of attempts within one
+retry group:
+
+```bash
+curl -fsS \
+  -H "Authorization: Bearer $KATCHA_RECOVERY_ADMIN_TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "enabled": true,
+    "monthly_limit_microusd": 10000000,
+    "provider_limits_microusd": {
+      "oci": 5000000,
+      "aws-lambda": 5000000
+    },
+    "max_concurrent_jobs": 2,
+    "max_retry_attempts": 3,
+    "max_retry_spend_microusd": 3000000
+  }' \
+  "$KATCHA_RECOVERY_COORDINATOR_URL/v1/external-compute/configure"
+```
+
+A reservation succeeds only when all of these remain within bounds:
+
+1. global external-compute switch is enabled,
+2. monthly settled + reserved spend,
+3. provider settled + reserved spend,
+4. active reservation count,
+5. retry-group attempt count,
+6. retry-group settled + reserved spend.
+
+Reservations are idempotent by `job_key`. A released or expired job key cannot
+be reused. Callers may provide an explicit monotonic attempt number, or omit it
+and let the Durable Object allocate the next retry attempt atomically. Settled
+job keys also cannot launch again.
+
+The accounting month is UTC. Monthly and per-provider settled spend are stored
+as durable aggregates, so bounded audit/history presentation cannot erase spend
+from a live month's ceiling. On month rollover, monthly/provider totals reset
+while still-active reservations carry forward conservatively. Retry-group
+settled spend **and attempt counters** survive the rollover so a failing logical
+job cannot escape either retry circuit at midnight UTC.
+
+The global kill switch is evaluated before idempotent reservation reuse. Turning
+external compute off therefore blocks even a replay of an existing reservation
+from authorizing another provider launch. The coordinator also refuses more than
+5,000 reservation records in one UTC month and more than 10,000 durable retry
+groups. These are fail-closed state-growth circuit breakers: Katcha never evicts
+spend history merely to admit another paid job.
+
+The OCI recovery runner reserves the **worst-case configured TTL cost before
+launching any paid fallback instance**. OCI capacity failures that create no
+instance release the reservation. Failures after a paid launch settle
+conservatively, and TTL/leader retirement settles from the instance's tagged
+runtime estimate.
+
+The Remotion renderer reserves the configured per-render ceiling immediately
+before `renderMediaOnLambda()`. The stable output identity is the retry group;
+the individual launch gets a unique job key and a coordinator-assigned attempt.
+Budget denial therefore happens before AWS invocation. Completed or uncertain
+Lambda attempts settle conservatively at the reserved ceiling; a settlement
+transport failure leaves the reservation held rather than failing a completed
+render and causing duplicate paid work. Finite Lambda reservations carry
+`settle_on_expiry=true`; on TTL expiry the coordinator converts the held
+reservation into settled spend at the reserved ceiling. OCI reservations do not
+use this shortcut because their provider instance lifecycle is reconciled
+explicitly by the recovery runner.
+
+This ledger is intentionally outside PostgreSQL so budget enforcement remains
+available when the Katcha VM or database is the component being recovered.
