@@ -279,8 +279,7 @@ def test_real_bootstrap_template_renders_without_touching_shell_syntax(
         assert "oci-recovery-test" in content
         assert "ocid1.vaultsecret.backup" in content
         assert "ocid1.vaultsecret.restore" in content
-        assert "katcha-backup.timer" in content
-        assert "katcha-restore-test.timer" in content
+        assert "install-production-units.sh --start" in content
         assert 'printf \'[katcha-recovery] %s\\n\' "$1"' in content
         subprocess.run(["bash", "-n", str(rendered)], check=True)
     finally:
