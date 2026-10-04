@@ -8,6 +8,7 @@ from typing import Any
 import httpx
 
 RULE_ID = "katcha-postgres-backups"
+LIFECYCLE_RULE_ID = "katcha-postgres-backup-expiry"
 
 
 class BucketLockError(RuntimeError):
@@ -21,6 +22,7 @@ class BucketLockConfig:
     bucket: str
     prefix: str
     retention_days: int
+    expiration_days: int
     jurisdiction: str | None = None
 
     @classmethod
@@ -34,6 +36,13 @@ class BucketLockConfig:
         days = int(os.environ.get("KATCHA_BACKUP_RETENTION_DAYS", "30"))
         if days < 7 or days > 3650:
             raise BucketLockError("backup retention must be between 7 and 3650 days")
+        expiration_days = int(
+            os.environ.get("KATCHA_BACKUP_EXPIRATION_DAYS", "60")
+        )
+        if expiration_days <= days or expiration_days > 3650:
+            raise BucketLockError(
+                "backup expiration must be greater than retention and at most 3650 days"
+            )
         prefix = os.environ.get("KATCHA_BACKUP_R2_PREFIX", "postgres").strip().strip("/")
         if not prefix:
             raise BucketLockError("KATCHA_BACKUP_R2_PREFIX cannot be empty")
@@ -44,6 +53,7 @@ class BucketLockConfig:
             bucket=required("KATCHA_BACKUP_R2_BUCKET"),
             prefix=f"{prefix}/",
             retention_days=days,
+            expiration_days=expiration_days,
             jurisdiction=jurisdiction or None,
         )
 
@@ -55,6 +65,13 @@ class BucketLockConfig:
         )
 
     @property
+    def lifecycle_url(self) -> str:
+        return (
+            "https://api.cloudflare.com/client/v4/accounts/"
+            f"{self.account_id}/r2/buckets/{self.bucket}/lifecycle"
+        )
+
+    @property
     def desired_rule(self) -> dict[str, object]:
         return {
             "id": RULE_ID,
@@ -63,6 +80,20 @@ class BucketLockConfig:
             "condition": {
                 "type": "Age",
                 "maxAgeSeconds": self.retention_days * 86400,
+            },
+        }
+
+    @property
+    def desired_lifecycle_rule(self) -> dict[str, object]:
+        return {
+            "id": LIFECYCLE_RULE_ID,
+            "enabled": True,
+            "conditions": {"prefix": self.prefix},
+            "deleteObjectsTransition": {
+                "condition": {
+                    "type": "Age",
+                    "maxAge": self.expiration_days * 86400,
+                }
             },
         }
 
@@ -125,6 +156,56 @@ def validate_required_rule(
         )
 
 
+def get_lifecycle_rules(config: BucketLockConfig) -> list[dict[str, Any]]:
+    response = httpx.get(
+        config.lifecycle_url,
+        headers=_headers(config),
+        timeout=20.0,
+    )
+    if response.status_code >= 400:
+        raise BucketLockError(
+            "Cloudflare lifecycle lookup failed with HTTP "
+            f"{response.status_code}: {response.text[:300]}"
+        )
+    payload = response.json()
+    if not isinstance(payload, dict) or payload.get("success") is not True:
+        raise BucketLockError("Cloudflare lifecycle lookup returned an invalid response")
+    result = payload.get("result") or {}
+    rules = result.get("rules") or []
+    if not isinstance(rules, list):
+        raise BucketLockError("Cloudflare lifecycle lookup returned invalid rules")
+    return [dict(rule) for rule in rules if isinstance(rule, dict)]
+
+
+def validate_required_lifecycle(
+    rules: list[dict[str, Any]],
+    config: BucketLockConfig,
+) -> None:
+    matches = [rule for rule in rules if rule.get("id") == LIFECYCLE_RULE_ID]
+    if len(matches) != 1:
+        raise BucketLockError(
+            f"expected exactly one enabled {LIFECYCLE_RULE_ID} lifecycle rule"
+        )
+    rule = matches[0]
+    transition = rule.get("deleteObjectsTransition") or {}
+    condition = transition.get("condition") or {}
+    max_age = int(condition.get("maxAge") or 0)
+    if rule.get("enabled") is not True:
+        raise BucketLockError(f"{LIFECYCLE_RULE_ID} is not enabled")
+    if (rule.get("conditions") or {}).get("prefix") != config.prefix:
+        raise BucketLockError(
+            f"{LIFECYCLE_RULE_ID} does not target {config.prefix!r}"
+        )
+    if condition.get("type") != "Age":
+        raise BucketLockError(
+            f"{LIFECYCLE_RULE_ID} must use an age deletion condition"
+        )
+    if max_age < config.expiration_days * 86400:
+        raise BucketLockError(
+            f"{LIFECYCLE_RULE_ID} expires backups too early"
+        )
+
+
 def apply_required_rule(config: BucketLockConfig) -> None:
     current = get_rules(config)
     desired = config.desired_rule
@@ -147,6 +228,28 @@ def apply_required_rule(config: BucketLockConfig) -> None:
     validate_required_rule(get_rules(config), config)
 
 
+def apply_required_lifecycle(config: BucketLockConfig) -> None:
+    current = get_lifecycle_rules(config)
+    desired = config.desired_lifecycle_rule
+    merged = [rule for rule in current if rule.get("id") != LIFECYCLE_RULE_ID]
+    merged.append(desired)
+    response = httpx.put(
+        config.lifecycle_url,
+        headers=_headers(config),
+        json={"rules": merged},
+        timeout=20.0,
+    )
+    if response.status_code >= 400:
+        raise BucketLockError(
+            "Cloudflare lifecycle update failed with HTTP "
+            f"{response.status_code}: {response.text[:300]}"
+        )
+    payload = response.json()
+    if not isinstance(payload, dict) or payload.get("success") is not True:
+        raise BucketLockError("Cloudflare lifecycle update returned an invalid response")
+    validate_required_lifecycle(get_lifecycle_rules(config), config)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -161,15 +264,18 @@ def main() -> int:
         config = BucketLockConfig.from_env()
         if args.action == "apply":
             apply_required_rule(config)
+            apply_required_lifecycle(config)
         else:
             validate_required_rule(get_rules(config), config)
+            validate_required_lifecycle(get_lifecycle_rules(config), config)
     except (BucketLockError, ValueError) as exc:
         print(f"BUCKET_LOCK_ERROR: {exc}")
         return 2
 
     print(
         f"R2 backup lock verified: bucket={config.bucket} "
-        f"prefix={config.prefix} retention_days>={config.retention_days}"
+        f"prefix={config.prefix} retention_days>={config.retention_days} "
+        f"expiration_days={config.expiration_days}"
     )
     return 0
 
