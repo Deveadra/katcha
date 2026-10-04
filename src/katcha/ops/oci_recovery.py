@@ -610,6 +610,10 @@ class OciCli:
                 "--volume-id",
                 volume_id,
                 "--force",
+                "--wait-for-state",
+                "TERMINATED",
+                "--max-wait-seconds",
+                "1200",
             ]
         )
 
@@ -884,11 +888,27 @@ def switch_volume(
         previous_instance = attached_instance
         oci.stop(attached_instance)
         oci.detach(_attachment_id(attachment))
-    oci.attach(
-        candidate_id,
-        volume_id,
-        device_path=config.cross_ad_device_path,
-    )
+    try:
+        oci.attach(
+            candidate_id,
+            volume_id,
+            device_path=config.cross_ad_device_path,
+        )
+    except Exception:
+        if previous_instance:
+            try:
+                oci.attach(
+                    previous_instance,
+                    volume_id,
+                    device_path=config.cross_ad_device_path,
+                )
+                oci.start(previous_instance)
+            except Exception as rollback_error:
+                print(
+                    "RECOVERY_SWITCH_ROLLBACK_WARNING: "
+                    f"{type(rollback_error).__name__}: {rollback_error}"
+                )
+        raise
     return previous_instance
 
 
@@ -1028,26 +1048,41 @@ def _cleanup_failed_attempt(
     config: RecoveryConfig,
     attempt: CandidateAttempt,
 ) -> None:
-    if attempt.storage_mode == "existing-volume":
-        rollback_volume(
-            oci,
-            config,
-            candidate_id=attempt.instance_id,
-            volume_id=attempt.volume_id,
-            previous_instance_id=attempt.previous_instance_id,
-        )
-    else:
-        _detach_candidate_volume(
-            oci,
-            config,
-            candidate_id=attempt.instance_id,
-            volume_id=attempt.volume_id,
-        )
+    errors: list[str] = []
+    try:
+        if attempt.storage_mode == "existing-volume":
+            rollback_volume(
+                oci,
+                config,
+                candidate_id=attempt.instance_id,
+                volume_id=attempt.volume_id,
+                previous_instance_id=attempt.previous_instance_id,
+            )
+        else:
+            _detach_candidate_volume(
+                oci,
+                config,
+                candidate_id=attempt.instance_id,
+                volume_id=attempt.volume_id,
+            )
+    except Exception as exc:
+        errors.append(f"storage:{type(exc).__name__}:{exc}")
+
     try:
         oci.terminate(attempt.instance_id)
-    finally:
-        if attempt.owns_recovery_volume:
+    except Exception as exc:
+        errors.append(f"terminate:{type(exc).__name__}:{exc}")
+
+    if attempt.owns_recovery_volume:
+        try:
             oci.delete_volume(attempt.volume_id)
+        except Exception as exc:
+            errors.append(f"volume-delete:{type(exc).__name__}:{exc}")
+
+    if errors:
+        raise RecoveryError(
+            "recovery attempt cleanup incomplete: " + " | ".join(errors)
+        )
 
 
 def _launch_attempt(
@@ -1094,9 +1129,17 @@ def _launch_attempt(
             storage_mode=storage_mode,
             user_data_path=user_data_path,
         )
-        previous_instance_id: str | None = None
+        attempt = CandidateAttempt(
+            instance_id=candidate_id,
+            target=target,
+            volume_id=volume_id,
+            storage_mode=storage_mode,
+            recovery_mode=recovery_mode,
+            previous_instance_id=None,
+            owns_recovery_volume=owns_recovery_volume,
+        )
         if storage_mode == "existing-volume":
-            previous_instance_id = switch_volume(
+            attempt.previous_instance_id = switch_volume(
                 oci,
                 config,
                 candidate_id,
@@ -1109,15 +1152,6 @@ def _launch_attempt(
                 candidate_id=candidate_id,
                 volume_id=volume_id,
             )
-        attempt = CandidateAttempt(
-            instance_id=candidate_id,
-            target=target,
-            volume_id=volume_id,
-            storage_mode=storage_mode,
-            recovery_mode=recovery_mode,
-            previous_instance_id=previous_instance_id,
-            owns_recovery_volume=owns_recovery_volume,
-        )
         wait_for_candidate_ready(
             coordinator,
             deployment_id=deployment_id,
