@@ -103,3 +103,45 @@ def test_client_requires_https_and_token() -> None:
             coordinator_url="https://recovery.example.test",
             token="",
         )
+
+
+
+def test_reserve_accepts_coordinator_assigned_attempt(monkeypatch) -> None:
+    def fake_post(url, *, headers, json, timeout):
+        del headers, timeout
+        assert json["attempt"] is None
+        return httpx.Response(
+            201,
+            json={
+                "reservation": {
+                    "id": "reservation-auto",
+                    "status": "reserved",
+                    "provider": "aws-lambda",
+                    "job_key": "render-job",
+                    "retry_group": "render-output",
+                    "attempt": 2,
+                    "estimated_cost_microusd": 500_000,
+                },
+                "reused": False,
+            },
+            request=httpx.Request("POST", url),
+        )
+
+    monkeypatch.setattr(httpx, "post", fake_post)
+    client = ExternalComputeBudgetClient(
+        coordinator_url="https://recovery.example.test",
+        token="compute-token",
+    )
+
+    reservation = client.reserve(
+        job_key="render-job",
+        provider="aws-lambda",
+        operation="remotion-video-render",
+        retry_group="render-output",
+        attempt=None,
+        estimated_cost_microusd=500_000,
+        ttl_seconds=7200,
+    )
+
+    assert reservation.attempt == 2
+    assert reservation.provider == "aws-lambda"
