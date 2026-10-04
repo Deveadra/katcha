@@ -9,6 +9,7 @@ import tempfile
 import time
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal, ROUND_UP
 from pathlib import Path
 from typing import Any
 
@@ -87,6 +88,7 @@ class RecoveryConfig:
     coordinator_url: str
     coordinator_admin_token: str
     candidate_token: str
+    external_compute_token: str
     public_health_url: str
     release_sha: str
     availability_domain: str
@@ -217,6 +219,7 @@ class RecoveryConfig:
             coordinator_url=_env("KATCHA_RECOVERY_COORDINATOR_URL").rstrip("/"),
             coordinator_admin_token=_env("KATCHA_RECOVERY_ADMIN_TOKEN"),
             candidate_token=_env("KATCHA_RECOVERY_CANDIDATE_TOKEN"),
+            external_compute_token=_env("KATCHA_EXTERNAL_COMPUTE_TOKEN"),
             public_health_url=_env("KATCHA_PUBLIC_HEALTH_URL"),
             release_sha=_env("KATCHA_RELEASE_SHA"),
             availability_domain=_env("KATCHA_OCI_AVAILABILITY_DOMAIN"),
@@ -340,6 +343,7 @@ class CoordinatorClient:
     def __init__(self, config: RecoveryConfig) -> None:
         self.base = config.coordinator_url
         self.admin_token = config.coordinator_admin_token
+        self.compute_token = config.external_compute_token
 
     def _request(
         self,
@@ -347,11 +351,14 @@ class CoordinatorClient:
         path: str,
         *,
         payload: dict[str, object] | None = None,
+        token: str | None = None,
     ) -> dict[str, Any]:
         response = httpx.request(
             method,
             f"{self.base}{path}",
-            headers={"Authorization": f"Bearer {self.admin_token}"},
+            headers={
+                "Authorization": f"Bearer {token or self.admin_token}"
+            },
             json=payload,
             timeout=15.0,
         )
@@ -409,6 +416,68 @@ class CoordinatorClient:
             payload={
                 "deployment_id": deployment_id,
                 "deployment_epoch": deployment_epoch,
+            },
+        )
+
+    def reserve_external_compute(
+        self,
+        *,
+        job_key: str,
+        provider: str,
+        operation: str,
+        retry_group: str,
+        attempt: int,
+        estimated_cost_microusd: int,
+        ttl_seconds: int,
+        metadata: dict[str, object] | None = None,
+    ) -> dict[str, Any]:
+        return self._request(
+            "POST",
+            "/v1/external-compute/reserve",
+            token=self.compute_token,
+            payload={
+                "job_key": job_key,
+                "provider": provider,
+                "operation": operation,
+                "retry_group": retry_group,
+                "attempt": attempt,
+                "estimated_cost_microusd": estimated_cost_microusd,
+                "ttl_seconds": ttl_seconds,
+                "metadata": metadata or {},
+            },
+        )
+
+    def settle_external_compute(
+        self,
+        reservation_id: str,
+        *,
+        actual_cost_microusd: int,
+        metadata: dict[str, object] | None = None,
+    ) -> dict[str, Any]:
+        return self._request(
+            "POST",
+            "/v1/external-compute/settle",
+            token=self.compute_token,
+            payload={
+                "reservation_id": reservation_id,
+                "actual_cost_microusd": actual_cost_microusd,
+                "metadata": metadata or {},
+            },
+        )
+
+    def release_external_compute(
+        self,
+        reservation_id: str,
+        *,
+        reason: str,
+    ) -> dict[str, Any]:
+        return self._request(
+            "POST",
+            "/v1/external-compute/release",
+            token=self.compute_token,
+            payload={
+                "reservation_id": reservation_id,
+                "reason": reason,
             },
         )
 
