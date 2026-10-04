@@ -76,6 +76,12 @@ plan="$RESTORE_ROOT/restore-plan.tsv"
 
 test -s "$plan"
 
+postgres_container="$("${compose[@]}" ps -q postgres)"
+if [[ -z "$postgres_container" ]]; then
+  echo "Could not resolve the fresh PostgreSQL container ID." >&2
+  exit 45
+fi
+
 restored=0
 alembic_seen=0
 while IFS=$'\t' read -r filename database; do
@@ -86,7 +92,7 @@ while IFS=$'\t' read -r filename database; do
     'dropdb -U "$POSTGRES_USER" --if-exists --force "$1" && createdb -U "$POSTGRES_USER" "$1"' \
     sh "$database"
 
-  docker cp "$backup_dir/$filename" "katcha-production-postgres-1:/tmp/$filename" >/dev/null
+  docker cp "$backup_dir/$filename" "$postgres_container:/tmp/$filename" >/dev/null
   "${compose[@]}" exec -T postgres sh -c \
     'pg_restore -U "$POSTGRES_USER" --exit-on-error --no-owner --no-acl -d "$1" "$2"' \
     sh "$database" "/tmp/$filename"
@@ -99,7 +105,7 @@ while IFS=$'\t' read -r filename database; do
   )"
   if [[ ! "$table_count" =~ ^[0-9]+$ || "$table_count" -lt 1 ]]; then
     echo "Restored database $database contains no application tables." >&2
-    exit 45
+    exit 46
   fi
 
   has_alembic="$(
