@@ -499,25 +499,59 @@ function expireExternalReservations(state, nowMs) {
   const current = normalizeExternalMonth(state, nowMs);
   const timestamp = nowIso(nowMs);
   let changed = false;
+  let monthlySettled = Number(
+    current.external_compute.monthly_settled_microusd || 0,
+  );
+  const providerSettled = {
+    ...(current.external_compute.provider_settled_microusd || {}),
+  };
+  const retrySettled = {
+    ...(current.external_compute.retry_settled_microusd || {}),
+  };
   const reservations = current.external_compute.reservations.map((row) => {
     if (
-      row.status === "reserved" &&
-      Number(row.expires_at_ms || 0) <= nowMs
+      row.status !== "reserved"
+      || Number(row.expires_at_ms || 0) > nowMs
     ) {
-      changed = true;
+      return row;
+    }
+    changed = true;
+    if (row.settle_on_expiry === true) {
+      const value = Number(row.estimated_cost_microusd || 0);
+      const provider = String(row.provider || "");
+      const retryGroup = String(row.retry_group || "");
+      monthlySettled += value;
+      providerSettled[provider] =
+        Number(providerSettled[provider] || 0) + value;
+      retrySettled[retryGroup] =
+        Number(retrySettled[retryGroup] || 0) + value;
       return {
         ...row,
-        status: "expired",
+        status: "settled",
+        actual_cost_microusd: value,
         settled_at: timestamp,
+        metadata: {
+          ...(row.metadata || {}),
+          settlement_reason:
+            "reservation expired; settled at reserved ceiling",
+          auto_settled_on_expiry: true,
+        },
       };
     }
-    return row;
+    return {
+      ...row,
+      status: "expired",
+      settled_at: timestamp,
+    };
   });
   if (!changed) return current;
   return {
     ...current,
     external_compute: {
       ...current.external_compute,
+      monthly_settled_microusd: monthlySettled,
+      provider_settled_microusd: providerSettled,
+      retry_settled_microusd: retrySettled,
       reservations,
     },
   };
@@ -636,6 +670,7 @@ export function reserveExternalCompute(
     attempt,
     estimatedCostMicrousd,
     ttlSeconds,
+    settleOnExpiry = false,
     metadata = {},
   },
   nowMs = Date.now(),
@@ -767,6 +802,7 @@ export function reserveExternalCompute(
     expires_at: nowIso(nowMs + ttlSeconds * 1000),
     expires_at_ms: nowMs + ttlSeconds * 1000,
     settled_at: null,
+    settle_on_expiry: settleOnExpiry === true,
     metadata:
       metadata && typeof metadata === "object" && !Array.isArray(metadata)
         ? metadata
