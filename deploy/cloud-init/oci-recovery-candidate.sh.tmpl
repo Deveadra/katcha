@@ -104,15 +104,8 @@ fi
 git -C /opt/katcha fetch --force origin "$RELEASE_SHA"
 git -C /opt/katcha checkout --detach "$RELEASE_SHA"
 
-install -m 0644 /opt/katcha/deploy/systemd/katcha.service /etc/systemd/system/katcha.service
-install -m 0644 /opt/katcha/deploy/systemd/katcha-backup.service /etc/systemd/system/katcha-backup.service
-install -m 0644 /opt/katcha/deploy/systemd/katcha-backup.timer /etc/systemd/system/katcha-backup.timer
-install -m 0644 /opt/katcha/deploy/systemd/katcha-restore-test.service /etc/systemd/system/katcha-restore-test.service
-install -m 0644 /opt/katcha/deploy/systemd/katcha-restore-test.timer /etc/systemd/system/katcha-restore-test.timer
-systemctl daemon-reload
-systemctl enable --now katcha.service
-systemctl enable --now katcha-backup.timer
-systemctl enable --now katcha-restore-test.timer
+KATCHA_REPO_ROOT=/opt/katcha \
+  /bin/bash /opt/katcha/deploy/scripts/install-production-units.sh --start
 
 log "Waiting for local Katcha readiness"
 for _ in $(seq 1 180); do
