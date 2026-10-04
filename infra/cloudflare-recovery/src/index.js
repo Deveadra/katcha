@@ -369,7 +369,7 @@ export class RecoveryAuthority extends DurableObject {
             ttlSeconds: positiveInt(
               body.ttl_seconds,
               "ttl_seconds",
-              259200,
+              604800,
             ),
             metadata:
               body.metadata === undefined
