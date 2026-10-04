@@ -100,6 +100,25 @@ WORKSPACE_MIME_TYPES = {
     ".html": "text/html; charset=utf-8",
     ".js": "text/javascript; charset=utf-8",
 }
+SERVICE_LOG_PREFIX = re.compile(
+    r"^(?P<container>[A-Za-z0-9_.-]+)\s+\|\s+(?P<source_time>\S+)\s+(?P<body>.*)$"
+)
+SERVICE_LOG_LEVEL = re.compile(
+    r"(?:^|\s)(DEBUG|INFO|WARN(?:ING)?|ERROR|CRITICAL|FATAL)(?=[:\s]|$)",
+    re.I,
+)
+SERVICE_EXIT = re.compile(r"(?P<container>[A-Za-z0-9_.-]+)\s+exited with code (?P<code>\d+)", re.I)
+SOURCE_LEVELS = {
+    "trace": "info",
+    "debug": "info",
+    "info": "info",
+    "warn": "warning",
+    "warning": "warning",
+    "error": "error",
+    "critical": "error",
+    "fatal": "error",
+    "panic": "error",
+}
 
 
 def workspace_asset_mime(path: Path) -> str:
@@ -121,6 +140,72 @@ def read_env(path):
     return values
 
 
+def service_log_context(line):
+    """Extract source timing/severity without replacing the original service log."""
+    raw = line.rstrip()
+    details = {}
+    level = None
+    body = raw
+    match = SERVICE_LOG_PREFIX.match(raw)
+    if match:
+        container = match.group("container")
+        body = match.group("body")
+        details["source_container"] = container
+        details["source_service"] = re.sub(r"-\d+$", "", container)
+        details["source_time"] = match.group("source_time")
+        try:
+            payload = json.loads(body)
+        except (TypeError, ValueError):
+            payload = None
+        if isinstance(payload, dict):
+            source_level = str(payload.get("level") or "").lower()
+            if source_level:
+                details["source_level"] = source_level
+                level = SOURCE_LEVELS.get(source_level)
+            mappings = {
+                "msg": "source_message",
+                "component": "source_component",
+                "error": "source_error",
+                "Error": "source_error",
+                "error-type": "source_error_type",
+                "service-error-type": "source_error_type",
+                "operation": "source_operation",
+                "grpc_code": "source_grpc_code",
+            }
+            for source_key, target_key in mappings.items():
+                value = payload.get(source_key)
+                if value not in (None, "") and target_key not in details:
+                    details[target_key] = value
+
+    if level is None:
+        source_level = SERVICE_LOG_LEVEL.search(body)
+        if source_level:
+            normalized = source_level.group(1).lower()
+            details.setdefault("source_level", normalized)
+            level = SOURCE_LEVELS.get(normalized, "info")
+
+    exit_match = SERVICE_EXIT.search(raw)
+    if exit_match:
+        code = int(exit_match.group("code"))
+        details.setdefault("source_container", exit_match.group("container"))
+        details.setdefault(
+            "source_service", re.sub(r"-\d+$", "", exit_match.group("container"))
+        )
+        details["exit_code"] = code
+        if code > 128:
+            details["exit_signal"] = code - 128
+        if code:
+            level = "error"
+
+    if level is None:
+        level = (
+            "error"
+            if re.search(r"exception|traceback|fatal|panic", raw, re.I)
+            else "info"
+        )
+    return level, details
+
+
 class Runtime:
     def __init__(self, root=ROOT):
         self.root = root
@@ -136,6 +221,7 @@ class Runtime:
         self.workspace_ready = False
         self.health_check_at = 0.0
         self.workspace_check_at = 0.0
+        self.resource_sample_at = 0.0
         self.retry_at = 0.0
         self.retry_delay = 10
         self.phase = "idle"
@@ -236,6 +322,105 @@ class Runtime:
         with self.events_lock:
             self.events.append(row)
         self.logger.info(json.dumps(row))
+
+    def diagnostic_filename(self):
+        stamp = dt.datetime.now(dt.UTC).strftime("%Y%m%dT%H%M%S%fZ")
+        phase = re.sub(r"[^a-z0-9-]+", "-", str(self.phase).lower()).strip("-")
+        return (
+            f"katcha-diagnostics-{stamp}-{phase or 'unknown'}-"
+            f"{self.session[:8]}.jsonl"
+        )
+
+    def _diagnostic_command(self, args, timeout=10):
+        return subprocess.run(
+            args,
+            cwd=self.root,
+            env=self.environment(),
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            check=True,
+        ).stdout
+
+    def resource_snapshot(self):
+        host = {
+            "cpu_count": os.cpu_count(),
+            "disk_free_bytes": shutil.disk_usage(self.root).free,
+        }
+        if hasattr(os, "getloadavg"):
+            host["load_average"] = os.getloadavg()
+        memory = Path("/proc/meminfo")
+        if memory.exists():
+            host["memory_kib"] = {
+                key: int(value.split()[0])
+                for line in memory.read_text().splitlines()
+                for key, value in [line.split(":", 1)]
+                if key in {"MemTotal", "MemAvailable", "SwapTotal", "SwapFree"}
+            }
+
+        result = {"host": host, "containers": []}
+        try:
+            ids = self._diagnostic_command(
+                [
+                    "docker",
+                    "ps",
+                    "-aq",
+                    "--filter",
+                    "label=com.docker.compose.project=katcha",
+                ],
+                timeout=5,
+            ).split()
+            if ids:
+                output = self._diagnostic_command(
+                    [
+                        "docker",
+                        "stats",
+                        "--no-stream",
+                        "--format",
+                        "{{json .}}",
+                        *ids,
+                    ],
+                    timeout=10,
+                )
+                result["containers"] = [
+                    json.loads(line) for line in output.splitlines() if line.strip()
+                ]
+            result["docker_available"] = True
+        except Exception:
+            result["docker_available"] = False
+        return result
+
+    def diagnostic_snapshot(self):
+        snapshot = {
+            "schema": "katcha.diagnostic.snapshot.v1",
+            "time": dt.datetime.now(dt.UTC).isoformat(),
+            "session": self.session,
+            "phase": self.phase,
+            "stage": self.stage,
+            "workspace_ready": self.workspace_ready,
+            "desired_running": self.desired_running,
+            "services": self.services,
+        }
+        try:
+            result = subprocess.run(
+                [sys.executable, str(self.root / "scripts" / "diagnose_runtime.py")],
+                cwd=self.root,
+                env=self.environment(),
+                capture_output=True,
+                text=True,
+                timeout=45,
+                check=True,
+            )
+            snapshot["evidence"] = json.loads(result.stdout)
+        except Exception:
+            snapshot["evidence"] = {
+                "available": False,
+                "hint": (
+                    "The on-demand resource probe failed or timed out; the retained "
+                    "event journal is still included below."
+                ),
+            }
+        return snapshot
 
     def command(self):
         command = [
@@ -824,12 +1009,12 @@ class Runtime:
                 for line in process.stdout:
                     if self.shutdown_event.is_set():
                         break
+                    level, details = service_log_context(line)
                     self.event(
-                        "error"
-                        if re.search(r"error|exception|traceback|fatal", line, re.I)
-                        else "info",
+                        level,
                         "service",
                         line.rstrip(),
+                        **details,
                     )
             except (OSError, ValueError):
                 # The launcher may close the pipe while stopping. That is an
@@ -1047,6 +1232,22 @@ class Runtime:
                 self.event("error", "health", str(exc))
             finally:
                 self.health_lock.release()
+        if self.desired_running and now >= self.resource_sample_at:
+            self.resource_sample_at = now + (300 if self.phase == "ready" else 60)
+            try:
+                self.event(
+                    "info",
+                    "resources",
+                    "Runtime resource sample.",
+                    resources=self.resource_snapshot(),
+                )
+            except Exception:
+                self.event(
+                    "warning",
+                    "diagnostics",
+                    "Runtime resource sample could not be collected.",
+                )
+
         # Reconcile missing/exited containers; never repeatedly restart unhealthy ones.
         present = {row["Service"] for row in self.services}
         missing = not present >= REQUIRED_SERVICES or any(
@@ -1128,13 +1329,15 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, *_):
         pass  # Request URLs can contain OAuth credentials.
 
-    def send(self, status, data, mime="application/json"):
+    def send(self, status, data, mime="application/json", headers=None):
         payload = data if isinstance(data, bytes) else json.dumps(data).encode()
         self.send_response(status)
         self.send_header("Content-Type", mime)
         self.send_header("Content-Length", str(len(payload)))
         self.send_header("Cache-Control", "no-store")
         self.send_header("X-Content-Type-Options", "nosniff")
+        for name, value in (headers or {}).items():
+            self.send_header(name, value)
         self.end_headers()
         self.write_response(payload)
 
@@ -1250,13 +1453,31 @@ class Handler(BaseHTTPRequestHandler):
             return self.send(200, self.server.runtime.snapshot())
         if self.path == "/runtime/diagnostics":
             runtime = self.server.runtime
-            # Flush and export the retained, already-redacted journal including earlier sessions.
-            chunks = []
+            # Export a point-in-time evidence snapshot followed by the retained,
+            # already-redacted journal from every rotated launcher session.
+            for handler in runtime.logger.handlers:
+                with contextlib.suppress(Exception):
+                    handler.flush()
+            snapshot = runtime.diagnostic_snapshot()
+            chunks = [(json.dumps(snapshot) + "\n").encode()]
+            journal_files = []
             for suffix in [".5", ".4", ".3", ".2", ".1", ""]:
                 path = runtime.directory / ("events.jsonl" + suffix)
                 if path.exists():
-                    chunks.append(path.read_bytes())
-            return self.send(200, b"".join(chunks), "application/x-ndjson")
+                    data = path.read_bytes()
+                    journal_files.append({"name": path.name, "size_bytes": len(data)})
+                    chunks.append(data if data.endswith(b"\n") else data + b"\n")
+            snapshot["journal_files"] = journal_files
+            chunks[0] = (json.dumps(snapshot) + "\n").encode()
+            filename = runtime.diagnostic_filename()
+            return self.send(
+                200,
+                b"".join(chunks),
+                "application/x-ndjson",
+                headers={
+                    "Content-Disposition": f'attachment; filename="{filename}"',
+                },
+            )
         return self.proxy()
 
     def _api_json_request(self, method, path, payload=None):
