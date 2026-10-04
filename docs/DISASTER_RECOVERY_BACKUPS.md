@@ -167,6 +167,8 @@ sudo journalctl -u katcha-restore-test.service -n 200 --no-pager
 
 A successful backup upload is not considered proven disaster recovery until this restore test passes.
 
+Secret-authority recovery is documented separately in docs/BREAK_GLASS_RECOVERY.md. The immutable database-backup bucket and the break-glass escrow bucket are intentionally different trust domains.
+
 ## Credential-separation invariants
 
 Hosted startup fails when any of these are true:
