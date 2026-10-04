@@ -6,6 +6,9 @@ DEPLOYMENT_EPOCH=__DEPLOYMENT_EPOCH__
 RELEASE_SHA=__RELEASE_SHA__
 DATA_VOLUME_FS_UUID=__DATA_VOLUME_FS_UUID__
 DATA_VOLUME_DEVICE_PATH=__DATA_VOLUME_DEVICE_PATH__
+SECRET_SOURCE=__SECRET_SOURCE__
+BREAK_GLASS_HANDOFF_URL=__BREAK_GLASS_HANDOFF_URL__
+BREAK_GLASS_HANDOFF_KEY=__BREAK_GLASS_HANDOFF_KEY__
 STORAGE_MODE=__STORAGE_MODE__
 CROSS_AD_MAX_BACKUP_AGE_SECONDS=__CROSS_AD_MAX_BACKUP_AGE_SECONDS__
 PRODUCTION_ENV_SECRET_ID=__PRODUCTION_ENV_SECRET_ID__
@@ -118,13 +121,43 @@ fi
 
 mkdir -p /etc/katcha/aws
 umask 077
-vault_bytes "$PRODUCTION_ENV_SECRET_ID" > /etc/katcha/katcha.env
-vault_bytes "$BACKUP_ENV_SECRET_ID" > /etc/katcha/backup.env
-vault_bytes "$RESTORE_ENV_SECRET_ID" > /etc/katcha/restore.env
-chmod 0600 /etc/katcha/katcha.env /etc/katcha/backup.env /etc/katcha/restore.env
-vault_bytes "$AWS_BUNDLE_SECRET_ID" > /tmp/katcha-aws.tgz
-tar -xzf /tmp/katcha-aws.tgz -C /etc/katcha/aws
-rm -f /tmp/katcha-aws.tgz
+
+if [[ ! -d /opt/katcha/.git ]]; then
+  git clone https://github.com/Deveadra/katcha.git /opt/katcha
+fi
+git -C /opt/katcha fetch --force origin "$RELEASE_SHA"
+git -C /opt/katcha checkout --detach "$RELEASE_SHA"
+
+case "$SECRET_SOURCE" in
+  oci-vault)
+    log "Restoring runtime secrets from OCI Vault"
+    vault_bytes "$PRODUCTION_ENV_SECRET_ID" > /etc/katcha/katcha.env
+    vault_bytes "$BACKUP_ENV_SECRET_ID" > /etc/katcha/backup.env
+    vault_bytes "$RESTORE_ENV_SECRET_ID" > /etc/katcha/restore.env
+    chmod 0600 /etc/katcha/katcha.env /etc/katcha/backup.env /etc/katcha/restore.env
+    vault_bytes "$AWS_BUNDLE_SECRET_ID" > /tmp/katcha-aws.tgz
+    tar -xzf /tmp/katcha-aws.tgz -C /etc/katcha/aws
+    rm -f /tmp/katcha-aws.tgz
+    ;;
+  break-glass)
+    log "Restoring runtime secrets from ephemeral off-OCI handoff"
+    python3 -m venv /opt/katcha-break-glass
+    /opt/katcha-break-glass/bin/pip install --quiet 'cryptography>=45,<47'
+    PYTHONPATH=/opt/katcha/src \
+      /opt/katcha-break-glass/bin/python -m katcha.ops.break_glass \
+      install-handoff \
+      --url "$BREAK_GLASS_HANDOFF_URL" \
+      --fernet-key "$BREAK_GLASS_HANDOFF_KEY" \
+      --root /etc/katcha >/dev/null
+    BREAK_GLASS_HANDOFF_KEY=""
+    BREAK_GLASS_HANDOFF_URL=""
+    unset BREAK_GLASS_HANDOFF_KEY BREAK_GLASS_HANDOFF_URL
+    ;;
+  *)
+    log "Unsupported secret source: $SECRET_SOURCE"
+    exit 36
+    ;;
+esac
 
 sed -i \
   -e '/^KATCHA_RELEASE_SHA=/d' \
@@ -136,12 +169,6 @@ KATCHA_RELEASE_SHA=$RELEASE_SHA
 KATCHA_DEPLOYMENT_ID=$DEPLOYMENT_ID
 KATCHA_DEPLOYMENT_EPOCH=$DEPLOYMENT_EPOCH
 EOF
-
-if [[ ! -d /opt/katcha/.git ]]; then
-  git clone https://github.com/Deveadra/katcha.git /opt/katcha
-fi
-git -C /opt/katcha fetch --force origin "$RELEASE_SHA"
-git -C /opt/katcha checkout --detach "$RELEASE_SHA"
 
 if [[ "$STORAGE_MODE" == "r2-restore" ]]; then
   log "Restoring latest verified R2 disaster backup"
