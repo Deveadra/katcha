@@ -540,3 +540,102 @@ def test_confirmed_pending_commit_failure_is_rollback_safe() -> None:
             deployment_epoch=8,
             expected_active_epoch=7,
         )
+
+
+
+def test_switch_volume_restores_previous_attachment_when_candidate_attach_fails(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    _base_env(monkeypatch, tmp_path)
+    config = oci_recovery.RecoveryConfig.from_env()
+
+    class FakeOci:
+        def __init__(self) -> None:
+            self.stopped: list[str] = []
+            self.detached: list[str] = []
+            self.attached: list[tuple[str, str]] = []
+            self.started: list[str] = []
+
+        def volume_attachments(self, _config, _volume_id):
+            return [
+                {
+                    "id": "attachment-old",
+                    "lifecycle-state": "ATTACHED",
+                    "instance-id": "instance-old",
+                }
+            ]
+
+        def stop(self, instance_id):
+            self.stopped.append(instance_id)
+
+        def detach(self, attachment_id):
+            self.detached.append(attachment_id)
+
+        def attach(self, instance_id, volume_id, *, device_path):
+            del device_path
+            self.attached.append((instance_id, volume_id))
+            if instance_id == "instance-new":
+                raise oci_recovery.RecoveryError("candidate attach failed")
+
+        def start(self, instance_id):
+            self.started.append(instance_id)
+
+    oci = FakeOci()
+    with pytest.raises(oci_recovery.RecoveryError, match="candidate attach failed"):
+        oci_recovery.switch_volume(
+            oci,
+            config,
+            "instance-new",
+            "volume-1",
+        )
+
+    assert oci.stopped == ["instance-old"]
+    assert oci.detached == ["attachment-old"]
+    assert oci.attached == [
+        ("instance-new", "volume-1"),
+        ("instance-old", "volume-1"),
+    ]
+    assert oci.started == ["instance-old"]
+
+
+def test_cleanup_attempt_continues_after_storage_cleanup_failure(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    _base_env(monkeypatch, tmp_path)
+    config = oci_recovery.RecoveryConfig.from_env()
+
+    class FakeOci:
+        def __init__(self) -> None:
+            self.terminated: list[str] = []
+            self.deleted: list[str] = []
+
+        def volume_attachments(self, _config, _volume_id):
+            raise oci_recovery.RecoveryError("attachment lookup failed")
+
+        def terminate(self, instance_id):
+            self.terminated.append(instance_id)
+
+        def delete_volume(self, volume_id):
+            self.deleted.append(volume_id)
+
+    oci = FakeOci()
+    attempt = oci_recovery.CandidateAttempt(
+        instance_id="instance-cross-ad",
+        target=config.alternate_targets[0],
+        volume_id="volume-cross-ad",
+        storage_mode="r2-restore",
+        recovery_mode="cross-ad-free-a1",
+        previous_instance_id=None,
+        owns_recovery_volume=True,
+    )
+
+    with pytest.raises(
+        oci_recovery.RecoveryError,
+        match="cleanup incomplete",
+    ):
+        oci_recovery._cleanup_failed_attempt(oci, config, attempt)
+
+    assert oci.terminated == ["instance-cross-ad"]
+    assert oci.deleted == ["volume-cross-ad"]
