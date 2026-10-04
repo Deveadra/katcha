@@ -3,6 +3,8 @@ set -euo pipefail
 
 ROOT="${KATCHA_REPO_ROOT:-/opt/katcha}"
 ENV_FILE="${KATCHA_ENV_FILE:-/etc/katcha/katcha.env}"
+BACKUP_ENV_FILE="${KATCHA_BACKUP_ENV_FILE:-/etc/katcha/backup.env}"
+RESTORE_ENV_FILE="${KATCHA_RESTORE_ENV_FILE:-/etc/katcha/restore.env}"
 DATA_ROOT="/srv/katcha"
 
 cd -- "${ROOT}"
@@ -26,6 +28,12 @@ fi
 
 PYTHONPATH="${ROOT}/src${PYTHONPATH:+:${PYTHONPATH}}" \
   python3 scripts/validate_production_runtime.py --env-file "${ENV_FILE}"
+
+PYTHONPATH="${ROOT}/src${PYTHONPATH:+:${PYTHONPATH}}" \
+  python3 -m katcha.ops.disaster_recovery_validate \
+    --production-env "${ENV_FILE}" \
+    --backup-env "${BACKUP_ENV_FILE}" \
+    --restore-env "${RESTORE_ENV_FILE}"
 
 compose=(
   docker compose

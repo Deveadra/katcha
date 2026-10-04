@@ -7,6 +7,8 @@ RELEASE_SHA=__RELEASE_SHA__
 DATA_VOLUME_FS_UUID=__DATA_VOLUME_FS_UUID__
 PRODUCTION_ENV_SECRET_ID=__PRODUCTION_ENV_SECRET_ID__
 AWS_BUNDLE_SECRET_ID=__AWS_BUNDLE_SECRET_ID__
+BACKUP_ENV_SECRET_ID=__BACKUP_ENV_SECRET_ID__
+RESTORE_ENV_SECRET_ID=__RESTORE_ENV_SECRET_ID__
 RECOVERY_COORDINATOR_URL=__RECOVERY_COORDINATOR_URL__
 RECOVERY_CANDIDATE_TOKEN=__RECOVERY_CANDIDATE_TOKEN__
 PUBLIC_HEALTH_URL=__PUBLIC_HEALTH_URL__
@@ -78,6 +80,9 @@ done
 mkdir -p /etc/katcha/aws
 umask 077
 vault_bytes "$PRODUCTION_ENV_SECRET_ID" > /etc/katcha/katcha.env
+vault_bytes "$BACKUP_ENV_SECRET_ID" > /etc/katcha/backup.env
+vault_bytes "$RESTORE_ENV_SECRET_ID" > /etc/katcha/restore.env
+chmod 0600 /etc/katcha/katcha.env /etc/katcha/backup.env /etc/katcha/restore.env
 vault_bytes "$AWS_BUNDLE_SECRET_ID" > /tmp/katcha-aws.tgz
 tar -xzf /tmp/katcha-aws.tgz -C /etc/katcha/aws
 rm -f /tmp/katcha-aws.tgz
@@ -99,9 +104,8 @@ fi
 git -C /opt/katcha fetch --force origin "$RELEASE_SHA"
 git -C /opt/katcha checkout --detach "$RELEASE_SHA"
 
-install -m 0644 /opt/katcha/deploy/systemd/katcha.service /etc/systemd/system/katcha.service
-systemctl daemon-reload
-systemctl enable --now katcha.service
+KATCHA_REPO_ROOT=/opt/katcha \
+  /bin/bash /opt/katcha/deploy/scripts/install-production-units.sh --start
 
 log "Waiting for local Katcha readiness"
 for _ in $(seq 1 180); do
