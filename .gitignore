@@ -37,3 +37,12 @@ crash.*.log
 
 # Local intelligence handoff inbox
 handoff/
+
+
+# Break-glass recovery artifacts. Public recipient templates belong under
+# deploy/breakglass/; private identities, encrypted bundles and decrypted
+# staging directories must stay outside source control.
+katcha-breakglass*.identity
+katcha-breakglass*.age
+.breakglass/
+breakglass-extracted/
