@@ -320,6 +320,11 @@ export class RecoveryAuthority extends DurableObject {
               "max_concurrent_jobs",
               100,
             ),
+            maxRetryAttempts: positiveInt(
+              body.max_retry_attempts ?? 3,
+              "max_retry_attempts",
+              100,
+            ),
             maxRetrySpendMicrousd: nonNegativeSafeInt(
               body.max_retry_spend_microusd,
               "max_retry_spend_microusd",
