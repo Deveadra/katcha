@@ -678,10 +678,14 @@ export function reserveExternalCompute(
   const retryAttemptsUsed = Number(
     (external.retry_attempts || {})[retryGroup] || 0,
   );
+  const resolvedAttempt =
+    attempt === null || attempt === undefined
+      ? retryAttemptsUsed + 1
+      : Number(attempt);
   if (
     retryAttemptsUsed >= external.max_retry_attempts ||
-    attempt > external.max_retry_attempts ||
-    attempt <= retryAttemptsUsed
+    resolvedAttempt > external.max_retry_attempts ||
+    resolvedAttempt <= retryAttemptsUsed
   ) {
     throw new StateConflict(
       `external compute retry attempt limit reached: ${retryGroup}`,
@@ -703,9 +707,9 @@ export function reserveExternalCompute(
     !Number.isSafeInteger(ttlSeconds) ||
     ttlSeconds < 60 ||
     ttlSeconds > 604800 ||
-    !Number.isSafeInteger(attempt) ||
-    attempt < 1 ||
-    attempt > 100
+    !Number.isSafeInteger(resolvedAttempt) ||
+    resolvedAttempt < 1 ||
+    resolvedAttempt > 100
   ) {
     throw new StateConflict("invalid external-compute reservation request", 422);
   }
@@ -755,7 +759,7 @@ export function reserveExternalCompute(
     provider,
     operation,
     retry_group: retryGroup,
-    attempt,
+    attempt: resolvedAttempt,
     estimated_cost_microusd: estimatedCostMicrousd,
     actual_cost_microusd: null,
     status: "reserved",
@@ -774,7 +778,7 @@ export function reserveExternalCompute(
       ...state.external_compute,
       retry_attempts: {
         ...(state.external_compute.retry_attempts || {}),
-        [retryGroup]: attempt,
+        [retryGroup]: resolvedAttempt,
       },
       reservations: [
         ...state.external_compute.reservations,
@@ -787,7 +791,7 @@ export function reserveExternalCompute(
     job_key: jobKey,
     provider,
     retry_group: retryGroup,
-    attempt,
+    attempt: resolvedAttempt,
     estimated_cost_microusd: estimatedCostMicrousd,
   });
   return { state, reservation, reused: false };
