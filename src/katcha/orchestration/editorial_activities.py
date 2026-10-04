@@ -328,7 +328,15 @@ def editorial_generate_narration(run_id: str, attempt: int) -> dict:
     return generate_narration(run_id, attempt)
 
 
+@activity.defn
+def editorial_direct_visuals(run_id: str, attempt: int) -> dict:
+    from katcha.editorial.direction import direct_visuals
+
+    return direct_visuals(run_id, attempt)
+
+
 EDITORIAL_ACTIVITIES = [
+    editorial_direct_visuals,
     editorial_generate_narration,
     editorial_render,
     editorial_begin,

@@ -26,6 +26,13 @@ class EditorialProjectWorkflow:
 
         try:
             context = await step("editorial_begin")
+            if context.get("target") == "direction":
+                return await workflow.execute_activity(
+                    "editorial_direct_visuals",
+                    args=[run_id, attempt],
+                    start_to_close_timeout=timedelta(minutes=10),
+                    retry_policy=RetryPolicy(maximum_attempts=1),
+                )
             if context.get("target") == "narration":
                 return await workflow.execute_activity(
                     "editorial_generate_narration",

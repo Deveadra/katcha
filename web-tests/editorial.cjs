@@ -12,7 +12,8 @@ let loseReviewResponse = true;
 let recordings = [];
 let loseUploadResponse = true;
 let loseGenerationResponse = true;
-let loseBillingResponse = true;
+let loseBillingResponse = true, loseDirectionResponse = true;
+let directionRun = null;
 let failHistoryPage = true, failHistoryPreview = true, delayedHistory = null;
 let historyRequestStarted;
 const historyStarted = new Promise(resolve => { historyRequestStarted = resolve; });
@@ -66,11 +67,18 @@ const draft = {
                         const anchor = historyRows.findIndex(row => row.editorial_run_id === url.searchParams.get('before'));
                         return send(historyRows.slice(anchor + 1, anchor + 22));
                     }
-                    if (!body) return send(run ? [run, ...(acquisitionRun && run !== acquisitionRun ? [acquisitionRun] : [])] : []);
+                    if (!body) return send(run ? [run, ...(acquisitionRun && run !== acquisitionRun ? [acquisitionRun] : []), ...(directionRun && run !== directionRun ? [directionRun] : [])] : []);
                     if (body.target === 'narration') {
                         run = {editorial_run_id: 'generated', target: 'narration', input_revision: 3, attempt: 1, status: 'completed', stage: 'narration_ready_for_review', artifacts: {generated_narration: {beat: 'generated-audio'}}};
                         recordings = [...recordings.filter(item => item.id !== 'generated-audio'), {id: 'generated-audio', beat_id: 'beat', status: 'active', duration_seconds: 2, created_at: '2026-10-04', revision: 3}];
                         if (loseGenerationResponse) { loseGenerationResponse = false; return send({detail: 'Generation response lost. Retry to recover saved work.'}, 503); }
+                        return send(run, 202);
+                    }
+                    if (body.target === 'direction') {
+                        const beat = {beat_id: 'beat', layout: 'single', media: [{candidate_id: 'candidate', start_seconds: 2, playback_rate: .5, freeze: false, push_in: 1.1}], overlays: []};
+                        directionRun = {editorial_run_id: 'direction', target: 'direction', input_revision: 3, attempt: 1, status: 'completed', stage: 'storyboard_ready_for_review', artifacts: {storyboard: {...body.direction, beats: [beat]}, direction_proposal: {beats: [{...beat, rationale: 'Hold attention on the linked interview'}]}, direction_asset_run_id: 'acquire', direction_duration_seconds: 2, direction_warnings: ['Review the selected footage against the script.']}};
+                        run = directionRun;
+                        if (loseDirectionResponse) { loseDirectionResponse = false; return send({detail: 'Visual plan response lost. Retry to recover saved work.'}, 503); }
                         return send(run, 202);
                     }
                     if (body.target === "render") {
@@ -117,6 +125,7 @@ const draft = {
                     return send(review.reviews[0], 201);
                 }
                 if (url.pathname.endsWith("/storyboard/preflight")) return send({version: "editorial-render-v1"});
+                if (url.pathname.endsWith("/runs/direction")) return send(directionRun);
                 if (url.pathname.endsWith("/runs/acquire")) return send(acquisitionRun);
                 if (url.pathname.includes("/runs/")) return send(run);
                 return send(project);
@@ -262,6 +271,27 @@ const draft = {
         const voiced = calls.find(call => call.body?.storyboard?.presentation_mode === 'narrated');
         assert.equal(voiced.body.storyboard.narration_ids.beat, 'generated-audio');
         assert(voiced, 'Expected a narrated storyboard call to exist');
+        await page.getByText('Let Katcha plan the visuals', {exact: true}).click();
+        await page.locator('#editorial-direct').click();
+        await page.getByText(/Visual plan response lost/).waitFor();
+        assert.equal(await page.locator('#editorial-storyboard input[type=number]').inputValue(), '1.5');
+        await page.locator('#editorial-direct').click();
+        await page.locator('#editorial-direction').filter({hasText: 'Hold attention on the linked interview'}).waitFor();
+        const directions = calls.filter(call => call.body?.target === 'direction');
+        assert.equal(directions.length, 2);
+        assert.deepEqual(directions[0].body, directions[1].body);
+        assert.equal(directions[0].body.direction.narration_ids.beat, 'generated-audio');
+        await page.setViewportSize({width: 390, height: 844});
+        assert(await page.evaluate(() => document.documentElement.scrollWidth <= 390));
+        await page.locator('#editorial-direction').screenshot({path: path.resolve(__dirname, 'test-results/editorial-direction-mobile.png')});
+        // Rendering the saved plan preserves speed and push-in, independent of manual controls.
+        await page.locator('#editorial-render-directed').click();
+        await page.getByText(/Review approved for this rendered revision/).waitFor();
+        const directedRender = calls.filter(call => call.body?.target === 'render').at(-1);
+        assert.equal(directedRender.body.storyboard.beats[0].media[0].playback_rate, .5);
+        assert.equal(directedRender.body.storyboard.beats[0].media[0].push_in, 1.1);
+        assert.equal(directedRender.body.storyboard.narration_ids.beat, 'generated-audio');
+        await page.setViewportSize({width: 1440, height: 1000});
         // Independent history must preserve edits and current review/preview identity.
         await page.locator('[data-beat-narration="0"]').fill('Unsaved current script stays here.');
         const writesBeforeHistory = calls.filter(call => call.method === 'POST').length;

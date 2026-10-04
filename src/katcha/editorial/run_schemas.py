@@ -6,20 +6,21 @@ from typing import Literal, Self
 from pydantic import Field, model_validator
 
 from katcha.editorial.project_schemas import Contract, Identity, RequestKey
-from katcha.editorial.visual_schemas import StoryboardPlan
+from katcha.editorial.visual_schemas import DirectionOptions, StoryboardPlan
 
 
 class StartEditorialRun(Contract):
     idempotency_key: RequestKey
     expected_revision: int = Field(ge=0, strict=True)
     # This contract grows only as its actual workers are implemented.
-    target: Literal["analysis", "script", "assets", "acquire_assets", "render", "narration"] = (
-        "analysis"
-    )
+    target: Literal[
+        "analysis", "script", "assets", "acquire_assets", "render", "narration", "direction"
+    ] = "analysis"
     confirm_narration: bool = False
     max_narration_estimate_usd: float = Field(default=0.5, gt=0, le=25, allow_inf_nan=False)
     asset_run_id: uuid.UUID | None = None
     storyboard: StoryboardPlan | None = None
+    direction: DirectionOptions | None = None
     scout_run_id: uuid.UUID | None = None
     asset_candidate_ids: list[Identity] = Field(default_factory=list, max_length=30)
     clip_bindings: dict[str, uuid.UUID] = Field(default_factory=dict, max_length=20)
@@ -46,8 +47,15 @@ class StartEditorialRun(Contract):
         if self.target == "render":
             if not self.asset_run_id or self.storyboard is None:
                 raise ValueError("Rendering requires acquired assets and an explicit storyboard")
+        elif self.target == "direction":
+            if not self.asset_run_id or self.direction is None or self.storyboard is not None:
+                raise ValueError(
+                    "Visual direction requires acquired assets and presentation options"
+                )
         elif self.asset_run_id or self.storyboard is not None:
             raise ValueError("Storyboard selection is only valid for rendering")
+        if self.target != "direction" and self.direction is not None:
+            raise ValueError("Direction options are only valid for visual direction")
         return self
 
 
