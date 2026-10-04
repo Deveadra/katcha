@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime
 from decimal import Decimal
 
-from fastapi import APIRouter, HTTPException, Query, UploadFile, status
+from fastapi import APIRouter, HTTPException, Query, Request, UploadFile, status
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import and_, func, select
 
@@ -19,6 +19,7 @@ from katcha.acquisition_models import (
     RightsAssessment,
     RightsEvidence,
 )
+from katcha.config import get_settings
 from katcha.db import session_scope
 from katcha.domain import (
     AudioRightsStatus,
@@ -55,6 +56,7 @@ from katcha.services.ingestion_sources import (
     restart_source_run,
     upsert_ingestion_source,
 )
+from katcha.services.intelligence_automation import advance_processed_handoff_receipt
 from katcha.services.intelligence_handoff import (
     HandoffInboxItem,
     handoff_inbox_summary,
@@ -217,6 +219,7 @@ class IngestIntelligenceBatchResponse(BaseModel):
 class MaterializeIntelligenceCandidateRequest(BaseModel):
     adapter_key: str = Field(default="operator_feed", min_length=1, max_length=64)
     provenance_confidence: float | None = Field(default=None, ge=0, le=1)
+    honor_operator_authorization: bool = True
 
 
 class HandoffInboxItemResponse(BaseModel):
@@ -308,6 +311,7 @@ class SourceFindPageResponse(BaseModel):
 
 
 class SourceOverviewResponse(BaseModel):
+    automatic_checks_available: bool = True
     source: IngestionSourceResponse
     channel_name: str | None
     channel_status: str | None
@@ -563,22 +567,16 @@ def get_source_overview(source_id: uuid.UUID) -> SourceOverviewResponse:
         source=IngestionSourceResponse.model_validate(overview.source),
         channel_name=overview.channel_name,
         channel_status=overview.channel_status,
+        automatic_checks_available=get_settings().research_enabled,
         run_count=overview.run_count,
         completed_runs=completed,
         failed_runs=failed,
-        running_runs=int(
-            overview.status_counts.get(DiscoveryRunStatus.RUNNING.value, 0)
-        ),
-        queued_runs=int(
-            overview.status_counts.get(DiscoveryRunStatus.QUEUED.value, 0)
-        ),
+        running_runs=int(overview.status_counts.get(DiscoveryRunStatus.RUNNING.value, 0)),
+        queued_runs=int(overview.status_counts.get(DiscoveryRunStatus.QUEUED.value, 0)),
         success_rate=success_rate,
         discovery_count=overview.discovery_count,
         unique_candidate_count=overview.unique_candidate_count,
-        recent_runs=[
-            DiscoveryRunResponse.model_validate(row)
-            for row in overview.recent_runs
-        ],
+        recent_runs=[DiscoveryRunResponse.model_validate(row) for row in overview.recent_runs],
         recent_finds=[
             SourceRecentFindResponse(
                 candidate=DiscoveryCandidateResponse.model_validate(item.candidate),
@@ -644,7 +642,7 @@ def import_source_drop(
     "/intelligence-ingest/batches",
     response_model=IngestIntelligenceBatchResponse,
 )
-def create_intelligence_ingest_batch(
+async def create_intelligence_ingest_batch(
     request: IngestIntelligenceBatchRequest,
 ) -> IngestIntelligenceBatchResponse:
     try:
@@ -660,7 +658,7 @@ def create_intelligence_ingest_batch(
         code = 404 if "channel profile not found" in str(exc) else 409
         raise HTTPException(status_code=code, detail=str(exc)) from exc
     batch: IntelligenceIngestBatch = result.batch
-    return IngestIntelligenceBatchResponse(
+    response = IngestIntelligenceBatchResponse(
         batch_id=batch.id,
         channel_profile_id=batch.channel_profile_id,
         batch_key=batch.batch_key,
@@ -676,6 +674,13 @@ def create_intelligence_ingest_batch(
             for row in result.records
         ],
     )
+    await advance_processed_handoff_receipt(
+        {
+            "status": "processed",
+            "record_ids": [str(row.id) for row in result.records],
+        }
+    )
+    return response
 
 
 def _handoff_response(item: HandoffInboxItem) -> HandoffInboxItemResponse:
@@ -727,6 +732,8 @@ async def upload_intelligence_handoff_file(
         item = submit_handoff_file(filename, content)
         if process and item.status == "incoming":
             item = process_handoff_file(item.filename)
+        if process and item.status == "processed":
+            await advance_processed_handoff_receipt(item.receipt)
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     return _handoff_response(item)
@@ -736,7 +743,7 @@ async def upload_intelligence_handoff_file(
     "/intelligence-ingest/inbox/process",
     response_model=list[HandoffInboxItemResponse],
 )
-def process_intelligence_handoff_files(
+async def process_intelligence_handoff_files(
     request: ProcessHandoffInboxRequest,
 ) -> list[HandoffInboxItemResponse]:
     try:
@@ -749,6 +756,9 @@ def process_intelligence_handoff_files(
             items = process_handoff_inbox(limit=request.limit)
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    for item in items:
+        if item.status == "processed":
+            await advance_processed_handoff_receipt(item.receipt)
     return [_handoff_response(item) for item in items]
 
 
@@ -820,8 +830,19 @@ def materialize_intelligence_candidate(
     creator = str(payload.get("creator") or payload.get("channel_name") or "").strip() or None
     creator_url = str(payload.get("creator_url") or "").strip() or None
 
+    authorization_scope = str(payload.get("authorization_scope") or "").strip()
+    official_source_verified = bool(
+        provenance.get("official_channel_verified") or payload.get("official_source_verified")
+    )
+    standing_authorized = (
+        request.honor_operator_authorization
+        and bool(payload.get("operator_authorized"))
+        and official_source_verified
+        and authorization_scope == "official_trailer_repost"
+    )
+
     try:
-        return observe_discovery_candidate(
+        candidate = observe_discovery_candidate(
             source_url=record.source_url,
             adapter_key=request.adapter_key,
             external_id=record.record_key,
@@ -843,8 +864,40 @@ def materialize_intelligence_candidate(
                 "intelligence_tags": list(record.tags or []),
                 "intelligence_payload": payload,
                 "source_type": "intelligence_handoff",
+                "operator_authorized": standing_authorized,
+                "authorization_scope": authorization_scope or None,
+                "official_source_verified": official_source_verified,
             },
         )
+        if standing_authorized:
+            assess_discovery_candidate(
+                candidate.id,
+                rights_basis=RightsBasis.OPERATOR_AUTHORIZED,
+                audio_status=AudioRightsStatus.CLEARED,
+                originality_gate=GateStatus.CLEARED,
+                risk_flags=[],
+                operator_authorized=True,
+                metadata={
+                    "authorization_source": "intelligence_handoff",
+                    "originality_evidence_status": "not_verified",
+                    "monetization_eligibility": "unknown",
+                    "authorization_is_not_originality_evidence": True,
+                    "authorization_scope": authorization_scope,
+                    "official_source_verified": True,
+                    "intelligence_record_id": str(record.id),
+                },
+                actor="operator",
+                reason=(
+                    "Standing operator authorization for verified official-trailer republication"
+                ),
+            )
+            with session_scope() as session:
+                refreshed = session.get(DiscoveryCandidate, candidate.id)
+                if refreshed is None:
+                    raise RuntimeError("materialized discovery candidate disappeared")
+                session.expunge(refreshed)
+                candidate = refreshed
+        return candidate
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
@@ -885,7 +938,11 @@ async def execute_discovery_run(run_id: uuid.UUID) -> ExecuteDiscoveryRunRespons
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         run_status = run.status
     workflow_id = f"discovery-run-{run_id}"
-    await start_discovery_workflow(str(run_id), workflow_id)
+    await start_discovery_workflow(
+        str(run_id),
+        workflow_id,
+        allow_failed_reuse=True,
+    )
     return ExecuteDiscoveryRunResponse(
         discovery_run_id=run_id,
         workflow_id=workflow_id,
@@ -1162,3 +1219,51 @@ def source_run_results(source_id: uuid.UUID, run_id: uuid.UUID) -> SourceRunResu
             total=total,
             candidates=[DiscoveryCandidateResponse.model_validate(row) for row in rows],
         )
+
+
+class SourcePollingRequest(BaseModel):
+    enabled: bool
+    interval_minutes: int = Field(default=60, ge=15, le=10080)
+
+
+@router.post("/discovery/sources/{source_id}/polling")
+async def configure_source_polling(
+    source_id: uuid.UUID, request: Request, body: SourcePollingRequest
+):
+    from katcha.api.control_auth import (
+        control_actor,
+        require_control_channel,
+        require_control_scope,
+    )
+    from katcha.orchestration.client import start_automatic_research_workflow
+    from katcha.services.source_polling import configure_polling
+
+    require_control_scope(request, "discovery:write")
+    with session_scope() as session:
+        row = session.get(IngestionSource, source_id)
+        if row is None:
+            raise HTTPException(404, "Source not found")
+        if row.channel_profile_id:
+            require_control_channel(request, row.channel_profile_id)
+        else:
+            require_control_scope(request, "*")
+    try:
+        config = configure_polling(
+            source_id,
+            enabled=body.enabled,
+            interval_minutes=body.interval_minutes,
+            actor=control_actor(request),
+        )
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    if body.enabled:
+        try:
+            await start_automatic_research_workflow()
+        except Exception:
+            return {
+                **config,
+                "dispatch_confirmed": False,
+                "message": "Settings saved. Worker dispatch could not be confirmed; retry Save. "
+                "The research worker also resumes enabled schedules on startup.",
+            }
+    return {**config, "dispatch_confirmed": True}

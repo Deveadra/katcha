@@ -520,18 +520,109 @@ def register_short_episode_publication(
     )
 
 
+def update_publication_plan(
+    publication_id: uuid.UUID,
+    *,
+    publish_mode: str,
+    publish_at: datetime | None = None,
+    notify_subscribers: bool | None = None,
+    actor: str = "operator",
+) -> Publication:
+    mode = publish_mode.strip().lower()
+    if mode not in {"asap", "scheduled"}:
+        raise ValueError("publish_mode must be 'asap' or 'scheduled'")
+    actor_value = actor.strip()
+    if not actor_value:
+        raise ValueError("actor must not be blank")
+
+    with session_scope() as session:
+        publication = session.scalar(
+            select(Publication).where(Publication.id == publication_id).with_for_update()
+        )
+        if publication is None:
+            raise ValueError(f"publication not found: {publication_id}")
+        if publication.youtube_video_id is not None:
+            raise ValueError("publication already entered YouTube upload; publish plan is locked")
+        if publication.status != PublicationStatus.QUEUED.value:
+            raise ValueError("publish plan can only change while publication is queued")
+        if publication.stage != "metadata_hold":
+            raise ValueError("publish plan can only change during metadata hold")
+
+        desired_publish_at = None if mode == "asap" else publish_at
+        if mode == "scheduled" and desired_publish_at is None:
+            raise ValueError("scheduled publish mode requires publish_at")
+        _, _, _, privacy_status, normalized_publish_at = _normalize_publication_metadata(
+            title=publication.title,
+            description=publication.description,
+            tags=list(publication.tags or []),
+            privacy_status="public",
+            publish_at=desired_publish_at,
+        )
+        publication.privacy_status = privacy_status
+        publication.publish_at = normalized_publish_at
+        if notify_subscribers is not None:
+            publication.notify_subscribers = bool(notify_subscribers)
+        publication.raw_status = {
+            **dict(publication.raw_status or {}),
+            "manual_plan_version": int(
+                (publication.raw_status or {}).get("manual_plan_version") or 0
+            )
+            + 1,
+            "publication_plan": {
+                "mode": mode,
+                "publish_at": (
+                    normalized_publish_at.isoformat() if normalized_publish_at is not None else None
+                ),
+                "notify_subscribers": publication.notify_subscribers,
+                "updated_by": actor_value,
+                "updated_at": datetime.now(UTC).isoformat(),
+            },
+        }
+        session.add(
+            DomainEvent(
+                aggregate_type="publication",
+                aggregate_id=str(publication.id),
+                event_type="publication.plan_updated",
+                payload={
+                    "publication_id": str(publication.id),
+                    "publish_mode": mode,
+                    "publish_at": (
+                        normalized_publish_at.isoformat()
+                        if normalized_publish_at is not None
+                        else None
+                    ),
+                    "notify_subscribers": publication.notify_subscribers,
+                    "actor": actor_value,
+                },
+            )
+        )
+        session.flush()
+        session.refresh(publication)
+        session.expunge(publication)
+        return publication
+
+
 def release_publication_for_upload(
     publication_id: uuid.UUID,
     *,
     actor: str = "operator",
+    expected_version: int | None = None,
 ) -> Publication:
     actor_value = actor.strip()
     if not actor_value:
         raise ValueError("actor must not be blank")
     with session_scope() as session:
-        publication = session.get(Publication, publication_id)
+        publication = session.scalar(
+            select(Publication).where(Publication.id == publication_id).with_for_update()
+        )
         if publication is None:
             raise ValueError(f"publication not found: {publication_id}")
+        if (
+            expected_version is not None
+            and int((publication.raw_status or {}).get("manual_plan_version") or 0)
+            != expected_version
+        ):
+            raise ValueError("Another tab changed the plan. Reload before starting upload")
         if publication.youtube_video_id is not None:
             raise ValueError("publication has already entered YouTube upload")
         if publication.status != PublicationStatus.QUEUED.value:

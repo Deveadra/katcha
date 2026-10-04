@@ -1,0 +1,11 @@
+[Unit]
+Description=Run Katcha PostgreSQL disaster backup hourly
+
+[Timer]
+OnCalendar=hourly
+Persistent=true
+RandomizedDelaySec=15min
+Unit=katcha-backup.service
+
+[Install]
+WantedBy=timers.target

@@ -5,7 +5,16 @@ from types import SimpleNamespace
 
 import pytest
 
-from katcha.orchestration import analysis_worker, production_worker, worker
+from katcha.orchestration import (
+    analysis_worker,
+    intelligence_worker,
+    longform_worker,
+    production_worker,
+    worker,
+)
+from katcha.orchestration import (
+    client as orchestration_client,
+)
 
 
 class _FakeSession:
@@ -41,6 +50,139 @@ class _AlreadyStarted(Exception):
     pass
 
 
+def test_manual_resume_policy_allows_only_failed_temporal_execution() -> None:
+    assert (
+        orchestration_client._workflow_reuse_policy(allow_failed_reuse=False)
+        == orchestration_client.WorkflowIDReusePolicy.REJECT_DUPLICATE
+    )
+    assert (
+        orchestration_client._workflow_reuse_policy(allow_failed_reuse=True)
+        == orchestration_client.WorkflowIDReusePolicy.ALLOW_DUPLICATE_FAILED_ONLY
+    )
+
+
+@pytest.mark.asyncio
+async def test_intelligence_worker_reconciles_persisted_discovery_runs(
+    monkeypatch,
+) -> None:
+    rows = [
+        SimpleNamespace(id="discovery-1"),
+        SimpleNamespace(id="discovery-2"),
+    ]
+    monkeypatch.setattr(
+        intelligence_worker,
+        "list_resumable_source_runs",
+        lambda: rows,
+    )
+    monkeypatch.setattr(
+        intelligence_worker,
+        "WorkflowAlreadyStartedError",
+        _AlreadyStarted,
+    )
+    client = _FakeClient(
+        already_started_ids={"discovery-run-discovery-2"},
+    )
+
+    resumed, present = await intelligence_worker._resume_persisted_discovery_work(
+        client,
+    )
+
+    assert resumed == 1
+    assert present == 1
+    assert [call[2]["id"] for call in client.calls] == [
+        "discovery-run-discovery-1",
+        "discovery-run-discovery-2",
+    ]
+    assert all(
+        call[2]["task_queue"] == intelligence_worker.DISCOVERY_TASK_QUEUE
+        for call in client.calls
+    )
+    assert all(
+        call[2]["id_reuse_policy"]
+        == intelligence_worker.WorkflowIDReusePolicy.ALLOW_DUPLICATE_FAILED_ONLY
+        for call in client.calls
+    )
+
+
+@pytest.mark.asyncio
+async def test_intelligence_worker_reconciles_nonterminal_command_goals(
+    monkeypatch,
+) -> None:
+    goals = [
+        SimpleNamespace(id="goal-1", status="running"),
+        SimpleNamespace(id="goal-2", status="waiting_workflow"),
+    ]
+    monkeypatch.setattr(
+        intelligence_worker,
+        "session_scope",
+        _scope_for(goals),
+    )
+    monkeypatch.setattr(
+        intelligence_worker,
+        "WorkflowAlreadyStartedError",
+        _AlreadyStarted,
+    )
+    client = _FakeClient(already_started_ids={"command-goal-goal-2"})
+
+    resumed, present = await intelligence_worker._resume_persisted_command_goals(
+        client,
+    )
+
+    assert resumed == 1
+    assert present == 1
+    assert [call[2]["id"] for call in client.calls] == [
+        "command-goal-goal-1",
+        "command-goal-goal-2",
+    ]
+    assert [call[1][0] for call in client.calls] == ["goal-1", "goal-2"]
+    assert all(
+        call[2]["task_queue"] == intelligence_worker.INTELLIGENCE_TASK_QUEUE
+        for call in client.calls
+    )
+    assert all(
+        call[2]["id_reuse_policy"]
+        == intelligence_worker.WorkflowIDReusePolicy.ALLOW_DUPLICATE_FAILED_ONLY
+        for call in client.calls
+    )
+
+
+@pytest.mark.asyncio
+async def test_standalone_longform_worker_reconciles_persisted_compilation(
+    monkeypatch,
+) -> None:
+    compilation = SimpleNamespace(
+        id="comp-standalone",
+        workflow_id="compilation-standalone",
+        status="voicing",
+    )
+    monkeypatch.setattr(
+        longform_worker,
+        "session_scope",
+        _scope_for([compilation]),
+    )
+    monkeypatch.setattr(
+        longform_worker,
+        "WorkflowAlreadyStartedError",
+        _AlreadyStarted,
+    )
+    client = _FakeClient()
+    settings = SimpleNamespace(temporal_longform_task_queue="longform")
+
+    resumed, present = await longform_worker._resume_persisted_longform_work(
+        client,
+        settings,
+    )
+
+    assert resumed == 1
+    assert present == 0
+    assert client.calls[0][2]["id"] == "compilation-standalone"
+    assert client.calls[0][2]["args"] == ["comp-standalone", "voice"]
+    assert (
+        client.calls[0][2]["id_reuse_policy"]
+        == longform_worker.WorkflowIDReusePolicy.ALLOW_DUPLICATE_FAILED_ONLY
+    )
+
+
 @pytest.mark.asyncio
 async def test_production_worker_reconciles_persisted_execution_stages(
     monkeypatch,
@@ -63,10 +205,15 @@ async def test_production_worker_reconciles_persisted_execution_stages(
         status="rendering",
         stage="rendering",
     )
+    preview = SimpleNamespace(
+        id="preview-1",
+        workflow_id="brand-preview-1",
+        status="rendering",
+    )
     monkeypatch.setattr(
         production_worker,
         "session_scope",
-        _scope_for([production], [episode], [compilation]),
+        _scope_for([production], [episode], [compilation], [preview]),
     )
     monkeypatch.setattr(
         production_worker,
@@ -84,7 +231,7 @@ async def test_production_worker_reconciles_persisted_execution_stages(
         settings,
     )
 
-    assert resumed == 2
+    assert resumed == 3
     assert present == 1
     calls = {
         call[2]["id"]: call
@@ -93,6 +240,13 @@ async def test_production_worker_reconciles_persisted_execution_stages(
     assert calls["production-prod-1"][2]["args"] == ["prod-1", "voice"]
     assert calls["episode-base-editorial-render"][2]["args"] == ["episode-1", "render"]
     assert calls["compilation-comp-1"][2]["args"] == ["comp-1", "render"]
+    assert calls["brand-preview-1"][1][0] == "preview-1"
+    assert calls["brand-preview-1"][2]["task_queue"] == "production"
+    assert all(
+        call[2]["id_reuse_policy"]
+        == production_worker.WorkflowIDReusePolicy.ALLOW_DUPLICATE_FAILED_ONLY
+        for call in client.calls
+    )
 
 
 @pytest.mark.asyncio
@@ -109,10 +263,15 @@ async def test_ingest_worker_reconciles_ingest_and_publication(
         workflow_id="publish-publication-1",
         status="processing",
     )
+    packaging = SimpleNamespace(
+        id="packaging-1",
+        workflow_id="packaging-workflow-1",
+        status="running",
+    )
     monkeypatch.setattr(
         worker,
         "session_scope",
-        _scope_for([source], [publication]),
+        _scope_for([source], [publication], [packaging]),
     )
     monkeypatch.setattr(worker, "WorkflowAlreadyStartedError", _AlreadyStarted)
     client = _FakeClient(already_started_ids={"ingest-source-1"})
@@ -129,7 +288,7 @@ async def test_ingest_worker_reconciles_ingest_and_publication(
         settings,
     )
 
-    assert resumed == 1
+    assert resumed == 2
     assert present == 1
     calls = {call[2]["id"]: call for call in client.calls}
     assert calls["ingest-source-1"][1][0] == "source-1"
@@ -139,6 +298,13 @@ async def test_ingest_worker_reconciles_ingest_and_publication(
         10,
         [24, 72],
     ]
+    assert calls["packaging-workflow-1"][1][0] == "packaging-1"
+    assert calls["packaging-workflow-1"][2]["task_queue"] == "publishing"
+    assert all(
+        call[2]["id_reuse_policy"]
+        == worker.WorkflowIDReusePolicy.ALLOW_DUPLICATE_FAILED_ONLY
+        for call in client.calls
+    )
 
 
 @pytest.mark.asyncio
@@ -177,3 +343,86 @@ async def test_analysis_worker_reconciles_queued_and_running_analysis(
         "analysis-workflow-2",
     ]
     assert all(call[2]["args"][1] is True for call in client.calls)
+    assert all(
+        call[2]["id_reuse_policy"]
+        == analysis_worker.WorkflowIDReusePolicy.ALLOW_DUPLICATE_FAILED_ONLY
+        for call in client.calls
+    )
+
+
+@pytest.mark.asyncio
+async def test_intelligence_worker_reconciles_persisted_automation_schedules(
+    monkeypatch,
+) -> None:
+    schedules = [
+        SimpleNamespace(
+            id="schedule-1",
+            schedule_kind="channel_intelligence",
+            subject_id="channel-1",
+            workflow_id="channel-intelligence-schedule-channel-1-g1",
+            supersedes_workflow_id="channel-intelligence-schedule-channel-1",
+            schedule_config={"interval_hours": 6},
+            enabled=True,
+        ),
+        SimpleNamespace(
+            id="schedule-2",
+            schedule_kind="topic_watch",
+            subject_id="watch-1",
+            workflow_id="topic-watch-schedule-watch-1-g2",
+            supersedes_workflow_id=None,
+            schedule_config={"interval_minutes": 30, "top_n": 25},
+            enabled=True,
+        ),
+    ]
+    monkeypatch.setattr(
+        intelligence_worker,
+        "list_enabled_automation_schedules",
+        lambda: schedules,
+    )
+    schedule_rows = {item.id: item for item in schedules}
+
+    @contextmanager
+    def locked_schedule(schedule_id):
+        yield schedule_rows[schedule_id]
+
+    monkeypatch.setattr(
+        intelligence_worker,
+        "locked_schedule_for_reconcile",
+        locked_schedule,
+    )
+    terminated = []
+
+    async def fake_terminate(_client, workflow_id, *, reason):
+        terminated.append((workflow_id, reason))
+        return bool(workflow_id)
+
+    monkeypatch.setattr(
+        intelligence_worker,
+        "terminate_workflow_if_running",
+        fake_terminate,
+    )
+    monkeypatch.setattr(
+        intelligence_worker,
+        "WorkflowAlreadyStartedError",
+        _AlreadyStarted,
+    )
+    client = _FakeClient(
+        already_started_ids={"topic-watch-schedule-watch-1-g2"},
+    )
+
+    resumed, present = await intelligence_worker._resume_persisted_automation_schedules(
+        client,
+    )
+
+    assert resumed == 1
+    assert present == 1
+    calls = {call[2]["id"]: call for call in client.calls}
+    intelligence = calls["channel-intelligence-schedule-channel-1-g1"]
+    assert intelligence[2]["args"] == ["channel-1", 6, 120]
+    assert intelligence[2]["task_queue"] == intelligence_worker.INTELLIGENCE_TASK_QUEUE
+    watch = calls["topic-watch-schedule-watch-1-g2"]
+    assert watch[2]["args"] == ["watch-1", 30, 25, 0]
+    assert watch[2]["task_queue"] == intelligence_worker.DISCOVERY_TASK_QUEUE
+    assert terminated[0][0] == "channel-intelligence-schedule-channel-1"
+    assert schedule_rows["schedule-1"].supersedes_workflow_id is None
+    assert schedule_rows["schedule-2"].supersedes_workflow_id is None

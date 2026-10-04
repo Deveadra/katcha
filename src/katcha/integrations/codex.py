@@ -16,6 +16,7 @@ from sqlalchemy import select
 from katcha.codex_models import CodexConnection, CodexOAuthState
 from katcha.config import Settings, get_settings
 from katcha.db import session_scope
+from katcha.runtime_fence import assert_mutation_authority
 from katcha.security.secrets import decrypt_secret, encrypt_secret
 
 AUTHORIZATION_URL = "https://auth.openai.com/oauth/authorize"
@@ -518,6 +519,7 @@ def _stream(
     tool: dict[str, object] | None = None,
     image_bytes: bytes | None = None,
 ) -> CodexInference:
+    assert_mutation_authority("ai.codex_plan_inference")
     body = {
         "model": session.model,
         "instructions": (

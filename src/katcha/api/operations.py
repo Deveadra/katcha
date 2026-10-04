@@ -9,11 +9,15 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 from sqlalchemy import and_, func, or_, select
 
+from katcha.acquisition_models import DiscoveryCandidate, IntelligenceRecord
 from katcha.api.control_auth import control_allowed_channel_ids, require_control_channel
+from katcha.content_models import ContentItem
 from katcha.db import session_scope
 from katcha.intelligence_models import ChannelProfile
-from katcha.models import DomainEvent
+from katcha.longform_models import Compilation, CompilationAsset
+from katcha.models import DomainEvent, SourceItem
 from katcha.orchestration.client import (
+    start_longform_workflow,
     start_production_workflow,
     start_publication_workflow,
     start_short_episode_editorial_workflow,
@@ -21,6 +25,7 @@ from katcha.orchestration.client import (
 from katcha.production_models import Production, ProductionAsset
 from katcha.publishing_models import Publication, PublicationAnalyticsSnapshot
 from katcha.render_models import RenderAttempt
+from katcha.services.compilations import register_compilation_regeneration
 from katcha.services.productions import register_regeneration
 from katcha.services.publications import retry_publication
 from katcha.services.short_episode_reviews import register_short_episode_regeneration
@@ -41,6 +46,7 @@ async def check_systems(request: Request) -> dict[str, object]:
 
     require_control_scope(request, "ai:read")
     return await system_check()
+
 
 WorkState = Literal["attention", "active"]
 
@@ -65,8 +71,20 @@ class OperationsChannelSummary(BaseModel):
     href: str
 
 
+class OperationsIntakeItem(BaseModel):
+    id: uuid.UUID
+    channel_profile_id: uuid.UUID
+    title: str
+    status: str
+    stage: str
+    message: str | None = None
+    source_url: str | None = None
+    updated_at: datetime
+    href: str
+
+
 class OperationsWorkItem(BaseModel):
-    kind: Literal["short_episode", "production", "publication"]
+    kind: Literal["short_episode", "production", "compilation", "publication"]
     id: uuid.UUID
     channel_profile_id: uuid.UUID
     title: str
@@ -86,7 +104,7 @@ class RecoverWorkRequest(BaseModel):
 
 
 class RecoverWorkResponse(BaseModel):
-    kind: Literal["short_episode", "production", "publication"]
+    kind: Literal["short_episode", "production", "compilation", "publication"]
     source_id: uuid.UUID
     action: Literal["resumed", "restarted"]
     workflow_id: str
@@ -132,6 +150,7 @@ class OperationsOverviewResponse(BaseModel):
     generated_at: datetime
     summary: OperationsSummary
     channels: list[OperationsChannelSummary]
+    intake: list[OperationsIntakeItem]
     attention: list[OperationsWorkItem]
     active: list[OperationsWorkItem]
     opportunities: list[OperationsOpportunity]
@@ -176,14 +195,30 @@ def _item_href(channel_profile_id: uuid.UUID) -> str:
     return f"/editing?channel={channel_profile_id}#editorial-pipeline"
 
 
-def _publication_href(channel_profile_id: uuid.UUID) -> str:
-    return f"/channels?channel={channel_profile_id}#content"
+def _publication_href(
+    channel_profile_id: uuid.UUID, publication_id: uuid.UUID | str | None = None
+) -> str:
+    selected = f"&publication={publication_id}" if publication_id else ""
+    return f"/channels?channel={channel_profile_id}{selected}#content"
 
 
 def _production_resume_stage(row: Production) -> str | None:
     status = str(row.status or "").lower()
     if status in {"queued", "scripting"}:
         return "script"
+    if status in {"scripted", "voicing"}:
+        return "voice"
+    if status in {"voiced", "rendering"}:
+        return "render"
+    return None
+
+
+def _compilation_resume_stage(row: Compilation) -> str | None:
+    status = str(row.status or "").lower()
+    if status in {"queued", "selecting"}:
+        return "select"
+    if status in {"planning", "critiquing"}:
+        return "plan"
     if status in {"scripted", "voicing"}:
         return "voice"
     if status in {"voiced", "rendering"}:
@@ -215,27 +250,28 @@ def _work_recovery(
     status: str,
     stage: str,
     state: WorkState,
-    row: Production | ShortEpisode | Publication,
+    row: Production | ShortEpisode | Compilation | Publication,
+    render_dead_letter: bool = False,
 ) -> tuple[str | None, str | None]:
+    del state  # Recovery is determined by durable execution state, not display severity.
     normalized_status = str(status or "").lower()
     normalized_stage = str(stage or "").lower()
-    if kind == "publication" and (
-        normalized_status == "failed" or normalized_stage == "processing_timeout"
-    ):
-        return "restart", "Restart"
-    if state == "attention":
+
+    if kind == "publication":
+        if normalized_status == "failed" or normalized_stage == "processing_timeout":
+            return "restart", "Restart"
+        if normalized_status in {"queued", "uploading", "uploaded", "processing"}:
+            return "resume", "Resume"
+        return None, None
+
+    if normalized_status == "failed" or render_dead_letter:
         return "restart", "Restart"
     if kind == "production" and isinstance(row, Production):
         return ("resume", "Resume") if _production_resume_stage(row) else (None, None)
     if kind == "short_episode" and isinstance(row, ShortEpisode):
         return ("resume", "Resume") if _short_episode_resume_stage(row) else (None, None)
-    if kind == "publication" and normalized_status in {
-        "queued",
-        "uploading",
-        "uploaded",
-        "processing",
-    }:
-        return "resume", "Resume"
+    if kind == "compilation" and isinstance(row, Compilation):
+        return ("resume", "Resume") if _compilation_resume_stage(row) else (None, None)
     return None, None
 
 
@@ -275,6 +311,24 @@ def _short_episode_restart_stage(episode_id: uuid.UUID) -> str:
         return "render" if narration is not None else "voice"
 
 
+def _compilation_restart_stage(compilation_id: uuid.UUID) -> str:
+    with session_scope() as session:
+        row = session.get(Compilation, compilation_id)
+        if row is None:
+            raise ValueError("compilation not found")
+        if not row.final_plan:
+            return "plan"
+        narration = session.scalar(
+            select(CompilationAsset.id)
+            .where(
+                CompilationAsset.compilation_id == compilation_id,
+                CompilationAsset.kind.like("narration_%"),
+            )
+            .limit(1)
+        )
+        return "render" if narration is not None else "voice"
+
+
 def _episode_workflow_id(base_workflow_id: str, start_stage: str) -> str:
     return f"{base_workflow_id}-editorial-{start_stage}"
 
@@ -301,7 +355,10 @@ def _event_channel_id(
     *,
     production_channels: dict[uuid.UUID, uuid.UUID],
     episode_channels: dict[uuid.UUID, uuid.UUID],
+    compilation_channels: dict[uuid.UUID, uuid.UUID],
     publication_channels: dict[uuid.UUID, uuid.UUID],
+    candidate_channels: dict[uuid.UUID, uuid.UUID],
+    source_channels: dict[uuid.UUID, uuid.UUID],
 ) -> uuid.UUID | None:
     payload = dict(event.payload or {})
     raw = payload.get("channel_profile_id")
@@ -323,8 +380,14 @@ def _event_channel_id(
         return production_channels.get(aggregate_id)
     if event.aggregate_type == "short_episode":
         return episode_channels.get(aggregate_id)
+    if event.aggregate_type == "compilation":
+        return compilation_channels.get(aggregate_id)
     if event.aggregate_type == "publication":
         return publication_channels.get(aggregate_id)
+    if event.aggregate_type == "discovery_candidate":
+        return candidate_channels.get(aggregate_id)
+    if event.aggregate_type == "source":
+        return source_channels.get(aggregate_id)
     return None
 
 
@@ -334,10 +397,12 @@ def _event_href(
 ) -> str | None:
     if channel_profile_id is None:
         return None
-    if event.aggregate_type in {"production", "short_episode", "render_attempt"}:
+    if event.aggregate_type in {"production", "short_episode", "compilation", "render_attempt"}:
         return _item_href(channel_profile_id)
     if event.aggregate_type == "publication":
-        return _publication_href(channel_profile_id)
+        return _publication_href(channel_profile_id, event.aggregate_id)
+    if event.aggregate_type == "content":
+        return f"/content?channel={channel_profile_id}&item={event.aggregate_id}"
     if event.aggregate_type == "channel_profile":
         return f"/channels?channel={channel_profile_id}"
     return None
@@ -348,7 +413,7 @@ def _event_href(
     response_model=RecoverWorkResponse,
 )
 async def recover_work_item(
-    kind: Literal["short_episode", "production", "publication"],
+    kind: Literal["short_episode", "production", "compilation", "publication"],
     source_id: uuid.UUID,
     http_request: Request,
     request: RecoverWorkRequest,
@@ -360,7 +425,6 @@ async def recover_work_item(
                 raise HTTPException(status_code=404, detail="production not found")
             require_control_channel(http_request, row.channel_profile_id)
             status_value = str(row.status or "").lower()
-            error = str(row.error or "").strip()
             workflow_id = row.workflow_id
             resume_stage = _production_resume_stage(row)
             latest_attempt = session.scalar(
@@ -373,7 +437,7 @@ async def recover_work_item(
                 latest_attempt is not None and latest_attempt.status == "dead_letter"
             )
 
-        if status_value == "failed" or error or render_dead_letter:
+        if status_value == "failed" or render_dead_letter:
             try:
                 stage = _production_restart_stage(source_id)
                 child = register_regeneration(
@@ -406,6 +470,7 @@ async def recover_work_item(
             str(source_id),
             workflow_id,
             start_stage=resume_stage,
+            allow_failed_reuse=True,
         )
         return RecoverWorkResponse(
             kind=kind,
@@ -421,7 +486,6 @@ async def recover_work_item(
                 raise HTTPException(status_code=404, detail="short episode not found")
             require_control_channel(http_request, row.channel_profile_id)
             status_value = str(row.status or "").lower()
-            error = str(row.error or "").strip()
             base_workflow_id = row.workflow_id
             resume_stage = _short_episode_resume_stage(row)
             latest_attempt = session.scalar(
@@ -434,7 +498,7 @@ async def recover_work_item(
                 latest_attempt is not None and latest_attempt.status == "dead_letter"
             )
 
-        if status_value == "failed" or error or render_dead_letter:
+        if status_value == "failed" or render_dead_letter:
             try:
                 stage = _short_episode_restart_stage(source_id)
                 child = register_short_episode_regeneration(
@@ -469,6 +533,60 @@ async def recover_work_item(
             str(source_id),
             workflow_id,
             start_stage=resume_stage,
+            allow_failed_reuse=True,
+        )
+        return RecoverWorkResponse(
+            kind=kind,
+            source_id=source_id,
+            action="resumed",
+            workflow_id=workflow_id,
+        )
+
+    if kind == "compilation":
+        with session_scope() as session:
+            row = session.get(Compilation, source_id)
+            if row is None or row.channel_profile_id is None:
+                raise HTTPException(status_code=404, detail="compilation not found")
+            require_control_channel(http_request, row.channel_profile_id)
+            status_value = str(row.status or "").lower()
+            workflow_id = row.workflow_id
+            resume_stage = _compilation_resume_stage(row)
+
+        if status_value == "failed":
+            try:
+                stage = _compilation_restart_stage(source_id)
+                child = register_compilation_regeneration(
+                    source_id,
+                    stage=stage,
+                    note="Restarted from Operations after interrupted or failed work",
+                    actor=request.actor,
+                )
+            except ValueError as exc:
+                raise HTTPException(status_code=409, detail=str(exc)) from exc
+            child_stage = str(child.regenerate_from or stage)
+            await start_longform_workflow(
+                str(child.id),
+                child.workflow_id,
+                start_stage=child_stage,
+            )
+            return RecoverWorkResponse(
+                kind=kind,
+                source_id=source_id,
+                action="restarted",
+                workflow_id=child.workflow_id,
+                replacement_id=child.id,
+            )
+
+        if resume_stage is None:
+            raise HTTPException(
+                status_code=409,
+                detail="compilation is not in a resumable execution stage",
+            )
+        await start_longform_workflow(
+            str(source_id),
+            workflow_id,
+            start_stage=resume_stage,
+            allow_failed_reuse=True,
         )
         return RecoverWorkResponse(
             kind=kind,
@@ -520,7 +638,11 @@ async def recover_work_item(
             status_code=409,
             detail="publication is not in a resumable execution stage",
         )
-    await start_publication_workflow(str(source_id), workflow_id)
+    await start_publication_workflow(
+        str(source_id),
+        workflow_id,
+        allow_failed_reuse=True,
+    )
     return RecoverWorkResponse(
         kind=kind,
         source_id=source_id,
@@ -567,6 +689,7 @@ def operations_overview(
                 generated_at=now,
                 summary=empty,
                 channels=[],
+                intake=[],
                 attention=[],
                 active=[],
                 opportunities=[],
@@ -575,9 +698,177 @@ def operations_overview(
             )
 
         profile_by_id = {profile.id: profile for profile in profiles}
-        youtube_to_channel = {
-            profile.youtube_connection_id: profile.id for profile in profiles
+
+        intelligence_records = list(
+            session.scalars(
+                select(IntelligenceRecord)
+                .where(IntelligenceRecord.channel_profile_id.in_(channel_ids))
+                .order_by(IntelligenceRecord.updated_at.desc())
+                .limit(max(limit * 8, 80))
+            )
+        )
+        record_ids = {str(row.id) for row in intelligence_records}
+        candidate_by_record: dict[str, DiscoveryCandidate] = {}
+        source_by_record: dict[str, SourceItem] = {}
+        if record_ids:
+            candidate_rows = list(
+                session.scalars(
+                    select(DiscoveryCandidate)
+                    .order_by(DiscoveryCandidate.updated_at.desc())
+                    .limit(max(limit * 20, 200))
+                )
+            )
+            for candidate in candidate_rows:
+                metadata = dict(candidate.candidate_metadata or {})
+                record_id = str(metadata.get("intelligence_record_id") or "")
+                channel_value = str(metadata.get("channel_profile_id") or "")
+                if (
+                    record_id in record_ids
+                    and channel_value in {str(value) for value in channel_ids}
+                    and record_id not in candidate_by_record
+                ):
+                    candidate_by_record[record_id] = candidate
+            source_rows = list(
+                session.scalars(
+                    select(SourceItem)
+                    .order_by(SourceItem.updated_at.desc())
+                    .limit(max(limit * 20, 200))
+                )
+            )
+            for source in source_rows:
+                metadata = dict(source.source_metadata or {})
+                record_id = str(metadata.get("intelligence_record_id") or "")
+                channel_value = str(metadata.get("channel_profile_id") or "")
+                if (
+                    record_id in record_ids
+                    and channel_value in {str(value) for value in channel_ids}
+                    and record_id not in source_by_record
+                ):
+                    source_by_record[record_id] = source
+
+        content_rows = list(
+            session.scalars(
+                select(ContentItem)
+                .where(ContentItem.channel_profile_id.in_(channel_ids))
+                .order_by(ContentItem.updated_at.desc())
+                .limit(limit)
+            )
+        )
+        content_channels = {row.id: row.channel_profile_id for row in content_rows}
+        content_sources = {
+            row.source_id: row.channel_profile_id for row in content_rows if row.source_id
         }
+        intake: list[OperationsIntakeItem] = []
+        for row in content_rows:
+            source = session.get(SourceItem, row.source_id) if row.source_id else None
+            status_value = source.status if source else row.status
+            message = source.error if source and source.error else row.error
+            if row.input_kind == "file" and row.status == "uploading":
+                message = (
+                    message
+                    or f"Received {row.upload_offset:,} of {row.size_bytes:,} bytes. "
+                    "Reselect the same file to resume."
+                )
+            intake.append(
+                OperationsIntakeItem(
+                    id=row.id,
+                    channel_profile_id=row.channel_profile_id,
+                    title=row.title,
+                    status=status_value,
+                    stage={
+                        "registered": "queued_download",
+                        "ingesting": "downloading",
+                        "ready": "downloaded",
+                        "failed": "download_failed",
+                    }.get(status_value, status_value),
+                    message=message,
+                    updated_at=source.updated_at if source else row.updated_at,
+                    href=f"/content?channel={row.channel_profile_id}&item={row.id}",
+                )
+            )
+        for record in intelligence_records:
+            record_id = str(record.id)
+            candidate = candidate_by_record.get(record_id)
+            source = source_by_record.get(record_id)
+            payload = dict(record.payload or {})
+            if source is not None:
+                normalized = str(source.status or "").lower()
+                if normalized == "registered":
+                    stage = "queued_download"
+                elif normalized == "ingesting":
+                    stage = "downloading"
+                elif normalized == "ready" and source.clip_id is not None:
+                    stage = "downloaded"
+                elif normalized == "failed":
+                    stage = "download_failed"
+                else:
+                    stage = normalized or "acquisition"
+                status_value = source.status
+                message = source.error or (
+                    "Source media acquired and ready for preparation."
+                    if stage == "downloaded"
+                    else "Source acquisition is moving through Katcha."
+                )
+                updated_at = source.updated_at
+            elif candidate is not None:
+                normalized = str(candidate.status or "").lower()
+                stage = {
+                    "discovered": "candidate_created",
+                    "qualified": "qualified_for_acquisition",
+                    "promoted": "queued_download",
+                    "review": "needs_attention",
+                    "rejected": "rejected",
+                }.get(normalized, normalized or "candidate")
+                status_value = candidate.status
+                message = (
+                    "Verified candidate is ready for acquisition."
+                    if normalized == "qualified"
+                    else "Discovery candidate created from retained intelligence."
+                )
+                updated_at = candidate.updated_at
+            else:
+                stage = "handoff_received"
+                status_value = record.status
+                message = (
+                    "Handoff stored; waiting for automation to create the acquisition candidate."
+                    if payload.get("production_intent")
+                    else record.summary
+                )
+                updated_at = record.updated_at
+            intake.append(
+                OperationsIntakeItem(
+                    id=record.id,
+                    channel_profile_id=record.channel_profile_id,
+                    title=record.title or record.record_key,
+                    status=str(status_value or "active"),
+                    stage=stage,
+                    message=message,
+                    source_url=record.source_url,
+                    updated_at=updated_at,
+                    href=f"/channels?channel={record.channel_profile_id}#content",
+                )
+            )
+            if len(intake) >= limit:
+                break
+
+        candidate_channels = {
+            candidate.id: uuid.UUID(str((candidate.candidate_metadata or {})["channel_profile_id"]))
+            for candidate in candidate_by_record.values()
+            if (candidate.candidate_metadata or {}).get("channel_profile_id")
+        }
+        source_channels = {
+            source.id: uuid.UUID(str((source.source_metadata or {})["channel_profile_id"]))
+            for source in source_by_record.values()
+            if (source.source_metadata or {}).get("channel_profile_id")
+        }
+        source_channels.update(content_sources)
+        ingest_batch_ids = {
+            batch_id
+            for record in intelligence_records
+            for batch_id in (record.first_batch_id, record.last_batch_id)
+        }
+
+        youtube_to_channel = {profile.youtube_connection_id: profile.id for profile in profiles}
 
         episodes = list(
             session.scalars(
@@ -599,6 +890,16 @@ def operations_overview(
                 .order_by(Production.updated_at.desc())
             )
         )
+        compilations = list(
+            session.scalars(
+                select(Compilation)
+                .where(
+                    Compilation.channel_profile_id.in_(channel_ids),
+                    ~Compilation.status.in_(_DONE_WORK_STATUSES),
+                )
+                .order_by(Compilation.updated_at.desc())
+            )
+        )
         attempts = list(
             session.scalars(
                 select(RenderAttempt)
@@ -613,6 +914,11 @@ def operations_overview(
         production_channels = {
             row.id: row.channel_profile_id
             for row in productions
+            if row.channel_profile_id is not None
+        }
+        compilation_channels = {
+            row.id: row.channel_profile_id
+            for row in compilations
             if row.channel_profile_id is not None
         }
 
@@ -636,6 +942,7 @@ def operations_overview(
                 stage=row.stage,
                 state=state,
                 row=row,
+                render_dead_letter=bool(attempt is not None and attempt.status == "dead_letter"),
             )
             work_items.append(
                 OperationsWorkItem(
@@ -676,6 +983,7 @@ def operations_overview(
                 stage=row.stage,
                 state=state,
                 row=row,
+                render_dead_letter=bool(attempt is not None and attempt.status == "dead_letter"),
             )
             work_items.append(
                 OperationsWorkItem(
@@ -694,12 +1002,47 @@ def operations_overview(
                 )
             )
 
+        for row in compilations:
+            if row.channel_profile_id is None:
+                continue
+            state = _work_state(
+                status=row.status,
+                error=row.error,
+                render_status=None,
+            )
+            if state is None:
+                continue
+            recovery_action, recovery_label = _work_recovery(
+                kind="compilation",
+                status=row.status,
+                stage=row.stage,
+                state=state,
+                row=row,
+            )
+            work_items.append(
+                OperationsWorkItem(
+                    kind="compilation",
+                    id=row.id,
+                    channel_profile_id=row.channel_profile_id,
+                    title=f"Long-form compilation · {row.theme}",
+                    status=row.status,
+                    stage=row.stage,
+                    state=state,
+                    message=row.error or f"{row.stage} · {row.status}",
+                    updated_at=row.updated_at,
+                    href=_item_href(row.channel_profile_id),
+                    recovery_action=recovery_action,
+                    recovery_label=recovery_label,
+                )
+            )
+
         publications_all = list(
             session.scalars(
                 select(Publication)
                 .where(
                     Publication.youtube_connection_id.in_(list(youtube_to_channel)),
-                    ~Publication.status.in_(_DONE_PUBLICATION_STATUSES),
+                    or_(~Publication.status.in_(_DONE_PUBLICATION_STATUSES),
+                        Publication.error.is_not(None)),
                 )
                 .order_by(Publication.updated_at.desc())
             )
@@ -735,7 +1078,7 @@ def operations_overview(
                     state=state,
                     message=row.failure_reason or row.error or f"{row.stage} · {row.status}",
                     updated_at=row.updated_at,
-                    href=_publication_href(channel_id),
+                    href=_publication_href(channel_id, row.id),
                     recovery_action=recovery_action,
                     recovery_label=recovery_label,
                 )
@@ -773,8 +1116,7 @@ def operations_overview(
             .join(
                 latest_watch,
                 and_(
-                    TrendOpportunity.channel_profile_id
-                    == latest_watch.c.channel_profile_id,
+                    TrendOpportunity.channel_profile_id == latest_watch.c.channel_profile_id,
                     TrendOpportunity.watch_version == latest_watch.c.version,
                 ),
             )
@@ -857,10 +1199,8 @@ def operations_overview(
                     average_view_percentage=(
                         snapshot.average_view_percentage if snapshot else None
                     ),
-                    estimated_revenue=(
-                        snapshot.estimated_revenue if snapshot else None
-                    ),
-                    href=_publication_href(channel_id),
+                    estimated_revenue=(snapshot.estimated_revenue if snapshot else None),
+                    href=_publication_href(channel_id, row.id),
                 )
             )
 
@@ -875,38 +1215,67 @@ def operations_overview(
                 DomainEvent.aggregate_id.in_([str(value) for value in channel_ids]),
             )
         ]
+        if content_channels:
+            event_filters.append(
+                and_(
+                    DomainEvent.aggregate_type == "content",
+                    DomainEvent.aggregate_id.in_([str(value) for value in content_channels]),
+                )
+            )
+        if ingest_batch_ids:
+            event_filters.append(
+                and_(
+                    DomainEvent.aggregate_type == "intelligence_ingest_batch",
+                    DomainEvent.aggregate_id.in_([str(value) for value in ingest_batch_ids]),
+                )
+            )
+        if candidate_channels:
+            event_filters.append(
+                and_(
+                    DomainEvent.aggregate_type == "discovery_candidate",
+                    DomainEvent.aggregate_id.in_([str(value) for value in candidate_channels]),
+                )
+            )
+        if source_channels:
+            event_filters.append(
+                and_(
+                    DomainEvent.aggregate_type == "source",
+                    DomainEvent.aggregate_id.in_([str(value) for value in source_channels]),
+                )
+            )
         if production_channels:
             event_filters.append(
                 and_(
                     DomainEvent.aggregate_type == "production",
-                    DomainEvent.aggregate_id.in_(
-                        [str(value) for value in production_channels]
-                    ),
+                    DomainEvent.aggregate_id.in_([str(value) for value in production_channels]),
                 )
             )
         if episode_channels:
             event_filters.append(
                 and_(
                     DomainEvent.aggregate_type == "short_episode",
-                    DomainEvent.aggregate_id.in_(
-                        [str(value) for value in episode_channels]
-                    ),
+                    DomainEvent.aggregate_id.in_([str(value) for value in episode_channels]),
+                )
+            )
+        if compilation_channels:
+            event_filters.append(
+                and_(
+                    DomainEvent.aggregate_type == "compilation",
+                    DomainEvent.aggregate_id.in_([str(value) for value in compilation_channels]),
                 )
             )
         if publication_channels:
             event_filters.append(
                 and_(
                     DomainEvent.aggregate_type == "publication",
-                    DomainEvent.aggregate_id.in_(
-                        [str(value) for value in publication_channels]
-                    ),
+                    DomainEvent.aggregate_id.in_([str(value) for value in publication_channels]),
                 )
             )
         recent_events = list(
             session.scalars(
                 select(DomainEvent)
                 .where(or_(*event_filters))
-                .order_by(DomainEvent.created_at.desc())
+                .order_by(DomainEvent.created_at.desc(), DomainEvent.id.desc())
                 .limit(limit)
             )
         )
@@ -917,8 +1286,13 @@ def operations_overview(
                 event,
                 production_channels=production_channels,
                 episode_channels=episode_channels,
+                compilation_channels=compilation_channels,
                 publication_channels=publication_channels,
+                candidate_channels=candidate_channels,
+                source_channels=source_channels,
             )
+            if event.aggregate_type == "content":
+                event_channel = content_channels.get(uuid.UUID(event.aggregate_id))
             if event_channel is None or event_channel not in visible_ids:
                 continue
             activity.append(
@@ -987,6 +1361,7 @@ def operations_overview(
                 published_last_7d=len(published_last_7d),
             ),
             channels=channel_summaries,
+            intake=intake,
             attention=attention,
             active=active,
             opportunities=opportunities,

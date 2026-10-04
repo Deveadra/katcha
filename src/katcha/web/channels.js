@@ -5,11 +5,15 @@ const state = {
     connections: [],
     channelId: launchParams.get("channel") || sessionStorage.getItem("katcha.channel") || "",
     summary: null,
+    operations: null,
     publications: [],
     productions: [],
     brands: [],
     analytics: new Map(),
-    selectedPublicationId: "",
+    packagingVariants: new Map(),
+    selectedPublicationId: launchParams.get("publication") || "",
+    publicationDrafts: new Map(),
+    loadEpoch: 0,
     goalDraft: [],
     goalChannelId: "",
     providerStatus: [],
@@ -710,6 +714,14 @@ async function setElevenLabsEnabled(enabled) {
                 }),
             },
         );
+        $("more-publications").hidden = state.publications.length < 250;
+        $("more-productions").hidden = state.productions.length < 100;
+        if (state.selectedPublicationId && !state.publications.some(p=>p.id===state.selectedPublicationId)) {
+            try {
+                const selected=await api('/v1/publications/'+state.selectedPublicationId);
+                if(selected.youtube_connection_id===channel.youtube_connection_id) state.publications.push(selected);
+            }catch(error){setStatus('Selected video could not load: '+error.message,'error');}
+        }
         await loadProviderData();
         setStatus(
             "Voice " +
@@ -821,12 +833,21 @@ async function loadChannel() {
     if (!state.channelId) return;
     sessionStorage.setItem("katcha.channel", state.channelId);
     setStatus("Loading channel operations…");
-    state.analytics.clear();
-    state.selectedPublicationId = "";
+    const epoch = ++state.loadEpoch;
+    const channelId = state.channelId;
+    if (state.loadedChannelId !== channelId) {
+        state.summary = null; state.operations = null; state.publications=[];state.productions=[];state.brands=[];
+        state.analytics.clear();state.packagingVariants.clear();state.loadedChannelId=channelId;
+    }
     const channel = activeChannel();
     try {
-        const [summary, publications, productions, brands] = await Promise.all([
+        const panels = await Promise.allSettled([
             api("/v1/channels/" + state.channelId),
+            api(
+                "/v1/operations/overview?channel_profile_id=" +
+                    encodeURIComponent(state.channelId) +
+                    "&limit=25",
+            ),
             api(
                 "/v1/publications?limit=250&youtube_connection_id=" +
                     encodeURIComponent(channel.youtube_connection_id),
@@ -834,10 +855,13 @@ async function loadChannel() {
             api("/v1/productions?limit=100&channel_profile_id=" + encodeURIComponent(state.channelId)),
             api("/v1/channels/" + state.channelId + "/brands"),
         ]);
-        state.summary = summary;
-        state.publications = publications;
-        state.productions = productions;
-        state.brands = brands;
+        if (epoch !== state.loadEpoch || channelId !== state.channelId) return;
+        const names = ["summary", "operations", "publications", "productions", "brands"];
+        const failures = [];
+        panels.forEach((result, index) => {
+            if (result.status === "fulfilled") state[names[index]] = result.value;
+            else failures.push(names[index] + ": " + result.reason.message);
+        });
         await loadProviderData();
 
         const measurable = state.publications
@@ -854,7 +878,9 @@ async function loadChannel() {
             }
         });
 
+        if (epoch !== state.loadEpoch || channelId !== state.channelId) return;
         renderAll();
+        if (failures.length) { setStatus("Some panels could not refresh: " + failures.join("; "), "error"); return; }
         setStatus(
             "Loaded " +
                 channelName(channel) +
@@ -869,11 +895,14 @@ async function loadChannel() {
 }
 
 function renderAll() {
+    const historyLink=$("content-history-link");
+    if(historyLink)historyLink.href="/content?channel="+encodeURIComponent(state.channelId);
     renderChannelHeader();
     renderMetrics();
     renderFocus();
     renderEconomics();
     renderMonetization();
+    renderChannelActivity();
     renderPublications();
     renderGrowth();
     renderProductions();
@@ -1312,6 +1341,87 @@ async function saveGrowthGoals(event) {
     }
 }
 
+function renderChannelActivity() {
+    const container = $("channel-activity-list");
+    const operations = state.operations || {};
+    const intake = (operations.intake || []).map((item) => ({
+        ...item,
+        lane: "Intake",
+        state: item.stage === "download_failed" || item.stage === "needs_attention"
+            ? "attention"
+            : "active",
+    }));
+    const attention = (operations.attention || []).map((item) => ({
+        ...item,
+        lane: "Needs attention",
+    }));
+    const active = (operations.active || []).map((item) => ({
+        ...item,
+        lane: item.kind === "publication" ? "Publishing" : "Production",
+    }));
+    const recent = (operations.activity || []).map((item) => ({
+        ...item,
+        id: item.aggregate_id,
+        title: friendly(item.event_type || "Recent activity"),
+        status: /fail|reject|attention/.test(item.event_type || "") ? "failed" : "event",
+        stage: /fail|reject|attention/.test(item.event_type || "") ? "needs_attention" : "recorded",
+        state: /fail|reject|attention/.test(item.event_type || "") ? "attention" : "recent",
+        lane: "Recent",
+        message: friendly(item.aggregate_type || "event"),
+        updated_at: item.created_at,
+    }));
+    const rows = [...intake, ...attention, ...active, ...recent]
+        .sort((a, b) => String(b.updated_at || "").localeCompare(String(a.updated_at || "")))
+;
+
+    if (!rows.length) {
+        container.innerHTML =
+            '<div class="studio-card empty-state">Nothing is queued or running for this channel right now.</div>';
+        return;
+    }
+    container.innerHTML = rows.map((item) => {
+        const link = item.source_url
+            ? '<a target="_blank" rel="noopener noreferrer" href="' +
+                escapeHtml(item.source_url) +
+                '">Source ↗</a>'
+            : item.href
+                ? '<a href="' + escapeHtml(item.href) + '">Open ↗</a>'
+                : "";
+        const message = item.message
+            ? '<small>' + escapeHtml(item.message) + '</small>'
+            : "";
+        return (
+            '<article class="studio-card channel-activity-item ' +
+            (item.state === "attention" ? "is-attention" : "") +
+            '"><div class="channel-activity-head"><span class="eyebrow">' +
+            escapeHtml(item.lane || "Activity") +
+            '</span><span class="status-pill ' +
+            escapeHtml(item.status || "active") +
+            '">' +
+            escapeHtml(friendly(item.stage || item.status || "active")) +
+            '</span></div><strong>' +
+            escapeHtml(item.title || "Untitled work") +
+            '</strong>' +
+            message +
+            '<div class="channel-activity-foot"><span>' +
+            escapeHtml(dateText(item.updated_at)) +
+            '</span>' +
+            link +
+            '</div></article>'
+        );
+    }).join("");
+}
+
+
+function datetimeLocalValue(value) {
+    if (!value) return "";
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return "";
+    const local = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
+    return local.toISOString().slice(0, 16);
+}
+
+
 function filteredPublications() {
     const query = $("content-search").value.trim().toLowerCase();
     const filter = $("content-filter").value;
@@ -1377,6 +1487,18 @@ async function selectPublication(id) {
             setStatus("Video loaded, but analytics could not be read: " + error.message, "error");
         }
     }
+    const selected = state.publications.find((item) => item.id === id);
+    const needsPreuploadPackaging =
+        selected?.stage === "metadata_hold" && !selected.youtube_video_id;
+    if (needsPreuploadPackaging && !state.packagingVariants.has(id)) {
+        try {
+            const variants = await api("/v1/publications/" + id + "/packaging/variants");
+            state.packagingVariants.set(id, variants || []);
+        } catch (error) {
+            state.packagingVariants.set(id, []);
+            setStatus("Video loaded, but packaging options could not be read: " + error.message, "error");
+        }
+    }
     renderVideoDetail();
     renderMetrics();
 }
@@ -1384,6 +1506,8 @@ async function selectPublication(id) {
 function renderVideoDetail() {
     const item = state.publications.find((row) => row.id === state.selectedPublicationId);
     if (!item) return;
+    if (state.publicationDrafts.has(item.id) && $("video-detail").dataset.publication === item.id) return;
+    $("video-detail").dataset.publication = item.id;
     const detail = state.analytics.get(item.id);
     const snapshot = detail?.snapshot || null;
     const retention = detail?.retention || [];
@@ -1442,6 +1566,79 @@ function renderVideoDetail() {
         "</p>";
     const refreshButton = $("refresh-video-analytics");
     if (refreshButton) refreshButton.addEventListener("click", refreshVideoAnalytics);
+
+    if (item.stage === "metadata_hold" && !item.youtube_video_id) {
+        const variants = state.packagingVariants.get(item.id) || [];
+        const applied = item.treatment_metadata?.preupload_packaging?.variant_id || "";
+        const variantMarkup = variants.length
+            ? '<div class="prepublish-variants">' +
+                variants.map((variant) =>
+                    '<button type="button" class="seo-variant' +
+                    (String(variant.id) === String(applied) ? " is-selected" : "") +
+                    '" data-apply-packaging="' + escapeHtml(variant.id) + '">' +
+                    '<strong>' + escapeHtml(variant.title) + '</strong>' +
+                    '<small>' + escapeHtml((variant.tags || []).slice(0, 8).join(" · ")) + '</small>' +
+                    '</button>'
+                ).join("") +
+                '</div>'
+            : '<div class="empty-state compact">No SEO options generated yet.</div>';
+        $("video-detail").insertAdjacentHTML(
+            "beforeend",
+            '<div class="prepublish-panel"><span class="eyebrow">PRE-PUBLISH CONTROL</span>' +
+            '<h4>Metadata and release plan</h4>' +
+            '<p class="detail-note">Nothing has been uploaded yet. Enter metadata yourself, or optionally generate SEO suggestions.</p>' +
+            variantMarkup +
+            '<div class="prepublish-actions"><button id="generate-packaging-options" class="studio-button secondary small" type="button">Generate SEO options</button></div>' +
+            '<label class="provider-field">Title<input id="publication-title" maxlength="100" required value="' + escapeHtml(item.title) + '"></label>' +
+            '<label class="provider-field">Description<textarea id="publication-description" maxlength="5000" rows="5">' + escapeHtml(item.description || "") + '</textarea></label>' +
+            '<label class="provider-field">Tags, separated by commas<input id="publication-tags" value="' + escapeHtml((item.tags || []).join(", ")) + '"></label>' +
+            '<label class="provider-field">Custom thumbnail (optional, JPEG or PNG up to 2 MiB)<input id="publication-thumbnail" type="file" accept="image/jpeg,image/png"></label>' +
+            (item.raw_status?.manual_thumbnail ? '<p>Custom thumbnail saved and will be applied before release.</p>' : '') +
+            releaseFields(item) +
+            '<label class="prepublish-check"><input id="publication-notify" type="checkbox"' + (item.notify_subscribers ? ' checked' : '') + '> Notify subscribers</label>' +
+            '<label class="prepublish-check"><input id="publication-kids" type="checkbox"' + (item.made_for_kids ? ' checked' : '') + '> Made for kids</label>' +
+            '<label class="prepublish-check"><input id="publication-synthetic" type="checkbox"' + (item.contains_synthetic_media ? ' checked' : '') + '> Contains realistic altered or synthetic content</label>' +
+            '<label class="provider-field">If processing misses the scheduled time<select id="publication-late"><option value="hold">Keep private for review</option><option value="asap">Publish as soon as ready</option></select></label>' +
+            '<div class="prepublish-actions"><button id="publication-save" class="studio-button secondary small" type="button">Save draft</button><button id="publication-start" class="studio-button primary small" type="button">Save and start upload</button></div>' +
+            '<small id="publication-draft-status" class="provider-help">Upload starts privately. The saved release plan controls final visibility after YouTube processing.</small></div>'
+        );
+
+        $("video-detail").querySelectorAll("[data-apply-packaging]").forEach((button) => {
+            button.addEventListener("click", () => applyPreuploadPackaging(button.dataset.applyPackaging));
+        });
+        $("generate-packaging-options")?.addEventListener("click", generatePackagingOptions);
+        $("publication-late").value = item.raw_status?.late_policy || "hold";
+        $("publication-save")?.addEventListener("click", () => savePublicationPlan());
+        restorePublicationDraft(item);
+        watchPublicationDraft(item);
+        $("publication-start")?.addEventListener("click", startHeldPublication);
+    } else if (item.youtube_video_id && ["scheduled", "private", "unlisted", "published"].includes(item.status)) {
+        $("video-detail").insertAdjacentHTML("beforeend", '<div class="prepublish-panel"><h4>Release controls</h4>' + releaseFields(item) + '<button id="publication-release" class="studio-button secondary small" type="button">Save release plan</button><p>Changes are confirmed against YouTube before being marked saved. YouTube Studio provides captions, end screens, cards, premieres, and advanced checks.</p><a target="_blank" rel="noopener noreferrer" href="https://studio.youtube.com/video/' + encodeURIComponent(item.youtube_video_id) + '/edit">Open YouTube Studio</a></div>');
+        $("publication-release").onclick = () => savePublicationPlan();
+        $("video-detail").insertAdjacentHTML("beforeend", '<button id="publication-reconcile" class="studio-button secondary small" type="button">Refresh release state from YouTube</button>');
+        $("publication-reconcile").onclick = async () => {
+            try {
+                const updated=await api('/v1/publications/'+item.id+'/reconcile-release',{method:'POST'});
+                state.publications[state.publications.findIndex(p=>p.id===item.id)]=updated;
+                renderPublications();setStatus('Release state refreshed from YouTube. Unsaved edits are retained; discard them to load the refreshed plan.','success');
+            } catch(error){setStatus(error.message,'error');}
+        };
+        restorePublicationDraft(item); watchPublicationDraft(item);
+    }
+    if (item.status === "queued" && item.stage === "queued" && !item.youtube_video_id) {
+        $("video-detail").insertAdjacentHTML("beforeend", '<button id="publication-start" class="studio-button secondary small" type="button">Retry upload start</button>');
+        $("publication-start").onclick = startHeldPublication;
+    }
+    $("video-detail").insertAdjacentHTML("beforeend", '<button id="publication-discard" class="studio-button secondary small" type="button">Discard unsaved edits and reload saved plan</button>');
+    $("publication-discard").onclick = async () => {
+        try {
+            const saved=await api('/v1/publications/'+item.id);
+            if(saved.youtube_connection_id!==activeChannel()?.youtube_connection_id)throw new Error('Publication belongs to another channel.');
+            state.publications[state.publications.findIndex(p=>p.id===item.id)]=saved;
+            state.publicationDrafts.delete(item.id);sessionStorage.removeItem('katcha.publicationDraft.'+item.id);renderPublications();
+        }catch(error){setStatus(error.message,'error');}
+    };
+    if (item.upload_size) $("video-detail").insertAdjacentHTML("beforeend", '<p>Upload acknowledged: ' + number(item.upload_offset || 0) + ' / ' + number(item.upload_size) + ' bytes (' + Math.floor((item.upload_offset || 0) / item.upload_size * 100) + '%)</p>');
 }
 
 function videoKpi(label, value) {
@@ -1453,6 +1650,130 @@ function videoKpi(label, value) {
         "</strong></div>"
     );
 }
+
+async function generatePackagingOptions() {
+    const item = state.publications.find((row) => row.id === state.selectedPublicationId);
+    if (!item) return;
+    try {
+        setStatus("Generating grounded SEO options…");
+        const result = await api(
+            "/v1/publications/" + item.id + "/packaging/generations",
+            {
+                method: "POST",
+                body: JSON.stringify({
+                    generation_key: "channel-studio-" + Date.now(),
+                    candidate_count: 3,
+                }),
+            },
+        );
+        state.packagingVariants.set(item.id, result.variants || []);
+        renderVideoDetail();
+        setStatus("Optional SEO suggestions generated. Save any manual edits before reviewing a suggestion.", "success");
+    } catch (error) {
+        setStatus(error.message, "error");
+    }
+}
+
+
+async function applyPreuploadPackaging(variantId) {
+    if (state.publicationDrafts.has(state.selectedPublicationId)) { setStatus("Save your manual edits before applying another metadata package.", "error"); return; }
+    const item = state.publications.find((row) => row.id === state.selectedPublicationId);
+    if (!item) return;
+    try {
+        setStatus("Applying SEO package…");
+        const updated = await api(
+            "/v1/publications/" + item.id + "/packaging/preupload",
+            {
+                method: "POST",
+                body: JSON.stringify({ variant_id: variantId, actor: "channel-studio" }),
+            },
+        );
+        const index = state.publications.findIndex((row) => row.id === item.id);
+        if (index >= 0) state.publications[index] = updated;
+        renderPublications();
+        setStatus("SEO package applied before upload.", "success");
+    } catch (error) {
+        setStatus(error.message, "error");
+    }
+}
+
+
+function channelLocalValue(value) {
+    if (!value) return "";
+    const parts = new Intl.DateTimeFormat('en-CA', {timeZone: activeChannel()?.timezone || 'UTC', year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hourCycle:'h23'}).formatToParts(new Date(value));
+    const get = type => parts.find(p => p.type === type)?.value;
+    return `${get('year')}-${get('month')}-${get('day')}T${get('hour')}:${get('minute')}`;
+}
+function releaseFields(item) {
+    const mode = item.publish_at ? "scheduled" : item.privacy_status === "public" ? "asap" : item.privacy_status || "private";
+    return '<label class="provider-field">Final visibility<select id="publication-mode">' + [['private','Keep private'],['unlisted','Unlisted'],['asap','Public when ready'],['scheduled','Scheduled public release']].map(([value,label]) => '<option value="'+value+'"'+(mode===value?' selected':'')+'>'+label+'</option>').join('') + '</select></label><label class="provider-field">Scheduled time · '+escapeHtml(activeChannel()?.timezone || 'UTC')+'<input id="publication-publish-at" type="datetime-local" value="'+escapeHtml(channelLocalValue(item.publish_at))+'"></label>';
+}
+const draftFieldIds = ['publication-title','publication-description','publication-tags','publication-mode','publication-publish-at','publication-notify','publication-kids','publication-synthetic','publication-late'];
+function restorePublicationDraft(item) {
+    const draft=state.publicationDrafts.get(item.id) || JSON.parse(sessionStorage.getItem('katcha.publicationDraft.'+item.id) || 'null');
+    if (!draft) return;
+    state.publicationDrafts.set(item.id,draft);
+    for (const [id,value] of Object.entries(draft.fields)) { const field=$(id); if (field) { if(field.type==='checkbox')field.checked=value;else field.value=value; } }
+    if ($('publication-draft-status')) $('publication-draft-status').textContent='Unsaved edits restored. Save before upload; edits are retained if a request fails.';
+}
+function watchPublicationDraft(item) {
+    const capture=()=>{
+        const existing=state.publicationDrafts.get(item.id);
+        const draft={version: existing?.version ?? item.raw_status?.manual_plan_version ?? 0, fields:{}};
+        for(const id of draftFieldIds){const field=$(id);if(field)draft.fields[id]=field.type==='checkbox'?field.checked:field.value;}
+        state.publicationDrafts.set(item.id,draft);sessionStorage.setItem('katcha.publicationDraft.'+item.id,JSON.stringify(draft));
+        if($('publication-draft-status'))$('publication-draft-status').textContent='Unsaved changes. Save draft or Save and start upload.';
+    };
+    draftFieldIds.forEach(id=>$(id)?.addEventListener('input',capture));
+}
+async function savePublicationPlan() {
+    const item = state.publications.find(row => row.id === state.selectedPublicationId);
+    if (!item) return null;
+    const mode=$('publication-mode').value;
+    const held=item.stage==='metadata_hold'&&!item.youtube_video_id;
+    const payload={publish_mode:mode,channel_local_time:mode==='scheduled'?$('publication-publish-at').value:null,expected_version:state.publicationDrafts.get(item.id)?.version ?? item.raw_status?.manual_plan_version ?? 0};
+    if(mode==='scheduled'&&!payload.channel_local_time){setStatus('Choose a scheduled time first.','error');return null;}
+    if(held)Object.assign(payload,{title:$('publication-title').value,description:$('publication-description').value,tags:$('publication-tags').value.split(',').map(t=>t.trim()).filter(Boolean),notify_subscribers:$('publication-notify').checked,made_for_kids:$('publication-kids').checked,contains_synthetic_media:$('publication-synthetic').checked,late_policy:$('publication-late').value});
+    try {
+        let updated=await api('/v1/publications/'+item.id+(held?'/draft':'/release-plan'),{method:'POST',body:JSON.stringify(payload)});
+        state.publications[state.publications.findIndex(row=>row.id===item.id)]=updated;
+        const file=$('publication-thumbnail')?.files[0];
+        if(file){
+            if(file.size>2*1024**2)throw new Error('Metadata saved. Choose a thumbnail up to 2 MiB.');
+            const pending=state.publicationDrafts.get(item.id);
+            if(pending)pending.version=updated.raw_status?.manual_plan_version || 0;
+            updated=await api('/v1/publications/'+item.id+'/thumbnail?expected_version='+(updated.raw_status?.manual_plan_version||0),{method:'PUT',body:file,headers:{'content-type':file.type}});
+            state.publications[state.publications.findIndex(row=>row.id===item.id)]=updated;
+        }
+        state.publicationDrafts.delete(item.id);sessionStorage.removeItem('katcha.publicationDraft.'+item.id);
+        renderPublications();setStatus(held?'Metadata and release plan saved.':'Release plan confirmed by YouTube.','success');return updated;
+    }catch(error){setStatus(error.message+' Your edits are retained.','error');return null;}
+}
+
+
+async function startHeldPublication() {
+    const item = state.publications.find((row) => row.id === state.selectedPublicationId);
+    if (!item) return;
+    const saved = item.stage === "queued" ? item : await savePublicationPlan();
+    if (!saved) return;
+    try {
+        setStatus("Starting resumable private-first YouTube upload…");
+        const updated = await api(
+            "/v1/publications/" + item.id + "/start",
+            {
+                method: "POST",
+                body: JSON.stringify({ actor: "channel-studio", expected_version: saved.raw_status?.manual_plan_version || 0 }),
+            },
+        );
+        const index = state.publications.findIndex((row) => row.id === item.id);
+        if (index >= 0) state.publications[index] = updated;
+        await loadChannel();
+        setStatus(updated.error || "Upload started. Channel activity now tracks the publishing workflow.", updated.error ? "error" : "success");
+    } catch (error) {
+        setStatus(error.message, "error");
+    }
+}
+
 
 async function refreshVideoAnalytics() {
     const item = state.publications.find((row) => row.id === state.selectedPublicationId);
@@ -1575,7 +1896,7 @@ function renderProductions() {
             '<div class="studio-card empty-state" style="padding:16px">No channel-scoped productions yet.</div>';
         return;
     }
-    container.innerHTML = state.productions.slice(0, 9)
+    container.innerHTML = state.productions
         .map((item) => {
             const issue = item.error ? '<p>' + escapeHtml(item.error) + "</p>" : '<p>' + escapeHtml(friendly(item.kind || "short")) + " · generation " + escapeHtml(item.generation) + "</p>";
             return (
@@ -1702,7 +2023,7 @@ const CHANNEL_STUDIO_HASH_GROUPS = {
 
 function channelStudioTabFromHash() {
     const hash = window.location.hash.replace(/^#/, "");
-    return CHANNEL_STUDIO_HASH_GROUPS[hash] || "overview";
+    return CHANNEL_STUDIO_HASH_GROUPS[hash] || (launchParams.get("publication") ? "content" : "overview");
 }
 
 function setChannelStudioTab(tab, { updateHash = true, focus = false } = {}) {
@@ -1770,6 +2091,7 @@ $("connect-form").addEventListener("submit", (event) => {
 $("channel").addEventListener("change", async (event) => {
     revokeProviderPreview();
     state.channelId = event.target.value;
+    state.selectedPublicationId = "";
     await loadChannel();
 });
 $("reload").addEventListener("click", loadChannel);
@@ -1866,4 +2188,38 @@ $("connect-another-youtube").addEventListener("click", beginYouTubeOAuth);
 
 if (state.oauthResult) {
     connect();
+}
+
+setInterval(async () => {
+    if (document.hidden || !state.channelId) return;
+    const channelId=state.channelId;
+    try {
+        const operations=await api('/v1/operations/overview?channel_profile_id='+encodeURIComponent(channelId)+'&limit=100');
+        if (channelId!==state.channelId) return;
+        state.operations=operations;renderChannelActivity();
+        const publicationId=state.selectedPublicationId;
+        if (publicationId) {
+            const updated=await api('/v1/publications/'+publicationId);
+            if(channelId!==state.channelId || publicationId!==state.selectedPublicationId)return;
+            const index=state.publications.findIndex(p=>p.id===publicationId);
+            if(index>=0)state.publications[index]=updated;
+            if(!state.publicationDrafts.has(publicationId))renderPublications();
+        }
+    } catch(error) { setStatus('Activity refresh failed: '+error.message+'. Use Refresh to retry.', 'error'); }
+},8000);
+
+for(const kind of ['publications','productions']){
+    $('more-'+kind).onclick=async()=>{
+        const button=$('more-'+kind);button.disabled=true;
+        const channelId=state.channelId;
+        const size=kind==='publications'?250:100;
+        try{
+            const scope=kind==='publications'?'youtube_connection_id='+encodeURIComponent(activeChannel().youtube_connection_id):'channel_profile_id='+encodeURIComponent(channelId);
+            const rows=await api('/v1/'+kind+'?'+scope+'&limit='+size+'&offset='+state[kind].length);
+            if(channelId!==state.channelId)return;
+            for(const row of rows)if(!state[kind].some(p=>p.id===row.id))state[kind].push(row);
+            button.hidden=rows.length<size;
+            if(kind==='publications')renderPublications();else renderProductions();
+        }catch(error){setStatus(error.message,'error');}finally{button.disabled=false;}
+    };
 }

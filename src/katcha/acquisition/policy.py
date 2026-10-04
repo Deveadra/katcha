@@ -11,6 +11,7 @@ from katcha.domain import (
 
 _GREEN_BASES = {
     RightsBasis.OWNED,
+    RightsBasis.OPERATOR_AUTHORIZED,
     RightsBasis.DIRECT_PERMISSION,
     RightsBasis.LICENSED,
     RightsBasis.CC0,
@@ -77,6 +78,8 @@ def evaluate_acquisition_policy(
         reasons.append("rights_basis_blocked")
     elif rights_basis in _GREEN_BASES:
         rights_gate = GateStatus.CLEARED
+        if rights_basis == RightsBasis.OPERATOR_AUTHORIZED:
+            advisories.append("operator_authorization_recorded")
         if rights_basis in _EVIDENCE_REQUIRED_BASES and not evidence_present:
             rights_gate = GateStatus.REVIEW_REQUIRED
             reasons.append("rights_evidence_required")

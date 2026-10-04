@@ -336,7 +336,7 @@
                                         <div><span>Last check</span><strong id="stat-last">—</strong><small id="stat-last-note">No checks yet</small></div>
                                     </div>
 
-                                    <section class="source-inspector-section">
+                                    <section id="source-polling" class="source-inspector-section" hidden><h3>Recurring checks</h3><label><input id="polling-enabled" type="checkbox"> Check this source automatically</label><label>Interval in minutes<input id="polling-interval" type="number" min="15" max="10080" value="60"></label><button id="save-polling" type="button" class="button secondary">Save recurring checks</button><p id="polling-status" role="status"></p><p>Checks discover finds for review; they do not authorize downloads or publishing. A running check may finish after pausing.</p></section><section class="source-inspector-section">
                                         <div class="source-section-head">
                                             <div><span class="section-kicker">SCOPE & BEHAVIOR</span><h3>What this source does</h3></div>
                                         </div>
@@ -399,7 +399,7 @@
 
                         <div class="handoff-stats" aria-label="Handoff inbox status">
                             <div><span>Pending</span><strong id="handoff-count-incoming">0</strong></div>
-                            <div><span>Processed</span><strong id="handoff-count-processed">0</strong></div>
+                            <div><span>Archived</span><strong id="handoff-count-processed">0</strong></div>
                             <div><span>Failed</span><strong id="handoff-count-failed">0</strong></div>
                         </div>
 
@@ -409,7 +409,7 @@
                                 <input id="handoff-file" type="file" accept=".json,application/json" required>
                                 <button type="submit" class="button primary">Import batch</button>
                             </div>
-                            <p class="hint">Files are imported immediately, then retained in the processed or failed queue with a receipt. Nothing is published by this action.</p>
+                            <p class="hint">Files are imported immediately. Successful batches leave the active inbox and are archived with a receipt; failed batches stay visible for attention. Nothing is published by this action.</p>
                             <div id="handoff-progress" class="handoff-progress" role="status" aria-live="polite" hidden>
                                 <div class="handoff-progress-head">
                                     <strong id="handoff-progress-title">Ready</strong>
@@ -422,14 +422,14 @@
 
                         <div class="callout handoff-folder">
                             <strong>Local drop folder</strong>
-                            <p>You can also place batch files in <code id="handoff-path">handoff/incoming</code>, then choose <strong>Process pending</strong>. This folder is mounted into the Katcha API container and ignored by Git.</p>
+                            <p>You can also place batch files in <code id="handoff-path">handoff/incoming</code>. Katcha processes pending files automatically on startup; <strong>Process pending</strong> remains available for immediate retries while Katcha is already running.</p>
                         </div>
 
                         <section class="handoff-history">
                             <div class="source-section-head">
-                                <div><span class="section-kicker">RECENT HANDOFFS</span><h3>Import history</h3></div>
+                                <div><span class="section-kicker">ACTIVE HANDOFFS</span><h3>Needs attention</h3></div>
                             </div>
-                            <div id="handoff-list" class="handoff-list"></div>
+                            <p><a id="handoff-history" href="/content">View content and successful import history</a></p><div id="handoff-list" class="handoff-list"></div>
                         </section>
                     </section>
                 </div>

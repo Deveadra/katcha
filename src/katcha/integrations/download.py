@@ -71,6 +71,7 @@ def ffprobe(path: Path) -> dict[str, object]:
         check=True,
         capture_output=True,
         text=True,
+        timeout=120,
     )
     return json.loads(result.stdout)
 

@@ -18,8 +18,10 @@ import os
 import queue
 import re
 import secrets
+import shutil
 import signal
 import subprocess
+import sys
 import threading
 import time
 import traceback
@@ -35,6 +37,9 @@ PREBUILT_REGISTRY = "ghcr.io/deveadra"
 EARLY_AUTOMATION_SERVICES = (
     "temporal",
     "intelligence-worker",
+)
+RETIRED_WORKER_SERVICES = (
+    "discovery-worker", "trend-worker", "longform-worker", "publishing-worker",
 )
 BACKGROUND_BUILD_SERVICES = (
     "minio",
@@ -552,6 +557,21 @@ class Runtime:
         temporary.write_text(fingerprint)
         temporary.replace(stamp)
 
+    def stop_retired_workers(self):
+        """Retire only replaced pollers in this Compose project; retain all data."""
+        for service in RETIRED_WORKER_SERVICES:
+            containers = self.run(
+                [
+                    "docker", "ps", "-q",
+                    "--filter", "label=com.docker.compose.project=katcha",
+                    "--filter", f"label=com.docker.compose.service={service}",
+                ],
+                capture=True,
+            ).split()
+            if containers:
+                self.event("info", "launcher", f"Stopping replaced {service} containers.")
+                self.run(["docker", "stop", "--time", "30", *containers], timeout=120)
+
     def operate(self, action):
         if not self.lock.acquire(blocking=False):
             return False
@@ -598,6 +618,7 @@ class Runtime:
             # Keep the interactive launch serialized at the Docker boundary. Running
             # Compose startup and image preparation concurrently is fragile on WSL/Docker
             # Desktop and can make the launcher itself unreachable under resource pressure.
+            self.stop_retired_workers()
             self.prepare_workspace_image()
 
             self.stage = "starting workspace"
@@ -900,8 +921,14 @@ class Runtime:
             self.services = [
                 {key: row.get(key) for key in ("Service", "State", "Health", "ExitCode")}
                 for row in rows
+                if row.get("Service") not in RETIRED_WORKER_SERVICES
             ]
-            if not rows:
+            if any(
+                row.get("Service") in RETIRED_WORKER_SERVICES and row.get("State") == "running"
+                for row in rows
+            ):
+                self.stop_retired_workers()
+            if not self.services:
                 self.phase = "idle"
                 self.stage = "idle"
                 return True
@@ -955,6 +982,7 @@ class Runtime:
         self.services = [
             {key: row.get(key) for key in ("Service", "State", "Health", "ExitCode")}
             for row in rows
+            if row.get("Service") not in RETIRED_WORKER_SERVICES
         ]
         bad = [
             r
@@ -981,8 +1009,14 @@ class Runtime:
 
     def probe_workspace(self):
         connection = http.client.HTTPConnection("127.0.0.1", 8000, timeout=2)
+        token = str(self.values.get("KATCHA_CONTROL_API_TOKEN") or "").strip()
+        headers = {"Authorization": f"Bearer {token}"} if token else {}
         try:
-            connection.request("GET", "/v1/health/workspace")
+            connection.request(
+                "GET",
+                "/v1/health/workspace",
+                headers=headers,
+            )
             self.workspace_ready = connection.getresponse().status == 200
         except (OSError, http.client.HTTPException):
             self.workspace_ready = False
@@ -1066,7 +1100,31 @@ class Runtime:
         )
 
 
+class ClientDisconnected(ConnectionError):
+    """The browser closed its socket while receiving a response."""
+
+
 class Handler(BaseHTTPRequestHandler):
+    def handle(self):
+        try:
+            super().handle()
+        except (ClientDisconnected, BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+            # Navigation and polling cancellation can close a browser socket.
+            # There is no client left to receive another response.
+            self.close_connection = True
+
+    def end_headers(self):
+        try:
+            super().end_headers()
+        except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError) as exc:
+            raise ClientDisconnected() from exc
+
+    def write_response(self, payload):
+        try:
+            self.wfile.write(payload)
+        except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError) as exc:
+            raise ClientDisconnected() from exc
+
     def log_message(self, *_):
         pass  # Request URLs can contain OAuth credentials.
 
@@ -1078,7 +1136,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Cache-Control", "no-store")
         self.send_header("X-Content-Type-Options", "nosniff")
         self.end_headers()
-        self.wfile.write(payload)
+        self.write_response(payload)
 
     def redirect(self, location):
         self.send_response(302)
@@ -1094,6 +1152,7 @@ class Handler(BaseHTTPRequestHandler):
             "/explorer": "/explorer/assets/index.html",
             "/ingestion": "/editing/assets/ingestion.html",
             "/clips": "/editing/assets/clips.html",
+            "/content": "/editing/assets/content.html",
             "/channels": "/channels/assets/channels.html",
             "/studio": "/studio/assets/studio.html",
             "/ai": "/ai/assets/ai.html",
@@ -1246,14 +1305,15 @@ class Handler(BaseHTTPRequestHandler):
         return filename
 
     def _existing_handoff_path(self, filename):
-        root = self.server.runtime.root / "handoff"
-        for status in ("incoming", "processed", "failed"):
-            path = root / status / filename
-            if path.exists():
-                if path.is_symlink() or not path.is_file():
-                    raise ValueError("Existing handoff path is not a regular file.")
-                return path
-        return None
+        # Only a currently pending file can conflict with a same-name upload.
+        # Processed/failed files are history and must not block a corrected or
+        # revised handoff that intentionally reuses the original filename.
+        path = self.server.runtime.root / "handoff" / "incoming" / filename
+        if not path.exists():
+            return None
+        if path.is_symlink() or not path.is_file():
+            raise ValueError("Existing handoff path is not a regular file.")
+        return path
 
     def _handle_handoff_upload(self):
         runtime = self.server.runtime
@@ -1399,6 +1459,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._handle_handoff_upload()
             if runtime_path == "/runtime/handoff/process":
                 return self._handle_handoff_process()
+        except ClientDisconnected:
+            raise
         except (OSError, ValueError, http.client.HTTPException) as exc:
             self.server.runtime.event(
                 "error",
@@ -1477,6 +1539,8 @@ class Handler(BaseHTTPRequestHandler):
             if action not in ("start", "stop"):
                 return self.send(404, {"error": "Unknown action"})
             return self.send(202 if runtime.operate(action) else 409, {"action": action})
+        except ClientDisconnected:
+            raise
         except (ValueError, OSError) as exc:
             runtime.event("error", "setup", str(exc))
             return self.send(400, {"error": runtime.redact(exc)})
@@ -1533,11 +1597,13 @@ class Handler(BaseHTTPRequestHandler):
             self.end_headers()
             headers_sent = True
             while chunk := response.read(65536):
-                self.wfile.write(chunk)
+                self.write_response(chunk)
             if response.status >= 500:
                 self.server.runtime.event(
                     "error", "api", f"HTTP {response.status}", path=self.path.split("?")[0]
                 )
+        except ClientDisconnected:
+            raise
         except Exception as exc:
             self.server.runtime.event(
                 "error",
@@ -1621,18 +1687,51 @@ def _open_browser(url, runtime):
                 + (f" ({detail})" if detail else "")
             )
 
-    try:
-        if webbrowser.open(url, new=2):
-            runtime.event(
-                "info",
-                "browser",
-                "Opened Katcha in the default browser.",
-                method="python",
-            )
-            return True
-        errors.append("python: no runnable browser was reported")
-    except (OSError, webbrowser.Error) as exc:
-        errors.append(f"python: {exc}")
+    if sys.platform == "linux" and not _is_wsl():
+        opener = shutil.which("xdg-open")
+        if opener:
+            try:
+                result = subprocess.run(
+                    [opener, url],
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    timeout=5,
+                    check=False,
+                )
+            except (OSError, subprocess.SubprocessError) as exc:
+                errors.append(f"xdg-open: {exc}")
+            else:
+                if result.returncode == 0:
+                    runtime.event(
+                        "info",
+                        "browser",
+                        "Opened Katcha in the desktop browser.",
+                        method="xdg-open",
+                    )
+                    return True
+                detail = (result.stderr or "").strip()
+                errors.append(
+                    "xdg-open: exit "
+                    + str(result.returncode)
+                    + (f" ({detail})" if detail else "")
+                )
+        else:
+            errors.append("xdg-open: command is not installed")
+    elif sys.platform != "linux":
+        try:
+            if webbrowser.open(url, new=2):
+                runtime.event(
+                    "info",
+                    "browser",
+                    "Opened Katcha in the default browser.",
+                    method="python",
+                )
+                return True
+            errors.append("python: no runnable browser was reported")
+        except (OSError, webbrowser.Error) as exc:
+            errors.append(f"python: {exc}")
 
     runtime.event(
         "warning",
@@ -1701,7 +1800,10 @@ def main():
 
     if not args.no_browser:
         threading.Thread(target=open_when_listening, daemon=True).start()
-    print("Katcha: " + url + " — close with Ctrl+C; services remain running.")
+    print("Katcha launch console: " + url)
+    print("If the browser does not open, paste that address into your browser.")
+    print("Click Start Katcha in the console to start the services.")
+    print("Ctrl+C closes the launch console; it does not stop running services.")
     interrupted = False
     try:
         server.serve_forever()

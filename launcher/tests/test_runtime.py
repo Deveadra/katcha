@@ -1,14 +1,122 @@
 import http.client
 import importlib.util
 import json
+import socket
+import struct
 import sys
 import threading
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 SPEC = importlib.util.spec_from_file_location("runtime", Path(__file__).parents[1] / "runtime.py")
 runtime = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(runtime)
+
+
+@pytest.mark.parametrize("error", [BrokenPipeError, ConnectionResetError, ConnectionAbortedError])
+@pytest.mark.parametrize("stage", ["headers", "body"])
+def test_browser_socket_failures_are_identified_at_response_boundary(error, stage):
+    handler = runtime.Handler.__new__(runtime.Handler)
+    handler.wfile = MagicMock()
+    if stage == "headers":
+        with (
+            patch.object(runtime.BaseHTTPRequestHandler, "end_headers", side_effect=error()),
+            pytest.raises(runtime.ClientDisconnected),
+        ):
+            handler.end_headers()
+    else:
+        handler.wfile.write.side_effect = error()
+        with pytest.raises(runtime.ClientDisconnected):
+            handler.write_response(b"response")
+
+
+def test_closed_browser_request_does_not_traceback_or_stop_status_server(tmp_path):
+    app = instance(tmp_path)
+    entered = threading.Event()
+    release = threading.Event()
+    finished = threading.Event()
+
+    class ObservedHandler(runtime.Handler):
+        def handle(self):
+            try:
+                super().handle()
+            finally:
+                finished.set()
+
+    def delayed_snapshot():
+        entered.set()
+        assert release.wait(3)
+        return {"workspace_ready": True}
+
+    server = runtime.ThreadingHTTPServer(("127.0.0.1", 0), ObservedHandler)
+    server.runtime = app
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        with patch.object(server, "handle_error") as errors:
+            with patch.object(app, "snapshot", side_effect=delayed_snapshot):
+                client = socket.create_connection(("127.0.0.1", server.server_port), timeout=3)
+                client.sendall(
+                    (
+                        "GET /runtime/status HTTP/1.0\r\n"
+                        f"Host: 127.0.0.1:{server.server_port}\r\n\r\n"
+                    ).encode()
+                )
+                assert entered.wait(3)
+                client.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("ii", 1, 0))
+                client.close()
+                release.set()
+                assert finished.wait(3)
+            connection = http.client.HTTPConnection("127.0.0.1", server.server_port, timeout=3)
+            connection.request("GET", "/runtime/status")
+            response = connection.getresponse()
+            assert response.status == 200
+            assert "workspace_ready" in json.loads(response.read())
+            connection.close()
+            errors.assert_not_called()
+    finally:
+        release.set()
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=3)
+
+
+def test_proxy_browser_disconnect_closes_upstream_without_gateway_failure():
+    handler = runtime.Handler.__new__(runtime.Handler)
+    handler.path = "/v1/fixture"
+    handler.command = "GET"
+    handler.headers = {}
+    handler.rfile = MagicMock()
+    handler.wfile = MagicMock()
+    handler.wfile.write.side_effect = BrokenPipeError()
+    handler.server = MagicMock()
+    handler.server.runtime.values = {"KATCHA_CONTROL_API_TOKEN": "fixture"}
+    handler.send_response = MagicMock()
+    handler.send_header = MagicMock()
+    handler.end_headers = MagicMock()
+    connection = MagicMock()
+    response = connection.getresponse.return_value
+    response.status = 200
+    response.getheaders.return_value = []
+    response.read.side_effect = [b"media", b""]
+    with (
+        patch.object(runtime.http.client, "HTTPConnection", return_value=connection),
+        pytest.raises(runtime.ClientDisconnected),
+    ):
+        handler.proxy()
+    connection.close.assert_called_once()
+    handler.server.runtime.event.assert_not_called()
+
+
+def test_handler_preserves_unexpected_application_errors():
+    handler = runtime.Handler.__new__(runtime.Handler)
+    with (
+        patch.object(runtime.BaseHTTPRequestHandler, "handle", side_effect=ValueError("bug")),
+        pytest.raises(ValueError, match="bug"),
+    ):
+        handler.handle()
 
 
 def instance(tmp_path):
@@ -203,6 +311,47 @@ def test_handoff_upload_rejects_conflicting_filename_content(tmp_path):
         server.server_close()
 
 
+def test_handoff_upload_allows_filename_reuse_after_archive(tmp_path):
+    app = instance(tmp_path)
+    archived = tmp_path / "handoff" / "processed" / "batch.json"
+    archived.write_bytes(b"old")
+    server = runtime.ThreadingHTTPServer(("127.0.0.1", 0), runtime.Handler)
+    server.runtime = app
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    result = [{
+        "filename": "batch.json",
+        "status": "processed",
+        "record_count": 2,
+    }]
+    try:
+        with patch.object(
+            runtime.Handler,
+            "_api_json_request",
+            return_value=(200, result),
+        ) as api:
+            connection = http.client.HTTPConnection(
+                "127.0.0.1",
+                server.server_port,
+            )
+            connection.request(
+                "POST",
+                "/runtime/handoff/upload?filename=batch.json",
+                b"new",
+                {"Content-Type": "application/octet-stream"},
+            )
+            response = connection.getresponse()
+            assert response.status == 200
+            response.read()
+            connection.close()
+
+        assert archived.read_bytes() == b"old"
+        assert (tmp_path / "handoff" / "incoming" / "batch.json").read_bytes() == b"new"
+        api.assert_called_once()
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
 def test_handoff_upload_rejects_path_traversal(tmp_path):
     app = instance(tmp_path)
     server = runtime.ThreadingHTTPServer(("127.0.0.1", 0), runtime.Handler)
@@ -267,7 +416,8 @@ def test_handoff_process_pending_uses_control_plane_api(tmp_path):
         server.server_close()
 
 
-def test_proxy_exception_returns_controlled_gateway_error(tmp_path):
+@pytest.mark.parametrize("error", [RuntimeError, ConnectionResetError])
+def test_proxy_exception_returns_controlled_gateway_error(tmp_path, error):
     app = instance(tmp_path)
     server = runtime.ThreadingHTTPServer(("127.0.0.1", 0), runtime.Handler)
     server.runtime = app
@@ -278,7 +428,7 @@ def test_proxy_exception_returns_controlled_gateway_error(tmp_path):
         with patch.object(
             runtime.http.client,
             "HTTPConnection",
-            side_effect=RuntimeError("fixture proxy failure"),
+            side_effect=error("fixture proxy failure"),
         ):
             connection.request("POST", "/v1/fixture", b"{}", {"Content-Type": "application/json"})
             response = connection.getresponse()
@@ -288,7 +438,7 @@ def test_proxy_exception_returns_controlled_gateway_error(tmp_path):
         assert "gateway" in body["error"].lower()
         assert any(
             event["component"] == "gateway"
-            and "RuntimeError" in event["message"]
+            and error.__name__ in event["message"]
             for event in app.events
         )
     finally:
@@ -343,16 +493,74 @@ def test_browser_open_reports_manual_recovery_when_all_methods_fail(tmp_path, ca
     with (
         patch.object(runtime, "_is_wsl", return_value=True),
         patch.object(runtime.subprocess, "run", return_value=failed),
-        patch.object(runtime.webbrowser, "open", return_value=False),
+        patch.object(runtime.webbrowser, "open") as browser,
     ):
         assert runtime._open_browser("http://127.0.0.1:8765", app) is False
 
+    browser.assert_not_called()
     assert "Open http://127.0.0.1:8765" in capsys.readouterr().out
     assert any(
         event["component"] == "browser" and event.get("recovery")
         for event in app.events
     )
 
+
+
+def test_linux_browser_open_uses_xdg_open(tmp_path):
+    app = instance(tmp_path)
+    with (
+        patch.object(runtime, "_is_wsl", return_value=False),
+        patch.object(runtime.sys, "platform", "linux"),
+        patch.object(runtime.shutil, "which", return_value="/usr/bin/xdg-open"),
+        patch.object(runtime.subprocess, "run", return_value=MagicMock(returncode=0)) as run,
+        patch.object(runtime.webbrowser, "open") as browser,
+    ):
+        assert runtime._open_browser("http://127.0.0.1:8765", app) is True
+
+    assert run.call_args.args[0] == ["/usr/bin/xdg-open", "http://127.0.0.1:8765"]
+    assert "Opened Katcha in the desktop browser." in [e["message"] for e in app.events]
+    browser.assert_not_called()
+
+
+def test_linux_gio_failure_is_suppressed_and_manual_url_is_actionable(tmp_path, capsys):
+    app = instance(tmp_path)
+    failure = MagicMock(returncode=1, stderr="gio: Operation not supported")
+    with (
+        patch.object(runtime, "_is_wsl", return_value=False),
+        patch.object(runtime.sys, "platform", "linux"),
+        patch.object(runtime.shutil, "which", return_value="/usr/bin/xdg-open"),
+        patch.object(runtime.subprocess, "run", return_value=failure),
+        patch.object(runtime.webbrowser, "open") as browser,
+    ):
+        assert runtime._open_browser("http://127.0.0.1:8765", app) is False
+
+    browser.assert_not_called()
+    output = capsys.readouterr().out
+    assert "gio:" not in output
+    assert "Open http://127.0.0.1:8765" in output
+    event = next(e for e in app.events if e["component"] == "browser")
+    assert "Operation not supported" in event["attempts"][0]
+
+
+def test_launcher_page_remains_available_when_browser_open_fails(tmp_path):
+    app = instance(tmp_path)
+    server = runtime.ThreadingHTTPServer(("127.0.0.1", 0), runtime.Handler)
+    server.runtime = app
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        address, port = server.server_address
+        connection = http.client.HTTPConnection(address, port, timeout=2)
+        connection.request("GET", "/")
+        response = connection.getresponse()
+        page = response.read()
+        assert response.status == 200
+        assert b"Start Katcha" in page
+        connection.close()
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
 
 def test_stop_logs_reaps_launcher_follower_without_stopping_services(tmp_path):
     app = instance(tmp_path)
@@ -818,15 +1026,39 @@ def test_unhealthy_running_containers_are_not_restart_looped(tmp_path):
 
 
 
-def test_workspace_probe_uses_control_plane_readiness(tmp_path):
+def test_workspace_probe_uses_authenticated_control_plane_readiness(tmp_path):
     app = instance(tmp_path)
-    from unittest.mock import MagicMock
-
     connection = MagicMock()
     connection.getresponse.return_value.status = 200
+
     with patch.object(runtime.http.client, "HTTPConnection", return_value=connection):
         assert app.probe_workspace() is True
-    connection.request.assert_called_once_with("GET", "/v1/health/workspace")
+
+    connection.request.assert_called_once_with(
+        "GET",
+        "/v1/health/workspace",
+        headers={
+            "Authorization": (
+                "Bearer " + app.values["KATCHA_CONTROL_API_TOKEN"]
+            )
+        },
+    )
+
+
+def test_workspace_probe_preserves_anonymous_development_fallback(tmp_path):
+    app = instance(tmp_path)
+    app.values["KATCHA_CONTROL_API_TOKEN"] = ""
+    connection = MagicMock()
+    connection.getresponse.return_value.status = 200
+
+    with patch.object(runtime.http.client, "HTTPConnection", return_value=connection):
+        assert app.probe_workspace() is True
+
+    connection.request.assert_called_once_with(
+        "GET",
+        "/v1/health/workspace",
+        headers={},
+    )
 
 
 def test_launcher_serves_workspace_shell_without_api(tmp_path):
@@ -1298,3 +1530,46 @@ def test_workspace_recovers_before_next_container_health_check(tmp_path):
     probe.assert_called_once()
     check.assert_not_called()
     operate.assert_not_called()
+
+
+def test_replaced_pollers_stop_only_within_katcha_project(tmp_path):
+    app = instance(tmp_path)
+    calls = []
+
+    def fake_run(args, **kwargs):
+        calls.append(args)
+        if "ps" in args and args[-1].endswith("=discovery-worker"):
+            return "old-discovery-1\nold-discovery-2\n"
+        return ""
+
+    with patch.object(app, "run", side_effect=fake_run):
+        app.stop_retired_workers()
+    searches = [call for call in calls if "ps" in call]
+    assert len(searches) == 4
+    assert all("label=com.docker.compose.project=katcha" in call for call in searches)
+    assert [call for call in calls if "stop" in call] == [
+        ["docker", "stop", "--time", "30", "old-discovery-1", "old-discovery-2"]
+    ]
+    assert not any("rm" in call or "down" in call for call in calls)
+
+
+@pytest.mark.parametrize("retired_state", ["running", "exited"])
+def test_reattach_ignores_retired_worker_health(tmp_path, retired_state):
+    app = instance(tmp_path)
+    rows = [
+        {"Service": service, "State": "running", "Health": "healthy", "ExitCode": 0}
+        for service in runtime.REQUIRED_SERVICES
+    ]
+    rows.append({"Service": "discovery-worker", "State": retired_state, "ExitCode": 1})
+    connection = MagicMock()
+    connection.getresponse.return_value.status = 200
+    with (
+        patch.object(app, "run", return_value=json.dumps(rows)),
+        patch.object(app, "stop_retired_workers") as retire,
+        patch.object(app, "start_logs"),
+        patch.object(runtime.http.client, "HTTPConnection", return_value=connection),
+    ):
+        assert app.reconcile_existing()
+    assert retire.call_count == int(retired_state == "running")
+    assert app.phase == "ready"
+    assert not any(row["Service"] == "discovery-worker" for row in app.services)

@@ -6,6 +6,14 @@ on:
   pull_request:
     paths:
       - .github/workflows/runtime-images.yml
+      - Dockerfile
+      - Dockerfile.analysis
+      - Dockerfile.control
+      - Dockerfile.production
+      - Dockerfile.renderer
+      - Dockerfile.minio
+      - pyproject.toml
+      - renderer/**
   workflow_dispatch:
 
 permissions:
@@ -17,9 +25,8 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  publish:
-    if: github.event_name != 'pull_request'
-    name: ${{ matrix.image }}
+  build:
+    name: ${{ matrix.image }} (${{ matrix.platforms }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -27,22 +34,31 @@ jobs:
         include:
           - image: katcha-control
             dockerfile: Dockerfile.control
+            platforms: linux/amd64,linux/arm64
           - image: katcha-ingest
             dockerfile: Dockerfile
+            platforms: linux/amd64,linux/arm64
           - image: katcha-analysis
             dockerfile: Dockerfile.analysis
+            platforms: linux/amd64,linux/arm64
           - image: katcha-renderer
             dockerfile: Dockerfile.renderer
+            platforms: linux/amd64,linux/arm64
           - image: katcha-production
             dockerfile: Dockerfile.production
+            platforms: linux/amd64,linux/arm64
           - image: katcha-minio
             dockerfile: Dockerfile.minio
+            platforms: linux/amd64
     steps:
       - uses: actions/checkout@v6
+
+      - uses: docker/setup-qemu-action@v3
 
       - uses: docker/setup-buildx-action@v3
 
       - name: Log in to GHCR
+        if: github.event_name != 'pull_request'
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
@@ -54,8 +70,8 @@ jobs:
         with:
           context: .
           file: ${{ matrix.dockerfile }}
-          platforms: linux/amd64
-          push: true
+          platforms: ${{ matrix.platforms }}
+          push: ${{ github.event_name != 'pull_request' }}
           tags: |
             ghcr.io/deveadra/${{ matrix.image }}:${{ github.sha }}
             ghcr.io/deveadra/${{ matrix.image }}:main
@@ -67,13 +83,13 @@ jobs:
 
   verify-public:
     name: Verify anonymous runtime pulls
-    needs: publish
-    if: ${{ always() && (github.event_name == 'pull_request' || needs.publish.result == 'success') }}
+    needs: build
+    if: github.event_name != 'pull_request' && needs.build.result == 'success'
     runs-on: ubuntu-latest
     permissions:
       contents: read
     env:
-      IMAGE_TAG: ${{ github.event_name == 'pull_request' && 'main' || github.sha }}
+      IMAGE_TAG: ${{ github.sha }}
     steps:
       - name: Pull runtime images without a registry login
         shell: bash
@@ -91,8 +107,6 @@ jobs:
             ref="ghcr.io/deveadra/${image}:${IMAGE_TAG}"
             echo "Anonymous pull: ${ref}"
             docker pull "${ref}"
-            if [[ "${GITHUB_EVENT_NAME}" != "pull_request" ]]; then
-              revision="$(docker inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "${ref}")"
-              test "${revision}" = "${GITHUB_SHA}"
-            fi
+            revision="$(docker inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "${ref}")"
+            test "${revision}" = "${GITHUB_SHA}"
           done

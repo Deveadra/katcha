@@ -657,6 +657,7 @@ async function loadChannel() {
     clearPreviewUrl();
     state.channel = $("channel").value;
     rememberWorkspace();
+    void window.KatchaEditorial.load(state.channel);
     state.episodes = []; state.blueprints = []; state.attempts = new Map();
     state.brands = []; state.candidates = []; state.productions = []; state.preview = null;
     if (!state.channel) { renderBlueprints(); renderEpisodes(); renderPerformance(null); renderBrandLab(); return; }
@@ -820,6 +821,7 @@ async function action(event) {
     } catch (error) { message(error.message, true); button.disabled = false; }
 }
 const PRODUCTION_HASH_GROUPS = {
+    editorial: "editorial",
     queue: "queue",
     "editorial-pipeline": "queue",
     recipes: "recipes",
@@ -835,7 +837,7 @@ function productionTabFromHash() {
 }
 
 function setProductionTab(tab, { updateHash = true, focus = false } = {}) {
-    const selected = ["queue", "recipes", "brand"].includes(tab) ? tab : "queue";
+    const selected = ["queue", "editorial", "recipes", "brand"].includes(tab) ? tab : "queue";
     document.querySelectorAll("[data-production-tab]").forEach((button) => {
         const active = button.dataset.productionTab === selected;
         button.setAttribute("aria-selected", active ? "true" : "false");
@@ -851,6 +853,7 @@ function setProductionTab(tab, { updateHash = true, focus = false } = {}) {
         section.hidden = !shouldShow;
     });
 
+    if (selected === "editorial" && state.channel && !$("channel").disabled) void window.KatchaEditorial.load(state.channel);
     if (updateHash) {
         const next = window.location.pathname + window.location.search + "#" + selected;
         window.history.replaceState(null, "", next);
@@ -891,6 +894,7 @@ function installProductionTabs() {
     setProductionTab(productionTabFromHash(), { updateHash: false });
 }
 
+window.KatchaEditorial.init(api, apiBlob);
 installProductionTabs();
 
 $("connect-form").addEventListener("submit", connect);

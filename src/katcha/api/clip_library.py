@@ -11,7 +11,7 @@ from sqlalchemy import String, cast, func, or_, select
 from katcha.clip_lifecycle_models import ClipLifecycle, ClipRetentionPolicy
 from katcha.db import session_scope
 from katcha.intelligence_models import ChannelProfile
-from katcha.models import Clip, ClipFeature, SourceItem
+from katcha.models import Clip, ClipAnalysisRun, ClipFeature, SourceItem
 from katcha.services.clip_lifecycle import (
     archive_clip,
     channel_info_for_clip,
@@ -57,6 +57,9 @@ class ClipLibraryItem(BaseModel):
     creator: str | None
     platform: str | None
     candidate_score: float | None
+    analysis_status: str | None = None
+    analysis_stage: str | None = None
+    analysis_error: str | None = None
     channels: list[ClipChannelRef]
     active_reference_count: int
     reference_count: int
@@ -244,6 +247,7 @@ def clip_library_summary(
 def list_clip_library(
     q: str | None = Query(default=None, max_length=500),
     channel_profile_id: uuid.UUID | None = Query(default=None),
+    clip_id: uuid.UUID | None = Query(default=None),
     clip_status: str | None = Query(default=None, alias="status", max_length=32),
     lifecycle_state: Literal["hot", "archived", "purged"] | None = Query(default=None),
     limit: int = Query(default=80, ge=1, le=250),
@@ -258,6 +262,8 @@ def list_clip_library(
                 return ClipLibraryPage(items=[], total=0, offset=offset, limit=limit)
             stmt = stmt.where(Clip.id.in_(channel_ids))
 
+        if clip_id is not None:
+            stmt = stmt.where(Clip.id == clip_id)
         if clip_status:
             stmt = stmt.where(Clip.status == clip_status)
         if lifecycle_state == "hot":
@@ -314,6 +320,21 @@ def list_clip_library(
                 if source.clip_id is not None:
                     sources_by_clip[source.clip_id].append(source)
 
+        latest_analysis_by_clip: dict[uuid.UUID, ClipAnalysisRun] = {}
+        if clip_ids:
+            analysis_rows = list(
+                session.scalars(
+                    select(ClipAnalysisRun)
+                    .where(ClipAnalysisRun.clip_id.in_(clip_ids))
+                    .order_by(
+                        ClipAnalysisRun.created_at.desc(),
+                        ClipAnalysisRun.id.desc(),
+                    )
+                )
+            )
+            for analysis in analysis_rows:
+                latest_analysis_by_clip.setdefault(analysis.clip_id, analysis)
+
         items: list[ClipLibraryItem] = []
         for clip in clips:
             lifecycle = ensure_lifecycle(session, clip)
@@ -355,6 +376,21 @@ def list_clip_library(
                     candidate_score=(
                         float(features.candidate_score)
                         if features and features.candidate_score is not None
+                        else None
+                    ),
+                    analysis_status=(
+                        latest_analysis_by_clip[clip.id].status
+                        if clip.id in latest_analysis_by_clip
+                        else None
+                    ),
+                    analysis_stage=(
+                        latest_analysis_by_clip[clip.id].stage
+                        if clip.id in latest_analysis_by_clip
+                        else None
+                    ),
+                    analysis_error=(
+                        latest_analysis_by_clip[clip.id].error
+                        if clip.id in latest_analysis_by_clip
                         else None
                     ),
                     channels=channels,

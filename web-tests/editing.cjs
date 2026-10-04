@@ -310,7 +310,7 @@ const verifiedPreview = {
         await page.locator("#connect-form button").click();
         await page.getByText("Ranking clips").waitFor();
         assert.equal(await page.locator(".logo").getAttribute("href"), "/home");
-        assert.equal(await page.locator("[data-production-tab]").count(), 3);
+        assert.equal(await page.locator("[data-production-tab]").count(), 4);
         assert.equal(
             await page.locator('[data-production-tab="queue"]').getAttribute("aria-selected"),
             "true",
@@ -422,7 +422,7 @@ const verifiedPreview = {
             await page.evaluate(() => document.documentElement.scrollWidth > innerWidth),
             false,
         );
-        assert.equal(await page.locator("[data-production-tab]").count(), 3);
+        assert.equal(await page.locator("[data-production-tab]").count(), 4);
         await page.getByRole("button", { name: /Render preview/ }).click();
         await page.getByText(/Brand preview verified/).waitFor();
         await page.locator("#brand-preview-video").waitFor();

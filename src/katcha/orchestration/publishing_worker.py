@@ -70,7 +70,7 @@ async def _resume_persisted_publications(client: Client, settings) -> tuple[int,
                     settings.analytics_offsets_hours(),
                 ],
                 id=row.workflow_id,
-                id_reuse_policy=WorkflowIDReusePolicy.REJECT_DUPLICATE,
+                id_reuse_policy=WorkflowIDReusePolicy.ALLOW_DUPLICATE_FAILED_ONLY,
                 task_queue=settings.temporal_publishing_task_queue,
             )
             resumed += 1

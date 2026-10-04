@@ -28,6 +28,13 @@ services:
       POSTGRES_USER: katcha
       POSTGRES_PWD: katcha
       POSTGRES_SEEDS: postgres
+      # All four Temporal services share PostgreSQL with the application.
+      # Bound each service's pools instead of retaining the upstream 20+10
+      # connections per service. Do not change history shards on existing data.
+      SQL_MAX_CONNS: "${KATCHA_TEMPORAL_SQL_MAX_CONNS:-5}"
+      SQL_MAX_IDLE_CONNS: "${KATCHA_TEMPORAL_SQL_MAX_IDLE_CONNS:-2}"
+      SQL_VIS_MAX_CONNS: "${KATCHA_TEMPORAL_SQL_VIS_MAX_CONNS:-2}"
+      SQL_VIS_MAX_IDLE_CONNS: "${KATCHA_TEMPORAL_SQL_VIS_MAX_IDLE_CONNS:-1}"
       DYNAMIC_CONFIG_FILE_PATH: config/dynamicconfig/development-sql.yaml
     ports:
       - "7233:7233"
@@ -69,7 +76,7 @@ services:
     volumes:
       - minio-data:/data
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/cluster"]
       interval: 30s
       start_interval: 1s
       start_period: 20s

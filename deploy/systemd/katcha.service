@@ -1,0 +1,22 @@
+[Unit]
+Description=Katcha production control plane
+Wants=network-online.target
+After=network-online.target docker.service
+Requires=docker.service
+RequiresMountsFor=/srv/katcha
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/katcha
+Environment=KATCHA_REPO_ROOT=/opt/katcha
+Environment=KATCHA_ENV_FILE=/etc/katcha/katcha.env
+ExecStart=/opt/katcha/deploy/scripts/production-supervisor.sh
+Restart=on-failure
+RestartSec=10s
+TimeoutStartSec=15min
+TimeoutStopSec=2min
+KillSignal=SIGTERM
+
+[Install]
+WantedBy=multi-user.target

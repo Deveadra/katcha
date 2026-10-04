@@ -16,6 +16,7 @@ from sqlalchemy import select
 from katcha.chatgpt_models import ChatGPTConnection, ChatGPTOAuthState
 from katcha.config import Settings, get_settings
 from katcha.db import session_scope
+from katcha.runtime_fence import assert_mutation_authority
 from katcha.security.secrets import decrypt_secret, encrypt_secret
 
 AUTHORIZATION_URL = "https://auth.openai.com/api/accounts/authorize"
@@ -637,6 +638,7 @@ def _stream_plan_response(
     body: dict[str, object],
     timeout: float,
 ) -> tuple[str, dict[str, object] | None, int, int]:
+    assert_mutation_authority("ai.chatgpt_plan_inference")
     payload = {
         "model": session.model,
         "store": False,

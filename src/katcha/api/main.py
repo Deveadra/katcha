@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import mimetypes
 import uuid
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from pathlib import Path
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
@@ -19,15 +22,19 @@ from katcha.api.chatgpt import router as chatgpt_router
 from katcha.api.clip_library import router as clip_library_router
 from katcha.api.codex import router as codex_router
 from katcha.api.command_center import router as command_center_router
+from katcha.api.content import router as content_router
 from katcha.api.control import router as control_router
 from katcha.api.control_auth import require_control_token, require_native_channel_body
 from katcha.api.edit_blueprints import router as edit_blueprints_router
+from katcha.api.editorial_projects import router as editorial_projects_router
+from katcha.api.editorial_runs import router as editorial_runs_router
 from katcha.api.explorer import router as explorer_router
 from katcha.api.goals import router as goals_router
 from katcha.api.integrations import router as integrations_router
 from katcha.api.intelligence import router as intelligence_router
 from katcha.api.operations import router as operations_router
 from katcha.api.packaging import router as packaging_router
+from katcha.api.publication_plans import router as publication_plans_router
 from katcha.api.reach import router as reach_router
 from katcha.api.schemas import (
     AnalysisRunResponse,
@@ -67,6 +74,7 @@ from katcha.api.schemas import (
     ReviewProductionRequest,
     SourceResponse,
     StartPublicationRequest,
+    UpdatePublicationPlanRequest,
     YouTubeConnectionResponse,
     YouTubeOAuthStartResponse,
 )
@@ -125,6 +133,11 @@ from katcha.services.compilations import (
     register_compilation_regeneration,
     review_compilation,
 )
+from katcha.services.intelligence_automation import (
+    advance_processed_handoff_receipt,
+    reconcile_authorized_handoff_records,
+)
+from katcha.services.intelligence_handoff import process_handoff_inbox
 from katcha.services.productions import (
     register_regeneration,
     register_short_production,
@@ -137,17 +150,45 @@ from katcha.services.publications import (
     register_publication,
     release_publication_for_upload,
     retry_publication,
+    update_publication_plan,
 )
 from katcha.services.render_automation import advance_render_automation
 from katcha.services.render_recovery import render_attempts_for_source
 from katcha.services.sources import register_source
+
+_logger = logging.getLogger(__name__)
+
+
+async def _process_pending_handoffs_on_startup() -> None:
+    """Drain manually dropped handoff files after the API database is available."""
+    try:
+        items = await asyncio.to_thread(process_handoff_inbox, limit=50)
+        for item in items:
+            if item.status == "processed":
+                await advance_processed_handoff_receipt(item.receipt)
+        await reconcile_authorized_handoff_records(limit=200)
+    except Exception:
+        # Handoff failures must never prevent Katcha itself from starting. Individual
+        # file validation failures are already moved to the failed queue by the
+        # handoff service; this guard covers broader storage/database problems.
+        _logger.exception("automatic handoff inbox processing failed during startup")
+
+
+@asynccontextmanager
+async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
+    await _process_pending_handoffs_on_startup()
+    yield
+
 
 app = FastAPI(
     title="Katcha API",
     dependencies=[Depends(require_control_token), Depends(require_native_channel_body)],
     version=__version__,
     description="Standalone control plane for Katcha media workflows.",
+    lifespan=_lifespan,
 )
+app.include_router(editorial_projects_router)
+app.include_router(editorial_runs_router)
 app.include_router(acquisition_router)
 app.include_router(brands_router)
 app.include_router(chatgpt_router)
@@ -156,10 +197,12 @@ app.include_router(clip_library_router)
 app.include_router(command_center_router)
 app.include_router(goals_router)
 app.include_router(control_router)
+app.include_router(content_router)
 app.include_router(edit_blueprints_router)
 app.include_router(intelligence_router)
 app.include_router(integrations_router)
 app.include_router(operations_router)
+app.include_router(publication_plans_router)
 app.include_router(packaging_router)
 app.include_router(reach_router)
 app.include_router(short_episodes_router)
@@ -167,22 +210,39 @@ app.include_router(studio_router)
 app.include_router(telegram_router)
 app.include_router(trends_router)
 app.include_router(explorer_router)
-app.mount("/explorer/assets", StaticFiles(directory=Path(__file__).parents[1] / "web"),
-          name="explorer-assets")
-app.mount("/editing/assets", StaticFiles(directory=Path(__file__).parents[1] / "web"),
-          name="editing-assets")
-app.mount("/channels/assets", StaticFiles(directory=Path(__file__).parents[1] / "web"),
-          name="channels-assets")
-app.mount("/ai/assets", StaticFiles(directory=Path(__file__).parents[1] / "web"),
-          name="ai-assets")
-app.mount("/operations/assets", StaticFiles(directory=Path(__file__).parents[1] / "web"),
-          name="operations-assets")
-app.mount("/settings/assets", StaticFiles(directory=Path(__file__).parents[1] / "web"),
-          name="settings-assets")
+app.mount(
+    "/explorer/assets",
+    StaticFiles(directory=Path(__file__).parents[1] / "web"),
+    name="explorer-assets",
+)
+app.mount(
+    "/editing/assets",
+    StaticFiles(directory=Path(__file__).parents[1] / "web"),
+    name="editing-assets",
+)
+app.mount(
+    "/channels/assets",
+    StaticFiles(directory=Path(__file__).parents[1] / "web"),
+    name="channels-assets",
+)
+app.mount("/ai/assets", StaticFiles(directory=Path(__file__).parents[1] / "web"), name="ai-assets")
+app.mount(
+    "/operations/assets",
+    StaticFiles(directory=Path(__file__).parents[1] / "web"),
+    name="operations-assets",
+)
+app.mount(
+    "/settings/assets",
+    StaticFiles(directory=Path(__file__).parents[1] / "web"),
+    name="settings-assets",
+)
 
 
-app.mount("/system", StaticFiles(directory=Path(__file__).parents[1] / "web" / "system"),
-          name="shared-system")
+app.mount(
+    "/system",
+    StaticFiles(directory=Path(__file__).parents[1] / "web" / "system"),
+    name="shared-system",
+)
 
 
 @app.get("/home", include_in_schema=False)
@@ -196,6 +256,12 @@ def operations_shell(request: Request):
 def explorer_shell(request: Request):
     query = "?" + request.url.query if request.url.query else ""
     return RedirectResponse("/explorer/assets/index.html" + query)
+
+
+@app.get("/content", include_in_schema=False)
+def content_shell(request: Request):
+    query = "?" + request.url.query if request.url.query else ""
+    return RedirectResponse("/editing/assets/content.html" + query)
 
 
 @app.get("/editing", include_in_schema=False)
@@ -489,11 +555,17 @@ def create_passthrough_production(
 @app.get("/v1/productions", response_model=list[ProductionResponse])
 def list_productions(
     limit: int = Query(default=50, ge=1, le=250),
+    offset: int = Query(default=0, ge=0),
     production_status: str | None = Query(default=None, alias="status"),
     channel_profile_id: uuid.UUID | None = Query(default=None),
 ) -> list[Production]:
     with session_scope() as session:
-        stmt = select(Production).order_by(Production.created_at.desc()).limit(limit)
+        stmt = (
+            select(Production)
+            .order_by(Production.created_at.desc(), Production.id)
+            .offset(offset)
+            .limit(limit)
+        )
         if production_status:
             stmt = stmt.where(Production.status == production_status)
         if channel_profile_id:
@@ -824,6 +896,27 @@ async def create_compilation_publication(
 
 
 @app.post(
+    "/v1/publications/{publication_id}/plan",
+    response_model=PublicationResponse,
+)
+def update_held_publication_plan(
+    publication_id: uuid.UUID,
+    request: UpdatePublicationPlanRequest,
+) -> Publication:
+    try:
+        return update_publication_plan(
+            publication_id,
+            publish_mode=request.publish_mode,
+            publish_at=request.publish_at,
+            notify_subscribers=request.notify_subscribers,
+            actor=request.actor,
+        )
+    except ValueError as exc:
+        code = 404 if "not found" in str(exc) else 409
+        raise HTTPException(status_code=code, detail=str(exc)) from exc
+
+
+@app.post(
     "/v1/publications/{publication_id}/start",
     response_model=PublicationResponse,
     status_code=status.HTTP_202_ACCEPTED,
@@ -831,35 +924,57 @@ async def create_compilation_publication(
 async def start_held_publication(
     publication_id: uuid.UUID,
     request: StartPublicationRequest,
+    http_request: Request,
 ) -> Publication:
+    from katcha.api.control_auth import control_actor
+    from katcha.api.publication_plans import authorize_publication
+
+    authorize_publication(http_request, publication_id)
     _require_youtube_execution()
     try:
         publication = release_publication_for_upload(
             publication_id,
-            actor=request.actor,
+            actor=control_actor(http_request),
+            expected_version=request.expected_version,
         )
     except ValueError as exc:
         code = 404 if "not found" in str(exc) else 409
         raise HTTPException(status_code=code, detail=str(exc)) from exc
-    await start_publication_workflow(str(publication.id), publication.workflow_id)
+    try:
+        await start_publication_workflow(str(publication.id), publication.workflow_id)
+    except Exception:
+        with session_scope() as session:
+            publication = session.get(Publication, publication_id)
+            publication.error = ("Upload queued; worker dispatch could not be confirmed. "
+                                 "Retry upload start.")
+            session.flush()
+            session.refresh(publication)
+            session.expunge(publication)
+    else:
+        with session_scope() as session:
+            publication = session.get(Publication, publication_id)
+            if (publication.error or "").startswith("Upload queued; worker dispatch"):
+                publication.error = None
+            session.flush()
+            session.refresh(publication)
+            session.expunge(publication)
     return publication
 
 
 @app.get("/v1/publications", response_model=list[PublicationResponse])
 def list_publications(
     limit: int = Query(default=50, ge=1, le=250),
+    offset: int = Query(default=0, ge=0),
     publication_status: str | None = Query(default=None, alias="status"),
     youtube_connection_id: uuid.UUID | None = Query(default=None),
 ) -> list[Publication]:
     with session_scope() as session:
-        stmt = select(Publication).order_by(Publication.created_at.desc())
+        stmt = select(Publication).order_by(Publication.created_at.desc(), Publication.id)
         if publication_status:
             stmt = stmt.where(Publication.status == publication_status)
         if youtube_connection_id:
-            stmt = stmt.where(
-                Publication.youtube_connection_id == youtube_connection_id
-            )
-        return list(session.scalars(stmt.limit(limit)))
+            stmt = stmt.where(Publication.youtube_connection_id == youtube_connection_id)
+        return list(session.scalars(stmt.offset(offset).limit(limit)))
 
 
 @app.get("/v1/publications/{publication_id}", response_model=PublicationResponse)

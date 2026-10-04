@@ -21,6 +21,10 @@ from katcha.orchestration.trend_client import (
     start_topic_watch_schedule,
     start_topic_watch_workflow,
 )
+from katcha.services.automation_schedules import (
+    locked_schedule_for_reconcile,
+    register_topic_watch_schedule,
+)
 from katcha.services.discovery_trends import (
     compute_candidate_trend_score,
     create_topic_watch_version,
@@ -264,13 +268,26 @@ async def schedule_topic_watch(
     watch_key, watch_version, enabled = _watch_snapshot(topic_watch_id)
     if not enabled:
         raise HTTPException(status_code=409, detail="topic watch is disabled")
-    workflow_id = f"topic-watch-schedule-{topic_watch_id}"
-    await start_topic_watch_schedule(
-        str(topic_watch_id),
-        workflow_id,
+    registration = register_topic_watch_schedule(
+        topic_watch_id,
         interval_minutes=request.interval_minutes,
         top_n=request.top_n,
     )
+    with locked_schedule_for_reconcile(registration.schedule.id) as current:
+        if current.workflow_id != registration.schedule.workflow_id:
+            raise HTTPException(
+                status_code=409,
+                detail="topic watch schedule was superseded by another update",
+            )
+        await start_topic_watch_schedule(
+            str(topic_watch_id),
+            current.workflow_id,
+            interval_minutes=int(current.schedule_config["interval_minutes"]),
+            top_n=int(current.schedule_config["top_n"]),
+            supersedes_workflow_id=current.supersedes_workflow_id,
+        )
+        current.supersedes_workflow_id = None
+        workflow_id = current.workflow_id
     return ScheduleTopicWatchResponse(
         topic_watch_id=topic_watch_id,
         watch_key=watch_key,

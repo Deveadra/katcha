@@ -1,0 +1,168 @@
+name: Disaster backup recovery
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/disaster-backup.yml
+      - deploy/backup.env.example
+      - deploy/restore.env.example
+      - deploy/docker-compose.production.yml
+      - deploy/scripts/postgres-backup.sh
+      - deploy/scripts/postgres-restore-test.sh
+      - deploy/scripts/postgres-disaster-restore.sh
+      - deploy/systemd/katcha-backup.service
+      - deploy/systemd/katcha-backup.timer
+      - deploy/systemd/katcha-restore-test.service
+      - deploy/systemd/katcha-restore-test.timer
+      - deploy/cloud-init/oci-recovery-candidate.sh.tmpl
+      - deploy/scripts/production-supervisor.sh
+      - src/katcha/ops/disaster_backup.py
+      - src/katcha/ops/disaster_recovery_validate.py
+      - src/katcha/ops/r2_bucket_lock.py
+      - src/katcha/ops/oci_recovery.py
+      - tests/test_disaster_backup.py
+      - tests/test_disaster_recovery_validate.py
+      - tests/test_r2_bucket_lock.py
+      - tests/test_oci_recovery.py
+      - tests/test_cloud_runtime_contract.py
+  push:
+    branches: [main]
+    paths:
+      - deploy/backup.env.example
+      - deploy/restore.env.example
+      - deploy/scripts/postgres-backup.sh
+      - deploy/scripts/postgres-restore-test.sh
+      - src/katcha/ops/disaster_backup.py
+      - src/katcha/ops/disaster_recovery_validate.py
+      - src/katcha/ops/r2_bucket_lock.py
+
+permissions:
+  contents: read
+
+jobs:
+  disaster-backup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Katcha test runtime
+        run: python -m pip install -e '.[dev]'
+
+      - name: Validate Python and shell contracts
+        run: |
+          python -m py_compile \
+            src/katcha/ops/disaster_backup.py \
+            src/katcha/ops/disaster_recovery_validate.py \
+            src/katcha/ops/r2_bucket_lock.py
+          bash -n deploy/scripts/postgres-backup.sh
+          bash -n deploy/scripts/postgres-restore-test.sh
+          bash -n deploy/cloud-init/oci-recovery-candidate.sh.tmpl
+          pytest -q \
+            tests/test_disaster_backup.py \
+            tests/test_disaster_recovery_validate.py \
+            tests/test_r2_bucket_lock.py \
+            tests/test_oci_recovery.py \
+            tests/test_cloud_runtime_contract.py
+
+      - name: Validate production Compose ops profiles
+        env:
+          KATCHA_ENV_FILE: ${{ github.workspace }}/.env.production.example
+          KATCHA_BACKUP_ENV_FILE: ${{ github.workspace }}/deploy/backup.env.example
+          KATCHA_RESTORE_ENV_FILE: ${{ github.workspace }}/deploy/restore.env.example
+        run: |
+          docker compose \
+            --env-file .env.production.example \
+            -f deploy/docker-compose.production.yml \
+            --profile ops \
+            config --quiet
+
+      - name: Prove PostgreSQL 16 logical dump can restore into a fresh cluster
+        shell: bash
+        run: |
+          set -euo pipefail
+          source_name=katcha-backup-source
+          target_name=katcha-backup-target
+          cleanup() {
+            docker rm -f "$source_name" "$target_name" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+
+          wait_for_postgres() {
+            local container="$1"
+            local stable=0
+            for attempt in $(seq 1 90); do
+              if docker exec "$container" psql -U postgres -d postgres -Atc \
+                  "SELECT 1;" >/dev/null 2>&1; then
+                stable=$((stable + 1))
+                if [[ "$stable" -ge 5 ]]; then
+                  return 0
+                fi
+              else
+                stable=0
+              fi
+              sleep 1
+            done
+            docker logs "$container" >&2 || true
+            return 1
+          }
+
+          docker run -d --name "$source_name" \
+            -e POSTGRES_PASSWORD=test-password \
+            postgres:16-alpine >/dev/null
+          wait_for_postgres "$source_name"
+
+          docker exec "$source_name" createdb -U postgres katcha
+          docker exec "$source_name" createdb -U postgres temporal
+          docker exec "$source_name" psql -U postgres -d katcha -v ON_ERROR_STOP=1 -c \
+            "CREATE TABLE alembic_version(version_num text primary key); INSERT INTO alembic_version VALUES ('test-head'); CREATE TABLE sample(id integer primary key, value text); INSERT INTO sample VALUES (1, 'durable');"
+          docker exec "$source_name" psql -U postgres -d temporal -v ON_ERROR_STOP=1 -c \
+            "CREATE TABLE executions(id integer primary key); INSERT INTO executions VALUES (1);"
+
+          mkdir -p /tmp/katcha-backup
+          : > /tmp/katcha-backup/databases.tsv
+          for database in katcha temporal; do
+            filename="db-$database.dump"
+            docker exec "$source_name" pg_dump -U postgres \
+              --format=custom --compress=6 --no-owner --no-acl "$database" \
+              > "/tmp/katcha-backup/$filename"
+            printf '%s\t%s\n' "$filename" "$database" \
+              >> /tmp/katcha-backup/databases.tsv
+          done
+
+          python -m katcha.ops.disaster_backup manifest \
+            --directory /tmp/katcha-backup \
+            --mapping /tmp/katcha-backup/databases.tsv \
+            --backup-id 20261003T000000Z-ci \
+            --release-sha aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
+            --deployment-id ci \
+            --deployment-epoch 1
+          python -m katcha.ops.disaster_backup restore-plan \
+            --directory /tmp/katcha-backup > /tmp/restore-plan.tsv
+
+          docker run -d --name "$target_name" \
+            -e POSTGRES_PASSWORD=test-password \
+            postgres:16-alpine >/dev/null
+          wait_for_postgres "$target_name"
+
+          for database in katcha temporal; do
+            filename="db-$database.dump"
+            docker exec "$target_name" createdb -U postgres "$database"
+            docker cp "/tmp/katcha-backup/$filename" "$target_name:/tmp/$filename" >/dev/null
+            docker exec "$target_name" pg_restore -U postgres \
+              --exit-on-error --no-owner --no-acl \
+              -d "$database" "/tmp/$filename"
+          done
+
+          test "$(
+            docker exec "$target_name" psql -U postgres -d katcha -Atc \
+              "SELECT value FROM sample WHERE id = 1;"
+          )" = "durable"
+          test "$(
+            docker exec "$target_name" psql -U postgres -d temporal -Atc \
+              "SELECT count(*) FROM executions;"
+          )" = "1"

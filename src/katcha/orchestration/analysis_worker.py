@@ -42,7 +42,7 @@ async def _resume_persisted_analysis_work(client: Client, settings) -> tuple[int
                 ClipAnalysisWorkflow.run,
                 args=[str(row.id), settings.ai_enabled],
                 id=row.workflow_id,
-                id_reuse_policy=WorkflowIDReusePolicy.REJECT_DUPLICATE,
+                id_reuse_policy=WorkflowIDReusePolicy.ALLOW_DUPLICATE_FAILED_ONLY,
                 task_queue=settings.temporal_analysis_task_queue,
             )
             resumed += 1

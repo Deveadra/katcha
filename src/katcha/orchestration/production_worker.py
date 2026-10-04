@@ -10,6 +10,7 @@ from temporalio.common import WorkflowIDReusePolicy
 from temporalio.exceptions import WorkflowAlreadyStartedError
 from temporalio.worker import Worker
 
+from katcha.brand_preview_models import BrandPreviewRender
 from katcha.config import get_settings
 from katcha.db import session_scope
 from katcha.longform_models import Compilation
@@ -148,6 +149,13 @@ async def _resume_persisted_production_work(client: Client, settings) -> tuple[i
                 )
             )
         )
+        brand_previews = list(
+            session.scalars(
+                select(BrandPreviewRender).where(
+                    BrandPreviewRender.status.in_(["queued", "rendering"])
+                )
+            )
+        )
 
     resumed = 0
     present = 0
@@ -196,8 +204,21 @@ async def _resume_persisted_production_work(client: Client, settings) -> tuple[i
                 workflow_run,
                 args=[source_id, stage],
                 id=workflow_id,
-                id_reuse_policy=WorkflowIDReusePolicy.REJECT_DUPLICATE,
+                id_reuse_policy=WorkflowIDReusePolicy.ALLOW_DUPLICATE_FAILED_ONLY,
                 task_queue=task_queue,
+            )
+            resumed += 1
+        except WorkflowAlreadyStartedError:
+            present += 1
+
+    for row in brand_previews:
+        try:
+            await client.start_workflow(
+                StagedBrandPreviewWorkflow.run,
+                str(row.id),
+                id=row.workflow_id,
+                id_reuse_policy=WorkflowIDReusePolicy.ALLOW_DUPLICATE_FAILED_ONLY,
+                task_queue=settings.temporal_production_task_queue,
             )
             resumed += 1
         except WorkflowAlreadyStartedError:

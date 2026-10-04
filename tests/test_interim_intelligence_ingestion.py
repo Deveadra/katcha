@@ -15,6 +15,7 @@ from katcha.acquisition_models import (
     IntelligenceBatchRecord,
     IntelligenceIngestBatch,
     IntelligenceRecord,
+    RightsAssessment,
 )
 from katcha.intelligence_models import ChannelProfile
 from katcha.publishing_models import YouTubeConnection
@@ -327,4 +328,71 @@ def test_intelligence_record_materializes_as_channel_scoped_discovery_candidate(
     assert candidate.candidate_metadata["intelligence_record_id"] == str(record.id)
     assert candidate.candidate_metadata["intelligence_summary"] == record.summary
     assert float(candidate.provenance_confidence) == pytest.approx(0.99)
+
+def test_verified_official_trailer_honors_standing_operator_authorization(
+    intelligence_scope,
+) -> None:
+    from katcha.api.acquisition import (
+        MaterializeIntelligenceCandidateRequest,
+        materialize_intelligence_candidate,
+    )
+
+    channel_id = _create_channel(
+        intelligence_scope,
+        suffix="foresceneauth",
+        title="FORESCENE",
+    )
+    result = ingest_intelligence_batch(
+        channel_profile_id=channel_id,
+        batch_key="visionquest-authorized-official-trailer",
+        producer="orion",
+        source_type="assistant",
+        records=[
+            {
+                "record_kind": "video",
+                "record_key": "youtube:video:sXKnmgmbkoE",
+                "title": "Marvel Television's VisionQuest | Official Trailer",
+                "summary": "Urgent official trailer publication.",
+                "source_url": "https://www.youtube.com/watch?v=sXKnmgmbkoE",
+                "platform": "youtube",
+                "tags": ["visionquest", "official_trailer"],
+                "payload": {
+                    "creator": "Marvel Entertainment",
+                    "operator_authorized": True,
+                    "authorization_scope": "official_trailer_repost",
+                    "official_source_verified": True,
+                },
+                "provenance": {
+                    "confidence": 0.99,
+                    "collector": "orion",
+                    "official_channel_verified": True,
+                },
+                "observed_at": "2026-10-02T10:45:00Z",
+            }
+        ],
+    )
+    record = result.records[0]
+
+    candidate = materialize_intelligence_candidate(
+        channel_id,
+        record.id,
+        MaterializeIntelligenceCandidateRequest(),
+    )
+
+    assert candidate.status == "qualified"
+    assert candidate.candidate_metadata["operator_authorized"] is True
+    assert candidate.candidate_metadata["authorization_scope"] == "official_trailer_repost"
+    assert candidate.candidate_metadata["official_source_verified"] is True
+
+    with intelligence_scope() as session:
+        assessment = session.scalar(
+            select(RightsAssessment).where(
+                RightsAssessment.discovery_candidate_id == candidate.id
+            )
+        )
+        assert assessment is not None
+        assert assessment.rights_basis == "operator_authorized"
+        assert assessment.operator_authorized is True
+        assert assessment.production_eligible is True
+        assert assessment.rights_gate == "cleared"
 

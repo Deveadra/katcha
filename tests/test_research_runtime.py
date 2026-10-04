@@ -61,7 +61,8 @@ def channel():
         return profile.id, connection.id
 
 
-def test_saved_source_collects_persists_and_bridges_to_trends(research_db, monkeypatch):
+@pytest.mark.parametrize("title", ["Gaming update", "🎬🔥", "---"])
+def test_saved_source_collects_persists_and_bridges_to_trends(research_db, monkeypatch, title):
     profile_id, _ = channel()
     source = upsert_ingestion_source(
         source_key="fixture-feed",
@@ -79,7 +80,7 @@ def test_saved_source_collects_persists_and_bridges_to_trends(research_db, monke
             items=(
                 DiscoveredCandidate(
                     source_url="https://example.com/gaming-news",
-                    title="Gaming update",
+                    title=title,
                     creator="Fixture newsroom",
                     provenance_confidence=0.9,
                     metadata={
@@ -188,6 +189,7 @@ def test_consolidated_workers_register_every_called_activity():
         "analysis_worker.py",
         "production_worker.py",
         "intelligence_worker.py",
+        "discovery_worker.py",
     ]:
         tree = ast.parse((root / worker_name).read_text())
         imports = {
@@ -346,3 +348,19 @@ def test_shared_source_cannot_inherit_provider_or_default_channel(research_db, m
         assert "channel_profile_id" not in candidate.candidate_metadata
         assert candidate.candidate_metadata["source_scope"] == "shared"
         assert candidate.candidate_metadata["ingestion_source_id"] == str(source.id)
+
+
+def test_unconfigured_channel_trends_wait_without_retries(research_db, monkeypatch):
+    from katcha.orchestration import trend_activities
+    from katcha.services.trends import refresh_channel_trends
+
+    profile_id, _ = channel()
+    result = refresh_channel_trends(profile_id, run_key="unconfigured")
+    assert result["status"] == "awaiting_configuration"
+    assert result["topics_scored"] == 0
+    monkeypatch.setattr(trend_activities, "channel_trend_source_health", lambda _: {})
+    monkeypatch.setattr(trend_activities, "source_health_allows_refresh", lambda *a, **k: True)
+    result = trend_activities.refresh_channel_trends_activity(str(profile_id), "unconfigured")
+    assert result["status"] == "awaiting_configuration"
+    with pytest.raises(ValueError, match="channel profile not found"):
+        refresh_channel_trends(uuid.uuid4(), run_key="missing")

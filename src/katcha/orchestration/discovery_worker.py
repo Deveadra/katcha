@@ -26,6 +26,8 @@ from katcha.orchestration.discovery_workflows import (
     TopicWatchScheduleWorkflow,
     TopicWatchWorkflow,
 )
+from katcha.orchestration.research_activities import prepare_research_jobs_activity
+from katcha.orchestration.research_workflows import AutomaticResearchWorkflow
 from katcha.services.ingestion_sources import list_resumable_source_runs
 
 
@@ -39,7 +41,7 @@ async def _resume_incomplete_source_runs(client: Client) -> tuple[int, int]:
                 DiscoveryRunWorkflow.run,
                 str(run.id),
                 id=workflow_id,
-                id_reuse_policy=WorkflowIDReusePolicy.REJECT_DUPLICATE,
+                id_reuse_policy=WorkflowIDReusePolicy.ALLOW_DUPLICATE_FAILED_ONLY,
                 task_queue=DISCOVERY_TASK_QUEUE,
             )
             resumed += 1
@@ -75,6 +77,7 @@ async def main() -> None:
                 DiscoveryRunWorkflow,
                 TopicWatchWorkflow,
                 TopicWatchScheduleWorkflow,
+                AutomaticResearchWorkflow,
             ],
             activities=[
                 execute_discovery_page_activity,
@@ -84,6 +87,7 @@ async def main() -> None:
                 prepare_topic_watch_execution_activity,
                 finalize_topic_watch_execution_activity,
                 record_topic_watch_command_cycle_activity,
+                prepare_research_jobs_activity,
             ],
             activity_executor=activity_executor,
         )

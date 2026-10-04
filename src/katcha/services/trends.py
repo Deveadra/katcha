@@ -577,7 +577,14 @@ def refresh_channel_trends(
             .limit(1)
         )
         if watch is None:
-            raise ValueError(f"trend watch profile not configured: {channel_profile_id}")
+            return {
+                "channel_profile_id": str(channel_profile_id),
+                "run_key": run_key,
+                "status": "awaiting_configuration",
+                "topics_scored": 0,
+                "qualified_opportunities": 0,
+                "evidence_packets_built": 0,
+            }
         cutoff = now - timedelta(
             hours=max(DEFAULT_BASELINE_WINDOW_HOURS, watch.freshness_horizon_hours)
         )

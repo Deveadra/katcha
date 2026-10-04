@@ -6,6 +6,7 @@ const state = {
     clips: [],
     total: 0,
     selectedId: null,
+    linkedClip: launchParams.get("clip") || "",
     features: new Map(),
     sources: new Map(),
     bucket: "all",
@@ -140,6 +141,7 @@ function queryString(extra = {}) {
     if (channelId && channelId !== "all") {
         params.set("channel_profile_id", channelId);
     }
+    if (state.linkedClip) params.set("clip_id", state.linkedClip);
     const search = $("search").value.trim();
     if (search) params.set("q", search);
     const status = $("status-filter").value;
@@ -236,7 +238,11 @@ function aiResult(features) {
 function renderDetail(clip, features, sources) {
     clearPreview();
     const ai = aiResult(features);
-    const canAnalyze = !features && clip.status !== "failed" && clip.lifecycle_state === "hot";
+    const analysisFailed = clip.analysis_status === "failed";
+    const canAnalyze = !features &&
+        clip.status !== "failed" &&
+        clip.lifecycle_state === "hot" &&
+        (!clip.analysis_status || analysisFailed);
     const canPreview = clip.lifecycle_state !== "purged";
     const channels = (clip.channels || []).map((channel) => channel.name).join(", ") || "Unassigned";
     const refs = clip.active_reference_count
@@ -247,7 +253,7 @@ function renderDetail(clip, features, sources) {
 
     const sourceLinks = sources.length ? sources.map((row) => `
         <div>
-            <a class="source-link" href="${escapeHTML(row.source_url)}" target="_blank" rel="noopener">${escapeHTML(row.title || row.source_url)}</a>
+            ${/^https?:\/\//i.test(row.source_url) ? `<a class="source-link" href="${escapeHTML(row.source_url)}" target="_blank" rel="noopener">${escapeHTML(row.title || row.source_url)}</a>` : `<span>${escapeHTML(row.title || "Uploaded video file")}</span>`}
             <small>${escapeHTML(row.platform)}${row.creator ? ` · ${escapeHTML(row.creator)}` : ""} · ${escapeHTML(date(row.discovered_at))}</small>
         </div>
     `).join("") : '<span class="empty">No source lineage is attached.</span>';
@@ -287,9 +293,11 @@ function renderDetail(clip, features, sources) {
                 <p>${escapeHTML(clip.creator || "Unknown creator")} · ${escapeHTML(clip.platform || "stored media")} · ${escapeHTML(channels)}</p>
             </div>
             <div class="detail-actions">
+                ${canPreview ? `<a class="mini" href="/content?channel=${encodeURIComponent(state.selectedChannel)}&clip=${encodeURIComponent(clip.id)}&title=${encodeURIComponent(clipTitle(clip))}">Create video</a>` : ""}
+
                 ${lifecycleChip(clip)}
                 ${canPreview ? `<button class="mini" type="button" data-load-preview="${escapeHTML(clip.id)}">Load preview</button>` : ""}
-                ${canAnalyze ? `<button class="mini" type="button" data-analyze="${escapeHTML(clip.id)}">Analyze</button>` : ""}
+                ${canAnalyze ? `<button class="mini ${analysisFailed ? "danger" : ""}" type="button" data-analyze="${escapeHTML(clip.id)}" data-force-retry="${analysisFailed ? "true" : "false"}">${analysisFailed ? "Retry analysis" : "Analyze"}</button>` : ""}
                 ${askAction}
                 ${lifecycleActions}
             </div>
@@ -302,6 +310,8 @@ function renderDetail(clip, features, sources) {
             </div>
             <span class="clip-chip ${escapeHTML(clip.lifecycle_state)}">${escapeHTML(clip.lifecycle_state.toUpperCase())}</span>
         </div>
+
+        ${analysisFailed ? `<div class="empty error analysis-failure"><strong>Latest analysis failed</strong><br>${escapeHTML(clip.analysis_error || "No failure detail was recorded.")}</div>` : ""}
 
         <div id="clip-preview" class="clip-preview">
             <div class="empty">${clip.lifecycle_state === "purged" ? "This clip’s source media was purged. Metadata and analysis remain below." : "Video is loaded only when requested so browsing stays fast."}</div>
@@ -549,13 +559,17 @@ async function loadPreview(id, button) {
 
 async function analyze(id, button) {
     button.disabled = true;
+    const forceRetry = button.dataset.forceRetry === "true";
     try {
         const result = await api(`/v1/clips/${encodeURIComponent(id)}/analyze`, {
             method: "POST",
-            body: JSON.stringify({ force_retry: false }),
+            body: JSON.stringify({ force_retry: forceRetry }),
         });
-        message(`Analysis queued · ${result.stage.replaceAll("_", " ")}.`);
-        button.textContent = "Analysis queued";
+        message(
+            (forceRetry ? "Analysis restarted" : "Analysis queued") +
+            ` · ${result.stage.replaceAll("_", " ")}.`
+        );
+        button.textContent = forceRetry ? "Analysis restarted" : "Analysis queued";
     } catch (error) {
         message(error.message, true);
         button.disabled = false;
@@ -903,3 +917,9 @@ document.querySelectorAll("[data-close-dialog]").forEach((button) => {
         if (dialog?.open) dialog.close();
     });
 });
+
+if(state.linkedClip){
+    const button=document.createElement('button');button.type='button';button.className='button secondary';button.textContent='Showing linked clip · Show all clips';
+    document.querySelector('.clip-toolbar').append(button);
+    button.onclick=()=>{state.linkedClip='';state.selectedId=null;launchParams.delete('clip');history.replaceState(null,'','/clips?'+launchParams.toString());button.remove();refreshLibrary();};
+}

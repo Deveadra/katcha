@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 
-from temporalio.client import Client
+from temporalio.client import Client, RPCError, RPCStatusCode, WorkflowExecutionStatus
 from temporalio.common import WorkflowIDReusePolicy
 from temporalio.exceptions import WorkflowAlreadyStartedError
 
@@ -45,6 +45,14 @@ _client: Client | None = None
 _client_lock = asyncio.Lock()
 
 
+def _workflow_reuse_policy(*, allow_failed_reuse: bool) -> WorkflowIDReusePolicy:
+    return (
+        WorkflowIDReusePolicy.ALLOW_DUPLICATE_FAILED_ONLY
+        if allow_failed_reuse
+        else WorkflowIDReusePolicy.REJECT_DUPLICATE
+    )
+
+
 async def get_temporal_client() -> Client:
     global _client
     if _client is not None:
@@ -57,6 +65,27 @@ async def get_temporal_client() -> Client:
                 namespace=settings.temporal_namespace,
             )
     return _client
+
+
+async def terminate_workflow_if_running(
+    client: Client,
+    workflow_id: str | None,
+    *,
+    reason: str,
+) -> bool:
+    if not workflow_id:
+        return False
+    handle = client.get_workflow_handle(workflow_id)
+    try:
+        description = await handle.describe()
+    except RPCError as exc:
+        if exc.status == RPCStatusCode.NOT_FOUND:
+            return False
+        raise
+    if description.status != WorkflowExecutionStatus.RUNNING:
+        return False
+    await handle.terminate(reason=reason)
+    return True
 
 
 async def start_ingest_workflow(source_id: str, workflow_id: str) -> str:
@@ -75,14 +104,21 @@ async def start_ingest_workflow(source_id: str, workflow_id: str) -> str:
     return handle.id
 
 
-async def start_discovery_workflow(run_id: str, workflow_id: str) -> str:
+async def start_discovery_workflow(
+    run_id: str,
+    workflow_id: str,
+    *,
+    allow_failed_reuse: bool = False,
+) -> str:
     client = await get_temporal_client()
     try:
         handle = await client.start_workflow(
             DiscoveryRunWorkflow.run,
             run_id,
             id=workflow_id,
-            id_reuse_policy=WorkflowIDReusePolicy.REJECT_DUPLICATE,
+            id_reuse_policy=_workflow_reuse_policy(
+                allow_failed_reuse=allow_failed_reuse,
+            ),
             task_queue=DISCOVERY_TASK_QUEUE,
         )
     except WorkflowAlreadyStartedError:
@@ -146,6 +182,7 @@ async def start_production_workflow(
     workflow_id: str,
     *,
     start_stage: str = "script",
+    allow_failed_reuse: bool = False,
 ) -> str:
     settings = get_settings()
     client = await get_temporal_client()
@@ -154,7 +191,9 @@ async def start_production_workflow(
             ShortProductionWorkflow.run,
             args=[production_id, start_stage],
             id=workflow_id,
-            id_reuse_policy=WorkflowIDReusePolicy.REJECT_DUPLICATE,
+            id_reuse_policy=_workflow_reuse_policy(
+                allow_failed_reuse=allow_failed_reuse,
+            ),
             task_queue=settings.temporal_production_task_queue,
         )
     except WorkflowAlreadyStartedError:
@@ -167,6 +206,7 @@ async def start_short_episode_editorial_workflow(
     workflow_id: str,
     *,
     start_stage: str = "script",
+    allow_failed_reuse: bool = False,
 ) -> str:
     settings = get_settings()
     client = await get_temporal_client()
@@ -175,7 +215,9 @@ async def start_short_episode_editorial_workflow(
             RankedShortEpisodeEditorialWorkflow.run,
             args=[episode_id, start_stage],
             id=workflow_id,
-            id_reuse_policy=WorkflowIDReusePolicy.REJECT_DUPLICATE,
+            id_reuse_policy=_workflow_reuse_policy(
+                allow_failed_reuse=allow_failed_reuse,
+            ),
             task_queue=settings.temporal_production_task_queue,
         )
     except WorkflowAlreadyStartedError:
@@ -188,6 +230,7 @@ async def start_longform_workflow(
     workflow_id: str,
     *,
     start_stage: str = "select",
+    allow_failed_reuse: bool = False,
 ) -> str:
     settings = get_settings()
     client = await get_temporal_client()
@@ -196,7 +239,9 @@ async def start_longform_workflow(
             LongformCompilationWorkflow.run,
             args=[compilation_id, start_stage],
             id=workflow_id,
-            id_reuse_policy=WorkflowIDReusePolicy.REJECT_DUPLICATE,
+            id_reuse_policy=_workflow_reuse_policy(
+                allow_failed_reuse=allow_failed_reuse,
+            ),
             task_queue=settings.temporal_longform_task_queue,
         )
     except WorkflowAlreadyStartedError:
@@ -239,7 +284,12 @@ async def start_reach_sync_workflow(connection_id: str, workflow_id: str) -> str
     return handle.id
 
 
-async def start_publication_workflow(publication_id: str, workflow_id: str) -> str:
+async def start_publication_workflow(
+    publication_id: str,
+    workflow_id: str,
+    *,
+    allow_failed_reuse: bool = False,
+) -> str:
     settings = get_settings()
     client = await get_temporal_client()
     try:
@@ -252,7 +302,9 @@ async def start_publication_workflow(publication_id: str, workflow_id: str) -> s
                 settings.analytics_offsets_hours(),
             ],
             id=workflow_id,
-            id_reuse_policy=WorkflowIDReusePolicy.REJECT_DUPLICATE,
+            id_reuse_policy=_workflow_reuse_policy(
+                allow_failed_reuse=allow_failed_reuse,
+            ),
             task_queue=settings.temporal_publishing_task_queue,
         )
     except WorkflowAlreadyStartedError:
@@ -302,8 +354,14 @@ async def start_channel_intelligence_schedule(
     workflow_id: str,
     *,
     interval_hours: int = DEFAULT_REFRESH_INTERVAL_HOURS,
+    supersedes_workflow_id: str | None = None,
 ) -> str:
     client = await get_temporal_client()
+    await terminate_workflow_if_running(
+        client,
+        supersedes_workflow_id,
+        reason=f"superseded by durable schedule {workflow_id}",
+    )
     try:
         handle = await client.start_workflow(
             ChannelIntelligenceScheduleWorkflow.run,
@@ -377,8 +435,14 @@ async def start_channel_trend_activation_schedule(
     workflow_id: str,
     *,
     interval_hours: int = 1,
+    supersedes_workflow_id: str | None = None,
 ) -> str:
     client = await get_temporal_client()
+    await terminate_workflow_if_running(
+        client,
+        supersedes_workflow_id,
+        reason=f"superseded by durable schedule {workflow_id}",
+    )
     try:
         handle = await client.start_workflow(
             ChannelTrendActivationScheduleWorkflow.run,
@@ -406,4 +470,18 @@ async def start_channel_trend_activation_performance(
         )
     except WorkflowAlreadyStartedError:
         handle = client.get_workflow_handle(workflow_id)
+    return handle.id
+
+
+async def start_automatic_research_workflow() -> str:
+    from katcha.orchestration.research_workflows import AutomaticResearchWorkflow
+    from katcha.services.research import RESEARCH_WORKFLOW_ID
+
+    client = await get_temporal_client()
+    try:
+        handle = await client.start_workflow(AutomaticResearchWorkflow.run,
+                                             id=RESEARCH_WORKFLOW_ID,
+                                             task_queue=DISCOVERY_TASK_QUEUE)
+    except WorkflowAlreadyStartedError:
+        handle = client.get_workflow_handle(RESEARCH_WORKFLOW_ID)
     return handle.id

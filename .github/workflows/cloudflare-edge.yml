@@ -1,0 +1,52 @@
+name: Cloudflare edge security
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/cloudflare-edge.yml
+      - infra/cloudflare-edge/**
+      - src/katcha/ops/cloudflare_edge.py
+      - src/katcha/api/control_auth.py
+      - tests/test_cloud_runtime_contract.py
+      - tests/test_control_auth.py
+  push:
+    branches: [main]
+    paths:
+      - infra/cloudflare-edge/**
+      - src/katcha/ops/cloudflare_edge.py
+      - src/katcha/api/control_auth.py
+
+permissions:
+  contents: read
+
+jobs:
+  edge-security:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Katcha test runtime
+        run: python -m pip install -e '.[dev]'
+
+      - name: Validate application and edge policy contracts
+        run: |
+          python -m py_compile src/katcha/ops/cloudflare_edge.py
+          pytest -q tests/test_control_auth.py tests/test_cloud_runtime_contract.py
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.16.4"
+
+      - name: Check Access Terraform formatting
+        run: terraform fmt -check -recursive infra/cloudflare-edge
+
+      - name: Initialize Access Terraform without backend
+        run: terraform -chdir=infra/cloudflare-edge init -backend=false -input=false
+
+      - name: Validate Access Terraform provider schema
+        run: terraform -chdir=infra/cloudflare-edge validate

@@ -14,6 +14,10 @@ from katcha.orchestration.client import (
     start_channel_trend_activation_performance,
     start_channel_trend_activation_schedule,
 )
+from katcha.services.automation_schedules import (
+    locked_schedule_for_reconcile,
+    register_channel_trend_activation_schedule,
+)
 from katcha.services.trend_activation_performance import (
     latest_activation_performance,
     list_activation_performance,
@@ -228,12 +232,24 @@ async def schedule_trend_activation(
             status_code=409,
             detail="trend activation policy is not configured",
         )
-    workflow_id = f"trend-auto-activation-schedule-{channel_profile_id}"
-    await start_channel_trend_activation_schedule(
-        str(channel_profile_id),
-        workflow_id,
+    registration = register_channel_trend_activation_schedule(
+        channel_profile_id,
         interval_hours=request.interval_hours,
     )
+    with locked_schedule_for_reconcile(registration.schedule.id) as current:
+        if current.workflow_id != registration.schedule.workflow_id:
+            raise HTTPException(
+                status_code=409,
+                detail="trend activation schedule was superseded by another update",
+            )
+        await start_channel_trend_activation_schedule(
+            str(channel_profile_id),
+            current.workflow_id,
+            interval_hours=int(current.schedule_config["interval_hours"]),
+            supersedes_workflow_id=current.supersedes_workflow_id,
+        )
+        current.supersedes_workflow_id = None
+        workflow_id = current.workflow_id
     return TrendActivationScheduleResponse(
         channel_profile_id=channel_profile_id,
         workflow_id=workflow_id,
