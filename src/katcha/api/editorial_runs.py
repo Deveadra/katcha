@@ -3,8 +3,8 @@ from __future__ import annotations
 import asyncio
 import uuid
 
-from fastapi import APIRouter, Query, Request
-from sqlalchemy import select
+from fastapi import APIRouter, HTTPException, Query, Request
+from sqlalchemy import and_, or_, select
 
 from katcha.api.control_auth import control_actor
 from katcha.api.editorial_projects import _authorize, _error
@@ -107,6 +107,7 @@ def list_runs(
     request: Request,
     offset: int = Query(0, ge=0, le=10000),
     limit: int = Query(20, ge=1, le=100),
+    before: uuid.UUID | None = None,
 ):
     _authorize(request, channel_profile_id)
     try:
@@ -114,15 +115,25 @@ def list_runs(
     except ValueError as exc:
         raise _error(exc) from exc
     with session_scope() as session:
+        query = select(EditorialRun).where(
+            EditorialRun.project_id == project_id,
+            EditorialRun.channel_profile_id == channel_profile_id,
+        )
+        if before is not None:
+            if offset:
+                raise HTTPException(422, "Use either a history cursor or an offset")
+            anchor = session.get(EditorialRun, before)
+            if anchor is None or (anchor.project_id, anchor.channel_profile_id) != (
+                project_id, channel_profile_id
+            ):
+                raise HTTPException(404, "History cursor not found in this project")
+            query = query.where(or_(
+                EditorialRun.created_at < anchor.created_at,
+                and_(EditorialRun.created_at == anchor.created_at, EditorialRun.id > anchor.id),
+            ))
         rows = session.scalars(
-            select(EditorialRun)
-            .where(
-                EditorialRun.project_id == project_id,
-                EditorialRun.channel_profile_id == channel_profile_id,
-            )
-            .order_by(EditorialRun.created_at.desc(), EditorialRun.id)
-            .offset(offset)
-            .limit(limit)
+            query.order_by(EditorialRun.created_at.desc(), EditorialRun.id)
+            .offset(offset).limit(limit)
         )
         return [run_response(row, include_artifacts=False) for row in rows]
 

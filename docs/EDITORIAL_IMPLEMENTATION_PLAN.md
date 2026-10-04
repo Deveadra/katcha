@@ -44,8 +44,8 @@ as API credit. Verify supported account capabilities when enabling each live rou
 | E3 | Durable specialist research, evidence verification and cost-bounded recursion | E1–E2 | Implemented; synthetic integration verified |
 | E4 | Story selection, writer/critic/revision loop and cited script review | E3 | Implemented; live editorial acceptance pending |
 | E5 | Claim-directed supplementary asset scout and acquisition/rights gate | E3–E4 | Video discovery/acquisition and render-time rights gate implemented; images pending |
-| E6 | Visual director, timing, compiler and editorial Remotion composition | E4–E5 | Compiler, local renderer and private preview implemented; narration/automatic direction pending |
-| E7 | Integrated editorial workspace, recovery/status and publication handoff | E1–E6 | Workspace, recovery and durable review implemented locally; publication pending |
+| E6 | Visual director, timing, compiler and editorial Remotion composition | E4–E5 | Compiler, local renderer, uploaded narration and private preview implemented; generated narration/automatic direction pending |
+| E7 | Integrated editorial workspace, recovery/status and publication handoff | E1–E6 | Workspace, recovery, durable review and historical inspection implemented; publication pending |
 | E8 | Fault injection, real authorized trailer acceptance, rollout and analytics | E7 | Planned |
 
 Use substantial PRs with coherent executable boundaries. E1 must explicitly say
@@ -650,3 +650,39 @@ transcribed or verified, and caption timing is proportional, not word-aligned.
 Remaining: generated narration, automatic visual direction, image/manual replacement,
 approved branding, historical run selection, publication handoff and real authorized
 source-to-reviewed-video acceptance.
+
+### E9 recoverable work-history inspection
+
+PR #267 (measured uploaded narration) merged at `c9834ba`; all five remote
+workflows passed, including CI, launcher, runtime images and both Cloudflare checks.
+
+Production now has a separate, lazy-loaded Project work history inspector. It lists
+prior work with stage/status, input revision, attempt and timestamp, and loads the
+exact saved output script (or input revision), cited evidence, diagnostic receipts,
+review history and private preview. Inspection leaves the working script, narration
+selection and current review controls untouched. Earlier approval receipts are
+shown separately from their current validity. Existing preview clearance checks
+remain mandatory; a changed revision can make an old video unavailable.
+
+The run-list API accepts a project-scoped keyset cursor, preserving pagination when
+new work starts and handling timestamp ties deterministically. Existing offset
+clients remain supported. An exact immutable-revision read endpoint is available
+to both the operator and native AI tools. History requests and media URLs are fenced
+by channel/project identity; late responses cannot restore the previous channel's
+content. Failed pagination retains the last successful page, and failed inspection
+or playback exposes retry instructions. History is read-only; it does not restart,
+approve, restore a revision or publish a historical result.
+
+Validation: 108 focused Python tests passed across history, project/run/review,
+narration, native tools and authentication. Browser fixtures passed historical
+pagination and interrupted-page retry, exact saved script display, invalidated
+review display, refused/retried preview transport, preservation of unsaved edits,
+and switching channels during an outstanding history request. These are synthetic
+API fixtures, not live-provider or playback-content acceptance. The existing
+narration browser test now waits for its actual POST response instead of matching
+an approval message left over from the prior render.
+
+Remaining: generated narration with billing recovery, automatic visual direction,
+image/manual replacement, approved branding, publication handoff and authorized
+operational source-to-reviewed-video acceptance. History inspection does not make
+historical previews exempt from current clearance or allow restoring old revisions.

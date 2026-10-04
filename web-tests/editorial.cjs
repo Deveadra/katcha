@@ -11,6 +11,10 @@ let review = {status: "unreviewed", sequence: 0, can_approve: true, reviews: []}
 let loseReviewResponse = true;
 let recordings = [];
 let loseUploadResponse = true;
+let failHistoryPage = true, failHistoryPreview = true, delayedHistory = null;
+let historyRequestStarted;
+const historyStarted = new Promise(resolve => { historyRequestStarted = resolve; });
+const historyRows = Array.from({length: 23}, (_, index) => ({editorial_run_id: `past-${index}`, target: index ? 'script' : 'render', input_revision: 1, attempt: 1, status: index ? 'blocked' : 'completed', stage: index ? 'researching' : 'render_ready_for_review', created_at: '2026-10-01T12:00:00Z', error: index ? 'Saved provider failure' : null, artifacts: {saved_revision: 1}}));
 const draft = {
     version: "editorial-draft-v1", observations: [],
     sources: [{ id: "source", title: "Interview", url: "https://example.com/interview", category: "interview", excerpt: "A synthetic quoted clue." }],
@@ -38,6 +42,16 @@ const draft = {
                     if (loseCreateResponse) { loseCreateResponse = false; return send({ detail: "Connection interrupted. Retry to recover the saved brief." }, 503); }
                     return send(project, 201);
                 }
+                if (url.pathname.endsWith('/revisions/1')) return send({revision: 1, draft, created_at: '2026-10-01T12:00:00Z'});
+                if (url.pathname.includes('/runs/past-')) {
+                    if (url.pathname.endsWith('/review')) return send({status: 'invalidated', blocker: 'Script revision changed; rebuild the render', reviews: [{decision: 'approve', actor: 'editor', note: 'Historical approval', created_at: '2026-10-01'}]});
+                    if (url.pathname.endsWith('/preview')) {
+                        if (failHistoryPreview) { failHistoryPreview = false; return send({detail: 'Preview clearance changed'}, 409); }
+                        return route.fulfill({status: 200, contentType: 'video/mp4', body: 'synthetic history transport'});
+                    }
+                    if (url.pathname.endsWith('/past-22')) { delayedHistory = () => send(historyRows[22]); historyRequestStarted(); return; }
+                    return send(historyRows.find(row => url.pathname.endsWith(`/${row.editorial_run_id}`)));
+                }
                 if (url.pathname.endsWith("/revisions")) {
                     if (!body) return send(revision ? [revision] : []);
                     if (loseSaveResponse) { loseSaveResponse = false; return send({ detail: "Save response interrupted. Your text is retained." }, 503); }
@@ -45,6 +59,11 @@ const draft = {
                     return send(revision, 201);
                 }
                 if (url.pathname.endsWith("/runs")) {
+                    if (url.searchParams.get('limit') === '21') {
+                        if (url.searchParams.has('before') && failHistoryPage) { failHistoryPage = false; return send({detail: 'History connection interrupted'}, 503); }
+                        const anchor = historyRows.findIndex(row => row.editorial_run_id === url.searchParams.get('before'));
+                        return send(historyRows.slice(anchor + 1, anchor + 22));
+                    }
                     if (!body) return send(run ? [run, ...(acquisitionRun && run !== acquisitionRun ? [acquisitionRun] : [])] : []);
                     if (body.target === "render") {
                         run = {editorial_run_id: "render", target: "render", input_revision: 3, attempt: 1, status: "completed", stage: "render_ready_for_review", artifacts: {requires_editorial_review: true}};
@@ -186,21 +205,59 @@ const draft = {
         const uploads = calls.filter(call => call.uploadKey);
         assert.equal(uploads.length, 2); assert.equal(uploads[0].uploadKey, uploads[1].uploadKey);
         assert.equal(await page.locator('[data-narration-select]').inputValue(), 'audio-id');
-        await page.getByRole('button', {name: 'Create narrated preview', exact: true}).click();
+        await Promise.all([
+            page.waitForResponse(response => response.request().method() === 'POST' && new URL(response.url()).pathname.endsWith('/runs') && response.request().postDataJSON()?.storyboard?.presentation_mode === 'narrated'),
+            page.getByRole('button', {name: 'Create narrated preview', exact: true}).click(),
+        ]);
         await page.getByText(/Review approved for this rendered revision/).waitFor();
         const voiced = calls.find(call => call.body?.storyboard?.presentation_mode === 'narrated');
         assert.equal(voiced.body.storyboard.narration_ids.beat, 'audio-id');
+        // Independent history must preserve edits and current review/preview identity.
+        await page.locator('[data-beat-narration="0"]').fill('Unsaved current script stays here.');
+        const writesBeforeHistory = calls.filter(call => call.method === 'POST').length;
+        await page.locator('#editorial-history > summary').click();
+        await page.locator('#editorial-history-status').filter({hasText: 'History page 1'}).waitFor();
+        assert.equal(await page.locator('[data-history-run]').count(), 20);
+        await page.locator('[data-history-run="past-0"]').click();
+        await page.locator('#editorial-history-review').filter({hasText: 'Previous approval is no longer valid'}).waitFor();
+        assert.match(await page.locator('#editorial-history-script').innerText(), /This might be a connection/);
+        assert.equal(await page.locator('[data-beat-narration="0"]').inputValue(), 'Unsaved current script stays here.');
+        await page.locator('#editorial-history-play').click();
+        await page.locator('#editorial-history-status').filter({hasText: 'Preview clearance changed'}).waitFor();
+        assert.equal(await page.locator('#editorial-history-preview').isHidden(), true);
+        await page.locator('#editorial-history-play').click();
+        await page.locator('#editorial-history-preview').waitFor({state: 'visible'});
+        await page.locator('#editorial-history-next').click();
+        await page.locator('#editorial-history-status').filter({hasText: 'History connection interrupted'}).waitFor();
+        assert.equal(await page.locator('[data-history-run]').count(), 20);
+        await page.locator('#editorial-history-next').click();
+        await page.locator('#editorial-history-status').filter({hasText: 'History page 2'}).waitFor();
+        assert.equal(await page.locator('[data-history-run]').count(), 3);
+        await page.locator('#editorial-history-back').click();
+        await page.locator('#editorial-history-status').filter({hasText: 'History page 1'}).waitFor();
+        assert.equal(calls.filter(call => call.method === 'POST').length, writesBeforeHistory);
         await page.screenshot({ path: path.resolve(__dirname, "test-results/editorial-desktop.png"), fullPage: true });
         await page.setViewportSize({ width: 390, height: 844 });
         assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
         assert.equal(await page.locator(".editorial-form").evaluate((node) => getComputedStyle(node).display), "grid");
         await page.screenshot({ path: path.resolve(__dirname, "test-results/editorial-mobile.png"), fullPage: true });
+        await page.locator('#editorial-history-detail').scrollIntoViewIfNeeded();
+        await page.screenshot({path: path.resolve(__dirname, 'test-results/editorial-history-mobile.png')});
         assert.equal(await page.locator('[data-production-tab="editorial"]').getAttribute("aria-selected"), "true");
         await page.locator('[data-production-tab="editorial"]').focus();
         await page.keyboard.press("ArrowRight");
         assert.equal(await page.locator('[data-production-tab="recipes"]').getAttribute("aria-selected"), "true");
         await page.keyboard.press("ArrowLeft");
+        await page.locator('#editorial-history-next').click();
+        await page.locator('[data-history-run="past-22"]').click();
+        await historyStarted;
         await page.locator("#channel").selectOption("two");
+        assert.equal(await page.locator('#editorial-history').isHidden(), true);
+        const lateResponse = page.waitForResponse(response => new URL(response.url()).pathname.endsWith('/runs/past-22'));
+        await delayedHistory();
+        await (await lateResponse).finished();
+        assert.equal(await page.locator('#editorial-history-detail').isHidden(), true);
+
         await page.getByText(/No editorial projects yet/).waitFor();
         assert.equal(await page.locator("#editorial-detail").isHidden(), true);
         assert.equal(await page.locator("#editorial-prompt").inputValue(), "");

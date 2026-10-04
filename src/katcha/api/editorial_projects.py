@@ -196,6 +196,22 @@ def history(
         return [_revision(row) for row in rows]
 
 
+@router.get("/{project_id}/revisions/{revision}", response_model=EditorialRevisionResponse)
+def revision_detail(
+    channel_profile_id: uuid.UUID, project_id: uuid.UUID, revision: int, request: Request,
+) -> EditorialRevisionResponse:
+    _authorize(request, channel_profile_id)
+    try:
+        get_project(channel_profile_id, project_id)
+    except ValueError as exc:
+        raise _error(exc) from exc
+    with session_scope() as session:
+        row = session.get(EditorialRevision, (project_id, revision))
+        if row is None:
+            raise HTTPException(404, "Script revision not found in this project")
+        return _revision(row)
+
+
 @router.post("/{project_id}/storyboard/preflight")
 def preflight_storyboard(
     channel_profile_id: uuid.UUID,
