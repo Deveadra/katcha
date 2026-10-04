@@ -1026,15 +1026,39 @@ def test_unhealthy_running_containers_are_not_restart_looped(tmp_path):
 
 
 
-def test_workspace_probe_uses_control_plane_readiness(tmp_path):
+def test_workspace_probe_uses_authenticated_control_plane_readiness(tmp_path):
     app = instance(tmp_path)
-    from unittest.mock import MagicMock
-
     connection = MagicMock()
     connection.getresponse.return_value.status = 200
+
     with patch.object(runtime.http.client, "HTTPConnection", return_value=connection):
         assert app.probe_workspace() is True
-    connection.request.assert_called_once_with("GET", "/v1/health/workspace")
+
+    connection.request.assert_called_once_with(
+        "GET",
+        "/v1/health/workspace",
+        headers={
+            "Authorization": (
+                "Bearer " + app.values["KATCHA_CONTROL_API_TOKEN"]
+            )
+        },
+    )
+
+
+def test_workspace_probe_preserves_anonymous_development_fallback(tmp_path):
+    app = instance(tmp_path)
+    app.values["KATCHA_CONTROL_API_TOKEN"] = ""
+    connection = MagicMock()
+    connection.getresponse.return_value.status = 200
+
+    with patch.object(runtime.http.client, "HTTPConnection", return_value=connection):
+        assert app.probe_workspace() is True
+
+    connection.request.assert_called_once_with(
+        "GET",
+        "/v1/health/workspace",
+        headers={},
+    )
 
 
 def test_launcher_serves_workspace_shell_without_api(tmp_path):

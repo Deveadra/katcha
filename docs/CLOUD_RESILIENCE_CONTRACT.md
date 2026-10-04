@@ -107,14 +107,25 @@ Startup credits, promotional credits, and free grants may reduce realized cost, 
 
 The OCI host exposes no public application listener.
 
-Cloudflare Tunnel is the origin path. The operator/admin surface is protected with Cloudflare Access. WAF/rate-limit rules are applied by endpoint class.
+Cloudflare Tunnel is the only origin path. The FastAPI listener remains bound to loopback on the VM.
 
-Public/machine endpoints are explicitly classified rather than globally bypassing Access. Examples that require separate policy include:
+Cloudflare Access protects the entire human/operator hostname. Exact operator email addresses are the allowlist. More-specific Access applications define only two intentional exceptions:
 
-- OAuth redirect/callback endpoints,
-- verified signed webhooks,
-- health probes that intentionally reveal only minimal state,
-- machine-to-machine control endpoints with their own strong authentication.
+- `/v1/*` is left to Katcha's own scoped bearer-principal authentication so durable machine clients and recovery automation do not depend on an interactive Access session,
+- `/auth/callback` remains public for the ChatGPT OAuth redirect.
+
+The Katcha application itself exposes only these unauthenticated control-plane paths:
+
+- `/v1/health/live`,
+- `/v1/health/ready`,
+- `/v1/integrations/youtube/oauth/callback`,
+- `/auth/callback`.
+
+`/v1/health/workspace` requires Katcha control authentication. Any future public endpoint must be added explicitly to both the application and edge-policy contracts.
+
+WAF custom rules are hostname-scoped and reject invalid methods on public health/OAuth endpoints plus common secret/admin probes. The Free-plan rate-limit budget is consumed by one IP-scoped rule covering only Katcha-specific public health and YouTube callback paths. The generic `/auth/callback` path is omitted from that free rate rule because Free rate-limit expressions do not expose the Host field.
+
+Cloudflare ruleset automation changes only rules carrying Katcha-owned stable refs. It must not replace or delete unrelated zone rules.
 
 ## External heavy compute
 

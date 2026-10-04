@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from katcha.ops import cloudflare_edge
 from katcha.ops.production_runtime import validate
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -238,3 +239,36 @@ def test_break_glass_escrow_drill_is_manual_and_non_oci() -> None:
     assert "disaster_recovery_validate" in workflow
     assert "Delete one-time handoff" in workflow
     assert "oci " not in workflow
+
+
+
+def test_cloudflare_edge_rules_fit_free_tier_contract() -> None:
+    config = object.__new__(cloudflare_edge.CloudflareEdgeConfig)
+    object.__setattr__(config, "hostname", "katcha.example.com")
+    object.__setattr__(config, "public_requests_per_10s", 30)
+    rules = cloudflare_edge.desired_rules(config)
+
+    custom = rules["http_request_firewall_custom"]
+    rate = rules["http_ratelimit"]
+    assert len(custom) == 2
+    assert {row["ref"] for row in custom} == {
+        "katcha_public_method_guard",
+        "katcha_sensitive_probe_block",
+    }
+    assert all(
+        'http.host eq "katcha.example.com"' in row["expression"]
+        for row in custom
+    )
+    assert len(rate) == 1
+    assert "http.host" not in rate[0]["expression"]
+    assert rate[0]["ratelimit"]["period"] == 10
+    assert rate[0]["ratelimit"]["requests_per_period"] == 30
+    assert "/auth/callback" not in rate[0]["expression"]
+
+
+
+def test_local_api_container_healthcheck_uses_public_liveness_not_workspace_auth() -> None:
+    compose = (ROOT / "docker-compose.app.yml").read_text(encoding="utf-8")
+
+    assert "http://localhost:8000/v1/health/live" in compose
+    assert "http://localhost:8000/v1/health/workspace" not in compose

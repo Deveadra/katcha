@@ -1009,8 +1009,14 @@ class Runtime:
 
     def probe_workspace(self):
         connection = http.client.HTTPConnection("127.0.0.1", 8000, timeout=2)
+        token = str(self.values.get("KATCHA_CONTROL_API_TOKEN") or "").strip()
+        headers = {"Authorization": f"Bearer {token}"} if token else {}
         try:
-            connection.request("GET", "/v1/health/workspace")
+            connection.request(
+                "GET",
+                "/v1/health/workspace",
+                headers=headers,
+            )
             self.workspace_ready = connection.getresponse().status == 200
         except (OSError, http.client.HTTPException):
             self.workspace_ready = False
