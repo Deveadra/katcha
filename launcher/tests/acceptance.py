@@ -157,9 +157,14 @@ if __name__ == "__main__":
         last_start = max(
             index
             for index, event in enumerate(journal)
-            if event["component"] == "launcher" and event["message"] == "start requested"
+            if event.get("component") == "launcher"
+            and event.get("message") == "start requested"
         )
-        messages = [event["message"] for event in journal[last_start:]]
+        messages = [
+            event["message"]
+            for event in journal[last_start:]
+            if isinstance(event, dict) and "message" in event
+        ]
         assert "Reusing unchanged workspace image." in messages
         assert "Reusing unchanged application images." in messages
         assert "Preparing the lightweight workspace control plane locally." not in messages
