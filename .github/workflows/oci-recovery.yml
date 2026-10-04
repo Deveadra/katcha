@@ -6,10 +6,13 @@ on:
       - .github/workflows/oci-recovery.yml
       - src/katcha/ops/oci_recovery.py
       - deploy/cloud-init/oci-recovery-candidate.sh.tmpl
+      - deploy/scripts/postgres-disaster-restore.sh
+      - src/katcha/ops/disaster_backup.py
       - infra/cloudflare-recovery/**
       - deploy/docker-compose.production.yml
       - src/katcha/ops/production_runtime.py
       - tests/test_oci_recovery.py
+      - tests/test_disaster_backup.py
       - tests/test_cloud_runtime_contract.py
   repository_dispatch:
     types: [katcha-recovery]
@@ -43,6 +46,10 @@ env:
   KATCHA_OCI_AVAILABILITY_DOMAIN: ${{ vars.KATCHA_OCI_AVAILABILITY_DOMAIN }}
   KATCHA_OCI_COMPARTMENT_ID: ${{ vars.KATCHA_OCI_COMPARTMENT_ID }}
   KATCHA_OCI_SUBNET_ID: ${{ vars.KATCHA_OCI_SUBNET_ID }}
+  KATCHA_OCI_CROSS_AD_TARGETS_JSON: ${{ vars.KATCHA_OCI_CROSS_AD_TARGETS_JSON }}
+  KATCHA_OCI_CROSS_AD_DATA_VOLUME_SIZE_GB: ${{ vars.KATCHA_OCI_CROSS_AD_DATA_VOLUME_SIZE_GB }}
+  KATCHA_OCI_DATA_VOLUME_DEVICE_PATH: ${{ vars.KATCHA_OCI_DATA_VOLUME_DEVICE_PATH }}
+  KATCHA_OCI_CROSS_AD_MAX_BACKUP_AGE_SECONDS: ${{ vars.KATCHA_OCI_CROSS_AD_MAX_BACKUP_AGE_SECONDS }}
   KATCHA_OCI_DATA_VOLUME_ID: ${{ vars.KATCHA_OCI_DATA_VOLUME_ID }}
   KATCHA_OCI_DATA_VOLUME_FS_UUID: ${{ vars.KATCHA_OCI_DATA_VOLUME_FS_UUID }}
   KATCHA_OCI_PRODUCTION_ENV_SECRET_ID: ${{ vars.KATCHA_OCI_PRODUCTION_ENV_SECRET_ID }}
@@ -82,9 +89,13 @@ jobs:
 
       - name: Validate dispatcher and bootstrap
         run: |
-          python -m py_compile src/katcha/ops/oci_recovery.py
+          python -m py_compile src/katcha/ops/oci_recovery.py src/katcha/ops/disaster_backup.py
           bash -n deploy/cloud-init/oci-recovery-candidate.sh.tmpl
-          pytest -q tests/test_oci_recovery.py tests/test_cloud_runtime_contract.py
+          bash -n deploy/scripts/postgres-disaster-restore.sh
+          pytest -q \
+            tests/test_oci_recovery.py \
+            tests/test_disaster_backup.py \
+            tests/test_cloud_runtime_contract.py
 
   recover:
     if: github.event_name == 'repository_dispatch' || github.event_name == 'workflow_dispatch'

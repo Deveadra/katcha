@@ -9,6 +9,7 @@ on:
       - deploy/docker-compose.production.yml
       - deploy/scripts/postgres-backup.sh
       - deploy/scripts/postgres-restore-test.sh
+      - deploy/scripts/postgres-disaster-restore.sh
       - deploy/systemd/katcha-backup.service
       - deploy/systemd/katcha-backup.timer
       - deploy/systemd/katcha-restore-test.service
@@ -91,16 +92,29 @@ jobs:
           }
           trap cleanup EXIT
 
+          wait_for_postgres() {
+            local container="$1"
+            local stable=0
+            for attempt in $(seq 1 90); do
+              if docker exec "$container" psql -U postgres -d postgres -Atc \
+                  "SELECT 1;" >/dev/null 2>&1; then
+                stable=$((stable + 1))
+                if [[ "$stable" -ge 5 ]]; then
+                  return 0
+                fi
+              else
+                stable=0
+              fi
+              sleep 1
+            done
+            docker logs "$container" >&2 || true
+            return 1
+          }
+
           docker run -d --name "$source_name" \
             -e POSTGRES_PASSWORD=test-password \
             postgres:16-alpine >/dev/null
-          for attempt in $(seq 1 60); do
-            if docker exec "$source_name" pg_isready -U postgres >/dev/null 2>&1; then
-              break
-            fi
-            test "$attempt" -lt 60
-            sleep 1
-          done
+          wait_for_postgres "$source_name"
 
           docker exec "$source_name" createdb -U postgres katcha
           docker exec "$source_name" createdb -U postgres temporal
@@ -133,21 +147,16 @@ jobs:
           docker run -d --name "$target_name" \
             -e POSTGRES_PASSWORD=test-password \
             postgres:16-alpine >/dev/null
-          for attempt in $(seq 1 60); do
-            if docker exec "$target_name" pg_isready -U postgres >/dev/null 2>&1; then
-              break
-            fi
-            test "$attempt" -lt 60
-            sleep 1
-          done
+          wait_for_postgres "$target_name"
 
-          while IFS=$'\t' read -r filename database; do
+          for database in katcha temporal; do
+            filename="db-$database.dump"
             docker exec "$target_name" createdb -U postgres "$database"
             docker cp "/tmp/katcha-backup/$filename" "$target_name:/tmp/$filename" >/dev/null
             docker exec "$target_name" pg_restore -U postgres \
               --exit-on-error --no-owner --no-acl \
               -d "$database" "/tmp/$filename"
-          done < /tmp/restore-plan.tsv
+          done
 
           test "$(
             docker exec "$target_name" psql -U postgres -d katcha -Atc \

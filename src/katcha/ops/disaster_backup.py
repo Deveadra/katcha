@@ -191,6 +191,32 @@ def load_manifest(path: Path) -> dict[str, Any]:
     return data
 
 
+def validate_manifest_age(
+    manifest: dict[str, Any],
+    *,
+    max_age_seconds: int,
+    now: datetime | None = None,
+) -> None:
+    if max_age_seconds < 1:
+        raise DisasterBackupError("max backup age must be positive")
+    raw = str(manifest.get("created_at") or "")
+    try:
+        created_at = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise DisasterBackupError("backup manifest has an invalid created_at") from exc
+    if created_at.tzinfo is None:
+        raise DisasterBackupError("backup manifest created_at must include a timezone")
+    current = now or datetime.now(UTC)
+    age_seconds = (current - created_at.astimezone(UTC)).total_seconds()
+    if age_seconds < -300:
+        raise DisasterBackupError("backup manifest timestamp is unexpectedly in the future")
+    if age_seconds > max_age_seconds:
+        raise DisasterBackupError(
+            f"latest completed backup is too old: {int(age_seconds)}s > "
+            f"{max_age_seconds}s"
+        )
+
+
 def verify_directory(directory: Path, manifest: dict[str, Any]) -> None:
     for row in manifest["databases"]:
         if not isinstance(row, dict):
@@ -326,7 +352,12 @@ def _get_json(client, bucket: str, key: str) -> tuple[dict[str, Any], bytes]:
     return data, raw
 
 
-def download_latest(destination: Path, config: R2BackupConfig) -> Path:
+def download_latest(
+    destination: Path,
+    config: R2BackupConfig,
+    *,
+    max_age_seconds: int | None = None,
+) -> Path:
     client = config.client()
     complete_key = latest_completion_key(client, config)
     complete, _ = _get_json(client, config.bucket, complete_key)
@@ -336,6 +367,8 @@ def download_latest(destination: Path, config: R2BackupConfig) -> Path:
         raise DisasterBackupError("completion marker does not reference a valid manifest")
 
     manifest, manifest_bytes = _get_json(client, config.bucket, manifest_key)
+    if max_age_seconds is not None:
+        validate_manifest_age(manifest, max_age_seconds=max_age_seconds)
     if _manifest_sha256(manifest_bytes) != expected_manifest_sha:
         raise DisasterBackupError("downloaded manifest checksum does not match completion marker")
     backup_id = str(manifest.get("backup_id") or "")
@@ -382,7 +415,13 @@ def _cmd_upload(args: argparse.Namespace) -> int:
 
 
 def _cmd_download(args: argparse.Namespace) -> int:
-    print(download_latest(args.destination, R2BackupConfig.from_env("restore")))
+    print(
+        download_latest(
+            args.destination,
+            R2BackupConfig.from_env("restore"),
+            max_age_seconds=args.max_age_seconds,
+        )
+    )
     return 0
 
 
@@ -413,6 +452,7 @@ def main() -> int:
 
     download = subparsers.add_parser("download-latest")
     download.add_argument("--destination", type=Path, required=True)
+    download.add_argument("--max-age-seconds", type=int)
     download.set_defaults(func=_cmd_download)
 
     restore_plan = subparsers.add_parser("restore-plan")
