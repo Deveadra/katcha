@@ -228,6 +228,45 @@ services:
     logging: *default-logging
     networks: [backend]
 
+  backup-writer:
+    image: ${KATCHA_IMAGE_REGISTRY:-ghcr.io/deveadra}/katcha-control:${KATCHA_RELEASE_SHA:?Set KATCHA_RELEASE_SHA to the exact deployed git SHA}
+    pull_policy: always
+    profiles: ["ops"]
+    user: "0:0"
+    env_file:
+      - ${KATCHA_BACKUP_ENV_FILE:-/etc/katcha/backup.env}
+    environment:
+      KATCHA_ENV: production
+      KATCHA_RELEASE_SHA: ${KATCHA_RELEASE_SHA:?Set KATCHA_RELEASE_SHA}
+      KATCHA_LEADERSHIP_FENCE_MODE: ${KATCHA_LEADERSHIP_FENCE_MODE:?Set KATCHA_LEADERSHIP_FENCE_MODE}
+      KATCHA_LEADERSHIP_FENCE_URL: ${KATCHA_LEADERSHIP_FENCE_URL:?Set KATCHA_LEADERSHIP_FENCE_URL}
+      KATCHA_LEADERSHIP_FENCE_TOKEN: ${KATCHA_LEADERSHIP_FENCE_TOKEN:?Set KATCHA_LEADERSHIP_FENCE_TOKEN}
+      KATCHA_LEADERSHIP_FENCE_TIMEOUT_SECONDS: ${KATCHA_LEADERSHIP_FENCE_TIMEOUT_SECONDS:-5}
+      KATCHA_DEPLOYMENT_ID: ${KATCHA_DEPLOYMENT_ID:?Set KATCHA_DEPLOYMENT_ID}
+      KATCHA_DEPLOYMENT_EPOCH: ${KATCHA_DEPLOYMENT_EPOCH:?Set KATCHA_DEPLOYMENT_EPOCH}
+    volumes:
+      - /srv/katcha/backups-local:/backup
+    command: ["python", "-m", "katcha.ops.disaster_backup", "--help"]
+    mem_limit: 256m
+    cpus: 0.2
+    logging: *default-logging
+    networks: [backend]
+
+  backup-reader:
+    image: ${KATCHA_IMAGE_REGISTRY:-ghcr.io/deveadra}/katcha-control:${KATCHA_RELEASE_SHA:?Set KATCHA_RELEASE_SHA to the exact deployed git SHA}
+    pull_policy: always
+    profiles: ["ops"]
+    user: "0:0"
+    env_file:
+      - ${KATCHA_RESTORE_ENV_FILE:-/etc/katcha/restore.env}
+    volumes:
+      - /srv/katcha/backups-local:/backup
+    command: ["python", "-m", "katcha.ops.disaster_backup", "--help"]
+    mem_limit: 256m
+    cpus: 0.2
+    logging: *default-logging
+    networks: [backend]
+
   telegram-worker:
     image: ${KATCHA_IMAGE_REGISTRY:-ghcr.io/deveadra}/katcha-control:${KATCHA_RELEASE_SHA:?Set KATCHA_RELEASE_SHA to the exact deployed git SHA}
     pull_policy: always
