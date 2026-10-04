@@ -164,8 +164,9 @@ All money values use integer **micro-USD** (1 USD = 1,000,000 micro-USD) so the
 coordinator never uses floating-point money arithmetic.
 
 Example: allow at most $10/month of external compute, with $5 assigned to OCI
-and $5 assigned to Modal, no more than two concurrent paid jobs, and at most $3
-of attempts within one retry group:
+emergency control-plane fallback and $5 assigned to Remotion Lambda rendering,
+no more than two concurrent paid jobs, and at most $3 of attempts within one
+retry group:
 
 ```bash
 curl -fsS \
@@ -176,7 +177,7 @@ curl -fsS \
     "monthly_limit_microusd": 10000000,
     "provider_limits_microusd": {
       "oci": 5000000,
-      "modal": 5000000
+      "aws-lambda": 5000000
     },
     "max_concurrent_jobs": 2,
     "max_retry_attempts": 3,
@@ -195,8 +196,9 @@ A reservation succeeds only when all of these remain within bounds:
 6. retry-group settled + reserved spend.
 
 Reservations are idempotent by `job_key`. A released or expired job key cannot
-be reused; a caller must advance its explicit attempt identity. Settled job keys
-also cannot launch again.
+be reused. Callers may provide an explicit monotonic attempt number, or omit it
+and let the Durable Object allocate the next retry attempt atomically. Settled
+job keys also cannot launch again.
 
 The accounting month is UTC. Monthly and per-provider settled spend are stored
 as durable aggregates, so bounded audit/history presentation cannot erase spend
@@ -217,6 +219,14 @@ launching any paid fallback instance**. OCI capacity failures that create no
 instance release the reservation. Failures after a paid launch settle
 conservatively, and TTL/leader retirement settles from the instance's tagged
 runtime estimate.
+
+The Remotion renderer reserves the configured per-render ceiling immediately
+before `renderMediaOnLambda()`. The stable output identity is the retry group;
+the individual launch gets a unique job key and a coordinator-assigned attempt.
+Budget denial therefore happens before AWS invocation. Completed or uncertain
+Lambda attempts settle conservatively at the reserved ceiling; a settlement
+transport failure leaves the reservation held rather than failing a completed
+render and causing duplicate paid work.
 
 This ledger is intentionally outside PostgreSQL so budget enforcement remains
 available when the Katcha VM or database is the component being recovered.
