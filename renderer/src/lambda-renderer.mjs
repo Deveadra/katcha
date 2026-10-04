@@ -146,6 +146,7 @@ export const reserveLambdaBudget = async ({
       retry_group: `render:${identity}`,
       estimated_cost_microusd: estimatedCostMicrousd,
       ttl_seconds: renderSettings.externalCompute.reservationTtlSeconds,
+      settle_on_expiry: true,
       metadata: {
         composition: compositionId,
         output_key_sha256: identity,
