@@ -202,8 +202,8 @@ The accounting month is UTC. Monthly and per-provider settled spend are stored
 as durable aggregates, so bounded audit/history presentation cannot erase spend
 from a live month's ceiling. On month rollover, monthly/provider totals reset
 while still-active reservations carry forward conservatively. Retry-group
-settled spend survives the rollover so a failing logical job cannot escape its
-retry cap at midnight UTC.
+settled spend **and attempt counters** survive the rollover so a failing logical
+job cannot escape either retry circuit at midnight UTC.
 
 The global kill switch is evaluated before idempotent reservation reuse. Turning
 external compute off therefore blocks even a replay of an existing reservation
