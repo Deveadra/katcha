@@ -269,6 +269,16 @@ class Settings(BaseSettings):
     tts_profile: str = "openai_youth_v2"
     tts_provider_override: Literal["auto", "openai", "gemini", "elevenlabs"] = "auto"
     renderer_url: str = "http://renderer:8787"
+    render_backend: Literal["local", "lambda"] = "local"
+    external_compute_enabled: bool = False
+    external_compute_coordinator_url: str | None = None
+    external_compute_token: SecretStr | None = None
+    remotion_lambda_max_render_cost_usd: float = Field(default=0.0, ge=0)
+    remotion_lambda_budget_ttl_seconds: int = Field(
+        default=7200,
+        ge=300,
+        le=604800,
+    )
     render_width: int = Field(default=1080, ge=360, le=2160)
     render_height: int = Field(default=1920, ge=640, le=3840)
     render_fps: int = Field(default=30, ge=24, le=60)
