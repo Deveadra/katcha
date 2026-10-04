@@ -873,7 +873,7 @@ def test_break_glass_mode_does_not_require_oci_vault_secret_ids(
     )
     monkeypatch.setenv(
         "KATCHA_BREAK_GLASS_HANDOFF_KEY",
-        "MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDA=",
+        "roUtmwTlzNzQht-sboiCMEq1azSRnyNjbzbET3CTKPk=",
     )
     for name in (
         "KATCHA_OCI_PRODUCTION_ENV_SECRET_ID",
@@ -941,7 +941,7 @@ def test_break_glass_bootstrap_renders_without_vault_dependency(
     )
     monkeypatch.setenv(
         "KATCHA_BREAK_GLASS_HANDOFF_KEY",
-        "MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDA=",
+        "roUtmwTlzNzQht-sboiCMEq1azSRnyNjbzbET3CTKPk=",
     )
     for name in (
         "KATCHA_OCI_PRODUCTION_ENV_SECRET_ID",
