@@ -674,3 +674,42 @@ def test_global_control_dependency_denies_unmapped_route(
         )
 
     assert exc.value.status_code == 403
+
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/v1/health/live",
+        "/v1/health/ready",
+        "/v1/integrations/youtube/oauth/callback",
+        "/auth/callback",
+    ],
+)
+def test_required_public_paths_bypass_control_auth(
+    monkeypatch,
+    path: str,
+) -> None:
+    monkeypatch.setattr(
+        "katcha.api.control_auth.get_settings",
+        lambda: Settings(_env_file=None, env="production"),
+    )
+    require_control_token(_request(path), None)
+
+
+def test_workspace_health_requires_control_auth_in_production(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        "katcha.api.control_auth.get_settings",
+        lambda: Settings(_env_file=None, env="production"),
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        require_control_token(
+            _request("/v1/health/workspace"),
+            None,
+        )
+
+    assert exc.value.status_code == 503
+    assert "not configured" in str(exc.value.detail)

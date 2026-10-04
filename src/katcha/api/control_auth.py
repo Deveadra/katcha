@@ -23,7 +23,6 @@ from katcha.config import (
 _bearer = HTTPBearer(auto_error=False)
 _PUBLIC_PATHS = {
     "/v1/health/live",
-    "/v1/health/workspace",
     "/v1/health/ready",
     "/v1/integrations/youtube/oauth/callback",
     "/auth/callback",

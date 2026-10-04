@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from katcha.ops import cloudflare_edge
 from katcha.ops.production_runtime import validate
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -121,6 +122,10 @@ def test_production_compose_is_remote_and_immutable() -> None:
     assert "/etc/katcha/aws:/home/katcha/.aws:ro" in compose
     assert "cloudflare/cloudflared:2026.9.2" in compose
     assert "KATCHA_CLOUDFLARE_TUNNEL_TOKEN" in compose
+    assert "backup-writer:" in compose
+    assert "backup-reader:" in compose
+    assert "KATCHA_BACKUP_ENV_FILE" in compose
+    assert "KATCHA_RESTORE_ENV_FILE" in compose
 
 
 def test_oracle_control_plane_images_are_multiarch() -> None:
@@ -147,3 +152,123 @@ def test_systemd_requires_durable_mount_and_restarts_supervisor() -> None:
     assert 'PYTHONPATH="${ROOT}/src' in supervisor
     assert "/etc/katcha/aws/config" in supervisor
     assert "docker-compose.aws-roles-anywhere.yml" not in supervisor
+
+
+
+def test_disaster_backup_units_are_durable_and_scheduled() -> None:
+    backup_service = (
+        ROOT / "deploy" / "systemd" / "katcha-backup.service"
+    ).read_text()
+    backup_timer = (
+        ROOT / "deploy" / "systemd" / "katcha-backup.timer"
+    ).read_text()
+    restore_service = (
+        ROOT / "deploy" / "systemd" / "katcha-restore-test.service"
+    ).read_text()
+    restore_timer = (
+        ROOT / "deploy" / "systemd" / "katcha-restore-test.timer"
+    ).read_text()
+
+    assert "RequiresMountsFor=/srv/katcha" in backup_service
+    assert "EnvironmentFile=/etc/katcha/katcha.env" in backup_service
+    assert "postgres-backup.sh" in backup_service
+    assert "OnCalendar=hourly" in backup_timer
+    assert "Persistent=true" in backup_timer
+    assert "postgres-restore-test.sh" in restore_service
+    assert "Sun *-*-* 04:15:00 UTC" in restore_timer
+    assert "Persistent=true" in restore_timer
+
+
+
+def test_break_glass_recovery_is_manual_explicit_and_ephemeral() -> None:
+    workflow = (
+        ROOT / ".github" / "workflows" / "oci-recovery.yml"
+    ).read_text(encoding="utf-8")
+
+    assert "secret_source:" in workflow
+    assert "default: oci-vault" in workflow
+    assert "- break-glass" in workflow
+    assert (
+        "github.event_name == 'workflow_dispatch' && "
+        "inputs.secret_source || 'oci-vault'"
+    ) in workflow
+    assert (
+        "if: github.event_name == 'workflow_dispatch' && "
+        "inputs.secret_source == 'break-glass'"
+    ) in workflow
+    assert "Build ephemeral off-OCI break-glass handoff" in workflow
+    assert "Delete ephemeral break-glass handoff" in workflow
+    assert (
+        "if: always() && github.event_name == 'workflow_dispatch' && "
+        "inputs.secret_source == 'break-glass'"
+    ) in workflow
+    assert "KATCHA_BREAK_GLASS_HANDOFF_OBJECT_KEY" in workflow
+    assert "create-handoff-from-escrow" in workflow
+    assert "KATCHA_BREAK_GLASS_ESCROW_KEY" in workflow
+    assert "BREAK_GLASS_PRODUCTION_ENV_B64" not in workflow
+
+
+def test_break_glass_candidate_keeps_oci_vault_and_escrow_paths_separate() -> None:
+    bootstrap = (
+        ROOT / "deploy" / "cloud-init" / "oci-recovery-candidate.sh.tmpl"
+    ).read_text(encoding="utf-8")
+
+    assert 'case "$SECRET_SOURCE" in' in bootstrap
+    assert "oci-vault)" in bootstrap
+    assert "break-glass)" in bootstrap
+    assert "install-handoff" in bootstrap
+    assert '--fernet-key "$BREAK_GLASS_HANDOFF_KEY"' not in bootstrap
+    assert (
+        'KATCHA_BREAK_GLASS_HANDOFF_KEY="$BREAK_GLASS_HANDOFF_KEY"'
+        in bootstrap
+    )
+
+
+
+def test_break_glass_escrow_drill_is_manual_and_non_oci() -> None:
+    workflow = (
+        ROOT / ".github" / "workflows" / "break-glass-escrow-drill.yml"
+    ).read_text(encoding="utf-8")
+
+    assert "workflow_dispatch:" in workflow
+    assert "repository_dispatch" not in workflow
+    assert "schedule:" not in workflow
+    assert "create-handoff-from-escrow" in workflow
+    assert "install-handoff" in workflow
+    assert "production_runtime" in workflow
+    assert "disaster_recovery_validate" in workflow
+    assert "Delete one-time handoff" in workflow
+    assert "oci " not in workflow
+
+
+
+def test_cloudflare_edge_rules_fit_free_tier_contract() -> None:
+    config = object.__new__(cloudflare_edge.CloudflareEdgeConfig)
+    object.__setattr__(config, "hostname", "katcha.example.com")
+    object.__setattr__(config, "public_requests_per_10s", 30)
+    rules = cloudflare_edge.desired_rules(config)
+
+    custom = rules["http_request_firewall_custom"]
+    rate = rules["http_ratelimit"]
+    assert len(custom) == 2
+    assert {row["ref"] for row in custom} == {
+        "katcha_public_method_guard",
+        "katcha_sensitive_probe_block",
+    }
+    assert all(
+        'http.host eq "katcha.example.com"' in row["expression"]
+        for row in custom
+    )
+    assert len(rate) == 1
+    assert "http.host" not in rate[0]["expression"]
+    assert rate[0]["ratelimit"]["period"] == 10
+    assert rate[0]["ratelimit"]["requests_per_period"] == 30
+    assert "/auth/callback" not in rate[0]["expression"]
+
+
+
+def test_local_api_container_healthcheck_uses_public_liveness_not_workspace_auth() -> None:
+    compose = (ROOT / "docker-compose.app.yml").read_text(encoding="utf-8")
+
+    assert "http://localhost:8000/v1/health/live" in compose
+    assert "http://localhost:8000/v1/health/workspace" not in compose

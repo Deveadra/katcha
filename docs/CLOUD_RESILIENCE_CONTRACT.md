@@ -10,13 +10,14 @@ OCI Ampere A1 Always Free is the preferred steady-state control plane because it
 
 Recovery order:
 
-1. restore or replace the healthy Always Free A1 instance when capacity exists,
-2. retry a valid placement within the tenancy/home-region options allowed by the account,
-3. if free capacity is still unavailable and the emergency-spend policy permits it, create the smallest approved paid OCI compute shape,
-4. restore the exact durable state, acquire leadership, and resume only reconciled work,
+1. replace the current same-AD Always Free A1 instance and reattach its durable data volume when that AD remains usable,
+2. if same-AD recovery fails, try every configured alternate-AD Always Free A1 target and restore the newest acceptable immutable R2 recovery point onto a fresh durable volume in that AD,
+3. only after all configured free A1 placements fail, and only when the emergency-spend policy permits it, try the smallest approved paid OCI compute shape in the current AD and then alternate ADs,
+4. acquire leadership only after storage restore, local readiness, public-route readiness, and fencing acceptance,
 5. periodically probe for acceptable Always Free A1 capacity,
 6. migrate authority back only after restore/health/fencing acceptance,
-7. destroy paid fallback compute automatically after the configured grace period.
+7. destroy paid fallback compute automatically after the configured grace period,
+8. retain superseded durable volumes for a bounded rollback window, then delete only those explicitly retirement-tagged, unattached, and proven not to be the active leader's volume.
 
 Paid fallback is bounded by both a maximum lifetime and a maximum infrastructure spend. It is a continuity mechanism, not the normal runtime.
 
@@ -72,15 +73,15 @@ A restore test from an R2 recovery point is a production gate.
 
 OCI Vault remains the normal secret authority for the OCI deployment.
 
-A minimal encrypted break-glass bundle is also kept outside OCI. It contains only the material needed to bootstrap a replacement environment, for example:
+A durable encrypted escrow is also kept outside OCI in a dedicated Cloudflare R2 bucket. The escrow contains the production environment, dedicated backup/restore environments, and AWS bootstrap material needed to reconstruct the control plane. Its Fernet decryption key is held outside OCI by GitHub Actions plus an operator-controlled offline/password-manager copy.
 
-- R2 restore credentials or a recoverable path to them,
-- Cloudflare recovery-coordinator deployment/configuration material,
-- encrypted Katcha credential-encryption key recovery material,
-- source-control/deployment bootstrap instructions and identities,
-- AWS rendering bootstrap material where it cannot be derived elsewhere.
+Normal Katcha runtime identities cannot read the escrow. Automatic recovery continues to use OCI Vault. Break-glass recovery is a manual workflow-dispatch choice only.
 
-The bundle is not mounted into normal Katcha processes and is not readable by the normal OCI runtime identity.
+A break-glass recovery does not hand the durable escrow key to the replacement VM. GitHub reads and verifies the durable escrow, re-encrypts it with a fresh one-time key, uploads the ciphertext beneath a separate short-lived handoff prefix, and supplies only that handoff URL/key to the candidate. The handoff is deleted in an always-run cleanup step and is also covered by a lifecycle rule that removes stale handoffs within 24 hours. The durable escrow prefix is excluded from that lifecycle.
+
+Escrow rotation is publish-then-switch: publish a new uniquely named encrypted object, update the GitHub pointer, pass the non-destructive escrow drill, and only then retire the superseded escrow. The durable escrow format is provider-neutral even though the current control-plane recovery backend still launches OCI compute.
+
+See docs/BREAK_GLASS_RECOVERY.md for the setup, drill, rotation, and live recovery procedure.
 
 ## Cost circuit breakers
 
@@ -106,14 +107,25 @@ Startup credits, promotional credits, and free grants may reduce realized cost, 
 
 The OCI host exposes no public application listener.
 
-Cloudflare Tunnel is the origin path. The operator/admin surface is protected with Cloudflare Access. WAF/rate-limit rules are applied by endpoint class.
+Cloudflare Tunnel is the only origin path. The FastAPI listener remains bound to loopback on the VM.
 
-Public/machine endpoints are explicitly classified rather than globally bypassing Access. Examples that require separate policy include:
+Cloudflare Access protects the entire human/operator hostname. Exact operator email addresses are the allowlist. More-specific Access applications define only two intentional exceptions:
 
-- OAuth redirect/callback endpoints,
-- verified signed webhooks,
-- health probes that intentionally reveal only minimal state,
-- machine-to-machine control endpoints with their own strong authentication.
+- `/v1/*` is left to Katcha's own scoped bearer-principal authentication so durable machine clients and recovery automation do not depend on an interactive Access session,
+- `/auth/callback` remains public for the ChatGPT OAuth redirect.
+
+The Katcha application itself exposes only these unauthenticated control-plane paths:
+
+- `/v1/health/live`,
+- `/v1/health/ready`,
+- `/v1/integrations/youtube/oauth/callback`,
+- `/auth/callback`.
+
+`/v1/health/workspace` requires Katcha control authentication. Any future public endpoint must be added explicitly to both the application and edge-policy contracts.
+
+WAF custom rules are hostname-scoped and reject invalid methods on public health/OAuth endpoints plus common secret/admin probes. The Free-plan rate-limit budget is consumed by one IP-scoped rule covering only Katcha-specific public health and YouTube callback paths. The generic `/auth/callback` path is omitted from that free rate rule because Free rate-limit expressions do not expose the Host field.
+
+Cloudflare ruleset automation changes only rules carrying Katcha-owned stable refs. It must not replace or delete unrelated zone rules.
 
 ## External heavy compute
 
@@ -135,7 +147,7 @@ Production cannot be declared ready until all of the following pass:
 2. attempt two simultaneous recoveries and prove only one deployment epoch becomes leader,
 3. wake a stale fenced control plane and prove it cannot publish or dispatch external work,
 4. delete/overwrite a locked database backup using runtime credentials and prove the action is denied,
-5. restore PostgreSQL/Temporal from R2 with the normal OCI instance unavailable,
+5. restore PostgreSQL/Temporal from R2 onto a fresh volume in another availability domain with the normal OCI instance and original data volume unavailable,
 6. bootstrap using the off-OCI break-glass path without depending on OCI Vault,
 7. exceed an external-compute budget in a fixture environment and prove no additional paid jobs launch,
 8. verify the operator surface is inaccessible without Access while OAuth/machine endpoints retain only their intended access path,

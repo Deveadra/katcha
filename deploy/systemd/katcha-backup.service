@@ -1,0 +1,19 @@
+[Unit]
+Description=Katcha immutable PostgreSQL disaster backup
+After=docker.service katcha.service
+Requires=docker.service
+RequiresMountsFor=/srv/katcha
+
+[Service]
+Type=oneshot
+User=root
+WorkingDirectory=/opt/katcha
+EnvironmentFile=/etc/katcha/katcha.env
+Environment=KATCHA_REPO_ROOT=/opt/katcha
+Environment=KATCHA_ENV_FILE=/etc/katcha/katcha.env
+Environment=KATCHA_BACKUP_ENV_FILE=/etc/katcha/backup.env
+ExecStart=/bin/bash /opt/katcha/deploy/scripts/postgres-backup.sh
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+TimeoutStartSec=45min

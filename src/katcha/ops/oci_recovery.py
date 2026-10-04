@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 
 import httpx
+from cryptography.fernet import Fernet
 
 
 class RecoveryError(RuntimeError):
@@ -25,6 +26,10 @@ class CapacityUnavailable(RecoveryError):
 
 class CommitOutcomeUnknown(RecoveryError):
     """Authority commit may have succeeded; destructive rollback is unsafe."""
+
+
+class RecoveryCleanupIncomplete(RecoveryError):
+    """Recovery cleanup did not fully restore the pre-attempt resource state."""
 
 
 def _env(name: str, *, default: str | None = None) -> str:
@@ -72,6 +77,12 @@ class ShapePlan:
 
 
 @dataclass(frozen=True, slots=True)
+class RecoveryTarget:
+    availability_domain: str
+    subnet_id: str
+
+
+@dataclass(frozen=True, slots=True)
 class RecoveryConfig:
     coordinator_url: str
     coordinator_admin_token: str
@@ -81,10 +92,16 @@ class RecoveryConfig:
     availability_domain: str
     compartment_id: str
     subnet_id: str
+    alternate_targets: tuple[RecoveryTarget, ...]
     data_volume_id: str
     data_volume_fs_uuid: str
+    secret_source: str
+    break_glass_handoff_url: str
+    break_glass_handoff_key: str
     production_env_secret_id: str
     aws_bundle_secret_id: str
+    backup_env_secret_id: str
+    restore_env_secret_id: str
     assign_public_ip: bool
     primary: ShapePlan
     fallback: ShapePlan
@@ -94,6 +111,10 @@ class RecoveryConfig:
     paid_max_incident_usd: float
     paid_max_concurrent: int
     candidate_timeout_seconds: int
+    cross_ad_volume_size_gb: int
+    cross_ad_device_path: str
+    cross_ad_max_backup_age_seconds: int
+    retired_volume_grace_hours: int
     bootstrap_template: Path
 
     @classmethod
@@ -114,6 +135,74 @@ class RecoveryConfig:
             _env("KATCHA_OCI_PAID_FALLBACK_MAX_CONCURRENT", default="1")
         )
         primary_image = _env("KATCHA_OCI_PRIMARY_IMAGE_ID")
+        secret_source = _env(
+            "KATCHA_RECOVERY_SECRET_SOURCE",
+            default="oci-vault",
+        ).casefold()
+        if secret_source == "oci-vault":
+            production_env_secret_id = _env(
+                "KATCHA_OCI_PRODUCTION_ENV_SECRET_ID"
+            )
+            aws_bundle_secret_id = _env("KATCHA_OCI_AWS_BUNDLE_SECRET_ID")
+            backup_env_secret_id = _env("KATCHA_OCI_BACKUP_ENV_SECRET_ID")
+            restore_env_secret_id = _env("KATCHA_OCI_RESTORE_ENV_SECRET_ID")
+            break_glass_handoff_url = ""
+            break_glass_handoff_key = ""
+        elif secret_source == "break-glass":
+            production_env_secret_id = os.environ.get(
+                "KATCHA_OCI_PRODUCTION_ENV_SECRET_ID",
+                "",
+            ).strip()
+            aws_bundle_secret_id = os.environ.get(
+                "KATCHA_OCI_AWS_BUNDLE_SECRET_ID",
+                "",
+            ).strip()
+            backup_env_secret_id = os.environ.get(
+                "KATCHA_OCI_BACKUP_ENV_SECRET_ID",
+                "",
+            ).strip()
+            restore_env_secret_id = os.environ.get(
+                "KATCHA_OCI_RESTORE_ENV_SECRET_ID",
+                "",
+            ).strip()
+            break_glass_handoff_url = _env(
+                "KATCHA_BREAK_GLASS_HANDOFF_URL"
+            )
+            break_glass_handoff_key = _env(
+                "KATCHA_BREAK_GLASS_HANDOFF_KEY"
+            )
+        else:
+            raise RecoveryError(
+                "KATCHA_RECOVERY_SECRET_SOURCE must be oci-vault or break-glass"
+            )
+        try:
+            raw_targets = json.loads(
+                _env("KATCHA_OCI_CROSS_AD_TARGETS_JSON", default="[]")
+            )
+        except json.JSONDecodeError as exc:
+            raise RecoveryError(
+                "KATCHA_OCI_CROSS_AD_TARGETS_JSON must be valid JSON"
+            ) from exc
+        if not isinstance(raw_targets, list):
+            raise RecoveryError(
+                "KATCHA_OCI_CROSS_AD_TARGETS_JSON must be a JSON array"
+            )
+        alternate_targets: list[RecoveryTarget] = []
+        for row in raw_targets:
+            if not isinstance(row, dict):
+                raise RecoveryError("each cross-AD target must be a JSON object")
+            availability_domain = str(row.get("availability_domain") or "").strip()
+            subnet_id = str(row.get("subnet_id") or "").strip()
+            if not availability_domain or not subnet_id:
+                raise RecoveryError(
+                    "each cross-AD target requires availability_domain and subnet_id"
+                )
+            alternate_targets.append(
+                RecoveryTarget(
+                    availability_domain=availability_domain,
+                    subnet_id=subnet_id,
+                )
+            )
         fallback_shape = (
             _env("KATCHA_OCI_PAID_FALLBACK_SHAPE")
             if paid_enabled
@@ -133,10 +222,16 @@ class RecoveryConfig:
             availability_domain=_env("KATCHA_OCI_AVAILABILITY_DOMAIN"),
             compartment_id=_env("KATCHA_OCI_COMPARTMENT_ID"),
             subnet_id=_env("KATCHA_OCI_SUBNET_ID"),
+            alternate_targets=tuple(alternate_targets),
             data_volume_id=_env("KATCHA_OCI_DATA_VOLUME_ID"),
             data_volume_fs_uuid=_env("KATCHA_OCI_DATA_VOLUME_FS_UUID"),
-            production_env_secret_id=_env("KATCHA_OCI_PRODUCTION_ENV_SECRET_ID"),
-            aws_bundle_secret_id=_env("KATCHA_OCI_AWS_BUNDLE_SECRET_ID"),
+            secret_source=secret_source,
+            break_glass_handoff_url=break_glass_handoff_url,
+            break_glass_handoff_key=break_glass_handoff_key,
+            production_env_secret_id=production_env_secret_id,
+            aws_bundle_secret_id=aws_bundle_secret_id,
+            backup_env_secret_id=backup_env_secret_id,
+            restore_env_secret_id=restore_env_secret_id,
             assign_public_ip=_bool_env("KATCHA_OCI_ASSIGN_PUBLIC_IP", True),
             primary=ShapePlan(
                 mode="always-free-a1",
@@ -163,6 +258,19 @@ class RecoveryConfig:
             paid_max_concurrent=paid_concurrent,
             candidate_timeout_seconds=int(
                 _env("KATCHA_RECOVERY_CANDIDATE_TIMEOUT_SECONDS", default="1200")
+            ),
+            cross_ad_volume_size_gb=int(
+                _env("KATCHA_OCI_CROSS_AD_DATA_VOLUME_SIZE_GB", default="50")
+            ),
+            cross_ad_device_path=_env(
+                "KATCHA_OCI_DATA_VOLUME_DEVICE_PATH",
+                default="/dev/oracleoci/oraclevdb",
+            ),
+            cross_ad_max_backup_age_seconds=int(
+                _env("KATCHA_OCI_CROSS_AD_MAX_BACKUP_AGE_SECONDS", default="7200")
+            ),
+            retired_volume_grace_hours=int(
+                _env("KATCHA_OCI_RETIRED_VOLUME_GRACE_HOURS", default="72")
             ),
             bootstrap_template=Path(
                 _env(
@@ -196,6 +304,36 @@ class RecoveryConfig:
                 )
         if len(self.release_sha) != 40:
             raise RecoveryError("KATCHA_RELEASE_SHA must be an exact git SHA")
+        if self.secret_source == "break-glass":
+            if not self.break_glass_handoff_url.startswith("https://"):
+                raise RecoveryError(
+                    "break-glass handoff URL must use HTTPS"
+                )
+            try:
+                Fernet(self.break_glass_handoff_key.encode("ascii"))
+            except (ValueError, UnicodeEncodeError) as exc:
+                raise RecoveryError(
+                    "break-glass handoff key must be a valid Fernet key"
+                ) from exc
+        if self.cross_ad_volume_size_gb < 50:
+            raise RecoveryError("cross-AD data volume must be at least 50 GB")
+        if self.cross_ad_max_backup_age_seconds < 900:
+            raise RecoveryError("cross-AD backup freshness window must be at least 900 seconds")
+        if (
+            self.retired_volume_grace_hours < 24
+            or self.retired_volume_grace_hours > 720
+        ):
+            raise RecoveryError(
+                "retired volume grace period must be between 24 and 720 hours"
+            )
+        if not self.cross_ad_device_path.startswith("/dev/oracleoci/"):
+            raise RecoveryError("cross-AD recovery requires a consistent OCI device path")
+        seen_targets = {(self.availability_domain, self.subnet_id)}
+        for target in self.alternate_targets:
+            key = (target.availability_domain, target.subnet_id)
+            if key in seen_targets:
+                raise RecoveryError("cross-AD recovery targets must be unique")
+            seen_targets.add(key)
 
 
 class CoordinatorClient:
@@ -310,8 +448,6 @@ class OciCli:
                 "list",
                 "--compartment-id",
                 config.compartment_id,
-                "--availability-domain",
-                config.availability_domain,
                 "--all",
             ]
         ).get("data", [])
@@ -331,6 +467,10 @@ class OciCli:
         deployment_id: str,
         deployment_epoch: int,
         plan: ShapePlan,
+        target: RecoveryTarget,
+        recovery_mode: str,
+        data_volume_id: str,
+        storage_mode: str,
         user_data_path: Path,
     ) -> str:
         expires = ""
@@ -343,7 +483,11 @@ class OciCli:
             "KatchaRecoveryIncident": incident.incident_id,
             "KatchaDeploymentId": deployment_id,
             "KatchaDeploymentEpoch": str(deployment_epoch),
-            "KatchaRecoveryMode": plan.mode,
+            "KatchaRecoveryMode": recovery_mode,
+            "KatchaPaidFallback": str(plan.paid).lower(),
+            "KatchaStorageMode": storage_mode,
+            "KatchaDataVolumeId": data_volume_id,
+            "KatchaSubnetId": target.subnet_id,
         }
         if expires:
             tags["KatchaExpiresAt"] = expires
@@ -353,11 +497,11 @@ class OciCli:
                 "instance",
                 "launch",
                 "--availability-domain",
-                config.availability_domain,
+                target.availability_domain,
                 "--compartment-id",
                 config.compartment_id,
                 "--subnet-id",
-                config.subnet_id,
+                target.subnet_id,
                 "--image-id",
                 plan.image_id,
                 "--shape",
@@ -370,7 +514,7 @@ class OciCli:
                 "--assign-public-ip",
                 str(config.assign_public_ip).lower(),
                 "--display-name",
-                f"katcha-recovery-{incident.incident_id[:8]}",
+                f"katcha-recovery-{incident.incident_id[:8]}-{recovery_mode[:12]}",
                 "--freeform-tags",
                 json.dumps(tags, separators=(",", ":")),
                 "--user-data-file",
@@ -386,7 +530,11 @@ class OciCli:
             raise RecoveryError("OCI launch returned no instance OCID")
         return instance_id
 
-    def volume_attachments(self, config: RecoveryConfig) -> list[dict[str, Any]]:
+    def volume_attachments(
+        self,
+        config: RecoveryConfig,
+        volume_id: str,
+    ) -> list[dict[str, Any]]:
         data = self.run(
             [
                 "compute",
@@ -395,7 +543,7 @@ class OciCli:
                 "--compartment-id",
                 config.compartment_id,
                 "--volume-id",
-                config.data_volume_id,
+                volume_id,
                 "--all",
             ]
         ).get("data", [])
@@ -459,7 +607,13 @@ class OciCli:
             ]
         )
 
-    def attach(self, config: RecoveryConfig, instance_id: str) -> None:
+    def attach(
+        self,
+        instance_id: str,
+        volume_id: str,
+        *,
+        device_path: str,
+    ) -> None:
         self.run(
             [
                 "compute",
@@ -468,11 +622,106 @@ class OciCli:
                 "--instance-id",
                 instance_id,
                 "--volume-id",
-                config.data_volume_id,
+                volume_id,
                 "--type",
                 "paravirtualized",
+                "--device",
+                device_path,
                 "--wait-for-state",
                 "ATTACHED",
+                "--max-wait-seconds",
+                "1200",
+            ]
+        )
+
+    def list_volumes(self, config: RecoveryConfig) -> list[dict[str, Any]]:
+        data = self.run(
+            [
+                "bv",
+                "volume",
+                "list",
+                "--compartment-id",
+                config.compartment_id,
+                "--all",
+            ]
+        ).get("data", [])
+        return list(data) if isinstance(data, list) else []
+
+    def get_volume(self, volume_id: str) -> dict[str, Any]:
+        data = self.run(
+            ["bv", "volume", "get", "--volume-id", volume_id]
+        ).get("data", {})
+        return dict(data) if isinstance(data, dict) else {}
+
+    def update_volume_tags(
+        self,
+        volume_id: str,
+        tags: dict[str, str],
+    ) -> None:
+        self.run(
+            [
+                "bv",
+                "volume",
+                "update",
+                "--volume-id",
+                volume_id,
+                "--freeform-tags",
+                json.dumps(tags, separators=(",", ":")),
+                "--force",
+            ]
+        )
+
+    def create_recovery_volume(
+        self,
+        config: RecoveryConfig,
+        incident: Incident,
+        *,
+        deployment_id: str,
+        availability_domain: str,
+    ) -> str:
+        tags = {
+            "KatchaRole": "recovery-data",
+            "KatchaRecoveryIncident": incident.incident_id,
+            "KatchaDeploymentId": deployment_id,
+            "KatchaEphemeralRecoveryVolume": "true",
+        }
+        result = self.run(
+            [
+                "bv",
+                "volume",
+                "create",
+                "--availability-domain",
+                availability_domain,
+                "--compartment-id",
+                config.compartment_id,
+                "--size-in-gbs",
+                str(config.cross_ad_volume_size_gb),
+                "--display-name",
+                f"katcha-recovery-data-{incident.incident_id[:8]}",
+                "--freeform-tags",
+                json.dumps(tags, separators=(",", ":")),
+                "--wait-for-state",
+                "AVAILABLE",
+                "--max-wait-seconds",
+                "1200",
+            ]
+        )
+        volume_id = str((result.get("data") or {}).get("id") or "")
+        if not volume_id:
+            raise RecoveryError("OCI volume create returned no volume OCID")
+        return volume_id
+
+    def delete_volume(self, volume_id: str) -> None:
+        self.run(
+            [
+                "bv",
+                "volume",
+                "delete",
+                "--volume-id",
+                volume_id,
+                "--force",
+                "--wait-for-state",
+                "TERMINATED",
                 "--max-wait-seconds",
                 "1200",
             ]
@@ -535,6 +784,18 @@ def _instance_id(row: dict[str, Any]) -> str:
     return str(row.get("id") or "")
 
 
+def _availability_domain(row: dict[str, Any]) -> str:
+    return str(row.get("availability-domain") or row.get("availabilityDomain") or "")
+
+
+def _is_paid_recovery(row: dict[str, Any]) -> bool:
+    tags = _tags(row)
+    return (
+        tags.get("KatchaPaidFallback", "").casefold() == "true"
+        or tags.get("KatchaRecoveryMode") == "paid-fallback"
+    )
+
+
 def find_deployment_instance(
     rows: list[dict[str, Any]],
     deployment_id: str,
@@ -566,7 +827,7 @@ def paid_instance_count(rows: list[dict[str, Any]]) -> int:
         1
         for row in rows
         if _state(row) not in {"TERMINATED", "TERMINATING"}
-        and _tags(row).get("KatchaRecoveryMode") == "paid-fallback"
+        and _is_paid_recovery(row)
     )
 
 
@@ -575,6 +836,7 @@ def render_bootstrap(
     *,
     deployment_id: str,
     deployment_epoch: int,
+    storage_mode: str,
 ) -> Path:
     content = config.bootstrap_template.read_text(encoding="utf-8")
     replacements = {
@@ -582,8 +844,18 @@ def render_bootstrap(
         "DEPLOYMENT_EPOCH": str(deployment_epoch),
         "RELEASE_SHA": config.release_sha,
         "DATA_VOLUME_FS_UUID": config.data_volume_fs_uuid,
+        "DATA_VOLUME_DEVICE_PATH": config.cross_ad_device_path,
+        "SECRET_SOURCE": config.secret_source,
+        "BREAK_GLASS_HANDOFF_URL": config.break_glass_handoff_url,
+        "BREAK_GLASS_HANDOFF_KEY": config.break_glass_handoff_key,
+        "STORAGE_MODE": storage_mode,
+        "CROSS_AD_MAX_BACKUP_AGE_SECONDS": str(
+            config.cross_ad_max_backup_age_seconds
+        ),
         "PRODUCTION_ENV_SECRET_ID": config.production_env_secret_id,
         "AWS_BUNDLE_SECRET_ID": config.aws_bundle_secret_id,
+        "BACKUP_ENV_SECRET_ID": config.backup_env_secret_id,
+        "RESTORE_ENV_SECRET_ID": config.restore_env_secret_id,
         "RECOVERY_COORDINATOR_URL": config.coordinator_url,
         "RECOVERY_CANDIDATE_TOKEN": config.candidate_token,
         "PUBLIC_HEALTH_URL": config.public_health_url,
@@ -715,9 +987,10 @@ def switch_volume(
     oci: OciCli,
     config: RecoveryConfig,
     candidate_id: str,
+    volume_id: str,
 ) -> str | None:
     previous_instance: str | None = None
-    attachments = oci.volume_attachments(config)
+    attachments = oci.volume_attachments(config, volume_id)
     for attachment in attachments:
         state = _state(attachment)
         attached_instance = _attachment_instance_id(attachment)
@@ -728,7 +1001,27 @@ def switch_volume(
         previous_instance = attached_instance
         oci.stop(attached_instance)
         oci.detach(_attachment_id(attachment))
-    oci.attach(config, candidate_id)
+    try:
+        oci.attach(
+            candidate_id,
+            volume_id,
+            device_path=config.cross_ad_device_path,
+        )
+    except Exception:
+        if previous_instance:
+            try:
+                oci.attach(
+                    previous_instance,
+                    volume_id,
+                    device_path=config.cross_ad_device_path,
+                )
+                oci.start(previous_instance)
+            except Exception as rollback_error:
+                raise RecoveryCleanupIncomplete(
+                    "candidate volume attach failed and restoring the previous "
+                    f"attachment also failed: {rollback_error}"
+                ) from rollback_error
+        raise
     return previous_instance
 
 
@@ -737,14 +1030,335 @@ def rollback_volume(
     config: RecoveryConfig,
     *,
     candidate_id: str,
+    volume_id: str,
     previous_instance_id: str | None,
 ) -> None:
-    for attachment in oci.volume_attachments(config):
+    for attachment in oci.volume_attachments(config, volume_id):
         if _attachment_instance_id(attachment) == candidate_id:
             oci.detach(_attachment_id(attachment))
     if previous_instance_id:
-        oci.attach(config, previous_instance_id)
+        oci.attach(
+            previous_instance_id,
+            volume_id,
+            device_path=config.cross_ad_device_path,
+        )
         oci.start(previous_instance_id)
+
+
+@dataclass(slots=True)
+class CandidateAttempt:
+    instance_id: str
+    target: RecoveryTarget
+    volume_id: str
+    storage_mode: str
+    recovery_mode: str
+    previous_instance_id: str | None
+    owns_recovery_volume: bool
+
+
+def _target_for_active(
+    config: RecoveryConfig,
+    active_instance: dict[str, Any] | None,
+) -> RecoveryTarget:
+    if active_instance is None:
+        return RecoveryTarget(
+            availability_domain=config.availability_domain,
+            subnet_id=config.subnet_id,
+        )
+    tags = _tags(active_instance)
+    availability_domain = _availability_domain(active_instance) or config.availability_domain
+    subnet_id = tags.get("KatchaSubnetId", "").strip()
+    if not subnet_id:
+        if availability_domain == config.availability_domain:
+            subnet_id = config.subnet_id
+        else:
+            for target in config.alternate_targets:
+                if target.availability_domain == availability_domain:
+                    subnet_id = target.subnet_id
+                    break
+    if not subnet_id:
+        raise RecoveryError(
+            "active recovery instance does not identify a subnet for its availability domain"
+        )
+    return RecoveryTarget(
+        availability_domain=availability_domain,
+        subnet_id=subnet_id,
+    )
+
+
+def _cross_ad_targets(
+    config: RecoveryConfig,
+    active_target: RecoveryTarget,
+) -> list[RecoveryTarget]:
+    targets = [
+        RecoveryTarget(config.availability_domain, config.subnet_id),
+        *config.alternate_targets,
+    ]
+    result: list[RecoveryTarget] = []
+    seen: set[tuple[str, str]] = set()
+    for target in targets:
+        key = (target.availability_domain, target.subnet_id)
+        if key in seen:
+            continue
+        seen.add(key)
+        if target.availability_domain == active_target.availability_domain:
+            continue
+        result.append(target)
+    return result
+
+
+def _current_data_volume_id(
+    config: RecoveryConfig,
+    active_instance: dict[str, Any] | None,
+) -> str:
+    if active_instance is not None:
+        tagged = _tags(active_instance).get("KatchaDataVolumeId", "").strip()
+        if tagged:
+            return tagged
+    return config.data_volume_id
+
+
+def _ensure_volume_attached(
+    oci: OciCli,
+    config: RecoveryConfig,
+    *,
+    candidate_id: str,
+    volume_id: str,
+) -> None:
+    attachments = oci.volume_attachments(config, volume_id)
+    for attachment in attachments:
+        state = _state(attachment)
+        attached_instance = _attachment_instance_id(attachment)
+        if state not in {"ATTACHED", "ATTACHING"} or not attached_instance:
+            continue
+        if attached_instance == candidate_id:
+            return
+        raise RecoveryError(
+            f"recovery volume is already attached to another instance: "
+            f"{attached_instance}"
+        )
+    oci.attach(
+        candidate_id,
+        volume_id,
+        device_path=config.cross_ad_device_path,
+    )
+
+
+def _detach_candidate_volume(
+    oci: OciCli,
+    config: RecoveryConfig,
+    *,
+    candidate_id: str,
+    volume_id: str,
+) -> None:
+    for attachment in oci.volume_attachments(config, volume_id):
+        if _attachment_instance_id(attachment) == candidate_id:
+            oci.detach(_attachment_id(attachment))
+
+
+def _cleanup_failed_attempt(
+    oci: OciCli,
+    config: RecoveryConfig,
+    attempt: CandidateAttempt,
+) -> None:
+    errors: list[str] = []
+    try:
+        if attempt.storage_mode == "existing-volume":
+            rollback_volume(
+                oci,
+                config,
+                candidate_id=attempt.instance_id,
+                volume_id=attempt.volume_id,
+                previous_instance_id=attempt.previous_instance_id,
+            )
+        else:
+            _detach_candidate_volume(
+                oci,
+                config,
+                candidate_id=attempt.instance_id,
+                volume_id=attempt.volume_id,
+            )
+    except Exception as exc:
+        errors.append(f"storage:{type(exc).__name__}:{exc}")
+
+    try:
+        oci.terminate(attempt.instance_id)
+    except Exception as exc:
+        errors.append(f"terminate:{type(exc).__name__}:{exc}")
+
+    if attempt.owns_recovery_volume:
+        try:
+            oci.delete_volume(attempt.volume_id)
+        except Exception as exc:
+            errors.append(f"volume-delete:{type(exc).__name__}:{exc}")
+
+    if errors:
+        raise RecoveryCleanupIncomplete(
+            "recovery attempt cleanup incomplete: " + " | ".join(errors)
+        )
+
+
+def _launch_attempt(
+    *,
+    config: RecoveryConfig,
+    oci: OciCli,
+    coordinator: CoordinatorClient,
+    incident: Incident,
+    deployment_id: str,
+    deployment_epoch: int,
+    plan: ShapePlan,
+    target: RecoveryTarget,
+    storage_mode: str,
+    current_volume_id: str,
+    recovery_mode: str,
+) -> CandidateAttempt:
+    owns_recovery_volume = storage_mode == "r2-restore"
+    volume_id = current_volume_id
+    user_data_path = render_bootstrap(
+        config,
+        deployment_id=deployment_id,
+        deployment_epoch=deployment_epoch,
+        storage_mode=storage_mode,
+    )
+    candidate_id = ""
+    attempt: CandidateAttempt | None = None
+    try:
+        if owns_recovery_volume:
+            volume_id = oci.create_recovery_volume(
+                config,
+                incident,
+                deployment_id=deployment_id,
+                availability_domain=target.availability_domain,
+            )
+        candidate_id = oci.launch(
+            config,
+            incident,
+            deployment_id=deployment_id,
+            deployment_epoch=deployment_epoch,
+            plan=plan,
+            target=target,
+            recovery_mode=recovery_mode,
+            data_volume_id=volume_id,
+            storage_mode=storage_mode,
+            user_data_path=user_data_path,
+        )
+        attempt = CandidateAttempt(
+            instance_id=candidate_id,
+            target=target,
+            volume_id=volume_id,
+            storage_mode=storage_mode,
+            recovery_mode=recovery_mode,
+            previous_instance_id=None,
+            owns_recovery_volume=owns_recovery_volume,
+        )
+        if storage_mode == "existing-volume":
+            attempt.previous_instance_id = switch_volume(
+                oci,
+                config,
+                candidate_id,
+                volume_id,
+            )
+        else:
+            _ensure_volume_attached(
+                oci,
+                config,
+                candidate_id=candidate_id,
+                volume_id=volume_id,
+            )
+        wait_for_candidate_ready(
+            coordinator,
+            deployment_id=deployment_id,
+            deployment_epoch=deployment_epoch,
+            timeout_seconds=config.candidate_timeout_seconds,
+        )
+        return attempt
+    except Exception:
+        if attempt is not None:
+            try:
+                _cleanup_failed_attempt(oci, config, attempt)
+            except RecoveryCleanupIncomplete:
+                raise
+        else:
+            if candidate_id:
+                try:
+                    oci.terminate(candidate_id)
+                except Exception as terminate_error:
+                    print(
+                        "RECOVERY_TERMINATE_WARNING: "
+                        f"{type(terminate_error).__name__}: {terminate_error}"
+                    )
+            if owns_recovery_volume:
+                try:
+                    oci.delete_volume(volume_id)
+                except Exception as volume_error:
+                    print(
+                        "RECOVERY_VOLUME_CLEANUP_WARNING: "
+                        f"{type(volume_error).__name__}: {volume_error}"
+                    )
+        raise
+    finally:
+        user_data_path.unlink(missing_ok=True)
+
+
+def _resume_existing_candidate(
+    *,
+    config: RecoveryConfig,
+    oci: OciCli,
+    coordinator: CoordinatorClient,
+    candidate: dict[str, Any],
+    deployment_id: str,
+    deployment_epoch: int,
+    rollback_instance_id: str | None,
+) -> CandidateAttempt:
+    tags = _tags(candidate)
+    candidate_id = _instance_id(candidate)
+    storage_mode = tags.get("KatchaStorageMode", "existing-volume")
+    volume_id = tags.get("KatchaDataVolumeId", "").strip() or config.data_volume_id
+    target = RecoveryTarget(
+        availability_domain=_availability_domain(candidate) or config.availability_domain,
+        subnet_id=tags.get("KatchaSubnetId", "").strip() or config.subnet_id,
+    )
+    attempt = CandidateAttempt(
+        instance_id=candidate_id,
+        target=target,
+        volume_id=volume_id,
+        storage_mode=storage_mode,
+        recovery_mode=tags.get("KatchaRecoveryMode", "existing-candidate"),
+        previous_instance_id=None,
+        owns_recovery_volume=storage_mode == "r2-restore",
+    )
+
+    try:
+        if storage_mode == "r2-restore":
+            _ensure_volume_attached(
+                oci,
+                config,
+                candidate_id=candidate_id,
+                volume_id=volume_id,
+            )
+        else:
+            attempt.previous_instance_id = switch_volume(
+                oci,
+                config,
+                candidate_id,
+                volume_id,
+            )
+            if attempt.previous_instance_id is None:
+                attempt.previous_instance_id = rollback_instance_id
+
+        wait_for_candidate_ready(
+            coordinator,
+            deployment_id=deployment_id,
+            deployment_epoch=deployment_epoch,
+            timeout_seconds=config.candidate_timeout_seconds,
+        )
+        return attempt
+    except Exception:
+        try:
+            _cleanup_failed_attempt(oci, config, attempt)
+        except RecoveryCleanupIncomplete:
+            raise
+        raise
 
 
 def recover(event_path: Path, config: RecoveryConfig, oci: OciCli) -> dict[str, Any]:
@@ -763,85 +1377,159 @@ def recover(event_path: Path, config: RecoveryConfig, oci: OciCli) -> dict[str, 
     deployment_epoch = int(pending["epoch"])
 
     rows = oci.list_instances(config)
-    existing = find_existing_candidate(rows, incident.incident_id)
-    candidate_id = _instance_id(existing) if existing else ""
-    mode = _tags(existing).get("KatchaRecoveryMode", "") if existing else ""
-    user_data_path: Path | None = None
-    previous_instance_id: str | None = None
-    active_instance = find_deployment_instance(
-        rows,
-        incident.active_deployment_id,
-    )
+    active_instance = find_deployment_instance(rows, incident.active_deployment_id)
     rollback_instance_id = _instance_id(active_instance) if active_instance else None
+    active_target = _target_for_active(config, active_instance)
+    current_volume_id = _current_data_volume_id(config, active_instance)
+    existing = find_existing_candidate(rows, incident.incident_id)
+
+    successful_attempt: CandidateAttempt | None = None
+    failures: list[str] = []
 
     try:
-        if not candidate_id:
-            user_data_path = render_bootstrap(
-                config,
-                deployment_id=deployment_id,
-                deployment_epoch=deployment_epoch,
-            )
+        if existing:
             try:
-                candidate_id = oci.launch(
-                    config,
-                    incident,
+                successful_attempt = _resume_existing_candidate(
+                    config=config,
+                    oci=oci,
+                    coordinator=coordinator,
+                    candidate=existing,
                     deployment_id=deployment_id,
                     deployment_epoch=deployment_epoch,
-                    plan=config.primary,
-                    user_data_path=user_data_path,
+                    rollback_instance_id=rollback_instance_id,
                 )
-                mode = config.primary.mode
-            except CapacityUnavailable as exc:
-                if not config.paid_enabled:
-                    raise RecoveryError(
-                        "A1 capacity unavailable and paid fallback is disabled"
-                    ) from exc
-                if paid_instance_count(rows) >= config.paid_max_concurrent:
-                    raise RecoveryError(
-                        "paid fallback concurrency limit reached"
-                    ) from exc
-                candidate_id = oci.launch(
-                    config,
-                    incident,
-                    deployment_id=deployment_id,
-                    deployment_epoch=deployment_epoch,
-                    plan=config.fallback,
-                    user_data_path=user_data_path,
+            except RecoveryCleanupIncomplete:
+                raise
+            except Exception as exc:
+                failures.append(
+                    f"resume-existing:{type(exc).__name__}:{exc}"
                 )
-                mode = config.fallback.mode
 
-        previous_instance_id = switch_volume(oci, config, candidate_id)
-        if previous_instance_id is None:
-            previous_instance_id = rollback_instance_id
-        wait_for_candidate_ready(
-            coordinator,
-            deployment_id=deployment_id,
-            deployment_epoch=deployment_epoch,
-            timeout_seconds=config.candidate_timeout_seconds,
-        )
+        if successful_attempt is None:
+            attempts: list[tuple[ShapePlan, RecoveryTarget, str, str]] = [
+                (
+                    config.primary,
+                    active_target,
+                    "existing-volume",
+                    "always-free-a1",
+                )
+            ]
+            for target in _cross_ad_targets(config, active_target):
+                attempts.append(
+                    (
+                        config.primary,
+                        target,
+                        "r2-restore",
+                        "cross-ad-free-a1",
+                    )
+                )
+
+            if config.paid_enabled:
+                attempts.append(
+                    (
+                        config.fallback,
+                        active_target,
+                        "existing-volume",
+                        "paid-fallback",
+                    )
+                )
+                for target in _cross_ad_targets(config, active_target):
+                    attempts.append(
+                        (
+                            config.fallback,
+                            target,
+                            "r2-restore",
+                            "cross-ad-paid-fallback",
+                        )
+                    )
+
+            for plan, target, storage_mode, recovery_mode in attempts:
+                if plan.paid and paid_instance_count(oci.list_instances(config)) >= (
+                    config.paid_max_concurrent
+                ):
+                    failures.append(
+                        f"{recovery_mode}@{target.availability_domain}:"
+                        "paid fallback concurrency limit reached"
+                    )
+                    continue
+                try:
+                    successful_attempt = _launch_attempt(
+                        config=config,
+                        oci=oci,
+                        coordinator=coordinator,
+                        incident=incident,
+                        deployment_id=deployment_id,
+                        deployment_epoch=deployment_epoch,
+                        plan=plan,
+                        target=target,
+                        storage_mode=storage_mode,
+                        current_volume_id=current_volume_id,
+                        recovery_mode=recovery_mode,
+                    )
+                    break
+                except RecoveryCleanupIncomplete:
+                    raise
+                except Exception as exc:
+                    failures.append(
+                        f"{recovery_mode}@{target.availability_domain}:"
+                        f"{type(exc).__name__}:{exc}"
+                    )
+
+        if successful_attempt is None:
+            detail = " | ".join(failures[-8:])
+            raise RecoveryError(
+                "all bounded OCI recovery attempts failed"
+                + (f": {detail}" if detail else "")
+            )
+
         committed = commit_authority_safely(
             coordinator,
             deployment_id=deployment_id,
             deployment_epoch=deployment_epoch,
             expected_active_epoch=incident.expected_active_epoch,
         )
-        if (
-            previous_instance_id
-            and previous_instance_id != candidate_id
-        ):
+
+        retire_instance_id = (
+            successful_attempt.previous_instance_id or rollback_instance_id
+        )
+        if retire_instance_id and retire_instance_id != successful_attempt.instance_id:
             try:
-                oci.terminate(previous_instance_id)
+                oci.terminate(retire_instance_id)
             except Exception as retire_error:
                 print(
                     "RECOVERY_RETIRE_WARNING: "
                     f"{type(retire_error).__name__}: {retire_error}"
                 )
+
+        if current_volume_id != successful_attempt.volume_id:
+            try:
+                retire_at = schedule_volume_retirement(
+                    oci,
+                    config,
+                    volume_id=current_volume_id,
+                    replacement_volume_id=successful_attempt.volume_id,
+                    replacement_deployment_id=deployment_id,
+                )
+                if retire_at:
+                    print(
+                        "RECOVERY_VOLUME_RETIREMENT_SCHEDULED: "
+                        f"{current_volume_id} after {retire_at}"
+                    )
+            except Exception as retirement_error:
+                print(
+                    "RECOVERY_VOLUME_RETIREMENT_WARNING: "
+                    f"{type(retirement_error).__name__}: {retirement_error}"
+                )
+
         return {
             "status": "committed",
-            "instance_id": candidate_id,
+            "instance_id": successful_attempt.instance_id,
             "deployment_id": deployment_id,
             "deployment_epoch": deployment_epoch,
-            "mode": mode,
+            "mode": successful_attempt.recovery_mode,
+            "storage_mode": successful_attempt.storage_mode,
+            "availability_domain": successful_attempt.target.availability_domain,
+            "data_volume_id": successful_attempt.volume_id,
             "leader_id": committed.get("leader_id"),
         }
     except CommitOutcomeUnknown:
@@ -851,25 +1539,13 @@ def recover(event_path: Path, config: RecoveryConfig, oci: OciCli) -> dict[str, 
         )
         raise
     except Exception:
-        if candidate_id:
+        if successful_attempt is not None:
             try:
-                rollback_volume(
-                    oci,
-                    config,
-                    candidate_id=candidate_id,
-                    previous_instance_id=previous_instance_id,
-                )
-            except Exception as rollback_error:
+                _cleanup_failed_attempt(oci, config, successful_attempt)
+            except Exception as cleanup_error:
                 print(
                     "RECOVERY_ROLLBACK_WARNING: "
-                    f"{type(rollback_error).__name__}: {rollback_error}"
-                )
-            try:
-                oci.terminate(candidate_id)
-            except Exception as terminate_error:
-                print(
-                    "RECOVERY_TERMINATE_WARNING: "
-                    f"{type(terminate_error).__name__}: {terminate_error}"
+                    f"{type(cleanup_error).__name__}: {cleanup_error}"
                 )
         try:
             coordinator.abort(
@@ -882,9 +1558,126 @@ def recover(event_path: Path, config: RecoveryConfig, oci: OciCli) -> dict[str, 
                 f"{type(abort_error).__name__}: {abort_error}"
             )
         raise
-    finally:
-        if user_data_path is not None:
-            user_data_path.unlink(missing_ok=True)
+
+
+def schedule_volume_retirement(
+    oci: OciCli,
+    config: RecoveryConfig,
+    *,
+    volume_id: str,
+    replacement_volume_id: str,
+    replacement_deployment_id: str,
+    now: datetime | None = None,
+) -> str:
+    if not volume_id or volume_id == replacement_volume_id:
+        return ""
+    current = now or datetime.now(UTC)
+    retire_at = current + timedelta(hours=config.retired_volume_grace_hours)
+    volume = oci.get_volume(volume_id)
+    if not volume:
+        raise RecoveryError(
+            f"cannot schedule retirement for missing volume: {volume_id}"
+        )
+    tags = _tags(volume)
+    tags.update(
+        {
+            "KatchaRetirementAuthorized": "true",
+            "KatchaRetireAfter": retire_at.isoformat(),
+            "KatchaReplacedByVolume": replacement_volume_id,
+            "KatchaReplacedByDeployment": replacement_deployment_id,
+        }
+    )
+    oci.update_volume_tags(volume_id, tags)
+    return retire_at.isoformat()
+
+
+def _parse_retirement_time(raw: str, volume_id: str) -> datetime:
+    try:
+        value = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise RecoveryError(
+            f"retired volume {volume_id} has an invalid KatchaRetireAfter tag"
+        ) from exc
+    if value.tzinfo is None:
+        raise RecoveryError(
+            f"retired volume {volume_id} has a timezone-less KatchaRetireAfter tag"
+        )
+    return value.astimezone(UTC)
+
+
+def _active_data_volume_id(
+    config: RecoveryConfig,
+    oci: OciCli,
+    coordinator: CoordinatorClient,
+) -> str:
+    state = coordinator.status()
+    active = state.get("active") or {}
+    deployment_id = str(active.get("deployment_id") or "").strip()
+    if not deployment_id:
+        raise RecoveryError(
+            "coordinator returned no active deployment; refusing volume cleanup"
+        )
+    rows = oci.list_instances(config)
+    active_instance = find_deployment_instance(rows, deployment_id)
+    if active_instance is None:
+        raise RecoveryError(
+            "active deployment instance is not visible in OCI; "
+            "refusing volume cleanup"
+        )
+    tagged = _tags(active_instance).get("KatchaDataVolumeId", "").strip()
+    if tagged:
+        return tagged
+    if _availability_domain(active_instance) == config.availability_domain:
+        return config.data_volume_id
+    raise RecoveryError(
+        "active non-primary deployment is missing KatchaDataVolumeId; "
+        "refusing volume cleanup"
+    )
+
+
+def cleanup_retired_volumes(
+    config: RecoveryConfig,
+    oci: OciCli,
+    coordinator: CoordinatorClient,
+    *,
+    now: datetime | None = None,
+) -> list[str]:
+    current = (now or datetime.now(UTC)).astimezone(UTC)
+    active_volume_id = _active_data_volume_id(config, oci, coordinator)
+    deleted: list[str] = []
+
+    for row in oci.list_volumes(config):
+        volume_id = str(row.get("id") or "").strip()
+        if not volume_id or volume_id == active_volume_id:
+            continue
+        if _state(row) != "AVAILABLE":
+            continue
+
+        tags = _tags(row)
+        if tags.get("KatchaRetirementAuthorized", "").casefold() != "true":
+            continue
+        retire_raw = tags.get("KatchaRetireAfter", "").strip()
+        if not retire_raw:
+            raise RecoveryError(
+                f"retired volume {volume_id} is missing KatchaRetireAfter"
+            )
+        if _parse_retirement_time(retire_raw, volume_id) > current:
+            continue
+
+        attachments = oci.volume_attachments(config, volume_id)
+        busy = [
+            attachment
+            for attachment in attachments
+            if _attachment_instance_id(attachment)
+            and _state(attachment) != "DETACHED"
+        ]
+        if busy:
+            continue
+
+        oci.delete_volume(volume_id)
+        deleted.append(volume_id)
+
+    return deleted
 
 
 def cleanup_expired_paid(
@@ -897,7 +1690,7 @@ def cleanup_expired_paid(
     terminated: list[str] = []
     for row in oci.list_instances(config):
         tags = _tags(row)
-        if tags.get("KatchaRecoveryMode") != "paid-fallback":
+        if not _is_paid_recovery(row):
             continue
         if _state(row) in {"TERMINATED", "TERMINATING"}:
             continue
@@ -932,9 +1725,16 @@ def main() -> int:
         )
         oci = OciCli()
         if args.action == "cleanup":
+            terminated = cleanup_expired_paid(config, oci)
+            retired_volumes_deleted = cleanup_retired_volumes(
+                config,
+                oci,
+                CoordinatorClient(config),
+            )
             result: object = {
                 "status": "cleanup_complete",
-                "terminated": cleanup_expired_paid(config, oci),
+                "terminated": terminated,
+                "retired_volumes_deleted": retired_volumes_deleted,
             }
         else:
             if args.event is None:

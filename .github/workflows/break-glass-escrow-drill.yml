@@ -1,0 +1,113 @@
+name: Break-glass escrow drill
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: katcha-break-glass-escrow-drill
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      KATCHA_BREAK_GLASS_R2_ENDPOINT_URL: ${{ vars.KATCHA_BREAK_GLASS_R2_ENDPOINT_URL }}
+      KATCHA_BREAK_GLASS_R2_BUCKET: ${{ vars.KATCHA_BREAK_GLASS_R2_BUCKET }}
+      KATCHA_BREAK_GLASS_R2_PREFIX: ${{ vars.KATCHA_BREAK_GLASS_R2_PREFIX }}
+      KATCHA_BREAK_GLASS_ESCROW_PREFIX: ${{ vars.KATCHA_BREAK_GLASS_ESCROW_PREFIX }}
+      KATCHA_BREAK_GLASS_ESCROW_OBJECT_KEY: ${{ vars.KATCHA_BREAK_GLASS_ESCROW_OBJECT_KEY }}
+      KATCHA_BREAK_GLASS_R2_REGION: ${{ vars.KATCHA_BREAK_GLASS_R2_REGION }}
+      KATCHA_BREAK_GLASS_R2_FORCE_PATH_STYLE: ${{ vars.KATCHA_BREAK_GLASS_R2_FORCE_PATH_STYLE }}
+      KATCHA_BREAK_GLASS_HANDOFF_TTL_SECONDS: ${{ vars.KATCHA_BREAK_GLASS_HANDOFF_TTL_SECONDS }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install validation runtime
+        run: python -m pip install -e .
+
+      - name: Rewrap durable escrow into one-time handoff
+        shell: bash
+        env:
+          KATCHA_BREAK_GLASS_R2_ACCESS_KEY: ${{ secrets.KATCHA_BREAK_GLASS_R2_ACCESS_KEY }}
+          KATCHA_BREAK_GLASS_R2_SECRET_KEY: ${{ secrets.KATCHA_BREAK_GLASS_R2_SECRET_KEY }}
+          KATCHA_BREAK_GLASS_ESCROW_KEY: ${{ secrets.KATCHA_BREAK_GLASS_ESCROW_KEY }}
+        run: |
+          set -euo pipefail
+          for name in \
+            KATCHA_BREAK_GLASS_R2_ACCESS_KEY \
+            KATCHA_BREAK_GLASS_R2_SECRET_KEY \
+            KATCHA_BREAK_GLASS_ESCROW_KEY \
+            KATCHA_BREAK_GLASS_ESCROW_OBJECT_KEY; do
+            if [[ -z "${!name:-}" ]]; then
+              echo "Missing required break-glass setting: $name" >&2
+              exit 41
+            fi
+          done
+
+          result="$(
+            python -m katcha.ops.break_glass create-handoff-from-escrow \
+              --escrow-object-key "$KATCHA_BREAK_GLASS_ESCROW_OBJECT_KEY" \
+              --ttl-seconds "${KATCHA_BREAK_GLASS_HANDOFF_TTL_SECONDS:-1800}"
+          )"
+          handoff_url="$(printf '%s' "$result" | jq -er '.url')"
+          handoff_key="$(printf '%s' "$result" | jq -er '.fernet_key')"
+          object_key="$(printf '%s' "$result" | jq -er '.object_key')"
+
+          echo "::add-mask::$handoff_url"
+          echo "::add-mask::$handoff_key"
+          {
+            echo "KATCHA_BREAK_GLASS_HANDOFF_URL=$handoff_url"
+            echo "KATCHA_BREAK_GLASS_HANDOFF_KEY=$handoff_key"
+            echo "KATCHA_BREAK_GLASS_HANDOFF_OBJECT_KEY=$object_key"
+          } >> "$GITHUB_ENV"
+
+      - name: Install and validate handoff on clean runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/katcha-break-glass"
+          install -d -m 0700 "$root"
+
+          python -m katcha.ops.break_glass install-handoff \
+            --root "$root" >/dev/null
+
+          python -m katcha.ops.production_runtime \
+            --env-file "$root/katcha.env"
+
+          python -m katcha.ops.disaster_recovery_validate \
+            --production-env "$root/katcha.env" \
+            --backup-env "$root/backup.env" \
+            --restore-env "$root/restore.env"
+
+          test -d "$root/aws"
+          test -f "$root/aws/config"
+          if find "$root/aws" -type l -print -quit | grep -q .; then
+            echo "AWS break-glass bundle contains a symlink after install." >&2
+            exit 42
+          fi
+
+          rm -rf "$root"
+
+      - name: Delete one-time handoff
+        if: always()
+        shell: bash
+        env:
+          KATCHA_BREAK_GLASS_R2_ACCESS_KEY: ${{ secrets.KATCHA_BREAK_GLASS_R2_ACCESS_KEY }}
+          KATCHA_BREAK_GLASS_R2_SECRET_KEY: ${{ secrets.KATCHA_BREAK_GLASS_R2_SECRET_KEY }}
+        run: |
+          set -euo pipefail
+          object_key="${KATCHA_BREAK_GLASS_HANDOFF_OBJECT_KEY:-}"
+          if [[ -z "$object_key" ]]; then
+            echo "No one-time handoff was created."
+            exit 0
+          fi
+          python -m katcha.ops.break_glass delete-handoff \
+            --object-key "$object_key"
