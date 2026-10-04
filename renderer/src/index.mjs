@@ -422,7 +422,8 @@ app.post('/render', async (request, response) => {
   if (isEditorial) {
     try {
       validateEditorialManifest(manifest);
-      // Until cost authorization is connected to durable runs, editorial is local only.
+      // Editorial remains local until its cloud render path has independent
+      // media/verification acceptance; video Lambda spend is budget-gated elsewhere.
       if (renderSettings.backend !== 'local') throw new Error('Editorial rendering requires the local backend');
       editorialDigest = createHash('sha256').update(JSON.stringify(manifest)).digest('hex');
     } catch (error) {
