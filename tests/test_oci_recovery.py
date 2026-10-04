@@ -23,7 +23,18 @@ def _base_env(monkeypatch, tmp_path: Path) -> None:
         "KATCHA_RELEASE_SHA": "a" * 40,
         "KATCHA_OCI_AVAILABILITY_DOMAIN": "TEST:AD-1",
         "KATCHA_OCI_COMPARTMENT_ID": "ocid1.compartment.test",
-        "KATCHA_OCI_SUBNET_ID": "ocid1.subnet.test",
+        "KATCHA_OCI_SUBNET_ID": "ocid1.subnet.ad1",
+        "KATCHA_OCI_CROSS_AD_TARGETS_JSON": json.dumps(
+            [
+                {
+                    "availability_domain": "TEST:AD-2",
+                    "subnet_id": "ocid1.subnet.ad2",
+                }
+            ]
+        ),
+        "KATCHA_OCI_CROSS_AD_DATA_VOLUME_SIZE_GB": "50",
+        "KATCHA_OCI_DATA_VOLUME_DEVICE_PATH": "/dev/oracleoci/oraclevdb",
+        "KATCHA_OCI_CROSS_AD_MAX_BACKUP_AGE_SECONDS": "7200",
         "KATCHA_OCI_DATA_VOLUME_ID": "ocid1.volume.test",
         "KATCHA_OCI_DATA_VOLUME_FS_UUID": "deadbeef-dead-beef-dead-beefdeadbeef",
         "KATCHA_OCI_PRODUCTION_ENV_SECRET_ID": "ocid1.vaultsecret.env",
@@ -42,6 +53,78 @@ def _base_env(monkeypatch, tmp_path: Path) -> None:
     }
     for key, value in values.items():
         monkeypatch.setenv(key, value)
+
+
+def _event(tmp_path: Path) -> Path:
+    path = tmp_path / "event.json"
+    path.write_text(
+        json.dumps(
+            {
+                "client_payload": {
+                    "incident_id": "12345678-1234-1234-1234-123456789012",
+                    "expected_active_epoch": 7,
+                    "active_deployment": {
+                        "deployment_id": "oci-a1-old",
+                        "epoch": 7,
+                    },
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    return path
+
+
+class FakeCoordinator:
+    instance = None
+
+    def __init__(self, _config):
+        self.committed = False
+        self.aborted = False
+        FakeCoordinator.instance = self
+
+    def status(self):
+        return {
+            "active": {"deployment_id": "oci-a1-old", "epoch": 7},
+            "incident": {"id": "12345678-1234-1234-1234-123456789012"},
+        }
+
+    def prepare(self, **_kwargs):
+        return {
+            "pending": {
+                "deployment_id": "oci-recovery-12345678-123",
+                "epoch": 8,
+            }
+        }
+
+    def commit(self, **_kwargs):
+        self.committed = True
+        return {"leader_id": "oci-recovery-12345678-123"}
+
+    def abort(self, **_kwargs):
+        self.aborted = True
+
+
+class RecoveryOci:
+    def __init__(self) -> None:
+        self.terminated: list[str] = []
+
+    def list_instances(self, _config):
+        return [
+            {
+                "id": "ocid1.instance.old",
+                "lifecycle-state": "RUNNING",
+                "availability-domain": "TEST:AD-1",
+                "freeform-tags": {
+                    "KatchaDeploymentId": "oci-a1-old",
+                    "KatchaDataVolumeId": "ocid1.volume.test",
+                    "KatchaSubnetId": "ocid1.subnet.ad1",
+                },
+            }
+        ]
+
+    def terminate(self, instance_id):
+        self.terminated.append(instance_id)
 
 
 def test_paid_budget_rejects_ttl_that_can_exceed_cap(monkeypatch, tmp_path) -> None:
@@ -67,6 +150,24 @@ def test_external_compute_kill_switch_fails_closed(monkeypatch, tmp_path) -> Non
         oci_recovery.RecoveryConfig.from_env()
 
 
+def test_cross_ad_targets_require_unique_ad_subnet_pairs(monkeypatch, tmp_path) -> None:
+    _base_env(monkeypatch, tmp_path)
+    monkeypatch.setenv(
+        "KATCHA_OCI_CROSS_AD_TARGETS_JSON",
+        json.dumps(
+            [
+                {
+                    "availability_domain": "TEST:AD-1",
+                    "subnet_id": "ocid1.subnet.ad1",
+                }
+            ]
+        ),
+    )
+
+    with pytest.raises(oci_recovery.RecoveryError, match="must be unique"):
+        oci_recovery.RecoveryConfig.from_env()
+
+
 def test_candidate_lookup_and_paid_count_ignore_terminated_instances() -> None:
     rows = [
         {
@@ -80,12 +181,15 @@ def test_candidate_lookup_and_paid_count_ignore_terminated_instances() -> None:
         {
             "id": "old-paid",
             "lifecycle-state": "TERMINATED",
-            "freeform-tags": {"KatchaRecoveryMode": "paid-fallback"},
+            "freeform-tags": {"KatchaPaidFallback": "true"},
         },
         {
             "id": "paid",
             "lifecycle-state": "STOPPED",
-            "freeform-tags": {"KatchaRecoveryMode": "paid-fallback"},
+            "freeform-tags": {
+                "KatchaRecoveryMode": "cross-ad-paid-fallback",
+                "KatchaPaidFallback": "true",
+            },
         },
     ]
 
@@ -112,7 +216,8 @@ def test_cleanup_terminates_only_expired_paid_instances(monkeypatch, tmp_path) -
                     "id": "expired",
                     "lifecycle-state": "RUNNING",
                     "freeform-tags": {
-                        "KatchaRecoveryMode": "paid-fallback",
+                        "KatchaRecoveryMode": "cross-ad-paid-fallback",
+                        "KatchaPaidFallback": "true",
                         "KatchaExpiresAt": (now - timedelta(minutes=1)).isoformat(),
                     },
                 },
@@ -121,6 +226,7 @@ def test_cleanup_terminates_only_expired_paid_instances(monkeypatch, tmp_path) -
                     "lifecycle-state": "RUNNING",
                     "freeform-tags": {
                         "KatchaRecoveryMode": "paid-fallback",
+                        "KatchaPaidFallback": "true",
                         "KatchaExpiresAt": (now + timedelta(hours=1)).isoformat(),
                     },
                 },
@@ -128,7 +234,7 @@ def test_cleanup_terminates_only_expired_paid_instances(monkeypatch, tmp_path) -
                     "id": "free",
                     "lifecycle-state": "RUNNING",
                     "freeform-tags": {
-                        "KatchaRecoveryMode": "always-free-a1",
+                        "KatchaRecoveryMode": "cross-ad-free-a1",
                     },
                 },
             ]
@@ -140,106 +246,159 @@ def test_cleanup_terminates_only_expired_paid_instances(monkeypatch, tmp_path) -
             self.terminated.append(instance_id)
 
     oci = FakeOci()
-    terminated = oci_recovery.cleanup_expired_paid(
-        config,
-        oci,
-        now=now,
-    )
+    terminated = oci_recovery.cleanup_expired_paid(config, oci, now=now)
 
     assert terminated == ["expired"]
     assert oci.softstopped == ["expired"]
     assert oci.terminated == ["expired"]
 
 
-def test_recovery_uses_paid_only_after_a1_capacity_failure(
+def test_recovery_prefers_cross_ad_free_before_paid(monkeypatch, tmp_path) -> None:
+    _base_env(monkeypatch, tmp_path)
+    config = oci_recovery.RecoveryConfig.from_env()
+    oci = RecoveryOci()
+    attempted: list[tuple[str, str, str]] = []
+
+    def fake_launch_attempt(**kwargs):
+        attempted.append(
+            (
+                kwargs["recovery_mode"],
+                kwargs["target"].availability_domain,
+                kwargs["storage_mode"],
+            )
+        )
+        if kwargs["recovery_mode"] == "always-free-a1":
+            raise oci_recovery.CapacityUnavailable("OutOfHostCapacity")
+        if kwargs["recovery_mode"] == "cross-ad-free-a1":
+            return oci_recovery.CandidateAttempt(
+                instance_id="ocid1.instance.crossad",
+                target=kwargs["target"],
+                volume_id="ocid1.volume.crossad",
+                storage_mode="r2-restore",
+                recovery_mode="cross-ad-free-a1",
+                previous_instance_id=None,
+                owns_recovery_volume=True,
+            )
+        raise AssertionError("paid fallback must not run when alternate free A1 works")
+
+    monkeypatch.setattr(oci_recovery, "CoordinatorClient", FakeCoordinator)
+    monkeypatch.setattr(oci_recovery, "_launch_attempt", fake_launch_attempt)
+
+    result = oci_recovery.recover(_event(tmp_path), config, oci)
+
+    assert attempted == [
+        ("always-free-a1", "TEST:AD-1", "existing-volume"),
+        ("cross-ad-free-a1", "TEST:AD-2", "r2-restore"),
+    ]
+    assert result["mode"] == "cross-ad-free-a1"
+    assert result["storage_mode"] == "r2-restore"
+    assert result["availability_domain"] == "TEST:AD-2"
+    assert result["data_volume_id"] == "ocid1.volume.crossad"
+    assert oci.terminated == ["ocid1.instance.old"]
+    assert FakeCoordinator.instance.committed is True
+    assert FakeCoordinator.instance.aborted is False
+
+
+def test_recovery_uses_paid_only_after_all_free_targets_fail(
     monkeypatch,
     tmp_path,
 ) -> None:
     _base_env(monkeypatch, tmp_path)
     config = oci_recovery.RecoveryConfig.from_env()
-    event = tmp_path / "event.json"
-    event.write_text(
-        json.dumps(
-            {
-                "client_payload": {
-                    "incident_id": "12345678-1234-1234-1234-123456789012",
-                    "expected_active_epoch": 7,
-                    "active_deployment": {
-                        "deployment_id": "oci-a1-old",
-                        "epoch": 7,
-                    },
-                }
-            }
-        ),
-        encoding="utf-8",
+    oci = RecoveryOci()
+    attempted: list[str] = []
+
+    def fake_launch_attempt(**kwargs):
+        mode = kwargs["recovery_mode"]
+        attempted.append(mode)
+        if mode in {"always-free-a1", "cross-ad-free-a1"}:
+            raise oci_recovery.CapacityUnavailable("OutOfHostCapacity")
+        if mode == "paid-fallback":
+            return oci_recovery.CandidateAttempt(
+                instance_id="ocid1.instance.paid",
+                target=kwargs["target"],
+                volume_id="ocid1.volume.test",
+                storage_mode="existing-volume",
+                recovery_mode=mode,
+                previous_instance_id="ocid1.instance.old",
+                owns_recovery_volume=False,
+            )
+        raise AssertionError("cross-AD paid fallback should not be needed")
+
+    monkeypatch.setattr(oci_recovery, "CoordinatorClient", FakeCoordinator)
+    monkeypatch.setattr(oci_recovery, "_launch_attempt", fake_launch_attempt)
+
+    result = oci_recovery.recover(_event(tmp_path), config, oci)
+
+    assert attempted == [
+        "always-free-a1",
+        "cross-ad-free-a1",
+        "paid-fallback",
+    ]
+    assert result["mode"] == "paid-fallback"
+
+
+def test_active_cross_ad_instance_becomes_new_same_ad_recovery_home(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    _base_env(monkeypatch, tmp_path)
+    config = oci_recovery.RecoveryConfig.from_env()
+    row = {
+        "availability-domain": "TEST:AD-2",
+        "freeform-tags": {
+            "KatchaSubnetId": "ocid1.subnet.ad2",
+            "KatchaDataVolumeId": "ocid1.volume.ad2",
+        },
+    }
+
+    target = oci_recovery._target_for_active(config, row)
+
+    assert target == oci_recovery.RecoveryTarget(
+        availability_domain="TEST:AD-2",
+        subnet_id="ocid1.subnet.ad2",
     )
+    assert oci_recovery._current_data_volume_id(config, row) == "ocid1.volume.ad2"
+    assert [
+        target.availability_domain
+        for target in oci_recovery._cross_ad_targets(config, target)
+    ] == ["TEST:AD-1"]
 
-    class FakeCoordinator:
-        instance = None
 
-        def __init__(self, _config):
-            self.committed = False
-            self.aborted = False
-            FakeCoordinator.instance = self
-
-        def status(self):
-            return {
-                "active": {"deployment_id": "oci-a1-old", "epoch": 7},
-                "incident": {"id": "12345678-1234-1234-1234-123456789012"},
-            }
-
-        def prepare(self, **_kwargs):
-            return {
-                "pending": {
-                    "deployment_id": "oci-recovery-12345678-123",
-                    "epoch": 8,
-                }
-            }
-
-        def commit(self, **_kwargs):
-            self.committed = True
-            return {"leader_id": "oci-recovery-12345678-123"}
-
-        def abort(self, **_kwargs):
-            self.aborted = True
+def test_failed_cross_ad_launch_deletes_fresh_volume(monkeypatch, tmp_path) -> None:
+    _base_env(monkeypatch, tmp_path)
+    config = oci_recovery.RecoveryConfig.from_env()
 
     class FakeOci:
         def __init__(self):
-            self.launch_modes = []
+            self.deleted = []
 
-        def list_instances(self, _config):
-            return []
+        def create_recovery_volume(self, *_args, **_kwargs):
+            return "ocid1.volume.fresh"
 
-        def launch(self, _config, _incident, *, plan, **_kwargs):
-            self.launch_modes.append(plan.mode)
-            if not plan.paid:
-                raise oci_recovery.CapacityUnavailable("OutOfHostCapacity")
-            return "ocid1.instance.paid"
+        def launch(self, *_args, **_kwargs):
+            raise oci_recovery.CapacityUnavailable("OutOfHostCapacity")
 
-        def volume_attachments(self, _config):
-            return []
+        def delete_volume(self, volume_id):
+            self.deleted.append(volume_id)
 
-        def attach(self, _config, _instance_id):
-            return None
+    class Coordinator:
+        pass
 
-        def terminate(self, _instance_id):
-            raise AssertionError("successful candidate must not be terminated")
-
-    oci = FakeOci()
-    monkeypatch.setattr(oci_recovery, "CoordinatorClient", FakeCoordinator)
-    monkeypatch.setattr(
-        oci_recovery,
-        "wait_for_candidate_ready",
-        lambda *_args, **_kwargs: None,
-    )
-
-    result = oci_recovery.recover(event, config, oci)
-
-    assert oci.launch_modes == ["always-free-a1", "paid-fallback"]
-    assert result["mode"] == "paid-fallback"
-    assert result["status"] == "committed"
-    assert FakeCoordinator.instance.committed is True
-    assert FakeCoordinator.instance.aborted is False
+    with pytest.raises(oci_recovery.CapacityUnavailable):
+        oci_recovery._launch_attempt(
+            config=config,
+            oci=FakeOci(),
+            coordinator=Coordinator(),
+            incident=oci_recovery.Incident("incident", 7, "old"),
+            deployment_id="candidate",
+            deployment_epoch=8,
+            plan=config.primary,
+            target=config.alternate_targets[0],
+            storage_mode="r2-restore",
+            current_volume_id=config.data_volume_id,
+            recovery_mode="cross-ad-free-a1",
+        )
 
 
 def test_stale_incident_is_rejected_before_compute() -> None:
@@ -272,6 +431,7 @@ def test_real_bootstrap_template_renders_without_touching_shell_syntax(
         config,
         deployment_id="oci-recovery-test",
         deployment_epoch=9,
+        storage_mode="r2-restore",
     )
     try:
         content = rendered.read_text(encoding="utf-8")
@@ -279,6 +439,9 @@ def test_real_bootstrap_template_renders_without_touching_shell_syntax(
         assert "oci-recovery-test" in content
         assert "ocid1.vaultsecret.backup" in content
         assert "ocid1.vaultsecret.restore" in content
+        assert "/dev/oracleoci/oraclevdb" in content
+        assert "r2-restore" in content
+        assert "postgres-disaster-restore.sh" in content
         assert "install-production-units.sh --start" in content
         assert 'printf \'[katcha-recovery] %s\\n\' "$1"' in content
         subprocess.run(["bash", "-n", str(rendered)], check=True)
