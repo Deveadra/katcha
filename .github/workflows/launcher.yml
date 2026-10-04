@@ -1,10 +1,28 @@
 name: Application launcher
 on:
   pull_request:
+    paths:
+      - .github/workflows/launcher.yml
+      - launcher/**
+      - Katcha.sh
+      - Katcha.ps1
+      - Katcha.cmd
+      - web-tests/launcher.cjs
+      - web-tests/package.json
+      - web-tests/package-lock.json
+      - src/katcha/web/**
+      - docker-compose*.yml
+      - .env.example
   push:
     branches: [main]
+  workflow_dispatch:
+
 permissions:
   contents: read
+
+concurrency:
+  group: launcher-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
   launcher:
     runs-on: ubuntu-latest
@@ -14,6 +32,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+          cache: pip
+          cache-dependency-path: pyproject.toml
       - run: pip install pytest pytest-asyncio ruff
       - run: ruff check launcher
       - run: python -m pytest launcher/tests -q
@@ -23,6 +43,13 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
+          cache: npm
+          cache-dependency-path: web-tests/package-lock.json
+      - name: Cache Playwright Chromium
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: launcher-playwright-${{ runner.os }}-${{ hashFiles('web-tests/package-lock.json') }}
       - run: npm ci --ignore-scripts
         working-directory: web-tests
       - run: npx playwright install --with-deps chromium
@@ -36,6 +63,7 @@ jobs:
           path: web-tests/test-results/launcher*.png
           if-no-files-found: ignore
   full-startup:
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 35
     steps:
@@ -43,6 +71,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+          cache: pip
+          cache-dependency-path: pyproject.toml
       - name: Boot full application and verify GUI, API and safe stop
         run: python launcher/tests/acceptance.py
       - uses: actions/upload-artifact@v4

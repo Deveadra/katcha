@@ -137,9 +137,10 @@ def test_production_compose_is_remote_and_immutable() -> None:
     assert "KATCHA_RESTORE_ENV_FILE" in compose
 
 
-def test_oracle_control_plane_images_are_multiarch() -> None:
+def test_oracle_control_plane_images_keep_multiarch_publish_with_amd64_prs() -> None:
     workflow = (ROOT / ".github" / "workflows" / "runtime-images.yml").read_text()
     assert "docker/setup-qemu-action@v3" in workflow
+    assert "if: github.event_name != 'pull_request'" in workflow
     for image in (
         "katcha-control",
         "katcha-ingest",
@@ -147,8 +148,12 @@ def test_oracle_control_plane_images_are_multiarch() -> None:
         "katcha-renderer",
         "katcha-production",
     ):
-        section = workflow.split(f"image: {image}", 1)[1].split("- image:", 1)[0]
-        assert "linux/amd64,linux/arm64" in section
+        definition = workflow.split(f'{{image: "{image}"', 1)[1].split("},", 1)[0]
+        assert "multi: true" in definition
+
+    assert 'context.eventName === "pull_request" || !multi' in workflow
+    assert '? "linux/amd64"' in workflow
+    assert ': "linux/amd64,linux/arm64"' in workflow
 
 
 def test_systemd_requires_durable_mount_and_restarts_supervisor() -> None:
