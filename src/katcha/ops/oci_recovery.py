@@ -1547,6 +1547,26 @@ def _resume_existing_candidate(
         availability_domain=_availability_domain(candidate) or config.availability_domain,
         subnet_id=tags.get("KatchaSubnetId", "").strip() or config.subnet_id,
     )
+    budget_reservation_id = tags.get(
+        "KatchaBudgetReservationId",
+        "",
+    ).strip() or None
+    budget_reserved_raw = tags.get(
+        "KatchaBudgetReservedMicrousd",
+        "",
+    ).strip()
+    budget_reserved_microusd = (
+        int(budget_reserved_raw)
+        if budget_reserved_raw.isdigit()
+        else None
+    )
+    if _is_paid_recovery(candidate) and (
+        not budget_reservation_id or not budget_reserved_microusd
+    ):
+        raise RecoveryError(
+            "existing paid recovery candidate has no valid external-compute "
+            "budget reservation tags"
+        )
     attempt = CandidateAttempt(
         instance_id=candidate_id,
         target=target,
@@ -1555,6 +1575,8 @@ def _resume_existing_candidate(
         recovery_mode=tags.get("KatchaRecoveryMode", "existing-candidate"),
         previous_instance_id=None,
         owns_recovery_volume=storage_mode == "r2-restore",
+        budget_reservation_id=budget_reservation_id,
+        budget_reserved_microusd=budget_reserved_microusd,
     )
 
     try:
@@ -1672,15 +1694,38 @@ def recover(event_path: Path, config: RecoveryConfig, oci: OciCli) -> dict[str, 
                         )
                     )
 
+            paid_attempt = 0
             for plan, target, storage_mode, recovery_mode in attempts:
-                if plan.paid and paid_instance_count(oci.list_instances(config)) >= (
-                    config.paid_max_concurrent
-                ):
-                    failures.append(
-                        f"{recovery_mode}@{target.availability_domain}:"
-                        "paid fallback concurrency limit reached"
-                    )
-                    continue
+                budget_reservation_id: str | None = None
+                budget_reserved_microusd: int | None = None
+                if plan.paid:
+                    paid_attempt += 1
+                    if paid_instance_count(oci.list_instances(config)) >= (
+                        config.paid_max_concurrent
+                    ):
+                        failures.append(
+                            f"{recovery_mode}@{target.availability_domain}:"
+                            "paid fallback concurrency limit reached"
+                        )
+                        continue
+                    try:
+                        (
+                            budget_reservation_id,
+                            budget_reserved_microusd,
+                        ) = _reserve_paid_compute(
+                            coordinator,
+                            config,
+                            incident,
+                            recovery_mode=recovery_mode,
+                            target=target,
+                            attempt=paid_attempt,
+                        )
+                    except Exception as exc:
+                        failures.append(
+                            f"{recovery_mode}@{target.availability_domain}:"
+                            f"budget:{type(exc).__name__}:{exc}"
+                        )
+                        continue
                 try:
                     successful_attempt = _launch_attempt(
                         config=config,
@@ -1694,11 +1739,60 @@ def recover(event_path: Path, config: RecoveryConfig, oci: OciCli) -> dict[str, 
                         storage_mode=storage_mode,
                         current_volume_id=current_volume_id,
                         recovery_mode=recovery_mode,
+                        budget_reservation_id=budget_reservation_id,
+                        budget_reserved_microusd=budget_reserved_microusd,
                     )
                     break
+                except CapacityUnavailable as exc:
+                    if budget_reservation_id:
+                        try:
+                            coordinator.release_external_compute(
+                                budget_reservation_id,
+                                reason="OCI reported no host capacity before launch",
+                            )
+                        except Exception as budget_error:
+                            raise RecoveryCleanupIncomplete(
+                                "OCI capacity attempt created no instance, but its "
+                                "external-compute reservation could not be released: "
+                                f"{budget_error}"
+                            ) from budget_error
+                    failures.append(
+                        f"{recovery_mode}@{target.availability_domain}:"
+                        f"{type(exc).__name__}:{exc}"
+                    )
                 except RecoveryCleanupIncomplete:
+                    if budget_reservation_id and budget_reserved_microusd:
+                        try:
+                            coordinator.settle_external_compute(
+                                budget_reservation_id,
+                                actual_cost_microusd=budget_reserved_microusd,
+                                metadata={
+                                    "settlement_reason": (
+                                        "recovery cleanup incomplete after paid attempt"
+                                    )
+                                },
+                            )
+                        except Exception as budget_error:
+                            print(
+                                "RECOVERY_BUDGET_SETTLEMENT_WARNING: "
+                                f"{type(budget_error).__name__}: {budget_error}"
+                            )
                     raise
                 except Exception as exc:
+                    if budget_reservation_id and budget_reserved_microusd:
+                        try:
+                            coordinator.settle_external_compute(
+                                budget_reservation_id,
+                                actual_cost_microusd=budget_reserved_microusd,
+                                metadata={
+                                    "settlement_reason": "paid recovery attempt failed",
+                                },
+                            )
+                        except Exception as budget_error:
+                            raise RecoveryCleanupIncomplete(
+                                "paid recovery attempt failed and its budget "
+                                f"reservation could not settle: {budget_error}"
+                            ) from budget_error
                     failures.append(
                         f"{recovery_mode}@{target.availability_domain}:"
                         f"{type(exc).__name__}:{exc}"
