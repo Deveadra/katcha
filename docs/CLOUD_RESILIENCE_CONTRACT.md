@@ -73,15 +73,18 @@ A restore test from an R2 recovery point is a production gate.
 
 OCI Vault remains the normal secret authority for the OCI deployment.
 
-A minimal encrypted break-glass bundle is also kept outside OCI. It contains only the material needed to bootstrap a replacement environment, for example:
+The repository now defines a standard `age`-encrypted break-glass bundle format and verification tool. The bundle contains exactly the bootstrap payloads already required by hosted recovery:
 
-- R2 restore credentials or a recoverable path to them,
-- Cloudflare recovery-coordinator deployment/configuration material,
-- encrypted Katcha credential-encryption key recovery material,
-- source-control/deployment bootstrap instructions and identities,
-- AWS rendering bootstrap material where it cannot be derived elsewhere.
+- production `katcha.env`, including the persistent Katcha credential-encryption key,
+- dedicated R2 backup-writer environment,
+- dedicated R2 read-only restore environment,
+- AWS rendering credential-process bundle.
 
-The bundle is not mounted into normal Katcha processes and is not readable by the normal OCI runtime identity.
+Every payload is size-bounded and SHA-256 verified before extraction. Archive traversal, links, duplicate/unexpected entries and checksum mismatches are rejected. Decrypted outputs are written with restrictive permissions.
+
+The `age` private identity is kept outside OCI, source control and normal Katcha runtime. The encrypted bundle is stored in multiple off-OCI failure domains and is never mounted into normal Katcha processes.
+
+This completes the encrypted escrow **artifact** and verification path. Production cutover gate 6 remains open until a controlled replacement-host bootstrap consumes this bundle without depending on OCI Vault and without placing long-lived plaintext secrets in OCI instance metadata/user-data.
 
 ## Cost circuit breakers
 
