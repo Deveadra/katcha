@@ -14,6 +14,7 @@ A single SQLite-backed Durable Object stores:
 - watchdog configuration and health history
 - one deduplicated recovery incident
 - a bounded authority event trail
+- a strongly consistent external-compute budget ledger
 
 The active epoch is never reused.
 
@@ -49,6 +50,8 @@ Fence token:
 Recovery-admin token:
 
 - `GET /v1/authority/status`
+- `GET /v1/external-compute/status`
+- `POST /v1/external-compute/configure`
 - `POST /v1/authority/prepare`
 - `POST /v1/authority/commit`
 - `POST /v1/authority/abort`
@@ -58,6 +61,12 @@ Candidate token:
 - `POST /v1/authority/candidate-ready`
 - `POST /v1/watchdog/configure`
 - `POST /v1/watchdog/probe-now`
+
+External-compute token:
+
+- `POST /v1/external-compute/reserve`
+- `POST /v1/external-compute/settle`
+- `POST /v1/external-compute/release`
 
 The watchdog probes the committed deployment's exact HTTPS health URL. After the
 configured consecutive-failure threshold it creates one incident and sends one
@@ -77,6 +86,7 @@ wrangler secret put FENCE_TOKEN
 wrangler secret put RECOVERY_ADMIN_TOKEN
 wrangler secret put RECOVERY_CANDIDATE_TOKEN
 wrangler secret put RECOVERY_DISPATCH_TOKEN
+wrangler secret put EXTERNAL_COMPUTE_TOKEN
 ```
 
 `RECOVERY_DISPATCH_URL` is also required before watchdog recovery can be enabled.
@@ -142,3 +152,60 @@ for repository-dispatch creation.
 The resulting workflow is serialized with a single
 `katcha-production-recovery` concurrency group, so concurrent watchdog/manual
 recovery requests cannot provision two replacements.
+
+
+## External-compute budget ledger
+
+Paid infrastructure is disabled by default in the coordinator even if a caller
+has cloud credentials. Enabling it requires an explicit recovery-admin
+configuration.
+
+All money values use integer **micro-USD** (1 USD = 1,000,000 micro-USD) so the
+coordinator never uses floating-point money arithmetic.
+
+Example: allow at most $10/month of external compute, with $5 assigned to OCI
+and $5 assigned to Modal, no more than two concurrent paid jobs, and at most $3
+of attempts within one retry group:
+
+```bash
+curl -fsS \
+  -H "Authorization: Bearer $KATCHA_RECOVERY_ADMIN_TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "enabled": true,
+    "monthly_limit_microusd": 10000000,
+    "provider_limits_microusd": {
+      "oci": 5000000,
+      "modal": 5000000
+    },
+    "max_concurrent_jobs": 2,
+    "max_retry_spend_microusd": 3000000
+  }' \
+  "$KATCHA_RECOVERY_COORDINATOR_URL/v1/external-compute/configure"
+```
+
+A reservation succeeds only when all of these remain within bounds:
+
+1. global external-compute switch is enabled,
+2. monthly settled + reserved spend,
+3. provider settled + reserved spend,
+4. active reservation count,
+5. retry-group settled + reserved spend.
+
+Reservations are idempotent by `job_key`. A released or expired job key cannot
+be reused; a caller must advance its explicit attempt identity. Settled job keys
+also cannot launch again.
+
+The accounting month is UTC. On month rollover, old settled spend drops from the
+new month's budget while still-active reservations carry forward conservatively.
+Recently expired reservations are retained long enough to accept delayed
+settlement.
+
+The OCI recovery runner reserves the **worst-case configured TTL cost before
+launching any paid fallback instance**. OCI capacity failures that create no
+instance release the reservation. Failures after a paid launch settle
+conservatively, and TTL/leader retirement settles from the instance's tagged
+runtime estimate.
+
+This ledger is intentionally outside PostgreSQL so budget enforcement remains
+available when the Katcha VM or database is the component being recovered.
