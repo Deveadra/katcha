@@ -19,8 +19,15 @@ def _aws_bundle(path: Path, *, unsafe: bool = False) -> None:
         info = tarfile.TarInfo(
             "../escape" if unsafe else "config"
         )
+        info.mode = 0o600
         info.size = len(payload)
         archive.addfile(info, io.BytesIO(payload))
+        if not unsafe:
+            helper = b"#!/bin/sh\nexit 0\n"
+            helper_info = tarfile.TarInfo("aws_signing_helper")
+            helper_info.mode = 0o755
+            helper_info.size = len(helper)
+            archive.addfile(helper_info, io.BytesIO(helper))
 
 
 def _unsafe_aws_bytes() -> bytes:
@@ -131,6 +138,9 @@ def test_break_glass_bundle_round_trip_installs_exact_files(tmp_path) -> None:
     )
     assert (root / "katcha.env").stat().st_mode & 0o777 == 0o600
     assert (root / "aws" / "config").stat().st_mode & 0o777 == 0o600
+    assert (
+        (root / "aws" / "aws_signing_helper").stat().st_mode & 0o777
+    ) == 0o700
 
 
 def test_break_glass_bundle_rejects_expired_handoff(tmp_path) -> None:
