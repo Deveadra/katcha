@@ -179,6 +179,7 @@ curl -fsS \
       "modal": 5000000
     },
     "max_concurrent_jobs": 2,
+    "max_retry_attempts": 3,
     "max_retry_spend_microusd": 3000000
   }' \
   "$KATCHA_RECOVERY_COORDINATOR_URL/v1/external-compute/configure"
@@ -190,16 +191,25 @@ A reservation succeeds only when all of these remain within bounds:
 2. monthly settled + reserved spend,
 3. provider settled + reserved spend,
 4. active reservation count,
-5. retry-group settled + reserved spend.
+5. retry-group attempt count,
+6. retry-group settled + reserved spend.
 
 Reservations are idempotent by `job_key`. A released or expired job key cannot
 be reused; a caller must advance its explicit attempt identity. Settled job keys
 also cannot launch again.
 
-The accounting month is UTC. On month rollover, old settled spend drops from the
-new month's budget while still-active reservations carry forward conservatively.
-Recently expired reservations are retained long enough to accept delayed
-settlement.
+The accounting month is UTC. Monthly and per-provider settled spend are stored
+as durable aggregates, so bounded audit/history presentation cannot erase spend
+from a live month's ceiling. On month rollover, monthly/provider totals reset
+while still-active reservations carry forward conservatively. Retry-group
+settled spend survives the rollover so a failing logical job cannot escape its
+retry cap at midnight UTC.
+
+The global kill switch is evaluated before idempotent reservation reuse. Turning
+external compute off therefore blocks even a replay of an existing reservation
+from authorizing another provider launch. The coordinator also refuses more than
+5,000 reservation records in one UTC month as an independent state-growth
+circuit breaker.
 
 The OCI recovery runner reserves the **worst-case configured TTL cost before
 launching any paid fallback instance**. OCI capacity failures that create no
