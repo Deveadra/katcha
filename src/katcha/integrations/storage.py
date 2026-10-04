@@ -99,9 +99,16 @@ class ObjectStore:
         destination.parent.mkdir(parents=True, exist_ok=True)
         self.client.download_file(self.settings.s3_bucket, key, str(destination))
 
-    def get_bytes(self, key: str) -> bytes:
+    def get_bytes(self, key: str, *, max_bytes: int | None = None) -> bytes:
         response = self.client.get_object(Bucket=self.settings.s3_bucket, Key=key)
-        return response["Body"].read()
+        body = response["Body"]
+        try:
+            data = body.read() if max_bytes is None else body.read(max_bytes + 1)
+            if max_bytes is not None and len(data) > max_bytes:
+                raise ValueError("Stored object exceeds the allowed size")
+            return data
+        finally:
+            body.close()
 
     def presigned_get_url(
         self,

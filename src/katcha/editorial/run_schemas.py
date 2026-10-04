@@ -13,7 +13,11 @@ class StartEditorialRun(Contract):
     idempotency_key: RequestKey
     expected_revision: int = Field(ge=0, strict=True)
     # This contract grows only as its actual workers are implemented.
-    target: Literal["analysis", "script", "assets", "acquire_assets", "render"] = "analysis"
+    target: Literal["analysis", "script", "assets", "acquire_assets", "render", "narration"] = (
+        "analysis"
+    )
+    confirm_narration: bool = False
+    max_narration_estimate_usd: float = Field(default=0.5, gt=0, le=25, allow_inf_nan=False)
     asset_run_id: uuid.UUID | None = None
     storyboard: StoryboardPlan | None = None
     scout_run_id: uuid.UUID | None = None
@@ -28,6 +32,10 @@ class StartEditorialRun(Contract):
 
     @model_validator(mode="after")
     def valid_asset_selection(self) -> Self:
+        if self.target == "narration" and not self.confirm_narration:
+            raise ValueError("Confirm use of the configured channel voice and budget")
+        if self.target != "narration" and self.confirm_narration:
+            raise ValueError("Narration confirmation is only valid for narration generation")
         if self.target == "acquire_assets":
             if not self.scout_run_id or not self.asset_candidate_ids:
                 raise ValueError("Asset acquisition requires a scout run and selected candidates")
@@ -45,3 +53,21 @@ class StartEditorialRun(Contract):
 
 class ResumeEditorialRun(Contract):
     expected_attempt: int = Field(ge=1, strict=True)
+
+
+class ReconcileNarrationBilling(Contract):
+    idempotency_key: RequestKey
+    beat_id: Identity
+    expected_dispatch_count: int = Field(ge=1, strict=True)
+    outcome: Literal["charged", "not_charged"]
+    actual_cost_usd: float = Field(ge=0, le=1000, allow_inf_nan=False)
+    provider_receipt: str = Field(min_length=1, max_length=2000)
+    confirmed: bool
+
+    @model_validator(mode="after")
+    def confirmed_charge(self) -> Self:
+        if not self.confirmed or not self.provider_receipt.strip():
+            raise ValueError("Confirm the provider's final outcome and include its receipt")
+        if self.outcome == "not_charged" and self.actual_cost_usd != 0:
+            raise ValueError("An uncharged request must have zero actual cost")
+        return self

@@ -61,6 +61,7 @@ window.KatchaEditorial = (() => {
         const changed = state.channel !== channel;
         state.channel = channel;
         if (changed) {
+            el("editorial-narration-confirm").checked = false;
             window.KatchaEditorialHistory.reset();
             clearPreview(); state.boardKey = ""; state.assetRun = null;
             state.project = null; state.revision = null; state.run = null; state.editorKey = ""; state.renderKey = "";
@@ -85,6 +86,7 @@ window.KatchaEditorial = (() => {
         }
     }
     async function open(id, { focus = true } = {}) {
+        if (state.project?.id !== id) el("editorial-narration-confirm").checked = false;
         clearTimeout(state.timer);
         if (state.project?.id !== id) window.KatchaEditorialHistory.reset();
         const epoch = ++state.epoch;
@@ -146,6 +148,7 @@ window.KatchaEditorial = (() => {
         assetControls();
         el("editorial-render").disabled = state.busy || Boolean(active) || state.stale || !state.assetRun || Boolean(read(storageKey(`pending.${state.project.id}`), null));
         el("editorial-render").disabled ||= el("editorial-presentation").value === "narrated" && !state.narration?.voice_enabled;
+        el("editorial-generate-narration").disabled = state.busy || Boolean(active) || state.stale || !state.narration?.voice_enabled || !state.revision?.draft.script?.length || Boolean(read(storageKey(`pending.${state.project.id}`), null));
         el("editorial-render").textContent = el("editorial-presentation").value === "narrated" ? "Create narrated preview" : "Create silent captioned preview";
         el("editorial-play").hidden = state.run?.stage !== "render_ready_for_review" || state.run?.status !== "completed";
         el("editorial-approve").disabled = state.busy || !state.review?.can_approve || !state.previewUrl || state.stale || Boolean(read(storageKey(`pending.${state.project.id}`), null));
@@ -174,6 +177,13 @@ window.KatchaEditorial = (() => {
         el("editorial-presentation").querySelector('[value="narrated"]').disabled = !data.voice_enabled;
         el("editorial-narration-panel").hidden = saved.mode !== "narrated" || !data.voice_enabled;
         el("editorial-narration-status").textContent = data.error ? `Recordings unavailable: ${data.error}. Refresh projects to retry.` : !data.voice_enabled ? "Voice is off. Enable it in Channel Studio to use narration, or choose Silent with captions." : "";
+        const holds = ["blocked", "failed", "cancelled"].includes(state.run?.status) ? state.run?.artifacts?.narration_billing || [] : [];
+        const billingKey = state.run?.editorial_run_id + JSON.stringify(holds);
+        el("editorial-narration-billing").hidden = !holds.length;
+        if (billingKey !== state.billingKey) {
+            state.billingKey = billingKey;
+            el("editorial-narration-billing").innerHTML = holds.map(hold => `<fieldset class="editorial-beat" data-billing-beat="${esc(hold.beat_id)}" data-billing-attempt="${esc(hold.dispatch_count)}"><legend>Resolve speech charge · ${esc(hold.beat_id)}</legend><p>Estimated $${esc(hold.estimated_cost_usd)} remains held. Check the provider's final request history before recording an outcome. Confirming no charge allows another attempt; recording a charge does not generate replacement audio.</p><label>Verified outcome<select data-billing-outcome><option value="charged">Provider charged for the request</option><option value="not_charged">Provider confirms no charge</option></select></label><label>Final cost (USD)<input data-billing-cost type="number" min="0" max="1000" step="0.000001" value="0"></label><label>Provider receipt or final-status reference<textarea data-billing-receipt maxlength="2000" rows="2"></textarea></label><label class="check-row"><input data-billing-confirm type="checkbox"> I verified the final provider outcome</label><button data-billing-save type="button" class="mini">Save verified billing outcome</button></fieldset>`).join("");
+        }
         const key = narrationKey() + JSON.stringify(data.recordings);
         if (key === state.narrationKey) return;
         state.narrationKey = key;
@@ -262,6 +272,30 @@ window.KatchaEditorial = (() => {
     }
     function init(transport, blobTransport) {
         api = transport; apiBlob = blobTransport;
+        el("editorial-narration-billing").addEventListener("click", event => {
+            const button = event.target.closest("[data-billing-save]");
+            if (!button) return;
+            const row = button.closest("[data-billing-beat]");
+            void guarded(async () => {
+                if (!row.querySelector("[data-billing-confirm]").checked) throw new Error("Verify the final provider outcome before saving.");
+                const payload = {beat_id: row.dataset.billingBeat, expected_dispatch_count: Number(row.dataset.billingAttempt), outcome: row.querySelector("[data-billing-outcome]").value, actual_cost_usd: Number(row.querySelector("[data-billing-cost]").value), provider_receipt: row.querySelector("[data-billing-receipt]").value.trim(), confirmed: true};
+                if (!payload.provider_receipt || !Number.isFinite(payload.actual_cost_usd) || payload.actual_cost_usd < 0 || payload.actual_cost_usd > 1000) throw new Error("Enter the provider receipt and final cost between $0 and $1000.");
+                const channel = state.channel; const project = state.project.id; const run = state.run.editorial_run_id;
+                payload.idempotency_key = identity(`speech-billing.${run}.${payload.beat_id}`, payload);
+                await api(path(channel, `/${project}/runs/${run}/narration-billing`), {method: "POST", body: JSON.stringify(payload)});
+                if (channel === state.channel) await open(project, {focus: false});
+            });
+        });
+        el("editorial-generate-narration").addEventListener("click", () => void guarded(async () => {
+            const channel = state.channel; const project = state.project.id;
+            if (!el("editorial-narration-confirm").checked) throw new Error("Confirm use of the channel voice and budget.");
+            const limit = Number(el("editorial-narration-limit").value);
+            if (!Number.isFinite(limit) || limit <= 0 || limit > 25) throw new Error("Enter an estimated cost limit between $0.01 and $25.");
+            const payload = {target: "narration", expected_revision: state.project.revision, confirm_narration: true, max_narration_estimate_usd: limit};
+            payload.idempotency_key = identity(`generate-narration.${project}`, payload);
+            await api(path(channel, `/${project}/runs`), {method: "POST", body: JSON.stringify(payload)});
+            if (channel === state.channel) await open(project, {focus: false});
+        }));
         window.KatchaEditorialHistory.init(transport, blobTransport);
         el("editorial-presentation").addEventListener("change", () => { saveNarrationChoices(); renderNarration(); renderActions(); });
         el("editorial-narration").addEventListener("change", saveNarrationChoices);

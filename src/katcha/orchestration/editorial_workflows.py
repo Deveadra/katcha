@@ -26,6 +26,13 @@ class EditorialProjectWorkflow:
 
         try:
             context = await step("editorial_begin")
+            if context.get("target") == "narration":
+                return await workflow.execute_activity(
+                    "editorial_generate_narration",
+                    args=[run_id, attempt],
+                    start_to_close_timeout=timedelta(minutes=35),
+                    retry_policy=RetryPolicy(maximum_attempts=1),
+                )
             if context.get("target") == "render":
                 return await workflow.execute_activity(
                     "editorial_render",
@@ -100,7 +107,7 @@ class EditorialProjectWorkflow:
                 args=[
                     run_id,
                     attempt,
-                    "Source preparation failed. Inspect the source/analysis receipt, "
+                    "Editorial work failed. Inspect the saved stage and provider receipts, "
                     "correct the connection or media problem, then resume this run.",
                 ],
                 start_to_close_timeout=timedelta(seconds=30),

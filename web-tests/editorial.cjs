@@ -11,6 +11,8 @@ let review = {status: "unreviewed", sequence: 0, can_approve: true, reviews: []}
 let loseReviewResponse = true;
 let recordings = [];
 let loseUploadResponse = true;
+let loseGenerationResponse = true;
+let loseBillingResponse = true;
 let failHistoryPage = true, failHistoryPreview = true, delayedHistory = null;
 let historyRequestStarted;
 const historyStarted = new Promise(resolve => { historyRequestStarted = resolve; });
@@ -65,6 +67,12 @@ const draft = {
                         return send(historyRows.slice(anchor + 1, anchor + 22));
                     }
                     if (!body) return send(run ? [run, ...(acquisitionRun && run !== acquisitionRun ? [acquisitionRun] : [])] : []);
+                    if (body.target === 'narration') {
+                        run = {editorial_run_id: 'generated', target: 'narration', input_revision: 3, attempt: 1, status: 'completed', stage: 'narration_ready_for_review', artifacts: {generated_narration: {beat: 'generated-audio'}}};
+                        recordings = [...recordings.filter(item => item.id !== 'generated-audio'), {id: 'generated-audio', beat_id: 'beat', status: 'active', duration_seconds: 2, created_at: '2026-10-04', revision: 3}];
+                        if (loseGenerationResponse) { loseGenerationResponse = false; return send({detail: 'Generation response lost. Retry to recover saved work.'}, 503); }
+                        return send(run, 202);
+                    }
                     if (body.target === "render") {
                         run = {editorial_run_id: "render", target: "render", input_revision: 3, attempt: 1, status: "completed", stage: "render_ready_for_review", artifacts: {requires_editorial_review: true}};
                         return send(run, 202);
@@ -88,6 +96,11 @@ const draft = {
                     run = { ...run, attempt: 2, status: "completed", stage: "script_ready", error: null };
                     revision = { revision: 1, draft }; project.revision = 1;
                     return send(run, 202);
+                }
+                if (url.pathname.endsWith('/narration-billing')) {
+                    run.artifacts.narration_billing = [];
+                    if (loseBillingResponse) { loseBillingResponse = false; return send({detail: 'Billing response lost. Retry the same receipt.'}, 503); }
+                    return send({outcome: body.outcome}, 201);
                 }
                 if (url.pathname.endsWith("/narration")) {
                     if (request.method() === 'GET') return send({voice_enabled: true, recordings});
@@ -205,14 +218,50 @@ const draft = {
         const uploads = calls.filter(call => call.uploadKey);
         assert.equal(uploads.length, 2); assert.equal(uploads[0].uploadKey, uploads[1].uploadKey);
         assert.equal(await page.locator('[data-narration-select]').inputValue(), 'audio-id');
+        await page.getByText('Generate recordings with the channel voice', {exact: true}).click();
+        await page.locator('#editorial-generate-narration').click();
+        await page.getByText('Confirm use of the channel voice and budget.', {exact: true}).waitFor();
+        assert.equal(calls.filter(call => call.body?.target === 'narration').length, 0);
+        await page.locator('#editorial-narration-confirm').check();
+        await page.locator('#editorial-narration-limit').fill('0.75');
+        await page.locator('#editorial-generate-narration').click();
+        await page.getByText(/Generation response lost/).waitFor();
+        assert.equal(await page.locator('#editorial-narration-limit').inputValue(), '0.75');
+        await page.locator('#editorial-generate-narration').click();
+        await page.locator('[data-narration-select] option[value="generated-audio"]').waitFor({state: 'attached'});
+        const generations = calls.filter(call => call.body?.target === 'narration');
+        assert.equal(generations.length, 2);
+        assert.deepEqual(generations[0].body, generations[1].body);
+        assert.equal(generations[0].body.max_narration_estimate_usd, 0.75);
+        run = {...run, status: 'blocked', artifacts: {...run.artifacts, narration_billing: [{beat_id: 'beat', dispatch_count: 1, estimated_cost_usd: '0.025'}]}};
+        await page.locator('#editorial-refresh').click();
+        await page.locator('[data-billing-save]').waitFor({state: 'visible'});
+        await page.locator('[data-billing-save]').click();
+        await page.getByText('Verify the final provider outcome before saving.', {exact: true}).waitFor();
+        await page.locator('[data-billing-outcome]').selectOption('not_charged');
+        await page.locator('[data-billing-receipt]').fill('Provider confirms synthetic request was rejected.');
+        await page.locator('[data-billing-confirm]').check();
+        await page.setViewportSize({width: 390, height: 844});
+        assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
+        await page.locator('#editorial-narration-billing').screenshot({path: path.resolve(__dirname, 'test-results/editorial-billing-mobile.png')});
+        await page.setViewportSize({width: 1280, height: 900});
+        await page.locator('[data-billing-save]').click();
+        await page.getByText(/Billing response lost/).waitFor();
+        assert.equal(await page.locator('[data-billing-receipt]').inputValue(), 'Provider confirms synthetic request was rejected.');
+        await page.locator('[data-billing-save]').click();
+        await page.locator('#editorial-narration-billing').waitFor({state: 'hidden'});
+        const billings = calls.filter(call => call.path.endsWith('/narration-billing'));
+        assert.equal(billings.length, 2);
+        assert.deepEqual(billings[0].body, billings[1].body);
+        await page.locator('[data-narration-select]').selectOption('generated-audio');
         await Promise.all([
             page.waitForResponse(response => response.request().method() === 'POST' && new URL(response.url()).pathname.endsWith('/runs') && response.request().postDataJSON()?.storyboard?.presentation_mode === 'narrated'),
             page.getByRole('button', {name: 'Create narrated preview', exact: true}).click(),
         ]);
         await page.getByText(/Review approved for this rendered revision/).waitFor();
         const voiced = calls.find(call => call.body?.storyboard?.presentation_mode === 'narrated');
+        assert.equal(voiced.body.storyboard.narration_ids.beat, 'generated-audio');
         assert(voiced, 'Expected a narrated storyboard call to exist');
-        assert.equal(voiced.body.storyboard.narration_ids.beat, 'audio-id');
         // Independent history must preserve edits and current review/preview identity.
         await page.locator('[data-beat-narration="0"]').fill('Unsaved current script stays here.');
         const writesBeforeHistory = calls.filter(call => call.method === 'POST').length;
@@ -261,6 +310,7 @@ const draft = {
 
         await page.getByText(/No editorial projects yet/).waitFor();
         assert.equal(await page.locator("#editorial-detail").isHidden(), true);
+        assert.equal(await page.locator("#editorial-narration-confirm").isChecked(), false);
         assert.equal(await page.locator("#editorial-prompt").inputValue(), "");
         await page.locator("#channel").selectOption("one");
         await page.getByRole("button", { name: "Open project", exact: true }).waitFor();

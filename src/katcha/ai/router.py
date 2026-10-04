@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 
 from katcha.config import get_settings
 from katcha.db import session_scope
@@ -301,6 +301,11 @@ def route_for_channel(
                 AIBudgetReservation.reservation_key == key,
             )
         )
+        if existing is not None and existing.status == "dispatched":
+            raise BudgetExceeded(
+                "Speech request may already have been accepted. Recover its saved result "
+                "or reconcile provider billing before retrying; automatic repeat is blocked."
+            )
         if existing is not None and existing.status == "settled":
             raise BudgetReservationSettled(
                 f"budget reservation already settled: {key}"
@@ -440,6 +445,7 @@ def route_for_channel(
         reservation.expires_at = now + timedelta(minutes=reservation_ttl_minutes)
         reservation.settled_at = None
         reservation.reservation_metadata = {
+            **dict(reservation.reservation_metadata or {}),
             "provider": chosen.provider,
             "model": chosen.model,
             "fallback_provider": fallback.provider if fallback else None,
@@ -487,20 +493,52 @@ def route_for_channel(
         )
 
 
+def dispatch_budget_reservation(reservation_id: uuid.UUID | None) -> int | None:
+    """Claim one external speech call. Dispatched reservations never expire implicitly."""
+    if reservation_id is None:
+        return
+    with session_scope() as session:
+        result = session.execute(
+            update(AIBudgetReservation)
+            .where(
+                AIBudgetReservation.id == reservation_id,
+                AIBudgetReservation.status == "reserved",
+                AIBudgetReservation.expires_at > datetime.now(UTC),
+            )
+            .values(status="dispatched")
+        )
+        if result.rowcount != 1:
+            raise BudgetExceeded("Speech request is already dispatched or its reservation expired")
+        row = session.get(AIBudgetReservation, reservation_id)
+        metadata = dict(row.reservation_metadata or {})
+        row.reservation_metadata = {
+            **metadata, "dispatch_count": int(metadata.get("dispatch_count", 0)) + 1
+        }
+        return row.reservation_metadata["dispatch_count"]
+
+
 def release_budget_reservation(
     reservation_id: uuid.UUID | None,
     *,
     reason: str,
+    expected_dispatch_count: int | None = None,
 ) -> None:
     if reservation_id is None:
         return
     with session_scope() as session:
+        session.execute(update(AIBudgetReservation).where(
+            AIBudgetReservation.id == reservation_id
+        ).values(status=AIBudgetReservation.status))
         reservation = session.scalar(
             select(AIBudgetReservation)
             .where(AIBudgetReservation.id == reservation_id)
             .with_for_update()
         )
-        if reservation is None or reservation.status != "reserved":
+        if reservation is None or reservation.status not in {"reserved", "dispatched"}:
+            return
+        if expected_dispatch_count is not None and (
+            reservation.reservation_metadata.get("dispatch_count") != expected_dispatch_count
+        ):
             return
         reservation.status = "released"
         reservation.settled_at = datetime.now(UTC)
@@ -530,7 +568,11 @@ def assert_ai_budget(estimated_increment_usd: Decimal = Decimal("0")) -> None:
         )
     if settings.resolved_ai_execution_mode() == "fixture":
         return
-    projected = month_to_date_cost() + estimated_increment_usd
+    with session_scope() as session:
+        pending = session.scalar(select(func.coalesce(func.sum(
+            AIBudgetReservation.estimated_cost_usd
+        ), 0)).where(AIBudgetReservation.status == "dispatched"))
+    projected = month_to_date_cost() + Decimal(str(pending or 0)) + estimated_increment_usd
     limit = Decimal(str(settings.ai_budget_usd_monthly))
     if projected > limit:
         raise BudgetExceeded(
@@ -553,6 +595,9 @@ def record_usage(
     with session_scope() as session:
         reservation = None
         if reservation_id is not None:
+            session.execute(update(AIBudgetReservation).where(
+                AIBudgetReservation.id == reservation_id
+            ).values(status=AIBudgetReservation.status))
             reservation = session.scalar(
                 select(AIBudgetReservation)
                 .where(AIBudgetReservation.id == reservation_id)
@@ -562,7 +607,7 @@ def record_usage(
                 raise RuntimeError("AI budget reservation disappeared before settlement")
             if reservation.status == "settled":
                 return
-            if reservation.status != "reserved":
+            if reservation.status not in {"reserved", "dispatched"}:
                 raise RuntimeError(
                     f"AI budget reservation is not active: {reservation.status}"
                 )

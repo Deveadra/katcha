@@ -13,11 +13,11 @@ from pathlib import Path
 
 import httpx
 
-from katcha.ai.failover import safe_to_fail_over
 from katcha.ai.pricing import estimate_token_cost
 from katcha.ai.router import (
     ModelTarget,
     assert_ai_budget,
+    dispatch_budget_reservation,
     record_usage,
     release_budget_reservation,
     route_for_channel,
@@ -30,6 +30,14 @@ from katcha.services.elevenlabs_integration import resolve_elevenlabs_voice
 
 class TTSUnavailable(RuntimeError):
     pass
+
+
+def speech_request_rejected(exc: Exception) -> bool:
+    # Text in an error message is not evidence that a provider rejected work.
+    status = getattr(exc, "status_code", None)
+    if status is None:
+        status = getattr(getattr(exc, "response", None), "status_code", None)
+    return isinstance(exc, TTSUnavailable) or status in {401, 403, 404, 429}
 
 
 @dataclass(frozen=True, slots=True)
@@ -337,7 +345,7 @@ def _openai_tts(text: str, profile: VoiceProfile, settings: Settings) -> TTSResu
     )
     from openai import OpenAI
 
-    client = OpenAI(api_key=settings.openai_api_key)
+    client = OpenAI(api_key=settings.openai_api_key, max_retries=0)
     response = client.audio.speech.create(
         model=profile.model,
         voice=profile.voice,
@@ -378,7 +386,10 @@ def _gemini_tts(text: str, profile: VoiceProfile, settings: Settings) -> TTSResu
     )
     from google import genai
 
-    client = genai.Client(api_key=settings.gemini_api_key)
+    client = genai.Client(
+        api_key=settings.gemini_api_key,
+        http_options={"retry_options": {"attempts": 0}},
+    )
     prompt = f"{profile.instructions}\n\nRead exactly this text:\n{text}"
     interaction = client.interactions.create(
         model=profile.model,
@@ -594,18 +605,21 @@ def synthesize_speech(
             return _elevenlabs_tts(text, selected, settings)
         raise TTSUnavailable(f"unsupported TTS provider: {selected.provider}")
 
+    dispatch_count = dispatch_budget_reservation(reservation_id)
     try:
         try:
             result = synthesize_with(profile)
         except Exception as exc:
-            if fallback_profile is None or not safe_to_fail_over(exc):
+            if fallback_profile is None or not speech_request_rejected(exc):
                 raise
             result = synthesize_with(fallback_profile)
     except Exception as exc:
-        release_budget_reservation(
-            reservation_id,
-            reason=f"tts_failed:{type(exc).__name__}",
-        )
+        if speech_request_rejected(exc):
+            release_budget_reservation(
+                reservation_id,
+                reason=f"tts_rejected:{type(exc).__name__}",
+                expected_dispatch_count=dispatch_count,
+            )
         raise
 
     metadata = {

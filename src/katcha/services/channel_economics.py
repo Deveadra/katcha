@@ -5,10 +5,11 @@ from calendar import monthrange
 from datetime import UTC, datetime
 from decimal import Decimal
 
-from sqlalchemy import distinct, func, select
+from sqlalchemy import and_, distinct, func, or_, select
 from sqlalchemy.orm import Session
 
 from katcha.db import session_scope
+from katcha.editorial_models import EditorialProject
 from katcha.integrations.youtube.oauth import MONETARY_SCOPE
 from katcha.intelligence_models import (
     AIBudgetReservation,
@@ -328,7 +329,13 @@ def _actual_spend_breakdown(
         clip_ids=clip_ids,
         since=since,
     )
-    source_cost = scoped_source_cost + legacy_source_cost
+    editorial_cost = _usage_cost(
+        session, reference_type="editorial_project",
+        reference_ids=[str(value) for value in session.scalars(
+            select(EditorialProject.id).where(EditorialProject.channel_profile_id == profile.id)
+        )], since=since,
+    )
+    source_cost = scoped_source_cost + legacy_source_cost + editorial_cost
     return source_cost + shared_analysis_cost, source_cost, shared_analysis_cost
 
 
@@ -391,8 +398,11 @@ def active_reserved_cost(
     value = session.scalar(
         select(func.coalesce(func.sum(AIBudgetReservation.estimated_cost_usd), 0)).where(
             AIBudgetReservation.channel_profile_id == channel_profile_id,
-            AIBudgetReservation.status == "reserved",
-            AIBudgetReservation.expires_at > timestamp,
+            or_(
+                AIBudgetReservation.status == "dispatched",
+                and_(AIBudgetReservation.status == "reserved",
+                     AIBudgetReservation.expires_at > timestamp),
+            ),
         )
     )
     return _decimal(value or 0)
