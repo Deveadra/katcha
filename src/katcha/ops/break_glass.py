@@ -616,17 +616,13 @@ def create_handoff(
     ttl_seconds: int,
     config: BreakGlassR2Config,
 ) -> dict[str, str | int]:
-    payload = json.loads(
-        build_bundle(
+    return _upload_handoff(
+        files=_file_rows_from_sources(
             production_env=production_env,
             backup_env=backup_env,
             restore_env=restore_env,
             aws_bundle=aws_bundle,
-            ttl_seconds=ttl_seconds,
-        )
-    )
-    return _upload_handoff(
-        files=payload["files"],
+        ),
         ttl_seconds=ttl_seconds,
         config=config,
     )
