@@ -211,6 +211,7 @@ const draft = {
         ]);
         await page.getByText(/Review approved for this rendered revision/).waitFor();
         const voiced = calls.find(call => call.body?.storyboard?.presentation_mode === 'narrated');
+        assert(voiced, 'Expected a narrated storyboard call to exist');
         assert.equal(voiced.body.storyboard.narration_ids.beat, 'audio-id');
         // Independent history must preserve edits and current review/preview identity.
         await page.locator('[data-beat-narration="0"]').fill('Unsaved current script stays here.');
