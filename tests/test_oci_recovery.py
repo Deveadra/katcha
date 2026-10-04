@@ -385,10 +385,11 @@ def test_failed_cross_ad_launch_deletes_fresh_volume(monkeypatch, tmp_path) -> N
     class Coordinator:
         pass
 
+    oci = FakeOci()
     with pytest.raises(oci_recovery.CapacityUnavailable):
         oci_recovery._launch_attempt(
             config=config,
-            oci=FakeOci(),
+            oci=oci,
             coordinator=Coordinator(),
             incident=oci_recovery.Incident("incident", 7, "old"),
             deployment_id="candidate",
@@ -399,6 +400,8 @@ def test_failed_cross_ad_launch_deletes_fresh_volume(monkeypatch, tmp_path) -> N
             current_volume_id=config.data_volume_id,
             recovery_mode="cross-ad-free-a1",
         )
+
+    assert oci.deleted == ["ocid1.volume.fresh"]
 
 
 def test_stale_incident_is_rejected_before_compute() -> None:
