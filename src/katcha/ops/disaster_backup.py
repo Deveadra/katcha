@@ -32,7 +32,7 @@ class R2BackupConfig:
     force_path_style: bool
 
     @classmethod
-    def from_env(cls, purpose: Literal["backup", "restore"]) -> "R2BackupConfig":
+    def from_env(cls, purpose: Literal["backup", "restore"]) -> R2BackupConfig:
         stem = "KATCHA_BACKUP_R2" if purpose == "backup" else "KATCHA_RESTORE_R2"
 
         def required(name: str) -> str:
