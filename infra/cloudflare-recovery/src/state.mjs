@@ -27,6 +27,7 @@ export function defaultAuthorityState() {
       monthly_limit_microusd: 0,
       provider_limits_microusd: {},
       max_concurrent_jobs: 1,
+      max_retry_attempts: 3,
       max_retry_spend_microusd: 0,
       monthly_settled_microusd: 0,
       provider_settled_microusd: {},
@@ -558,6 +559,7 @@ export function configureExternalCompute(
     monthlyLimitMicrousd,
     providerLimitsMicrousd,
     maxConcurrentJobs,
+    maxRetryAttempts,
     maxRetrySpendMicrousd,
   },
   nowMs = Date.now(),
@@ -571,6 +573,8 @@ export function configureExternalCompute(
     }
     limits[provider] = value;
   }
+  const retryAttempts =
+    maxRetryAttempts ?? state.external_compute.max_retry_attempts ?? 3;
   if (
     !Number.isSafeInteger(monthlyLimitMicrousd) ||
     monthlyLimitMicrousd < 0 ||
@@ -578,7 +582,10 @@ export function configureExternalCompute(
     maxRetrySpendMicrousd < 0 ||
     !Number.isSafeInteger(maxConcurrentJobs) ||
     maxConcurrentJobs < 1 ||
-    maxConcurrentJobs > 100
+    maxConcurrentJobs > 100 ||
+    !Number.isSafeInteger(retryAttempts) ||
+    retryAttempts < 1 ||
+    retryAttempts > 100
   ) {
     throw new StateConflict("invalid external-compute budget configuration", 422);
   }
@@ -590,6 +597,7 @@ export function configureExternalCompute(
       monthly_limit_microusd: monthlyLimitMicrousd,
       provider_limits_microusd: limits,
       max_concurrent_jobs: maxConcurrentJobs,
+      max_retry_attempts: retryAttempts,
       max_retry_spend_microusd: maxRetrySpendMicrousd,
     },
   };
@@ -597,6 +605,7 @@ export function configureExternalCompute(
     enabled: enabled === true,
     monthly_limit_microusd: monthlyLimitMicrousd,
     max_concurrent_jobs: maxConcurrentJobs,
+    max_retry_attempts: retryAttempts,
     max_retry_spend_microusd: maxRetrySpendMicrousd,
   });
 }
@@ -632,6 +641,18 @@ export function reserveExternalCompute(
   if (external.reservations.length >= MAX_EXTERNAL_RESERVATIONS_PER_MONTH) {
     throw new StateConflict(
       "external compute monthly reservation-count safety limit reached",
+      429,
+    );
+  }
+  const retryAttemptsUsed = external.reservations.filter(
+    (row) => row.retry_group === retryGroup,
+  ).length;
+  if (
+    retryAttemptsUsed >= external.max_retry_attempts ||
+    attempt > external.max_retry_attempts
+  ) {
+    throw new StateConflict(
+      `external compute retry attempt limit reached: ${retryGroup}`,
       429,
     );
   }
@@ -869,6 +890,7 @@ export function externalComputeStatus(current, nowMs = Date.now()) {
       monthly_limit_microusd: external.monthly_limit_microusd,
       provider_limits_microusd: external.provider_limits_microusd,
       max_concurrent_jobs: external.max_concurrent_jobs,
+      max_retry_attempts: external.max_retry_attempts,
       max_retry_spend_microusd: external.max_retry_spend_microusd,
       settled_microusd: summary.settled_microusd,
       reserved_microusd: summary.reserved_microusd,
