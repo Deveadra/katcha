@@ -639,3 +639,29 @@ def test_cleanup_attempt_continues_after_storage_cleanup_failure(
 
     assert oci.terminated == ["instance-cross-ad"]
     assert oci.deleted == ["volume-cross-ad"]
+
+
+
+def test_recovery_stops_after_incomplete_cleanup(monkeypatch, tmp_path) -> None:
+    _base_env(monkeypatch, tmp_path)
+    config = oci_recovery.RecoveryConfig.from_env()
+    oci = RecoveryOci()
+    attempted: list[str] = []
+
+    def fake_launch_attempt(**kwargs):
+        attempted.append(kwargs["recovery_mode"])
+        raise oci_recovery.RecoveryCleanupIncomplete(
+            "candidate cleanup could not restore storage"
+        )
+
+    monkeypatch.setattr(oci_recovery, "CoordinatorClient", FakeCoordinator)
+    monkeypatch.setattr(oci_recovery, "_launch_attempt", fake_launch_attempt)
+
+    with pytest.raises(
+        oci_recovery.RecoveryCleanupIncomplete,
+        match="could not restore storage",
+    ):
+        oci_recovery.recover(_event(tmp_path), config, oci)
+
+    assert attempted == ["always-free-a1"]
+    assert FakeCoordinator.instance.aborted is True
