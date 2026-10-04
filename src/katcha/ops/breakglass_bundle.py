@@ -26,6 +26,7 @@ EXPECTED_PAYLOADS = {
 MAX_PAYLOAD_BYTES = 64 * 1024 * 1024
 MAX_TOTAL_PAYLOAD_BYTES = 128 * 1024 * 1024
 MAX_MANIFEST_BYTES = 256 * 1024
+MAX_PLAINTEXT_ARCHIVE_BYTES = MAX_TOTAL_PAYLOAD_BYTES + (2 * 1024 * 1024)
 
 
 class BreakGlassError(RuntimeError):
@@ -122,6 +123,12 @@ def _validate_recipients_file(path: Path) -> None:
 
 def _validate_identity_file(path: Path) -> None:
     _require_private_regular_file(path, label="age identity file")
+    if os.name == "posix":
+        mode = path.stat().st_mode & 0o777
+        if mode & 0o077:
+            raise BreakGlassError(
+                "age identity file must not be readable or writable by group/other"
+            )
 
 
 def _manifest_for(payloads: dict[str, bytes]) -> dict[str, object]:
@@ -286,6 +293,13 @@ def _safe_tar_members(archive: tarfile.TarFile) -> dict[str, tarfile.TarInfo]:
         )
     if members[MANIFEST_NAME].size > MAX_MANIFEST_BYTES:
         raise BreakGlassError("break-glass manifest is too large")
+    total_payload_size = sum(
+        members[name].size for name in EXPECTED_PAYLOADS
+    )
+    if total_payload_size > MAX_TOTAL_PAYLOAD_BYTES:
+        raise BreakGlassError(
+            "break-glass archive payloads exceed the total size limit"
+        )
     return members
 
 
@@ -399,31 +413,47 @@ def extract_bundle(
             executable = shutil.which("age")
             if executable is None:
                 raise BreakGlassError("age is required but was not found on PATH")
+            process = subprocess.Popen(
+                [
+                    executable,
+                    "--decrypt",
+                    "-i",
+                    str(identity_file.resolve()),
+                    str(bundle.resolve()),
+                ],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            assert process.stdout is not None
+            written = 0
             try:
-                subprocess.run(
-                    [
-                        executable,
-                        "--decrypt",
-                        "-i",
-                        str(identity_file.resolve()),
-                        str(bundle.resolve()),
-                    ],
-                    check=True,
-                    stdout=handle,
-                    stderr=subprocess.PIPE,
-                    text=False,
-                )
-            except subprocess.CalledProcessError as exc:
-                detail = (exc.stderr or b"").decode(
-                    "utf-8",
-                    errors="replace",
-                ).strip()
+                while True:
+                    chunk = process.stdout.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    written += len(chunk)
+                    if written > MAX_PLAINTEXT_ARCHIVE_BYTES:
+                        process.kill()
+                        process.wait()
+                        raise BreakGlassError(
+                            "decrypted break-glass archive exceeds the size limit"
+                        )
+                    handle.write(chunk)
+                stderr = process.stderr.read() if process.stderr is not None else b""
+                return_code = process.wait()
+            finally:
+                process.stdout.close()
+                if process.stderr is not None:
+                    process.stderr.close()
+
+            if return_code != 0:
+                detail = stderr.decode("utf-8", errors="replace").strip()
                 if len(detail) > 500:
                     detail = detail[:500] + "..."
                 raise BreakGlassError(
                     "age decryption failed"
                     + (f": {detail}" if detail else "")
-                ) from exc
+                )
 
         with tarfile.open(plain_archive, mode="r:*") as archive:
             members = _safe_tar_members(archive)
