@@ -19,41 +19,85 @@ on:
 permissions:
   contents: read
   packages: write
+  pull-requests: read
 
 concurrency:
   group: runtime-images-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
+  plan:
+    name: Plan runtime image builds
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+      has_images: ${{ steps.plan.outputs.has_images }}
+    steps:
+      - name: Select images and platforms
+        id: plan
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const definitions = [
+              {image: "katcha-control", dockerfile: "Dockerfile.control", multi: true},
+              {image: "katcha-ingest", dockerfile: "Dockerfile", multi: true},
+              {image: "katcha-analysis", dockerfile: "Dockerfile.analysis", multi: true},
+              {image: "katcha-renderer", dockerfile: "Dockerfile.renderer", multi: true},
+              {image: "katcha-production", dockerfile: "Dockerfile.production", multi: true},
+              {image: "katcha-minio", dockerfile: "Dockerfile.minio", multi: false},
+            ];
+
+            let selected = definitions;
+            if (context.eventName === "pull_request") {
+              const files = await github.paginate(github.rest.pulls.listFiles, {
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pull_number: context.payload.pull_request.number,
+                per_page: 100,
+              });
+              const names = new Set(files.map((file) => file.filename));
+              const allImages =
+                names.has(".github/workflows/runtime-images.yml") ||
+                names.has(".dockerignore");
+              const sharedPython = names.has("pyproject.toml");
+              const rendererChanged = [...names].some((name) => name.startsWith("renderer/"));
+
+              selected = definitions.filter(({image, dockerfile}) => {
+                if (allImages || names.has(dockerfile)) return true;
+                if (
+                  sharedPython &&
+                  ["katcha-control", "katcha-ingest", "katcha-analysis", "katcha-production"].includes(image)
+                ) return true;
+                return image === "katcha-renderer" && rendererChanged;
+              });
+            }
+
+            const include = selected.map(({image, dockerfile, multi}) => ({
+              image,
+              dockerfile,
+              platforms:
+                context.eventName === "pull_request" || !multi
+                  ? "linux/amd64"
+                  : "linux/amd64,linux/arm64",
+            }));
+            core.setOutput("matrix", JSON.stringify({include}));
+            core.setOutput("has_images", include.length ? "true" : "false");
+            core.info(`Selected runtime images: ${include.map((entry) => entry.image).join(", ") || "none"}`);
+
   build:
     name: ${{ matrix.image }} (${{ matrix.platforms }})
+    needs: plan
+    if: needs.plan.outputs.has_images == 'true'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - image: katcha-control
-            dockerfile: Dockerfile.control
-            platforms: linux/amd64,linux/arm64
-          - image: katcha-ingest
-            dockerfile: Dockerfile
-            platforms: linux/amd64,linux/arm64
-          - image: katcha-analysis
-            dockerfile: Dockerfile.analysis
-            platforms: linux/amd64,linux/arm64
-          - image: katcha-renderer
-            dockerfile: Dockerfile.renderer
-            platforms: linux/amd64,linux/arm64
-          - image: katcha-production
-            dockerfile: Dockerfile.production
-            platforms: linux/amd64,linux/arm64
-          - image: katcha-minio
-            dockerfile: Dockerfile.minio
-            platforms: linux/amd64
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
     steps:
       - uses: actions/checkout@v6
 
       - uses: docker/setup-qemu-action@v3
+        if: github.event_name != 'pull_request'
 
       - uses: docker/setup-buildx-action@v3
 
