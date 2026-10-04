@@ -898,3 +898,62 @@ test("legacy settled reservations migrate into durable spend aggregates", () => 
     /monthly budget exceeded/,
   );
 });
+
+
+test("retry groups open their circuit after the configured attempt ceiling", () => {
+  const now = Date.UTC(2026, 9, 4, 12, 0, 0);
+  let state = configureExternalCompute(
+    defaultAuthorityState(),
+    {
+      enabled: true,
+      monthlyLimitMicrousd: 5_000_000,
+      providerLimitsMicrousd: { oci: 5_000_000 },
+      maxConcurrentJobs: 2,
+      maxRetryAttempts: 2,
+      maxRetrySpendMicrousd: 5_000_000,
+    },
+    now,
+  );
+
+  for (const attempt of [1, 2]) {
+    const reserved = reserveExternalCompute(
+      state,
+      {
+        jobKey: `attempt-limit-${attempt}`,
+        provider: "oci",
+        operation: "paid-fallback",
+        retryGroup: "incident-attempt-limit",
+        attempt,
+        estimatedCostMicrousd: 100_000,
+        ttlSeconds: 3600,
+      },
+      now + attempt * 10,
+    );
+    state = releaseExternalCompute(
+      reserved.state,
+      {
+        reservationId: reserved.reservation.id,
+        reason: "provider unavailable before launch",
+      },
+      now + attempt * 10 + 1,
+    ).state;
+  }
+
+  assert.throws(
+    () =>
+      reserveExternalCompute(
+        state,
+        {
+          jobKey: "attempt-limit-3",
+          provider: "oci",
+          operation: "paid-fallback",
+          retryGroup: "incident-attempt-limit",
+          attempt: 3,
+          estimatedCostMicrousd: 100_000,
+          ttlSeconds: 3600,
+        },
+        now + 100,
+      ),
+    /retry attempt limit reached/,
+  );
+});
