@@ -72,6 +72,12 @@ class ShapePlan:
 
 
 @dataclass(frozen=True, slots=True)
+class RecoveryTarget:
+    availability_domain: str
+    subnet_id: str
+
+
+@dataclass(frozen=True, slots=True)
 class RecoveryConfig:
     coordinator_url: str
     coordinator_admin_token: str
@@ -81,6 +87,7 @@ class RecoveryConfig:
     availability_domain: str
     compartment_id: str
     subnet_id: str
+    alternate_targets: tuple[RecoveryTarget, ...]
     data_volume_id: str
     data_volume_fs_uuid: str
     production_env_secret_id: str
@@ -96,6 +103,9 @@ class RecoveryConfig:
     paid_max_incident_usd: float
     paid_max_concurrent: int
     candidate_timeout_seconds: int
+    cross_ad_volume_size_gb: int
+    cross_ad_device_path: str
+    cross_ad_max_backup_age_seconds: int
     bootstrap_template: Path
 
     @classmethod
@@ -116,6 +126,34 @@ class RecoveryConfig:
             _env("KATCHA_OCI_PAID_FALLBACK_MAX_CONCURRENT", default="1")
         )
         primary_image = _env("KATCHA_OCI_PRIMARY_IMAGE_ID")
+        try:
+            raw_targets = json.loads(
+                _env("KATCHA_OCI_CROSS_AD_TARGETS_JSON", default="[]")
+            )
+        except json.JSONDecodeError as exc:
+            raise RecoveryError(
+                "KATCHA_OCI_CROSS_AD_TARGETS_JSON must be valid JSON"
+            ) from exc
+        if not isinstance(raw_targets, list):
+            raise RecoveryError(
+                "KATCHA_OCI_CROSS_AD_TARGETS_JSON must be a JSON array"
+            )
+        alternate_targets: list[RecoveryTarget] = []
+        for row in raw_targets:
+            if not isinstance(row, dict):
+                raise RecoveryError("each cross-AD target must be a JSON object")
+            availability_domain = str(row.get("availability_domain") or "").strip()
+            subnet_id = str(row.get("subnet_id") or "").strip()
+            if not availability_domain or not subnet_id:
+                raise RecoveryError(
+                    "each cross-AD target requires availability_domain and subnet_id"
+                )
+            alternate_targets.append(
+                RecoveryTarget(
+                    availability_domain=availability_domain,
+                    subnet_id=subnet_id,
+                )
+            )
         fallback_shape = (
             _env("KATCHA_OCI_PAID_FALLBACK_SHAPE")
             if paid_enabled
@@ -135,6 +173,7 @@ class RecoveryConfig:
             availability_domain=_env("KATCHA_OCI_AVAILABILITY_DOMAIN"),
             compartment_id=_env("KATCHA_OCI_COMPARTMENT_ID"),
             subnet_id=_env("KATCHA_OCI_SUBNET_ID"),
+            alternate_targets=tuple(alternate_targets),
             data_volume_id=_env("KATCHA_OCI_DATA_VOLUME_ID"),
             data_volume_fs_uuid=_env("KATCHA_OCI_DATA_VOLUME_FS_UUID"),
             production_env_secret_id=_env("KATCHA_OCI_PRODUCTION_ENV_SECRET_ID"),
@@ -168,6 +207,16 @@ class RecoveryConfig:
             candidate_timeout_seconds=int(
                 _env("KATCHA_RECOVERY_CANDIDATE_TIMEOUT_SECONDS", default="1200")
             ),
+            cross_ad_volume_size_gb=int(
+                _env("KATCHA_OCI_CROSS_AD_DATA_VOLUME_SIZE_GB", default="50")
+            ),
+            cross_ad_device_path=_env(
+                "KATCHA_OCI_DATA_VOLUME_DEVICE_PATH",
+                default="/dev/oracleoci/oraclevdb",
+            ),
+            cross_ad_max_backup_age_seconds=int(
+                _env("KATCHA_OCI_CROSS_AD_MAX_BACKUP_AGE_SECONDS", default="7200")
+            ),
             bootstrap_template=Path(
                 _env(
                     "KATCHA_OCI_RECOVERY_BOOTSTRAP_TEMPLATE",
@@ -200,6 +249,18 @@ class RecoveryConfig:
                 )
         if len(self.release_sha) != 40:
             raise RecoveryError("KATCHA_RELEASE_SHA must be an exact git SHA")
+        if self.cross_ad_volume_size_gb < 50:
+            raise RecoveryError("cross-AD data volume must be at least 50 GB")
+        if self.cross_ad_max_backup_age_seconds < 900:
+            raise RecoveryError("cross-AD backup freshness window must be at least 900 seconds")
+        if not self.cross_ad_device_path.startswith("/dev/oracleoci/"):
+            raise RecoveryError("cross-AD recovery requires a consistent OCI device path")
+        seen_targets = {(self.availability_domain, self.subnet_id)}
+        for target in self.alternate_targets:
+            key = (target.availability_domain, target.subnet_id)
+            if key in seen_targets:
+                raise RecoveryError("cross-AD recovery targets must be unique")
+            seen_targets.add(key)
 
 
 class CoordinatorClient:
