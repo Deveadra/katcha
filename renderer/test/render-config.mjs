@@ -8,6 +8,13 @@ const defaults = resolveRenderSettings({});
 assert.deepEqual(defaults, {
   backend: 'local',
   concurrency: 1,
+  externalCompute: {
+    enabled: false,
+    coordinatorUrl: null,
+    token: null,
+    maxRenderCostUsd: 0,
+    reservationTtlSeconds: 0,
+  },
   timeoutInMilliseconds: 120000,
   lambda: {
     expectedAccountId: null,
@@ -26,14 +33,30 @@ assert.deepEqual(defaults, {
 });
 assert.doesNotThrow(() => validateLambdaSettings(defaults));
 
-const cloud = resolveRenderSettings({
+const budgetEnv = {
+  KATCHA_EXTERNAL_COMPUTE_ENABLED: 'true',
+  KATCHA_EXTERNAL_COMPUTE_COORDINATOR_URL: 'https://recovery.example.test',
+  KATCHA_EXTERNAL_COMPUTE_TOKEN: 'compute-token-with-more-than-32-characters',
+  KATCHA_REMOTION_LAMBDA_MAX_RENDER_COST_USD: '0.50',
+  KATCHA_REMOTION_LAMBDA_BUDGET_TTL_SECONDS: '7200',
+};
+
+const lambdaEnv = {
+  ...budgetEnv,
   KATCHA_RENDER_BACKEND: 'lambda',
   KATCHA_AWS_EXPECTED_ACCOUNT_ID: '123456789012',
+  KATCHA_REMOTION_LAMBDA_FUNCTION_NAME: 'remotion-render-test',
+  KATCHA_REMOTION_LAMBDA_SERVE_URL: 'https://example.com/site',
+};
+
+const cloud = resolveRenderSettings({
+  ...lambdaEnv,
   KATCHA_RENDER_CONCURRENCY: '3',
   KATCHA_RENDER_TIMEOUT_MS: '180000',
   KATCHA_REMOTION_LAMBDA_REGION: 'us-east-2',
   KATCHA_REMOTION_LAMBDA_FUNCTION_NAME: 'remotion-render-4-0-529-test',
-  KATCHA_REMOTION_LAMBDA_SERVE_URL: 'https://example.s3.us-east-2.amazonaws.com/sites/katcha/index.html',
+  KATCHA_REMOTION_LAMBDA_SERVE_URL:
+    'https://example.s3.us-east-2.amazonaws.com/sites/katcha/index.html',
   KATCHA_REMOTION_LAMBDA_POLL_INTERVAL_MS: '3000',
   KATCHA_REMOTION_LAMBDA_MAX_WAIT_MS: '900000',
   KATCHA_REMOTION_LAMBDA_MAX_RETRIES: '1',
@@ -51,6 +74,8 @@ assert.equal(cloud.lambda.region, 'us-east-2');
 assert.equal(cloud.lambda.framesPerLambda, 30);
 assert.equal(cloud.lambda.stagingBucket, 'katcha-render-staging-123456789012');
 assert.equal(cloud.lambda.stagingPrefix, 'temporary/render-inputs');
+assert.equal(cloud.externalCompute.maxRenderCostUsd, 0.5);
+assert.equal(cloud.externalCompute.reservationTtlSeconds, 7200);
 assert.doesNotThrow(() => validateLambdaSettings(cloud));
 
 assert.throws(
@@ -63,10 +88,42 @@ assert.throws(
 );
 assert.throws(
   () => validateLambdaSettings(resolveRenderSettings({
-    KATCHA_RENDER_BACKEND: 'lambda',
-    KATCHA_AWS_EXPECTED_ACCOUNT_ID: '123456789012',
-    KATCHA_REMOTION_LAMBDA_FUNCTION_NAME: 'remotion-render-test',
-    KATCHA_REMOTION_LAMBDA_SERVE_URL: 'https://example.com/site',
+    ...lambdaEnv,
+    KATCHA_EXTERNAL_COMPUTE_ENABLED: 'false',
+  })),
+  /EXTERNAL_COMPUTE_ENABLED must be true/,
+);
+assert.throws(
+  () => validateLambdaSettings(resolveRenderSettings({
+    ...lambdaEnv,
+    KATCHA_EXTERNAL_COMPUTE_COORDINATOR_URL: 'http://localhost:8788',
+  })),
+  /public HTTPS URL/,
+);
+assert.throws(
+  () => validateLambdaSettings(resolveRenderSettings({
+    ...lambdaEnv,
+    KATCHA_EXTERNAL_COMPUTE_TOKEN: 'short',
+  })),
+  /at least 32 characters/,
+);
+assert.throws(
+  () => validateLambdaSettings(resolveRenderSettings({
+    ...lambdaEnv,
+    KATCHA_REMOTION_LAMBDA_MAX_RENDER_COST_USD: '0',
+  })),
+  /MAX_RENDER_COST_USD must be positive/,
+);
+assert.throws(
+  () => validateLambdaSettings(resolveRenderSettings({
+    ...lambdaEnv,
+    KATCHA_REMOTION_LAMBDA_BUDGET_TTL_SECONDS: '60',
+  })),
+  /BUDGET_TTL_SECONDS/,
+);
+assert.throws(
+  () => validateLambdaSettings(resolveRenderSettings({
+    ...lambdaEnv,
     KATCHA_REMOTION_LAMBDA_MAX_WAIT_MS: '1500000',
     KATCHA_REMOTION_STAGING_BUCKET: 'Invalid_Bucket',
   })),
@@ -74,10 +131,7 @@ assert.throws(
 );
 assert.throws(
   () => validateLambdaSettings(resolveRenderSettings({
-    KATCHA_RENDER_BACKEND: 'lambda',
-    KATCHA_AWS_EXPECTED_ACCOUNT_ID: '123456789012',
-    KATCHA_REMOTION_LAMBDA_FUNCTION_NAME: 'remotion-render-test',
-    KATCHA_REMOTION_LAMBDA_SERVE_URL: 'https://example.com/site',
+    ...lambdaEnv,
     KATCHA_REMOTION_LAMBDA_MAX_WAIT_MS: '1500000',
     KATCHA_REMOTION_STAGING_BUCKET: 'katcha-staging-example',
     KATCHA_REMOTION_STAGING_URL_EXPIRES_SECONDS: '1700',
@@ -96,25 +150,19 @@ assert.equal(
 
 assert.throws(
   () => validateLambdaSettings(resolveRenderSettings({
-    KATCHA_RENDER_BACKEND: 'lambda',
-    KATCHA_AWS_EXPECTED_ACCOUNT_ID: '123456789012',
-    KATCHA_REMOTION_LAMBDA_FUNCTION_NAME: 'remotion-render-test',
-    KATCHA_REMOTION_LAMBDA_SERVE_URL: 'https://example.com/site',
+    ...lambdaEnv,
     KATCHA_REMOTION_STAGING_BUCKET: 'katcha-staging-example',
     KATCHA_REMOTION_STAGING_PREFIX: '/unsafe-prefix/',
   })),
   /normalized S3 prefix/,
 );
 
-console.log('PASS: renderer runtime settings are conservative, explicit, and cloud-safe.');
-
 assert.throws(
   () => validateLambdaSettings(resolveRenderSettings({
-    KATCHA_RENDER_BACKEND: 'lambda',
-    KATCHA_AWS_EXPECTED_ACCOUNT_ID: '123456789012',
+    ...lambdaEnv,
     KATCHA_REMOTION_LAMBDA_REGION: 'moon-1',
-    KATCHA_REMOTION_LAMBDA_FUNCTION_NAME: 'remotion-render-test',
-    KATCHA_REMOTION_LAMBDA_SERVE_URL: 'https://example.com/site',
   })),
   /not supported by Remotion Lambda/,
 );
+
+console.log('PASS: renderer runtime settings are conservative, explicit, and budget-safe.');
