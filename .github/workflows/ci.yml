@@ -99,8 +99,19 @@ jobs:
               renderer:
                 ciChanged ||
                 prefix("renderer/", "src/katcha/rendering/") ||
-                exact("Dockerfile.renderer", "scripts/ranked_renderer_smoke.py", "docker-compose.yml") ||
-                has((name) => name.startsWith("tests/test_render") || name.startsWith("tests/test_editorial")),
+                exact(
+                  "Dockerfile.renderer",
+                  "scripts/ranked_renderer_smoke.py",
+                  "docker-compose.yml",
+                  "tests/test_editorial_render.py",
+                  "tests/test_editorial_visual_compiler.py",
+                  "tests/test_ranked_episode_rendering.py",
+                  "tests/test_reaction_rendering.py",
+                  "tests/test_render_recovery_automation.py",
+                  "tests/test_renderer_diagnostics.py",
+                  "tests/test_brand_previews.py",
+                  "tests/test_packaging_thumbnails.py"
+                ),
               explorer:
                 ciChanged ||
                 prefix("web-tests/", "src/katcha/web/") ||
