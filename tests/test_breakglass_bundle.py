@@ -264,3 +264,17 @@ def test_wrong_age_identity_cannot_extract_bundle(tmp_path: Path) -> None:
 
 def stat_mode(path: Path) -> int:
     return os.stat(path).st_mode & 0o777
+
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX permission check")
+def test_extract_rejects_group_readable_identity(tmp_path: Path) -> None:
+    identity = tmp_path / "breakglass.identity"
+    identity.write_text("AGE-SECRET-KEY-1FIXTURE\n", encoding="utf-8")
+    identity.chmod(0o640)
+
+    with pytest.raises(
+        breakglass_bundle.BreakGlassError,
+        match="must not be readable or writable by group/other",
+    ):
+        breakglass_bundle._validate_identity_file(identity)
