@@ -154,3 +154,26 @@ Production cannot be declared ready until all of the following pass:
 9. run the full local-PC-off acceptance test while the hosted control plane owns leadership.
 
 The normal target remains near-zero fixed infrastructure cost. Reliability is preserved by allowing a small, explicit, observable, automatically-expiring amount of emergency spend rather than accepting an unbounded outage.
+
+
+## External compute spending circuit breaker
+
+Paid compute authorization is not stored solely on the OCI host or Katcha
+PostgreSQL. The external Cloudflare recovery coordinator owns a strongly
+consistent budget ledger so a database/control-plane outage cannot bypass spend
+limits.
+
+Required production controls:
+
+- global external-compute enabled/disabled switch, disabled by default,
+- durable UTC monthly ceiling,
+- explicit per-provider ceilings,
+- maximum concurrent paid jobs,
+- maximum settled + reserved spend for one retry group,
+- idempotent reservation key before provider creation,
+- settlement/release after provider outcome,
+- provider-side TTL cleanup as a second independent guard.
+
+OCI paid fallback uses both the existing local TTL/incident cap and the external
+coordinator ledger. Future Modal, Fargate, Lambda, or other paid compute adapters
+must reserve through the same coordinator before creating provider resources.
