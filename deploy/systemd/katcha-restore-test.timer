@@ -1,0 +1,11 @@
+[Unit]
+Description=Verify Katcha R2 PostgreSQL backups weekly
+
+[Timer]
+OnCalendar=Sun *-*-* 04:15:00 UTC
+Persistent=true
+RandomizedDelaySec=30min
+Unit=katcha-restore-test.service
+
+[Install]
+WantedBy=timers.target
