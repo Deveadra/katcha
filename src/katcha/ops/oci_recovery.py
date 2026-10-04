@@ -1817,6 +1817,21 @@ def recover(event_path: Path, config: RecoveryConfig, oci: OciCli) -> dict[str, 
         )
         if retire_instance_id and retire_instance_id != successful_attempt.instance_id:
             try:
+                retire_row = oci.get_instance(retire_instance_id)
+                if _is_paid_recovery(retire_row):
+                    oci.softstop(retire_instance_id)
+                    try:
+                        _settle_paid_instance_budget(
+                            coordinator,
+                            retire_row,
+                            ended_at=datetime.now(UTC),
+                            reason="superseded after authority handoff",
+                        )
+                    except Exception as budget_error:
+                        print(
+                            "RECOVERY_BUDGET_SETTLEMENT_WARNING: "
+                            f"{type(budget_error).__name__}: {budget_error}"
+                        )
                 oci.terminate(retire_instance_id)
             except Exception as retire_error:
                 print(
@@ -1870,6 +1885,27 @@ def recover(event_path: Path, config: RecoveryConfig, oci: OciCli) -> dict[str, 
                     "RECOVERY_ROLLBACK_WARNING: "
                     f"{type(cleanup_error).__name__}: {cleanup_error}"
                 )
+            if (
+                successful_attempt.budget_reservation_id
+                and successful_attempt.budget_reserved_microusd
+            ):
+                try:
+                    coordinator.settle_external_compute(
+                        successful_attempt.budget_reservation_id,
+                        actual_cost_microusd=(
+                            successful_attempt.budget_reserved_microusd
+                        ),
+                        metadata={
+                            "settlement_reason": (
+                                "paid candidate rolled back before authority commit"
+                            )
+                        },
+                    )
+                except Exception as budget_error:
+                    print(
+                        "RECOVERY_BUDGET_SETTLEMENT_WARNING: "
+                        f"{type(budget_error).__name__}: {budget_error}"
+                    )
         try:
             coordinator.abort(
                 deployment_id=deployment_id,
@@ -2006,27 +2042,59 @@ def cleanup_retired_volumes(
 def cleanup_expired_paid(
     config: RecoveryConfig,
     oci: OciCli,
+    coordinator: CoordinatorClient,
     *,
     now: datetime | None = None,
 ) -> list[str]:
-    current = now or datetime.now(UTC)
+    current = (now or datetime.now(UTC)).astimezone(UTC)
     terminated: list[str] = []
     for row in oci.list_instances(config):
         tags = _tags(row)
         if not _is_paid_recovery(row):
             continue
-        if _state(row) in {"TERMINATED", "TERMINATING"}:
+
+        state = _state(row)
+        if state in {"TERMINATED", "TERMINATING"}:
+            if tags.get("KatchaBudgetReservationId", "").strip():
+                _settle_paid_instance_budget(
+                    coordinator,
+                    row,
+                    ended_at=current,
+                    reason="reconciled terminated paid fallback",
+                )
             continue
+
         expires_raw = tags.get("KatchaExpiresAt", "")
         if not expires_raw:
+            oci.softstop(_instance_id(row))
             raise RecoveryError(
                 f"paid fallback instance {_instance_id(row)} is missing KatchaExpiresAt"
             )
-        expires = datetime.fromisoformat(expires_raw.replace("Z", "+00:00"))
-        if expires > current:
+        try:
+            expires = datetime.fromisoformat(
+                expires_raw.replace("Z", "+00:00")
+            )
+        except ValueError as exc:
+            oci.softstop(_instance_id(row))
+            raise RecoveryError(
+                f"paid fallback instance {_instance_id(row)} has invalid KatchaExpiresAt"
+            ) from exc
+        if expires.tzinfo is None:
+            oci.softstop(_instance_id(row))
+            raise RecoveryError(
+                f"paid fallback instance {_instance_id(row)} has timezone-less KatchaExpiresAt"
+            )
+        if expires.astimezone(UTC) > current:
             continue
+
         instance_id = _instance_id(row)
         oci.softstop(instance_id)
+        _settle_paid_instance_budget(
+            coordinator,
+            row,
+            ended_at=current,
+            reason="paid fallback TTL expired",
+        )
         oci.terminate(instance_id)
         terminated.append(instance_id)
     return terminated
@@ -2048,11 +2116,16 @@ def main() -> int:
         )
         oci = OciCli()
         if args.action == "cleanup":
-            terminated = cleanup_expired_paid(config, oci)
+            coordinator = CoordinatorClient(config)
+            terminated = cleanup_expired_paid(
+                config,
+                oci,
+                coordinator,
+            )
             retired_volumes_deleted = cleanup_retired_volumes(
                 config,
                 oci,
-                CoordinatorClient(config),
+                coordinator,
             )
             result: object = {
                 "status": "cleanup_complete",
