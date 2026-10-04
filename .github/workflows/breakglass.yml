@@ -1,0 +1,76 @@
+name: Break-glass recovery bundle
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/breakglass.yml
+      - deploy/breakglass/**
+      - docs/BREAK_GLASS_RECOVERY.md
+      - docs/CLOUD_RESILIENCE_CONTRACT.md
+      - src/katcha/ops/breakglass_bundle.py
+      - tests/test_breakglass_bundle.py
+  push:
+    branches: [main]
+    paths:
+      - deploy/breakglass/**
+      - docs/BREAK_GLASS_RECOVERY.md
+      - src/katcha/ops/breakglass_bundle.py
+      - tests/test_breakglass_bundle.py
+
+permissions:
+  contents: read
+
+jobs:
+  breakglass:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install age and Katcha test runtime
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq age
+          python -m pip install -e '.[dev]'
+
+      - name: Validate break-glass tooling
+        run: |
+          ruff check src/katcha/ops/breakglass_bundle.py tests/test_breakglass_bundle.py
+          python -m py_compile src/katcha/ops/breakglass_bundle.py
+          pytest -q tests/test_breakglass_bundle.py
+
+      - name: Prove encrypted bundle survives plaintext source removal
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          root="$(mktemp -d)"
+          trap 'rm -rf "$root"' EXIT
+
+          mkdir -p "$root/source/aws" "$root/restored"
+          printf '%s\n'             'KATCHA_ENV=production'             'KATCHA_CREDENTIAL_ENCRYPTION_KEY=ci-secret-encryption-key'             > "$root/source/katcha.env"
+          printf '%s\n'             'KATCHA_BACKUP_R2_ACCESS_KEY=ci-writer'             > "$root/source/backup.env"
+          printf '%s\n'             'KATCHA_RESTORE_R2_ACCESS_KEY=ci-reader'             > "$root/source/restore.env"
+          printf '%s\n' 'credential-process-fixture'             > "$root/source/aws/config"
+          tar -czf "$root/source/aws.tgz" -C "$root/source/aws" .
+
+          age-keygen -o "$root/breakglass.identity" 2>/dev/null
+          age-keygen -y "$root/breakglass.identity"             > "$root/recipients.txt"
+
+          python -m katcha.ops.breakglass_bundle create             --production-env "$root/source/katcha.env"             --backup-env "$root/source/backup.env"             --restore-env "$root/source/restore.env"             --aws-bundle "$root/source/aws.tgz"             --recipients-file "$root/recipients.txt"             --output "$root/katcha-breakglass.age"
+
+          rm -rf "$root/source"
+
+          python -m katcha.ops.breakglass_bundle extract             --bundle "$root/katcha-breakglass.age"             --identity-file "$root/breakglass.identity"             --destination "$root/restored"
+
+          test -s "$root/restored/katcha.env"
+          test -s "$root/restored/backup.env"
+          test -s "$root/restored/restore.env"
+          test -s "$root/restored/aws.tgz"
+          test -s "$root/restored/manifest.json"
+          test "$(stat -c '%a' "$root/restored")" = "700"
+          test "$(stat -c '%a' "$root/restored/katcha.env")" = "600"
