@@ -13,6 +13,7 @@ def _config() -> r2_bucket_lock.BucketLockConfig:
         bucket="katcha-backup-prod",
         prefix="postgres/",
         retention_days=30,
+        expiration_days=60,
     )
 
 
@@ -94,3 +95,45 @@ def test_apply_preserves_unrelated_bucket_lock_rules(monkeypatch) -> None:
 
     assert existing in applied
     assert config.desired_rule in applied
+
+
+
+def test_required_lifecycle_expires_only_after_retention_window() -> None:
+    config = _config()
+    r2_bucket_lock.validate_required_lifecycle(
+        [
+            {
+                "id": r2_bucket_lock.LIFECYCLE_RULE_ID,
+                "enabled": True,
+                "conditions": {"prefix": "postgres/"},
+                "deleteObjectsTransition": {
+                    "condition": {
+                        "type": "Age",
+                        "maxAge": 60 * 86400,
+                    }
+                },
+            }
+        ],
+        config,
+    )
+
+
+def test_required_lifecycle_rejects_early_expiration() -> None:
+    config = _config()
+    with pytest.raises(r2_bucket_lock.BucketLockError, match="too early"):
+        r2_bucket_lock.validate_required_lifecycle(
+            [
+                {
+                    "id": r2_bucket_lock.LIFECYCLE_RULE_ID,
+                    "enabled": True,
+                    "conditions": {"prefix": "postgres/"},
+                    "deleteObjectsTransition": {
+                        "condition": {
+                            "type": "Age",
+                            "maxAge": 20 * 86400,
+                        }
+                    },
+                }
+            ],
+            config,
+        )
