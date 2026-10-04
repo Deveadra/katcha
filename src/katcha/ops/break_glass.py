@@ -34,7 +34,7 @@ class BreakGlassR2Config:
     force_path_style: bool
 
     @classmethod
-    def from_env(cls) -> "BreakGlassR2Config":
+    def from_env(cls) -> BreakGlassR2Config:
         def required(name: str) -> str:
             value = os.environ.get(f"KATCHA_BREAK_GLASS_R2_{name}", "").strip()
             if not value:
@@ -144,13 +144,15 @@ def _read_required_file(path: Path, label: str) -> bytes:
 
 def _validated_aws_members(data: bytes) -> list[tarfile.TarInfo]:
     try:
-        archive = tarfile.open(fileobj=io.BytesIO(data), mode="r:gz")
+        with tarfile.open(
+            fileobj=io.BytesIO(data),
+            mode="r:gz",
+        ) as archive:
+            members = archive.getmembers()
     except tarfile.TarError as exc:
         raise BreakGlassError(
             "AWS break-glass bundle is not a valid tar.gz"
         ) from exc
-    with archive:
-        members = archive.getmembers()
     if not members:
         raise BreakGlassError("AWS break-glass bundle is empty")
     seen: set[str] = set()
