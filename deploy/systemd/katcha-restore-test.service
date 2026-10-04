@@ -12,7 +12,7 @@ EnvironmentFile=/etc/katcha/katcha.env
 Environment=KATCHA_REPO_ROOT=/opt/katcha
 Environment=KATCHA_ENV_FILE=/etc/katcha/katcha.env
 Environment=KATCHA_RESTORE_ENV_FILE=/etc/katcha/restore.env
-ExecStart=/opt/katcha/deploy/scripts/postgres-restore-test.sh
+ExecStart=/bin/bash /opt/katcha/deploy/scripts/postgres-restore-test.sh
 Nice=15
 IOSchedulingClass=best-effort
 IOSchedulingPriority=7
