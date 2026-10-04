@@ -191,15 +191,59 @@ def _render(
         "render.dispatch",
         settings=settings,
     )
+    budget = None
+    if not isinstance(manifest, EditorialRenderManifest):
+        budget = _reserve_lambda_render_budget(manifest, settings)
+
     url = f"{settings.renderer_url.rstrip('/')}/render"
-    with httpx.Client(timeout=httpx.Timeout(1800.0, connect=10.0)) as client:
-        response = client.post(url, json=manifest.model_dump(mode="json"))
-        if isinstance(manifest, EditorialRenderManifest) and response.status_code == 400:
-            raise EditorialRenderRejected(
-                "Editorial renderer rejected this request before dispatch"
+    try:
+        with httpx.Client(timeout=httpx.Timeout(1800.0, connect=10.0)) as client:
+            response = client.post(url, json=manifest.model_dump(mode="json"))
+    except httpx.HTTPError as exc:
+        _settle_lambda_budget(
+            budget,
+            reason="renderer transport outcome uncertain",
+        )
+        raise RendererRequestError(
+            f"renderer request failed before a response was received: {exc}"
+        ) from exc
+
+    if isinstance(manifest, EditorialRenderManifest) and response.status_code == 400:
+        raise EditorialRenderRejected(
+            "Editorial renderer rejected this request before dispatch"
+        )
+
+    if not response.is_success:
+        if 400 <= response.status_code < 500:
+            _release_lambda_budget(
+                budget,
+                reason=f"renderer rejected request with HTTP {response.status_code}",
+            )
+        else:
+            _settle_lambda_budget(
+                budget,
+                reason=f"renderer returned HTTP {response.status_code}",
             )
         _raise_for_renderer_error(response)
-        payload = response.json()
+
+    payload = response.json()
+    metadata = dict(payload.get("metadata") or {})
+    if budget is not None:
+        if metadata.get("reused") is True:
+            _release_lambda_budget(
+                budget,
+                reason="renderer reused an existing verified output",
+            )
+        elif metadata.get("renderer") == "remotion-lambda":
+            _settle_lambda_budget(
+                budget,
+                reason="Remotion Lambda render completed",
+            )
+        else:
+            _settle_lambda_budget(
+                budget,
+                reason="Lambda backend returned an ambiguous render result",
+            )
     output_key = payload.get("output_key")
     if not isinstance(output_key, str) or not output_key:
         raise RuntimeError("renderer response did not contain output_key")
@@ -210,7 +254,7 @@ def _render(
     return RenderResult(
         output_key=output_key,
         duration_seconds=float(payload.get("duration_seconds") or manifest.output_duration_seconds),
-        metadata=dict(payload.get("metadata") or {}),
+        metadata=metadata,
     )
 
 
