@@ -26,7 +26,7 @@ class BucketLockConfig:
     jurisdiction: str | None = None
 
     @classmethod
-    def from_env(cls) -> "BucketLockConfig":
+    def from_env(cls) -> BucketLockConfig:
         def required(name: str) -> str:
             value = os.environ.get(name, "").strip()
             if not value:
