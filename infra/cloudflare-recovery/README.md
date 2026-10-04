@@ -226,7 +226,11 @@ the individual launch gets a unique job key and a coordinator-assigned attempt.
 Budget denial therefore happens before AWS invocation. Completed or uncertain
 Lambda attempts settle conservatively at the reserved ceiling; a settlement
 transport failure leaves the reservation held rather than failing a completed
-render and causing duplicate paid work.
+render and causing duplicate paid work. Finite Lambda reservations carry
+`settle_on_expiry=true`; on TTL expiry the coordinator converts the held
+reservation into settled spend at the reserved ceiling. OCI reservations do not
+use this shortcut because their provider instance lifecycle is reconciled
+explicitly by the recovery runner.
 
 This ledger is intentionally outside PostgreSQL so budget enforcement remains
 available when the Katcha VM or database is the component being recovered.
