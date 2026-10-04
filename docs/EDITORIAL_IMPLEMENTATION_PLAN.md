@@ -741,3 +741,46 @@ Still pending: automatic visual direction, image/manual replacement, approved br
 assets, publication handoff, provider-specific live speech acceptance, broader
 non-editorial billing-reconciliation UI and authorized source-to-reviewed-video
 operational acceptance. Captions remain proportional rather than word-aligned.
+
+### E11 recoverable semantic visual direction
+
+PR #275 merged at `20631e7`; CI, browser checks and the launcher passed.
+
+A durable `direction` target now plans acquired footage, comparisons, freezes,
+restrained push-ins and linked evidence quote cards for the current script. The
+operator explicitly selects silent captions or exact narration recordings before
+planning. Narrated timing uses measured sample lengths rounded to render frames.
+The existing bounded research-provider gateway persists responses, reuses completed
+receipts and blocks automatic repetition of uncertain requests; no paid fallback
+is introduced. Cancellation and replaced attempts cannot promote model output.
+
+The server resolves candidate identities and measured lengths from completed,
+revision-bound acquisition. The compiler validates beat/claim links, quote sources,
+current rights, media identity, playback bounds and narration before saving a usable
+storyboard. Invalid proposals remain available when structurally valid, without
+starting a render. Review notes flag long unchanged scenes and repeated source
+intervals; these are heuristics, not retention predictions. Comparisons require
+distinct candidate identities.
+
+Production exposes Plan visuals, per-beat reasons and timing choices, warnings, and
+an explicit Create preview from this plan action. The saved plan retains its exact
+presentation and recording selections. Render preflight rechecks current clearance.
+Manual storyboard entries remain independent and survive planning/reconnection.
+Native Katcha AI can use the same typed stage. No migration is required.
+
+This first director is text-based: it reads acquired asset descriptions and the
+saved evidence dossier, not the acquired footage itself. It cannot establish object
+coordinates, so automatic spatial overlays are rejected. It does not approve rights,
+render review or publication. Frame-grounded direction, image/manual replacement,
+approved branding, publication handoff and live source-to-reviewed-video acceptance
+remain pending. No live provider or visual-quality acceptance is claimed.
+
+Validation: **1070 passed, 2 skipped, 1 failed** in the full local SQLite suite.
+The failure is the same source-scout cycle recovery intermittence previously
+reproduced on unchanged main during E10. All 21 new direction cases passed,
+including measured narration, removed recordings, interrupted-provider recovery,
+real compiler clearance/hash/bounds checks, stale revisions and cancellation.
+The editorial browser journey passed lost direction-response replay, narration
+selection, exact saved-plan rendering, preservation of manual edits, and 390px
+layout. Ruff, compilation, JavaScript syntax and diff checks passed. PostgreSQL and
+remote CI remain publication gates; fixtures do not establish live visual quality.

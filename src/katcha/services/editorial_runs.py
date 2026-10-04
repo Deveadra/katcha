@@ -103,11 +103,25 @@ def start_run(
         if active is not None:
             raise EditorialConflict("This project already has active work; inspect or cancel it")
         artifacts = {"brief": project.brief}
-        if request.target in {"assets", "acquire_assets", "render", "narration"}:
+        if request.target in {"assets", "acquire_assets", "render", "narration", "direction"}:
             revision = session.get(EditorialRevision, (project_id, project.revision))
             if revision is None or not revision.draft.get("script"):
                 raise EditorialConflict("Save a cited script before scouting supporting assets")
             artifacts.update(input_draft=revision.draft, input_draft_digest=revision.digest)
+        if request.target == "direction":
+            acquired = session.get(EditorialRun, request.asset_run_id)
+            if (
+                acquired is None
+                or acquired.channel_profile_id != channel_id
+                or acquired.project_id != project_id
+                or acquired.status != "completed"
+                or acquired.options.get("target") != "acquire_assets"
+                or acquired.input_revision != project.revision
+                or acquired.artifacts.get("input_draft_digest") != revision.digest
+            ):
+                raise EditorialConflict(
+                    "Select completed asset acquisition for this script revision"
+                )
         if request.target == "narration":
             from katcha.editorial.narration import voice_enabled
 
@@ -117,7 +131,9 @@ def start_run(
                 )
         urls = (
             project.brief["source_urls"]
-            if request.target not in {"assets", "acquire_assets", "render", "narration"}
+            if request.target not in {
+                "assets", "acquire_assets", "render", "narration", "direction"
+            }
             else []
         )
         if request.target == "acquire_assets":

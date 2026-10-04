@@ -102,7 +102,10 @@ window.KatchaEditorial = (() => {
         const narration = project.revision > 0 ? await api(`${base}/narration?revision=${project.revision}`).catch(error => ({error: error.message, recordings: []})) : {voice_enabled: true, recordings: []};
         const acquisition = runs.find(item => item.target === "acquire_assets" && item.status === "completed" && item.input_revision === project.revision);
         const assetRun = acquisition ? (acquisition.editorial_run_id === run?.editorial_run_id ? run : await api(`${base}/runs/${encodeURIComponent(acquisition.editorial_run_id)}`)) : null;
+        const directed = runs.find(item => item.target === "direction" && item.status === "completed" && item.input_revision === project.revision);
+        const directionRun = directed ? (directed.editorial_run_id === run?.editorial_run_id ? run : await api(`${base}/runs/${encodeURIComponent(directed.editorial_run_id)}`)) : null;
         if (epoch !== state.epoch) return;
+        state.directionRun = run?.target === "direction" && run.status !== "completed" ? null : directionRun;
         if (state.project?.id !== id || state.run?.editorial_run_id !== run?.editorial_run_id) clearPreview();
         window.KatchaEditorialHistory.context(channel, id);
         state.assetRun = assetRun; state.review = review; state.narration = narration;
@@ -117,7 +120,7 @@ window.KatchaEditorial = (() => {
             : "Brief saved. Choose source analysis or research and scripting.";
         el("editorial-discard").hidden = !state.stale;
         feedback(run?.error || "Project loaded. Generated claims and scripts need editorial review.", Boolean(run?.error));
-        renderActions(); renderEvidence(); renderScript(); renderStoryboard(); renderReview(); renderNarration(); renderActions();
+        renderActions(); renderEvidence(); renderScript(); renderStoryboard(); renderDirection(); renderReview(); renderNarration(); renderActions();
         if (state.stale) feedback("A newer script revision is available. Your unsaved text is retained below. Copy it before discarding edits to load the latest version.", true);
         if (focus) el("editorial-title").focus();
         if (run && ["queued", "running"].includes(run.status)) {
@@ -149,6 +152,8 @@ window.KatchaEditorial = (() => {
         el("editorial-render").disabled = state.busy || Boolean(active) || state.stale || !state.assetRun || Boolean(read(storageKey(`pending.${state.project.id}`), null));
         el("editorial-render").disabled ||= el("editorial-presentation").value === "narrated" && !state.narration?.voice_enabled;
         el("editorial-generate-narration").disabled = state.busy || Boolean(active) || state.stale || !state.narration?.voice_enabled || !state.revision?.draft.script?.length || Boolean(read(storageKey(`pending.${state.project.id}`), null));
+        el("editorial-direct").disabled = el("editorial-render").disabled;
+        el("editorial-render-directed").disabled = state.busy || Boolean(active) || state.stale || !state.directionRun || Boolean(read(storageKey(`pending.${state.project.id}`), null));
         el("editorial-render").textContent = el("editorial-presentation").value === "narrated" ? "Create narrated preview" : "Create silent captioned preview";
         el("editorial-play").hidden = state.run?.stage !== "render_ready_for_review" || state.run?.status !== "completed";
         el("editorial-approve").disabled = state.busy || !state.review?.can_approve || !state.previewUrl || state.stale || Boolean(read(storageKey(`pending.${state.project.id}`), null));
@@ -215,6 +220,23 @@ window.KatchaEditorial = (() => {
             const options = [...choices.filter(item => item.beat_id === beat.id && receipts[item.id]).map(item => ({value: `media:${item.id}`, label: item.title})), ...sources.map(item => ({value: `quote:${item.id}`, label: `Evidence quote: ${item.title}`}))];
             return `<fieldset class="editorial-beat" data-board-beat="${esc(beat.id)}"><legend>Beat ${index + 1} · ${beat.planned_duration_seconds}s</legend><label>Visual<select>${'<option value="">Choose a visual</option>'}${options.map(item => `<option value="${esc(item.value)}" ${saved[index]?.choice === item.value ? "selected" : ""}>${esc(item.label)}</option>`).join("")}</select></label><label>Footage start (seconds)<input type="number" min="0" step="0.1" value="${esc(saved[index]?.start || "0")}"></label><label class="check-row"><input type="checkbox" ${saved[index]?.freeze ? "checked" : ""}> Hold this frame</label></fieldset>`;
         }).join("") || '<p class="empty">Save a script and acquire supporting media to prepare a preview.</p>';
+    }
+    function renderDirection() {
+        const artifacts = state.directionRun?.artifacts || {};
+        const proposal = artifacts.direction_proposal || (state.run?.target === "direction" ? state.run.artifacts?.direction_proposal : null);
+        el("editorial-render-directed").hidden = !artifacts.storyboard;
+        const titles = new Map((state.assetRun?.artifacts?.asset_selection || []).map(item => [item.id, item.title]));
+        el("editorial-direction").innerHTML = proposal
+            ? `<p>${artifacts.storyboard ? `Plan ready · ${esc(artifacts.storyboard.presentation_mode === "narrated" ? "selected narration" : "silent captions")} · ${Number(artifacts.direction_duration_seconds).toFixed(1)}s. Review every choice below.` : "This proposal did not pass validation. Adjust the manual storyboard below."}</p>`
+                + proposal.beats.map((beat, index) => `<article class="item"><div><h4>Beat ${index + 1} · ${esc(beat.layout)}</h4><p>${esc(beat.rationale)}</p>${beat.media.map(use => `<p>${esc(titles.get(use.candidate_id) || use.candidate_id)} · from ${esc(use.start_seconds)}s · ${use.freeze ? "held frame" : `${esc(use.playback_rate)}× playback`} · ${esc(use.push_in)}× push-in</p>`).join("")}${beat.quote_source_id ? `<p>Evidence quote: ${esc((state.revision?.draft.sources || []).find(source => source.id === beat.quote_source_id)?.title || beat.quote_source_id)}</p>` : ""}</div></article>`).join("")
+                + (artifacts.direction_warnings || []).map(warning => `<p>${esc(warning)}</p>`).join("")
+            : '<p class="empty">No validated plan for this revision yet. Save the script, acquire its supporting media, and choose the presentation above.</p>';
+    }
+    function directionOptions() {
+        const presentation_mode = el("editorial-presentation").value;
+        const narration_ids = presentation_mode === "narrated" ? Object.fromEntries([...el("editorial-narration").querySelectorAll("[data-narration-select]")].map(input => [input.dataset.narrationSelect, input.value])) : {};
+        if (presentation_mode === "narrated" && (state.revision.draft.script.some(beat => !narration_ids[beat.id]) || !state.narration?.voice_enabled)) throw new Error("Enable voice and choose a recording for every beat.");
+        return {presentation_mode, narration_ids};
     }
     function storyboardPlan() {
         const beats = [...el("editorial-storyboard").querySelectorAll("[data-board-beat]")].map(row => {
@@ -342,6 +364,22 @@ window.KatchaEditorial = (() => {
                 if (channel === state.channel) await open(project, {focus: false});
             }));
         }
+        el("editorial-direct").addEventListener("click", () => void guarded(async () => {
+            const channel = state.channel; const project = state.project.id;
+            const payload = {target: "direction", expected_revision: state.project.revision, asset_run_id: state.assetRun.editorial_run_id, direction: directionOptions()};
+            payload.idempotency_key = identity(`direction.${project}`, payload);
+            await api(path(channel, `/${project}/runs`), {method: "POST", body: JSON.stringify(payload)});
+            if (channel === state.channel) await open(project, {focus: false});
+        }));
+        el("editorial-render-directed").addEventListener("click", () => void guarded(async () => {
+            const channel = state.channel; const project = state.project.id;
+            const artifacts = state.directionRun.artifacts;
+            const payload = {target: "render", expected_revision: state.project.revision, asset_run_id: artifacts.direction_asset_run_id, storyboard: artifacts.storyboard};
+            await api(path(channel, `/${project}/storyboard/preflight`), {method: "POST", body: JSON.stringify({expected_revision: payload.expected_revision, asset_run_id: payload.asset_run_id, plan: payload.storyboard})});
+            payload.idempotency_key = identity(`render.${project}`, payload);
+            await api(path(channel, `/${project}/runs`), {method: "POST", body: JSON.stringify(payload)});
+            if (channel === state.channel) await open(project, {focus: false});
+        }));
         el("editorial-storyboard").addEventListener("input", saveStoryboard);
         el("editorial-render").addEventListener("click", () => void guarded(async () => {
             const channel = state.channel; const project = state.project.id;

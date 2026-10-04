@@ -203,6 +203,36 @@ class EditorialRenderManifest(Contract):
         return self
 
 
+class DirectionOptions(Contract):
+    presentation_mode: Literal["captioned_silent", "narrated"]
+    narration_ids: dict[Identity, UUID] = Field(default_factory=dict, max_length=100)
+
+    @model_validator(mode="after")
+    def explicit_audio(self) -> Self:
+        if self.presentation_mode == "captioned_silent" and self.narration_ids:
+            raise ValueError("Silent direction cannot select narration")
+        if self.presentation_mode == "narrated" and not self.narration_ids:
+            raise ValueError("Choose recordings before directing narrated visuals")
+        return self
+
+
+class DirectedBeat(VisualBeat):
+    rationale: str = Field(min_length=1, max_length=1000)
+
+    @model_validator(mode="after")
+    def no_unobserved_regions(self) -> Self:
+        # Text-only direction cannot establish where an object appears in a frame.
+        if self.overlays:
+            raise ValueError("Automatic annotations require observed source regions")
+        if len({item.candidate_id for item in self.media}) != len(self.media):
+            raise ValueError("Automatic comparisons require distinct assets")
+        return self
+
+
+class DirectionResult(Contract):
+    beats: list[DirectedBeat] = Field(min_length=1, max_length=100)
+
+
 class StoryboardPreflightRequest(Contract):
     expected_revision: int = Field(gt=0, strict=True)
     asset_run_id: UUID
