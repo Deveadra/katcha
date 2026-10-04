@@ -44,8 +44,8 @@ as API credit. Verify supported account capabilities when enabling each live rou
 | E3 | Durable specialist research, evidence verification and cost-bounded recursion | E1–E2 | Implemented; synthetic integration verified |
 | E4 | Story selection, writer/critic/revision loop and cited script review | E3 | Implemented; live editorial acceptance pending |
 | E5 | Claim-directed supplementary asset scout and acquisition/rights gate | E3–E4 | Video discovery/acquisition and render-time rights gate implemented; images pending |
-| E6 | Visual director, timing, compiler and editorial Remotion composition | E4–E5 | Compiler, local renderer and private preview implemented; narration/automatic direction pending |
-| E7 | Integrated editorial workspace, recovery/status and publication handoff | E1–E6 | Workspace, recovery and durable review implemented locally; publication pending |
+| E6 | Visual director, timing, compiler and editorial Remotion composition | E4–E5 | Compiler, local renderer, uploaded narration and private preview implemented; generated narration/automatic direction pending |
+| E7 | Integrated editorial workspace, recovery/status and publication handoff | E1–E6 | Workspace, recovery, durable review and historical inspection implemented; publication pending |
 | E8 | Fault injection, real authorized trailer acceptance, rollout and analytics | E7 | Planned |
 
 Use substantial PRs with coherent executable boundaries. E1 must explicitly say

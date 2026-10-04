@@ -12,6 +12,8 @@ let loseReviewResponse = true;
 let recordings = [];
 let loseUploadResponse = true;
 let failHistoryPage = true, failHistoryPreview = true, delayedHistory = null;
+let historyRequestStarted;
+const historyStarted = new Promise(resolve => { historyRequestStarted = resolve; });
 const historyRows = Array.from({length: 23}, (_, index) => ({editorial_run_id: `past-${index}`, target: index ? 'script' : 'render', input_revision: 1, attempt: 1, status: index ? 'blocked' : 'completed', stage: index ? 'researching' : 'render_ready_for_review', created_at: '2026-10-01T12:00:00Z', error: index ? 'Saved provider failure' : null, artifacts: {saved_revision: 1}}));
 const draft = {
     version: "editorial-draft-v1", observations: [],
@@ -47,7 +49,7 @@ const draft = {
                         if (failHistoryPreview) { failHistoryPreview = false; return send({detail: 'Preview clearance changed'}, 409); }
                         return route.fulfill({status: 200, contentType: 'video/mp4', body: 'synthetic history transport'});
                     }
-                    if (url.pathname.endsWith('/past-22')) { delayedHistory = () => send(historyRows[22]); return; }
+                    if (url.pathname.endsWith('/past-22')) { delayedHistory = () => send(historyRows[22]); historyRequestStarted(); return; }
                     return send(historyRows.find(row => url.pathname.endsWith(`/${row.editorial_run_id}`)));
                 }
                 if (url.pathname.endsWith("/revisions")) {
@@ -248,10 +250,12 @@ const draft = {
         await page.keyboard.press("ArrowLeft");
         await page.locator('#editorial-history-next').click();
         await page.locator('[data-history-run="past-22"]').click();
-        await page.waitForFunction(() => document.querySelector('#editorial-history-status').textContent === 'Loading selected work…');
+        await historyStarted;
         await page.locator("#channel").selectOption("two");
         assert.equal(await page.locator('#editorial-history').isHidden(), true);
-        if (delayedHistory) await delayedHistory();
+        const lateResponse = page.waitForResponse(response => new URL(response.url()).pathname.endsWith('/runs/past-22'));
+        await delayedHistory();
+        await (await lateResponse).finished();
         assert.equal(await page.locator('#editorial-history-detail').isHidden(), true);
 
         await page.getByText(/No editorial projects yet/).waitFor();
