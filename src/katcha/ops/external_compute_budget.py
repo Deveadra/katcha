@@ -18,6 +18,7 @@ class ExternalComputeReservation:
     job_key: str
     retry_group: str
     estimated_cost_microusd: int
+    attempt: int
     reused: bool
 
 
@@ -84,7 +85,7 @@ class ExternalComputeBudgetClient:
         provider: str,
         operation: str,
         retry_group: str,
-        attempt: int,
+        attempt: int | None,
         estimated_cost_microusd: int,
         ttl_seconds: int,
         metadata: dict[str, object] | None = None,
@@ -123,6 +124,7 @@ class ExternalComputeBudgetClient:
                 row.get("estimated_cost_microusd")
                 or estimated_cost_microusd
             ),
+            attempt=int(row.get("attempt") or attempt or 0),
             reused=bool(data.get("reused")),
         )
 
