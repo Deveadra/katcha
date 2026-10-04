@@ -2,11 +2,23 @@ name: Cloudflare recovery coordinator
 
 on:
   pull_request:
+    paths:
+      - .github/workflows/cloudflare-recovery.yml
+      - infra/cloudflare-recovery/**
+      - src/katcha/ops/external_compute_budget.py
+      - src/katcha/ops/oci_recovery.py
+      - tests/test_external_compute_budget.py
+      - tests/test_cloud_runtime_contract.py
   push:
     branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: read
+
+concurrency:
+  group: cloudflare-recovery-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   recovery-coordinator:
@@ -20,6 +32,12 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: "22"
+
+      - name: Cache Wrangler npm downloads
+        uses: actions/cache@v4
+        with:
+          path: ~/.npm
+          key: cloudflare-recovery-npm-${{ runner.os }}-wrangler-4.146.0
 
       - name: Test authority state machine
         run: node --test infra/cloudflare-recovery/test/*.test.mjs
