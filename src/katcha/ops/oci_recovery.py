@@ -9,7 +9,7 @@ import tempfile
 import time
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from decimal import Decimal, ROUND_UP
+from decimal import ROUND_UP, Decimal
 from pathlib import Path
 from typing import Any
 
@@ -1007,7 +1007,7 @@ def _paid_instance_cost_microusd(
             return reserved
         raise RecoveryError(
             f"paid fallback instance {_instance_id(row)} lacks usable budget tags"
-        )
+        ) from None
 
     effective_end = ended_at.astimezone(UTC)
     expires_raw = tags.get("KatchaExpiresAt", "").strip()
