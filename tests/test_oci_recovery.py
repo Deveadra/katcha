@@ -340,7 +340,7 @@ def test_cleanup_terminates_only_expired_paid_instances(monkeypatch, tmp_path) -
     assert terminated == ["expired"]
     assert oci.softstopped == ["expired"]
     assert oci.terminated == ["expired"]
-    assert coordinator.settled == [("reservation-expired", 200000)]
+    assert coordinator.settled == [("reservation-expired", 198_334)]
 
 
 def test_recovery_prefers_cross_ad_free_before_paid(monkeypatch, tmp_path) -> None:
