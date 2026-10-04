@@ -375,8 +375,6 @@ class OciCli:
                 "list",
                 "--compartment-id",
                 config.compartment_id,
-                "--availability-domain",
-                config.availability_domain,
                 "--all",
             ]
         ).get("data", [])
@@ -396,6 +394,10 @@ class OciCli:
         deployment_id: str,
         deployment_epoch: int,
         plan: ShapePlan,
+        target: RecoveryTarget,
+        recovery_mode: str,
+        data_volume_id: str,
+        storage_mode: str,
         user_data_path: Path,
     ) -> str:
         expires = ""
@@ -408,7 +410,11 @@ class OciCli:
             "KatchaRecoveryIncident": incident.incident_id,
             "KatchaDeploymentId": deployment_id,
             "KatchaDeploymentEpoch": str(deployment_epoch),
-            "KatchaRecoveryMode": plan.mode,
+            "KatchaRecoveryMode": recovery_mode,
+            "KatchaPaidFallback": str(plan.paid).lower(),
+            "KatchaStorageMode": storage_mode,
+            "KatchaDataVolumeId": data_volume_id,
+            "KatchaSubnetId": target.subnet_id,
         }
         if expires:
             tags["KatchaExpiresAt"] = expires
@@ -418,11 +424,11 @@ class OciCli:
                 "instance",
                 "launch",
                 "--availability-domain",
-                config.availability_domain,
+                target.availability_domain,
                 "--compartment-id",
                 config.compartment_id,
                 "--subnet-id",
-                config.subnet_id,
+                target.subnet_id,
                 "--image-id",
                 plan.image_id,
                 "--shape",
@@ -435,7 +441,7 @@ class OciCli:
                 "--assign-public-ip",
                 str(config.assign_public_ip).lower(),
                 "--display-name",
-                f"katcha-recovery-{incident.incident_id[:8]}",
+                f"katcha-recovery-{incident.incident_id[:8]}-{recovery_mode[:12]}",
                 "--freeform-tags",
                 json.dumps(tags, separators=(",", ":")),
                 "--user-data-file",
@@ -451,7 +457,11 @@ class OciCli:
             raise RecoveryError("OCI launch returned no instance OCID")
         return instance_id
 
-    def volume_attachments(self, config: RecoveryConfig) -> list[dict[str, Any]]:
+    def volume_attachments(
+        self,
+        config: RecoveryConfig,
+        volume_id: str,
+    ) -> list[dict[str, Any]]:
         data = self.run(
             [
                 "compute",
@@ -460,7 +470,7 @@ class OciCli:
                 "--compartment-id",
                 config.compartment_id,
                 "--volume-id",
-                config.data_volume_id,
+                volume_id,
                 "--all",
             ]
         ).get("data", [])
@@ -524,7 +534,13 @@ class OciCli:
             ]
         )
 
-    def attach(self, config: RecoveryConfig, instance_id: str) -> None:
+    def attach(
+        self,
+        instance_id: str,
+        volume_id: str,
+        *,
+        device_path: str,
+    ) -> None:
         self.run(
             [
                 "compute",
@@ -533,13 +549,67 @@ class OciCli:
                 "--instance-id",
                 instance_id,
                 "--volume-id",
-                config.data_volume_id,
+                volume_id,
                 "--type",
                 "paravirtualized",
+                "--device",
+                device_path,
                 "--wait-for-state",
                 "ATTACHED",
                 "--max-wait-seconds",
                 "1200",
+            ]
+        )
+
+    def create_recovery_volume(
+        self,
+        config: RecoveryConfig,
+        incident: Incident,
+        *,
+        deployment_id: str,
+        availability_domain: str,
+    ) -> str:
+        tags = {
+            "KatchaRole": "recovery-data",
+            "KatchaRecoveryIncident": incident.incident_id,
+            "KatchaDeploymentId": deployment_id,
+            "KatchaEphemeralRecoveryVolume": "true",
+        }
+        result = self.run(
+            [
+                "bv",
+                "volume",
+                "create",
+                "--availability-domain",
+                availability_domain,
+                "--compartment-id",
+                config.compartment_id,
+                "--size-in-gbs",
+                str(config.cross_ad_volume_size_gb),
+                "--display-name",
+                f"katcha-recovery-data-{incident.incident_id[:8]}",
+                "--freeform-tags",
+                json.dumps(tags, separators=(",", ":")),
+                "--wait-for-state",
+                "AVAILABLE",
+                "--max-wait-seconds",
+                "1200",
+            ]
+        )
+        volume_id = str((result.get("data") or {}).get("id") or "")
+        if not volume_id:
+            raise RecoveryError("OCI volume create returned no volume OCID")
+        return volume_id
+
+    def delete_volume(self, volume_id: str) -> None:
+        self.run(
+            [
+                "bv",
+                "volume",
+                "delete",
+                "--volume-id",
+                volume_id,
+                "--force",
             ]
         )
 
