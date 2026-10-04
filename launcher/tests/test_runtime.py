@@ -187,6 +187,43 @@ def test_service_log_context_marks_sigkill_exit_as_error_without_guessing_oom():
     assert "oom" not in json.dumps(details).lower()
 
 
+def test_resource_snapshot_retains_oom_exit_and_restart_state(tmp_path):
+    app = instance(tmp_path)
+    inspected = [
+        {
+            "Config": {
+                "Labels": {"com.docker.compose.service": "intelligence-worker"}
+            },
+            "State": {
+                "Status": "exited",
+                "OOMKilled": True,
+                "ExitCode": 137,
+                "Health": {"Status": "unhealthy"},
+            },
+            "RestartCount": 2,
+        }
+    ]
+    with patch.object(
+        app,
+        "_diagnostic_command",
+        side_effect=["abc", json.dumps(inspected), '{"CPUPerc":"99%"}'],
+    ):
+        result = app.resource_snapshot()
+
+    assert result["docker_available"] is True
+    assert result["container_state"] == [
+        {
+            "service": "intelligence-worker",
+            "status": "exited",
+            "oom_killed": True,
+            "exit_code": 137,
+            "restart_count": 2,
+            "health": "unhealthy",
+        }
+    ]
+    assert result["containers"][0]["CPUPerc"] == "99%"
+
+
 def test_diagnostics_export_prepends_snapshot_and_uses_contextual_filename(tmp_path):
     app = instance(tmp_path)
     app.phase = "degraded"
