@@ -70,6 +70,7 @@ jobs:
 
       - name: Validate production Compose ops profiles
         env:
+          KATCHA_ENV_FILE: ${{ github.workspace }}/.env.production.example
           KATCHA_BACKUP_ENV_FILE: ${{ github.workspace }}/deploy/backup.env.example
           KATCHA_RESTORE_ENV_FILE: ${{ github.workspace }}/deploy/restore.env.example
         run: |
