@@ -176,5 +176,15 @@ Required production controls:
 - provider-side TTL cleanup as a second independent guard.
 
 OCI paid fallback uses both the existing local TTL/incident cap and the external
-coordinator ledger. Future Modal, Fargate, Lambda, or other paid compute adapters
-must reserve through the same coordinator before creating provider resources.
+coordinator ledger. Remotion Lambda video rendering also reserves through this
+ledger at the renderer's AWS invocation boundary. A budget denial prevents
+`renderMediaOnLambda()` from being called at all.
+
+Lambda reservations use a conservative operator-configured maximum cost per render.
+A completed or uncertain Lambda attempt settles that full ceiling. If settlement is
+temporarily unavailable after a successful render, the reservation remains held but
+the verified render is allowed to complete so Katcha does not retry and duplicate
+AWS spend.
+
+Future Modal, Fargate, or other paid compute adapters must reserve through the same
+coordinator immediately before creating provider resources.
