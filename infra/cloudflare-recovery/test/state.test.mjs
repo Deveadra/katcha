@@ -1109,3 +1109,85 @@ test("legacy reservation history migrates retry attempt counters", () => {
     /retry attempt limit reached/,
   );
 });
+
+
+
+test("external compute atomically allocates retry attempts when omitted", () => {
+  const now = Date.UTC(2026, 9, 4, 12, 0, 0);
+  let state = configureExternalCompute(
+    defaultAuthorityState(),
+    {
+      enabled: true,
+      monthlyLimitMicrousd: 5_000_000,
+      providerLimitsMicrousd: { "aws-lambda": 5_000_000 },
+      maxConcurrentJobs: 2,
+      maxRetryAttempts: 2,
+      maxRetrySpendMicrousd: 5_000_000,
+    },
+    now,
+  );
+
+  const first = reserveExternalCompute(
+    state,
+    {
+      jobKey: "render-job-1",
+      provider: "aws-lambda",
+      operation: "remotion-video-render",
+      retryGroup: "render-output-1",
+      attempt: null,
+      estimatedCostMicrousd: 500_000,
+      ttlSeconds: 3600,
+    },
+    now + 1,
+  );
+  assert.equal(first.reservation.attempt, 1);
+  state = releaseExternalCompute(
+    first.state,
+    {
+      reservationId: first.reservation.id,
+      reason: "test retry",
+    },
+    now + 2,
+  ).state;
+
+  const second = reserveExternalCompute(
+    state,
+    {
+      jobKey: "render-job-2",
+      provider: "aws-lambda",
+      operation: "remotion-video-render",
+      retryGroup: "render-output-1",
+      attempt: null,
+      estimatedCostMicrousd: 500_000,
+      ttlSeconds: 3600,
+    },
+    now + 3,
+  );
+  assert.equal(second.reservation.attempt, 2);
+  state = releaseExternalCompute(
+    second.state,
+    {
+      reservationId: second.reservation.id,
+      reason: "test retry",
+    },
+    now + 4,
+  ).state;
+
+  assert.throws(
+    () =>
+      reserveExternalCompute(
+        state,
+        {
+          jobKey: "render-job-3",
+          provider: "aws-lambda",
+          operation: "remotion-video-render",
+          retryGroup: "render-output-1",
+          attempt: null,
+          estimatedCostMicrousd: 500_000,
+          ttlSeconds: 3600,
+        },
+        now + 5,
+      ),
+    /retry attempt limit reached/,
+  );
+});
