@@ -216,9 +216,20 @@ Also configure:
 - `KATCHA_OCI_CROSS_AD_DATA_VOLUME_SIZE_GB` — minimum 50 GB; default 50
 - `KATCHA_OCI_DATA_VOLUME_DEVICE_PATH` — default `/dev/oracleoci/oraclevdb`
 - `KATCHA_OCI_CROSS_AD_MAX_BACKUP_AGE_SECONDS` — default 7200 seconds
+- `KATCHA_OCI_RETIRED_VOLUME_GRACE_HOURS` — rollback grace before an obsolete durable volume becomes eligible for deletion; default 72 hours, allowed range 24–720
 
 The recovery candidate is tagged with its active subnet and data-volume OCID. If an alternate-AD candidate becomes authoritative, future incidents treat that AD and volume as the current home rather than falling back to stale static primary values.
 
 Failed alternate-AD attempts terminate their candidate and delete the unused fresh recovery volume. A commit with an uncertain outcome is different: the candidate and its volume are deliberately left in place for coordinator reconciliation because destructive cleanup would be unsafe.
+
+After a successful move to a different durable volume, the old volume is retained for the configured rollback grace period. Katcha then tags it with an explicit retirement authorization and timestamp. The scheduled recovery-maintenance workflow deletes it only when:
+
+1. the Cloudflare coordinator can identify the current leader,
+2. the current leader identifies a different active data-volume OCID,
+3. the retirement timestamp has expired,
+4. the old volume is in an available state,
+5. OCI shows no non-detached attachment.
+
+Missing coordinator state, missing active-volume identity, an attachment in progress, or malformed retirement metadata fails closed and prevents deletion. Arbitrary untagged volumes are never deleted by this cleanup.
 
 The RPO of an alternate-AD restore is bounded by the backup cadence and the maximum accepted backup age. The default hourly backup schedule plus a 7200-second freshness gate targets a practical bootstrap-stage recovery window without pretending to provide synchronous replication.
