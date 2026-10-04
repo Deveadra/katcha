@@ -44,7 +44,7 @@ as API credit. Verify supported account capabilities when enabling each live rou
 | E3 | Durable specialist research, evidence verification and cost-bounded recursion | E1–E2 | Implemented; synthetic integration verified |
 | E4 | Story selection, writer/critic/revision loop and cited script review | E3 | Implemented; live editorial acceptance pending |
 | E5 | Claim-directed supplementary asset scout and acquisition/rights gate | E3–E4 | Video discovery/acquisition and render-time rights gate implemented; images pending |
-| E6 | Visual director, timing, compiler and editorial Remotion composition | E4–E5 | Compiler, local renderer, uploaded narration and private preview implemented; generated narration/automatic direction pending |
+| E6 | Visual director, timing, compiler and editorial Remotion composition | E4–E5 | Compiler, local renderer, uploaded/generated narration and private preview implemented; automatic direction/live speech acceptance pending |
 | E7 | Integrated editorial workspace, recovery/status and publication handoff | E1–E6 | Workspace, recovery, durable review and historical inspection implemented; publication pending |
 | E8 | Fault injection, real authorized trailer acceptance, rollout and analytics | E7 | Planned |
 
@@ -686,3 +686,58 @@ Remaining: generated narration with billing recovery, automatic visual direction
 image/manual replacement, approved branding, publication handoff and authorized
 operational source-to-reviewed-video acceptance. History inspection does not make
 historical previews exempt from current clearance or allow restoring old revisions.
+
+### E10 generated narration and verified billing recovery
+
+PR #268 is merged; its CI, launcher and recovery workflows passed. This checkpoint
+is integrated with main through `a37f264` and preserves the historical inspector.
+
+A durable `narration` run generates each saved script beat using the channel's
+configured ElevenLabs primary long-form voice. It requires explicit confirmation,
+live channel policy, voice enabled, a known configured credit cost, and an operator
+estimate ceiling. Voice/model/output format/rate are frozen on the run. The ceiling
+is an estimate using that configured rate, not a guarantee of the provider's final
+charge. Channel and global budget checks still apply. Editorial project usage is now
+included in channel spending instead of disappearing after reservation settlement.
+
+Each speech call atomically claims a non-expiring dispatched reservation. Timeouts,
+invalid output and uncertain storage outcomes retain the hold and block automatic
+regeneration. Explicit provider rejections permit retry. A successful response is
+validated as bounded PCM WAV, checksummed, stored privately, and given a durable
+receipt before accounting and narration attachment. Retries recover those bytes;
+completed beats are reused. Dispatch counters fence late responses and stale billing
+confirmations. Receipt storage, accounting and reconciliation serialize on the ledger.
+
+The operator can reconcile an unknown charge from Production after checking the
+provider's final outcome. A receipt/reference and explicit confirmation are required;
+charged outcomes create usage once, and confirmed no-charge outcomes permit another
+attempt. Replays return the original audit receipt without changing a newer attempt.
+The API is channel-scoped and the native reconciliation tool requires confirmation.
+Katcha records the operator's verification; it does not independently query the
+provider's billing history. Confirmed charges without recovered audio remain blocked
+from automatic regeneration; recovered recordings may be uploaded for review.
+
+Shared channel-budgeted TTS also retains unknown holds and blocks repeated dispatch.
+OpenAI/Gemini speech SDK automatic retries are disabled; provider error text alone is
+not sufficient to release a reservation or fail over. The new reconciliation UI is
+specific to editorial runs; non-editorial unknown speech holds still require
+operational reconciliation. No migration is needed: existing reservation metadata
+stores the immutable voice/audio/reconciliation receipts and dispatch counter.
+
+Validation: full local SQLite suite reached **1049 passed, 2 skipped, 1 failed**.
+The source-scout cycle-recovery failure is intermittent on unchanged main `a37f264`:
+that baseline passed its complete suite (1026 passed, 2 skipped), then reproduced
+the same failure on an isolated repeat. No source-scout implementation was changed.
+Generated narration tests cover saved-audio/settlement/attachment recovery, voice and
+revision gates, explicit rejection, unknown charges, stale callbacks, channel scopes,
+confirmation, accounting replay, completed-beat reuse and workflow registration.
+The editorial browser journey, existing Production and shared Aerith checks passed.
+Generation and reconciliation preserve request identity and input after a lost
+response; the active billing form was visually checked at 390px. Ruff and compilation
+passed. These tests use synthetic provider/audio fixtures; no live provider call or
+paid narration acceptance is claimed. PostgreSQL/full remote CI remains a gate.
+
+Still pending: automatic visual direction, image/manual replacement, approved brand
+assets, publication handoff, provider-specific live speech acceptance, broader
+non-editorial billing-reconciliation UI and authorized source-to-reviewed-video
+operational acceptance. Captions remain proportional rather than word-aligned.

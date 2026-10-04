@@ -10,7 +10,11 @@ from katcha.api.control_auth import control_actor
 from katcha.api.editorial_projects import _authorize, _error
 from katcha.db import session_scope
 from katcha.editorial.review_schemas import ReviewEditorialRender
-from katcha.editorial.run_schemas import ResumeEditorialRun, StartEditorialRun
+from katcha.editorial.run_schemas import (
+    ReconcileNarrationBilling,
+    ResumeEditorialRun,
+    StartEditorialRun,
+)
 from katcha.editorial_models import EditorialRun
 from katcha.orchestration.client import get_temporal_client
 from katcha.orchestration.editorial_dispatch import dispatch_editorial_run
@@ -22,6 +26,21 @@ router = APIRouter(
     prefix="/v1/channels/{channel_profile_id}/editorial-projects/{project_id}/runs",
     tags=["editorial-projects"],
 )
+
+
+@router.post("/{editorial_run_id}/narration-billing", status_code=201)
+def reconcile_narration_billing(
+    channel_profile_id: uuid.UUID, project_id: uuid.UUID, editorial_run_id: uuid.UUID,
+    body: ReconcileNarrationBilling, request: Request,
+):
+    from katcha.editorial.generated_narration import reconcile_billing
+
+    _authorize(request, channel_profile_id, write=True)
+    try:
+        return reconcile_billing(channel_profile_id, project_id, editorial_run_id, body,
+                                 actor=control_actor(request))
+    except ValueError as exc:
+        raise _error(exc) from exc
 
 
 @router.get("/{editorial_run_id}/review")
@@ -67,6 +86,12 @@ def run_response(row: EditorialRun, *, include_artifacts: bool = True) -> dict:
     }
     if include_artifacts:
         result["artifacts"] = row.artifacts
+        if row.options["target"] == "narration" and row.status in {
+            "blocked", "failed", "cancelled"
+        }:
+            from katcha.editorial.generated_narration import billing_holds
+
+            result["artifacts"] = {**row.artifacts, "narration_billing": billing_holds(row)}
     return result
 
 

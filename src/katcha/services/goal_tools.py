@@ -79,11 +79,22 @@ TOOLS = {
             "scout candidates for review. target=render requires an asset_run_id and explicit "
             "captioned_silent or narrated storyboard. Narrated requires uploaded recording IDs for "
             "every beat; uses local rendering with a private review preview. "
+            "target=narration generates each saved beat using the channel ElevenLabs primary "
+            "long-form voice; requires explicit operator authorization, confirm_narration=true "
+            "and a max_narration_estimate_usd ceiling. Unknown charges block automatic retries. "
             "Research requires a live "
             "eligible provider; discovery and generation are not rights/publication approval.",
             "production:create", "POST",
             "/v1/channels/{channel_profile_id}/editorial-projects/{project_id}/runs",
             retry_safe=True,
+        ),
+        GoalTool(
+            "reconcile_editorial_narration_billing",
+            "Record an operator-verified final speech charge or rejection after an uncertain "
+            "outcome. Requires provider evidence and explicit confirmation; never guess billing.",
+            "production:create", "POST",
+            "/v1/channels/{channel_profile_id}/editorial-projects/{project_id}"
+            "/runs/{editorial_run_id}/narration-billing", confirm=True, retry_safe=True,
         ),
         GoalTool(
             "editorial_runs", "List editorial execution progress and saved blockers",

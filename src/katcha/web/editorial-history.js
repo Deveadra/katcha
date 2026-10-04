@@ -2,7 +2,7 @@
 window.KatchaEditorialHistory = (() => {
     const el = id => document.getElementById(`editorial-history${id ? `-${id}` : ""}`);
     const esc = value => String(value ?? "").replace(/[&<>"']/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"})[c]);
-    const labels = {analysis: "Source analysis", script: "Research and script", assets: "Asset search", acquire_assets: "Asset download", render: "Video preview"};
+    const labels = {narration: "Narration generation", analysis: "Source analysis", script: "Research and script", assets: "Asset search", acquire_assets: "Asset download", render: "Video preview"};
     const date = value => value && Number.isFinite(Date.parse(value)) ? new Date(value).toLocaleString() : "Date unavailable";
     const readable = value => String(value || "Unknown").replaceAll("_", " ");
     let api, apiBlob, channel = "", project = "", generation = 0, request = 0;

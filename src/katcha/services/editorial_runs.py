@@ -103,14 +103,21 @@ def start_run(
         if active is not None:
             raise EditorialConflict("This project already has active work; inspect or cancel it")
         artifacts = {"brief": project.brief}
-        if request.target in {"assets", "acquire_assets", "render"}:
+        if request.target in {"assets", "acquire_assets", "render", "narration"}:
             revision = session.get(EditorialRevision, (project_id, project.revision))
             if revision is None or not revision.draft.get("script"):
                 raise EditorialConflict("Save a cited script before scouting supporting assets")
             artifacts.update(input_draft=revision.draft, input_draft_digest=revision.digest)
+        if request.target == "narration":
+            from katcha.editorial.narration import voice_enabled
+
+            if not voice_enabled(session, channel_id):
+                raise EditorialConflict(
+                    "Voice is off for this channel. Enable it in Channel Studio"
+                )
         urls = (
             project.brief["source_urls"]
-            if request.target not in {"assets", "acquire_assets", "render"}
+            if request.target not in {"assets", "acquire_assets", "render", "narration"}
             else []
         )
         if request.target == "acquire_assets":
