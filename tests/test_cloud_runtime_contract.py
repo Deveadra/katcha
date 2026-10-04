@@ -202,6 +202,9 @@ def test_break_glass_recovery_is_manual_explicit_and_ephemeral() -> None:
         "inputs.secret_source == 'break-glass'"
     ) in workflow
     assert "KATCHA_BREAK_GLASS_HANDOFF_OBJECT_KEY" in workflow
+    assert "create-handoff-from-escrow" in workflow
+    assert "KATCHA_BREAK_GLASS_ESCROW_KEY" in workflow
+    assert "BREAK_GLASS_PRODUCTION_ENV_B64" not in workflow
 
 
 def test_break_glass_candidate_keeps_oci_vault_and_escrow_paths_separate() -> None:
@@ -218,3 +221,20 @@ def test_break_glass_candidate_keeps_oci_vault_and_escrow_paths_separate() -> No
         'KATCHA_BREAK_GLASS_HANDOFF_KEY="$BREAK_GLASS_HANDOFF_KEY"'
         in bootstrap
     )
+
+
+
+def test_break_glass_escrow_drill_is_manual_and_non_oci() -> None:
+    workflow = (
+        ROOT / ".github" / "workflows" / "break-glass-escrow-drill.yml"
+    ).read_text(encoding="utf-8")
+
+    assert "workflow_dispatch:" in workflow
+    assert "repository_dispatch" not in workflow
+    assert "schedule:" not in workflow
+    assert "create-handoff-from-escrow" in workflow
+    assert "install-handoff" in workflow
+    assert "production_runtime" in workflow
+    assert "disaster_recovery_validate" in workflow
+    assert "Delete one-time handoff" in workflow
+    assert "oci " not in workflow
