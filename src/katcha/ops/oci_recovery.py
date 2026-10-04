@@ -928,6 +928,130 @@ def paid_instance_count(rows: list[dict[str, Any]]) -> int:
     )
 
 
+def _paid_worst_case_microusd(config: RecoveryConfig) -> int:
+    return _usd_to_microusd(
+        Decimal(str(config.paid_estimated_hourly_usd))
+        * Decimal(config.paid_ttl_hours)
+    )
+
+
+def _reserve_paid_compute(
+    coordinator: CoordinatorClient,
+    config: RecoveryConfig,
+    incident: Incident,
+    *,
+    recovery_mode: str,
+    target: RecoveryTarget,
+    attempt: int,
+) -> tuple[str, int]:
+    estimated = _paid_worst_case_microusd(config)
+    result = coordinator.reserve_external_compute(
+        job_key=(
+            f"recovery:{incident.incident_id}:{recovery_mode}:"
+            f"{target.availability_domain}:attempt-{attempt}"
+        ),
+        provider="oci",
+        operation="paid-control-plane-fallback",
+        retry_group=f"recovery:{incident.incident_id}",
+        attempt=attempt,
+        estimated_cost_microusd=estimated,
+        ttl_seconds=config.paid_ttl_hours * 3600 + 3600,
+        metadata={
+            "recovery_mode": recovery_mode,
+            "availability_domain": target.availability_domain,
+            "shape": config.fallback.shape,
+            "ttl_hours": config.paid_ttl_hours,
+            "estimated_hourly_usd": config.paid_estimated_hourly_usd,
+        },
+    )
+    reservation = result.get("reservation") or {}
+    reservation_id = str(reservation.get("id") or "").strip()
+    if (
+        not reservation_id
+        or str(reservation.get("status") or "") != "reserved"
+    ):
+        raise RecoveryError(
+            "external-compute coordinator did not return an active reservation"
+        )
+    return reservation_id, estimated
+
+
+def _paid_instance_cost_microusd(
+    row: dict[str, Any],
+    *,
+    ended_at: datetime,
+) -> int:
+    tags = _tags(row)
+    reserved_raw = tags.get("KatchaBudgetReservedMicrousd", "").strip()
+    try:
+        reserved = int(reserved_raw)
+    except ValueError:
+        reserved = 0
+    if reserved < 0:
+        reserved = 0
+
+    started_raw = tags.get("KatchaPaidStartedAt", "").strip()
+    hourly_raw = tags.get("KatchaEstimatedHourlyUsd", "").strip()
+    try:
+        started = datetime.fromisoformat(started_raw.replace("Z", "+00:00"))
+        if started.tzinfo is None:
+            raise ValueError("timezone required")
+        hourly = Decimal(hourly_raw)
+        if hourly <= 0:
+            raise ValueError("hourly cost must be positive")
+    except (ValueError, ArithmeticError):
+        if reserved > 0:
+            return reserved
+        raise RecoveryError(
+            f"paid fallback instance {_instance_id(row)} lacks usable budget tags"
+        )
+
+    effective_end = ended_at.astimezone(UTC)
+    expires_raw = tags.get("KatchaExpiresAt", "").strip()
+    if expires_raw:
+        try:
+            expires = datetime.fromisoformat(expires_raw.replace("Z", "+00:00"))
+            if expires.tzinfo is not None:
+                effective_end = min(effective_end, expires.astimezone(UTC))
+        except ValueError:
+            pass
+
+    elapsed_seconds = max(
+        (effective_end - started.astimezone(UTC)).total_seconds(),
+        60.0,
+    )
+    return _usd_to_microusd(
+        hourly * Decimal(str(elapsed_seconds)) / Decimal("3600")
+    )
+
+
+def _settle_paid_instance_budget(
+    coordinator: CoordinatorClient,
+    row: dict[str, Any],
+    *,
+    ended_at: datetime,
+    reason: str,
+) -> None:
+    tags = _tags(row)
+    reservation_id = tags.get("KatchaBudgetReservationId", "").strip()
+    if not reservation_id:
+        raise RecoveryError(
+            f"paid fallback instance {_instance_id(row)} has no budget reservation"
+        )
+    coordinator.settle_external_compute(
+        reservation_id,
+        actual_cost_microusd=_paid_instance_cost_microusd(
+            row,
+            ended_at=ended_at,
+        ),
+        metadata={
+            "settlement_reason": reason,
+            "instance_id": _instance_id(row),
+            "recovery_mode": tags.get("KatchaRecoveryMode", ""),
+        },
+    )
+
+
 def render_bootstrap(
     config: RecoveryConfig,
     *,
