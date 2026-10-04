@@ -19,6 +19,7 @@ from katcha.editorial.visual_schemas import (
     EditorialScene,
     RenderCaption,
     RenderMedia,
+    RenderNarration,
     StoryboardPlan,
 )
 from katcha.editorial_models import EditorialProject, EditorialRevision, EditorialRun
@@ -34,6 +35,7 @@ def compile_visuals(
     draft: EditorialDraft,
     plan: StoryboardPlan,
     media: list[RenderMedia],
+    narration: list[RenderNarration] | None = None,
 ) -> EditorialRenderManifest:
     if [beat.beat_id for beat in plan.beats] != [beat.id for beat in draft.script]:
         raise EditorialConflict("Storyboard must cover each script beat once, in script order")
@@ -41,14 +43,20 @@ def compile_visuals(
     claims = {claim.id: claim for claim in draft.claims}
     cursor = 0
     timeline = []
+    audio_by_beat = {item.beat_id: item for item in narration or []}
     for beat, visual in zip(draft.script, plan.beats, strict=True):
         if beat.uncertainty_disclosure and len(beat.uncertainty_disclosure) > 180:
             raise EditorialConflict(
                 "Shorten the on-screen uncertainty disclosure to 180 characters"
             )
         frames = max(1, math.ceil(beat.planned_duration_seconds * 30))
+        if plan.presentation_mode == "narrated":
+            audio = audio_by_beat.get(beat.id)
+            if audio is None or audio.text_digest != _digest({"text": beat.narration}):
+                raise EditorialConflict("Narration does not match this saved script beat")
+            frames = (audio.sample_frames * 30 + audio.sample_rate - 1) // audio.sample_rate
         words = beat.narration.split()
-        if len(words) / (frames / 30) > 3.5:
+        if plan.presentation_mode == "captioned_silent" and len(words) / (frames / 30) > 3.5:
             raise EditorialConflict("Caption-only script is too fast to read; adjust beat duration")
         # Small, bounded chunks avoid filling the entire frame with a paragraph.
         chunks = [" ".join(words[index : index + 12]) for index in range(0, len(words), 12)]
@@ -91,6 +99,10 @@ def compile_visuals(
         timeline=timeline,
         output_duration_seconds=cursor / 30,
     )
+    if plan.presentation_mode == "narrated":
+        value.update(version="editorial-render-v2", narration=[
+            audio_by_beat[beat.id].model_dump(mode="json") for beat in draft.script
+        ])
     digest = _digest(
         {
             **value,
@@ -136,6 +148,11 @@ def compile_project_visuals(
         if revision is None or revision.digest != run.artifacts.get("input_draft_digest"):
             raise EditorialConflict("Acquired assets do not match the frozen script")
         draft = EditorialDraft.model_validate(revision.draft)
+        from katcha.editorial.narration import resolve_narration
+
+        narration = resolve_narration(
+            session, channel_id, project_id, expected_revision, draft, plan
+        )
         receipts = dict(run.artifacts.get("acquired_assets") or {})
         used = {item.candidate_id for beat in plan.beats for item in beat.media}
         if not used <= receipts.keys():
@@ -192,4 +209,5 @@ def compile_project_visuals(
         draft=draft,
         plan=plan,
         media=resolved,
+        narration=narration,
     )

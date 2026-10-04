@@ -4,6 +4,7 @@ import uuid
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from sqlalchemy import select
+from starlette.concurrency import run_in_threadpool
 
 from katcha.api.control_auth import control_actor, require_control_channel, require_control_scope
 from katcha.db import session_scope
@@ -27,6 +28,62 @@ from katcha.services.editorial_projects import (
 router = APIRouter(
     prefix="/v1/channels/{channel_profile_id}/editorial-projects", tags=["editorial-projects"]
 )
+
+
+@router.get("/{project_id}/narration")
+def narration_list(
+    channel_profile_id: uuid.UUID, project_id: uuid.UUID, request: Request,
+    revision: int = Query(ge=1),
+):
+    from katcha.editorial.narration import list_narration
+
+    _authorize(request, channel_profile_id)
+    try:
+        return list_narration(channel_profile_id, project_id, revision)
+    except ValueError as exc:
+        raise _error(exc) from exc
+
+
+@router.post("/{project_id}/narration", status_code=201)
+async def narration_upload(
+    channel_profile_id: uuid.UUID, project_id: uuid.UUID, request: Request,
+    revision: int = Query(ge=1), beat_id: str = Query(min_length=1, max_length=120),
+    idempotency_key: str = Query(min_length=1, max_length=120),
+    permitted_use: bool = Query(False),
+):
+    from katcha.editorial.narration import MAX_AUDIO_BYTES, import_narration
+
+    _authorize(request, channel_profile_id, write=True)
+    try:
+        await run_in_threadpool(get_project, channel_profile_id, project_id)
+        data = bytearray()
+        async for chunk in request.stream():
+            if len(data) + len(chunk) > MAX_AUDIO_BYTES:
+                raise HTTPException(413, "Upload a WAV recording no larger than 32 MiB")
+            data.extend(chunk)
+        return await run_in_threadpool(
+            import_narration, channel_profile_id, project_id, revision=revision,
+            beat_id=beat_id, idempotency_key=idempotency_key, audio=bytes(data),
+            actor=control_actor(request), permitted_use=permitted_use,
+        )
+    except ValueError as exc:
+        raise _error(exc) from exc
+
+
+@router.post("/{project_id}/narration/{narration_id}/revoke")
+def narration_revoke(
+    channel_profile_id: uuid.UUID, project_id: uuid.UUID,
+    narration_id: uuid.UUID, request: Request,
+):
+    from katcha.editorial.narration import revoke_narration
+
+    _authorize(request, channel_profile_id, write=True)
+    try:
+        return revoke_narration(
+            channel_profile_id, project_id, narration_id, actor=control_actor(request)
+        )
+    except ValueError as exc:
+        raise _error(exc) from exc
 
 
 def _authorize(request: Request, channel_id: uuid.UUID, *, write: bool = False) -> None:

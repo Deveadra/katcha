@@ -3,7 +3,7 @@
 from typing import Literal, Self
 from uuid import UUID
 
-from pydantic import Field, model_validator
+from pydantic import Field, model_serializer, model_validator
 
 from katcha.editorial.project_schemas import Contract, Identity, Text
 
@@ -57,8 +57,43 @@ class VisualBeat(Contract):
 
 class StoryboardPlan(Contract):
     # Caption-only is an explicit editorial choice, never a silent substitute for narration.
-    presentation_mode: Literal["captioned_silent"]
+    presentation_mode: Literal["captioned_silent", "narrated"]
     beats: list[VisualBeat] = Field(min_length=1, max_length=100)
+    narration_ids: dict[Identity, UUID] = Field(default_factory=dict, max_length=100)
+
+    @model_validator(mode="after")
+    def narration_selection(self) -> Self:
+        if self.presentation_mode == "captioned_silent" and self.narration_ids:
+            raise ValueError("Silent storyboards cannot select narration")
+        if self.presentation_mode == "narrated" and set(self.narration_ids) != {
+            beat.beat_id for beat in self.beats
+        }:
+            raise ValueError("Select one narration recording for every storyboard beat")
+        return self
+
+
+class RenderNarration(Contract):
+    narration_id: UUID
+    beat_id: Identity
+    storage_key: str = Field(min_length=1, max_length=1000)
+    sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+    text_digest: str = Field(pattern=r"^[a-f0-9]{64}$")
+    sample_rate: int = Field(ge=8000, le=96000, strict=True)
+    sample_frames: int = Field(gt=0, le=57600000, strict=True)
+
+    @model_validator(mode="after")
+    def bounded_audio(self) -> Self:
+        if self.sample_frames > self.sample_rate * 600:
+            raise ValueError("Narration exceeds ten minutes per beat")
+        if (
+            not self.storage_key.startswith("editorial/")
+            or "/narration/" not in self.storage_key
+            or not self.storage_key.endswith(f"/{self.sha256}.wav")
+            or any(part in {".", ".."} for part in self.storage_key.split("/"))
+            or any(ord(char) < 32 or char in ":\\" for char in self.storage_key)
+        ):
+            raise ValueError("Narration requires a managed content-addressed WAV key")
+        return self
 
 
 class RenderMedia(Contract):
@@ -98,11 +133,12 @@ class EditorialScene(VisualBeat):
 
 
 class EditorialRenderManifest(Contract):
-    version: Literal["editorial-render-v1"] = "editorial-render-v1"
+    version: Literal["editorial-render-v1", "editorial-render-v2"] = "editorial-render-v1"
     project_id: str
     revision: int = Field(gt=0, strict=True)
     draft_digest: str = Field(pattern=r"^[a-f0-9]{64}$")
-    presentation_mode: Literal["captioned_silent"]
+    presentation_mode: Literal["captioned_silent", "narrated"]
+    narration: list[RenderNarration] = Field(default_factory=list, max_length=100)
     width: Literal[1920] = 1920
     height: Literal[1080] = 1080
     fps: Literal[30] = 30
@@ -112,8 +148,28 @@ class EditorialRenderManifest(Contract):
     output_key: str
     requires_editorial_review: Literal[True] = True
 
+    @model_serializer(mode="wrap")
+    def preserve_v1(self, handler):
+        value = handler(self)
+        if self.version == "editorial-render-v1":
+            value.pop("narration", None)
+        return value
+
     @model_validator(mode="after")
     def valid_timeline(self) -> Self:
+        narrated = self.presentation_mode == "narrated"
+        if narrated != (self.version == "editorial-render-v2"):
+            raise ValueError("Narrated rendering requires manifest version 2")
+        if not narrated and self.narration:
+            raise ValueError("Silent rendering cannot contain narration")
+        if narrated and [item.beat_id for item in self.narration] != [
+            scene.beat_id for scene in self.timeline
+        ]:
+            raise ValueError("Narration must cover the timeline once in beat order")
+        for scene, audio in zip(self.timeline, self.narration, strict=False):
+            frames = (audio.sample_frames * self.fps + audio.sample_rate - 1) // audio.sample_rate
+            if scene.duration_frames != frames:
+                raise ValueError("Scene duration must follow the measured narration samples")
         media = {item.candidate_id: item for item in self.media}
         if len(media) != len(self.media):
             raise ValueError("Render media identities must be unique")

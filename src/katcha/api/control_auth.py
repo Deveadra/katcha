@@ -267,6 +267,12 @@ def _require_named_principal_route_access(request: Request) -> None:
         )
         return
 
+    if re.fullmatch(
+        r"/v1/channels/[^/]+/editorial-projects/[^/]+/narration(?:/[^/]+/revoke)?", path
+    ):
+        require_control_scope(request, "ai:read" if method == "GET" else "production:create")
+        return
+
     if method == "GET" and re.fullmatch(
         r"/v1/channels/[^/]+/editorial-projects/[^/]+/runs/[^/]+/preview", path
     ):

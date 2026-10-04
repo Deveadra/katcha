@@ -1,6 +1,7 @@
 // Actual synthetic media acceptance: no provider, S3, rights, or publication claims.
 import fs from 'node:fs/promises';
 import os from 'node:os';
+import {createHash} from 'node:crypto';
 import path from 'node:path';
 import {execFileSync} from 'node:child_process';
 import {bundle} from '@remotion/bundler';
@@ -11,6 +12,7 @@ const temp = await fs.mkdtemp(path.join(os.tmpdir(), 'katcha-editorial-test-'));
 try {
   const publicDir = path.join(temp, 'public'); await fs.mkdir(publicDir);
   execFileSync('ffmpeg', ['-y', '-f', 'lavfi', '-i', 'testsrc2=size=640x360:rate=30', '-t', '4', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', path.join(publicDir, 'test.mp4')], {stdio: 'ignore'});
+  execFileSync('ffmpeg', ['-y', '-f', 'lavfi', '-i', 'sine=frequency=440:sample_rate=24000:duration=2', '-c:a', 'pcm_s16le', path.join(publicDir, 'narration.wav')], {stdio: 'ignore'});
   const serveUrl = await bundle({entryPoint: path.resolve('src/entry.jsx'), publicDir});
   const props = structuredClone(fixture);
   const comparison = structuredClone(props.timeline[0]);
@@ -32,5 +34,17 @@ try {
   for (const [seconds, name] of [[3, 'comparison'], [5, 'quote']]) {
     execFileSync('ffmpeg', ['-y', '-ss', String(seconds), '-i', output, '-frames:v', '1', path.resolve(`test-results/editorial-${name}.png`)], {stdio: 'ignore'});
   }
+  const narrated = structuredClone(props);
+  narrated.version = 'editorial-render-v2'; narrated.presentation_mode = 'narrated';
+  const sha = createHash('sha256').update(await fs.readFile(path.join(publicDir, 'narration.wav'))).digest('hex');
+  narrated.narration = narrated.timeline.map(scene => ({narration_id: scene.beat_id, beat_id: scene.beat_id, sha256: sha, text_digest: 'a'.repeat(64), storage_key: `editorial/${narrated.project_id}/narration/${scene.beat_id}/${sha}.wav`, sample_rate: 24000, sample_frames: 48000}));
+  delete narrated.media[0].url; validateEditorialManifest(narrated);
+  narrated.media[0].url = '/public/test.mp4'; narrated.narration.forEach(audio => { audio.url = '/public/narration.wav'; });
+  const voiced = path.resolve('test-results/editorial-narrated.mp4');
+  const voicedComposition = await selectComposition({serveUrl, id: 'Editorial', inputProps: narrated, ...options});
+  await renderMedia({serveUrl, composition: voicedComposition, inputProps: narrated, codec: 'h264', outputLocation: voiced, concurrency: 1, ...options});
+  const voicedProbe = JSON.parse(execFileSync('ffprobe', ['-v', 'error', '-show_streams', '-show_format', '-of', 'json', voiced]));
+  if (!voicedProbe.streams.some(stream => stream.codec_type === 'audio') || Number(voicedProbe.streams.find(stream => stream.codec_type === 'video').nb_frames) !== 180) throw new Error('Narrated render has no audio or incorrect frame count');
+  console.log('Verified narrated render: 180 frames with real synthetic PCM audio');
   console.log('Verified synthetic editorial render: 1920x1080, 180 frames, silent; single, comparison, freeze and quote scenes');
 } finally { await fs.rm(temp, {recursive: true, force: true}); }
