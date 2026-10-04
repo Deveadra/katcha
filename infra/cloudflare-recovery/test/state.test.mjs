@@ -676,3 +676,225 @@ test("UTC month rollover drops old settled spend but carries active reservations
   assert.equal(status.reserved_microusd, 500_000);
   assert.equal(status.concurrent_jobs, 1);
 });
+
+
+test("kill switch denies replay of an existing active reservation", () => {
+  const now = Date.UTC(2026, 9, 4, 12, 0, 0);
+  const first = reserveExternalCompute(
+    configuredComputeState(now),
+    {
+      jobKey: "kill-switch-replay",
+      provider: "oci",
+      operation: "paid-fallback",
+      retryGroup: "incident-kill-switch",
+      attempt: 1,
+      estimatedCostMicrousd: 500_000,
+      ttlSeconds: 3600,
+    },
+    now,
+  );
+  const disabled = configureExternalCompute(
+    first.state,
+    {
+      enabled: false,
+      monthlyLimitMicrousd: 5_000_000,
+      providerLimitsMicrousd: {
+        oci: 3_000_000,
+        modal: 2_000_000,
+      },
+      maxConcurrentJobs: 2,
+      maxRetrySpendMicrousd: 2_500_000,
+    },
+    now + 1000,
+  );
+
+  assert.throws(
+    () =>
+      reserveExternalCompute(
+        disabled,
+        {
+          jobKey: "kill-switch-replay",
+          provider: "oci",
+          operation: "paid-fallback",
+          retryGroup: "incident-kill-switch",
+          attempt: 1,
+          estimatedCostMicrousd: 500_000,
+          ttlSeconds: 3600,
+        },
+        now + 2000,
+      ),
+    /external compute is disabled/,
+  );
+});
+
+test("settled spend cannot be evicted by reservation history growth", () => {
+  const now = Date.UTC(2026, 9, 4, 12, 0, 0);
+  let state = configureExternalCompute(
+    defaultAuthorityState(),
+    {
+      enabled: true,
+      monthlyLimitMicrousd: 550_000,
+      providerLimitsMicrousd: { modal: 550_000 },
+      maxConcurrentJobs: 2,
+      maxRetrySpendMicrousd: 10_000,
+    },
+    now,
+  );
+
+  for (let index = 0; index < 550; index += 1) {
+    const reserved = reserveExternalCompute(
+      state,
+      {
+        jobKey: `history-${index}`,
+        provider: "modal",
+        operation: "tiny-job",
+        retryGroup: `group-${index}`,
+        attempt: 1,
+        estimatedCostMicrousd: 1_000,
+        ttlSeconds: 3600,
+      },
+      now + index * 2,
+    );
+    state = settleExternalCompute(
+      reserved.state,
+      {
+        reservationId: reserved.reservation.id,
+        actualCostMicrousd: 1_000,
+      },
+      now + index * 2 + 1,
+    ).state;
+  }
+
+  const status = externalComputeStatus(state, now + 2000).status;
+  assert.equal(status.settled_microusd, 550_000);
+  assert.equal(status.provider_settled_microusd.modal, 550_000);
+  assert.equal(state.external_compute.reservations.length, 550);
+
+  assert.throws(
+    () =>
+      reserveExternalCompute(
+        state,
+        {
+          jobKey: "history-over-budget",
+          provider: "modal",
+          operation: "tiny-job",
+          retryGroup: "new-group",
+          attempt: 1,
+          estimatedCostMicrousd: 1,
+          ttlSeconds: 3600,
+        },
+        now + 3000,
+      ),
+    /monthly budget exceeded/,
+  );
+});
+
+test("retry-group settled spend survives UTC month rollover", () => {
+  const january = Date.UTC(2026, 0, 31, 23, 50, 0);
+  let state = configuredComputeState(january);
+  const first = reserveExternalCompute(
+    state,
+    {
+      jobKey: "cross-month-attempt-1",
+      provider: "oci",
+      operation: "paid-fallback",
+      retryGroup: "incident-cross-month",
+      attempt: 1,
+      estimatedCostMicrousd: 1_200_000,
+      ttlSeconds: 3600,
+    },
+    january,
+  );
+  state = settleExternalCompute(
+    first.state,
+    {
+      reservationId: first.reservation.id,
+      actualCostMicrousd: 1_000_000,
+    },
+    january + 1000,
+  ).state;
+
+  const february = Date.UTC(2026, 1, 1, 0, 10, 0);
+  assert.throws(
+    () =>
+      reserveExternalCompute(
+        state,
+        {
+          jobKey: "cross-month-attempt-2",
+          provider: "oci",
+          operation: "paid-fallback",
+          retryGroup: "incident-cross-month",
+          attempt: 2,
+          estimatedCostMicrousd: 1_600_000,
+          ttlSeconds: 3600,
+        },
+        february,
+      ),
+    /retry budget exceeded/,
+  );
+});
+
+test("legacy settled reservations migrate into durable spend aggregates", () => {
+  const now = Date.UTC(2026, 9, 4, 12, 0, 0);
+  const legacy = {
+    ...defaultAuthorityState(),
+    external_compute: {
+      enabled: true,
+      month_key: "2026-10",
+      monthly_limit_microusd: 5_000_000,
+      provider_limits_microusd: { oci: 3_000_000 },
+      max_concurrent_jobs: 2,
+      max_retry_spend_microusd: 2_500_000,
+      reservations: [
+        {
+          id: "legacy-settled",
+          job_key: "legacy-job",
+          provider: "oci",
+          operation: "paid-fallback",
+          retry_group: "legacy-incident",
+          attempt: 1,
+          estimated_cost_microusd: 500_000,
+          actual_cost_microusd: 400_000,
+          status: "settled",
+          reserved_at: new Date(now - 1000).toISOString(),
+          expires_at: new Date(now + 1000).toISOString(),
+          expires_at_ms: now + 1000,
+          settled_at: new Date(now).toISOString(),
+          metadata: {},
+        },
+      ],
+    },
+  };
+
+  const status = externalComputeStatus(legacy, now).status;
+  assert.equal(status.settled_microusd, 400_000);
+  assert.equal(status.provider_settled_microusd.oci, 400_000);
+
+  assert.throws(
+    () =>
+      reserveExternalCompute(
+        configureExternalCompute(
+          legacy,
+          {
+            enabled: true,
+            monthlyLimitMicrousd: 450_000,
+            providerLimitsMicrousd: { oci: 450_000 },
+            maxConcurrentJobs: 2,
+            maxRetrySpendMicrousd: 2_500_000,
+          },
+          now,
+        ),
+        {
+          jobKey: "legacy-over-budget",
+          provider: "oci",
+          operation: "paid-fallback",
+          retryGroup: "new-incident",
+          attempt: 1,
+          estimatedCostMicrousd: 100_000,
+          ttlSeconds: 3600,
+        },
+        now + 1000,
+      ),
+    /monthly budget exceeded/,
+  );
+});
