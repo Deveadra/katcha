@@ -28,6 +28,8 @@ def _base_env(monkeypatch, tmp_path: Path) -> None:
         "KATCHA_OCI_DATA_VOLUME_FS_UUID": "deadbeef-dead-beef-dead-beefdeadbeef",
         "KATCHA_OCI_PRODUCTION_ENV_SECRET_ID": "ocid1.vaultsecret.env",
         "KATCHA_OCI_AWS_BUNDLE_SECRET_ID": "ocid1.vaultsecret.aws",
+        "KATCHA_OCI_BACKUP_ENV_SECRET_ID": "ocid1.vaultsecret.backup",
+        "KATCHA_OCI_RESTORE_ENV_SECRET_ID": "ocid1.vaultsecret.restore",
         "KATCHA_OCI_PRIMARY_IMAGE_ID": "ocid1.image.arm",
         "KATCHA_OCI_PAID_FALLBACK_SHAPE": "VM.Standard.E5.Flex",
         "KATCHA_OCI_PAID_FALLBACK_IMAGE_ID": "ocid1.image.amd",
@@ -275,6 +277,10 @@ def test_real_bootstrap_template_renders_without_touching_shell_syntax(
         content = rendered.read_text(encoding="utf-8")
         assert "__DEPLOYMENT_ID__" not in content
         assert "oci-recovery-test" in content
+        assert "ocid1.vaultsecret.backup" in content
+        assert "ocid1.vaultsecret.restore" in content
+        assert "katcha-backup.timer" in content
+        assert "katcha-restore-test.timer" in content
         assert 'printf \'[katcha-recovery] %s\\n\' "$1"' in content
         subprocess.run(["bash", "-n", str(rendered)], check=True)
     finally:
