@@ -665,3 +665,196 @@ def test_recovery_stops_after_incomplete_cleanup(monkeypatch, tmp_path) -> None:
 
     assert attempted == ["always-free-a1"]
     assert FakeCoordinator.instance.aborted is True
+
+
+
+def test_retired_volume_grace_period_is_bounded(monkeypatch, tmp_path) -> None:
+    _base_env(monkeypatch, tmp_path)
+    monkeypatch.setenv("KATCHA_OCI_RETIRED_VOLUME_GRACE_HOURS", "12")
+
+    with pytest.raises(
+        oci_recovery.RecoveryError,
+        match="grace period must be between 24 and 720 hours",
+    ):
+        oci_recovery.RecoveryConfig.from_env()
+
+
+def test_schedule_volume_retirement_preserves_existing_tags(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    _base_env(monkeypatch, tmp_path)
+    config = oci_recovery.RecoveryConfig.from_env()
+    now = datetime(2026, 10, 4, 2, 0, tzinfo=UTC)
+
+    class FakeOci:
+        def __init__(self) -> None:
+            self.updated = None
+
+        def get_volume(self, volume_id):
+            assert volume_id == "volume-old"
+            return {
+                "id": volume_id,
+                "freeform-tags": {
+                    "Owner": "katcha",
+                    "DoNotLose": "true",
+                },
+            }
+
+        def update_volume_tags(self, volume_id, tags):
+            self.updated = (volume_id, tags)
+
+    oci = FakeOci()
+    retire_at = oci_recovery.schedule_volume_retirement(
+        oci,
+        config,
+        volume_id="volume-old",
+        replacement_volume_id="volume-new",
+        replacement_deployment_id="deployment-new",
+        now=now,
+    )
+
+    assert retire_at == (now + timedelta(hours=72)).isoformat()
+    volume_id, tags = oci.updated
+    assert volume_id == "volume-old"
+    assert tags["Owner"] == "katcha"
+    assert tags["DoNotLose"] == "true"
+    assert tags["KatchaRetirementAuthorized"] == "true"
+    assert tags["KatchaReplacedByVolume"] == "volume-new"
+    assert tags["KatchaReplacedByDeployment"] == "deployment-new"
+
+
+def test_cleanup_retired_volumes_deletes_only_expired_unattached_non_active(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    _base_env(monkeypatch, tmp_path)
+    config = oci_recovery.RecoveryConfig.from_env()
+    now = datetime(2026, 10, 8, 12, 0, tzinfo=UTC)
+    past = (now - timedelta(hours=1)).isoformat()
+    future = (now + timedelta(hours=1)).isoformat()
+
+    class Coordinator:
+        def status(self):
+            return {
+                "active": {
+                    "deployment_id": "leader",
+                    "epoch": 9,
+                }
+            }
+
+    class FakeOci:
+        def __init__(self) -> None:
+            self.deleted = []
+
+        def list_instances(self, _config):
+            return [
+                {
+                    "id": "leader-instance",
+                    "availability-domain": "TEST:AD-2",
+                    "lifecycle-state": "RUNNING",
+                    "freeform-tags": {
+                        "KatchaDeploymentId": "leader",
+                        "KatchaDataVolumeId": "volume-active",
+                    },
+                }
+            ]
+
+        def list_volumes(self, _config):
+            return [
+                {
+                    "id": "volume-active",
+                    "lifecycle-state": "AVAILABLE",
+                    "freeform-tags": {
+                        "KatchaRetirementAuthorized": "true",
+                        "KatchaRetireAfter": past,
+                    },
+                },
+                {
+                    "id": "volume-expired",
+                    "lifecycle-state": "AVAILABLE",
+                    "freeform-tags": {
+                        "KatchaRetirementAuthorized": "true",
+                        "KatchaRetireAfter": past,
+                    },
+                },
+                {
+                    "id": "volume-future",
+                    "lifecycle-state": "AVAILABLE",
+                    "freeform-tags": {
+                        "KatchaRetirementAuthorized": "true",
+                        "KatchaRetireAfter": future,
+                    },
+                },
+                {
+                    "id": "volume-attached",
+                    "lifecycle-state": "AVAILABLE",
+                    "freeform-tags": {
+                        "KatchaRetirementAuthorized": "true",
+                        "KatchaRetireAfter": past,
+                    },
+                },
+                {
+                    "id": "volume-unmanaged",
+                    "lifecycle-state": "AVAILABLE",
+                    "freeform-tags": {
+                        "KatchaRetireAfter": past,
+                    },
+                },
+            ]
+
+        def volume_attachments(self, _config, volume_id):
+            if volume_id == "volume-attached":
+                return [
+                    {
+                        "instance-id": "some-instance",
+                        "lifecycle-state": "ATTACHED",
+                    }
+                ]
+            return []
+
+        def delete_volume(self, volume_id):
+            self.deleted.append(volume_id)
+
+    oci = FakeOci()
+    deleted = oci_recovery.cleanup_retired_volumes(
+        config,
+        oci,
+        Coordinator(),
+        now=now,
+    )
+
+    assert deleted == ["volume-expired"]
+    assert oci.deleted == ["volume-expired"]
+
+
+def test_cleanup_retired_volumes_fails_closed_on_coordinator_ambiguity(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    _base_env(monkeypatch, tmp_path)
+    config = oci_recovery.RecoveryConfig.from_env()
+
+    class Coordinator:
+        def status(self):
+            return {"active": {}}
+
+    class FakeOci:
+        def __init__(self) -> None:
+            self.deleted = []
+
+        def delete_volume(self, volume_id):
+            self.deleted.append(volume_id)
+
+    oci = FakeOci()
+    with pytest.raises(
+        oci_recovery.RecoveryError,
+        match="no active deployment",
+    ):
+        oci_recovery.cleanup_retired_volumes(
+            config,
+            oci,
+            Coordinator(),
+        )
+
+    assert oci.deleted == []

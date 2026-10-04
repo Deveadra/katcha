@@ -110,6 +110,7 @@ class RecoveryConfig:
     cross_ad_volume_size_gb: int
     cross_ad_device_path: str
     cross_ad_max_backup_age_seconds: int
+    retired_volume_grace_hours: int
     bootstrap_template: Path
 
     @classmethod
@@ -221,6 +222,9 @@ class RecoveryConfig:
             cross_ad_max_backup_age_seconds=int(
                 _env("KATCHA_OCI_CROSS_AD_MAX_BACKUP_AGE_SECONDS", default="7200")
             ),
+            retired_volume_grace_hours=int(
+                _env("KATCHA_OCI_RETIRED_VOLUME_GRACE_HOURS", default="72")
+            ),
             bootstrap_template=Path(
                 _env(
                     "KATCHA_OCI_RECOVERY_BOOTSTRAP_TEMPLATE",
@@ -257,6 +261,13 @@ class RecoveryConfig:
             raise RecoveryError("cross-AD data volume must be at least 50 GB")
         if self.cross_ad_max_backup_age_seconds < 900:
             raise RecoveryError("cross-AD backup freshness window must be at least 900 seconds")
+        if (
+            self.retired_volume_grace_hours < 24
+            or self.retired_volume_grace_hours > 720
+        ):
+            raise RecoveryError(
+                "retired volume grace period must be between 24 and 720 hours"
+            )
         if not self.cross_ad_device_path.startswith("/dev/oracleoci/"):
             raise RecoveryError("cross-AD recovery requires a consistent OCI device path")
         seen_targets = {(self.availability_domain, self.subnet_id)}
@@ -562,6 +573,43 @@ class OciCli:
                 "ATTACHED",
                 "--max-wait-seconds",
                 "1200",
+            ]
+        )
+
+    def list_volumes(self, config: RecoveryConfig) -> list[dict[str, Any]]:
+        data = self.run(
+            [
+                "bv",
+                "volume",
+                "list",
+                "--compartment-id",
+                config.compartment_id,
+                "--all",
+            ]
+        ).get("data", [])
+        return list(data) if isinstance(data, list) else []
+
+    def get_volume(self, volume_id: str) -> dict[str, Any]:
+        data = self.run(
+            ["bv", "volume", "get", "--volume-id", volume_id]
+        ).get("data", {})
+        return dict(data) if isinstance(data, dict) else {}
+
+    def update_volume_tags(
+        self,
+        volume_id: str,
+        tags: dict[str, str],
+    ) -> None:
+        self.run(
+            [
+                "bv",
+                "volume",
+                "update",
+                "--volume-id",
+                volume_id,
+                "--freeform-tags",
+                json.dumps(tags, separators=(",", ":")),
+                "--force",
             ]
         )
 
@@ -1392,6 +1440,26 @@ def recover(event_path: Path, config: RecoveryConfig, oci: OciCli) -> dict[str, 
                     f"{type(retire_error).__name__}: {retire_error}"
                 )
 
+        if current_volume_id != successful_attempt.volume_id:
+            try:
+                retire_at = schedule_volume_retirement(
+                    oci,
+                    config,
+                    volume_id=current_volume_id,
+                    replacement_volume_id=successful_attempt.volume_id,
+                    replacement_deployment_id=deployment_id,
+                )
+                if retire_at:
+                    print(
+                        "RECOVERY_VOLUME_RETIREMENT_SCHEDULED: "
+                        f"{current_volume_id} after {retire_at}"
+                    )
+            except Exception as retirement_error:
+                print(
+                    "RECOVERY_VOLUME_RETIREMENT_WARNING: "
+                    f"{type(retirement_error).__name__}: {retirement_error}"
+                )
+
         return {
             "status": "committed",
             "instance_id": successful_attempt.instance_id,
@@ -1429,6 +1497,126 @@ def recover(event_path: Path, config: RecoveryConfig, oci: OciCli) -> dict[str, 
                 f"{type(abort_error).__name__}: {abort_error}"
             )
         raise
+
+
+def schedule_volume_retirement(
+    oci: OciCli,
+    config: RecoveryConfig,
+    *,
+    volume_id: str,
+    replacement_volume_id: str,
+    replacement_deployment_id: str,
+    now: datetime | None = None,
+) -> str:
+    if not volume_id or volume_id == replacement_volume_id:
+        return ""
+    current = now or datetime.now(UTC)
+    retire_at = current + timedelta(hours=config.retired_volume_grace_hours)
+    volume = oci.get_volume(volume_id)
+    if not volume:
+        raise RecoveryError(
+            f"cannot schedule retirement for missing volume: {volume_id}"
+        )
+    tags = _tags(volume)
+    tags.update(
+        {
+            "KatchaRetirementAuthorized": "true",
+            "KatchaRetireAfter": retire_at.isoformat(),
+            "KatchaReplacedByVolume": replacement_volume_id,
+            "KatchaReplacedByDeployment": replacement_deployment_id,
+        }
+    )
+    oci.update_volume_tags(volume_id, tags)
+    return retire_at.isoformat()
+
+
+def _parse_retirement_time(raw: str, volume_id: str) -> datetime:
+    try:
+        value = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise RecoveryError(
+            f"retired volume {volume_id} has an invalid KatchaRetireAfter tag"
+        ) from exc
+    if value.tzinfo is None:
+        raise RecoveryError(
+            f"retired volume {volume_id} has a timezone-less KatchaRetireAfter tag"
+        )
+    return value.astimezone(UTC)
+
+
+def _active_data_volume_id(
+    config: RecoveryConfig,
+    oci: OciCli,
+    coordinator: CoordinatorClient,
+) -> str:
+    state = coordinator.status()
+    active = state.get("active") or {}
+    deployment_id = str(active.get("deployment_id") or "").strip()
+    if not deployment_id:
+        raise RecoveryError(
+            "coordinator returned no active deployment; refusing volume cleanup"
+        )
+    rows = oci.list_instances(config)
+    active_instance = find_deployment_instance(rows, deployment_id)
+    if active_instance is None:
+        raise RecoveryError(
+            "active deployment instance is not visible in OCI; "
+            "refusing volume cleanup"
+        )
+    tagged = _tags(active_instance).get("KatchaDataVolumeId", "").strip()
+    if tagged:
+        return tagged
+    if _availability_domain(active_instance) == config.availability_domain:
+        return config.data_volume_id
+    raise RecoveryError(
+        "active non-primary deployment is missing KatchaDataVolumeId; "
+        "refusing volume cleanup"
+    )
+
+
+def cleanup_retired_volumes(
+    config: RecoveryConfig,
+    oci: OciCli,
+    coordinator: CoordinatorClient,
+    *,
+    now: datetime | None = None,
+) -> list[str]:
+    current = (now or datetime.now(UTC)).astimezone(UTC)
+    active_volume_id = _active_data_volume_id(config, oci, coordinator)
+    deleted: list[str] = []
+
+    for row in oci.list_volumes(config):
+        volume_id = str(row.get("id") or "").strip()
+        if not volume_id or volume_id == active_volume_id:
+            continue
+        if _state(row) != "AVAILABLE":
+            continue
+
+        tags = _tags(row)
+        if tags.get("KatchaRetirementAuthorized", "").casefold() != "true":
+            continue
+        retire_raw = tags.get("KatchaRetireAfter", "").strip()
+        if not retire_raw:
+            raise RecoveryError(
+                f"retired volume {volume_id} is missing KatchaRetireAfter"
+            )
+        if _parse_retirement_time(retire_raw, volume_id) > current:
+            continue
+
+        attachments = oci.volume_attachments(config, volume_id)
+        busy = [
+            attachment
+            for attachment in attachments
+            if _attachment_instance_id(attachment)
+            and _state(attachment) != "DETACHED"
+        ]
+        if busy:
+            continue
+
+        oci.delete_volume(volume_id)
+        deleted.append(volume_id)
+
+    return deleted
 
 
 def cleanup_expired_paid(
@@ -1476,9 +1664,16 @@ def main() -> int:
         )
         oci = OciCli()
         if args.action == "cleanup":
+            terminated = cleanup_expired_paid(config, oci)
+            retired_volumes_deleted = cleanup_retired_volumes(
+                config,
+                oci,
+                CoordinatorClient(config),
+            )
             result: object = {
                 "status": "cleanup_complete",
-                "terminated": cleanup_expired_paid(config, oci),
+                "terminated": terminated,
+                "retired_volumes_deleted": retired_volumes_deleted,
             }
         else:
             if args.event is None:
