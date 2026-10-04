@@ -24,7 +24,16 @@ SELECT json_build_object(
         WHERE state LIKE 'idle in transaction%'),
     'lock_waiters', (SELECT count(*) FROM pg_stat_activity WHERE wait_event_type = 'Lock'),
     'blocked_connections', (SELECT count(*) FROM pg_stat_activity
-        WHERE cardinality(pg_blocking_pids(pid)) > 0)
+        WHERE cardinality(pg_blocking_pids(pid)) > 0),
+    'long_transactions', (SELECT count(*) FROM pg_stat_activity
+        WHERE xact_start IS NOT NULL
+          AND pid <> pg_backend_pid()
+          AND xact_start < clock_timestamp() - interval '30 seconds'),
+    'oldest_transaction_seconds', COALESCE((
+        SELECT max(extract(epoch FROM (clock_timestamp() - xact_start)))
+        FROM pg_stat_activity
+        WHERE xact_start IS NOT NULL AND pid <> pg_backend_pid()
+    ), 0)
 );
 ROLLBACK;
 """
@@ -34,6 +43,74 @@ def docker(*args: str) -> str:
     return subprocess.run(
         ["docker", *args], check=True, capture_output=True, text=True, timeout=10
     ).stdout
+
+
+def _pressure_snapshot(path: Path) -> dict:
+    """Parse Linux PSI counters without exporting process or workload details."""
+    if not path.exists():
+        return {}
+    result = {}
+    try:
+        for line in path.read_text().splitlines():
+            parts = line.split()
+            if not parts:
+                continue
+            values = {}
+            for item in parts[1:]:
+                if "=" not in item:
+                    continue
+                key, value = item.split("=", 1)
+                values[key] = int(value) if key == "total" else float(value)
+            result[parts[0]] = values
+    except (OSError, ValueError):
+        return {}
+    return result
+
+
+def _integer_file_snapshot(path: Path) -> dict:
+    if not path.exists():
+        return {}
+    result = {}
+    try:
+        for line in path.read_text().splitlines():
+            key, value = line.split(None, 1)
+            result[key] = int(value)
+    except (OSError, ValueError):
+        return {}
+    return result
+
+
+def docker_event_snapshot(until: str) -> list[dict]:
+    """Return bounded container lifecycle evidence with only allow-listed attributes."""
+    output = docker(
+        "events",
+        "--since",
+        "24h",
+        "--until",
+        until,
+        "--filter",
+        "label=com.docker.compose.project=katcha",
+        "--format",
+        "{{json .}}",
+    )
+    events = []
+    for line in output.splitlines()[-200:]:
+        try:
+            row = json.loads(line)
+        except (TypeError, ValueError):
+            continue
+        attributes = row.get("Actor", {}).get("Attributes", {}) or {}
+        events.append(
+            {
+                "time": row.get("time"),
+                "time_nano": row.get("timeNano"),
+                "action": row.get("Action") or row.get("status"),
+                "service": attributes.get("com.docker.compose.service"),
+                "exit_code": attributes.get("exitCode"),
+                "signal": attributes.get("signal"),
+            }
+        )
+    return events
 
 
 def postgres_snapshot(containers: list[dict]) -> dict:
@@ -73,11 +150,15 @@ def postgres_snapshot(containers: list[dict]) -> dict:
 
 
 def collect() -> dict:
+    captured_at = dt.datetime.now(dt.UTC).isoformat()
+    disk = shutil.disk_usage(Path.cwd())
     snapshot = {
-        "captured_at": dt.datetime.now(dt.UTC).isoformat(),
+        "captured_at": captured_at,
         "host": {
             "cpu_count": os.cpu_count(),
-            "disk_free_bytes": shutil.disk_usage(Path.cwd()).free,
+            "disk_total_bytes": disk.total,
+            "disk_used_bytes": disk.used,
+            "disk_free_bytes": disk.free,
         },
     }
     if hasattr(os, "getloadavg"):
@@ -90,6 +171,16 @@ def collect() -> dict:
             for key, value in [line.split(":", 1)]
             if key in {"MemTotal", "MemAvailable", "SwapTotal", "SwapFree"}
         }
+    pressure = {
+        name: values
+        for name in ("cpu", "memory", "io")
+        if (values := _pressure_snapshot(Path("/proc/pressure") / name))
+    }
+    if pressure:
+        snapshot["host"]["pressure"] = pressure
+    memory_events = _integer_file_snapshot(Path("/sys/fs/cgroup/memory.events"))
+    if memory_events:
+        snapshot["host"]["cgroup_memory_events"] = memory_events
     try:
         with urllib.request.urlopen("http://127.0.0.1:8765/runtime/status", timeout=3) as response:
             runtime = json.load(response)
@@ -112,6 +203,9 @@ def collect() -> dict:
                     for key in ("Status", "OOMKilled", "ExitCode", "StartedAt", "FinishedAt")
                 },
                 "health": row.get("State", {}).get("Health", {}).get("Status"),
+                "health_failing_streak": row.get("State", {})
+                .get("Health", {})
+                .get("FailingStreak"),
                 "restart_count": row.get("RestartCount"),
                 "memory_limit_bytes": row.get("HostConfig", {}).get("Memory"),
                 "cpu_limit_nano": row.get("HostConfig", {}).get("NanoCpus"),
@@ -129,6 +223,13 @@ def collect() -> dict:
             else []
         )
         snapshot["postgres"] = postgres_snapshot(containers)
+        try:
+            snapshot["docker_events_24h"] = docker_event_snapshot(captured_at)
+        except Exception:
+            snapshot["docker_events_24h"] = {
+                "available": False,
+                "hint": "Docker lifecycle event history was unavailable or timed out.",
+            }
     except Exception:
         snapshot["docker"] = {
             "available": False,
