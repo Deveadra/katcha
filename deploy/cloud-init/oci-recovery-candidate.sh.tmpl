@@ -5,6 +5,9 @@ DEPLOYMENT_ID=__DEPLOYMENT_ID__
 DEPLOYMENT_EPOCH=__DEPLOYMENT_EPOCH__
 RELEASE_SHA=__RELEASE_SHA__
 DATA_VOLUME_FS_UUID=__DATA_VOLUME_FS_UUID__
+DATA_VOLUME_DEVICE_PATH=__DATA_VOLUME_DEVICE_PATH__
+STORAGE_MODE=__STORAGE_MODE__
+CROSS_AD_MAX_BACKUP_AGE_SECONDS=__CROSS_AD_MAX_BACKUP_AGE_SECONDS__
 PRODUCTION_ENV_SECRET_ID=__PRODUCTION_ENV_SECRET_ID__
 AWS_BUNDLE_SECRET_ID=__AWS_BUNDLE_SECRET_ID__
 BACKUP_ENV_SECRET_ID=__BACKUP_ENV_SECRET_ID__
@@ -22,11 +25,11 @@ install_runtime() {
     export DEBIAN_FRONTEND=noninteractive
     apt-get update -qq
     apt-get install -y -qq \
-      ca-certificates curl git python3 python3-pip python3-venv \
+      ca-certificates curl e2fsprogs git python3 python3-pip python3-venv \
       docker.io docker-compose-v2
   elif command -v dnf >/dev/null 2>&1; then
     dnf install -y \
-      ca-certificates curl git python3 python3-pip docker docker-compose-plugin
+      ca-certificates curl e2fsprogs git python3 python3-pip docker docker-compose-plugin
   else
     log "Unsupported recovery image: apt-get/dnf missing"
     exit 30
@@ -55,18 +58,49 @@ vault_bytes() {
 
 install_runtime
 
-log "Waiting for durable volume UUID"
+case "$STORAGE_MODE" in
+  existing-volume|r2-restore)
+    ;;
+  *)
+    log "Unsupported storage mode: $STORAGE_MODE"
+    exit 32
+    ;;
+esac
+
+log "Waiting for durable block device"
 device=""
 for _ in $(seq 1 120); do
-  device="$(blkid -U "$DATA_VOLUME_FS_UUID" 2>/dev/null || true)"
-  if [[ -n "$device" ]]; then
+  if [[ -b "$DATA_VOLUME_DEVICE_PATH" ]]; then
+    device="$DATA_VOLUME_DEVICE_PATH"
     break
+  fi
+  if [[ "$STORAGE_MODE" == "existing-volume" && -n "$DATA_VOLUME_FS_UUID" ]]; then
+    device="$(blkid -U "$DATA_VOLUME_FS_UUID" 2>/dev/null || true)"
+    if [[ -n "$device" ]]; then
+      break
+    fi
   fi
   sleep 5
 done
-if [[ -z "$device" ]]; then
-  log "Durable volume UUID did not appear"
-  exit 32
+if [[ -z "$device" || ! -b "$device" ]]; then
+  log "Durable block device did not appear"
+  exit 33
+fi
+
+if [[ "$STORAGE_MODE" == "r2-restore" ]]; then
+  if blkid -s TYPE -o value "$device" 2>/dev/null | grep -q .; then
+    log "Fresh cross-AD recovery volume unexpectedly contains a filesystem"
+    exit 34
+  fi
+  log "Formatting fresh cross-AD recovery volume"
+  mkfs.ext4 -F "$device"
+fi
+
+filesystem_type="$(blkid -s TYPE -o value "$device" 2>/dev/null || true)"
+filesystem_uuid="$(blkid -s UUID -o value "$device" 2>/dev/null || true)"
+if [[ -z "$filesystem_type" || -z "$filesystem_uuid" ]]; then
+  log "Durable block device has no usable filesystem identity"
+  exit 35
 fi
 
 mkdir -p /srv/katcha
@@ -76,6 +110,11 @@ fi
 for directory in postgres handoff recovery backups-local; do
   mkdir -p "/srv/katcha/$directory"
 done
+
+if ! grep -Fq "UUID=$filesystem_uuid /srv/katcha " /etc/fstab; then
+  printf 'UUID=%s /srv/katcha %s defaults,_netdev,nofail 0 2\n' \
+    "$filesystem_uuid" "$filesystem_type" >> /etc/fstab
+fi
 
 mkdir -p /etc/katcha/aws
 umask 077
@@ -103,6 +142,15 @@ if [[ ! -d /opt/katcha/.git ]]; then
 fi
 git -C /opt/katcha fetch --force origin "$RELEASE_SHA"
 git -C /opt/katcha checkout --detach "$RELEASE_SHA"
+
+if [[ "$STORAGE_MODE" == "r2-restore" ]]; then
+  log "Restoring latest verified R2 disaster backup"
+  KATCHA_REPO_ROOT=/opt/katcha \
+  KATCHA_ENV_FILE=/etc/katcha/katcha.env \
+  KATCHA_RESTORE_ENV_FILE=/etc/katcha/restore.env \
+  KATCHA_CROSS_AD_MAX_BACKUP_AGE_SECONDS="$CROSS_AD_MAX_BACKUP_AGE_SECONDS" \
+    /bin/bash /opt/katcha/deploy/scripts/postgres-disaster-restore.sh
+fi
 
 KATCHA_REPO_ROOT=/opt/katcha \
   /bin/bash /opt/katcha/deploy/scripts/install-production-units.sh --start
