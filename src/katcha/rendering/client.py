@@ -1,13 +1,20 @@
 from __future__ import annotations
 
 import math
+import uuid
 from dataclasses import dataclass
+from decimal import ROUND_UP, Decimal
 from typing import Any
 
 import httpx
 
 from katcha.config import Settings, get_settings
 from katcha.editorial.visual_schemas import EditorialRenderManifest
+from katcha.ops.external_compute_budget import (
+    ExternalComputeBudgetClient,
+    ExternalComputeBudgetError,
+    ExternalComputeReservation,
+)
 from katcha.rendering.blueprint_manifest import BlueprintRenderManifest
 from katcha.rendering.longform_manifest import LongformRenderManifest
 from katcha.rendering.manifest import ShortRenderManifest
@@ -52,6 +59,121 @@ class ThumbnailRenderResult:
     width: int
     height: int
     metadata: dict[str, Any]
+
+
+def _usd_to_microusd(value: float) -> int:
+    amount = Decimal(str(value))
+    if amount <= 0:
+        raise RendererRequestError(
+            "Lambda render budget ceiling must be positive"
+        )
+    return int(
+        (amount * Decimal("1000000")).quantize(
+            Decimal("1"),
+            rounding=ROUND_UP,
+        )
+    )
+
+
+def _lambda_budget_client(settings: Settings) -> ExternalComputeBudgetClient:
+    if not settings.external_compute_enabled:
+        raise RendererRequestError(
+            "Lambda rendering is blocked because external compute is disabled"
+        )
+    coordinator = str(
+        settings.external_compute_coordinator_url or ""
+    ).strip()
+    token = (
+        settings.external_compute_token.get_secret_value().strip()
+        if settings.external_compute_token is not None
+        else ""
+    )
+    try:
+        return ExternalComputeBudgetClient(
+            coordinator_url=coordinator,
+            token=token,
+        )
+    except ExternalComputeBudgetError as exc:
+        raise RendererRequestError(
+            f"Lambda rendering budget gate is unavailable: {exc}"
+        ) from exc
+
+
+def _reserve_lambda_render_budget(
+    manifest: (
+        ShortRenderManifest
+        | LongformRenderManifest
+        | RankedEpisodeRenderManifest
+        | BlueprintRenderManifest
+    ),
+    settings: Settings,
+) -> tuple[ExternalComputeBudgetClient, ExternalComputeReservation] | None:
+    if settings.render_backend != "lambda":
+        return None
+    client = _lambda_budget_client(settings)
+    estimated = _usd_to_microusd(
+        settings.remotion_lambda_max_render_cost_usd
+    )
+    try:
+        reservation = client.reserve(
+            job_key=f"render:{manifest.output_key}:{uuid.uuid4().hex}",
+            provider="aws-lambda",
+            operation="remotion-video-render",
+            retry_group=f"render:{manifest.output_key}",
+            attempt=None,
+            estimated_cost_microusd=estimated,
+            ttl_seconds=settings.remotion_lambda_budget_ttl_seconds,
+            metadata={
+                "manifest_version": str(manifest.version),
+                "output_key": manifest.output_key,
+                "duration_seconds": float(manifest.output_duration_seconds),
+            },
+        )
+    except ExternalComputeBudgetError as exc:
+        raise RendererRequestError(
+            f"Lambda render budget reservation denied: {exc}"
+        ) from exc
+    if reservation.status != "reserved":
+        raise RendererRequestError(
+            "Lambda render budget coordinator did not return an active reservation"
+        )
+    return client, reservation
+
+
+def _release_lambda_budget(
+    budget: tuple[ExternalComputeBudgetClient, ExternalComputeReservation] | None,
+    *,
+    reason: str,
+) -> None:
+    if budget is None:
+        return
+    client, reservation = budget
+    try:
+        client.release(reservation.id, reason=reason)
+    except ExternalComputeBudgetError as exc:
+        raise RendererRequestError(
+            f"Lambda render budget release failed: {exc}"
+        ) from exc
+
+
+def _settle_lambda_budget(
+    budget: tuple[ExternalComputeBudgetClient, ExternalComputeReservation] | None,
+    *,
+    reason: str,
+) -> None:
+    if budget is None:
+        return
+    client, reservation = budget
+    try:
+        client.settle(
+            reservation.id,
+            actual_cost_microusd=reservation.estimated_cost_microusd,
+            metadata={"settlement_reason": reason},
+        )
+    except ExternalComputeBudgetError as exc:
+        raise RendererRequestError(
+            f"Lambda render budget settlement failed: {exc}"
+        ) from exc
 
 
 def _render(
