@@ -268,7 +268,7 @@ jobs:
             --object-key "$object_key"
 
   paid-fallback-expiry:
-    if: github.event_name == 'schedule'
+    if: github.event_name == 'schedule' && vars.KATCHA_OCI_RECOVERY_CONFIGURED == 'true'
     runs-on: ubuntu-latest
     concurrency:
       group: katcha-production-recovery
