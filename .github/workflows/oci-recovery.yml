@@ -5,6 +5,8 @@ on:
     paths:
       - .github/workflows/oci-recovery.yml
       - src/katcha/ops/oci_recovery.py
+      - src/katcha/ops/break_glass.py
+      - src/katcha/ops/break_glass_lifecycle.py
       - deploy/cloud-init/oci-recovery-candidate.sh.tmpl
       - deploy/scripts/postgres-disaster-restore.sh
       - src/katcha/ops/disaster_backup.py
@@ -30,6 +32,14 @@ on:
         description: Active deployment ID observed when recovery began
         required: true
         type: string
+      secret_source:
+        description: Runtime secret source for this manual recovery
+        required: true
+        default: oci-vault
+        type: choice
+        options:
+          - oci-vault
+          - break-glass
   schedule:
     - cron: "7,22,37,52 * * * *"
 
@@ -41,7 +51,16 @@ env:
   KATCHA_RECOVERY_COORDINATOR_URL: ${{ vars.KATCHA_RECOVERY_COORDINATOR_URL }}
   KATCHA_RECOVERY_ADMIN_TOKEN: ${{ secrets.KATCHA_RECOVERY_ADMIN_TOKEN }}
   KATCHA_RECOVERY_CANDIDATE_TOKEN: ${{ secrets.KATCHA_RECOVERY_CANDIDATE_TOKEN }}
+  KATCHA_RECOVERY_SECRET_SOURCE: ${{ github.event_name == 'workflow_dispatch' && inputs.secret_source || 'oci-vault' }}
   KATCHA_PUBLIC_HEALTH_URL: ${{ vars.KATCHA_PUBLIC_HEALTH_URL }}
+  KATCHA_BREAK_GLASS_R2_ENDPOINT_URL: ${{ vars.KATCHA_BREAK_GLASS_R2_ENDPOINT_URL }}
+  KATCHA_BREAK_GLASS_R2_BUCKET: ${{ vars.KATCHA_BREAK_GLASS_R2_BUCKET }}
+  KATCHA_BREAK_GLASS_R2_PREFIX: ${{ vars.KATCHA_BREAK_GLASS_R2_PREFIX }}
+  KATCHA_BREAK_GLASS_ESCROW_PREFIX: ${{ vars.KATCHA_BREAK_GLASS_ESCROW_PREFIX }}
+  KATCHA_BREAK_GLASS_ESCROW_OBJECT_KEY: ${{ vars.KATCHA_BREAK_GLASS_ESCROW_OBJECT_KEY }}
+  KATCHA_BREAK_GLASS_R2_REGION: ${{ vars.KATCHA_BREAK_GLASS_R2_REGION }}
+  KATCHA_BREAK_GLASS_R2_FORCE_PATH_STYLE: ${{ vars.KATCHA_BREAK_GLASS_R2_FORCE_PATH_STYLE }}
+  KATCHA_BREAK_GLASS_HANDOFF_TTL_SECONDS: ${{ vars.KATCHA_BREAK_GLASS_HANDOFF_TTL_SECONDS }}
   KATCHA_RELEASE_SHA: ${{ github.sha }}
   KATCHA_OCI_AVAILABILITY_DOMAIN: ${{ vars.KATCHA_OCI_AVAILABILITY_DOMAIN }}
   KATCHA_OCI_COMPARTMENT_ID: ${{ vars.KATCHA_OCI_COMPARTMENT_ID }}
@@ -90,12 +109,14 @@ jobs:
 
       - name: Validate dispatcher and bootstrap
         run: |
-          python -m py_compile src/katcha/ops/oci_recovery.py src/katcha/ops/disaster_backup.py
+          python -m py_compile src/katcha/ops/oci_recovery.py src/katcha/ops/disaster_backup.py src/katcha/ops/break_glass.py src/katcha/ops/break_glass_lifecycle.py
           bash -n deploy/cloud-init/oci-recovery-candidate.sh.tmpl
           bash -n deploy/scripts/postgres-disaster-restore.sh
           pytest -q \
             tests/test_oci_recovery.py \
             tests/test_disaster_backup.py \
+            tests/test_break_glass.py \
+            tests/test_break_glass_lifecycle.py \
             tests/test_cloud_runtime_contract.py
 
   recover:
@@ -117,6 +138,51 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -e .
           python -m pip install 'oci-cli==3.94.1'
+
+      - name: Build ephemeral off-OCI break-glass handoff
+        if: github.event_name == 'workflow_dispatch' && inputs.secret_source == 'break-glass'
+        shell: bash
+        env:
+          KATCHA_BREAK_GLASS_R2_ACCESS_KEY: ${{ secrets.KATCHA_BREAK_GLASS_R2_ACCESS_KEY }}
+          KATCHA_BREAK_GLASS_R2_SECRET_KEY: ${{ secrets.KATCHA_BREAK_GLASS_R2_SECRET_KEY }}
+          KATCHA_BREAK_GLASS_ESCROW_KEY: ${{ secrets.KATCHA_BREAK_GLASS_ESCROW_KEY }}
+        run: |
+          set -euo pipefail
+
+          require_secret() {
+            local name="$1"
+            local value="$2"
+            if [[ -z "$value" ]]; then
+              echo "Missing required GitHub break-glass secret: $name" >&2
+              exit 41
+            fi
+          }
+
+          require_secret KATCHA_BREAK_GLASS_R2_ACCESS_KEY "$KATCHA_BREAK_GLASS_R2_ACCESS_KEY"
+          require_secret KATCHA_BREAK_GLASS_R2_SECRET_KEY "$KATCHA_BREAK_GLASS_R2_SECRET_KEY"
+          require_secret KATCHA_BREAK_GLASS_ESCROW_KEY "$KATCHA_BREAK_GLASS_ESCROW_KEY"
+          if [[ -z "${KATCHA_BREAK_GLASS_ESCROW_OBJECT_KEY:-}" ]]; then
+            echo "Missing KATCHA_BREAK_GLASS_ESCROW_OBJECT_KEY repository variable." >&2
+            exit 42
+          fi
+
+          result="$(
+            python -m katcha.ops.break_glass create-handoff-from-escrow \
+              --escrow-object-key "$KATCHA_BREAK_GLASS_ESCROW_OBJECT_KEY" \
+              --ttl-seconds "${KATCHA_BREAK_GLASS_HANDOFF_TTL_SECONDS:-1800}"
+          )"
+
+          handoff_url="$(printf '%s' "$result" | jq -er '.url')"
+          handoff_key="$(printf '%s' "$result" | jq -er '.fernet_key')"
+          object_key="$(printf '%s' "$result" | jq -er '.object_key')"
+
+          echo "::add-mask::$handoff_url"
+          echo "::add-mask::$handoff_key"
+          {
+            echo "KATCHA_BREAK_GLASS_HANDOFF_URL=$handoff_url"
+            echo "KATCHA_BREAK_GLASS_HANDOFF_KEY=$handoff_key"
+            echo "KATCHA_BREAK_GLASS_HANDOFF_OBJECT_KEY=$object_key"
+          } >> "$GITHUB_ENV"
 
       - name: Configure OCI API authentication
         shell: bash
@@ -169,6 +235,22 @@ jobs:
             event_path=/tmp/katcha-recovery-event.json
           fi
           python -m katcha.ops.oci_recovery recover --event "$event_path"
+
+      - name: Delete ephemeral break-glass handoff
+        if: always() && github.event_name == 'workflow_dispatch' && inputs.secret_source == 'break-glass'
+        shell: bash
+        env:
+          KATCHA_BREAK_GLASS_R2_ACCESS_KEY: ${{ secrets.KATCHA_BREAK_GLASS_R2_ACCESS_KEY }}
+          KATCHA_BREAK_GLASS_R2_SECRET_KEY: ${{ secrets.KATCHA_BREAK_GLASS_R2_SECRET_KEY }}
+        run: |
+          set -euo pipefail
+          object_key="${KATCHA_BREAK_GLASS_HANDOFF_OBJECT_KEY:-}"
+          if [[ -z "$object_key" ]]; then
+            echo "No break-glass handoff object was created; nothing to delete."
+            exit 0
+          fi
+          python -m katcha.ops.break_glass delete-handoff \
+            --object-key "$object_key"
 
   paid-fallback-expiry:
     if: github.event_name == 'schedule'

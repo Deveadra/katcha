@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 
 import httpx
+from cryptography.fernet import Fernet
 
 
 class RecoveryError(RuntimeError):
@@ -94,6 +95,9 @@ class RecoveryConfig:
     alternate_targets: tuple[RecoveryTarget, ...]
     data_volume_id: str
     data_volume_fs_uuid: str
+    secret_source: str
+    break_glass_handoff_url: str
+    break_glass_handoff_key: str
     production_env_secret_id: str
     aws_bundle_secret_id: str
     backup_env_secret_id: str
@@ -131,6 +135,46 @@ class RecoveryConfig:
             _env("KATCHA_OCI_PAID_FALLBACK_MAX_CONCURRENT", default="1")
         )
         primary_image = _env("KATCHA_OCI_PRIMARY_IMAGE_ID")
+        secret_source = _env(
+            "KATCHA_RECOVERY_SECRET_SOURCE",
+            default="oci-vault",
+        ).casefold()
+        if secret_source == "oci-vault":
+            production_env_secret_id = _env(
+                "KATCHA_OCI_PRODUCTION_ENV_SECRET_ID"
+            )
+            aws_bundle_secret_id = _env("KATCHA_OCI_AWS_BUNDLE_SECRET_ID")
+            backup_env_secret_id = _env("KATCHA_OCI_BACKUP_ENV_SECRET_ID")
+            restore_env_secret_id = _env("KATCHA_OCI_RESTORE_ENV_SECRET_ID")
+            break_glass_handoff_url = ""
+            break_glass_handoff_key = ""
+        elif secret_source == "break-glass":
+            production_env_secret_id = os.environ.get(
+                "KATCHA_OCI_PRODUCTION_ENV_SECRET_ID",
+                "",
+            ).strip()
+            aws_bundle_secret_id = os.environ.get(
+                "KATCHA_OCI_AWS_BUNDLE_SECRET_ID",
+                "",
+            ).strip()
+            backup_env_secret_id = os.environ.get(
+                "KATCHA_OCI_BACKUP_ENV_SECRET_ID",
+                "",
+            ).strip()
+            restore_env_secret_id = os.environ.get(
+                "KATCHA_OCI_RESTORE_ENV_SECRET_ID",
+                "",
+            ).strip()
+            break_glass_handoff_url = _env(
+                "KATCHA_BREAK_GLASS_HANDOFF_URL"
+            )
+            break_glass_handoff_key = _env(
+                "KATCHA_BREAK_GLASS_HANDOFF_KEY"
+            )
+        else:
+            raise RecoveryError(
+                "KATCHA_RECOVERY_SECRET_SOURCE must be oci-vault or break-glass"
+            )
         try:
             raw_targets = json.loads(
                 _env("KATCHA_OCI_CROSS_AD_TARGETS_JSON", default="[]")
@@ -181,10 +225,13 @@ class RecoveryConfig:
             alternate_targets=tuple(alternate_targets),
             data_volume_id=_env("KATCHA_OCI_DATA_VOLUME_ID"),
             data_volume_fs_uuid=_env("KATCHA_OCI_DATA_VOLUME_FS_UUID"),
-            production_env_secret_id=_env("KATCHA_OCI_PRODUCTION_ENV_SECRET_ID"),
-            aws_bundle_secret_id=_env("KATCHA_OCI_AWS_BUNDLE_SECRET_ID"),
-            backup_env_secret_id=_env("KATCHA_OCI_BACKUP_ENV_SECRET_ID"),
-            restore_env_secret_id=_env("KATCHA_OCI_RESTORE_ENV_SECRET_ID"),
+            secret_source=secret_source,
+            break_glass_handoff_url=break_glass_handoff_url,
+            break_glass_handoff_key=break_glass_handoff_key,
+            production_env_secret_id=production_env_secret_id,
+            aws_bundle_secret_id=aws_bundle_secret_id,
+            backup_env_secret_id=backup_env_secret_id,
+            restore_env_secret_id=restore_env_secret_id,
             assign_public_ip=_bool_env("KATCHA_OCI_ASSIGN_PUBLIC_IP", True),
             primary=ShapePlan(
                 mode="always-free-a1",
@@ -257,6 +304,17 @@ class RecoveryConfig:
                 )
         if len(self.release_sha) != 40:
             raise RecoveryError("KATCHA_RELEASE_SHA must be an exact git SHA")
+        if self.secret_source == "break-glass":
+            if not self.break_glass_handoff_url.startswith("https://"):
+                raise RecoveryError(
+                    "break-glass handoff URL must use HTTPS"
+                )
+            try:
+                Fernet(self.break_glass_handoff_key.encode("ascii"))
+            except (ValueError, UnicodeEncodeError) as exc:
+                raise RecoveryError(
+                    "break-glass handoff key must be a valid Fernet key"
+                ) from exc
         if self.cross_ad_volume_size_gb < 50:
             raise RecoveryError("cross-AD data volume must be at least 50 GB")
         if self.cross_ad_max_backup_age_seconds < 900:
@@ -787,6 +845,9 @@ def render_bootstrap(
         "RELEASE_SHA": config.release_sha,
         "DATA_VOLUME_FS_UUID": config.data_volume_fs_uuid,
         "DATA_VOLUME_DEVICE_PATH": config.cross_ad_device_path,
+        "SECRET_SOURCE": config.secret_source,
+        "BREAK_GLASS_HANDOFF_URL": config.break_glass_handoff_url,
+        "BREAK_GLASS_HANDOFF_KEY": config.break_glass_handoff_key,
         "STORAGE_MODE": storage_mode,
         "CROSS_AD_MAX_BACKUP_AGE_SECONDS": str(
             config.cross_ad_max_backup_age_seconds

@@ -73,15 +73,15 @@ A restore test from an R2 recovery point is a production gate.
 
 OCI Vault remains the normal secret authority for the OCI deployment.
 
-A minimal encrypted break-glass bundle is also kept outside OCI. It contains only the material needed to bootstrap a replacement environment, for example:
+A durable encrypted escrow is also kept outside OCI in a dedicated Cloudflare R2 bucket. The escrow contains the production environment, dedicated backup/restore environments, and AWS bootstrap material needed to reconstruct the control plane. Its Fernet decryption key is held outside OCI by GitHub Actions plus an operator-controlled offline/password-manager copy.
 
-- R2 restore credentials or a recoverable path to them,
-- Cloudflare recovery-coordinator deployment/configuration material,
-- encrypted Katcha credential-encryption key recovery material,
-- source-control/deployment bootstrap instructions and identities,
-- AWS rendering bootstrap material where it cannot be derived elsewhere.
+Normal Katcha runtime identities cannot read the escrow. Automatic recovery continues to use OCI Vault. Break-glass recovery is a manual workflow-dispatch choice only.
 
-The bundle is not mounted into normal Katcha processes and is not readable by the normal OCI runtime identity.
+A break-glass recovery does not hand the durable escrow key to the replacement VM. GitHub reads and verifies the durable escrow, re-encrypts it with a fresh one-time key, uploads the ciphertext beneath a separate short-lived handoff prefix, and supplies only that handoff URL/key to the candidate. The handoff is deleted in an always-run cleanup step and is also covered by a lifecycle rule that removes stale handoffs within 24 hours. The durable escrow prefix is excluded from that lifecycle.
+
+Escrow rotation is publish-then-switch: publish a new uniquely named encrypted object, update the GitHub pointer, pass the non-destructive escrow drill, and only then retire the superseded escrow. The durable escrow format is provider-neutral even though the current control-plane recovery backend still launches OCI compute.
+
+See docs/BREAK_GLASS_RECOVERY.md for the setup, drill, rotation, and live recovery procedure.
 
 ## Cost circuit breakers
 

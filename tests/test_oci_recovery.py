@@ -858,3 +858,112 @@ def test_cleanup_retired_volumes_fails_closed_on_coordinator_ambiguity(
         )
 
     assert oci.deleted == []
+
+
+
+def test_break_glass_mode_does_not_require_oci_vault_secret_ids(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    _base_env(monkeypatch, tmp_path)
+    monkeypatch.setenv("KATCHA_RECOVERY_SECRET_SOURCE", "break-glass")
+    monkeypatch.setenv(
+        "KATCHA_BREAK_GLASS_HANDOFF_URL",
+        "https://handoff.example.invalid/object?signature=fixture",
+    )
+    monkeypatch.setenv(
+        "KATCHA_BREAK_GLASS_HANDOFF_KEY",
+        "roUtmwTlzNzQht-sboiCMEq1azSRnyNjbzbET3CTKPk=",
+    )
+    for name in (
+        "KATCHA_OCI_PRODUCTION_ENV_SECRET_ID",
+        "KATCHA_OCI_AWS_BUNDLE_SECRET_ID",
+        "KATCHA_OCI_BACKUP_ENV_SECRET_ID",
+        "KATCHA_OCI_RESTORE_ENV_SECRET_ID",
+    ):
+        monkeypatch.delenv(name, raising=False)
+
+    config = oci_recovery.RecoveryConfig.from_env()
+
+    assert config.secret_source == "break-glass"
+    assert config.production_env_secret_id == ""
+    assert config.aws_bundle_secret_id == ""
+    assert config.backup_env_secret_id == ""
+    assert config.restore_env_secret_id == ""
+
+
+def test_break_glass_mode_rejects_invalid_handoff_key(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    _base_env(monkeypatch, tmp_path)
+    monkeypatch.setenv("KATCHA_RECOVERY_SECRET_SOURCE", "break-glass")
+    monkeypatch.setenv(
+        "KATCHA_BREAK_GLASS_HANDOFF_URL",
+        "https://handoff.example.invalid/object",
+    )
+    monkeypatch.setenv(
+        "KATCHA_BREAK_GLASS_HANDOFF_KEY",
+        "not-a-fernet-key",
+    )
+
+    with pytest.raises(
+        oci_recovery.RecoveryError,
+        match="valid Fernet key",
+    ):
+        oci_recovery.RecoveryConfig.from_env()
+
+
+def test_oci_vault_mode_still_requires_vault_secret_ids(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    _base_env(monkeypatch, tmp_path)
+    monkeypatch.setenv("KATCHA_RECOVERY_SECRET_SOURCE", "oci-vault")
+    monkeypatch.delenv("KATCHA_OCI_PRODUCTION_ENV_SECRET_ID", raising=False)
+
+    with pytest.raises(
+        oci_recovery.RecoveryError,
+        match="KATCHA_OCI_PRODUCTION_ENV_SECRET_ID",
+    ):
+        oci_recovery.RecoveryConfig.from_env()
+
+
+def test_break_glass_bootstrap_renders_without_vault_dependency(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    _base_env(monkeypatch, tmp_path)
+    monkeypatch.setenv("KATCHA_RECOVERY_SECRET_SOURCE", "break-glass")
+    monkeypatch.setenv(
+        "KATCHA_BREAK_GLASS_HANDOFF_URL",
+        "https://handoff.example.invalid/object?signature=fixture",
+    )
+    monkeypatch.setenv(
+        "KATCHA_BREAK_GLASS_HANDOFF_KEY",
+        "roUtmwTlzNzQht-sboiCMEq1azSRnyNjbzbET3CTKPk=",
+    )
+    for name in (
+        "KATCHA_OCI_PRODUCTION_ENV_SECRET_ID",
+        "KATCHA_OCI_AWS_BUNDLE_SECRET_ID",
+        "KATCHA_OCI_BACKUP_ENV_SECRET_ID",
+        "KATCHA_OCI_RESTORE_ENV_SECRET_ID",
+    ):
+        monkeypatch.delenv(name, raising=False)
+
+    config = oci_recovery.RecoveryConfig.from_env()
+    rendered = oci_recovery.render_bootstrap(
+        config,
+        deployment_id="oci-break-glass-test",
+        deployment_epoch=10,
+        storage_mode="r2-restore",
+    )
+    try:
+        content = rendered.read_text(encoding="utf-8")
+        assert "SECRET_SOURCE=break-glass" in content
+        assert "install-handoff" in content
+        assert "Restoring runtime secrets from OCI Vault" in content
+        assert "case \"$SECRET_SOURCE\"" in content
+        subprocess.run(["bash", "-n", str(rendered)], check=True)
+    finally:
+        rendered.unlink(missing_ok=True)
