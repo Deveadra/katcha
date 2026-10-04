@@ -6,6 +6,8 @@ export class StateConflict extends Error {
   }
 }
 
+const MAX_EXTERNAL_RESERVATIONS_PER_MONTH = 5000;
+
 export function defaultAuthorityState() {
   return {
     version: 1,
@@ -26,6 +28,9 @@ export function defaultAuthorityState() {
       provider_limits_microusd: {},
       max_concurrent_jobs: 1,
       max_retry_spend_microusd: 0,
+      monthly_settled_microusd: 0,
+      provider_settled_microusd: {},
+      retry_settled_microusd: {},
       reservations: [],
     },
     events: [],
@@ -51,17 +56,58 @@ export function normalizeState(value) {
     ...base,
     ...value,
     watchdog: { ...base.watchdog, ...(value.watchdog || {}) },
-    external_compute: {
-      ...base.external_compute,
-      ...(value.external_compute || {}),
-      provider_limits_microusd: {
-        ...base.external_compute.provider_limits_microusd,
-        ...((value.external_compute || {}).provider_limits_microusd || {}),
-      },
-      reservations: Array.isArray((value.external_compute || {}).reservations)
-        ? value.external_compute.reservations.slice(-500)
-        : [],
-    },
+    external_compute: (() => {
+      const raw = value.external_compute || {};
+      const reservations = Array.isArray(raw.reservations)
+        ? raw.reservations
+        : [];
+      const migratedMonthlySettled =
+        raw.monthly_settled_microusd === undefined
+          ? reservations
+              .filter((row) => row?.status === "settled")
+              .reduce(
+                (total, row) =>
+                  total + Number(row.actual_cost_microusd || 0),
+                0,
+              )
+          : Number(raw.monthly_settled_microusd || 0);
+      const migratedProviderSettled = {
+        ...(raw.provider_settled_microusd || {}),
+      };
+      const migratedRetrySettled = {
+        ...(raw.retry_settled_microusd || {}),
+      };
+      if (raw.provider_settled_microusd === undefined) {
+        for (const row of reservations) {
+          if (row?.status !== "settled") continue;
+          const provider = String(row.provider || "");
+          const value = Number(row.actual_cost_microusd || 0);
+          migratedProviderSettled[provider] =
+            (migratedProviderSettled[provider] || 0) + value;
+        }
+      }
+      if (raw.retry_settled_microusd === undefined) {
+        for (const row of reservations) {
+          if (row?.status !== "settled") continue;
+          const retryGroup = String(row.retry_group || "");
+          const value = Number(row.actual_cost_microusd || 0);
+          migratedRetrySettled[retryGroup] =
+            (migratedRetrySettled[retryGroup] || 0) + value;
+        }
+      }
+      return {
+        ...base.external_compute,
+        ...raw,
+        provider_limits_microusd: {
+          ...base.external_compute.provider_limits_microusd,
+          ...(raw.provider_limits_microusd || {}),
+        },
+        monthly_settled_microusd: migratedMonthlySettled,
+        provider_settled_microusd: migratedProviderSettled,
+        retry_settled_microusd: migratedRetrySettled,
+        reservations,
+      };
+    })(),
     events: Array.isArray(value.events) ? value.events.slice(-100) : [],
   };
 }
@@ -425,6 +471,8 @@ function normalizeExternalMonth(state, nowMs) {
     external_compute: {
       ...current.external_compute,
       month_key: key,
+      monthly_settled_microusd: 0,
+      provider_settled_microusd: {},
       reservations: carried,
     },
   };
@@ -460,24 +508,24 @@ function expireExternalReservations(state, nowMs) {
 
 function externalSpendSummary(state, nowMs) {
   const current = expireExternalReservations(state, nowMs);
-  let settled = 0;
+  const external = current.external_compute;
+  const settled = Number(external.monthly_settled_microusd || 0);
   let reserved = 0;
-  const providerSettled = {};
+  const providerSettled = {
+    ...(external.provider_settled_microusd || {}),
+  };
   const providerReserved = {};
-  const retrySettled = {};
+  const retrySettled = {
+    ...(external.retry_settled_microusd || {}),
+  };
   const retryReserved = {};
   let concurrent = 0;
   let expiredHeld = 0;
 
-  for (const row of current.external_compute.reservations) {
+  for (const row of external.reservations) {
     const provider = String(row.provider || "");
     const retryGroup = String(row.retry_group || "");
-    if (row.status === "settled") {
-      const value = Number(row.actual_cost_microusd || 0);
-      settled += value;
-      providerSettled[provider] = (providerSettled[provider] || 0) + value;
-      retrySettled[retryGroup] = (retrySettled[retryGroup] || 0) + value;
-    } else if (row.status === "reserved" || row.status === "expired") {
+    if (row.status === "reserved" || row.status === "expired") {
       const value = Number(row.estimated_cost_microusd || 0);
       reserved += value;
       if (row.status === "reserved") {
@@ -569,6 +617,9 @@ export function reserveExternalCompute(
 ) {
   let state = expireExternalReservations(current, nowMs);
   const external = state.external_compute;
+  if (!external.enabled) {
+    throw new StateConflict("external compute is disabled", 423);
+  }
   const existing = external.reservations.find((row) => row.job_key === jobKey);
   if (existing) {
     if (existing.status === "reserved" || existing.status === "settled") {
@@ -578,8 +629,11 @@ export function reserveExternalCompute(
       `external-compute job key cannot be reused after ${existing.status}: ${jobKey}`,
     );
   }
-  if (!external.enabled) {
-    throw new StateConflict("external compute is disabled", 423);
+  if (external.reservations.length >= MAX_EXTERNAL_RESERVATIONS_PER_MONTH) {
+    throw new StateConflict(
+      "external compute monthly reservation-count safety limit reached",
+      429,
+    );
   }
   if (!Object.prototype.hasOwnProperty.call(
     external.provider_limits_microusd,
@@ -668,7 +722,7 @@ export function reserveExternalCompute(
       reservations: [
         ...state.external_compute.reservations,
         reservation,
-      ].slice(-500),
+      ],
     },
   };
   state = event(state, "external_compute.reserved", nowMs, {
@@ -720,10 +774,33 @@ export function settleExternalCompute(
   };
   const reservations = [...state.external_compute.reservations];
   reservations[index] = reservation;
+  const provider = String(previous.provider || "");
+  const retryGroup = String(previous.retry_group || "");
   state = {
     ...state,
     external_compute: {
       ...state.external_compute,
+      monthly_settled_microusd:
+        Number(state.external_compute.monthly_settled_microusd || 0) +
+        actualCostMicrousd,
+      provider_settled_microusd: {
+        ...(state.external_compute.provider_settled_microusd || {}),
+        [provider]:
+          Number(
+            (state.external_compute.provider_settled_microusd || {})[
+              provider
+            ] || 0,
+          ) + actualCostMicrousd,
+      },
+      retry_settled_microusd: {
+        ...(state.external_compute.retry_settled_microusd || {}),
+        [retryGroup]:
+          Number(
+            (state.external_compute.retry_settled_microusd || {})[
+              retryGroup
+            ] || 0,
+          ) + actualCostMicrousd,
+      },
       reservations,
     },
   };
