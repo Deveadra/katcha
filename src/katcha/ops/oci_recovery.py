@@ -985,6 +985,32 @@ def _current_data_volume_id(
     return config.data_volume_id
 
 
+def _ensure_volume_attached(
+    oci: OciCli,
+    config: RecoveryConfig,
+    *,
+    candidate_id: str,
+    volume_id: str,
+) -> None:
+    attachments = oci.volume_attachments(config, volume_id)
+    for attachment in attachments:
+        state = _state(attachment)
+        attached_instance = _attachment_instance_id(attachment)
+        if state not in {"ATTACHED", "ATTACHING"} or not attached_instance:
+            continue
+        if attached_instance == candidate_id:
+            return
+        raise RecoveryError(
+            f"recovery volume is already attached to another instance: "
+            f"{attached_instance}"
+        )
+    oci.attach(
+        candidate_id,
+        volume_id,
+        device_path=config.cross_ad_device_path,
+    )
+
+
 def _detach_candidate_volume(
     oci: OciCli,
     config: RecoveryConfig,
@@ -1040,14 +1066,6 @@ def _launch_attempt(
 ) -> CandidateAttempt:
     owns_recovery_volume = storage_mode == "r2-restore"
     volume_id = current_volume_id
-    if owns_recovery_volume:
-        volume_id = oci.create_recovery_volume(
-            config,
-            incident,
-            deployment_id=deployment_id,
-            availability_domain=target.availability_domain,
-        )
-
     user_data_path = render_bootstrap(
         config,
         deployment_id=deployment_id,
@@ -1057,6 +1075,13 @@ def _launch_attempt(
     candidate_id = ""
     attempt: CandidateAttempt | None = None
     try:
+        if owns_recovery_volume:
+            volume_id = oci.create_recovery_volume(
+                config,
+                incident,
+                deployment_id=deployment_id,
+                availability_domain=target.availability_domain,
+            )
         candidate_id = oci.launch(
             config,
             incident,
@@ -1078,10 +1103,11 @@ def _launch_attempt(
                 volume_id,
             )
         else:
-            oci.attach(
-                candidate_id,
-                volume_id,
-                device_path=config.cross_ad_device_path,
+            _ensure_volume_attached(
+                oci,
+                config,
+                candidate_id=candidate_id,
+                volume_id=volume_id,
             )
         attempt = CandidateAttempt(
             instance_id=candidate_id,
@@ -1150,10 +1176,11 @@ def _resume_existing_candidate(
     )
     previous_instance_id: str | None = None
     if storage_mode == "r2-restore":
-        oci.attach(
-            candidate_id,
-            volume_id,
-            device_path=config.cross_ad_device_path,
+        _ensure_volume_attached(
+            oci,
+            config,
+            candidate_id=candidate_id,
+            volume_id=volume_id,
         )
     else:
         previous_instance_id = switch_volume(
@@ -1172,18 +1199,25 @@ def _resume_existing_candidate(
         storage_mode=storage_mode,
         recovery_mode=tags.get("KatchaRecoveryMode", "existing-candidate"),
         previous_instance_id=previous_instance_id,
-        owns_recovery_volume=(
-            storage_mode == "r2-restore"
-            and tags.get("KatchaEphemeralRecoveryVolume", "true").casefold() == "true"
-        ),
+        owns_recovery_volume=storage_mode == "r2-restore",
     )
-    wait_for_candidate_ready(
-        coordinator,
-        deployment_id=deployment_id,
-        deployment_epoch=deployment_epoch,
-        timeout_seconds=config.candidate_timeout_seconds,
-    )
-    return attempt
+    try:
+        wait_for_candidate_ready(
+            coordinator,
+            deployment_id=deployment_id,
+            deployment_epoch=deployment_epoch,
+            timeout_seconds=config.candidate_timeout_seconds,
+        )
+        return attempt
+    except Exception:
+        try:
+            _cleanup_failed_attempt(oci, config, attempt)
+        except Exception as cleanup_error:
+            print(
+                "RECOVERY_ATTEMPT_CLEANUP_WARNING: "
+                f"{type(cleanup_error).__name__}: {cleanup_error}"
+            )
+        raise
 
 
 def recover(event_path: Path, config: RecoveryConfig, oci: OciCli) -> dict[str, Any]:
