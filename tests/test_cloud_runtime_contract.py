@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from katcha.ops import cloudflare_edge
 from katcha.ops.production_runtime import validate
 
 ROOT = Path(__file__).resolve().parents[1]
