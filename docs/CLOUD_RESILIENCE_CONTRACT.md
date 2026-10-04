@@ -10,10 +10,10 @@ OCI Ampere A1 Always Free is the preferred steady-state control plane because it
 
 Recovery order:
 
-1. restore or replace the healthy Always Free A1 instance when capacity exists,
-2. retry a valid placement within the tenancy/home-region options allowed by the account,
-3. if free capacity is still unavailable and the emergency-spend policy permits it, create the smallest approved paid OCI compute shape,
-4. restore the exact durable state, acquire leadership, and resume only reconciled work,
+1. replace the current same-AD Always Free A1 instance and reattach its durable data volume when that AD remains usable,
+2. if same-AD recovery fails, try every configured alternate-AD Always Free A1 target and restore the newest acceptable immutable R2 recovery point onto a fresh durable volume in that AD,
+3. only after all configured free A1 placements fail, and only when the emergency-spend policy permits it, try the smallest approved paid OCI compute shape in the current AD and then alternate ADs,
+4. acquire leadership only after storage restore, local readiness, public-route readiness, and fencing acceptance,
 5. periodically probe for acceptable Always Free A1 capacity,
 6. migrate authority back only after restore/health/fencing acceptance,
 7. destroy paid fallback compute automatically after the configured grace period.
@@ -135,7 +135,7 @@ Production cannot be declared ready until all of the following pass:
 2. attempt two simultaneous recoveries and prove only one deployment epoch becomes leader,
 3. wake a stale fenced control plane and prove it cannot publish or dispatch external work,
 4. delete/overwrite a locked database backup using runtime credentials and prove the action is denied,
-5. restore PostgreSQL/Temporal from R2 with the normal OCI instance unavailable,
+5. restore PostgreSQL/Temporal from R2 onto a fresh volume in another availability domain with the normal OCI instance and original data volume unavailable,
 6. bootstrap using the off-OCI break-glass path without depending on OCI Vault,
 7. exceed an external-compute budget in a fixture environment and prove no additional paid jobs launch,
 8. verify the operator surface is inaccessible without Access while OAuth/machine endpoints retain only their intended access path,
