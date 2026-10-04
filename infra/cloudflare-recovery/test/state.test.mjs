@@ -1191,3 +1191,51 @@ test("external compute atomically allocates retry attempts when omitted", () => 
     /retry attempt limit reached/,
   );
 });
+
+
+
+test("finite external compute reservation settles its ceiling on expiry", () => {
+  const now = Date.UTC(2026, 9, 4, 12, 0, 0);
+  const state = configureExternalCompute(
+    defaultAuthorityState(),
+    {
+      enabled: true,
+      monthlyLimitMicrousd: 5_000_000,
+      providerLimitsMicrousd: { "aws-lambda": 5_000_000 },
+      maxConcurrentJobs: 2,
+      maxRetryAttempts: 3,
+      maxRetrySpendMicrousd: 5_000_000,
+    },
+    now,
+  );
+  const reserved = reserveExternalCompute(
+    state,
+    {
+      jobKey: "finite-render",
+      provider: "aws-lambda",
+      operation: "remotion-video-render",
+      retryGroup: "render-output",
+      attempt: null,
+      estimatedCostMicrousd: 500_000,
+      ttlSeconds: 300,
+      settleOnExpiry: true,
+    },
+    now,
+  );
+
+  const status = externalComputeStatus(
+    reserved.state,
+    now + 301_000,
+  ).status;
+  const row = status.reservations.find(
+    (item) => item.id === reserved.reservation.id,
+  );
+
+  assert.equal(row.status, "settled");
+  assert.equal(row.actual_cost_microusd, 500_000);
+  assert.equal(row.metadata.auto_settled_on_expiry, true);
+  assert.equal(status.reserved_microusd, 0);
+  assert.equal(status.expired_held_microusd, 0);
+  assert.equal(status.settled_microusd, 500_000);
+  assert.equal(status.provider_settled_microusd["aws-lambda"], 500_000);
+});
