@@ -4,6 +4,7 @@ set -euo pipefail
 REPO_ROOT="${KATCHA_REPO_ROOT:-/opt/katcha}"
 ENV_FILE="${KATCHA_ENV_FILE:-/etc/katcha/katcha.env}"
 RESTORE_ENV_FILE="${KATCHA_RESTORE_ENV_FILE:-/etc/katcha/restore.env}"
+export KATCHA_RESTORE_ENV_FILE="$RESTORE_ENV_FILE"
 COMPOSE_FILE="${KATCHA_PRODUCTION_COMPOSE_FILE:-$REPO_ROOT/deploy/docker-compose.production.yml}"
 DATA_ROOT="${KATCHA_DATA_ROOT:-/srv/katcha}"
 POSTGRES_ROOT="$DATA_ROOT/postgres"
@@ -42,14 +43,21 @@ trap cleanup_download EXIT
 "${compose[@]}" pull postgres
 "${compose[@]}" up -d postgres
 
-for attempt in $(seq 1 90); do
+stable=0
+for attempt in $(seq 1 120); do
   if "${compose[@]}" exec -T postgres sh -lc \
-      'pg_isready -U "$POSTGRES_USER" -d postgres' >/dev/null 2>&1; then
-    break
+      'psql -U "$POSTGRES_USER" -d postgres -At -v ON_ERROR_STOP=1 -c "SELECT 1;"' \
+      >/dev/null 2>&1; then
+    stable=$((stable + 1))
+    if [[ "$stable" -ge 5 ]]; then
+      break
+    fi
+  else
+    stable=0
   fi
-  if [[ "$attempt" -eq 90 ]]; then
+  if [[ "$attempt" -eq 120 ]]; then
     "${compose[@]}" logs --no-color postgres >&2 || true
-    echo "Fresh PostgreSQL did not become ready for disaster restore." >&2
+    echo "Fresh PostgreSQL did not become stably ready for disaster restore." >&2
     exit 43
   fi
   sleep 1
