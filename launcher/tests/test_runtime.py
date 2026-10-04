@@ -159,6 +159,109 @@ def test_diagnostics_redact_and_preserve_valid_json(tmp_path):
     assert row["session"] == app.session
 
 
+
+def test_service_log_context_uses_source_severity_instead_of_error_word():
+    line = (
+        'temporal-1 | 2026-10-04T14:54:27.400036101Z '
+        '{"level":"info","msg":"matching client encountered error",'
+        '"service":"frontend","error":"Not enough hosts to serve the request",'
+        '"service-error-type":"serviceerror.Unavailable"}'
+    )
+    level, details = runtime.service_log_context(line)
+    assert level == "info"
+    assert details["source_service"] == "temporal"
+    assert details["source_time"] == "2026-10-04T14:54:27.400036101Z"
+    assert details["source_message"] == "matching client encountered error"
+    assert details["source_error"] == "Not enough hosts to serve the request"
+    assert details["source_error_type"] == "serviceerror.Unavailable"
+
+
+def test_service_log_context_marks_sigkill_exit_as_error_without_guessing_oom():
+    level, details = runtime.service_log_context(
+        "intelligence-worker-1 exited with code 137"
+    )
+    assert level == "error"
+    assert details["source_service"] == "intelligence-worker"
+    assert details["exit_code"] == 137
+    assert details["exit_signal"] == 9
+    assert "oom" not in json.dumps(details).lower()
+
+
+def test_resource_snapshot_retains_oom_exit_and_restart_state(tmp_path):
+    app = instance(tmp_path)
+    inspected = [
+        {
+            "Config": {
+                "Labels": {"com.docker.compose.service": "intelligence-worker"}
+            },
+            "State": {
+                "Status": "exited",
+                "OOMKilled": True,
+                "ExitCode": 137,
+                "Health": {"Status": "unhealthy"},
+            },
+            "RestartCount": 2,
+        }
+    ]
+    with patch.object(
+        app,
+        "_diagnostic_command",
+        side_effect=["abc", json.dumps(inspected), '{"CPUPerc":"99%"}'],
+    ):
+        result = app.resource_snapshot()
+
+    assert result["docker_available"] is True
+    assert result["container_state"] == [
+        {
+            "service": "intelligence-worker",
+            "status": "exited",
+            "oom_killed": True,
+            "exit_code": 137,
+            "restart_count": 2,
+            "health": "unhealthy",
+        }
+    ]
+    assert result["containers"][0]["CPUPerc"] == "99%"
+
+
+def test_diagnostics_export_prepends_snapshot_and_uses_contextual_filename(tmp_path):
+    app = instance(tmp_path)
+    app.phase = "degraded"
+    app.stage = "waiting for runtime"
+    app.event("error", "fixture", "retained event")
+
+    server = runtime.ThreadingHTTPServer(("127.0.0.1", 0), runtime.Handler)
+    server.runtime = app
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        snapshot = {
+            "schema": "katcha.diagnostic.snapshot.v1",
+            "time": "2026-10-04T15:00:00+00:00",
+            "session": app.session,
+        }
+        with patch.object(app, "diagnostic_snapshot", return_value=snapshot):
+            connection = http.client.HTTPConnection(
+                "127.0.0.1", server.server_port, timeout=3
+            )
+            connection.request("GET", "/runtime/diagnostics")
+            response = connection.getresponse()
+            body = response.read().decode()
+            disposition = response.getheader("Content-Disposition")
+            connection.close()
+
+        assert response.status == 200
+        assert response.getheader("Content-Type") == "application/x-ndjson"
+        assert disposition.startswith('attachment; filename="katcha-diagnostics-')
+        assert f"-degraded-{app.session[:8]}.jsonl" in disposition
+        rows = [json.loads(line) for line in body.splitlines() if line.strip()]
+        assert rows[0]["schema"] == "katcha.diagnostic.snapshot.v1"
+        assert rows[0]["journal_files"][0]["name"] == "events.jsonl"
+        assert any(row.get("message") == "retained event" for row in rows[1:])
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
 def test_aws_overlay_and_shell_isolation(tmp_path):
     app = instance(tmp_path)
     with patch.dict(

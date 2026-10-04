@@ -20,7 +20,11 @@ def test_diagnostics_exports_resource_evidence_without_credentials():
             "Status": "exited",
             "OOMKilled": True,
             "ExitCode": 137,
-            "Health": {"Status": "unhealthy", "Log": ["private-value"]},
+            "Health": {
+                "Status": "unhealthy",
+                "FailingStreak": 4,
+                "Log": ["private-value"],
+            },
         },
         "RestartCount": 3,
         "HostConfig": {"Memory": 1024, "NanoCpus": 1000000000},
@@ -34,6 +38,7 @@ def test_diagnostics_exports_resource_evidence_without_credentials():
         result = diagnostics.collect()
     assert result["containers"][0]["state"]["OOMKilled"] is True
     assert result["containers"][0]["restart_count"] == 3
+    assert result["containers"][0]["health_failing_streak"] == 4
     assert result["resource_usage"][0]["CPUPerc"] == "99%"
     assert "private-value" not in json.dumps(result)
 
@@ -98,3 +103,59 @@ def test_postgres_probe_skips_stopped_or_absent_container():
     with patch.object(diagnostics, "docker") as run:
         assert diagnostics.postgres_snapshot([])["available"] is False
     run.assert_not_called()
+
+
+
+def test_docker_event_snapshot_keeps_lifecycle_evidence_without_arbitrary_labels():
+    event = {
+        "time": 1791122400,
+        "timeNano": 1791122400000000000,
+        "Action": "die",
+        "Actor": {
+            "Attributes": {
+                "com.docker.compose.service": "intelligence-worker",
+                "exitCode": "137",
+                "signal": "9",
+                "private-token": "must-not-export",
+            }
+        },
+    }
+    with patch.object(diagnostics, "docker", return_value=json.dumps(event)) as run:
+        result = diagnostics.docker_event_snapshot("2026-10-04T15:00:00+00:00")
+
+    assert result == [
+        {
+            "time": 1791122400,
+            "time_nano": 1791122400000000000,
+            "action": "die",
+            "service": "intelligence-worker",
+            "exit_code": "137",
+            "signal": "9",
+        }
+    ]
+    args = run.call_args.args
+    assert args[:2] == ("events", "--since")
+    assert "private-token" not in json.dumps(result)
+
+
+def test_pressure_snapshot_is_numeric_and_does_not_export_other_text(tmp_path):
+    pressure = tmp_path / "memory.pressure"
+    pressure.write_text(
+        "some avg10=0.50 avg60=0.25 avg300=0.10 total=1234\n"
+        "full avg10=0.20 avg60=0.10 avg300=0.05 total=567\n"
+    )
+
+    assert diagnostics._pressure_snapshot(pressure) == {
+        "some": {
+            "avg10": 0.5,
+            "avg60": 0.25,
+            "avg300": 0.1,
+            "total": 1234,
+        },
+        "full": {
+            "avg10": 0.2,
+            "avg60": 0.1,
+            "avg300": 0.05,
+            "total": 567,
+        },
+    }

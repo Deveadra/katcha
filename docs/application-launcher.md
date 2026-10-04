@@ -93,11 +93,19 @@ while the control plane becomes healthy and the media factory continues warming.
   Docker's restart policy restarts long-running services when Docker returns.
 - Dependencies are probed every ten seconds while the launcher runs. Worker process
   status is checked, but this does not prove that every workflow is making progress.
-- **Export diagnostics** downloads retained JSONL events, including prior launcher
-  sessions, timestamps, component, phase, errors, traceback and recovery guidance.
+- **Export diagnostics** downloads a self-describing JSONL bundle with a unique
+  timestamp/phase/session filename. The first row is a point-in-time evidence snapshot;
+  retained launcher/service events from prior sessions follow it. The snapshot includes
+  host CPU/load/memory/swap/disk pressure, current container state/OOM/exit/restart/health
+  evidence, Docker resource usage and recent lifecycle events, plus a bounded read-only
+  PostgreSQL contention summary. Service events also carry parsed source service/time/severity
+  fields when available, while preserving the original redacted log line.
 - Logs live at `.local/runtime/events.jsonl`, rotating at 5 MB with five backups.
   Docker logs rotate separately at 10 MB × three files per service. The launcher
-  captures recent logs on restart and follows subsequent output while open.
+  captures recent logs on restart and follows subsequent output while open. While Katcha
+  is requested to run, lightweight resource samples are also retained periodically so a
+  later export can show memory pressure, OOM state, restart counts, and resource trends
+  that may no longer be visible after a container is recreated.
 - Known configured secrets, bearer tokens, connection passwords and common signed
   query credentials are redacted. Redaction is best effort: review diagnostics before
   sharing, especially third-party payloads. The export never includes `.env`.
