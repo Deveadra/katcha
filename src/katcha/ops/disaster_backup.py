@@ -386,6 +386,14 @@ def _cmd_download(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_restore_plan(args: argparse.Namespace) -> int:
+    manifest = load_manifest(args.directory / "manifest.json")
+    verify_directory(args.directory, manifest)
+    for row in manifest["databases"]:
+        print(f"{row['file']}\t{row['database']}")
+    return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -406,6 +414,10 @@ def main() -> int:
     download = subparsers.add_parser("download-latest")
     download.add_argument("--destination", type=Path, required=True)
     download.set_defaults(func=_cmd_download)
+
+    restore_plan = subparsers.add_parser("restore-plan")
+    restore_plan.add_argument("--directory", type=Path, required=True)
+    restore_plan.set_defaults(func=_cmd_restore_plan)
 
     args = parser.parse_args()
     try:
