@@ -264,3 +264,11 @@ def test_cloudflare_edge_rules_fit_free_tier_contract() -> None:
     assert rate[0]["ratelimit"]["period"] == 10
     assert rate[0]["ratelimit"]["requests_per_period"] == 30
     assert "/auth/callback" not in rate[0]["expression"]
+
+
+
+def test_local_api_container_healthcheck_uses_public_liveness_not_workspace_auth() -> None:
+    compose = (ROOT / "docker-compose.app.yml").read_text(encoding="utf-8")
+
+    assert "http://localhost:8000/v1/health/live" in compose
+    assert "http://localhost:8000/v1/health/workspace" not in compose
