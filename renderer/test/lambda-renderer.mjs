@@ -53,6 +53,7 @@ const props = {
       order.push('reserve');
       assert.equal(body.provider, 'aws-lambda');
       assert.equal(Object.hasOwn(body, 'attempt'), false);
+      assert.equal(body.settle_on_expiry, true);
       return {
         ok: true,
         status: 201,
