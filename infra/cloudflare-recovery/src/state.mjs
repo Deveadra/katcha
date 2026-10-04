@@ -416,7 +416,14 @@ function normalizeExternalMonth(state, nowMs) {
     return current;
   }
   const carried = current.external_compute.reservations
-    .filter((row) => row.status === "reserved")
+    .filter(
+      (row) =>
+        row.status === "reserved" ||
+        (
+          row.status === "expired" &&
+          nowMs - Number(row.expires_at_ms || 0) <= 7 * 86400 * 1000
+        ),
+    )
     .map((row) => ({ ...row, carried_into_month: key }));
   return {
     ...current,
@@ -587,7 +594,7 @@ export function reserveExternalCompute(
     estimatedCostMicrousd <= 0 ||
     !Number.isSafeInteger(ttlSeconds) ||
     ttlSeconds < 60 ||
-    ttlSeconds > 259200 ||
+    ttlSeconds > 604800 ||
     !Number.isSafeInteger(attempt) ||
     attempt < 1 ||
     attempt > 100
