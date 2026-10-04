@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -178,3 +179,32 @@ def test_manifest_rejects_missing_or_empty_database_dumps(tmp_path) -> None:
             deployment_id="deployment-1",
             deployment_epoch=1,
         )
+
+
+
+def test_manifest_age_rejects_stale_recovery_point(tmp_path) -> None:
+    source = _backup_directory(tmp_path)
+    manifest = disaster_backup.load_manifest(source / "manifest.json")
+    manifest["created_at"] = (
+        datetime(2026, 10, 4, 0, 0, tzinfo=UTC).isoformat()
+    )
+
+    with pytest.raises(disaster_backup.DisasterBackupError, match="too old"):
+        disaster_backup.validate_manifest_age(
+            manifest,
+            max_age_seconds=3600,
+            now=datetime(2026, 10, 4, 2, 0, tzinfo=UTC),
+        )
+
+
+def test_manifest_age_accepts_recent_recovery_point(tmp_path) -> None:
+    source = _backup_directory(tmp_path)
+    manifest = disaster_backup.load_manifest(source / "manifest.json")
+    now = datetime(2026, 10, 4, 2, 0, tzinfo=UTC)
+    manifest["created_at"] = (now - timedelta(minutes=45)).isoformat()
+
+    disaster_backup.validate_manifest_age(
+        manifest,
+        max_age_seconds=3600,
+        now=now,
+    )
