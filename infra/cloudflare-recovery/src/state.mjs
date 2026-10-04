@@ -7,6 +7,7 @@ export class StateConflict extends Error {
 }
 
 const MAX_EXTERNAL_RESERVATIONS_PER_MONTH = 5000;
+const MAX_EXTERNAL_RETRY_GROUPS = 10000;
 
 export function defaultAuthorityState() {
   return {
@@ -641,6 +642,20 @@ export function reserveExternalCompute(
   if (external.reservations.length >= MAX_EXTERNAL_RESERVATIONS_PER_MONTH) {
     throw new StateConflict(
       "external compute monthly reservation-count safety limit reached",
+      429,
+    );
+  }
+  const knownRetryGroups = new Set([
+    ...Object.keys(external.retry_settled_microusd || {}),
+    ...external.reservations.map((row) => String(row.retry_group || "")),
+  ]);
+  knownRetryGroups.delete("");
+  if (
+    !knownRetryGroups.has(retryGroup) &&
+    knownRetryGroups.size >= MAX_EXTERNAL_RETRY_GROUPS
+  ) {
+    throw new StateConflict(
+      "external compute retry-group state safety limit reached",
       429,
     );
   }
