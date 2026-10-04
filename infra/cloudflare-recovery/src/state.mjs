@@ -417,12 +417,7 @@ function normalizeExternalMonth(state, nowMs) {
   }
   const carried = current.external_compute.reservations
     .filter(
-      (row) =>
-        row.status === "reserved" ||
-        (
-          row.status === "expired" &&
-          nowMs - Number(row.expires_at_ms || 0) <= 7 * 86400 * 1000
-        ),
+      (row) => row.status === "reserved" || row.status === "expired",
     )
     .map((row) => ({ ...row, carried_into_month: key }));
   return {
@@ -472,6 +467,7 @@ function externalSpendSummary(state, nowMs) {
   const retrySettled = {};
   const retryReserved = {};
   let concurrent = 0;
+  let expiredHeld = 0;
 
   for (const row of current.external_compute.reservations) {
     const provider = String(row.provider || "");
@@ -481,10 +477,14 @@ function externalSpendSummary(state, nowMs) {
       settled += value;
       providerSettled[provider] = (providerSettled[provider] || 0) + value;
       retrySettled[retryGroup] = (retrySettled[retryGroup] || 0) + value;
-    } else if (row.status === "reserved") {
+    } else if (row.status === "reserved" || row.status === "expired") {
       const value = Number(row.estimated_cost_microusd || 0);
       reserved += value;
-      concurrent += 1;
+      if (row.status === "reserved") {
+        concurrent += 1;
+      } else {
+        expiredHeld += value;
+      }
       providerReserved[provider] = (providerReserved[provider] || 0) + value;
       retryReserved[retryGroup] = (retryReserved[retryGroup] || 0) + value;
     }
@@ -499,6 +499,7 @@ function externalSpendSummary(state, nowMs) {
     retry_settled_microusd: retrySettled,
     retry_reserved_microusd: retryReserved,
     concurrent_jobs: concurrent,
+    expired_held_microusd: expiredHeld,
   };
 }
 
@@ -750,7 +751,7 @@ export function releaseExternalCompute(
   if (previous.status === "released") {
     return { state, reservation: previous, reused: true };
   }
-  if (previous.status !== "reserved") {
+  if (!["reserved", "expired"].includes(previous.status)) {
     throw new StateConflict(
       `external-compute reservation cannot release from ${previous.status}`,
     );
@@ -797,6 +798,7 @@ export function externalComputeStatus(current, nowMs = Date.now()) {
       provider_settled_microusd: summary.provider_settled_microusd,
       provider_reserved_microusd: summary.provider_reserved_microusd,
       concurrent_jobs: summary.concurrent_jobs,
+      expired_held_microusd: summary.expired_held_microusd,
       reservations: external.reservations.slice(-100),
     },
   };
