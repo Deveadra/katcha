@@ -7,7 +7,6 @@ import io
 import json
 import os
 import secrets
-import stat
 import tarfile
 import urllib.request
 import uuid
@@ -238,36 +237,53 @@ def _decode_file(payload: dict[str, Any], name: str) -> bytes:
     return data
 
 
-def _safe_install_aws_bundle(data: bytes, destination: Path) -> None:
-    destination.mkdir(parents=True, exist_ok=True)
-    destination.chmod(0o700)
+def _validated_aws_members(data: bytes) -> list[tarfile.TarInfo]:
     try:
         archive = tarfile.open(fileobj=io.BytesIO(data), mode="r:gz")
     except tarfile.TarError as exc:
         raise BreakGlassError("AWS break-glass bundle is not a valid tar.gz") from exc
     with archive:
         members = archive.getmembers()
-        if not members:
-            raise BreakGlassError("AWS break-glass bundle is empty")
-        for member in members:
-            member_path = Path(member.name)
-            if (
-                member_path.is_absolute()
-                or ".." in member_path.parts
-                or member.issym()
-                or member.islnk()
-                or member.isdev()
-                or member.isfifo()
-            ):
-                raise BreakGlassError(
-                    f"unsafe AWS break-glass bundle member: {member.name}"
-                )
-            if not (member.isdir() or member.isfile()):
-                raise BreakGlassError(
-                    f"unsupported AWS break-glass bundle member: {member.name}"
-                )
+    if not members:
+        raise BreakGlassError("AWS break-glass bundle is empty")
+    seen: set[str] = set()
+    for member in members:
+        member_path = Path(member.name)
+        normalized = member_path.as_posix().rstrip("/")
+        if (
+            not normalized
+            or normalized in seen
+            or member_path.is_absolute()
+            or ".." in member_path.parts
+            or member.issym()
+            or member.islnk()
+            or member.isdev()
+            or member.isfifo()
+        ):
+            raise BreakGlassError(
+                f"unsafe AWS break-glass bundle member: {member.name}"
+            )
+        if not (member.isdir() or member.isfile()):
+            raise BreakGlassError(
+                f"unsupported AWS break-glass bundle member: {member.name}"
+            )
+        seen.add(normalized)
+    return members
+
+
+def _safe_install_aws_bundle(data: bytes, destination: Path) -> None:
+    members = _validated_aws_members(data)
+    if destination.is_symlink():
+        raise BreakGlassError("AWS break-glass destination cannot be a symlink")
+    destination.mkdir(parents=True, exist_ok=True)
+    destination.chmod(0o700)
+    with tarfile.open(fileobj=io.BytesIO(data), mode="r:gz") as archive:
         for member in members:
             target = destination / member.name
+            if target.exists() and target.is_symlink():
+                raise BreakGlassError(
+                    f"AWS break-glass target cannot be a symlink: {member.name}"
+                )
             if member.isdir():
                 target.mkdir(parents=True, exist_ok=True)
                 target.chmod(0o700)
@@ -295,14 +311,25 @@ def install_bundle(
     now: datetime | None = None,
 ) -> dict[str, Any]:
     payload = _parse_bundle(encrypted, fernet_key, now=now)
+    decoded = {
+        name: _decode_file(payload, name)
+        for name in _REQUIRED_FILES
+    }
+    _validated_aws_members(decoded["aws_bundle.tgz"])
+    if root.is_symlink():
+        raise BreakGlassError("break-glass install root cannot be a symlink")
     root.mkdir(parents=True, exist_ok=True)
     root.chmod(0o700)
     for name in ("katcha.env", "backup.env", "restore.env"):
         path = root / name
-        path.write_bytes(_decode_file(payload, name))
+        if path.exists() and path.is_symlink():
+            raise BreakGlassError(
+                f"break-glass destination cannot be a symlink: {name}"
+            )
+        path.write_bytes(decoded[name])
         path.chmod(0o600)
     _safe_install_aws_bundle(
-        _decode_file(payload, "aws_bundle.tgz"),
+        decoded["aws_bundle.tgz"],
         root / "aws",
     )
     return {
@@ -400,10 +427,19 @@ def _cmd_create(args: argparse.Namespace) -> int:
 
 
 def _cmd_install(args: argparse.Namespace) -> int:
-    encrypted = download_encrypted(args.url)
+    url = args.url or os.environ.get("KATCHA_BREAK_GLASS_HANDOFF_URL", "").strip()
+    fernet_key = (
+        args.fernet_key
+        or os.environ.get("KATCHA_BREAK_GLASS_HANDOFF_KEY", "").strip()
+    )
+    if not url:
+        raise BreakGlassError("break-glass handoff URL is required")
+    if not fernet_key:
+        raise BreakGlassError("break-glass handoff key is required")
+    encrypted = download_encrypted(url)
     result = install_bundle(
         encrypted,
-        fernet_key=args.fernet_key,
+        fernet_key=fernet_key,
         root=args.root,
     )
     print(json.dumps(result, sort_keys=True))
@@ -429,8 +465,8 @@ def main() -> int:
     create.set_defaults(func=_cmd_create)
 
     install = subparsers.add_parser("install-handoff")
-    install.add_argument("--url", required=True)
-    install.add_argument("--fernet-key", required=True)
+    install.add_argument("--url")
+    install.add_argument("--fernet-key")
     install.add_argument("--root", type=Path, required=True)
     install.set_defaults(func=_cmd_install)
 
