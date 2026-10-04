@@ -1,8 +1,8 @@
 # Hosted Katcha control-plane foundation
 
-Audited against accepted `main` at `2ec7fc9ae556d923f2a8266f798176be8dc6d110` on October 2, 2026.
+Originally audited against accepted `main` on October 2, 2026. Updated October 4, 2026 after the resilience implementation series through the live-provisioning milestone.
 
-This document is the implementation checkpoint for moving Katcha away from a local-machine availability dependency. It does **not** claim that OCI, Cloudflare, or AWS resources have been provisioned yet.
+This document describes the hosted runtime foundation. The repository now implements the recovery, fencing, backup, edge-security, break-glass, and spend-control layers that were originally deferred. It still does **not** claim that the user's live OCI, Cloudflare, R2, or AWS account resources have been provisioned. See `docs/LIVE_CLOUD_CUTOVER.md` for the ordered account-side cutover.
 
 The production objective is **not** "Oracle Free Tier is Katcha's production machine." The production objective is: **OCI Always Free is Katcha's normal $0 control plane, with a tightly bounded paid/credited escape hatch when free capacity cannot be restored.** Free capacity is an optimization; continuity, fencing, durable state, and spend limits are correctness requirements.
 
@@ -111,28 +111,25 @@ The supervisor:
 
 Docker restart policies recover individual services. systemd recovers the compose supervisor. The later external watchdog recovers the VM itself.
 
-## Deliberately deferred before production cutover
+## Implementation status at the live-provisioning milestone
 
-The following are not optional; they are simply later implementation phases:
+The items originally listed here as deferred are now implemented in the repository:
 
-1. centralized complete workflow recovery registry and side-effect idempotency tests,
-2. Cloudflare R2 migration tooling and object verification,
-3. OCI Terraform/OpenTofu for A1, network, block volume, IAM and Vault,
-4. Vault-to-`/etc/katcha/katcha.env` secret loader,
-5. Cloudflare Tunnel,
-6. independent Cloudflare Worker health watchdog + GitHub OCI recovery workflow,
-7. on-demand AWS Fargate Spot analysis backend,
-8. PostgreSQL point-in-time backup to R2 and tested restore,
-9. production deployment workflow using immutable image SHAs,
-10. VM reboot/replacement and local-PC-off chaos acceptance,
-11. recovery coordination in a SQLite-backed Cloudflare Durable Object rather than eventually-consistent KV,
-12. an OCI paid-compute escape hatch with TTL, spend ceiling, and automatic return to Always Free capacity,
-13. immutable R2 backup prefixes with separate backup and runtime-media credentials,
-14. an encrypted off-OCI break-glass bootstrap bundle that normal Katcha processes cannot read,
-15. hard external-compute/API cost circuit breakers and a global kill switch,
-16. Cloudflare Access plus endpoint-specific WAF/rate-limit policy,
-17. monotonically increasing deployment epochs / leadership fencing so a stale control plane cannot resume side effects,
-18. an on-demand secondary compute backend (Modal or equivalent) for workloads where it is cheaper/simpler than maintaining warm compute,
-19. startup/cloud credits used opportunistically but never required for the recovery design.
+- complete workflow recovery registry and side-effect classification,
+- external deployment-epoch leadership fencing,
+- SQLite Durable Object recovery coordination,
+- same-AD and cross-AD OCI recovery,
+- bounded paid OCI fallback with durable spend reservations,
+- immutable R2 PostgreSQL/Temporal backups and tested restore,
+- off-OCI encrypted break-glass escrow,
+- Cloudflare Tunnel/Access/WAF/rate-limit contracts,
+- retired-volume cleanup safeguards,
+- Remotion Lambda spend fencing,
+- change-aware CI for the cloud runtime.
 
-Until those gates pass, the existing installation remains the authoritative production candidate and no local data/volumes should be deleted.
+What remains is **live provider provisioning and controlled acceptance**, not another speculative application-architecture phase.
+
+The repository still lacks checked-in Terraform/OpenTofu for the initial OCI VCN/subnets/A1 VM/block volume/Vault/dynamic-group bootstrap. Those resources must be provisioned in the user's OCI account before the automated recovery paths can operate.
+
+Do not delete the local installation or any local recovery data until the complete acceptance sequence in `docs/LIVE_CLOUD_CUTOVER.md` passes, including the local-PC-off test.
+
