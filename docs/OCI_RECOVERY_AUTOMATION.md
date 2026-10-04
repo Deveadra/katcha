@@ -74,14 +74,11 @@ ceiling rather than an automatic extension.
 
 ## Same-AD and cross-AD recovery
 
-This implementation intentionally handles the common **compute loss / A1
-capacity shortage** path by reattaching the existing OCI block volume inside its
-availability domain.
+The dispatcher first attempts same-AD recovery and reattaches the existing durable volume when that AD remains usable.
 
-It does not pretend that an OCI block volume can be directly attached across
-availability domains. Region/AD loss is a separate recovery path: create a new
-volume in the target AD and restore PostgreSQL/Temporal from the immutable R2
-backup set. That path remains a production cutover gate.
+If same-AD free A1 recovery cannot proceed, the dispatcher tries configured alternate-AD free A1 targets before paid compute. Cross-AD recovery creates fresh durable storage in the target AD and restores the newest acceptable immutable R2 PostgreSQL/Temporal recovery point. The old OCI block volume is never treated as cross-AD attachable.
+
+Only after configured free placements fail may the bounded paid fallback path run, and paid launch still requires durable external-compute budget authorization.
 
 ## GitHub configuration contract
 
@@ -148,16 +145,16 @@ two bootstrap secrets it requires:
 
 It should not receive broad Vault administration privileges.
 
-## Remaining gates
+## Current cutover boundary
 
-Before live cutover:
+The recovery automation described above is implemented and covered by repository tests.
 
-1. provision the OCI network, volume, Vault secrets, dynamic-group policy and
-   initial A1 instance,
-2. exercise real A1 replacement with the production volume on a disposable
-   acceptance copy,
-3. prove paid fallback launch then automatic expiry,
-4. implement and test return-to-A1 migration before paid expiry,
-5. implement immutable R2 database backups and cross-AD restore,
-6. configure Cloudflare Access/WAF endpoint policy,
-7. run the complete local-PC-off and stale-host chaos suite.
+Remaining work is account-side provisioning and real acceptance:
+
+1. create the initial OCI network/subnets/A1 instance/block volume/Vault/dynamic-group resources,
+2. configure the Cloudflare recovery Worker, Tunnel and edge policies,
+3. create/scoped R2 media, backup and break-glass storage,
+4. install real GitHub variables/secrets,
+5. run same-AD, cross-AD, paid-fallback, break-glass, stale-host and local-PC-off acceptance against live infrastructure.
+
+Use `docs/LIVE_CLOUD_CUTOVER.md` as the authoritative ordered runbook.
