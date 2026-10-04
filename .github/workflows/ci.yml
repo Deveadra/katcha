@@ -4,12 +4,118 @@ on:
   pull_request:
   push:
     branches: [main]
+  schedule:
+    - cron: "17 9 * * *"
+  workflow_dispatch:
 
 permissions:
   contents: read
+  pull-requests: read
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  changes:
+    name: Plan affected checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    outputs:
+      python: ${{ steps.plan.outputs.python }}
+      terraform: ${{ steps.plan.outputs.terraform }}
+      acceptance_media: ${{ steps.plan.outputs.acceptance_media }}
+      temporal: ${{ steps.plan.outputs.temporal }}
+      storage: ${{ steps.plan.outputs.storage }}
+      renderer: ${{ steps.plan.outputs.renderer }}
+      explorer: ${{ steps.plan.outputs.explorer }}
+    steps:
+      - name: Classify changed files
+        id: plan
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const groups = [
+              "python",
+              "terraform",
+              "acceptance_media",
+              "temporal",
+              "storage",
+              "renderer",
+              "explorer",
+            ];
+
+            if (context.eventName !== "pull_request") {
+              for (const group of groups) core.setOutput(group, "true");
+              core.info("Full validation selected for main, scheduled, or manual run.");
+              return;
+            }
+
+            const files = await github.paginate(github.rest.pulls.listFiles, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.payload.pull_request.number,
+              per_page: 100,
+            });
+            const names = files.map((file) => file.filename);
+            const has = (predicate) => names.some(predicate);
+            const exact = (...paths) => has((name) => paths.includes(name));
+            const prefix = (...prefixes) => has((name) =>
+              prefixes.some((value) => name.startsWith(value))
+            );
+            const ciChanged = exact(".github/workflows/ci.yml");
+
+            const outputs = {
+              python:
+                ciChanged ||
+                prefix("src/", "tests/", "alembic/", "scripts/") ||
+                exact(
+                  "alembic.ini",
+                  "pyproject.toml",
+                  ".env.example",
+                  "docker-compose.yml",
+                  "docker-compose.discovery.yml",
+                  "docker-compose.trends.yml",
+                  "docker-compose.intelligence.yml",
+                  "docker-compose.acceptance.yml",
+                  "docker-compose.aws-render.yml",
+                  "docker-compose.aws-roles-anywhere.yml",
+                  "docker-compose.aws-lambda-acceptance.yml"
+                ),
+              terraform:
+                ciChanged ||
+                prefix("infra/aws-render-staging/") ||
+                has((name) => name.startsWith("scripts/aws_") || name.startsWith("scripts/test_aws_")),
+              acceptance_media:
+                ciChanged ||
+                exact("docker-compose.acceptance.yml", "Dockerfile", ".env.example"),
+              temporal:
+                ciChanged ||
+                prefix("dynamicconfig/") ||
+                exact("docker-compose.yml", ".env.example"),
+              storage:
+                ciChanged ||
+                exact("Dockerfile.minio", "docker-compose.yml", ".env.example"),
+              renderer:
+                ciChanged ||
+                prefix("renderer/", "src/katcha/rendering/") ||
+                exact("Dockerfile.renderer", "scripts/ranked_renderer_smoke.py", "docker-compose.yml") ||
+                has((name) => name.startsWith("tests/test_render") || name.startsWith("tests/test_editorial")),
+              explorer:
+                ciChanged ||
+                prefix("web-tests/", "src/katcha/web/") ||
+                has((name) => name.startsWith("src/katcha/api/")),
+            };
+
+            for (const [group, enabled] of Object.entries(outputs)) {
+              core.setOutput(group, enabled ? "true" : "false");
+              core.info(`${group}: ${enabled}`);
+            }
+            core.info(`Changed files: ${names.join(", ")}`);
+
   python:
+    needs: changes
+    if: github.event_name != 'pull_request' || needs.changes.outputs.python == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     services:
@@ -177,6 +283,8 @@ jobs:
 
 
   terraform:
+    needs: changes
+    if: github.event_name != 'pull_request' || needs.changes.outputs.terraform == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -198,6 +306,8 @@ jobs:
         run: terraform -chdir=infra/aws-render-staging validate
 
   acceptance-media:
+    needs: changes
+    if: github.event_name != 'pull_request' || needs.changes.outputs.acceptance_media == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
@@ -242,6 +352,8 @@ jobs:
             down
 
   temporal-smoke:
+    needs: changes
+    if: github.event_name != 'pull_request' || needs.changes.outputs.temporal == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
@@ -283,6 +395,8 @@ jobs:
         run: docker compose --env-file .env.example down -v
 
   storage-image:
+    needs: changes
+    if: github.event_name != 'pull_request' || needs.changes.outputs.storage == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -314,6 +428,8 @@ jobs:
           done
 
   renderer:
+    needs: changes
+    if: github.event_name != 'pull_request' || needs.changes.outputs.renderer == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     defaults:
@@ -327,6 +443,14 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: "22"
+
+      - name: Cache renderer npm downloads
+        uses: actions/cache@v4
+        with:
+          path: ~/.npm
+          key: renderer-npm-${{ runner.os }}-${{ hashFiles('renderer/package.json') }}
+          restore-keys: |
+            renderer-npm-${{ runner.os }}-
 
       - name: Install renderer dependencies
         run: npm install --ignore-scripts
@@ -393,6 +517,8 @@ jobs:
 
 
   ranked-render-e2e:
+    needs: changes
+    if: github.event_name != 'pull_request' || needs.changes.outputs.renderer == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
@@ -448,6 +574,8 @@ jobs:
         run: docker compose --env-file .env.example down -v
 
   explorer:
+    needs: changes
+    if: github.event_name != 'pull_request' || needs.changes.outputs.explorer == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     defaults:
@@ -458,6 +586,13 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
+          cache: npm
+          cache-dependency-path: web-tests/package-lock.json
+      - name: Cache Playwright Chromium
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-chromium-${{ runner.os }}-${{ hashFiles('web-tests/package-lock.json') }}
       - name: Install browser test dependencies
         run: npm ci --ignore-scripts
       - name: Install Chromium
@@ -472,3 +607,39 @@ jobs:
           path: web-tests/test-results/
           if-no-files-found: ignore
           retention-days: 7
+
+
+  pr-gate:
+    name: PR Gate
+    if: always()
+    needs:
+      - changes
+      - python
+      - terraform
+      - acceptance-media
+      - temporal-smoke
+      - storage-image
+      - renderer
+      - ranked-render-e2e
+      - explorer
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Require every selected check to pass
+        env:
+          CHECK_RESULTS: ${{ toJson(needs) }}
+        run: |
+          python - <<'PY'
+          import json
+          import os
+
+          checks = json.loads(os.environ["CHECK_RESULTS"])
+          failed = {
+              name: data.get("result")
+              for name, data in checks.items()
+              if data.get("result") not in {"success", "skipped"}
+          }
+          if failed:
+              raise SystemExit(f"selected CI checks did not pass: {failed}")
+          print("PASS: every selected CI check passed; irrelevant checks were skipped.")
+          PY
