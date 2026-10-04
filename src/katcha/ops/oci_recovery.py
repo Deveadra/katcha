@@ -33,6 +33,18 @@ class RecoveryCleanupIncomplete(RecoveryError):
     """Recovery cleanup did not fully restore the pre-attempt resource state."""
 
 
+def _usd_to_microusd(value: Decimal | float | str) -> int:
+    amount = Decimal(str(value))
+    if amount < 0:
+        raise RecoveryError("cost cannot be negative")
+    return int(
+        (amount * Decimal("1000000")).quantize(
+            Decimal("1"),
+            rounding=ROUND_UP,
+        )
+    )
+
+
 def _env(name: str, *, default: str | None = None) -> str:
     value = os.environ.get(name)
     if value is None or not str(value).strip():
@@ -541,9 +553,17 @@ class OciCli:
         data_volume_id: str,
         storage_mode: str,
         user_data_path: Path,
+        budget_reservation_id: str | None = None,
+        budget_reserved_microusd: int | None = None,
     ) -> str:
         expires = ""
+        paid_started_at = ""
         if plan.paid:
+            if not budget_reservation_id or not budget_reserved_microusd:
+                raise RecoveryError(
+                    "paid OCI launch requires an external-compute budget reservation"
+                )
+            paid_started_at = datetime.now(UTC).isoformat()
             expires = (
                 datetime.now(UTC) + timedelta(hours=config.paid_ttl_hours)
             ).isoformat()
@@ -560,6 +580,14 @@ class OciCli:
         }
         if expires:
             tags["KatchaExpiresAt"] = expires
+            tags["KatchaPaidStartedAt"] = paid_started_at
+            tags["KatchaBudgetReservationId"] = budget_reservation_id
+            tags["KatchaBudgetReservedMicrousd"] = str(
+                budget_reserved_microusd
+            )
+            tags["KatchaEstimatedHourlyUsd"] = (
+                f"{config.paid_estimated_hourly_usd:.8f}"
+            )
         result = self.run(
             [
                 "compute",
@@ -1123,6 +1151,8 @@ class CandidateAttempt:
     recovery_mode: str
     previous_instance_id: str | None
     owns_recovery_volume: bool
+    budget_reservation_id: str | None = None
+    budget_reserved_microusd: int | None = None
 
 
 def _target_for_active(
@@ -1280,6 +1310,8 @@ def _launch_attempt(
     storage_mode: str,
     current_volume_id: str,
     recovery_mode: str,
+    budget_reservation_id: str | None = None,
+    budget_reserved_microusd: int | None = None,
 ) -> CandidateAttempt:
     owns_recovery_volume = storage_mode == "r2-restore"
     volume_id = current_volume_id
@@ -1310,6 +1342,8 @@ def _launch_attempt(
             data_volume_id=volume_id,
             storage_mode=storage_mode,
             user_data_path=user_data_path,
+            budget_reservation_id=budget_reservation_id,
+            budget_reserved_microusd=budget_reserved_microusd,
         )
         attempt = CandidateAttempt(
             instance_id=candidate_id,
@@ -1319,6 +1353,8 @@ def _launch_attempt(
             recovery_mode=recovery_mode,
             previous_instance_id=None,
             owns_recovery_volume=owns_recovery_volume,
+            budget_reservation_id=budget_reservation_id,
+            budget_reserved_microusd=budget_reserved_microusd,
         )
         if storage_mode == "existing-volume":
             attempt.previous_instance_id = switch_volume(
