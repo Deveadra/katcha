@@ -141,7 +141,18 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install -e .
-          python -m pip install 'oci-cli==3.94.1'
+          python -m venv /tmp/katcha-oci-cli
+          /tmp/katcha-oci-cli/bin/python -m pip install --upgrade pip
+          /tmp/katcha-oci-cli/bin/python -m pip install 'oci-cli==3.94.1'
+          echo "/tmp/katcha-oci-cli/bin" >> "$GITHUB_PATH"
+          python - <<'PY'
+          import cryptography
+          major = int(cryptography.__version__.split(".", 1)[0])
+          if major >= 47:
+              raise SystemExit(
+                  f"OCI CLI installation contaminated Katcha cryptography: {cryptography.__version__}"
+              )
+          PY
 
       - name: Build ephemeral off-OCI break-glass handoff
         if: github.event_name == 'workflow_dispatch' && inputs.secret_source == 'break-glass'
@@ -274,7 +285,18 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install -e .
-          python -m pip install 'oci-cli==3.94.1'
+          python -m venv /tmp/katcha-oci-cli
+          /tmp/katcha-oci-cli/bin/python -m pip install --upgrade pip
+          /tmp/katcha-oci-cli/bin/python -m pip install 'oci-cli==3.94.1'
+          echo "/tmp/katcha-oci-cli/bin" >> "$GITHUB_PATH"
+          python - <<'PY'
+          import cryptography
+          major = int(cryptography.__version__.split(".", 1)[0])
+          if major >= 47:
+              raise SystemExit(
+                  f"OCI CLI installation contaminated Katcha cryptography: {cryptography.__version__}"
+              )
+          PY
 
       - name: Configure OCI API authentication
         shell: bash
