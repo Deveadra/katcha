@@ -24,7 +24,7 @@ class BreakGlassLifecycleConfig:
     jurisdiction: str | None = None
 
     @classmethod
-    def from_env(cls) -> "BreakGlassLifecycleConfig":
+    def from_env(cls) -> BreakGlassLifecycleConfig:
         def required(name: str) -> str:
             value = os.environ.get(name, "").strip()
             if not value:
