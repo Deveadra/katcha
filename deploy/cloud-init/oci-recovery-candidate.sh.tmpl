@@ -143,11 +143,11 @@ case "$SECRET_SOURCE" in
     log "Restoring runtime secrets from ephemeral off-OCI handoff"
     python3 -m venv /opt/katcha-break-glass
     /opt/katcha-break-glass/bin/pip install --quiet 'cryptography>=45,<47'
+    KATCHA_BREAK_GLASS_HANDOFF_URL="$BREAK_GLASS_HANDOFF_URL" \
+    KATCHA_BREAK_GLASS_HANDOFF_KEY="$BREAK_GLASS_HANDOFF_KEY" \
     PYTHONPATH=/opt/katcha/src \
       /opt/katcha-break-glass/bin/python -m katcha.ops.break_glass \
       install-handoff \
-      --url "$BREAK_GLASS_HANDOFF_URL" \
-      --fernet-key "$BREAK_GLASS_HANDOFF_KEY" \
       --root /etc/katcha >/dev/null
     BREAK_GLASS_HANDOFF_KEY=""
     BREAK_GLASS_HANDOFF_URL=""
