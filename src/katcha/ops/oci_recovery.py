@@ -85,6 +85,8 @@ class RecoveryConfig:
     data_volume_fs_uuid: str
     production_env_secret_id: str
     aws_bundle_secret_id: str
+    backup_env_secret_id: str
+    restore_env_secret_id: str
     assign_public_ip: bool
     primary: ShapePlan
     fallback: ShapePlan
@@ -137,6 +139,8 @@ class RecoveryConfig:
             data_volume_fs_uuid=_env("KATCHA_OCI_DATA_VOLUME_FS_UUID"),
             production_env_secret_id=_env("KATCHA_OCI_PRODUCTION_ENV_SECRET_ID"),
             aws_bundle_secret_id=_env("KATCHA_OCI_AWS_BUNDLE_SECRET_ID"),
+            backup_env_secret_id=_env("KATCHA_OCI_BACKUP_ENV_SECRET_ID"),
+            restore_env_secret_id=_env("KATCHA_OCI_RESTORE_ENV_SECRET_ID"),
             assign_public_ip=_bool_env("KATCHA_OCI_ASSIGN_PUBLIC_IP", True),
             primary=ShapePlan(
                 mode="always-free-a1",
@@ -584,6 +588,8 @@ def render_bootstrap(
         "DATA_VOLUME_FS_UUID": config.data_volume_fs_uuid,
         "PRODUCTION_ENV_SECRET_ID": config.production_env_secret_id,
         "AWS_BUNDLE_SECRET_ID": config.aws_bundle_secret_id,
+        "BACKUP_ENV_SECRET_ID": config.backup_env_secret_id,
+        "RESTORE_ENV_SECRET_ID": config.restore_env_secret_id,
         "RECOVERY_COORDINATOR_URL": config.coordinator_url,
         "RECOVERY_CANDIDATE_TOKEN": config.candidate_token,
         "PUBLIC_HEALTH_URL": config.public_health_url,
