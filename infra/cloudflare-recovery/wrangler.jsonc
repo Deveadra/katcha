@@ -38,5 +38,7 @@
       "RECOVERY_DISPATCH_TOKEN",
       "EXTERNAL_COMPUTE_TOKEN"
     ]
-  }
+  },
+  "workers_dev": false,
+  "preview_urls": false
 }
