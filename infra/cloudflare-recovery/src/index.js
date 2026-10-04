@@ -366,7 +366,10 @@ export class RecoveryAuthority extends DurableObject {
             provider: tokenId(body.provider, "provider", 64),
             operation: tokenId(body.operation, "operation", 128),
             retryGroup: tokenId(body.retry_group, "retry_group"),
-            attempt: positiveInt(body.attempt, "attempt", 100),
+            attempt:
+              body.attempt === undefined || body.attempt === null
+                ? null
+                : positiveInt(body.attempt, "attempt", 100),
             estimatedCostMicrousd: positiveInt(
               body.estimated_cost_microusd,
               "estimated_cost_microusd",
