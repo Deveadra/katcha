@@ -56,6 +56,8 @@ env:
   KATCHA_BREAK_GLASS_R2_ENDPOINT_URL: ${{ vars.KATCHA_BREAK_GLASS_R2_ENDPOINT_URL }}
   KATCHA_BREAK_GLASS_R2_BUCKET: ${{ vars.KATCHA_BREAK_GLASS_R2_BUCKET }}
   KATCHA_BREAK_GLASS_R2_PREFIX: ${{ vars.KATCHA_BREAK_GLASS_R2_PREFIX }}
+  KATCHA_BREAK_GLASS_ESCROW_PREFIX: ${{ vars.KATCHA_BREAK_GLASS_ESCROW_PREFIX }}
+  KATCHA_BREAK_GLASS_ESCROW_OBJECT_KEY: ${{ vars.KATCHA_BREAK_GLASS_ESCROW_OBJECT_KEY }}
   KATCHA_BREAK_GLASS_R2_REGION: ${{ vars.KATCHA_BREAK_GLASS_R2_REGION }}
   KATCHA_BREAK_GLASS_R2_FORCE_PATH_STYLE: ${{ vars.KATCHA_BREAK_GLASS_R2_FORCE_PATH_STYLE }}
   KATCHA_BREAK_GLASS_HANDOFF_TTL_SECONDS: ${{ vars.KATCHA_BREAK_GLASS_HANDOFF_TTL_SECONDS }}
@@ -143,18 +145,9 @@ jobs:
         env:
           KATCHA_BREAK_GLASS_R2_ACCESS_KEY: ${{ secrets.KATCHA_BREAK_GLASS_R2_ACCESS_KEY }}
           KATCHA_BREAK_GLASS_R2_SECRET_KEY: ${{ secrets.KATCHA_BREAK_GLASS_R2_SECRET_KEY }}
-          BREAK_GLASS_PRODUCTION_ENV_B64: ${{ secrets.KATCHA_BREAK_GLASS_PRODUCTION_ENV_B64 }}
-          BREAK_GLASS_BACKUP_ENV_B64: ${{ secrets.KATCHA_BREAK_GLASS_BACKUP_ENV_B64 }}
-          BREAK_GLASS_RESTORE_ENV_B64: ${{ secrets.KATCHA_BREAK_GLASS_RESTORE_ENV_B64 }}
-          BREAK_GLASS_AWS_BUNDLE_B64: ${{ secrets.KATCHA_BREAK_GLASS_AWS_BUNDLE_B64 }}
+          KATCHA_BREAK_GLASS_ESCROW_KEY: ${{ secrets.KATCHA_BREAK_GLASS_ESCROW_KEY }}
         run: |
           set -euo pipefail
-          umask 077
-          workdir="$(mktemp -d)"
-          cleanup() {
-            rm -rf "$workdir"
-          }
-          trap cleanup EXIT
 
           require_secret() {
             local name="$1"
@@ -164,24 +157,18 @@ jobs:
               exit 41
             fi
           }
+
           require_secret KATCHA_BREAK_GLASS_R2_ACCESS_KEY "$KATCHA_BREAK_GLASS_R2_ACCESS_KEY"
           require_secret KATCHA_BREAK_GLASS_R2_SECRET_KEY "$KATCHA_BREAK_GLASS_R2_SECRET_KEY"
-          require_secret KATCHA_BREAK_GLASS_PRODUCTION_ENV_B64 "$BREAK_GLASS_PRODUCTION_ENV_B64"
-          require_secret KATCHA_BREAK_GLASS_BACKUP_ENV_B64 "$BREAK_GLASS_BACKUP_ENV_B64"
-          require_secret KATCHA_BREAK_GLASS_RESTORE_ENV_B64 "$BREAK_GLASS_RESTORE_ENV_B64"
-          require_secret KATCHA_BREAK_GLASS_AWS_BUNDLE_B64 "$BREAK_GLASS_AWS_BUNDLE_B64"
-
-          printf '%s' "$BREAK_GLASS_PRODUCTION_ENV_B64" | base64 --decode > "$workdir/katcha.env"
-          printf '%s' "$BREAK_GLASS_BACKUP_ENV_B64" | base64 --decode > "$workdir/backup.env"
-          printf '%s' "$BREAK_GLASS_RESTORE_ENV_B64" | base64 --decode > "$workdir/restore.env"
-          printf '%s' "$BREAK_GLASS_AWS_BUNDLE_B64" | base64 --decode > "$workdir/aws_bundle.tgz"
+          require_secret KATCHA_BREAK_GLASS_ESCROW_KEY "$KATCHA_BREAK_GLASS_ESCROW_KEY"
+          if [[ -z "${KATCHA_BREAK_GLASS_ESCROW_OBJECT_KEY:-}" ]]; then
+            echo "Missing KATCHA_BREAK_GLASS_ESCROW_OBJECT_KEY repository variable." >&2
+            exit 42
+          fi
 
           result="$(
-            python -m katcha.ops.break_glass create-handoff \
-              --production-env "$workdir/katcha.env" \
-              --backup-env "$workdir/backup.env" \
-              --restore-env "$workdir/restore.env" \
-              --aws-bundle "$workdir/aws_bundle.tgz" \
+            python -m katcha.ops.break_glass create-handoff-from-escrow \
+              --escrow-object-key "$KATCHA_BREAK_GLASS_ESCROW_OBJECT_KEY" \
               --ttl-seconds "${KATCHA_BREAK_GLASS_HANDOFF_TTL_SECONDS:-1800}"
           )"
 
