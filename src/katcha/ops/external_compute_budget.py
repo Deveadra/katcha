@@ -88,6 +88,7 @@ class ExternalComputeBudgetClient:
         attempt: int | None,
         estimated_cost_microusd: int,
         ttl_seconds: int,
+        settle_on_expiry: bool = False,
         metadata: dict[str, object] | None = None,
     ) -> ExternalComputeReservation:
         data = self._request(
@@ -100,6 +101,7 @@ class ExternalComputeBudgetClient:
                 "attempt": attempt,
                 "estimated_cost_microusd": estimated_cost_microusd,
                 "ttl_seconds": ttl_seconds,
+                "settle_on_expiry": settle_on_expiry,
                 "metadata": metadata or {},
             },
         )
