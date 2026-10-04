@@ -1,0 +1,9 @@
+# Katcha break-glass recipients are PUBLIC keys only.
+# Generate an offline identity:
+#   age-keygen -o katcha-breakglass.identity
+# Print its public recipient:
+#   age-keygen -y katcha-breakglass.identity
+#
+# Replace the placeholder below with one or more real age recipients.
+# Never commit the corresponding identity/private key.
+age1REPLACE_WITH_REAL_OFFLINE_RECIPIENT
