@@ -23,5 +23,20 @@
   },
   "observability": {
     "enabled": true
+  },
+  "routes": [
+    {
+      "pattern": "recovery.katcha.stream",
+      "custom_domain": true
+    }
+  ],
+  "secrets": {
+    "required": [
+      "FENCE_TOKEN",
+      "RECOVERY_ADMIN_TOKEN",
+      "RECOVERY_CANDIDATE_TOKEN",
+      "RECOVERY_DISPATCH_TOKEN",
+      "EXTERNAL_COMPUTE_TOKEN"
+    ]
   }
 }

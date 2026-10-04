@@ -12,6 +12,13 @@ passed.
 
 The target architecture is:
 
+The current live provisioning selections are:
+
+- OCI tenancy: `AerithDimensional`, identity domain `Default`, home region `us-ashburn-1`,
+- Cloudflare zone: `katcha.stream`,
+- production application hostname: `app.katcha.stream`,
+- recovery coordinator hostname: `recovery.katcha.stream`.
+
 - OCI Ampere A1 Always Free as the normal near-$0 control plane,
 - Cloudflare Tunnel as the only application ingress,
 - Cloudflare Access/WAF/rate limiting at the edge,
