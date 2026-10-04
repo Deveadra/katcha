@@ -343,9 +343,12 @@ class Runtime:
         ).stdout
 
     def resource_snapshot(self):
+        disk = shutil.disk_usage(self.root)
         host = {
             "cpu_count": os.cpu_count(),
-            "disk_free_bytes": shutil.disk_usage(self.root).free,
+            "disk_total_bytes": disk.total,
+            "disk_used_bytes": disk.used,
+            "disk_free_bytes": disk.free,
         }
         if hasattr(os, "getloadavg"):
             host["load_average"] = os.getloadavg()
@@ -357,8 +360,16 @@ class Runtime:
                 for key, value in [line.split(":", 1)]
                 if key in {"MemTotal", "MemAvailable", "SwapTotal", "SwapFree"}
             }
+        memory_events = Path("/sys/fs/cgroup/memory.events")
+        if memory_events.exists():
+            with contextlib.suppress(OSError, ValueError):
+                host["cgroup_memory_events"] = {
+                    key: int(value)
+                    for line in memory_events.read_text().splitlines()
+                    for key, value in [line.split(None, 1)]
+                }
 
-        result = {"host": host, "containers": []}
+        result = {"host": host, "containers": [], "container_state": []}
         try:
             ids = self._diagnostic_command(
                 [
@@ -371,6 +382,22 @@ class Runtime:
                 timeout=5,
             ).split()
             if ids:
+                inspected = json.loads(
+                    self._diagnostic_command(["docker", "inspect", *ids], timeout=10)
+                )
+                result["container_state"] = [
+                    {
+                        "service": row.get("Config", {})
+                        .get("Labels", {})
+                        .get("com.docker.compose.service"),
+                        "status": row.get("State", {}).get("Status"),
+                        "oom_killed": row.get("State", {}).get("OOMKilled"),
+                        "exit_code": row.get("State", {}).get("ExitCode"),
+                        "restart_count": row.get("RestartCount"),
+                        "health": row.get("State", {}).get("Health", {}).get("Status"),
+                    }
+                    for row in inspected
+                ]
                 output = self._diagnostic_command(
                     [
                         "docker",
