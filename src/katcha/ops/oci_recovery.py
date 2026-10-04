@@ -16,6 +16,8 @@ from typing import Any
 import httpx
 from cryptography.fernet import Fernet
 
+from katcha.ops.external_compute_budget import ExternalComputeBudgetClient
+
 
 class RecoveryError(RuntimeError):
     pass
@@ -355,7 +357,10 @@ class CoordinatorClient:
     def __init__(self, config: RecoveryConfig) -> None:
         self.base = config.coordinator_url
         self.admin_token = config.coordinator_admin_token
-        self.compute_token = config.external_compute_token
+        self.compute_budget = ExternalComputeBudgetClient(
+            coordinator_url=config.coordinator_url,
+            token=config.external_compute_token,
+        )
 
     def _request(
         self,
@@ -443,21 +448,29 @@ class CoordinatorClient:
         ttl_seconds: int,
         metadata: dict[str, object] | None = None,
     ) -> dict[str, Any]:
-        return self._request(
-            "POST",
-            "/v1/external-compute/reserve",
-            token=self.compute_token,
-            payload={
-                "job_key": job_key,
-                "provider": provider,
-                "operation": operation,
-                "retry_group": retry_group,
-                "attempt": attempt,
-                "estimated_cost_microusd": estimated_cost_microusd,
-                "ttl_seconds": ttl_seconds,
-                "metadata": metadata or {},
-            },
+        reservation = self.compute_budget.reserve(
+            job_key=job_key,
+            provider=provider,
+            operation=operation,
+            retry_group=retry_group,
+            attempt=attempt,
+            estimated_cost_microusd=estimated_cost_microusd,
+            ttl_seconds=ttl_seconds,
+            metadata=metadata,
         )
+        return {
+            "reservation": {
+                "id": reservation.id,
+                "status": reservation.status,
+                "provider": reservation.provider,
+                "job_key": reservation.job_key,
+                "retry_group": reservation.retry_group,
+                "estimated_cost_microusd": (
+                    reservation.estimated_cost_microusd
+                ),
+            },
+            "reused": reservation.reused,
+        }
 
     def settle_external_compute(
         self,
@@ -466,15 +479,10 @@ class CoordinatorClient:
         actual_cost_microusd: int,
         metadata: dict[str, object] | None = None,
     ) -> dict[str, Any]:
-        return self._request(
-            "POST",
-            "/v1/external-compute/settle",
-            token=self.compute_token,
-            payload={
-                "reservation_id": reservation_id,
-                "actual_cost_microusd": actual_cost_microusd,
-                "metadata": metadata or {},
-            },
+        return self.compute_budget.settle(
+            reservation_id,
+            actual_cost_microusd=actual_cost_microusd,
+            metadata=metadata,
         )
 
     def release_external_compute(
@@ -483,14 +491,9 @@ class CoordinatorClient:
         *,
         reason: str,
     ) -> dict[str, Any]:
-        return self._request(
-            "POST",
-            "/v1/external-compute/release",
-            token=self.compute_token,
-            payload={
-                "reservation_id": reservation_id,
-                "reason": reason,
-            },
+        return self.compute_budget.release(
+            reservation_id,
+            reason=reason,
         )
 
 
