@@ -12,7 +12,7 @@ EnvironmentFile=/etc/katcha/katcha.env
 Environment=KATCHA_REPO_ROOT=/opt/katcha
 Environment=KATCHA_ENV_FILE=/etc/katcha/katcha.env
 Environment=KATCHA_BACKUP_ENV_FILE=/etc/katcha/backup.env
-ExecStart=/opt/katcha/deploy/scripts/postgres-backup.sh
+ExecStart=/bin/bash /opt/katcha/deploy/scripts/postgres-backup.sh
 Nice=10
 IOSchedulingClass=best-effort
 IOSchedulingPriority=7
