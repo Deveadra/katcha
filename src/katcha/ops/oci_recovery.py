@@ -110,6 +110,7 @@ class RecoveryConfig:
     cross_ad_volume_size_gb: int
     cross_ad_device_path: str
     cross_ad_max_backup_age_seconds: int
+    retired_volume_grace_hours: int
     bootstrap_template: Path
 
     @classmethod
@@ -221,6 +222,9 @@ class RecoveryConfig:
             cross_ad_max_backup_age_seconds=int(
                 _env("KATCHA_OCI_CROSS_AD_MAX_BACKUP_AGE_SECONDS", default="7200")
             ),
+            retired_volume_grace_hours=int(
+                _env("KATCHA_OCI_RETIRED_VOLUME_GRACE_HOURS", default="72")
+            ),
             bootstrap_template=Path(
                 _env(
                     "KATCHA_OCI_RECOVERY_BOOTSTRAP_TEMPLATE",
@@ -257,6 +261,13 @@ class RecoveryConfig:
             raise RecoveryError("cross-AD data volume must be at least 50 GB")
         if self.cross_ad_max_backup_age_seconds < 900:
             raise RecoveryError("cross-AD backup freshness window must be at least 900 seconds")
+        if (
+            self.retired_volume_grace_hours < 24
+            or self.retired_volume_grace_hours > 720
+        ):
+            raise RecoveryError(
+                "retired volume grace period must be between 24 and 720 hours"
+            )
         if not self.cross_ad_device_path.startswith("/dev/oracleoci/"):
             raise RecoveryError("cross-AD recovery requires a consistent OCI device path")
         seen_targets = {(self.availability_domain, self.subnet_id)}
