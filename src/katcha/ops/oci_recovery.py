@@ -1208,34 +1208,34 @@ def _resume_existing_candidate(
         availability_domain=_availability_domain(candidate) or config.availability_domain,
         subnet_id=tags.get("KatchaSubnetId", "").strip() or config.subnet_id,
     )
-    previous_instance_id: str | None = None
-    if storage_mode == "r2-restore":
-        _ensure_volume_attached(
-            oci,
-            config,
-            candidate_id=candidate_id,
-            volume_id=volume_id,
-        )
-    else:
-        previous_instance_id = switch_volume(
-            oci,
-            config,
-            candidate_id,
-            volume_id,
-        )
-        if previous_instance_id is None:
-            previous_instance_id = rollback_instance_id
-
     attempt = CandidateAttempt(
         instance_id=candidate_id,
         target=target,
         volume_id=volume_id,
         storage_mode=storage_mode,
         recovery_mode=tags.get("KatchaRecoveryMode", "existing-candidate"),
-        previous_instance_id=previous_instance_id,
+        previous_instance_id=None,
         owns_recovery_volume=storage_mode == "r2-restore",
     )
+
     try:
+        if storage_mode == "r2-restore":
+            _ensure_volume_attached(
+                oci,
+                config,
+                candidate_id=candidate_id,
+                volume_id=volume_id,
+            )
+        else:
+            attempt.previous_instance_id = switch_volume(
+                oci,
+                config,
+                candidate_id,
+                volume_id,
+            )
+            if attempt.previous_instance_id is None:
+                attempt.previous_instance_id = rollback_instance_id
+
         wait_for_candidate_ready(
             coordinator,
             deployment_id=deployment_id,
