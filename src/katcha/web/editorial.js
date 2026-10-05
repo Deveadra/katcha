@@ -2,7 +2,7 @@
 window.KatchaEditorial = (() => {
     const el = (id) => document.getElementById(id);
     const esc = (value) => String(value ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
-    const state = { channel: "", epoch: 0, project: null, revision: null, run: null, busy: false, timer: null, editorKey: "" };
+    const state = { channel: "", epoch: 0, project: null, revision: null, run: null, busy: false, timer: null, editorKey: "", sourceClipBindings: {}, clipResults: [], clipPickerEpoch: 0, clipSearchTimer: null };
     let api, apiBlob;
     function clearPreview() {
         if (state.previewUrl) URL.revokeObjectURL(state.previewUrl);
@@ -28,10 +28,40 @@ window.KatchaEditorial = (() => {
         try { const parsed = new URL(url); return ["https:", "http:"].includes(parsed.protocol) ? esc(parsed.href) : "#"; }
         catch { return "#"; }
     }
+    function sourceUrls() {
+        return el("editorial-urls").value.split(/\s+/).filter(Boolean);
+    }
+    function clipLabel(item) {
+        return item.title || item.creator || `${item.platform || "Stored"} clip · ${String(item.clip_id || item.id).slice(0, 8)}`;
+    }
+    function duration(value) {
+        const seconds = Number(value);
+        if (!Number.isFinite(seconds)) return "duration unavailable";
+        const minutes = Math.floor(seconds / 60);
+        const remainder = Math.round(seconds % 60);
+        return minutes ? `${minutes}m ${String(remainder).padStart(2, "0")}s` : `${Math.round(seconds)}s`;
+    }
+    function reconcileSourceClipBindings() {
+        const urls = new Set(sourceUrls());
+        state.sourceClipBindings = Object.fromEntries(
+            Object.entries(state.sourceClipBindings || {}).filter(([url]) => urls.has(url)),
+        );
+    }
+    function renderSelectedClips() {
+        const entries = Object.entries(state.sourceClipBindings || {});
+        el("editorial-selected-clips").innerHTML = entries.length ? entries.map(([url, item]) => `
+            <article class="editorial-selected-clip">
+                <div><strong>${esc(clipLabel(item))}</strong><small>${esc(item.creator || item.platform || "Managed Katcha media")} · ${esc(duration(item.duration_seconds))}</small><a href="${safeLink(url)}" target="_blank" rel="noopener noreferrer">${esc(url)}</a></div>
+                <button type="button" class="mini" data-editorial-unpin-clip="${esc(url)}">Use URL instead</button>
+            </article>`).join("") : '<p class="empty">No managed clips pinned. Source links will be acquired only when needed.</p>';
+    }
     function saveBrief() {
-        if (state.channel) remember(storageKey("brief"), {
+        if (!state.channel) return;
+        reconcileSourceClipBindings();
+        renderSelectedClips();
+        remember(storageKey("brief"), {
             prompt: el("editorial-prompt").value, urls: el("editorial-urls").value,
-            seconds: el("editorial-duration").value,
+            seconds: el("editorial-duration").value, sourceClipBindings: state.sourceClipBindings,
         });
     }
     function restoreBrief() {
@@ -39,6 +69,71 @@ window.KatchaEditorial = (() => {
         el("editorial-prompt").value = value.prompt || "";
         el("editorial-urls").value = value.urls || "";
         el("editorial-duration").value = value.seconds || "420";
+        state.sourceClipBindings = value.sourceClipBindings || {};
+        reconcileSourceClipBindings();
+        renderSelectedClips();
+    }
+    function renderClipResults() {
+        const selectedIds = new Set(Object.values(state.sourceClipBindings || {}).map(item => item.clip_id));
+        const rows = (state.clipResults || []).filter(item => item.status !== "failed" && item.lifecycle_state !== "purged");
+        el("editorial-clip-results").innerHTML = rows.length ? rows.map(item => `
+            <article class="editorial-clip-result">
+                <div><strong>${esc(clipLabel(item))}</strong><small>${esc(item.creator || item.platform || "Stored media")} · ${esc(duration(item.duration_seconds))} · ${esc(String(item.status || "ready").replaceAll("_", " "))}</small></div>
+                <button type="button" class="mini" data-editorial-use-clip="${esc(item.id)}" ${selectedIds.has(item.id) ? "disabled" : ""}>${selectedIds.has(item.id) ? "Pinned" : "Use clip"}</button>
+            </article>`).join("") : '<p class="empty">No reusable channel clips match this search.</p>';
+    }
+    async function loadClipPicker(query = "") {
+        if (!state.channel) return;
+        const requestEpoch = ++state.clipPickerEpoch;
+        el("editorial-clip-results").innerHTML = '<p class="empty">Searching channel clips…</p>';
+        const params = new URLSearchParams({channel_profile_id: state.channel, lifecycle_state: "hot", limit: "20"});
+        if (query.trim()) params.set("q", query.trim());
+        try {
+            const result = await api(`/v1/clips/library?${params}`);
+            if (requestEpoch !== state.clipPickerEpoch) return;
+            state.clipResults = result.items || [];
+            renderClipResults();
+        } catch (error) {
+            if (requestEpoch !== state.clipPickerEpoch) return;
+            el("editorial-clip-results").innerHTML = `<p class="empty error">${esc(error.message)}</p>`;
+        }
+    }
+    async function pinManagedClip(clipId) {
+        const clip = state.clipResults.find(item => item.id === clipId);
+        if (!clip) throw new Error("Refresh the clip picker and choose the clip again.");
+        const sources = await api(`/v1/clips/${encodeURIComponent(clipId)}/sources`);
+        const source = sources.find(item => {
+            try {
+                const parsed = new URL(item.canonical_url || item.source_url);
+                return ["https:", "http:"].includes(parsed.protocol);
+            } catch { return false; }
+        });
+        if (!source) throw new Error("This clip has no reusable source lineage. Open Clip Library to inspect it.");
+        const sourceUrl = source.canonical_url || source.source_url;
+        const existingForClip = Object.entries(state.sourceClipBindings).find(([, item]) => item.clip_id === clipId);
+        if (existingForClip && existingForClip[0] !== sourceUrl) delete state.sourceClipBindings[existingForClip[0]];
+        state.sourceClipBindings[sourceUrl] = {
+            clip_id: clip.id, title: clip.title, creator: clip.creator, platform: clip.platform,
+            duration_seconds: clip.duration_seconds,
+        };
+        const urls = sourceUrls();
+        if (!urls.includes(sourceUrl)) {
+            el("editorial-urls").value = [...urls, sourceUrl].join("\n");
+        }
+        saveBrief();
+        renderClipResults();
+        feedback(`${clipLabel(clip)} pinned. Katcha will reuse this managed media for the source.`);
+    }
+    function renderProjectSources() {
+        if (!state.project) return;
+        const bindings = state.project.brief?.source_clip_bindings || {};
+        el("editorial-source-bindings").innerHTML = (state.project.brief?.source_urls || []).map(url => {
+            const value = String(url);
+            const managed = bindings[value];
+            let host = value;
+            try { host = new URL(value).hostname.replace(/^www\./, ""); } catch {}
+            return `<span class="editorial-source-chip ${managed ? "managed" : ""}">${managed ? "Managed clip" : "Source URL"} · ${esc(host)}</span>`;
+        }).join("");
     }
     async function guarded(action) {
         if (state.busy || !state.channel) return;
@@ -64,6 +159,7 @@ window.KatchaEditorial = (() => {
             el("editorial-narration-confirm").checked = false;
             window.KatchaEditorialHistory.reset();
             clearPreview(); state.boardKey = ""; state.assetRun = null; state.imageFormKey = ""; el("editorial-image-file").value = ""; el("editorial-image-confirm").checked = false;
+            clearTimeout(state.clipSearchTimer); state.clipPickerEpoch += 1; state.clipResults = []; state.sourceClipBindings = {};
             state.project = null; state.revision = null; state.run = null; state.editorKey = ""; state.renderKey = "";
             el("editorial-detail").hidden = true;
         }
@@ -75,7 +171,7 @@ window.KatchaEditorial = (() => {
             const rows = await api(path(channel, "?limit=100"));
             if (epoch !== state.epoch) return;
             el("editorial-projects").innerHTML = rows.length ? rows.map((row) => `
-                <article class="item"><div><h3>${esc(row.brief.prompt)}</h3><p>${row.brief.source_urls.length} source(s) · Revision ${row.revision}</p></div>
+                <article class="item"><div><h3>${esc(row.brief.prompt)}</h3><p>${row.brief.source_urls.length} source(s) · ${Object.keys(row.brief.source_clip_bindings || {}).length} managed · Revision ${row.revision}</p></div>
                 <button type="button" class="mini" data-open-editorial="${esc(row.id)}">Open project</button></article>`).join("")
                 : '<div class="empty">No editorial projects yet. Add a brief and a source link to create one.</div>';
             if (state.project) await open(state.project.id, { focus: false });
@@ -121,6 +217,7 @@ window.KatchaEditorial = (() => {
             : "Brief saved. Choose source analysis or research and scripting.";
         el("editorial-discard").hidden = !state.stale;
         feedback(run?.error || "Project loaded. Generated claims and scripts need editorial review.", Boolean(run?.error));
+        renderProjectSources();
         renderActions(); renderEvidence(); renderScript(); renderImages(); renderStoryboard(); renderDirection(); renderReview(); renderNarration(); renderActions();
         setAiLinks(); restoreStage();
         if (state.stale) feedback("A newer script revision is available. Your unsaved text is retained below. Copy it before discarding edits to load the latest version.", true);
@@ -367,6 +464,28 @@ window.KatchaEditorial = (() => {
     }
     function init(transport, blobTransport) {
         api = transport; apiBlob = blobTransport;
+        el("editorial-source-picker").addEventListener("toggle", () => {
+            if (el("editorial-source-picker").open && state.channel) void loadClipPicker(el("editorial-clip-search").value);
+        });
+        el("editorial-clip-search").addEventListener("input", () => {
+            clearTimeout(state.clipSearchTimer);
+            state.clipSearchTimer = setTimeout(() => void loadClipPicker(el("editorial-clip-search").value), 250);
+        });
+        el("editorial-clip-results").addEventListener("click", (event) => {
+            const button = event.target.closest("[data-editorial-use-clip]");
+            if (!button) return;
+            button.disabled = true;
+            void pinManagedClip(button.dataset.editorialUseClip)
+                .catch((error) => { feedback(error.message, true); renderClipResults(); });
+        });
+        el("editorial-selected-clips").addEventListener("click", (event) => {
+            const button = event.target.closest("[data-editorial-unpin-clip]");
+            if (!button) return;
+            delete state.sourceClipBindings[button.dataset.editorialUnpinClip];
+            saveBrief();
+            renderClipResults();
+            feedback("Managed clip unpinned. The source URL remains available for normal intake.");
+        });
         el("editorial-stage-tabs").addEventListener("click", (event) => {
             const button = event.target.closest("[data-editorial-stage]");
             if (button) selectStage(button.dataset.editorialStage);
@@ -528,7 +647,15 @@ window.KatchaEditorial = (() => {
             event.preventDefault();
             void guarded(async () => {
                 const channel = state.channel;
-                const payload = { brief: { prompt: el("editorial-prompt").value.trim(), source_urls: el("editorial-urls").value.split(/\s+/).filter(Boolean), target_duration_seconds: Number(el("editorial-duration").value) } };
+                reconcileSourceClipBindings();
+                const payload = { brief: {
+                    prompt: el("editorial-prompt").value.trim(),
+                    source_urls: sourceUrls(),
+                    source_clip_bindings: Object.fromEntries(
+                        Object.entries(state.sourceClipBindings).map(([url, item]) => [url, item.clip_id]),
+                    ),
+                    target_duration_seconds: Number(el("editorial-duration").value),
+                } };
                 payload.idempotency_key = identity("create", payload);
                 const row = await api(path(channel), { method: "POST", body: JSON.stringify(payload) });
                 if (channel === state.channel) { await load(channel); await open(row.id); }
