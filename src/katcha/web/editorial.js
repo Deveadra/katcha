@@ -44,7 +44,7 @@ window.KatchaEditorial = (() => {
         if (state.busy || !state.channel) return;
         state.busy = true;
         el("editorial-form-fields").disabled = true;
-        el("editorial-detail").querySelectorAll("button").forEach((button) => { button.disabled = true; });
+        el("editorial-detail").querySelectorAll("button:not([data-editorial-stage])").forEach((button) => { button.disabled = true; });
         const channel = state.channel;
         try { await action(); }
         catch (error) { if (channel === state.channel) feedback(error.message, true); }
@@ -122,6 +122,7 @@ window.KatchaEditorial = (() => {
         el("editorial-discard").hidden = !state.stale;
         feedback(run?.error || "Project loaded. Generated claims and scripts need editorial review.", Boolean(run?.error));
         renderActions(); renderEvidence(); renderScript(); renderImages(); renderStoryboard(); renderDirection(); renderReview(); renderNarration(); renderActions();
+        setAiLinks(); restoreStage();
         if (state.stale) feedback("A newer script revision is available. Your unsaved text is retained below. Copy it before discarding edits to load the latest version.", true);
         if (focus) el("editorial-title").focus();
         if (run && ["queued", "running"].includes(run.status)) {
@@ -147,7 +148,7 @@ window.KatchaEditorial = (() => {
             : '<button class="mini" type="button" data-editorial-action="analysis">Analyze sources</button><button class="button primary" type="button" data-editorial-action="script">Research and draft script</button>'
                 + (canResume ? '<button class="mini" type="button" data-editorial-action="resume">Resume saved work</button>' : "");
         if (!active && state.revision?.draft.script?.length) el("editorial-actions").insertAdjacentHTML("beforeend", '<button class="mini" type="button" data-editorial-action="assets">Find supporting assets</button>');
-        el("editorial-detail").querySelectorAll("button").forEach((button) => { button.disabled = state.busy; });
+        el("editorial-detail").querySelectorAll("button:not([data-editorial-stage])").forEach((button) => { button.disabled = state.busy; });
         el("editorial-save-script").disabled = state.busy || !state.revision || Boolean(active) || state.stale;
         assetControls();
         el("editorial-render").disabled = state.busy || Boolean(active) || state.stale || !state.revision?.draft.script?.length || Boolean(read(storageKey(`pending.${state.project.id}`), null));
@@ -324,8 +325,64 @@ window.KatchaEditorial = (() => {
             visual_intent: el("editorial-script").querySelector(`[data-beat-visual="${index}"]`).value,
         }));
     }
+
+    const EDITORIAL_STAGES = ["research", "script", "assets", "storyboard", "preview"];
+    function stageKey() {
+        return state.project ? storageKey(`stage.${state.project.id}`) : "";
+    }
+    function selectStage(stage, {focus = false, persist = true} = {}) {
+        if (!EDITORIAL_STAGES.includes(stage)) stage = "research";
+        el("editorial-stage-tabs").querySelectorAll("[data-editorial-stage]").forEach((button) => {
+            const active = button.dataset.editorialStage === stage;
+            button.setAttribute("aria-selected", active ? "true" : "false");
+            button.tabIndex = active ? 0 : -1;
+            if (active && focus) button.focus();
+        });
+        document.querySelectorAll("[data-editorial-stage-panel]").forEach((panel) => {
+            panel.hidden = panel.dataset.editorialStagePanel !== stage;
+        });
+        if (persist && state.project) remember(stageKey(), stage);
+    }
+    function restoreStage() {
+        selectStage(read(stageKey(), "research"), {persist: false});
+    }
+    function setAiLinks() {
+        if (!state.project) return;
+        const title = state.project.brief?.prompt || "the current editorial project";
+        const prompts = {
+            research: `Inspect editorial project ${state.project.id} for "${title}". Review source observations, evidence quality, contradictions and research gaps. Do not invent evidence. Recommend the next research action.`,
+            script: `Inspect editorial project ${state.project.id} for "${title}". Help improve the current script while preserving evidence links, uncertainty wording, pacing and viewer payoff. Flag unsupported lines instead of rewriting them as facts.`,
+            assets: `Inspect editorial project ${state.project.id} for "${title}". Help fill the current asset requests using relevant, rights-aware supporting media. Prefer clear provenance and explain any gaps that need operator-supplied material.`,
+            storyboard: `Inspect editorial project ${state.project.id} for "${title}". Review the visual direction and storyboard for pacing, evidence alignment, repetition and clarity. Suggest changes using cleared project assets; keep every suggestion operator-reviewable.`,
+            preview: `Inspect editorial project ${state.project.id} for "${title}". Review render/review status, blockers and downstream publication readiness. Identify what still needs operator verification before approval.`,
+        };
+        document.querySelectorAll("[data-editorial-ai]").forEach((link) => {
+            const prompt = prompts[link.dataset.editorialAi] || prompts.research;
+            link.href = "/ai?" + new URLSearchParams({focus: "chat", channel: state.channel, prompt}).toString();
+        });
+    }
+    function advanceStage(stage) {
+        selectStage(stage);
+        el("editorial-stage-tabs").scrollIntoView({block: "nearest", behavior: "smooth"});
+    }
     function init(transport, blobTransport) {
         api = transport; apiBlob = blobTransport;
+        el("editorial-stage-tabs").addEventListener("click", (event) => {
+            const button = event.target.closest("[data-editorial-stage]");
+            if (button) selectStage(button.dataset.editorialStage);
+        });
+        el("editorial-stage-tabs").addEventListener("keydown", (event) => {
+            if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+            const current = EDITORIAL_STAGES.indexOf(event.target.dataset.editorialStage);
+            if (current < 0) return;
+            event.preventDefault();
+            let next = current;
+            if (event.key === "ArrowLeft") next = (current - 1 + EDITORIAL_STAGES.length) % EDITORIAL_STAGES.length;
+            if (event.key === "ArrowRight") next = (current + 1) % EDITORIAL_STAGES.length;
+            if (event.key === "Home") next = 0;
+            if (event.key === "End") next = EDITORIAL_STAGES.length - 1;
+            selectStage(EDITORIAL_STAGES[next], {focus: true});
+        });
         el("editorial-narration-billing").addEventListener("click", event => {
             const button = event.target.closest("[data-billing-save]");
             if (!button) return;
@@ -337,7 +394,7 @@ window.KatchaEditorial = (() => {
                 const channel = state.channel; const project = state.project.id; const run = state.run.editorial_run_id;
                 payload.idempotency_key = identity(`speech-billing.${run}.${payload.beat_id}`, payload);
                 await api(path(channel, `/${project}/runs/${run}/narration-billing`), {method: "POST", body: JSON.stringify(payload)});
-                if (channel === state.channel) await open(project, {focus: false});
+                if (channel === state.channel) { await open(project, {focus: false}); advanceStage("storyboard"); }
             });
         });
         el("editorial-generate-narration").addEventListener("click", () => void guarded(async () => {
@@ -348,7 +405,7 @@ window.KatchaEditorial = (() => {
             const payload = {target: "narration", expected_revision: state.project.revision, confirm_narration: true, max_narration_estimate_usd: limit};
             payload.idempotency_key = identity(`generate-narration.${project}`, payload);
             await api(path(channel, `/${project}/runs`), {method: "POST", body: JSON.stringify(payload)});
-            if (channel === state.channel) await open(project, {focus: false});
+            if (channel === state.channel) { await open(project, {focus: false}); advanceStage("storyboard"); }
         }));
         el("editorial-image-form").addEventListener("input", saveImageForm);
         el("editorial-image-upload").addEventListener("click", () => void guarded(async () => {
@@ -427,7 +484,7 @@ window.KatchaEditorial = (() => {
                 payload.idempotency_key = identity(`review.${run}`, payload);
                 await api(path(channel, `/${project}/runs/${run}/review`), {method: "POST", body: JSON.stringify(payload)});
                 sessionStorage.removeItem(key);
-                if (channel === state.channel) await open(project, {focus: false});
+                if (channel === state.channel) { await open(project, {focus: false}); advanceStage("preview"); }
             }));
         }
         el("editorial-direct").addEventListener("click", () => void guarded(async () => {
@@ -435,7 +492,7 @@ window.KatchaEditorial = (() => {
             const payload = {target: "direction", expected_revision: state.project.revision, asset_run_id: state.assetRun.editorial_run_id, direction: directionOptions()};
             payload.idempotency_key = identity(`direction.${project}`, payload);
             await api(path(channel, `/${project}/runs`), {method: "POST", body: JSON.stringify(payload)});
-            if (channel === state.channel) await open(project, {focus: false});
+            if (channel === state.channel) { await open(project, {focus: false}); advanceStage("storyboard"); }
         }));
         el("editorial-render-directed").addEventListener("click", () => void guarded(async () => {
             const channel = state.channel; const project = state.project.id;
@@ -444,7 +501,7 @@ window.KatchaEditorial = (() => {
             await api(path(channel, `/${project}/storyboard/preflight`), {method: "POST", body: JSON.stringify({expected_revision: payload.expected_revision, asset_run_id: payload.asset_run_id, plan: payload.storyboard})});
             payload.idempotency_key = identity(`render.${project}`, payload);
             await api(path(channel, `/${project}/runs`), {method: "POST", body: JSON.stringify(payload)});
-            if (channel === state.channel) await open(project, {focus: false});
+            if (channel === state.channel) { await open(project, {focus: false}); advanceStage("preview"); }
         }));
         const persistStoryboardChoice = () => { saveStoryboard(); showFootageControls(); };
         el("editorial-storyboard").addEventListener("input", persistStoryboardChoice);
@@ -455,7 +512,7 @@ window.KatchaEditorial = (() => {
             await api(path(channel, `/${project}/storyboard/preflight`), {method: "POST", body: JSON.stringify({expected_revision: payload.expected_revision, asset_run_id: payload.asset_run_id, plan: payload.storyboard})});
             payload.idempotency_key = identity(`render.${project}`, payload);
             await api(path(channel, `/${project}/runs`), {method: "POST", body: JSON.stringify(payload)});
-            if (channel === state.channel) await open(project, {focus: false});
+            if (channel === state.channel) { await open(project, {focus: false}); advanceStage("preview"); }
         }));
         el("editorial-play").addEventListener("click", () => void guarded(async () => {
             const epoch = state.epoch;
@@ -463,6 +520,7 @@ window.KatchaEditorial = (() => {
             if (epoch !== state.epoch) return;
             clearPreview(); state.previewUrl = URL.createObjectURL(blob);
             el("editorial-preview").src = state.previewUrl; el("editorial-preview").hidden = false;
+            advanceStage("preview");
             feedback("Preview loaded. Review the evidence, timing and media before publication.");
         }));
         el("editorial-form").addEventListener("input", saveBrief);
@@ -496,7 +554,10 @@ window.KatchaEditorial = (() => {
                     payload.idempotency_key = identity(`start.${project}`, payload);
                 }
                 await api(path(channel, suffix), { method: "POST", body: JSON.stringify(payload) });
-                if (channel === state.channel) await open(project, { focus: false });
+                if (channel === state.channel) {
+                    await open(project, { focus: false });
+                    advanceStage(action === "assets" ? "assets" : ["script", "resume"].includes(action) ? "script" : "research");
+                }
             });
         });
         el("editorial-assets").addEventListener("change", () => {
@@ -508,7 +569,7 @@ window.KatchaEditorial = (() => {
                 scout_run_id: scoutId(), asset_candidate_ids: selectedAssets() };
             payload.idempotency_key = identity(`acquire.${project}`, payload);
             await api(path(channel, `/${project}/runs`), { method: "POST", body: JSON.stringify(payload) });
-            if (channel === state.channel) await open(project, { focus: false });
+            if (channel === state.channel) { await open(project, { focus: false }); advanceStage("storyboard"); }
         }));
         el("editorial-script").addEventListener("input", () => {
             if (state.revision) {
@@ -523,7 +584,9 @@ window.KatchaEditorial = (() => {
             sessionStorage.removeItem(storageKey(`pending.${state.project.id}`));
             sessionStorage.removeItem(storageKey(`script.${state.editorKey}`));
             state.renderKey = "";
-            void open(state.project.id, { focus: false }).catch((error) => feedback(error.message, true));
+            void open(state.project.id, { focus: false })
+                .then(() => advanceStage("script"))
+                .catch((error) => feedback(error.message, true));
         });
         el("editorial-save-script").addEventListener("click", () => void guarded(async () => {
             const channel = state.channel; const project = state.project.id;
@@ -533,7 +596,7 @@ window.KatchaEditorial = (() => {
             await api(path(channel, `/${project}/revisions`), { method: "POST", body: JSON.stringify(payload) });
             sessionStorage.removeItem(key);
             sessionStorage.removeItem(`katcha.editorial.${channel}.pending.${project}`);
-            if (channel === state.channel) { await open(project, { focus: false }); feedback("Script saved as a new revision. Review evidence before production."); }
+            if (channel === state.channel) { await open(project, { focus: false }); advanceStage("script"); feedback("Script saved as a new revision. Review evidence before production."); }
         }));
     }
     return { init, load };

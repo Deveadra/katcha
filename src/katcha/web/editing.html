@@ -53,86 +53,151 @@
                     <button type="button" role="tab" data-production-tab="recipes" aria-selected="false">Recipes</button>
                     <button type="button" role="tab" data-production-tab="brand" aria-selected="false">Brand</button>
                 </nav>
-                <section class="panel card production-workspace" data-production-group="editorial" hidden>
-                    <div class="panel-head"><div><div class="eyebrow">RESEARCHED ORIGINALS</div><h2>From a source to a story</h2></div><button id="editorial-refresh" class="mini" type="button">Refresh projects</button></div>
-                    <p>Create a brief, investigate source material, and review a cited script. A single trailer is enough to start.</p>
-                    <p>Research needs an eligible live AI connection. Generated claims need review. Clear media for reuse before rendering a private preview. Publishing is not connected yet.</p>
-                    <form id="editorial-form"><fieldset id="editorial-form-fields" class="editorial-form" disabled>
-                        <legend>New editorial project</legend>
-                        <label>What should this story investigate?<textarea id="editorial-prompt" rows="3" maxlength="4000" required placeholder="Find overlooked clues and explain what the evidence supports."></textarea></label>
-                        <label>Source video links<textarea id="editorial-urls" rows="2" required placeholder="One HTTPS YouTube link per line"></textarea><small>Automatic intake currently supports YouTube. Other sources require an ingested channel clip through Katcha AI or the API.</small></label>
-                        <label>Target length in seconds<input id="editorial-duration" type="number" min="15" max="3600" step="1" value="420" required></label>
-                        <button class="button primary" type="submit">Save brief</button>
-                    </fieldset></form>
-                    <div id="editorial-feedback" class="message" role="status" aria-live="polite"></div>
-                    <h3>Projects</h3><div id="editorial-projects"><div class="empty">Select a channel to begin.</div></div>
-                    <section id="editorial-detail" hidden>
-                        <h2 id="editorial-title" tabindex="-1"></h2><p id="editorial-status"></p>
-                        <div id="editorial-actions" class="panel-head-actions"></div>
-                        <h3>Source observations</h3><div id="editorial-observations"></div>
-                        <h3>Research and evidence</h3><p id="editorial-gaps" role="status"></p><div id="editorial-evidence"></div>
-                        <h3>Script</h3><p id="editorial-script-note"></p><button id="editorial-discard" class="mini" type="button" hidden>Discard edits and load latest script</button><div id="editorial-script"></div>
-                        <button id="editorial-save-script" class="button secondary" type="button" disabled>Save script revision</button>
-                        <h3>Supporting assets</h3><p>Download selected YouTube videos for review. Downloads do not grant reuse permission. Upload still images below. Other source videos currently require manual acquisition through Sources.</p><p id="editorial-asset-gaps"></p><div id="editorial-assets"></div>
-                        <button id="editorial-acquire-assets" class="button secondary" type="button" disabled>Download selected videos for review</button>
-                        <details class="ae-help"><summary>Visual requests and missing material</summary><pre id="editorial-asset-requests"></pre></details>
-                        <details class="ae-help"><summary>Upload still images</summary>
-                            <p>Attach PNG/JPEG images to saved script beats (16 MiB, 16 megapixels maximum). Record your source and permission; uploads do not independently establish rights or factual accuracy. Generated artwork must be marked as an illustration.</p>
-                            <div id="editorial-image-form" class="editorial-beat">
-                                <label>Script beat<select id="editorial-image-beat"></select></label>
-                                <label>Image<input id="editorial-image-file" type="file" accept="image/png,image/jpeg,.png,.jpg,.jpeg"></label>
-                                <label>On-screen credit / title<input id="editorial-image-title" maxlength="200"></label>
-                                <label>Original source or ownership reference<input id="editorial-image-source" maxlength="2000"></label>
-                                <label>Permission or permitted-use basis<textarea id="editorial-image-permission" maxlength="2000" rows="2"></textarea></label>
-                                <label class="check-row"><input id="editorial-image-illustration" type="checkbox"> Illustration or generated artwork (shown on screen)</label>
-                                <label class="check-row"><input id="editorial-image-confirm" type="checkbox"> I have permission to use this image in this video</label>
-                                <button id="editorial-image-upload" type="button" class="mini">Upload image</button>
+                <section class="panel card production-workspace editorial-workspace" data-production-group="editorial" hidden>
+                    <div class="panel-head editorial-workspace-head">
+                        <div><div class="eyebrow">AI EDITORIAL STUDIO</div><h2>Build a researched original</h2><p>Bring the source. Katcha can research, write, source, direct and render; you can override every stage.</p></div>
+                        <button id="editorial-refresh" class="mini" type="button">Refresh projects</button>
+                    </div>
+                    <div class="editorial-studio-layout">
+                        <aside class="editorial-project-rail" aria-label="Editorial project bin">
+                            <details class="editorial-project-launcher" open>
+                                <summary><span><small>NEW PROJECT</small><strong>Start from source</strong></span><span aria-hidden="true">＋</span></summary>
+                                <form id="editorial-form"><fieldset id="editorial-form-fields" class="editorial-form" disabled>
+                                    <label>Story brief<textarea id="editorial-prompt" rows="3" maxlength="4000" required placeholder="What should Katcha investigate, prove or explain?"></textarea></label>
+                                    <label>Source video links<textarea id="editorial-urls" rows="2" required placeholder="Paste one HTTPS YouTube link per line"></textarea><small>URL intake is live now. Managed clip/file intake will join this same source dock rather than becoming a separate workflow.</small></label>
+                                    <label>Target length<input id="editorial-duration" type="number" min="15" max="3600" step="1" value="420" required><small>Seconds; final timing follows actual narration/media.</small></label>
+                                    <button class="button primary" type="submit">Create project</button>
+                                </fieldset></form>
+                            </details>
+                            <div class="editorial-input-dock" aria-label="Available editorial inputs">
+                                <span class="eyebrow">PROJECT INPUTS</span>
+                                <p>Start with source URLs. Add owned/permitted stills in Assets and WAV narration in Storyboard.</p>
                             </div>
-                            <div id="editorial-images" role="status"></div>
-                        </details>
-                        <h3>Video preview</h3><p>Choose footage, an uploaded image or an evidence quote for each saved script beat. Current media clearance is required; publication remains a separate review.</p>
-                        <label>Presentation<select id="editorial-presentation"><option value="captioned_silent">Silent with captions</option><option value="narrated">Narration with captions</option></select></label>
-                        <p id="editorial-narration-status" role="status"></p>
-                        <section id="editorial-narration-billing" hidden aria-label="Unresolved speech charges"></section>
-                        <section id="editorial-narration-panel" hidden aria-label="Narration recordings"><p>Upload one PCM WAV recording per saved script beat (32 MiB maximum). Scene timing follows measured audio length. Check the wording and caption timing in the preview; transcription is not verified and caption timing is estimated.</p><div id="editorial-narration"></div><details class="ae-help"><summary>Generate recordings with the channel voice</summary><div class="editorial-beat"><p>Uses the ElevenLabs primary long-form voice from Channel Studio and the channel AI budget. Requires a configured credit cost. The limit below caps the estimate, not the provider's final charge. Completed beats are reused on resume; unknown provider outcomes stop automatic generation.</p><label>Maximum estimated cost (USD)<input id="editorial-narration-limit" type="number" min="0.01" max="25" step="0.01" value="0.50"></label><label class="check-row"><input id="editorial-narration-confirm" type="checkbox"> Use this channel voice and budget to generate the saved script</label><button id="editorial-generate-narration" class="mini" type="button">Generate script recordings</button></div></details></section>
-                        <details class="ae-help"><summary>Let Katcha plan the visuals</summary>
-                            <p>Plan footage, comparisons and evidence quotes from acquired material. Uses the eligible research provider with no paid fallback. Review the choices before creating a preview; this does not generate narration or approve publication.</p>
-                            <button id="editorial-direct" class="mini" type="button" disabled>Plan visuals</button>
-                            <div id="editorial-direction" role="status"></div>
-                            <button id="editorial-render-directed" class="mini" type="button" hidden>Create preview from this plan</button>
-                        </details>
-                        <div id="editorial-storyboard"></div>
-                        <button id="editorial-render" class="button secondary" type="button" disabled>Create silent captioned preview</button>
-                        <button id="editorial-play" class="mini" type="button" hidden>Load private preview</button>
-                        <video id="editorial-preview" controls playsinline hidden style="width:100%;max-height:70vh"></video>
-                        <section id="editorial-review" hidden aria-label="Render review">
-                            <p id="editorial-review-status" role="status"></p>
-                            <label>Review notes<textarea id="editorial-review-note" rows="3" maxlength="4000"></textarea></label>
-                            <div class="toolbar">
-                                <button id="editorial-approve" class="mini" type="button">Approve reviewed video</button>
-                                <button id="editorial-request-changes" class="mini" type="button">Request changes</button>
+                            <div class="editorial-project-list-head"><span class="eyebrow">PROJECT BIN</span><small>Channel scoped</small></div>
+                            <div id="editorial-projects"><div class="empty">Select a channel to begin.</div></div>
+                            <div id="editorial-feedback" class="message" role="status" aria-live="polite"></div>
+                        </aside>
+
+                        <section id="editorial-detail" class="editorial-project-studio" hidden>
+                            <header class="editorial-project-header">
+                                <div>
+                                    <span class="eyebrow">ACTIVE PROJECT</span>
+                                    <h2 id="editorial-title" tabindex="-1"></h2>
+                                    <p id="editorial-status"></p>
+                                </div>
+                                <div id="editorial-actions" class="panel-head-actions"></div>
+                            </header>
+
+                            <nav id="editorial-stage-tabs" class="editorial-stage-tabs" role="tablist" aria-label="Editorial project stages">
+                                <button type="button" role="tab" data-editorial-stage="research" aria-selected="true">Research</button>
+                                <button type="button" role="tab" data-editorial-stage="script" aria-selected="false">Script</button>
+                                <button type="button" role="tab" data-editorial-stage="assets" aria-selected="false">Assets</button>
+                                <button type="button" role="tab" data-editorial-stage="storyboard" aria-selected="false">Storyboard</button>
+                                <button type="button" role="tab" data-editorial-stage="preview" aria-selected="false">Preview</button>
+                            </nav>
+
+                            <div class="editorial-stage-panels">
+                                <section class="editorial-stage-panel" data-editorial-stage-panel="research">
+                                    <div class="editorial-stage-head"><div><span class="eyebrow">1 · RESEARCH</span><h3>Evidence before assertions</h3><p>Analyze the source, investigate supporting material, and keep uncertainty visible.</p></div><a class="editorial-ai-link" data-editorial-ai="research" href="/ai?focus=chat">Ask Katcha ✦</a></div>
+                                    <div class="editorial-stage-grid">
+                                        <section class="editorial-subpanel"><h4>Source observations</h4><div id="editorial-observations"></div></section>
+                                        <section class="editorial-subpanel"><h4>Research & claims</h4><p id="editorial-gaps" role="status"></p><div id="editorial-evidence"></div></section>
+                                    </div>
+                                    <details class="ae-help"><summary>Provider receipts and research gaps</summary><pre id="editorial-receipts"></pre></details>
+                                </section>
+
+                                <section class="editorial-stage-panel" data-editorial-stage-panel="script" hidden>
+                                    <div class="editorial-stage-head"><div><span class="eyebrow">2 · SCRIPT</span><h3>Write against frozen evidence</h3><p>Edit narration and visual intent beat by beat. Saving creates an immutable revision.</p></div><a class="editorial-ai-link" data-editorial-ai="script" href="/ai?focus=chat">Ask Katcha ✦</a></div>
+                                    <p id="editorial-script-note"></p>
+                                    <button id="editorial-discard" class="mini" type="button" hidden>Discard edits and load latest script</button>
+                                    <div id="editorial-script"></div>
+                                    <div class="editorial-stage-actions"><button id="editorial-save-script" class="button secondary" type="button" disabled>Save script revision</button></div>
+                                </section>
+
+                                <section class="editorial-stage-panel" data-editorial-stage-panel="assets" hidden>
+                                    <div class="editorial-stage-head"><div><span class="eyebrow">3 · ASSETS</span><h3>Build the project bin</h3><p>Scout supporting media, acquire permitted video, or plug in owned/approved stills.</p></div><a class="editorial-ai-link" data-editorial-ai="assets" href="/ai?focus=chat">Ask Katcha ✦</a></div>
+                                    <p id="editorial-asset-gaps"></p>
+                                    <div id="editorial-assets"></div>
+                                    <div class="editorial-stage-actions"><button id="editorial-acquire-assets" class="button secondary" type="button" disabled>Download selected videos for review</button></div>
+                                    <details class="ae-help"><summary>Visual requests and missing material</summary><pre id="editorial-asset-requests"></pre></details>
+                                    <details class="editorial-upload-drawer">
+                                        <summary><span><strong>Upload still image</strong><small>PNG/JPEG · attach to a saved script beat</small></span><span aria-hidden="true">＋</span></summary>
+                                        <p>Record the source and permission. Generated artwork must be identified as an illustration.</p>
+                                        <div id="editorial-image-form" class="editorial-beat">
+                                            <label>Script beat<select id="editorial-image-beat"></select></label>
+                                            <label>Image<input id="editorial-image-file" type="file" accept="image/png,image/jpeg,.png,.jpg,.jpeg"></label>
+                                            <label>On-screen credit / title<input id="editorial-image-title" maxlength="200"></label>
+                                            <label>Original source or ownership reference<input id="editorial-image-source" maxlength="2000"></label>
+                                            <label>Permission or permitted-use basis<textarea id="editorial-image-permission" maxlength="2000" rows="2"></textarea></label>
+                                            <label class="check-row"><input id="editorial-image-illustration" type="checkbox"> Illustration or generated artwork</label>
+                                            <label class="check-row"><input id="editorial-image-confirm" type="checkbox"> I have permission to use this image in this video</label>
+                                            <button id="editorial-image-upload" type="button" class="mini">Upload image</button>
+                                        </div>
+                                        <div id="editorial-images" role="status"></div>
+                                    </details>
+                                </section>
+
+                                <section class="editorial-stage-panel" data-editorial-stage-panel="storyboard" hidden>
+                                    <div class="editorial-stage-head"><div><span class="eyebrow">4 · STORYBOARD</span><h3>Direct the cut</h3><p>Choose presentation and narration, let Katcha propose the visual cut, then override any beat manually.</p></div><a class="editorial-ai-link" data-editorial-ai="storyboard" href="/ai?focus=chat">Ask Katcha ✦</a></div>
+                                    <div class="editorial-storyboard-controls">
+                                        <label>Presentation<select id="editorial-presentation"><option value="captioned_silent">Silent with captions</option><option value="narrated">Narration with captions</option></select></label>
+                                        <p id="editorial-narration-status" role="status"></p>
+                                    </div>
+                                    <section id="editorial-narration-billing" hidden aria-label="Unresolved speech charges"></section>
+                                    <section id="editorial-narration-panel" hidden aria-label="Narration recordings">
+                                        <div class="editorial-subpanel-head"><div><h4>Narration tracks</h4><p>Upload one PCM WAV per saved beat, or generate recordings with the channel voice.</p></div></div>
+                                        <div id="editorial-narration"></div>
+                                        <details class="editorial-upload-drawer"><summary><span><strong>Generate channel narration</strong><small>AI voice · cost-bounded · resumable</small></span><span aria-hidden="true">✦</span></summary><div class="editorial-beat"><p>Uses the primary long-form voice and channel AI budget. Completed beats are reused on resume; unknown provider outcomes stop automatic generation.</p><label>Maximum estimated cost (USD)<input id="editorial-narration-limit" type="number" min="0.01" max="25" step="0.01" value="0.50"></label><label class="check-row"><input id="editorial-narration-confirm" type="checkbox"> Use this channel voice and budget</label><button id="editorial-generate-narration" class="mini" type="button">Generate script recordings</button></div></details>
+                                    </section>
+                                    <details class="editorial-ai-drawer" open><summary><span><strong>AI visual director</strong><small>Plan a cut from cleared media and evidence</small></span><span aria-hidden="true">✦</span></summary>
+                                        <p>Katcha proposes footage, comparisons and evidence quotes. Review every choice before rendering.</p>
+                                        <button id="editorial-direct" class="mini" type="button" disabled>Plan visuals</button>
+                                        <div id="editorial-direction" role="status"></div>
+                                        <button id="editorial-render-directed" class="mini" type="button" hidden>Create preview from this plan</button>
+                                    </details>
+                                    <div class="editorial-subpanel-head"><div><h4>Manual storyboard</h4><p>Every AI choice remains editable before render.</p></div></div>
+                                    <div id="editorial-storyboard"></div>
+                                </section>
+
+                                <section class="editorial-stage-panel" data-editorial-stage-panel="preview" hidden>
+                                    <div class="editorial-stage-head"><div><span class="eyebrow">5 · PREVIEW</span><h3>Render, inspect, approve</h3><p>Create a private preview, check timing/media/evidence, and record the operator decision.</p></div><a class="editorial-ai-link" data-editorial-ai="preview" href="/ai?focus=chat">Ask Katcha ✦</a></div>
+                                    <div class="editorial-preview-actions">
+                                        <button id="editorial-render" class="button primary" type="button" disabled>Create silent captioned preview</button>
+                                        <button id="editorial-play" class="mini" type="button" hidden>Load private preview</button>
+                                    </div>
+                                    <video id="editorial-preview" controls playsinline hidden></video>
+                                    <section id="editorial-review" class="editorial-review-panel" hidden aria-label="Render review">
+                                        <p id="editorial-review-status" role="status"></p>
+                                        <label>Review notes<textarea id="editorial-review-note" rows="3" maxlength="4000"></textarea></label>
+                                        <div class="toolbar">
+                                            <button id="editorial-approve" class="mini" type="button">Approve reviewed video</button>
+                                            <button id="editorial-request-changes" class="mini" type="button">Request changes</button>
+                                        </div>
+                                        <p>Approval records your review of this exact video. Publishing remains a separate controlled handoff.</p>
+                                        <details class="ae-help"><summary>Review history</summary><div id="editorial-review-history"></div></details>
+                                    </section>
+                                </section>
                             </div>
-                            <p>Approval records your review of this exact video. Publishing is not connected yet.</p>
-                            <details class="ae-help"><summary>Review history</summary><div id="editorial-review-history"></div></details>
+
+                            <details id="editorial-history" class="editorial-history-drawer" hidden>
+                                <summary><span><strong>Project work history</strong><small>Inspect previous runs, scripts and previews without replacing current edits</small></span><span aria-hidden="true">⌄</span></summary>
+                                <div class="editorial-history-body">
+                                    <div class="toolbar"><button id="editorial-history-refresh" class="mini" type="button">Refresh history</button><button id="editorial-history-back" class="mini" type="button" disabled>Newer work</button><button id="editorial-history-next" class="mini" type="button" disabled>Older work</button></div>
+                                    <p id="editorial-history-status" role="status" aria-live="polite"></p>
+                                    <div id="editorial-history-list"></div>
+                                    <section id="editorial-history-detail" hidden aria-label="Selected past work">
+                                        <h3 id="editorial-history-title" tabindex="-1"></h3>
+                                        <p id="editorial-history-result"></p>
+                                        <div id="editorial-history-review"></div>
+                                        <button id="editorial-history-play" class="mini" type="button" hidden>Load selected private preview</button>
+                                        <video id="editorial-history-preview" controls playsinline hidden></video>
+                                        <h4>Saved script and evidence</h4><div id="editorial-history-script"></div>
+                                        <details class="ae-help"><summary>Saved receipts and diagnostics</summary><pre id="editorial-history-receipts"></pre></details>
+                                    </section>
+                                </div>
+                            </details>
                         </section>
-                        <details class="ae-help"><summary>Provider receipts and research gaps</summary><pre id="editorial-receipts"></pre></details>
-                    </section>
-                    <details id="editorial-history" class="ae-help" hidden>
-                        <summary>Project work history</summary>
-                        <p>Inspect previous work and the script it used. Your current edits stay in place. Preview access checks current clearance; a changed script or removed recording can make an older preview unavailable.</p>
-                        <div class="toolbar"><button id="editorial-history-refresh" class="mini" type="button">Refresh history</button><button id="editorial-history-back" class="mini" type="button" disabled>Newer work</button><button id="editorial-history-next" class="mini" type="button" disabled>Older work</button></div>
-                        <p id="editorial-history-status" role="status" aria-live="polite"></p>
-                        <div id="editorial-history-list"></div>
-                        <section id="editorial-history-detail" hidden aria-label="Selected past work">
-                            <h3 id="editorial-history-title" tabindex="-1"></h3>
-                            <p id="editorial-history-result"></p>
-                            <div id="editorial-history-review"></div>
-                            <button id="editorial-history-play" class="mini" type="button" hidden>Load selected private preview</button>
-                            <video id="editorial-history-preview" controls playsinline hidden style="width:100%;max-height:70vh"></video>
-                            <h4>Saved script and evidence</h4><div id="editorial-history-script"></div>
-                            <details class="ae-help"><summary>Saved receipts and diagnostics</summary><pre id="editorial-history-receipts"></pre></details>
-                        </section>
-                    </details>
+                    </div>
                 </section>
                 <div class="grid production-workspace" data-production-group="recipes" hidden>
                     <section class="panel card" id="blueprints-panel">
