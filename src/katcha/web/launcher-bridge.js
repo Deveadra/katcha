@@ -109,17 +109,19 @@ function installWorkspaceMenu() {
     brand.before(cluster);
     cluster.append(brand);
 
+    /* Quick switcher stays available everywhere; the persistent tree below removes
+       the old "remember what is inside the dropdown" navigation burden. */
     const details = document.createElement('details');
     details.className = 'workspace-menu';
     const links = KATCHA_WORKSPACES.map((workspace) =>
-        '<a href="' + workspace.href + '" ' +
+        '<a href="' + workspace.href + '" data-workspace-key="' + workspace.key + '" ' +
         (current.key === workspace.key ? 'aria-current="page"' : '') + '>' +
         '<span aria-hidden="true">' + workspace.icon + '</span>' +
         '<b>' + workspace.label + '</b></a>'
     ).join('');
 
     details.innerHTML =
-        '<summary aria-label="Open workspace menu">' +
+        '<summary aria-label="Quick switch workspace">' +
             '<span class="workspace-menu-copy">' +
                 '<small>WORKSPACE</small>' +
                 '<strong>' + current.label + '</strong>' +
@@ -134,8 +136,62 @@ function installWorkspaceMenu() {
         '</div>';
     cluster.append(details);
 
-    const legacyNav = aside.querySelector('.rail-nav, nav[aria-label="Workspace"], nav:not(.stats)');
-    if (legacyNav) legacyNav.remove();
+    const groups = [
+        { key: 'plan', label: 'Plan', workspaces: ['home', 'trends', 'sources'] },
+        { key: 'create', label: 'Create', workspaces: ['clips', 'ai', 'production', 'studio'] },
+        { key: 'grow', label: 'Grow', workspaces: ['channel'] },
+    ];
+    const tree = document.createElement('nav');
+    tree.className = 'workspace-tree';
+    tree.setAttribute('aria-label', 'Katcha workspaces');
+
+    for (const group of groups) {
+        const section = document.createElement('details');
+        section.className = 'workspace-group';
+        section.dataset.workspaceGroup = group.key;
+
+        let savedState = null;
+        try {
+            savedState = sessionStorage.getItem('katcha.workspaceGroup.' + group.key);
+        } catch {
+            savedState = null;
+        }
+        const containsCurrent = group.workspaces.includes(current.key);
+        section.open = containsCurrent || savedState !== 'closed';
+
+        const rows = group.workspaces
+            .map((key) => KATCHA_WORKSPACES.find((workspace) => workspace.key === key))
+            .filter(Boolean)
+            .map((workspace) => {
+                const isCurrent = workspace.key === current.key;
+                return '<a href="' + workspace.href + '" data-workspace-key="' + workspace.key + '" ' +
+                    'class="workspace-tree-link' + (isCurrent ? ' is-current' : '') + '" ' +
+                    (isCurrent ? 'aria-label="' + workspace.label + ', current workspace"' : '') + '>' +
+                    '<span class="workspace-tree-icon" aria-hidden="true">' + workspace.icon + '</span>' +
+                    '<b>' + workspace.label + '</b>' +
+                '</a>';
+            })
+            .join('');
+
+        section.innerHTML =
+            '<summary><span>' + group.label + '</span><small>' + group.workspaces.length + '</small></summary>' +
+            '<div class="workspace-group-body">' + rows + '</div>';
+        section.addEventListener('toggle', () => {
+            try {
+                sessionStorage.setItem(
+                    'katcha.workspaceGroup.' + group.key,
+                    section.open ? 'open' : 'closed',
+                );
+            } catch {
+                /* Navigation remains fully functional when storage is unavailable. */
+            }
+        });
+        tree.append(section);
+    }
+    cluster.after(tree);
+
+    const legacyNav = aside.querySelector('.rail-nav, nav[aria-label="Workspace"], nav:not(.stats):not(.workspace-tree)');
+    if (legacyNav && legacyNav !== tree) legacyNav.remove();
     const legacyLabel = aside.querySelector('.rail-label, .sidebar-label');
     if (legacyLabel) legacyLabel.remove();
 

@@ -8,13 +8,22 @@ textarea {
     border-radius: var(--ae-radius-control);
 }
 
+button,
+.button,
+.icon-button,
+input,
+select,
+textarea {
+    min-height: var(--ae-control-height);
+}
+
 input,
 select,
 textarea {
     border: 1px solid var(--ae-line) !important;
-    background: rgba(255, 255, 255, 0.035) !important;
+    background: var(--ae-surface-inset) !important;
     color: var(--ae-text) !important;
-    box-shadow: inset 0 1px rgba(255, 255, 255, 0.025);
+    box-shadow: inset 0 1px rgba(244, 247, 255, 0.025);
 }
 
 input::placeholder,
@@ -25,41 +34,45 @@ textarea::placeholder {
 input:hover,
 select:hover,
 textarea:hover {
-    border-color: var(--ae-line-hover) !important;
+    border-color: var(--ae-line-strong) !important;
 }
 
 button,
 .button,
 .icon-button {
-    border-color: var(--ae-line) !important;
+    border: 1px solid var(--ae-line) !important;
 }
 
 .primary {
-    border: 1px solid rgba(183, 165, 255, 0.38) !important;
-    background:
-        linear-gradient(120deg, rgba(183, 165, 255, 0.23), rgba(132, 231, 255, 0.13)),
-        rgba(30, 31, 47, 0.96) !important;
-    color: var(--ae-text) !important;
+    border: 1px solid rgba(244, 247, 255, 0.54) !important;
+    background: var(--ae-prism) !important;
+    color: var(--ae-ink) !important;
+    font-weight: 800;
     box-shadow:
-        inset 0 1px rgba(255, 255, 255, 0.08),
-        0 8px 24px rgba(46, 38, 83, 0.2);
+        inset 0 1px rgba(255, 255, 255, 0.50),
+        0 7px 20px rgba(98, 220, 235, 0.10);
 }
 
 .primary:hover:not(:disabled) {
-    border-color: rgba(132, 231, 255, 0.55) !important;
-    filter: brightness(1.06);
+    border-color: rgba(244, 247, 255, 0.80) !important;
+    filter: brightness(1.045) saturate(1.03);
+    transform: translateY(-1px);
 }
 
 .icon-button,
-.text-button {
-    background: rgba(255, 255, 255, 0.035) !important;
+.text-button,
+.button.secondary,
+.studio-button.secondary {
+    background: transparent !important;
     color: var(--ae-text-secondary) !important;
 }
 
 .icon-button:hover:not(:disabled),
-.text-button:hover:not(:disabled) {
+.text-button:hover:not(:disabled),
+.button.secondary:hover:not(:disabled),
+.studio-button.secondary:hover:not(:disabled) {
     border-color: var(--ae-line-hover) !important;
-    background: rgba(255, 255, 255, 0.065) !important;
+    background: rgba(169, 239, 247, 0.045) !important;
     color: var(--ae-text) !important;
 }
 
@@ -67,100 +80,10 @@ button:disabled,
 input:disabled,
 select:disabled,
 textarea:disabled {
-    opacity: 0.5;
+    opacity: 0.48;
     cursor: not-allowed;
 }
 
-.card,
-.panel,
-.list-panel,
-.detail-panel,
-.interest-panel,
-.learning-drawer,
-.connect {
-    border-color: var(--ae-line) !important;
-    background: var(--ae-surface-soft) !important;
-    box-shadow: inset 0 1px rgba(255, 255, 255, 0.025);
-}
-
-.demo-pill,
-.tag,
-.status,
-.badge {
-    border-color: var(--ae-line) !important;
-}
-
-.toast {
-    border: 1px solid var(--ae-line) !important;
-    border-radius: var(--ae-radius-overlay) !important;
-    background: rgba(18, 21, 32, 0.92) !important;
-    color: var(--ae-text) !important;
-    box-shadow: var(--ae-shadow-overlay) !important;
-    backdrop-filter: blur(20px);
-    -webkit-backdrop-filter: blur(20px);
-}
-
-details > summary {
-    cursor: pointer;
-}
-
-
-/* Compact progressive disclosure for secondary explanations. */
-.ae-help {
-    margin: 8px 0;
-    border: 1px solid var(--ae-line);
-    border-radius: 10px;
-    background: rgba(255, 255, 255, 0.018);
-}
-
-.ae-help > summary {
-    list-style: none;
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    min-height: 34px;
-    padding: 7px 10px;
-    color: var(--ae-text-secondary);
-    font-size: 10px;
-    font-weight: 760;
-    letter-spacing: 0.02em;
-}
-
-.ae-help > summary::-webkit-details-marker {
-    display: none;
-}
-
-.ae-help > summary::before {
-    content: "ⓘ";
-    color: var(--ae-cyan);
-    font-size: 12px;
-}
-
-.ae-help > summary::after {
-    content: "⌄";
-    margin-left: auto;
-    color: var(--ae-text-tertiary);
-    transition: transform var(--ae-motion-fast) var(--ae-ease-standard);
-}
-
-.ae-help[open] > summary::after {
-    transform: rotate(180deg);
-}
-
-.ae-help > :not(summary) {
-    margin: 0;
-    padding: 0 10px 10px;
-    color: var(--ae-text-tertiary);
-    font-size: 10px;
-    line-height: 1.55;
-}
-
-.rail-help {
-    margin-top: auto;
-}
-
-
-/* Aerith glass material pass: translucent depth with restrained prismatic light. */
 .card,
 .panel,
 .studio-card,
@@ -175,58 +98,20 @@ details > summary {
 .home-panel,
 .pulse-card {
     border-color: var(--ae-line) !important;
-    background:
-        var(--ae-prism-soft),
-        var(--ae-glass-panel) !important;
+    border-radius: var(--ae-radius-panel) !important;
+    background: var(--ae-surface) !important;
     box-shadow:
-        inset 0 1px var(--ae-glass-highlight),
-        inset 0 -1px rgba(255, 255, 255, 0.018),
-        0 16px 42px rgba(0, 0, 0, 0.18) !important;
-    backdrop-filter: blur(14px) saturate(138%);
-    -webkit-backdrop-filter: blur(14px) saturate(138%);
+        inset 0 1px rgba(244, 247, 255, 0.025),
+        var(--ae-shadow-panel) !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
 }
 
 .card:hover,
 .studio-card:hover,
 .metric-card:hover,
 .pulse-card:hover {
-    border-color: var(--ae-line-hover) !important;
-}
-
-input,
-select,
-textarea {
-    background:
-        linear-gradient(120deg, rgba(185, 168, 255, 0.035), rgba(124, 232, 255, 0.02)),
-        rgba(6, 9, 18, 0.56) !important;
-    box-shadow:
-        inset 0 1px rgba(255, 255, 255, 0.045),
-        0 1px rgba(0, 0, 0, 0.2) !important;
-    backdrop-filter: blur(10px);
-    -webkit-backdrop-filter: blur(10px);
-}
-
-.primary {
-    background:
-        linear-gradient(
-            118deg,
-            rgba(185, 168, 255, 0.34),
-            rgba(124, 232, 255, 0.19) 50%,
-            rgba(246, 166, 217, 0.18)
-        ),
-        rgba(26, 25, 48, 0.82) !important;
-    box-shadow:
-        inset 0 1px rgba(255, 255, 255, 0.13),
-        0 10px 28px rgba(80, 60, 154, 0.20) !important;
-}
-
-.icon-button,
-.text-button,
-.button.secondary,
-.studio-button.secondary {
-    background:
-        linear-gradient(120deg, rgba(185, 168, 255, 0.055), rgba(124, 232, 255, 0.025)),
-        rgba(255, 255, 255, 0.025) !important;
+    border-color: var(--ae-line-strong) !important;
 }
 
 .demo-pill,
@@ -234,13 +119,125 @@ textarea {
 .status,
 .badge,
 .pill {
-    background:
-        linear-gradient(105deg, rgba(185, 168, 255, 0.075), rgba(124, 232, 255, 0.035)),
-        rgba(255, 255, 255, 0.025) !important;
+    border-color: var(--ae-line) !important;
+    border-radius: var(--ae-radius-control) !important;
+    background: var(--ae-surface-raised) !important;
 }
 
-.ae-help {
-    background:
-        linear-gradient(120deg, rgba(185, 168, 255, 0.045), rgba(124, 232, 255, 0.02)),
-        rgba(10, 13, 25, 0.42) !important;
+.toast {
+    border: 1px solid var(--ae-line-strong) !important;
+    border-radius: var(--ae-radius-overlay) !important;
+    background: var(--ae-glass-strong) !important;
+    color: var(--ae-text) !important;
+    box-shadow: var(--ae-shadow-overlay) !important;
+    backdrop-filter: blur(18px);
+    -webkit-backdrop-filter: blur(18px);
+}
+
+details > summary {
+    cursor: pointer;
+}
+
+/* Compact progressive disclosure for secondary explanation. */
+.ae-help,
+.ae-disclosure {
+    margin: 8px 0;
+    border: 1px solid var(--ae-line);
+    border-radius: var(--ae-radius-panel);
+    background: var(--ae-surface-inset);
+}
+
+.ae-help > summary,
+.ae-disclosure > summary {
+    list-style: none;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-height: 44px;
+    padding: 8px 12px;
+    color: var(--ae-text-secondary);
+    font-size: 11px;
+    font-weight: 760;
+    letter-spacing: 0.01em;
+}
+
+.ae-help > summary::-webkit-details-marker,
+.ae-disclosure > summary::-webkit-details-marker {
+    display: none;
+}
+
+.ae-help > summary::before {
+    content: "ⓘ";
+    color: var(--ae-cyan);
+    font-size: 12px;
+}
+
+.ae-help > summary::after,
+.ae-disclosure > summary::after {
+    content: "⌄";
+    margin-left: auto;
+    color: var(--ae-text-tertiary);
+    transition: transform var(--ae-motion-fast) var(--ae-ease-standard);
+}
+
+.ae-help[open] > summary::after,
+.ae-disclosure[open] > summary::after {
+    transform: rotate(180deg);
+}
+
+.ae-help > :not(summary) {
+    margin: 0;
+    padding: 0 12px 12px;
+    color: var(--ae-text-tertiary);
+    font-size: 10px;
+    line-height: 1.55;
+}
+
+.ae-disclosure > :not(summary) {
+    margin-inline: 12px;
+}
+
+.ae-disclosure > :last-child {
+    margin-bottom: 12px;
+}
+
+.rail-help {
+    margin-top: auto;
+}
+
+/* Explicit opt-in glass is reserved for navigation, overlays and media. */
+.ae-glass {
+    background: var(--ae-glass) !important;
+    backdrop-filter: blur(20px) saturate(128%) !important;
+    -webkit-backdrop-filter: blur(20px) saturate(128%) !important;
+}
+
+/* Shared compact status treatment without turning every label into a pill. */
+.ae-status-dot {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+}
+
+.ae-status-dot::before {
+    content: "";
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: currentColor;
+}
+
+
+/* Native compact selectors must not inherit text-field target sizing. */
+input[type="checkbox"],
+input[type="radio"] {
+    min-height: 0;
+    width: 18px;
+    height: 18px;
+    accent-color: var(--ae-cyan);
+}
+
+.studio-button {
+    min-height: 44px;
+    border-radius: var(--ae-radius-control) !important;
 }

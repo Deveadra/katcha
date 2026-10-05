@@ -64,6 +64,18 @@ const labels = workspaces.map((row) => row.label);
                 labels,
                 workspace.label + ": shared workspace order drifted",
             );
+            const workspaceTree = page.locator(".workspace-tree");
+            assert.equal(await workspaceTree.count(), 1, workspace.label + ": persistent workspace tree missing");
+            assert.deepEqual(
+                await workspaceTree.locator(".workspace-group > summary > span").allTextContents(),
+                ["Plan", "Create", "Grow"],
+                workspace.label + ": task-oriented navigation groups drifted",
+            );
+            assert.deepEqual(
+                await workspaceTree.locator(".workspace-tree-link b").allTextContents(),
+                ["Home", "Trends", "Sources", "Clips", "Katcha AI", "Production", "Clip Studio", "Channel Studio"],
+                workspace.label + ": persistent workspace navigation drifted",
+            );
             assert.equal(
                 await menu.locator(".workspace-menu-popover").isVisible(),
                 false,
@@ -90,7 +102,7 @@ const labels = workspaces.map((row) => row.label);
                 backdropFilter: getComputedStyle(node).backdropFilter || getComputedStyle(node).webkitBackdropFilter,
             }));
             assert.match(chatStyle.backgroundImage, /linear-gradient/);
-            assert.match(chatStyle.backdropFilter, /blur/);
+            assert.equal(chatStyle.backdropFilter, "none");
             assert.equal(
                 await page.locator(".ae-skip-link").evaluate((node) => getComputedStyle(node).position),
                 "fixed",
@@ -122,7 +134,7 @@ const labels = workspaces.map((row) => row.label);
             await page.setViewportSize({ width: 1440, height: 900 });
         }
 
-        console.log("PASS: shared Aerith navigation, terminology, keyboard behavior, progressive disclosure, skip navigation and mobile width");
+        console.log("PASS: shared Katcha navigation, task grouping, keyboard behavior, progressive disclosure, skip navigation and mobile width");
     } finally {
         await browser.close();
     }

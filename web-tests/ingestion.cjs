@@ -608,6 +608,9 @@ function overview(source) {
         })));
         await page.locator("#history-refresh").click();
         await page.waitForFunction(() => !document.querySelector("#source-alert").hidden);
+        await page.waitForFunction(() =>
+            document.querySelectorAll("#all-finds .source-find").length === 25
+        );
         assert.match(await page.locator("#source-alert").innerText(), /status 403/);
         assert.match(await page.locator("#history").innerText(), /quota or credential denied/);
         assert.match(await page.locator("#finds-count").innerText(), /30 finds/);

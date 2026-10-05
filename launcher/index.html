@@ -1,9 +1,415 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Katcha · Launch console</title>
 <style>
-:root{color-scheme:dark;font:15px system-ui;background:#10121a;color:#eef0fa}*{box-sizing:border-box}body{margin:0}header{border-bottom:1px solid #303344;padding:22px 5%;display:flex;justify-content:space-between;align-items:center}.logo{font-size:26px;font-weight:800;letter-spacing:-1px}.logo span,em{color:#b8a0ff}main{max-width:1250px;margin:auto;padding:44px 24px}.eyebrow{color:#b8a0ff;font-size:11px;letter-spacing:2px;font-weight:700}h1{font-size:44px;letter-spacing:-2px;margin:12px 0}p{color:#a8aec3;line-height:1.6}.integration-feedback{margin-top:10px;min-height:20px;color:#a8aec3}.integration-feedback.good{color:#91e9c4}.integration-feedback.bad{color:#ffada8}button,.button{font:inherit;background:#b8a0ff;color:#141020;border:0;border-radius:10px;padding:12px 19px;cursor:pointer;text-decoration:none;display:inline-block;font-weight:650}button.secondary,.secondary{background:#292d40;color:#f1edff}button:disabled{opacity:.4;cursor:wait}.actions{display:flex;gap:10px;flex-wrap:wrap;margin:24px 0}.grid{display:grid;grid-template-columns:1.3fr 1fr;gap:20px}.card{background:#191d2a;border:1px solid #30364a;border-radius:18px;padding:25px;margin-bottom:20px}h2{font-size:19px;margin:0 0 16px}.pill{border:1px solid #57536c;border-radius:30px;padding:6px 13px;font-size:12px;color:#c5b7f4}.good{color:#91e9c4}.bad{color:#ffada8}.row{display:flex;justify-content:space-between;gap:15px;padding:10px 0;border-bottom:1px solid #303344}.row span:last-child{color:#b9bfce}label{display:block;color:#bdc3d5;font-size:12px;margin:15px 0 6px}input,select{width:100%;background:#111520;color:#fff;border:1px solid #41485e;border-radius:8px;padding:11px;font:inherit}summary{cursor:pointer;font-weight:600;padding:8px 0}pre{white-space:pre-wrap;overflow-wrap:anywhere;font:12px/1.6 ui-monospace,monospace;margin:0;max-height:430px;overflow:auto}#notice{min-height:24px;color:#ffc0b5}a{color:#c6b7ff}small{color:#919bb4}#open[aria-disabled=true]{pointer-events:none;opacity:.4}@media(max-width:800px){.grid{grid-template-columns:1fr}h1{font-size:34px}main{padding:25px 16px}}
-#katcha-chat-shortcut{position:fixed;right:24px;bottom:24px;z-index:1000;display:flex;align-items:center;gap:9px;padding:12px 17px;border:1px solid #b293e0;border-radius:999px;background:#2d2147;color:#fff;text-decoration:none;font:700 13px system-ui,sans-serif;box-shadow:0 12px 38px #0009}#katcha-chat-shortcut:focus-visible{outline:3px solid #aee7fa;outline-offset:3px}@media(max-width:700px){#katcha-chat-shortcut{right:14px;bottom:14px}}
-</style></head><body><header><div class="logo"><span>✦</span> katcha.</div><span class="pill" id="phase">Connecting</span></header><main><div class="eyebrow">YOUR CONTENT WORKSPACE</div><h1>Ready when you are.</h1><p>One place to launch your channels, connect your tools, and keep production moving.</p><div class="actions"><button id="start">Start Katcha</button><a class="button secondary" id="open" href="/home" aria-disabled="false">Open workspace ↗</a><button class="secondary" id="stop">Stop services</button><a class="button secondary" href="/runtime/diagnostics">Export diagnostics ↓</a></div><div id="notice" role="status" aria-live="polite"></div><div class="grid"><div><section class="card"><h2>System health</h2><p id="summary">Checking the launcher…</p><div id="services"></div></section><section class="card"><h2>Diagnostics</h2><p>Startup, service output, health changes, resource pressure, container lifecycle evidence, and database contention are retained for troubleshooting. Exports use unique timestamp/session names and include a point-in-time snapshot.</p><label for="errors"><input type="checkbox" id="errors" style="width:auto"> Only warnings and errors</label><pre id="events" aria-live="off"></pre></section></div><div><section class="card"><h2>Connections & setup</h2><p>Settings are saved on this computer. Existing credentials stay in place unless you replace them. Click Start to apply changes.</p><form id="settings"><label for="ai">AI execution</label><select name="KATCHA_AI_EXECUTION_MODE" id="ai"><option value="fixture">Fixture — no live AI calls</option><option value="live">Live — uses configured providers</option><option value="auto">Use saved AI enablement</option></select><label>OpenAI API key<input name="KATCHA_OPENAI_API_KEY" type="password" autocomplete="new-password"></label><label>Gemini API key<input name="KATCHA_GEMINI_API_KEY" type="password" autocomplete="new-password"></label><details><summary>YouTube</summary><label>Client ID<input name="KATCHA_YOUTUBE_CLIENT_ID"></label><label>Client secret<input name="KATCHA_YOUTUBE_CLIENT_SECRET" type="password" autocomplete="new-password"></label><label>Data API key<input name="KATCHA_YOUTUBE_DATA_API_KEY" type="password" autocomplete="new-password"></label><p>Save your OAuth application details, then <button type="button" class="secondary" id="youtube">Connect YouTube</button></p><small>Register callback: http://localhost:8000/v1/integrations/youtube/oauth/callback</small></details><details><summary>Telegram</summary><label>Telegram control<select name="KATCHA_TELEGRAM_ENABLED"><option value="false">Disabled</option><option value="true">Enabled</option></select></label><label>BotFather bot token<input name="KATCHA_TELEGRAM_BOT_TOKEN" type="password" autocomplete="new-password"></label><label>Pairing code<input name="KATCHA_TELEGRAM_PAIRING_CODE" readonly></label><label>External review media endpoint<input name="KATCHA_TELEGRAM_REVIEW_STORAGE_ENDPOINT_URL" placeholder="https://media.example.com"></label><small>Long-form videos are sent as expiring review links. Leave this blank for normal AWS S3. If Katcha uses local/private MinIO, enter the externally reachable HTTPS endpoint for that storage.</small><p>Save settings and start Katcha, then message your bot <code>/start &lt;pairing-code&gt;</code>. Katcha binds that private chat and Telegram user to review controls.</p><p><button type="button" class="secondary" id="telegram-save">Save Telegram</button> <button type="button" class="secondary" id="telegram-test">Send test message</button></p><small id="telegram-state">Not checked</small><div id="telegram-feedback" class="integration-feedback" role="status" aria-live="polite"></div><small>No public Telegram webhook is required; Katcha uses Telegram long polling.</small></details><details><summary>Rendering & AWS</summary><label>Renderer<select name="KATCHA_RENDER_BACKEND"><option value="local">Local Docker renderer</option><option value="lambda">AWS Lambda</option></select></label><label>AWS profile<input name="KATCHA_AWS_PROFILE"></label><label>Expected AWS account ID<input name="KATCHA_AWS_EXPECTED_ACCOUNT_ID"></label><label>Region<input name="KATCHA_REMOTION_LAMBDA_REGION"></label><label>Lambda function<input name="KATCHA_REMOTION_LAMBDA_FUNCTION_NAME"></label><label>Remotion serve URL<input name="KATCHA_REMOTION_LAMBDA_SERVE_URL"></label><label>Staging bucket<input name="KATCHA_REMOTION_STAGING_BUCKET"></label><p>Uses the existing host AWS profile and any saved Roles Anywhere configuration. AWS resources must already be provisioned.</p></details><button style="margin-top:20px">Save settings</button></form></section><section class="card"><h2>Your data stays with you</h2><p>Stopping services preserves channel data, stored media, and saved credentials. Docker restarts services after a reboot. Relaunch Katcha to reopen this console.</p><small>First launch builds the application images and may take several minutes. Requires Docker Desktop with WSL integration and Python 3.11+.</small></section></div></div></main>
+:root{
+    color-scheme:dark;
+    --void:#080916;
+    --midnight:#111327;
+    --indigo:#202443;
+    --slate:#747da4;
+    --silver:#c6d1e8;
+    --pearl:#f4f7ff;
+    --ice:#a9eff7;
+    --cyan:#62dceb;
+    --periwinkle:#abb5ff;
+    --violet:#ae8cff;
+    --pink:#f2baea;
+    --champagne:#f1edc8;
+    --success:#b6efda;
+    --warning:#f1d8a7;
+    --danger:#ffb6cd;
+    --line:rgba(198,209,232,.16);
+    --line-strong:rgba(198,209,232,.28);
+    --prism:linear-gradient(108deg,var(--ice),var(--cyan) 20%,var(--periwinkle) 43%,var(--violet) 62%,var(--pink) 80%,var(--champagne));
+    font:14px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+    background:var(--void);
+    color:var(--pearl);
+}
+*{box-sizing:border-box}
+body{
+    margin:0;
+    min-height:100dvh;
+    background:
+        radial-gradient(circle at 8% -12%,rgba(169,239,247,.08),transparent 30rem),
+        radial-gradient(circle at 102% 8%,rgba(174,140,255,.06),transparent 31rem),
+        var(--void);
+}
+header{
+    position:sticky;
+    z-index:20;
+    top:0;
+    min-height:68px;
+    padding:0 clamp(20px,4vw,56px);
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    border-bottom:1px solid var(--line);
+    background:rgba(8,9,22,.82);
+    backdrop-filter:blur(18px);
+    -webkit-backdrop-filter:blur(18px);
+}
+.logo{font-size:24px;font-weight:850;letter-spacing:-1px}
+.logo span{color:var(--violet)}
+main{width:min(100%,1180px);margin:auto;padding:48px clamp(20px,3.5vw,44px) 88px}
+.launch-hero{
+    position:relative;
+    padding:0 0 28px;
+    border-bottom:1px solid var(--line);
+}
+.eyebrow{
+    color:var(--ice);
+    font-size:9px;
+    letter-spacing:.16em;
+    font-weight:850;
+    text-transform:uppercase
+}
+h1{
+    max-width:760px;
+    margin:10px 0 10px;
+    font-size:clamp(38px,5vw,58px);
+    line-height:.98;
+    letter-spacing:-.055em
+}
+p{color:var(--silver);line-height:1.6}
+.launch-hero>p{max-width:720px;margin:0;font-size:13px}
+.actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:22px 0 0}
+button,.button,.action-menu>summary{
+    min-height:48px;
+    display:inline-flex;
+    align-items:center;
+    justify-content:center;
+    padding:0 16px;
+    border:1px solid var(--line);
+    border-radius:2px;
+    background:transparent;
+    color:var(--silver);
+    font:750 12px/1 inherit;
+    cursor:pointer;
+    text-decoration:none
+}
+button:hover,.button:hover,.action-menu>summary:hover{
+    border-color:rgba(169,239,247,.42);
+    background:rgba(169,239,247,.04);
+    color:var(--pearl)
+}
+button.primary{
+    border-color:rgba(244,247,255,.55);
+    background:var(--prism);
+    color:#101225;
+    font-weight:850
+}
+button.primary:hover{filter:brightness(1.04);color:#101225}
+button:disabled{opacity:.45;cursor:wait}
+#open[aria-disabled=true]{pointer-events:none;opacity:.45}
+.action-menu{position:relative}
+.action-menu>summary{list-style:none}
+.action-menu>summary::-webkit-details-marker{display:none}
+.action-menu-popover{
+    position:absolute;
+    z-index:40;
+    top:calc(100% + 6px);
+    right:0;
+    min-width:210px;
+    padding:6px;
+    border:1px solid var(--line-strong);
+    border-radius:6px;
+    background:rgba(17,19,39,.97);
+    box-shadow:0 22px 64px #0008;
+    backdrop-filter:blur(16px)
+}
+.action-menu:not([open]) .action-menu-popover{display:none}
+.action-menu-popover a{
+    display:block;
+    padding:10px;
+    border-radius:2px;
+    color:var(--silver);
+    text-decoration:none
+}
+.action-menu-popover a:hover{background:rgba(169,239,247,.05);color:var(--pearl)}
+#notice{min-height:22px;margin-top:12px;color:var(--warning);font-size:11px}
+.launch-grid{
+    display:grid;
+    grid-template-columns:minmax(0,1.25fr) minmax(320px,.75fr);
+    gap:16px;
+    align-items:start;
+    margin-top:20px
+}
+.side-stack{display:grid;gap:12px}
+.card{
+    margin:0;
+    padding:20px;
+    border:1px solid var(--line);
+    border-radius:2px;
+    background:var(--midnight);
+    box-shadow:0 12px 30px #0004
+}
+.card-head{
+    display:flex;
+    align-items:flex-start;
+    justify-content:space-between;
+    gap:16px;
+    margin-bottom:10px
+}
+h2{margin:0;color:var(--pearl);font-size:17px;letter-spacing:-.025em}
+.card-head small{color:var(--slate);font-size:9px;text-align:right}
+.health-card>p{margin:6px 0 16px;font-size:11px}
+.pill{
+    border:1px solid var(--line);
+    border-radius:2px;
+    padding:6px 10px;
+    background:var(--indigo);
+    color:var(--silver);
+    font-size:9px;
+    font-weight:850;
+    letter-spacing:.08em
+}
+.good{color:var(--success)!important}
+.bad{color:var(--danger)!important}
+.row{
+    display:flex;
+    justify-content:space-between;
+    gap:15px;
+    min-height:44px;
+    align-items:center;
+    padding:8px 0;
+    border-bottom:1px solid var(--line);
+    font-size:11px
+}
+.row:last-child{border-bottom:0}
+.row span:last-child{color:var(--silver);text-align:right}
+.disclosure-card{padding:0;overflow:hidden}
+.disclosure-card>summary{
+    list-style:none;
+    display:flex;
+    align-items:center;
+    gap:12px;
+    min-height:66px;
+    padding:14px 16px;
+    cursor:pointer
+}
+.disclosure-card>summary::-webkit-details-marker{display:none}
+.disclosure-card>summary div{display:grid;gap:3px;min-width:0}
+.disclosure-card>summary strong{color:var(--pearl);font-size:14px}
+.disclosure-card>summary small{color:var(--slate);font-size:9px;line-height:1.4}
+.disclosure-card>summary::after{
+    content:"›";
+    margin-left:auto;
+    color:var(--slate);
+    font-size:20px;
+    transform:rotate(0deg);
+    transition:transform 140ms cubic-bezier(.22,1,.36,1)
+}
+.disclosure-card[open]>summary::after{transform:rotate(90deg)}
+.disclosure-card[open]>summary{border-bottom:1px solid var(--line)}
+.disclosure-body{padding:16px}
+.disclosure-body>p:first-child{margin-top:0}
+label{display:block;color:var(--silver);font-size:10px;margin:14px 0 6px}
+input,select{
+    width:100%;
+    min-height:46px;
+    padding:0 11px;
+    border:1px solid var(--line);
+    border-radius:2px;
+    background:#0d0f20;
+    color:var(--pearl);
+    font:inherit
+}
+input:focus-visible,select:focus-visible,button:focus-visible,a:focus-visible,summary:focus-visible{
+    outline:2px solid var(--ice);
+    outline-offset:5px
+}
+.disclosure-body details{
+    margin-top:10px;
+    border-top:1px solid var(--line)
+}
+.disclosure-body details>summary{
+    min-height:44px;
+    display:flex;
+    align-items:center;
+    padding:8px 0;
+    color:var(--silver);
+    font-weight:700
+}
+.integration-feedback{margin-top:10px;min-height:20px;color:var(--silver)}
+.integration-feedback.good{color:var(--success)}
+.integration-feedback.bad{color:var(--danger)}
+pre{
+    margin:10px 0 0;
+    max-height:360px;
+    overflow:auto;
+    white-space:pre-wrap;
+    overflow-wrap:anywhere;
+    color:var(--silver);
+    font:11px/1.55 ui-monospace,SFMono-Regular,Consolas,monospace
+}
+.diagnostics-copy{margin:0;color:var(--silver);font-size:10px}
+.inline-check{
+    display:flex;
+    align-items:center;
+    gap:8px;
+    min-height:40px;
+    margin:8px 0 0;
+    color:var(--silver)
+}
+.inline-check input{width:16px;height:16px;min-height:0;margin:0;accent-color:var(--cyan)}
+.trust-note{
+    padding:14px 2px 0;
+    border-top:1px solid var(--line);
+    color:var(--slate);
+    font-size:10px;
+    line-height:1.55
+}
+.trust-note strong{display:block;margin-bottom:4px;color:var(--silver);font-size:11px}
+code{color:var(--ice)}
+small{color:var(--slate)}
+#katcha-chat-shortcut{
+    position:fixed;
+    right:24px;
+    bottom:24px;
+    z-index:1000;
+    min-height:48px;
+    display:flex;
+    align-items:center;
+    gap:8px;
+    padding:0 15px;
+    border:1px solid rgba(244,247,255,.55);
+    border-radius:6px;
+    background:var(--prism);
+    color:#101225;
+    text-decoration:none;
+    font:800 12px/1 system-ui,sans-serif;
+    box-shadow:0 16px 38px #0007
+}
+@media(max-width:860px){
+    main{padding-top:30px}
+    .launch-grid{grid-template-columns:1fr}
+}
+@media(max-width:560px){
+    header{min-height:60px;padding-inline:14px}
+    main{padding:24px 14px 28px}
+    h1{font-size:38px}
+    .actions>*{flex:1 1 calc(50% - 4px)}
+    .action-menu>summary{width:100%}
+    .action-menu-popover{left:0;right:auto}
+    #katcha-chat-shortcut{
+        position:static;
+        width:calc(100% - 28px);
+        margin:0 14px 18px;
+        justify-content:center
+    }
+}
+@media(prefers-reduced-motion:reduce){
+    *,*::before,*::after{animation-duration:.001ms!important;transition-duration:.001ms!important}
+}
+</style></head><body>
+<header>
+    <div class="logo"><span>✦</span> katcha.</div>
+    <span class="pill" id="phase">Connecting</span>
+</header>
+<main>
+    <section class="launch-hero">
+        <div class="eyebrow">KATCHA CONTROL PLANE</div>
+        <h1>Start, recover, or open Katcha.</h1>
+        <p>The launcher handles runtime recovery and connections. Day-to-day channel work belongs in the workspace.</p>
+        <div class="actions">
+            <button class="primary" id="start">Start Katcha</button>
+            <a class="button" id="open" href="/home" aria-disabled="false">Open workspace ↗</a>
+            <button id="stop">Stop services</button>
+            <details class="action-menu">
+                <summary>More</summary>
+                <div class="action-menu-popover">
+                    <a href="/runtime/diagnostics">Export diagnostics ↓</a>
+                </div>
+            </details>
+        </div>
+        <div id="notice" role="status" aria-live="polite"></div>
+    </section>
+
+    <div class="launch-grid">
+        <section class="card health-card">
+            <div class="card-head">
+                <div><div class="eyebrow">RUNTIME</div><h2>System status</h2></div>
+                <small>Live service health</small>
+            </div>
+            <p id="summary">Checking the launcher…</p>
+            <div id="services"></div>
+        </section>
+
+        <div class="side-stack">
+            <details class="card disclosure-card" id="connections">
+                <summary>
+                    <div><strong>Connections & setup</strong><small>AI, YouTube, Telegram, rendering</small></div>
+                </summary>
+                <div class="disclosure-body">
+                    <p>Change these only when connecting or replacing a provider. Saved credentials remain in place when password fields are left blank.</p>
+                    <form id="settings">
+                        <label for="ai">AI execution</label>
+                        <select name="KATCHA_AI_EXECUTION_MODE" id="ai">
+                            <option value="fixture">Fixture — no live AI calls</option>
+                            <option value="live">Live — uses configured providers</option>
+                            <option value="auto">Use saved AI enablement</option>
+                        </select>
+                        <label>OpenAI API key<input name="KATCHA_OPENAI_API_KEY" type="password" autocomplete="new-password"></label>
+                        <label>Gemini API key<input name="KATCHA_GEMINI_API_KEY" type="password" autocomplete="new-password"></label>
+
+                        <details>
+                            <summary>YouTube</summary>
+                            <label>Client ID<input name="KATCHA_YOUTUBE_CLIENT_ID"></label>
+                            <label>Client secret<input name="KATCHA_YOUTUBE_CLIENT_SECRET" type="password" autocomplete="new-password"></label>
+                            <label>Data API key<input name="KATCHA_YOUTUBE_DATA_API_KEY" type="password" autocomplete="new-password"></label>
+                            <p>Save your OAuth application details, then <button type="button" id="youtube">Connect YouTube</button></p>
+                            <small>Register callback: http://localhost:8000/v1/integrations/youtube/oauth/callback</small>
+                        </details>
+
+                        <details>
+                            <summary>Telegram</summary>
+                            <label>Telegram control<select name="KATCHA_TELEGRAM_ENABLED"><option value="false">Disabled</option><option value="true">Enabled</option></select></label>
+                            <label>BotFather bot token<input name="KATCHA_TELEGRAM_BOT_TOKEN" type="password" autocomplete="new-password"></label>
+                            <label>Pairing code<input name="KATCHA_TELEGRAM_PAIRING_CODE" readonly></label>
+                            <label>External review media endpoint<input name="KATCHA_TELEGRAM_REVIEW_STORAGE_ENDPOINT_URL" placeholder="https://media.example.com"></label>
+                            <small>Long-form videos are sent as expiring review links. Leave this blank for normal AWS S3. If Katcha uses local/private MinIO, enter the externally reachable HTTPS endpoint for that storage.</small>
+                            <p>Save settings and start Katcha, then message your bot <code>/start &lt;pairing-code&gt;</code>. Katcha binds that private chat and Telegram user to review controls.</p>
+                            <p><button type="button" id="telegram-save">Save Telegram</button> <button type="button" id="telegram-test">Send test message</button></p>
+                            <small id="telegram-state">Not checked</small>
+                            <div id="telegram-feedback" class="integration-feedback" role="status" aria-live="polite"></div>
+                            <small>No public Telegram webhook is required; Katcha uses Telegram long polling.</small>
+                        </details>
+
+                        <details>
+                            <summary>Rendering & AWS</summary>
+                            <label>Renderer<select name="KATCHA_RENDER_BACKEND"><option value="local">Local Docker renderer</option><option value="lambda">AWS Lambda</option></select></label>
+                            <label>AWS profile<input name="KATCHA_AWS_PROFILE"></label>
+                            <label>Expected AWS account ID<input name="KATCHA_AWS_EXPECTED_ACCOUNT_ID"></label>
+                            <label>Region<input name="KATCHA_REMOTION_LAMBDA_REGION"></label>
+                            <label>Lambda function<input name="KATCHA_REMOTION_LAMBDA_FUNCTION_NAME"></label>
+                            <label>Remotion serve URL<input name="KATCHA_REMOTION_LAMBDA_SERVE_URL"></label>
+                            <label>Staging bucket<input name="KATCHA_REMOTION_STAGING_BUCKET"></label>
+                            <p>Uses the existing host AWS profile and any saved Roles Anywhere configuration. AWS resources must already be provisioned.</p>
+                        </details>
+
+                        <button class="primary" style="margin-top:16px">Save settings</button>
+                    </form>
+                </div>
+            </details>
+
+            <details class="card disclosure-card" id="diagnostics">
+                <summary>
+                    <div><strong>Diagnostics & troubleshooting</strong><small>Logs and recovery evidence</small></div>
+                </summary>
+                <div class="disclosure-body">
+                    <p class="diagnostics-copy">Katcha retains startup, service, resource, container, and database evidence for troubleshooting.</p>
+                    <label class="inline-check" for="errors"><input type="checkbox" id="errors"> Only warnings and errors</label>
+                    <pre id="events" aria-live="off"></pre>
+                </div>
+            </details>
+
+            <div class="trust-note">
+                <strong>Your data stays with you.</strong>
+                Stopping services preserves channel data, stored media, and saved credentials. Relaunching Katcha reconnects to recoverable services instead of discarding work.
+            </div>
+        </div>
+    </div>
+</main>
 <script>
 const $=id=>document.getElementById(id);let initialized=false,last,disconnected=false;
 async function request(path,body){const controller=new AbortController();const timeout=setTimeout(()=>controller.abort(),path==='/runtime/status'?8000:120000);try{const response=await fetch(path,{...(body===undefined?{}:{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}),signal:controller.signal});const data=await response.json();if(!response.ok)throw Error(data.detail||data.error||'Another operation is running');return data}finally{clearTimeout(timeout)}}

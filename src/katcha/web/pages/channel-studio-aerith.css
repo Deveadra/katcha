@@ -347,3 +347,104 @@ body[data-katcha-page="channel"] .studio-footer {
         width: 100%;
     }
 }
+
+
+/* Crystal UX: reduce chrome and keep advanced controls out of the default path. */
+body[data-katcha-page="channel"] .studio-content {
+    max-width: var(--ae-content-max);
+    margin-inline: auto;
+    padding: 24px clamp(20px, 3vw, 48px) 72px;
+}
+
+body[data-katcha-page="channel"] .studio-card,
+body[data-katcha-page="channel"] .channel-overview-identity {
+    border-radius: var(--ae-radius-panel) !important;
+    background: var(--ae-surface) !important;
+    box-shadow: var(--ae-shadow-panel) !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+}
+
+body[data-katcha-page="channel"] .connect,
+body[data-katcha-page="channel"] .channel-command {
+    border-radius: var(--ae-radius-panel) !important;
+}
+
+.channel-workspace-tabs {
+    top: 60px;
+    gap: 0;
+    padding: 0;
+    margin: 8px 0 10px;
+    border: 1px solid var(--ae-line);
+    background: rgba(8, 9, 22, 0.92);
+    backdrop-filter: blur(14px);
+    -webkit-backdrop-filter: blur(14px);
+}
+
+.channel-workspace-tabs button {
+    min-height: 44px;
+    padding: 8px 16px;
+    border: 0 !important;
+    border-right: 1px solid var(--ae-line) !important;
+    border-radius: 0 !important;
+}
+
+.channel-workspace-tabs button:last-child {
+    border-right: 0 !important;
+}
+
+.channel-workspace-tabs button:hover {
+    background: rgba(169, 239, 247, 0.035) !important;
+}
+
+.channel-workspace-tabs button[aria-selected="true"] {
+    border-color: var(--ae-line) !important;
+    background: rgba(169, 239, 247, 0.07) !important;
+    box-shadow: inset 0 -2px var(--ae-cyan);
+}
+
+body[data-katcha-page="channel"] .custom-goal-editor.ae-disclosure {
+    margin: 14px 0;
+    padding: 0;
+    border: 1px solid var(--ae-line);
+    background: var(--ae-surface-inset);
+}
+
+body[data-katcha-page="channel"] .custom-goal-editor > summary small {
+    margin-left: 8px;
+    color: var(--ae-text-tertiary);
+    font-size: 9px;
+    font-weight: 600;
+    letter-spacing: 0;
+    text-transform: none;
+}
+
+body[data-katcha-page="channel"] .custom-goal-fields {
+    margin: 0 12px 8px;
+}
+
+body[data-katcha-page="channel"] .custom-goals {
+    margin: 0 12px 12px;
+}
+
+@media (max-width: 950px) {
+    .channel-workspace-tabs {
+        top: 0;
+    }
+}
+
+@media (max-width: 720px) {
+    body[data-katcha-page="channel"] .studio-content {
+        padding-inline: 14px;
+    }
+
+    body[data-katcha-page="channel"] .custom-goal-editor > summary {
+        align-items: flex-start;
+        flex-wrap: wrap;
+    }
+
+    body[data-katcha-page="channel"] .custom-goal-editor > summary small {
+        width: 100%;
+        margin-left: 0;
+    }
+}

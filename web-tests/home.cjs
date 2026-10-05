@@ -148,9 +148,9 @@ const observability = { request_count: 16, p95_latency_ms: 720, estimated_cost_u
             backdropFilter: getComputedStyle(node).backdropFilter || getComputedStyle(node).webkitBackdropFilter,
         }));
         assert.equal(heroStyle.display, "grid");
-        assert.match(heroStyle.backgroundImage, /gradient/);
-        assert(heroStyle.borderRadius >= 20);
-        assert.match(heroStyle.backdropFilter, /blur/);
+        assert.equal(heroStyle.backgroundImage, "none");
+        assert(heroStyle.borderRadius <= 6);
+        assert.equal(heroStyle.backdropFilter, "none");
 
         const attentionStyle = await page.locator(".attention-grid").evaluate((node) => ({
             display: getComputedStyle(node).display,
@@ -171,9 +171,9 @@ const observability = { request_count: 16, p95_latency_ms: 720, estimated_cost_u
             borderRadius: parseFloat(getComputedStyle(node).borderRadius),
             backdropFilter: getComputedStyle(node).backdropFilter || getComputedStyle(node).webkitBackdropFilter,
         }));
-        assert.match(panelStyle.backgroundImage, /gradient/);
-        assert(panelStyle.borderRadius >= 18);
-        assert.match(panelStyle.backdropFilter, /blur/);
+        assert.equal(panelStyle.backgroundImage, "none");
+        assert(panelStyle.borderRadius <= 6);
+        assert.equal(panelStyle.backdropFilter, "none");
         assert.equal(await page.locator("#metric-production").innerText(), "2");
         assert.equal(await page.locator("#metric-failures").innerText(), "3");
         assert.equal(await page.locator("#metric-clips").innerText(), "42");

@@ -69,5 +69,60 @@ The Aerith design system is the source of truth for primary Katcha workspace pre
 - Workspace-specific Aerith layout belongs in `web/pages/<workspace>-aerith.css`. It may arrange that workspace's content, but it must not recreate the global shell.
 - Primary workspace HTML must reference CSS and JavaScript with absolute web-root paths. Route-relative asset URLs are forbidden because launcher routes have different prefixes.
 - A new Aerith workspace must not depend on an unrelated legacy stylesheet merely to obtain shell geometry. Legacy CSS may remain temporarily for unmigrated feature internals only.
-- Visual acceptance must check computed layout/material properties, not only DOM presence. A page that renders all text but loses its grid, glass panels, spacing, or hierarchy is a regression.
+- Visual acceptance must check computed layout/material properties, not only DOM presence. A page that renders all text but loses its grid, intended material treatment, spacing, or hierarchy is a regression.
 - Shared launcher tests must verify the real CSS/JS assets required by a workspace, not only its HTML document.
+
+
+## Katcha Crystal design-kit contract
+
+The uploaded ALL-OUT design kit is now the visual foundation for Katcha. Google
+Material, Apple HIG, and Salesforce Lightning are interaction references; Katcha
+keeps its own brand rather than visually cloning any of them.
+
+### Information architecture
+
+- The primary mental model is **Plan → Create → Grow**. Keep top-level workspaces
+  visible in the persistent desktop tree; the workspace menu is a quick switcher,
+  not the only way to discover navigation.
+- Use collapsible section headers for groups of related destinations or controls.
+  A collapsed section must never hide an error, destructive consequence, active
+  failure, required approval, or other information needed for a safe decision.
+- Prefer 3–5 local tabs for peer views within one workspace. Do not nest tabs.
+  Advanced or optional settings belong in disclosures, drawers, or focused dialogs.
+- Keep Katcha's monetization signals actionable: surface contribution margin,
+  growth pressure, monetization progress, and the next evidence-backed action
+  before low-value diagnostics.
+
+### Visual hierarchy
+
+- Use the kit's midnight/pearl base. Content surfaces are opaque by default.
+  Reserve glass for navigation, overlays, and media controls.
+- Prismatic color is emphasis, not wallpaper. Use it for the brand accent, a
+  primary action, or a single focal edge/zone. Never use gradients on paragraphs.
+- Default corners are precise (2px). Use 6px only where a softer overlay or
+  floating control genuinely benefits from it. Avoid indiscriminate pills.
+- Use the shared 4px spacing scale and keep ordinary page content within the
+  1248px content measure. Do not reintroduce page-specific spacing systems.
+- Interactive controls must retain generous targets, visible labels, clear
+  keyboard focus, and readable disabled/error states.
+
+### Component behavior
+
+- Prefer native semantic controls and disclosures. Keep advanced fields out of
+  the default path unless prior saved state makes them immediately relevant.
+- One card should express one task or idea. When several metrics form one status
+  summary, use a divided stat strip instead of a field of decorative cards.
+- Buttons represent actions; tabs represent views; menu items represent
+  destinations or secondary actions. Do not interchange these roles for styling.
+- Empty, loading, degraded, failed, and success states remain visually and
+  textually distinct. Status must never depend on color alone.
+- Motion uses the shared fast/panel/reveal timings and always honors
+  `prefers-reduced-motion`.
+
+### Token ownership
+
+`system/aerith-tokens.css` remains the single source of truth for Katcha's
+shared palette, spacing, radii, motion, and material primitives. Page styles
+should compose those tokens rather than hard-code a parallel theme. Do not add
+the design kit's bundled font files to the repository; use approved product/web
+font delivery or the system font stack instead.

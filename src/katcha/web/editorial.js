@@ -446,7 +446,9 @@ window.KatchaEditorial = (() => {
             await api(path(channel, `/${project}/runs`), {method: "POST", body: JSON.stringify(payload)});
             if (channel === state.channel) await open(project, {focus: false});
         }));
-        el("editorial-storyboard").addEventListener("input", () => { saveStoryboard(); showFootageControls(); });
+        const persistStoryboardChoice = () => { saveStoryboard(); showFootageControls(); };
+        el("editorial-storyboard").addEventListener("input", persistStoryboardChoice);
+        el("editorial-storyboard").addEventListener("change", persistStoryboardChoice);
         el("editorial-render").addEventListener("click", () => void guarded(async () => {
             const channel = state.channel; const project = state.project.id;
             const payload = {target: "render", expected_revision: state.project.revision, asset_run_id: state.assetRun?.editorial_run_id || null, storyboard: storyboardPlan()};

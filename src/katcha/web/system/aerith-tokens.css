@@ -1,64 +1,86 @@
 :root {
     color-scheme: dark;
 
-    --ae-bg: #080913;
-    --ae-bg-elevated: #0d1020;
-    --ae-surface: rgba(18, 21, 36, 0.84);
-    --ae-surface-soft: rgba(18, 22, 38, 0.66);
-    --ae-surface-raised: rgba(24, 27, 45, 0.78);
+    /* ALL-OUT / Katcha crystal palette. */
+    --ae-bg: #080916;
+    --ae-bg-elevated: #111327;
+    --ae-surface: #111327;
+    --ae-surface-soft: #15182f;
+    --ae-surface-raised: #202443;
+    --ae-surface-inset: #0d0f20;
 
-    --ae-glass: rgba(255, 255, 255, 0.065);
-    --ae-glass-strong: rgba(255, 255, 255, 0.115);
-    --ae-line: rgba(226, 231, 255, 0.13);
-    --ae-line-hover: rgba(228, 234, 255, 0.24);
+    --ae-glass: rgba(17, 19, 39, 0.76);
+    --ae-glass-strong: rgba(17, 19, 39, 0.90);
+    --ae-line: rgba(198, 209, 232, 0.16);
+    --ae-line-strong: rgba(198, 209, 232, 0.28);
+    --ae-line-hover: rgba(169, 239, 247, 0.42);
 
-    --ae-text: #f6f4fb;
-    --ae-text-secondary: #b4b6c5;
-    --ae-text-tertiary: #7c8192;
+    --ae-text: #f4f7ff;
+    --ae-text-secondary: #c6d1e8;
+    --ae-text-tertiary: #747da4;
+    --ae-ink: #101225;
 
-    --ae-violet: #b9a8ff;
-    --ae-cyan: #7ce8ff;
-    --ae-rose: #f6a6d9;
-    --ae-mint: #9be6c2;
-    --ae-warning: #ffc66d;
-    --ae-danger: #ff8f9c;
-    --ae-success: #9be6c2;
+    --ae-ice: #a9eff7;
+    --ae-cyan: #62dceb;
+    --ae-periwinkle: #abb5ff;
+    --ae-violet: #ae8cff;
+    --ae-rose: #f2baea;
+    --ae-champagne: #f1edc8;
+    --ae-success: #b6efda;
+    --ae-warning: #f1d8a7;
+    --ae-danger: #ffb6cd;
+    --ae-mint: var(--ae-success);
 
     --ae-prism:
         linear-gradient(
-            118deg,
-            rgba(185, 168, 255, 0.22) 0%,
-            rgba(124, 232, 255, 0.13) 36%,
-            rgba(246, 166, 217, 0.16) 68%,
-            rgba(155, 230, 194, 0.10) 100%
+            108deg,
+            var(--ae-ice) 0%,
+            var(--ae-cyan) 20%,
+            var(--ae-periwinkle) 43%,
+            var(--ae-violet) 62%,
+            var(--ae-rose) 80%,
+            var(--ae-champagne) 100%
         );
     --ae-prism-soft:
         linear-gradient(
-            125deg,
-            rgba(185, 168, 255, 0.085),
-            rgba(124, 232, 255, 0.045) 42%,
-            rgba(246, 166, 217, 0.065) 76%,
-            rgba(255, 255, 255, 0.018)
+            108deg,
+            rgba(169, 239, 247, 0.11),
+            rgba(171, 181, 255, 0.09) 44%,
+            rgba(242, 186, 234, 0.08) 76%,
+            rgba(241, 237, 200, 0.05)
         );
-    --ae-glass-panel: rgba(12, 15, 29, 0.64);
-    --ae-glass-panel-strong: rgba(15, 18, 34, 0.78);
-    --ae-glass-highlight: rgba(255, 255, 255, 0.105);
 
-    --ae-radius-control: 9px;
-    --ae-radius-panel: 13px;
-    --ae-radius-overlay: 16px;
+    /* Geometry follows the kit: precise by default, softened only when useful. */
+    --ae-radius-control: 2px;
+    --ae-radius-panel: 2px;
+    --ae-radius-soft: 6px;
+    --ae-radius-overlay: 6px;
 
-    --ae-shadow-panel: 0 18px 44px rgba(0, 0, 0, 0.24);
-    --ae-shadow-overlay: 0 24px 80px rgba(0, 0, 0, 0.52);
+    --ae-space-1: 4px;
+    --ae-space-2: 8px;
+    --ae-space-3: 12px;
+    --ae-space-4: 16px;
+    --ae-space-6: 24px;
+    --ae-space-8: 32px;
+    --ae-space-12: 48px;
+    --ae-space-16: 64px;
+    --ae-space-24: 96px;
+    --ae-space-32: 128px;
+    --ae-content-max: 1248px;
+    --ae-control-height: 48px;
+
+    --ae-shadow-panel: 0 12px 30px rgba(0, 0, 0, 0.22);
+    --ae-shadow-overlay: 0 24px 70px rgba(0, 0, 0, 0.48);
 
     --ae-motion-instant: 90ms;
     --ae-motion-fast: 140ms;
-    --ae-motion-base: 200ms;
-    --ae-motion-panel: 260ms;
-    --ae-ease: cubic-bezier(.2, .8, .2, 1);
+    --ae-motion-base: 240ms;
+    --ae-motion-panel: 240ms;
+    --ae-motion-reveal: 480ms;
+    --ae-ease: cubic-bezier(.22, 1, .36, 1);
     --ae-ease-standard: var(--ae-ease);
 
-    /* Compatibility aliases while legacy routes migrate onto Aerith primitives. */
+    /* Compatibility aliases while legacy routes migrate onto shared primitives. */
     --bg: var(--ae-bg);
     --panel: var(--ae-surface);
     --panel2: var(--ae-bg-elevated);

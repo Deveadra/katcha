@@ -23,6 +23,9 @@ const assert = require('node:assert/strict');
         await page.goto('http://localhost:8765');
         await page.waitForFunction(()=>document.getElementById('phase').textContent==='IDLE');
         assert.equal(await page.locator('#open').getAttribute('aria-disabled'),'false');
+        const connections=page.locator('#connections');
+        assert.equal(await connections.evaluate(node=>node.open),false);
+        await connections.locator(':scope > summary').click();
         await page.locator('input[name="KATCHA_OPENAI_API_KEY"]').fill('unsaved-fixture-value');
         let consoleStatusRequests = 0;
         await page.route('**/runtime/status', async route => {
@@ -122,13 +125,15 @@ const assert = require('node:assert/strict');
             backdropFilter:getComputedStyle(node).backdropFilter||getComputedStyle(node).webkitBackdropFilter
         }));
         assert.match(shortcutStyle.backgroundImage,/linear-gradient/);
-        assert.match(shortcutStyle.backdropFilter,/blur/);
-        const panelGlass=await workspace.locator('.home-panel').first().evaluate(node=>({
+        assert.equal(shortcutStyle.backdropFilter,'none');
+        const panelMaterial=await workspace.locator('.home-panel').first().evaluate(node=>({
             backgroundImage:getComputedStyle(node).backgroundImage,
-            backdropFilter:getComputedStyle(node).backdropFilter||getComputedStyle(node).webkitBackdropFilter
+            backdropFilter:getComputedStyle(node).backdropFilter||getComputedStyle(node).webkitBackdropFilter,
+            borderRadius:parseFloat(getComputedStyle(node).borderRadius)
         }));
-        assert.match(panelGlass.backgroundImage,/linear-gradient/);
-        assert.match(panelGlass.backdropFilter,/blur/);
+        assert.equal(panelMaterial.backgroundImage,'none');
+        assert.equal(panelMaterial.backdropFilter,'none');
+        assert(panelMaterial.borderRadius<=6);
 
         // Trends must render with its complete design system through the real launcher.
         const trends=await browser.newPage({viewport:{width:1440,height:1000}});
@@ -192,6 +197,10 @@ const assert = require('node:assert/strict');
         await page.screenshot({path:'test-results/launcher-desktop.png',fullPage:true});
         await page.setViewportSize({width:390,height:844});
         assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
+        assert.equal(
+            await page.locator('#katcha-chat-shortcut').evaluate(node=>getComputedStyle(node).position),
+            'static',
+        );
         await page.screenshot({path:'test-results/launcher-mobile.png',fullPage:true});
         assert.deepEqual(errors,[]);
     } finally {
