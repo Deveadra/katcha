@@ -26,7 +26,7 @@ from katcha.editorial.project_schemas import (
 )
 from katcha.editorial_models import EditorialProject, EditorialRevision
 from katcha.intelligence_models import ChannelProfile
-from katcha.models import DomainEvent
+from katcha.models import Clip, DomainEvent, SourceItem
 from katcha.services import goal_tools
 from katcha.services.editorial_projects import EditorialConflict, create_project, save_draft
 
@@ -89,6 +89,33 @@ def brief(key="create-1"):
             "source_urls": ["https://www.youtube.com/watch?v=fixture"],
         },
     }
+
+
+def managed_clip(channel, *, source_url="https://www.youtube.com/watch?v=fixture"):
+    clip_id = uuid.uuid4()
+    with db.session_scope() as session:
+        session.add(
+            Clip(
+                id=clip_id,
+                sha256=uuid.uuid4().hex * 2,
+                storage_key=f"raw/{clip_id}.mp4",
+                duration_seconds=90,
+                width=1920,
+                height=1080,
+                status="scored",
+            )
+        )
+        session.add(
+            SourceItem(
+                source_url=source_url,
+                canonical_url=source_url,
+                platform="youtube",
+                status="ready",
+                clip_id=clip_id,
+                source_metadata={"channel_profile_id": str(channel)},
+            )
+        )
+    return clip_id
 
 
 def draft():
@@ -175,6 +202,44 @@ def test_api_roundtrip_replay_history_and_audit(saved):
             )
         )
         assert len(events) == 3
+
+
+def test_project_persists_verified_managed_source_binding(saved):
+    client, channel, _ = saved
+    clip_id = managed_clip(channel)
+    body = brief("managed-source")
+    source_url = body["brief"]["source_urls"][0]
+    body["brief"]["source_clip_bindings"] = {source_url: str(clip_id)}
+
+    response = client.post(root(channel), json=body)
+    assert response.status_code == 201, response.text
+    project = response.json()
+    assert project["brief"]["source_clip_bindings"] == {source_url: str(clip_id)}
+    assert client.post(root(channel), json=body).json()["id"] == project["id"]
+
+
+def test_project_rejects_managed_clip_without_matching_lineage(saved):
+    client, channel, _ = saved
+    clip_id = managed_clip(channel, source_url="https://www.youtube.com/watch?v=other")
+    body = brief("wrong-lineage")
+    source_url = body["brief"]["source_urls"][0]
+    body["brief"]["source_clip_bindings"] = {source_url: str(clip_id)}
+
+    response = client.post(root(channel), json=body)
+    assert response.status_code == 409
+    assert "does not match" in response.json()["detail"]
+
+
+def test_project_rejects_managed_clip_from_another_channel(saved):
+    client, channel, other = saved
+    clip_id = managed_clip(other)
+    body = brief("wrong-channel")
+    source_url = body["brief"]["source_urls"][0]
+    body["brief"]["source_clip_bindings"] = {source_url: str(clip_id)}
+
+    response = client.post(root(channel), json=body)
+    assert response.status_code == 409
+    assert "not available to this channel" in response.json()["detail"]
 
 
 def test_changed_replay_and_stale_save_preserve_current_draft(saved):
