@@ -152,7 +152,7 @@ function installWorkspaceMenu() {
 
         let savedState = null;
         try {
-            savedState = localStorage.getItem('katcha.workspaceGroup.' + group.key);
+            savedState = sessionStorage.getItem('katcha.workspaceGroup.' + group.key);
         } catch {
             savedState = null;
         }
@@ -178,7 +178,7 @@ function installWorkspaceMenu() {
             '<div class="workspace-group-body">' + rows + '</div>';
         section.addEventListener('toggle', () => {
             try {
-                localStorage.setItem(
+                sessionStorage.setItem(
                     'katcha.workspaceGroup.' + group.key,
                     section.open ? 'open' : 'closed',
                 );
