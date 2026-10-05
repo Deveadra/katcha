@@ -355,8 +355,10 @@ const draft = {
         assert.equal(imageRender.storyboard.beats[0].layout, 'image');
         await page.locator('[data-editorial-stage="assets"]').click();
         await page.locator('[data-image-revoke]').click();
+        await page.locator('[data-editorial-stage="preview"]').click();
         await page.getByText(/Previous approval is no longer valid/).waitFor();
         assert.equal(await page.locator('#editorial-storyboard select option[value="image:still-image"]').count(), 0);
+        await page.locator('[data-editorial-stage="assets"]').click();
         await page.locator('#editorial-image-file').setInputFiles({name: 'owned.png', mimeType: 'image/png', buffer: Buffer.from('synthetic upload transport')});
         await page.locator('#editorial-image-confirm').check();
         await page.locator('#editorial-image-upload').click();
