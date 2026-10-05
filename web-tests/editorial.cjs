@@ -162,8 +162,10 @@ const draft = {
         assert.equal(await page.locator('[data-editorial-stage-panel="research"]').isVisible(), true);
         assert.equal(await page.locator('[data-editorial-stage-panel="script"]').isHidden(), true);
         const researchAiHref = await page.locator('[data-editorial-ai="research"]').getAttribute("href");
-        assert.match(researchAiHref, /\/ai\?/);
-        assert.match(decodeURIComponent(researchAiHref), /Inspect editorial project/);
+        const researchAiUrl = new URL(researchAiHref, "http://127.0.0.1");
+        assert.equal(researchAiUrl.pathname, "/ai");
+        assert.equal(researchAiUrl.searchParams.get("channel"), "one");
+        assert.match(researchAiUrl.searchParams.get("prompt"), /Inspect editorial project/);
         await page.locator('[data-editorial-stage="research"]').focus();
         await page.keyboard.press("ArrowRight");
         assert.equal(await page.locator('[data-editorial-stage="script"]').getAttribute("aria-selected"), "true");
