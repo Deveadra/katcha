@@ -304,18 +304,17 @@ jobs:
         run: |
           set -euo pipefail
           message="$(
-            cat <<EOF
-Katcha is back online.
-
-Deployment: ${{ steps.recovery.outputs.deployment_id }}
-Epoch: ${{ steps.recovery.outputs.deployment_epoch }}
-Availability Domain: ${{ steps.recovery.outputs.availability_domain }}
-Recovery mode: ${{ steps.recovery.outputs.mode }}
-Storage: ${{ steps.recovery.outputs.storage_mode }}
-Public health: confirmed
-
-The replacement deployment has committed leadership and is authoritative.
-EOF
+            printf '%s\n' \
+              'Katcha is back online.' \
+              '' \
+              'Deployment: ${{ steps.recovery.outputs.deployment_id }}' \
+              'Epoch: ${{ steps.recovery.outputs.deployment_epoch }}' \
+              'Availability Domain: ${{ steps.recovery.outputs.availability_domain }}' \
+              'Recovery mode: ${{ steps.recovery.outputs.mode }}' \
+              'Storage: ${{ steps.recovery.outputs.storage_mode }}' \
+              'Public health: confirmed' \
+              '' \
+              'The replacement deployment has committed leadership and is authoritative.'
           )"
           bash scripts/notify-telegram.sh "$message"
 
