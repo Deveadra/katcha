@@ -22,6 +22,16 @@ const workspaces = [
     { file: "settings.html", label: "Settings" },
 ];
 const labels = workspaces.map((row) => row.label);
+const groupForWorkspace = new Map([
+    ["Home", "Plan"],
+    ["Trends", "Plan"],
+    ["Sources", "Plan"],
+    ["Clips", "Create"],
+    ["Katcha AI", "Create"],
+    ["Production", "Create"],
+    ["Clip Studio", "Create"],
+    ["Channel Studio", "Grow"],
+]);
 
 (async () => {
     for (let i = 0; i < 50; i++) {
@@ -44,7 +54,7 @@ const labels = workspaces.map((row) => row.label);
         for (const workspace of workspaces) {
             await page.goto("http://127.0.0.1:" + port + "/" + workspace.file, { waitUntil: "domcontentloaded" });
             const menu = page.locator(".workspace-menu");
-            await menu.locator("summary").waitFor();
+            await menu.locator("summary").waitFor({ state: "attached" });
 
             const routeRelativeAssets = await page
                 .locator('link[rel="stylesheet"][href], script[src]')
@@ -77,9 +87,20 @@ const labels = workspaces.map((row) => row.label);
                 workspace.label + ": persistent workspace navigation drifted",
             );
             assert.equal(
-                await menu.locator(".workspace-menu-popover").isVisible(),
+                await menu.isVisible(),
                 false,
-                workspace.label + ": workspace popover must be hidden while closed",
+                workspace.label + ": duplicate workspace switcher should stay hidden on desktop",
+            );
+            assert.equal(
+                await workspaceTree.isVisible(),
+                true,
+                workspace.label + ": grouped workspace tree should be visible on desktop",
+            );
+            const expectedOpenGroup = groupForWorkspace.get(workspace.label);
+            assert.deepEqual(
+                await workspaceTree.locator(".workspace-group[open] > summary > span").allTextContents(),
+                expectedOpenGroup ? [expectedOpenGroup] : [],
+                workspace.label + ": only the relevant task group should open by default",
             );
             const currentWorkspace = menu.locator('[aria-current="page"]');
             assert.equal(
@@ -108,6 +129,30 @@ const labels = workspaces.map((row) => row.label);
                 "fixed",
             );
 
+            if (workspace.help) {
+                assert.ok(
+                    await page.locator(".ae-help").count() >= workspace.help,
+                    workspace.label + ": expected progressive disclosure help",
+                );
+            }
+
+            await page.setViewportSize({ width: 390, height: 844 });
+            assert.equal(
+                await workspaceTree.isVisible(),
+                false,
+                workspace.label + ": desktop workspace tree should collapse on mobile",
+            );
+            assert.equal(
+                await menu.isVisible(),
+                true,
+                workspace.label + ": quick workspace switcher should replace the tree on mobile",
+            );
+            assert.equal(
+                await menu.locator(".workspace-menu-popover").isVisible(),
+                false,
+                workspace.label + ": workspace popover must be hidden while closed",
+            );
+
             await menu.locator("summary").click();
             assert.equal(await menu.evaluate((node) => node.open), true);
             await page.keyboard.press("Escape");
@@ -118,14 +163,6 @@ const labels = workspaces.map((row) => row.label);
             await page.locator("main").click({ position: { x: 5, y: 5 } });
             assert.equal(await menu.evaluate((node) => node.open), false);
 
-            if (workspace.help) {
-                assert.ok(
-                    await page.locator(".ae-help").count() >= workspace.help,
-                    workspace.label + ": expected progressive disclosure help",
-                );
-            }
-
-            await page.setViewportSize({ width: 390, height: 844 });
             assert.equal(
                 await page.evaluate(() => document.documentElement.scrollWidth > innerWidth),
                 false,
