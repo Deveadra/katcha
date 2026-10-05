@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import uuid
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import func, select, update
 
 from katcha.acquisition_models import DiscoveryRun, TopicWatchVersion
 from katcha.command_center_models import CommandActionProposal
@@ -118,6 +119,13 @@ def record_command_workflow_lifecycle(
         raise ValueError("workflow_id is required")
 
     with session_scope() as session:
+        # Serialize lifecycle receipts, including replay checks, on both SQLite
+        # and PostgreSQL. UUID order is not event order when timestamps tie.
+        session.execute(
+            update(CommandActionProposal)
+            .where(CommandActionProposal.id == proposal_id)
+            .values(status=CommandActionProposal.status)
+        )
         proposal = session.get(CommandActionProposal, proposal_id)
         if proposal is None:
             raise ValueError(f"command action proposal not found: {proposal_id}")
@@ -164,12 +172,25 @@ def record_command_workflow_lifecycle(
         if detail:
             payload["detail"] = dict(detail)
 
+        latest_at = session.scalar(
+            select(func.max(DomainEvent.created_at)).where(
+                DomainEvent.aggregate_type == "command_action_proposal",
+                DomainEvent.aggregate_id == str(proposal.id),
+            )
+        )
+        created_at = datetime.now(UTC)
+        if latest_at is not None:
+            if latest_at.tzinfo is None:
+                latest_at = latest_at.replace(tzinfo=UTC)
+            created_at = max(created_at, latest_at + timedelta(microseconds=1))
+
         session.add(
             DomainEvent(
                 aggregate_type="command_action_proposal",
                 aggregate_id=str(proposal.id),
                 event_type=event_type,
                 payload=payload,
+                created_at=created_at,
             )
         )
     return True

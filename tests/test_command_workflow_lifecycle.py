@@ -1,6 +1,9 @@
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
+from threading import Barrier
 
+import pytest
 from sqlalchemy import select
 
 from katcha.db import session_scope
@@ -19,6 +22,7 @@ from katcha.services.command_activity import get_action_activity
 from katcha.services.command_workflow_lifecycle import (
     proposal_id_from_command_run_key,
     record_command_source_prepare_lifecycle,
+    record_command_workflow_lifecycle,
     record_intelligence_command_workflow_lifecycle,
     record_topic_watch_command_cycle,
 )
@@ -173,7 +177,40 @@ def test_non_command_intelligence_run_does_not_emit_lifecycle() -> None:
     )
 
 
-def test_source_scout_cycles_report_active_degraded_then_recovered() -> None:
+def test_concurrent_lifecycle_replay_writes_one_receipt() -> None:
+    workflow_id = f"concurrent-{uuid.uuid4()}"
+    proposal = _executed_proposal(
+        _profile(), action_type="start_source_scout",
+        result={"workflow_id": workflow_id},
+    )
+    barrier = Barrier(2)
+
+    def record() -> bool:
+        barrier.wait(timeout=10)
+        return record_command_workflow_lifecycle(
+            proposal.id, workflow_id=workflow_id, state="completed",
+            cycle_key="same-cycle",
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        futures = [pool.submit(record) for _ in range(2)]
+        assert sorted(future.result(timeout=20) for future in futures) == [False, True]
+
+
+@pytest.mark.parametrize("clock_step", [0, -60])
+def test_source_scout_cycles_report_active_degraded_then_recovered(
+    monkeypatch: pytest.MonkeyPatch, clock_step: int,
+) -> None:
+    from katcha.services import command_workflow_lifecycle as lifecycle
+
+    class Clock(datetime):
+        current = datetime(2040, 1, 1, tzinfo=UTC)
+
+        @classmethod
+        def now(cls, tz=None):
+            return cls.current
+
+    monkeypatch.setattr(lifecycle, "datetime", Clock)
     profile_id = _profile()
     proposal = create_action_proposals(
         request_id=uuid.uuid4(),
@@ -224,6 +261,7 @@ def test_source_scout_cycles_report_active_degraded_then_recovered() -> None:
     assert degraded.resource.stage == "cycle_failed"
     assert degraded.resource.error == "provider fixture failure"
 
+    Clock.current += timedelta(seconds=clock_step)
     assert record_topic_watch_command_cycle(
         topic_watch_id=watch.id,
         workflow_id=workflow_id,
@@ -252,6 +290,16 @@ def test_source_scout_cycles_report_active_degraded_then_recovered() -> None:
     assert duplicate is False
 
     with session_scope() as session:
+        events = list(session.scalars(select(DomainEvent).where(
+            DomainEvent.aggregate_id == str(proposal.id),
+            DomainEvent.event_type.in_([
+                "command_center.workflow_cycle_failed",
+                "command_center.workflow_cycle_completed",
+            ]),
+        ).order_by(DomainEvent.created_at)))
+        assert len(events) == 2
+        assert events[0].created_at < events[1].created_at
+        assert events[1].payload["cycle_key"] == "cycle-2"
         row = session.get(type(watch), watch.id)
         assert row is not None
         row.enabled = False
