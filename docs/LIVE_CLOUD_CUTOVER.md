@@ -333,11 +333,17 @@ administrator API key. In the Default identity domain create a group named
 attach a tenancy policy with only:
 
 ```text
-Allow group 'Default'/'katcha-github-recovery' to manage instance-family in compartment katcha-prod
-Allow group 'Default'/'katcha-github-recovery' to manage volume-family in compartment katcha-prod
-Allow group 'Default'/'katcha-github-recovery' to use virtual-network-family in compartment katcha-prod
-Allow group 'Default'/'katcha-github-recovery' to read instance-images in tenancy
+Allow group katcha-github-recovery to manage instance-family in compartment katcha-prod
+Allow group katcha-github-recovery to manage volume-family in compartment katcha-prod
+Allow group katcha-github-recovery to use virtual-network-family in compartment katcha-prod
+Allow group katcha-github-recovery to read instance-images in tenancy
+Allow group katcha-github-recovery to read app-catalog-listing in tenancy
 ```
+
+Because this group is in the Default identity domain, the domain qualifier may
+be omitted; OCI treats the unqualified group name as `Default/katcha-github-recovery`.
+Create this policy in the root compartment so the tenancy-scoped image/catalog
+reads and the `katcha-prod` grants can live together.
 
 The GitHub workflows validate OCI authentication by listing instances only in
 `katcha-prod`; they do not require tenancy-wide region-subscription access.
