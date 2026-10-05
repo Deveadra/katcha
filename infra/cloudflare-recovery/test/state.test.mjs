@@ -309,7 +309,7 @@ test("unresolved dispatched incident is re-queued after retry interval", () => {
     enabled: true,
     intervalSeconds: 60,
     failureThreshold: 1,
-    recoveryRetrySeconds: 900,
+    recoveryRetrySeconds: 300,
   }, 3000);
 
   let probe = applyProbe(state, {
@@ -327,7 +327,7 @@ test("unresolved dispatched incident is re-queued after retry interval", () => {
     deploymentEpoch: 1,
     healthy: false,
     detail: "still down",
-  }, 5_000 + 899_000);
+  }, 5_000 + 299_000);
   assert.equal(probe.shouldDispatch, false);
   assert.equal(probe.state.incident.status, "dispatched");
 
@@ -336,7 +336,7 @@ test("unresolved dispatched incident is re-queued after retry interval", () => {
     deploymentEpoch: 1,
     healthy: false,
     detail: "still down",
-  }, 5_000 + 900_000);
+  }, 5_000 + 300_000);
   assert.equal(probe.shouldDispatch, true);
   assert.equal(probe.state.incident.status, "pending_dispatch");
   assert.equal(probe.state.incident.id, incidentId);
