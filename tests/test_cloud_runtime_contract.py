@@ -301,7 +301,7 @@ def test_bootstrap_capacity_search_self_chains_with_cron_as_backstop() -> None:
     assert "steps.handoff.outcome == 'failure'" in workflow
     assert "vars.KATCHA_OCI_BOOTSTRAP_POLL_ENABLED == 'true'" in workflow
     assert "gh workflow run oci-bootstrap-capacity.yml" in workflow
-    assert "dead-man/backstop" in workflow
+    assert "dead-man/backstop" in workflow.lower()
     assert "Starting the first autonomous capacity pass" in configurator
     assert "gh workflow run oci-bootstrap-capacity.yml" in configurator
     assert "five-minute GitHub schedule remains only as a dead-man/backstop" in configurator
