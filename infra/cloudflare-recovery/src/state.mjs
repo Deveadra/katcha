@@ -23,9 +23,9 @@ export function defaultAuthorityState() {
     },
     bootstrap_watchdog: {
       enabled: false,
-      check_interval_seconds: 60,
+      check_interval_seconds: 300,
       stale_after_seconds: 900,
-      redispatch_cooldown_seconds: 1200,
+      redispatch_cooldown_seconds: 1800,
       configured_at: null,
       last_heartbeat_at: null,
       last_heartbeat_at_ms: 0,
@@ -342,9 +342,9 @@ export function configureBootstrapWatchdog(
   current,
   {
     enabled,
-    checkIntervalSeconds = 60,
+    checkIntervalSeconds = 300,
     staleAfterSeconds = 900,
-    redispatchCooldownSeconds = 1200,
+    redispatchCooldownSeconds = 1800,
   },
   nowMs = Date.now(),
 ) {
