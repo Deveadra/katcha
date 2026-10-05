@@ -480,7 +480,7 @@ export class RecoveryAuthority extends DurableObject {
             20,
           ),
           recoveryRetrySeconds: positiveInt(
-            body.recovery_retry_seconds ?? 900,
+            body.recovery_retry_seconds ?? 300,
             "recovery_retry_seconds",
             86400,
           ),
