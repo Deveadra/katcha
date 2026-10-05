@@ -620,8 +620,13 @@ function renderComparison() {
     const rows = state.compare
         .map((id) => state.rows.find((r) => r.opportunity.id === id))
         .filter(Boolean);
-    $("comparison").hidden = !rows.length;
-    $("comparison").innerHTML =
+    const comparison = $("comparison");
+    comparison.hidden = rows.length < 2;
+    if (rows.length < 2) {
+        comparison.innerHTML = "";
+        return;
+    }
+    comparison.innerHTML =
         `<div class="comparison-head"><h3>Compare ${rows.length}/2</h3><button id="clear-compare">Clear</button></div><table class="comparison-table"><thead><tr><th>Signal</th>${rows.map((r) => `<th>${esc(r.topic)}</th>`).join("")}</tr></thead><tbody>${[
             ["Baseline", "opportunity_score"],
             ["Calibrated", "calibrated_score"],
