@@ -212,8 +212,11 @@
                                             <input id="growth-target-date" type="date">
                                         </label>
                                     </div>
-                                    <div class="custom-goal-editor">
-                                        <span class="micro-label">OPTIONAL CUSTOM BENCHMARK</span>
+                                    <details id="custom-goal-editor" class="custom-goal-editor ae-disclosure">
+                                        <summary>
+                                            <span>Custom benchmarks</span>
+                                            <small>Optional targets beyond YouTube milestones</small>
+                                        </summary>
                                         <div class="custom-goal-fields">
                                             <select id="custom-goal-metric" aria-label="Custom goal metric">
                                                 <option value="subscribers">Subscribers</option>
@@ -221,7 +224,7 @@
                                                 <option value="qualified_shorts_views_90d">Shorts views / 90d</option>
                                                 <option value="public_uploads_90d">Public uploads / 90d</option>
                                             </select>
-                                            <input id="custom-goal-target" type="number" min="1" step="1" placeholder="Target">
+                                            <input id="custom-goal-target" type="number" min="1" step="1" placeholder="Target" aria-label="Custom goal target">
                                             <select id="custom-goal-priority" aria-label="Custom goal priority">
                                                 <option value="5">Critical</option>
                                                 <option value="4">High</option>
@@ -233,7 +236,7 @@
                                             <button id="add-custom-goal" class="studio-button secondary small" type="button">+ Add goal</button>
                                         </div>
                                         <div id="custom-goals" class="custom-goals"></div>
-                                    </div>
+                                    </details>
                                     <button class="studio-button primary" type="submit">Save growth goals</button>
                                 </form>
                                 <div id="ai-growth-focus" class="ai-growth-focus empty-state">
