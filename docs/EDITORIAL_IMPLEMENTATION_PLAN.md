@@ -242,6 +242,41 @@ long unchanged visuals, excessive overlays, narration/visual mismatch and delaye
 payoffs. A zoom on repeated footage does not magically count as fresh evidence.
 Thresholds are configurable editorial heuristics, not guaranteed YouTube outcomes.
 
+## Editorial Studio product contract
+
+Treat Editorial Projects as Katcha's channel-specific AI nonlinear editor, not a long
+form with automation buttons. The operator mental model is: project/source bin →
+evidence/script workspace → asset bin → storyboard/timeline → private preview/review.
+Use professional-editor conventions only where they reduce cognitive load; do not copy
+Premiere complexity that is irrelevant to a channel operator.
+
+Every AI-assisted stage needs a visible manual/operator path. AI can analyze, research,
+draft, scout, direct, voice, compile and diagnose, but operators can upload/import,
+replace, edit, reorder, choose, reject and retry without losing prior receipts or
+evidence. An AI result is a proposal or durable artifact, never an irreversible UI state.
+
+Input must become plug-and-play behind versioned contracts. The source dock ultimately
+accepts URLs, managed Katcha clips and direct media uploads. The script dock accepts
+operator-written/pasted/uploaded starting material separately from evidence-validated
+script revisions; importing text must not mark factual statements as verified. Asset
+bins accept acquired media plus owned/permitted uploads. Narration supports uploaded
+recordings and configured AI voices. New input kinds must preserve provenance, hashes,
+rights/use decisions and request identity instead of bypassing acquisition/revision
+contracts.
+
+Research, Script, Assets, Storyboard and Preview are the primary task stages. Keep the
+active stage bounded and scannable, keep project/history/navigation secondary, and
+avoid forcing one page-length form. Stage transitions may guide the operator after a
+successful action, but must remain directly navigable and keyboard accessible. Preserve
+unsaved work per project/channel and never hide blockers solely because another stage
+is active.
+
+AI assistance should be contextual at each stage. Katcha AI must receive channel,
+project and requested stage/task context through typed project tools or explicit project
+identity; a generic chat link without project context is not the long-term integration.
+Manual edits and AI actions must converge on the same durable project/revision/run
+contracts so either path can resume after disconnects.
+
 ## E7: user journey and operational wiring
 
 In Channel Studio/Production, add an Editorial Projects view with brief/source entry,
