@@ -199,7 +199,7 @@ class Ad2SuccessClient:
                     "lifecycle-state": "AVAILABLE",
                 }
             }
-        if prefix == ["compute", "volume-attachment"]:
+        if args[:2] == ["compute", "volume-attachment"]:
             operation = args[2]
             if operation == "list":
                 return {"data": []}
