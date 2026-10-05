@@ -179,9 +179,9 @@ function installWorkspaceMenu() {
             '<summary><span>' + group.label + '</span><small>' + group.workspaces.length + '</small></summary>' +
             '<div class="workspace-group-body">' + rows + '</div>';
         section.querySelector('summary').addEventListener('click', () => {
-            /* Persist only operator intent. Programmatic current-group expansion also emits
-               a toggle event, so listening to toggle would incorrectly make that state sticky. */
-            queueMicrotask(() => {
+            /* Persist only operator intent. Read the state on the next task so the native
+               <details> summary toggle has completed before we save open/closed. */
+            setTimeout(() => {
                 try {
                     sessionStorage.setItem(
                         'katcha.workspaceGroup.' + group.key,
@@ -190,7 +190,7 @@ function installWorkspaceMenu() {
                 } catch {
                     /* Navigation remains fully functional when storage is unavailable. */
                 }
-            });
+            }, 0);
         });
         tree.append(section);
     }
