@@ -226,3 +226,18 @@ details > summary {
     border-radius: 50%;
     background: currentColor;
 }
+
+
+/* Native compact selectors must not inherit text-field target sizing. */
+input[type="checkbox"],
+input[type="radio"] {
+    min-height: 0;
+    width: 18px;
+    height: 18px;
+    accent-color: var(--ae-cyan);
+}
+
+.studio-button {
+    min-height: 44px;
+    border-radius: var(--ae-radius-control) !important;
+}
