@@ -35,7 +35,6 @@ args=(
     --request POST
     --data-urlencode "chat_id=$CHAT_ID"
     --data-urlencode "text=$MESSAGE"
-    --data-urlencode "disable_web_page_preview=true"
 )
 
 if [[ -n "$THREAD_ID" ]]; then
