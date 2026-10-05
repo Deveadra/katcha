@@ -44,7 +44,7 @@ window.KatchaEditorial = (() => {
         if (state.busy || !state.channel) return;
         state.busy = true;
         el("editorial-form-fields").disabled = true;
-        el("editorial-detail").querySelectorAll("button").forEach((button) => { button.disabled = true; });
+        el("editorial-detail").querySelectorAll("button:not([data-editorial-stage])").forEach((button) => { button.disabled = true; });
         const channel = state.channel;
         try { await action(); }
         catch (error) { if (channel === state.channel) feedback(error.message, true); }
@@ -148,7 +148,7 @@ window.KatchaEditorial = (() => {
             : '<button class="mini" type="button" data-editorial-action="analysis">Analyze sources</button><button class="button primary" type="button" data-editorial-action="script">Research and draft script</button>'
                 + (canResume ? '<button class="mini" type="button" data-editorial-action="resume">Resume saved work</button>' : "");
         if (!active && state.revision?.draft.script?.length) el("editorial-actions").insertAdjacentHTML("beforeend", '<button class="mini" type="button" data-editorial-action="assets">Find supporting assets</button>');
-        el("editorial-detail").querySelectorAll("button").forEach((button) => { button.disabled = state.busy; });
+        el("editorial-detail").querySelectorAll("button:not([data-editorial-stage])").forEach((button) => { button.disabled = state.busy; });
         el("editorial-save-script").disabled = state.busy || !state.revision || Boolean(active) || state.stale;
         assetControls();
         el("editorial-render").disabled = state.busy || Boolean(active) || state.stale || !state.revision?.draft.script?.length || Boolean(read(storageKey(`pending.${state.project.id}`), null));
