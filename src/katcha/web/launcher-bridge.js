@@ -47,7 +47,9 @@ function installAerithSystem() {
         document.head.append(link);
     }
 
-    document.body.dataset.katchaPage = workspaceKeyFromPath();
+    if (!document.body.dataset.katchaPage) {
+        document.body.dataset.katchaPage = workspaceKeyFromPath();
+    }
     const theme = document.querySelector('meta[name="theme-color"]');
     if (theme) theme.content = '#090b12';
 }
