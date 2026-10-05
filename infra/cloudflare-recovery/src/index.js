@@ -475,47 +475,45 @@ export class RecoveryAuthority extends DurableObject {
             "RECOVERY_DISPATCH_URL must be configured before enabling bootstrap watchdog",
           );
         }
-        const state = await this.updateState((current) =>
-          configureBootstrapWatchdog(current, {
-            enabled,
-            checkIntervalSeconds: positiveInt(
-              body.check_interval_seconds ?? 60,
-              "check_interval_seconds",
-              3600,
-            ),
-            staleAfterSeconds: positiveInt(
-              body.stale_after_seconds ?? 900,
-              "stale_after_seconds",
-              86400,
-            ),
-            redispatchCooldownSeconds: positiveInt(
-              body.redispatch_cooldown_seconds ?? 1200,
-              "redispatch_cooldown_seconds",
-              86400,
-            ),
-          }),
-        );
-        if (state.bootstrap_watchdog.check_interval_seconds < 30) {
+        const config = {
+          enabled,
+          checkIntervalSeconds: positiveInt(
+            body.check_interval_seconds ?? 300,
+            "check_interval_seconds",
+            3600,
+          ),
+          staleAfterSeconds: positiveInt(
+            body.stale_after_seconds ?? 900,
+            "stale_after_seconds",
+            86400,
+          ),
+          redispatchCooldownSeconds: positiveInt(
+            body.redispatch_cooldown_seconds ?? 1800,
+            "redispatch_cooldown_seconds",
+            86400,
+          ),
+        };
+        if (config.checkIntervalSeconds < 30) {
           throw new HttpError(
             400,
             "check_interval_seconds must be at least 30",
           );
         }
-        if (state.bootstrap_watchdog.stale_after_seconds < 300) {
+        if (config.staleAfterSeconds < 300) {
           throw new HttpError(
             400,
             "stale_after_seconds must be at least 300",
           );
         }
-        if (
-          state.bootstrap_watchdog.redispatch_cooldown_seconds <
-          state.bootstrap_watchdog.stale_after_seconds
-        ) {
+        if (config.redispatchCooldownSeconds < config.staleAfterSeconds) {
           throw new HttpError(
             400,
             "redispatch_cooldown_seconds must be at least stale_after_seconds",
           );
         }
+        const state = await this.updateState((current) =>
+          configureBootstrapWatchdog(current, config),
+        );
         await this.scheduleWatchdog(state);
         return json({ bootstrap_watchdog: state.bootstrap_watchdog });
       }
@@ -636,7 +634,19 @@ export class RecoveryAuthority extends DurableObject {
   async alarm() {
     try {
       await this.runBootstrapWatchdog();
+    } catch (error) {
+      console.error(
+        "bootstrap watchdog alarm failed",
+        error?.message || String(error),
+      );
+    }
+    try {
       await this.runProbe();
+    } catch (error) {
+      console.error(
+        "production watchdog alarm failed",
+        error?.message || String(error),
+      );
     } finally {
       await this.scheduleWatchdog(await this.readState());
     }
