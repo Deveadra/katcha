@@ -26,9 +26,9 @@ payload="$(
         --argjson enabled "$ENABLED" \
         '{
           enabled:$enabled,
-          check_interval_seconds:60,
+          check_interval_seconds:300,
           stale_after_seconds:900,
-          redispatch_cooldown_seconds:1200
+          redispatch_cooldown_seconds:1800
         }'
 )"
 
@@ -58,7 +58,7 @@ curl \
 if [[ "$ENABLED" == "true" ]]; then
     echo
     echo "Cloudflare will rescue a stale bootstrap chain after 15 minutes,"
-    echo "with at most one rescue dispatch per 20 minutes until heartbeats resume."
+    echo "with at most one rescue dispatch per 30 minutes until heartbeats resume."
 else
     echo
     echo "Cloudflare bootstrap watchdog is disabled."
