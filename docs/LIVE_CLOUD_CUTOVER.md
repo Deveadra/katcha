@@ -285,10 +285,11 @@ enabled, the Durable Object wakes every five minutes; if no heartbeat has been
 seen for 15 minutes, it sends a `katcha-bootstrap-poll`
 `repository_dispatch` through the already-authorized recovery GitHub
 dispatcher. Rescue dispatches are rate-limited to one attempt per 30 minutes so
-a long GitHub-hosted-runner outage cannot build an unbounded queue. The
-watchdog automatically disables when the acquisition handoff completes. A
-Cloudflare outage does not stop the primary GitHub self-chain because heartbeat
-delivery is intentionally best-effort.
+a long GitHub-hosted-runner outage cannot build an unbounded queue. When a
+Cloudflare rescue run actually starts, GitHub sends the operator a best-effort
+Telegram "polling recovery" notice. The watchdog automatically disables when
+the acquisition handoff completes. A Cloudflare outage does not stop the primary
+GitHub self-chain because heartbeat delivery is intentionally best-effort.
 
 After deploying the updated recovery Worker, enable this independent watchdog:
 
