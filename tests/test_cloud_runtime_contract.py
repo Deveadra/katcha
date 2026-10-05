@@ -336,6 +336,20 @@ def test_recovery_notifies_only_after_commit_and_public_health() -> None:
     assert 'KATCHA_TELEGRAM_REQUIRED: "true"' in workflow
 
 
+def test_telegram_notification_test_is_manual_only() -> None:
+    workflow = (
+        ROOT / ".github" / "workflows" / "telegram-notification-test.yml"
+    ).read_text(encoding="utf-8")
+
+    assert "workflow_dispatch:" in workflow
+    assert "schedule:" not in workflow
+    assert "repository_dispatch" not in workflow
+    assert "KATCHA_TELEGRAM_BOT_TOKEN" in workflow
+    assert "KATCHA_TELEGRAM_CHAT_ID" in workflow
+    assert 'KATCHA_TELEGRAM_REQUIRED: "true"' in workflow
+    assert "notify-telegram.sh" in workflow
+
+
 def test_cloudflare_recovery_retry_default_is_five_minutes() -> None:
     state = (
         ROOT / "infra" / "cloudflare-recovery" / "src" / "state.mjs"
