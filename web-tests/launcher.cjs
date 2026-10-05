@@ -197,6 +197,10 @@ const assert = require('node:assert/strict');
         await page.screenshot({path:'test-results/launcher-desktop.png',fullPage:true});
         await page.setViewportSize({width:390,height:844});
         assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
+        assert.equal(
+            await page.locator('#katcha-chat-shortcut').evaluate(node=>getComputedStyle(node).position),
+            'static',
+        );
         await page.screenshot({path:'test-results/launcher-mobile.png',fullPage:true});
         assert.deepEqual(errors,[]);
     } finally {
