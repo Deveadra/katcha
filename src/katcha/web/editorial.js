@@ -405,7 +405,7 @@ window.KatchaEditorial = (() => {
             const payload = {target: "narration", expected_revision: state.project.revision, confirm_narration: true, max_narration_estimate_usd: limit};
             payload.idempotency_key = identity(`generate-narration.${project}`, payload);
             await api(path(channel, `/${project}/runs`), {method: "POST", body: JSON.stringify(payload)});
-            if (channel === state.channel) await open(project, {focus: false});
+            if (channel === state.channel) { await open(project, {focus: false}); advanceStage("storyboard"); }
         }));
         el("editorial-image-form").addEventListener("input", saveImageForm);
         el("editorial-image-upload").addEventListener("click", () => void guarded(async () => {
@@ -512,7 +512,7 @@ window.KatchaEditorial = (() => {
             await api(path(channel, `/${project}/storyboard/preflight`), {method: "POST", body: JSON.stringify({expected_revision: payload.expected_revision, asset_run_id: payload.asset_run_id, plan: payload.storyboard})});
             payload.idempotency_key = identity(`render.${project}`, payload);
             await api(path(channel, `/${project}/runs`), {method: "POST", body: JSON.stringify(payload)});
-            if (channel === state.channel) await open(project, {focus: false});
+            if (channel === state.channel) { await open(project, {focus: false}); advanceStage("preview"); }
         }));
         el("editorial-play").addEventListener("click", () => void guarded(async () => {
             const epoch = state.epoch;
@@ -554,7 +554,10 @@ window.KatchaEditorial = (() => {
                     payload.idempotency_key = identity(`start.${project}`, payload);
                 }
                 await api(path(channel, suffix), { method: "POST", body: JSON.stringify(payload) });
-                if (channel === state.channel) await open(project, { focus: false });
+                if (channel === state.channel) {
+                    await open(project, { focus: false });
+                    advanceStage(action === "assets" ? "assets" : ["script", "resume"].includes(action) ? "script" : "research");
+                }
             });
         });
         el("editorial-assets").addEventListener("change", () => {
@@ -581,7 +584,9 @@ window.KatchaEditorial = (() => {
             sessionStorage.removeItem(storageKey(`pending.${state.project.id}`));
             sessionStorage.removeItem(storageKey(`script.${state.editorKey}`));
             state.renderKey = "";
-            void open(state.project.id, { focus: false }).catch((error) => feedback(error.message, true));
+            void open(state.project.id, { focus: false })
+                .then(() => advanceStage("script"))
+                .catch((error) => feedback(error.message, true));
         });
         el("editorial-save-script").addEventListener("click", () => void guarded(async () => {
             const channel = state.channel; const project = state.project.id;
