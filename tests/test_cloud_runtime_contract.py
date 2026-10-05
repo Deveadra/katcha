@@ -194,6 +194,24 @@ def test_disaster_backup_units_are_durable_and_scheduled() -> None:
 
 
 
+def test_oci_recovery_has_independent_scheduled_watchdog_backstop() -> None:
+    workflow = (
+        ROOT / ".github" / "workflows" / "oci-recovery.yml"
+    ).read_text(encoding="utf-8")
+
+    assert 'cron: "3,8,13,18,23,28,33,38,43,48,53,58 * * * *"' in workflow
+    assert "recovery-watchdog-backstop:" in workflow
+    assert "/v1/watchdog/probe-now" in workflow
+    assert "KATCHA_RECOVERY_ADMIN_TOKEN" in workflow
+    assert (
+        "github.event.schedule == "
+        "'3,8,13,18,23,28,33,38,43,48,53,58 * * * *'"
+    ) in workflow
+    assert (
+        "github.event.schedule == '7,22,37,52 * * * *'"
+    ) in workflow
+
+
 def test_break_glass_recovery_is_manual_explicit_and_ephemeral() -> None:
     workflow = (
         ROOT / ".github" / "workflows" / "oci-recovery.yml"
