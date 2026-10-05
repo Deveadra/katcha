@@ -784,3 +784,47 @@ The editorial browser journey passed lost direction-response replay, narration
 selection, exact saved-plan rendering, preservation of manual edits, and 390px
 layout. Ruff, compilation, JavaScript syntax and diff checks passed. PostgreSQL and
 remote CI remain publication gates; fixtures do not establish live visual quality.
+
+### E12 permission-attested uploaded still images
+
+PR #276 is merged. This milestone is integrated with main through `0c2b9fa`.
+
+Production now accepts PNG/JPEG stills assigned to exact saved script beats. Uploads
+require an on-screen credit/title, source or ownership reference, permitted-use basis
+and explicit permission attestation. Generated artwork can be marked as an illustration;
+that label is rendered on screen. This records operator authority, not independent
+rights clearance or verification that the image depicts a factual event.
+
+Intake bounds bytes, dimensions and decoded pixels, rejects animation and unsupported
+formats, applies EXIF orientation, strips metadata and stores a normalized PNG with
+an immutable checksum receipt. Upload replay retains identity after a lost response;
+changed bytes or permission details conflict. Persistence rechecks the current script
+after storage. Removal is audited and retained in history; it invalidates current
+render approval through the compiler's existing review checks. An interrupted database
+commit can leave an unreferenced object; automatic orphan cleanup remains pending.
+Migration `0054_editorial_images` is additive and follows narration migration 0053.
+
+Version-3 manifests can mix uploaded image scenes with acquired video and quote cards,
+with silent captions or measured narration. Image/quote-only previews do not require
+a video acquisition run. Images keep their measured aspect ratio; native storyboards
+can request restrained push-in. The renderer checks managed image keys, bounded bytes,
+checksums and PNG dimensions before rendering. Versions 1 and 2 retain their serialized
+shape, and the direction provider schema remains exactly compatible with saved receipts.
+The text-only director still requires manual selection of uploaded images.
+
+Validation: **1083 passed, 2 skipped, 1 failed** in the full local SQLite suite. The
+failure is the same pre-existing source-scout cycle-recovery intermittence recorded in
+E10/E11. All 13 new image cases passed, including migration roundtrip, authentication,
+replay, permission gates, storage failure, script races and approval invalidation.
+The browser journey passed interrupted upload/replay with retained file and permission
+fields, per-beat image selection, narrated render submission, removal and 390px layout.
+A real Chromium/Remotion/FFmpeg render produced a 60-frame image video with narration
+and an illustration credit; existing 180-frame silent and narrated renders also passed.
+The rendered still and mobile form were visually inspected. Local render acceptance
+used a test-only loopback-interface fallback because interface enumeration is unavailable
+in this execution environment; application and renderer code were not altered for it.
+Ruff, compilation, renderer contracts, JavaScript syntax and diff checks passed.
+
+Remaining: frame-grounded visual direction, automatic image acquisition, image comparison
+and region annotations, approved channel branding, publication handoff and live authorized
+source-to-reviewed-video acceptance. This milestone does not generate artwork or publish.

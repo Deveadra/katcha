@@ -13,6 +13,7 @@ try {
   const publicDir = path.join(temp, 'public'); await fs.mkdir(publicDir);
   execFileSync('ffmpeg', ['-y', '-f', 'lavfi', '-i', 'testsrc2=size=640x360:rate=30', '-t', '4', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', path.join(publicDir, 'test.mp4')], {stdio: 'ignore'});
   execFileSync('ffmpeg', ['-y', '-f', 'lavfi', '-i', 'sine=frequency=440:sample_rate=24000:duration=2', '-c:a', 'pcm_s16le', path.join(publicDir, 'narration.wav')], {stdio: 'ignore'});
+  execFileSync('ffmpeg', ['-y', '-f', 'lavfi', '-i', 'color=c=navy:size=640x360', '-frames:v', '1', path.join(publicDir, 'still.png')], {stdio: 'ignore'});
   const serveUrl = await bundle({entryPoint: path.resolve('src/entry.jsx'), publicDir});
   const props = structuredClone(fixture);
   const comparison = structuredClone(props.timeline[0]);
@@ -45,6 +46,21 @@ try {
   await renderMedia({serveUrl, composition: voicedComposition, inputProps: narrated, codec: 'h264', outputLocation: voiced, concurrency: 1, ...options});
   const voicedProbe = JSON.parse(execFileSync('ffprobe', ['-v', 'error', '-show_streams', '-show_format', '-of', 'json', voiced]));
   if (!voicedProbe.streams.some(stream => stream.codec_type === 'audio') || Number(voicedProbe.streams.find(stream => stream.codec_type === 'video').nb_frames) !== 180) throw new Error('Narrated render has no audio or incorrect frame count');
+  const still = structuredClone(fixture);
+  const imageSha = createHash('sha256').update(await fs.readFile(path.join(publicDir, 'still.png'))).digest('hex');
+  still.version = 'editorial-render-v3'; still.media = [];
+  still.images = [{image_id: 'still', beat_id: 'beat', storage_key: `editorial/${still.project_id}/images/still/${imageSha}.png`, sha256: imageSha, width: 640, height: 360, title: 'Synthetic original art', illustration: true}];
+  still.timeline[0] = {...still.timeline[0], layout: 'image', media: [], overlays: [], image_id: 'still', image_push_in: 1.1};
+  still.presentation_mode = 'narrated'; still.narration = [structuredClone(narrated.narration[0])];
+  delete still.narration[0].url; validateEditorialManifest(still);
+  still.images[0].url = '/public/still.png'; still.narration[0].url = '/public/narration.wav';
+  const stillOutput = path.resolve('test-results/editorial-still.mp4');
+  const stillComposition = await selectComposition({serveUrl, id: 'Editorial', inputProps: still, ...options});
+  await renderMedia({serveUrl, composition: stillComposition, inputProps: still, codec: 'h264', outputLocation: stillOutput, concurrency: 1, ...options});
+  const stillProbe = JSON.parse(execFileSync('ffprobe', ['-v', 'error', '-show_streams', '-of', 'json', stillOutput]));
+  if (!stillProbe.streams.some(s => s.codec_type === 'audio') || Number(stillProbe.streams.find(s => s.codec_type === 'video').nb_frames) !== 60) throw new Error('Still render verification failed');
+  execFileSync('ffmpeg', ['-y', '-ss', '1', '-i', stillOutput, '-frames:v', '1', path.resolve('test-results/editorial-still.png')], {stdio: 'ignore'});
+  console.log('Verified still-image render: 60 frames with narration and illustration credit');
   console.log('Verified narrated render: 180 frames with real synthetic PCM audio');
   console.log('Verified synthetic editorial render: 1920x1080, 180 frames, silent; single, comparison, freeze and quote scenes');
 } finally { await fs.rm(temp, {recursive: true, force: true}); }

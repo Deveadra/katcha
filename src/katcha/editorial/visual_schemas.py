@@ -38,20 +38,57 @@ class VisualOverlay(Contract):
 
 class VisualBeat(Contract):
     beat_id: Identity
-    layout: Literal["single", "comparison", "quote"]
+    layout: Literal["single", "comparison", "quote", "image"]
     media: list[VisualMediaUse] = Field(default_factory=list, max_length=2)
     quote_source_id: Identity | None = None
+    image_id: UUID | None = None
+    image_push_in: float = Field(default=1, ge=1, le=1.15)
     overlays: list[VisualOverlay] = Field(default_factory=list, max_length=8)
 
     @model_validator(mode="after")
     def coherent_layout(self) -> Self:
-        expected = {"single": 1, "comparison": 2, "quote": 0}[self.layout]
+        expected = {"single": 1, "comparison": 2, "quote": 0, "image": 0}[self.layout]
         if len(self.media) != expected:
             raise ValueError("Visual layout has the wrong number of media sources")
+        if (self.layout == "image") != bool(self.image_id):
+            raise ValueError("Only image layouts require an uploaded image")
+        if self.layout != "image" and self.image_push_in != 1:
+            raise ValueError("Image motion is only valid for image layouts")
         if (self.layout == "quote") != bool(self.quote_source_id):
             raise ValueError("Only quote layouts require a research source")
         if any(overlay.media_index >= len(self.media) for overlay in self.overlays):
             raise ValueError("Visual annotation references an absent source")
+        return self
+
+    @model_serializer(mode="wrap")
+    def preserve_existing_visuals(self, handler):
+        value = handler(self)
+        if self.layout != "image":
+            value.pop("image_id", None)
+            value.pop("image_push_in", None)
+        return value
+
+
+class RenderImage(Contract):
+    image_id: UUID
+    beat_id: Identity
+    storage_key: str = Field(min_length=1, max_length=1000)
+    sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+    width: int = Field(gt=0, le=8192, strict=True)
+    height: int = Field(gt=0, le=8192, strict=True)
+    title: str = Field(min_length=1, max_length=200)
+    illustration: bool
+
+    @model_validator(mode="after")
+    def managed_png(self) -> Self:
+        if (
+            self.width * self.height > 16_000_000
+            or not self.storage_key.startswith("editorial/")
+            or not self.storage_key.endswith(f"/images/{self.image_id}/{self.sha256}.png")
+            or any(part in {".", ".."} for part in self.storage_key.split("/"))
+            or any(ord(char) < 32 or char in ":\\" for char in self.storage_key)
+        ):
+            raise ValueError("Image requires a bounded, managed PNG receipt")
         return self
 
 
@@ -133,12 +170,15 @@ class EditorialScene(VisualBeat):
 
 
 class EditorialRenderManifest(Contract):
-    version: Literal["editorial-render-v1", "editorial-render-v2"] = "editorial-render-v1"
+    version: Literal["editorial-render-v1", "editorial-render-v2", "editorial-render-v3"] = (
+        "editorial-render-v1"
+    )
     project_id: str
     revision: int = Field(gt=0, strict=True)
     draft_digest: str = Field(pattern=r"^[a-f0-9]{64}$")
     presentation_mode: Literal["captioned_silent", "narrated"]
     narration: list[RenderNarration] = Field(default_factory=list, max_length=100)
+    images: list[RenderImage] = Field(default_factory=list, max_length=100)
     width: Literal[1920] = 1920
     height: Literal[1080] = 1080
     fps: Literal[30] = 30
@@ -153,12 +193,16 @@ class EditorialRenderManifest(Contract):
         value = handler(self)
         if self.version == "editorial-render-v1":
             value.pop("narration", None)
+        if self.version != "editorial-render-v3":
+            value.pop("images", None)
         return value
 
     @model_validator(mode="after")
     def valid_timeline(self) -> Self:
         narrated = self.presentation_mode == "narrated"
-        if narrated != (self.version == "editorial-render-v2"):
+        if self.version != "editorial-render-v3" and narrated != (
+            self.version == "editorial-render-v2"
+        ):
             raise ValueError("Narrated rendering requires manifest version 2")
         if not narrated and self.narration:
             raise ValueError("Silent rendering cannot contain narration")
@@ -170,6 +214,17 @@ class EditorialRenderManifest(Contract):
             frames = (audio.sample_frames * self.fps + audio.sample_rate - 1) // audio.sample_rate
             if scene.duration_frames != frames:
                 raise ValueError("Scene duration must follow the measured narration samples")
+        images = {item.image_id: item for item in self.images}
+        selected_images = {scene.image_id for scene in self.timeline if scene.layout == "image"}
+        if (
+            len(images) != len(self.images)
+            or set(images) != selected_images
+            or bool(images) != (self.version == "editorial-render-v3")
+        ):
+            raise ValueError("Image manifests must cover exactly the selected images in version 3")
+        for scene in self.timeline:
+            if scene.image_id and images[scene.image_id].beat_id != scene.beat_id:
+                raise ValueError("Image must belong to its saved script beat")
         media = {item.candidate_id: item for item in self.media}
         if len(media) != len(self.media):
             raise ValueError("Render media identities must be unique")
@@ -216,12 +271,19 @@ class DirectionOptions(Contract):
         return self
 
 
-class DirectedBeat(VisualBeat):
+class DirectedBeat(Contract):
+    # Preserve the version-1 provider schema so existing saved responses remain recoverable.
+    beat_id: Identity
+    layout: Literal["single", "comparison", "quote"]
+    media: list[VisualMediaUse] = Field(default_factory=list, max_length=2)
+    quote_source_id: Identity | None = None
+    overlays: list[VisualOverlay] = Field(default_factory=list, max_length=8)
     rationale: str = Field(min_length=1, max_length=1000)
 
     @model_validator(mode="after")
     def no_unobserved_regions(self) -> Self:
         # Text-only direction cannot establish where an object appears in a frame.
+        VisualBeat.model_validate(self.model_dump(exclude={"rationale"}))
         if self.overlays:
             raise ValueError("Automatic annotations require observed source regions")
         if len({item.candidate_id for item in self.media}) != len(self.media):
@@ -235,5 +297,5 @@ class DirectionResult(Contract):
 
 class StoryboardPreflightRequest(Contract):
     expected_revision: int = Field(gt=0, strict=True)
-    asset_run_id: UUID
+    asset_run_id: UUID | None = None
     plan: StoryboardPlan

@@ -1,6 +1,6 @@
 import {createHash} from 'node:crypto';
 import {validateEditorialManifest} from './editorial-contract.mjs';
-import {verifyNarrationBytes} from './editorial-media.mjs';
+import {verifyNarrationBytes, verifyImageBytes} from './editorial-media.mjs';
 import fs from 'node:fs';
 import {execFile} from 'node:child_process';
 import os from 'node:os';
@@ -127,7 +127,7 @@ const inspectImage = async (filePath) => {
 };
 
 const verifyRender = (probe, manifest) => {
-  if (manifest.version === 'editorial-render-v2' && !probe.has_audio) throw new Error('Narrated editorial output is missing its audio track');
+  if (manifest.presentation_mode === 'narrated' && !probe.has_audio) throw new Error('Narrated editorial output is missing its audio track');
   const tolerance = Math.max(0.35, 2 / Number(manifest.fps || 30));
   if (Math.abs(probe.duration_seconds - Number(manifest.output_duration_seconds)) > tolerance) {
     throw new Error(
@@ -419,7 +419,7 @@ const activeEditorialOutputs = new Set();
 
 app.post('/render', async (request, response) => {
   const manifest = request.body;
-  const isEditorial = ['editorial-render-v1', 'editorial-render-v2'].includes(manifest?.version);
+  const isEditorial = ['editorial-render-v1', 'editorial-render-v2', 'editorial-render-v3'].includes(manifest?.version);
   let editorialDigest;
   if (isEditorial) {
     try {
@@ -495,12 +495,18 @@ app.post('/render', async (request, response) => {
       ? {...manifest, media: await Promise.all(manifest.media.map(async asset => {
           if (!(await exists(asset.storage_key))) throw new Error('Missing editorial media');
           return {...asset, url: await renderAssetUrl(asset.storage_key)};
-        })), ...(manifest.version === 'editorial-render-v2' ? {narration: await Promise.all(manifest.narration.map(async audio => {
+        })), ...(manifest.presentation_mode === 'narrated' ? {narration: await Promise.all(manifest.narration.map(async audio => {
           const stored = await headObject(audio.storage_key);
           if (!(Number(stored.ContentLength) > 0) || Number(stored.ContentLength) > 32 * 1024 * 1024) throw new Error('Missing or oversized editorial narration');
           const object = await s3.send(new GetObjectCommand({Bucket: bucket, Key: audio.storage_key}));
           await verifyNarrationBytes(object.Body, audio.sha256);
           return {...audio, url: await renderAssetUrl(audio.storage_key)};
+        }))} : {}), ...(manifest.version === 'editorial-render-v3' ? {images: await Promise.all(manifest.images.map(async image => {
+          const stored = await headObject(image.storage_key);
+          if (!(Number(stored.ContentLength) > 0) || Number(stored.ContentLength) > 16 * 1024 * 1024) throw new Error('Missing or oversized editorial image');
+          const object = await s3.send(new GetObjectCommand({Bucket: bucket, Key: image.storage_key}));
+          await verifyImageBytes(object.Body, image);
+          return {...image, url: await renderAssetUrl(image.storage_key)};
         }))} : {})}
       : isLongform
       ? await hydrateLongformManifest(manifest)

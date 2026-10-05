@@ -18,6 +18,7 @@ from katcha.editorial.visual_schemas import (
     EditorialRenderManifest,
     EditorialScene,
     RenderCaption,
+    RenderImage,
     RenderMedia,
     RenderNarration,
     StoryboardPlan,
@@ -36,6 +37,7 @@ def compile_visuals(
     plan: StoryboardPlan,
     media: list[RenderMedia],
     narration: list[RenderNarration] | None = None,
+    images: list[RenderImage] | None = None,
 ) -> EditorialRenderManifest:
     if [beat.beat_id for beat in plan.beats] != [beat.id for beat in draft.script]:
         raise EditorialConflict("Storyboard must cover each script beat once, in script order")
@@ -100,9 +102,14 @@ def compile_visuals(
         output_duration_seconds=cursor / 30,
     )
     if plan.presentation_mode == "narrated":
-        value.update(version="editorial-render-v2", narration=[
-            audio_by_beat[beat.id].model_dump(mode="json") for beat in draft.script
-        ])
+        value.update(
+            version="editorial-render-v2",
+            narration=[audio_by_beat[beat.id].model_dump(mode="json") for beat in draft.script],
+        )
+    if images:
+        value.update(
+            version="editorial-render-v3", images=[item.model_dump(mode="json") for item in images]
+        )
     digest = _digest(
         {
             **value,
@@ -119,13 +126,13 @@ def compile_project_visuals(
     channel_id: uuid.UUID,
     project_id: uuid.UUID,
     expected_revision: int,
-    asset_run_id: uuid.UUID,
+    asset_run_id: uuid.UUID | None,
     plan: StoryboardPlan,
     *,
     session: Session | None = None,
 ) -> EditorialRenderManifest:
     """Server-side resolution: storage keys and rights flags never come from a model/client."""
-    with (session_scope() if session is None else nullcontext(session)) as session:
+    with session_scope() if session is None else nullcontext(session) as session:
         ensure_active_profile(session, channel_id)
         project = session.get(EditorialProject, project_id)
         if project is None or project.channel_profile_id != channel_id:
@@ -135,8 +142,9 @@ def compile_project_visuals(
                 "Script changed; rebuild the storyboard for its current revision"
             )
         revision = session.get(EditorialRevision, (project_id, expected_revision))
-        run = session.get(EditorialRun, asset_run_id)
-        if (
+        run = session.get(EditorialRun, asset_run_id) if asset_run_id else None
+        uses_video = any(beat.media for beat in plan.beats)
+        if (uses_video or asset_run_id) and (
             run is None
             or run.project_id != project_id
             or run.channel_profile_id != channel_id
@@ -145,7 +153,7 @@ def compile_project_visuals(
             or run.options.get("target") != "acquire_assets"
         ):
             raise EditorialConflict("Select completed asset acquisition for this script revision")
-        if revision is None or revision.digest != run.artifacts.get("input_draft_digest"):
+        if revision is None or (run and revision.digest != run.artifacts.get("input_draft_digest")):
             raise EditorialConflict("Acquired assets do not match the frozen script")
         draft = EditorialDraft.model_validate(revision.draft)
         from katcha.editorial.narration import resolve_narration
@@ -153,11 +161,15 @@ def compile_project_visuals(
         narration = resolve_narration(
             session, channel_id, project_id, expected_revision, draft, plan
         )
-        receipts = dict(run.artifacts.get("acquired_assets") or {})
+        from katcha.editorial.images import resolve_images
+
+        images = resolve_images(session, channel_id, project_id, expected_revision, plan)
+        artifacts = run.artifacts if run else {}
+        receipts = dict(artifacts.get("acquired_assets") or {})
         used = {item.candidate_id for beat in plan.beats for item in beat.media}
         if not used <= receipts.keys():
             raise EditorialConflict("Storyboard references an asset outside this acquisition")
-        selections = {item["id"]: item for item in run.artifacts.get("asset_selection", [])}
+        selections = {item["id"]: item for item in artifacts.get("asset_selection", [])}
         beats = {beat.id: beat for beat in draft.script}
         for visual in plan.beats:
             beat = beats.get(visual.beat_id)
@@ -210,4 +222,5 @@ def compile_project_visuals(
         plan=plan,
         media=resolved,
         narration=narration,
+        images=images,
     )

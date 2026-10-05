@@ -43,6 +43,13 @@ TOOLS = {
     tool.name: tool
     for tool in [
         GoalTool(
+            "editorial_images",
+            "List permission-attested still images for a saved script revision. "
+            "Select a returned image_id in an image storyboard layout. Does not generate images.",
+            "ai:read", "GET",
+            "/v1/channels/{channel_profile_id}/editorial-projects/{project_id}/images",
+        ),
+        GoalTool(
             "editorial_narration", "List measured operator recordings for a saved script revision; "
             "use returned recording IDs in a narrated storyboard. Does not generate speech.",
             "ai:read", "GET",
@@ -64,7 +71,7 @@ TOOLS = {
         ),
         GoalTool(
             "preflight_editorial_storyboard",
-            "Validate an explicit caption-only storyboard against the current script and "
+            "Validate an explicit captioned or narrated storyboard against the current script and "
             "acquired media, source timing, evidence references and current rights. "
             "Returns a deterministic manifest; does not render or approve publication.",
             "production:create", "POST",
@@ -76,8 +83,9 @@ TOOLS = {
             "Start durable editorial work: target=analysis prepares sampled frames/transcript; "
             "target=script interprets sources, researches evidence and drafts a cited script. "
             "target=assets scouts supporting media; target=acquire_assets downloads selected "
-            "scout candidates for review. target=render requires an asset_run_id and explicit "
-            "captioned_silent or narrated storyboard. Narrated requires uploaded recording IDs for "
+            "scout candidates for review. target=render requires an explicit storyboard "
+            "and asset_run_id when using footage. "
+            "Use captioned_silent or narrated presentation. Narrated requires recording IDs for "
             "every beat; uses local rendering with a private review preview. "
             "target=direction creates a reviewable storyboard using completed asset_run_id and "
             "direction presentation_mode/narration_ids. "

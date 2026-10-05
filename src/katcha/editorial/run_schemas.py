@@ -45,7 +45,9 @@ class StartEditorialRun(Contract):
         elif self.scout_run_id or self.asset_candidate_ids:
             raise ValueError("Asset selection is only valid for asset acquisition")
         if self.target == "render":
-            if not self.asset_run_id or self.storyboard is None:
+            if self.storyboard is None or (
+                any(beat.media for beat in self.storyboard.beats) and not self.asset_run_id
+            ):
                 raise ValueError("Rendering requires acquired assets and an explicit storyboard")
         elif self.target == "direction":
             if not self.asset_run_id or self.direction is None or self.storyboard is not None:

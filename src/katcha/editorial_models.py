@@ -126,3 +126,33 @@ class EditorialNarration(Base):
     status: Mapped[str] = mapped_column(String(32), default="active")
     actor: Mapped[str] = mapped_column(String(255))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class EditorialImage(Base):
+    __tablename__ = "editorial_images"
+    __table_args__ = (
+        CheckConstraint("revision > 0", name="ck_editorial_image_revision"),
+        CheckConstraint("width > 0 AND height > 0", name="ck_editorial_image_dimensions"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("editorial_projects.id"), index=True
+    )
+    channel_profile_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("channel_profiles.id"), index=True
+    )
+    revision: Mapped[int] = mapped_column(Integer)
+    beat_id: Mapped[str] = mapped_column(String(120))
+    request_digest: Mapped[str] = mapped_column(String(64))
+    sha256: Mapped[str] = mapped_column(String(64))
+    storage_key: Mapped[str] = mapped_column(String(1000))
+    width: Mapped[int] = mapped_column(Integer)
+    height: Mapped[int] = mapped_column(Integer)
+    title: Mapped[str] = mapped_column(String(200))
+    source_reference: Mapped[str] = mapped_column(String(2000))
+    use_note: Mapped[str] = mapped_column(String(2000))
+    illustration: Mapped[bool] = mapped_column(default=False)
+    status: Mapped[str] = mapped_column(String(32), default="active")
+    actor: Mapped[str] = mapped_column(String(255))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

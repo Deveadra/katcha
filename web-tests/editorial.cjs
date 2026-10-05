@@ -10,6 +10,7 @@ let loseCreateResponse = true, loseSaveResponse = true;
 let review = {status: "unreviewed", sequence: 0, can_approve: true, reviews: []};
 let loseReviewResponse = true;
 let recordings = [];
+let stillImages = [], loseImageResponse = true;
 let loseUploadResponse = true;
 let loseGenerationResponse = true;
 let loseBillingResponse = true, loseDirectionResponse = true;
@@ -33,8 +34,8 @@ const draft = {
         await page.route("**/v1/**", (route) => {
             const request = route.request();
             const url = new URL(request.url());
-            const body = request.method() === "POST" && !url.pathname.endsWith("/narration") ? request.postDataJSON() : null;
-            calls.push({ path: url.pathname, method: request.method(), body, auth: request.headers().authorization });
+            const body = request.method() === "POST" && !url.pathname.endsWith("/narration") && !url.pathname.endsWith("/images") ? request.postDataJSON() : null;
+            calls.push({ query: url.search, path: url.pathname, method: request.method(), body, auth: request.headers().authorization });
             const send = (value, status = 200) => route.fulfill({ status, contentType: "application/json", body: JSON.stringify(value) });
             if (url.pathname === "/v1/channels") return send([{ id: "one", status: "active", profile_metadata: { name: "FORESCENE" } }, { id: "two", status: "active", profile_metadata: { name: "Other channel" } }]);
             if (url.pathname.includes("/editorial-projects")) {
@@ -109,6 +110,13 @@ const draft = {
                     run.artifacts.narration_billing = [];
                     if (loseBillingResponse) { loseBillingResponse = false; return send({detail: 'Billing response lost. Retry the same receipt.'}, 503); }
                     return send({outcome: body.outcome}, 201);
+                }
+                if (url.pathname.endsWith('/images/still-image/revoke')) { stillImages[0].status = 'revoked'; review = {...review, status: 'invalidated', can_approve: false}; return send(stillImages[0]); }
+                if (url.pathname.endsWith('/images')) {
+                    if (request.method() === 'GET') return send({images: stillImages});
+                    stillImages = [{id: 'still-image', beat_id: url.searchParams.get('beat_id'), revision: 3, status: 'active', width: 320, height: 180, title: url.searchParams.get('title'), source_reference: url.searchParams.get('source_reference'), use_note: url.searchParams.get('use_note'), illustration: url.searchParams.get('illustration') === 'true'}];
+                    if (loseImageResponse) { loseImageResponse = false; return send({detail: 'Image response lost. Retry to recover upload.'}, 503); }
+                    return send(stillImages[0], 201);
                 }
                 if (url.pathname.endsWith("/narration")) {
                     if (request.method() === 'GET') return send({voice_enabled: true, recordings});
@@ -291,6 +299,43 @@ const draft = {
         assert.equal(directedRender.body.storyboard.beats[0].media[0].playback_rate, .5);
         assert.equal(directedRender.body.storyboard.beats[0].media[0].push_in, 1.1);
         assert.equal(directedRender.body.storyboard.narration_ids.beat, 'generated-audio');
+        await page.setViewportSize({width: 1440, height: 1000});
+        await page.getByText('Upload still images', {exact: true}).click();
+        await page.locator('#editorial-image-file').setInputFiles({name: 'owned.png', mimeType: 'image/png', buffer: Buffer.from('synthetic upload transport')});
+        await page.locator('#editorial-image-title').fill('Original synthetic art');
+        await page.locator('#editorial-image-source').fill('Owned art');
+        await page.locator('#editorial-image-permission').fill('Created and permitted by operator');
+        await page.locator('#editorial-image-illustration').check();
+        await page.locator('#editorial-image-upload').click();
+        await page.getByText(/Confirm permission to use this image/).waitFor();
+        await page.locator('#editorial-image-confirm').check();
+        await page.locator('#editorial-image-upload').click();
+        await page.getByText(/Image response lost/).waitFor();
+        assert.equal(await page.locator('#editorial-image-file').evaluate(input => input.files.length), 1);
+        assert.equal(await page.locator('#editorial-image-permission').inputValue(), 'Created and permitted by operator');
+        await page.locator('#editorial-image-upload').click();
+        await page.locator('#editorial-images').filter({hasText: 'Original synthetic art'}).waitFor();
+        const imageUploads = calls.filter(call => call.path.endsWith('/images') && call.method === 'POST');
+        assert.equal(imageUploads.length, 2);
+        assert.equal(imageUploads[0].query, imageUploads[1].query);
+        await page.locator('#editorial-storyboard select').selectOption('image:still-image');
+        await page.setViewportSize({width: 390, height: 844});
+        assert(await page.evaluate(() => document.documentElement.scrollWidth <= 390));
+        await page.locator('#editorial-image-form').screenshot({path: path.resolve(__dirname, 'test-results/editorial-images-mobile.png')});
+        await page.getByRole('button', {name: 'Create narrated preview', exact: true}).click();
+        await page.getByText(/Review approved for this rendered revision/).waitFor();
+        const imageRender = calls.filter(call => call.body?.target === 'render').at(-1);
+        assert.equal(imageRender.body.storyboard.beats[0].image_id, 'still-image');
+        assert.equal(imageRender.body.storyboard.beats[0].layout, 'image');
+        await page.locator('[data-image-revoke]').click();
+        await page.getByText(/Previous approval is no longer valid/).waitFor();
+        assert.equal(await page.locator('#editorial-storyboard select option[value="image:still-image"]').count(), 0);
+        await page.locator('#editorial-image-file').setInputFiles({name: 'owned.png', mimeType: 'image/png', buffer: Buffer.from('synthetic upload transport')});
+        await page.locator('#editorial-image-confirm').check();
+        await page.locator('#editorial-image-upload').click();
+        await page.locator('#editorial-images').filter({hasText: 'Original synthetic art'}).waitFor();
+        const newImageUpload = calls.filter(call => call.path.endsWith('/images') && call.method === 'POST').at(-1);
+        assert.notEqual(new URLSearchParams(newImageUpload.query).get('idempotency_key'), new URLSearchParams(imageUploads[0].query).get('idempotency_key'));
         await page.setViewportSize({width: 1440, height: 1000});
         // Independent history must preserve edits and current review/preview identity.
         await page.locator('[data-beat-narration="0"]').fill('Unsaved current script stays here.');
