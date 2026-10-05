@@ -209,7 +209,9 @@ const draft = {
         await page.getByText("Supporting interview", { exact: true }).waitFor();
         assert.equal(await page.getByLabel("Select video for review download").isChecked(), true);
         await page.getByRole("button", { name: "Download selected videos for review", exact: true }).click();
-        assert.equal(await page.locator('[data-editorial-stage="storyboard"]').getAttribute("aria-selected"), "true");
+        await page.waitForFunction(() =>
+            document.querySelector('[data-editorial-stage="storyboard"]')?.getAttribute("aria-selected") === "true"
+        );
         const acquired = calls.find((call) => call.body?.target === "acquire_assets");
         assert.equal(acquired.body.scout_run_id, "scout");
         assert.deepEqual(acquired.body.asset_candidate_ids, ["candidate"]);
