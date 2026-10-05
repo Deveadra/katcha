@@ -338,11 +338,11 @@ const draft = {
         const imageUploads = calls.filter(call => call.path.endsWith('/images') && call.method === 'POST');
         assert.equal(imageUploads.length, 2);
         assert.equal(imageUploads[0].query, imageUploads[1].query);
-        await page.locator('[data-editorial-stage="storyboard"]').click();
-        await page.locator('#editorial-storyboard select').selectOption('image:still-image');
         await page.setViewportSize({width: 390, height: 844});
         assert(await page.evaluate(() => document.documentElement.scrollWidth <= 390));
         await page.locator('#editorial-image-form').screenshot({path: path.resolve(__dirname, 'test-results/editorial-images-mobile.png')});
+        await page.locator('[data-editorial-stage="storyboard"]').click();
+        await page.locator('#editorial-storyboard select').selectOption('image:still-image');
         const imageRenderRequest = page.waitForRequest((request) => {
             if (request.method() !== 'POST') return false;
             if (!new URL(request.url()).pathname.endsWith('/runs')) return false;
