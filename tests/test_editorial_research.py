@@ -56,6 +56,37 @@ def test_completed_provider_receipt_reuses_without_provider_connection(saved, mo
         provider.structured_call(str(row.id), 1, "plan", "Changed evidence", ResearchPlan)
 
 
+def test_frame_download_failure_can_resume_without_spending_a_submission(saved, monkeypatch):
+    row = new_run(saved)
+    monkeypatch.setattr(provider, "select_provider", lambda **kw: "codex")
+    invoke = Mock(return_value=output({"questions": [question()]}))
+    store = Mock()
+    store.get_bytes.side_effect = OSError("Storage temporarily unavailable")
+    monkeypatch.setattr(provider, "_invoke", invoke)
+    monkeypatch.setattr(provider, "ObjectStore", lambda: store)
+    args = (str(row.id), 1, "frames", "Evidence", ResearchPlan)
+    with pytest.raises(OSError, match="Storage"):
+        provider.structured_call(*args, image_key="managed/frames.jpg")
+    invoke.assert_not_called()
+    current = get_run(row.channel_profile_id, row.project_id, row.id)
+    assert not current.artifacts.get("provider_calls")
+    checkpoint(str(row.id), 1, status="failed")
+    control_run(row.channel_profile_id, row.project_id, row.id, expected_attempt=1, cancel=False)
+    store.get_bytes.side_effect = None
+    store.get_bytes.return_value = b"frame-image"
+    resumed_args = (str(row.id), 2, "frames", "Evidence", ResearchPlan)
+    value, receipt = provider.structured_call(*resumed_args, image_key="managed/frames.jpg")
+    assert receipt["submissions"] == 1
+    assert receipt["coverage"] == "sampled_frames"
+    assert invoke.call_args.kwargs["image"] == b"frame-image"
+    store.get_bytes.side_effect = AssertionError("Replay must not download frames")
+    assert provider.structured_call(*resumed_args, image_key="managed/frames.jpg") == (
+        value,
+        receipt,
+    )
+    assert invoke.call_count == 1
+
+
 def test_ambiguous_request_never_repeated_after_resume(saved, monkeypatch):
     row = new_run(saved)
     monkeypatch.setattr(provider, "select_provider", lambda **kw: "codex")
