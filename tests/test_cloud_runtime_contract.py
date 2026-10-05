@@ -232,6 +232,9 @@ def test_oci_github_auth_probe_stays_compartment_scoped() -> None:
     assert "KATCHA_OCI_RECOVERY_CONFIGURED" in configurator
     assert "KATCHA_OCI_PAID_FALLBACK_ENABLED" in configurator
     assert "KATCHA_EXTERNAL_COMPUTE_ENABLED" in configurator
+    assert "KATCHA_GITHUB_AUTOMATION_TOKEN" in configurator
+    assert "KATCHA_TELEGRAM_BOT_TOKEN" in configurator
+    assert "KATCHA_TELEGRAM_CHAT_ID" in configurator
     assert "gh secret set OCI_API_PRIVATE_KEY" in configurator
     assert "cat \"$PRIVATE_KEY_FILE\"" not in configurator
 
@@ -280,6 +283,9 @@ def test_oci_bootstrap_capacity_poll_is_gated_and_full_size() -> None:
     assert "initial capacity poller is intentionally pinned" in poller
     assert '"KatchaPaidFallback": "false"' in poller
     assert '--assign-public-ip",\n                    "false"' in poller
+    assert "BOOTSTRAP_CAPACITY_ATTEMPT" in poller
+    assert "BOOTSTRAP_CAPACITY_UNAVAILABLE" in poller
+    assert "BOOTSTRAP_CAPACITY_ACQUIRED" in poller
 
 
 def test_bootstrap_acquisition_transitions_and_notifies_before_stopping() -> None:
