@@ -11,8 +11,8 @@ on:
       - scripts/notify-telegram.sh
   workflow_dispatch:
   schedule:
-    # Five-minute pre-deployment capacity polling, offset from the recovery
-    # watchdog schedule to reduce scheduler contention.
+    # Dead-man/backstop only. Active searches self-dispatch the next serialized
+    # pass immediately after a capacity miss, avoiding reliance on cron latency.
     - cron: "1,6,11,16,21,26,31,36,41,46,51,56 * * * *"
 
 permissions:
@@ -168,6 +168,7 @@ jobs:
           echo "A1 capacity acquired and durable storage attached."
 
       - name: Transition acquired capacity
+        id: handoff
         if: steps.bootstrap.outputs.status == 'acquired'
         shell: bash
         env:
@@ -184,3 +185,27 @@ jobs:
         run: |
           set -euo pipefail
           bash scripts/transition-oci-bootstrap.sh
+
+      - name: Continue autonomous capacity search
+        if: >-
+          always() &&
+          vars.KATCHA_OCI_BOOTSTRAP_POLL_ENABLED == 'true' &&
+          (
+            steps.bootstrap.outputs.status == 'capacity-unavailable' ||
+            (
+              steps.bootstrap.outputs.status == 'acquired' &&
+              steps.handoff.outcome == 'failure'
+            )
+          )
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.KATCHA_GITHUB_AUTOMATION_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${GH_TOKEN:-}" ]]; then
+            echo "Missing KATCHA_GITHUB_AUTOMATION_TOKEN; cannot continue autonomous polling." >&2
+            exit 51
+          fi
+
+          echo "Dispatching the next serialized A1 capacity pass immediately."
+          gh workflow run oci-bootstrap-capacity.yml             --repo "$GITHUB_REPOSITORY"             --ref "$GITHUB_REF_NAME"
