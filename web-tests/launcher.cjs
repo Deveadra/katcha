@@ -23,6 +23,9 @@ const assert = require('node:assert/strict');
         await page.goto('http://localhost:8765');
         await page.waitForFunction(()=>document.getElementById('phase').textContent==='IDLE');
         assert.equal(await page.locator('#open').getAttribute('aria-disabled'),'false');
+        const connections=page.locator('#connections');
+        assert.equal(await connections.evaluate(node=>node.open),false);
+        await connections.locator('summary').click();
         await page.locator('input[name="KATCHA_OPENAI_API_KEY"]').fill('unsaved-fixture-value');
         let consoleStatusRequests = 0;
         await page.route('**/runtime/status', async route => {
