@@ -839,7 +839,8 @@
 }
 
 @media (max-width: 950px) {
-    .workspace-tree {
+    .app-shell .workspace-tree,
+    .shell .workspace-tree {
         display: none;
     }
 
