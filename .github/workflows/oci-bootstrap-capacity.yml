@@ -110,8 +110,10 @@ jobs:
           key_file=$HOME/.oci/oci_api_key.pem
           EOF
 
-          oci iam region-subscription list \
-            --query 'data[0]."region-name"' \
+          oci compute instance list \
+            --compartment-id "$KATCHA_OCI_COMPARTMENT_ID" \
+            --limit 1 \
+            --query 'length(data)' \
             --raw-output >/dev/null
 
       - name: Poll all configured A1 availability domains
