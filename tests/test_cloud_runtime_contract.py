@@ -236,6 +236,31 @@ def test_oci_github_auth_probe_stays_compartment_scoped() -> None:
     assert "cat \"$PRIVATE_KEY_FILE\"" not in configurator
 
 
+def test_bootstrap_enable_validates_before_turning_on_cron() -> None:
+    workflow = (
+        ROOT / ".github" / "workflows" / "oci-bootstrap-capacity.yml"
+    ).read_text(encoding="utf-8")
+    configurator = (
+        ROOT / "scripts" / "configure-github-oci-bootstrap.sh"
+    ).read_text(encoding="utf-8")
+
+    assert "github.event_name == 'workflow_dispatch'" in workflow
+    assert (
+        "github.event_name == 'schedule' &&\n"
+        "          vars.KATCHA_OCI_BOOTSTRAP_POLL_ENABLED == 'true'"
+    ) in workflow
+    assert "gh run watch" in configurator
+    validation = configurator.index(
+        "Running one-shot OCI bootstrap validation before enabling the scheduler"
+    )
+    enable = configurator.index(
+        'gh variable set KATCHA_OCI_BOOTSTRAP_POLL_ENABLED --repo "$REPO" --body "true"',
+        validation,
+    )
+    assert validation < enable
+    assert "Scheduled polling remains disabled." in configurator
+
+
 def test_oci_bootstrap_capacity_poll_is_gated_and_full_size() -> None:
     workflow = (
         ROOT / ".github" / "workflows" / "oci-bootstrap-capacity.yml"
