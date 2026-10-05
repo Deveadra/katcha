@@ -14,8 +14,13 @@ fi
 BOT_TOKEN="${KATCHA_TELEGRAM_BOT_TOKEN:-}"
 CHAT_ID="${KATCHA_TELEGRAM_CHAT_ID:-}"
 THREAD_ID="${KATCHA_TELEGRAM_THREAD_ID:-}"
+REQUIRED="${KATCHA_TELEGRAM_REQUIRED:-false}"
 
 if [[ -z "$BOT_TOKEN" || -z "$CHAT_ID" ]]; then
+    if [[ "$REQUIRED" == "true" ]]; then
+        echo "Telegram notification is required but bot token/chat ID is not configured." >&2
+        exit 4
+    fi
     echo "Telegram notification skipped: bot token/chat ID not configured."
     exit 0
 fi
