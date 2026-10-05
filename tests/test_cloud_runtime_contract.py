@@ -332,6 +332,8 @@ def test_cloudflare_bootstrap_deadman_is_independent_from_actions_cron() -> None
     assert "github.event_name == 'repository_dispatch'" in workflow
     assert "Record bootstrap run start" in workflow
     assert "Record bootstrap run completion" in workflow
+    assert "Notify operator when Cloudflare revives polling" in workflow
+    assert "Cloudflare restarted OCI A1 polling" in workflow
     assert "report-bootstrap-heartbeat.sh" in workflow
     assert "/v1/bootstrap/heartbeat" in heartbeat
     assert "KATCHA_RECOVERY_CANDIDATE_TOKEN" in workflow
