@@ -11,6 +11,15 @@ on:
       - scripts/transition-oci-bootstrap.sh
       - scripts/notify-telegram.sh
   workflow_dispatch:
+    inputs:
+      mode:
+        description: Run one operator validation pass or an autonomous polling pass
+        required: true
+        default: validate
+        type: choice
+        options:
+          - validate
+          - poll
   schedule:
     # Dead-man/backstop only. Active searches self-dispatch the next serialized
     # pass immediately after a capacity miss, avoiding reliance on cron latency.
@@ -44,7 +53,16 @@ jobs:
   poll:
     if: >-
       (
-        github.event_name == 'workflow_dispatch' ||
+        (
+          github.event_name == 'workflow_dispatch' &&
+          (
+            inputs.mode == 'validate' ||
+            (
+              inputs.mode == 'poll' &&
+              vars.KATCHA_OCI_BOOTSTRAP_POLL_ENABLED == 'true'
+            )
+          )
+        ) ||
         (
           github.event_name == 'schedule' &&
           vars.KATCHA_OCI_BOOTSTRAP_POLL_ENABLED == 'true'
@@ -210,4 +228,7 @@ jobs:
           fi
 
           echo "Dispatching the next serialized A1 capacity pass immediately."
-          gh workflow run oci-bootstrap-capacity.yml             --repo "$GITHUB_REPOSITORY"             --ref "$GITHUB_REF_NAME"
+          gh workflow run oci-bootstrap-capacity.yml \
+            --repo "$GITHUB_REPOSITORY" \
+            --ref "$GITHUB_REF_NAME" \
+            -f mode=poll
