@@ -7,6 +7,7 @@ on:
       - src/katcha/ops/oci_bootstrap_capacity.py
       - tests/test_oci_bootstrap_capacity.py
       - scripts/configure-github-oci-bootstrap.sh
+      - scripts/configure-github-recovery-notifications.sh
       - scripts/transition-oci-bootstrap.sh
       - scripts/notify-telegram.sh
   workflow_dispatch:
@@ -35,6 +36,7 @@ jobs:
           python -m pip install -e '.[dev]'
           python -m py_compile src/katcha/ops/oci_bootstrap_capacity.py
           bash -n scripts/configure-github-oci-bootstrap.sh
+          bash -n scripts/configure-github-recovery-notifications.sh
           bash -n scripts/transition-oci-bootstrap.sh
           bash -n scripts/notify-telegram.sh
           pytest -q tests/test_oci_bootstrap_capacity.py
