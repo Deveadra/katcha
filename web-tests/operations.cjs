@@ -264,13 +264,18 @@ function payload(selected = "") {
             (await workspaceTree.locator(".workspace-tree-link.is-current b").textContent()).trim(),
             "Home",
         );
+        assert.equal(await page.locator("body").getAttribute("data-katcha-page"), "operations");
         const panelMaterial = await page.locator(".ops-panel").first().evaluate((node) => ({
             backgroundImage: getComputedStyle(node).backgroundImage,
+            backgroundColor: getComputedStyle(node).backgroundColor,
             backdropFilter: getComputedStyle(node).backdropFilter || getComputedStyle(node).webkitBackdropFilter,
             borderRadius: parseFloat(getComputedStyle(node).borderRadius),
+            borderStyle: getComputedStyle(node).borderStyle,
         }));
         assert.equal(panelMaterial.backgroundImage, "none");
+        assert.notEqual(panelMaterial.backgroundColor, "rgba(0, 0, 0, 0)");
         assert.equal(panelMaterial.backdropFilter, "none");
+        assert.equal(panelMaterial.borderStyle, "solid");
         assert(panelMaterial.borderRadius <= 6);
         await page.locator("#token").fill("fixture-token");
         await page.locator("#connect-form button").click();
