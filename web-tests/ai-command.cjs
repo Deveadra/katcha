@@ -528,10 +528,12 @@ let browser;
     );
     await page.waitForFunction(() => document.querySelector("#status").textContent.includes("Workspace token required"));
     assert.equal(await page.locator("#katcha-chat-shortcut").getAttribute("href"), "#prompt");
-    await page.locator(".workspace-menu").waitFor();
-    await page.locator(".workspace-menu > summary").click();
-    assert.match(await page.locator(".workspace-menu-popover").innerText(), /Katcha AI/);
-    await page.locator(".workspace-menu > summary").click();
+    await page.locator(".workspace-tree").waitFor();
+    assert.equal(await page.locator(".workspace-menu").isVisible(), false);
+    assert.equal(
+        (await page.locator(".workspace-tree-link.is-current b").textContent()).trim(),
+        "Katcha AI",
+    );
 
     await page.locator("#token").fill("fixture-token");
     await page.locator("#connect-form button").click();
