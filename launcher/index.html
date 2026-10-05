@@ -286,12 +286,17 @@ small{color:var(--slate)}
 }
 @media(max-width:560px){
     header{min-height:60px;padding-inline:14px}
-    main{padding:24px 14px 82px}
+    main{padding:24px 14px 28px}
     h1{font-size:38px}
     .actions>*{flex:1 1 calc(50% - 4px)}
     .action-menu>summary{width:100%}
     .action-menu-popover{left:0;right:auto}
-    #katcha-chat-shortcut{right:14px;bottom:14px}
+    #katcha-chat-shortcut{
+        position:static;
+        width:calc(100% - 28px);
+        margin:0 14px 18px;
+        justify-content:center
+    }
 }
 @media(prefers-reduced-motion:reduce){
     *,*::before,*::after{animation-duration:.001ms!important;transition-duration:.001ms!important}
