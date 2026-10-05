@@ -139,7 +139,7 @@ if [[ "$ENABLE" == "true" ]]; then
             --jq '.[0].databaseId // empty'
     )"
 
-    gh workflow run oci-bootstrap-capacity.yml --repo "$REPO"
+    gh workflow run oci-bootstrap-capacity.yml --repo "$REPO" -f mode=validate
 
     run_id=""
     for _ in {1..30}; do
@@ -173,12 +173,16 @@ if [[ "$ENABLE" == "true" ]]; then
     fi
 
     echo
-    echo "Validation succeeded. Enabling five-minute A1 bootstrap polling..."
+    echo "Validation succeeded. Enabling autonomous A1 bootstrap polling..."
     gh variable set KATCHA_OCI_BOOTSTRAP_POLL_ENABLED --repo "$REPO" --body "true"
+
+    echo "Starting the first autonomous capacity pass..."
+    gh workflow run oci-bootstrap-capacity.yml --repo "$REPO" --ref main -f mode=poll
 
     echo
     echo "Bootstrap polling is ENABLED."
-    echo "The scheduled workflow will retry the full 2 OCPU / 12 GB A1 target every five minutes."
+    echo "Each completed AD1→AD2→AD3 miss immediately dispatches the next serialized pass."
+    echo "The five-minute GitHub schedule remains only as a dead-man/backstop."
 else
     echo
     echo "Configuration installed with polling DISABLED."

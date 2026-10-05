@@ -288,6 +288,46 @@ def test_oci_bootstrap_capacity_poll_is_gated_and_full_size() -> None:
     assert "BOOTSTRAP_CAPACITY_ACQUIRED" in poller
 
 
+def test_bootstrap_capacity_search_self_chains_with_cron_as_backstop() -> None:
+    workflow = (
+        ROOT / ".github" / "workflows" / "oci-bootstrap-capacity.yml"
+    ).read_text(encoding="utf-8")
+    configurator = (
+        ROOT / "scripts" / "configure-github-oci-bootstrap.sh"
+    ).read_text(encoding="utf-8")
+
+    assert "Continue autonomous capacity search" in workflow
+    assert "inputs.mode == 'validate'" in workflow
+    assert "inputs.mode == 'poll'" in workflow
+    assert "-f mode=poll" in workflow
+    assert "-f mode=validate" in configurator
+    assert "steps.bootstrap.outputs.status == 'capacity-unavailable'" in workflow
+    assert "steps.handoff.outcome == 'failure'" in workflow
+    assert "vars.KATCHA_OCI_BOOTSTRAP_POLL_ENABLED == 'true'" in workflow
+    assert "gh workflow run oci-bootstrap-capacity.yml" in workflow
+    assert "dead-man/backstop" in workflow.lower()
+    assert "Starting the first autonomous capacity pass" in configurator
+    assert "gh workflow run oci-bootstrap-capacity.yml" in configurator
+    assert "five-minute GitHub schedule remains only as a dead-man/backstop" in configurator
+
+
+def test_recovery_notification_configurator_proves_pat_and_telegram() -> None:
+    configurator = (
+        ROOT / "scripts" / "configure-github-recovery-notifications.sh"
+    ).read_text(encoding="utf-8")
+
+    assert "read -r -s -p" in configurator
+    assert "gh secret set KATCHA_GITHUB_AUTOMATION_TOKEN" in configurator
+    assert "gh secret set KATCHA_TELEGRAM_BOT_TOKEN" in configurator
+    assert "gh secret set KATCHA_TELEGRAM_CHAT_ID" in configurator
+    assert "KATCHA_GITHUB_AUTOMATION_TOKEN_VALIDATED" in configurator
+    assert 'GH_TOKEN="$AUTOMATION_TOKEN"' in configurator
+    assert "gh workflow run telegram-notification-test.yml" in configurator
+    assert "gh run watch" in configurator
+    assert 'echo "$AUTOMATION_TOKEN"' not in configurator
+    assert 'echo "$BOT_TOKEN"' not in configurator
+
+
 def test_bootstrap_acquisition_transitions_and_notifies_before_stopping() -> None:
     workflow = (
         ROOT / ".github" / "workflows" / "oci-bootstrap-capacity.yml"
