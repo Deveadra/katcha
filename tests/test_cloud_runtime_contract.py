@@ -212,6 +212,41 @@ def test_oci_recovery_has_independent_scheduled_watchdog_backstop() -> None:
     ) in workflow
 
 
+def test_oci_bootstrap_capacity_poll_is_gated_and_full_size() -> None:
+    workflow = (
+        ROOT / ".github" / "workflows" / "oci-bootstrap-capacity.yml"
+    ).read_text(encoding="utf-8")
+    poller = (
+        ROOT / "src" / "katcha" / "ops" / "oci_bootstrap_capacity.py"
+    ).read_text(encoding="utf-8")
+
+    assert 'cron: "1,6,11,16,21,26,31,36,41,46,51,56 * * * *"' in workflow
+    assert "KATCHA_OCI_BOOTSTRAP_POLL_ENABLED" in workflow
+    assert "KATCHA_OCI_RECOVERY_CONFIGURED != 'true'" in workflow
+    assert "oci_bootstrap_capacity" in workflow
+    assert "cancel-in-progress: false" in workflow
+    assert 'shape: str = "VM.Standard.A1.Flex"' in poller
+    assert "ocpus: float = 2.0" in poller
+    assert "memory_gb: float = 12.0" in poller
+    assert "initial capacity poller is intentionally pinned" in poller
+    assert '"KatchaPaidFallback": "false"' in poller
+    assert '--assign-public-ip",\n                    "false"' in poller
+
+
+def test_cloudflare_recovery_retry_default_is_five_minutes() -> None:
+    state = (
+        ROOT / "infra" / "cloudflare-recovery" / "src" / "state.mjs"
+    ).read_text(encoding="utf-8")
+    worker = (
+        ROOT / "infra" / "cloudflare-recovery" / "src" / "index.js"
+    ).read_text(encoding="utf-8")
+
+    assert "recovery_retry_seconds: 300" in state
+    assert "recoveryRetrySeconds = 300" in state
+    assert "body.recovery_retry_seconds ?? 300" in worker
+    assert "body.recovery_retry_seconds ?? 900" not in worker
+
+
 def test_break_glass_recovery_is_manual_explicit_and_ephemeral() -> None:
     workflow = (
         ROOT / ".github" / "workflows" / "oci-recovery.yml"

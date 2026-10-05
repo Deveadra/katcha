@@ -265,6 +265,17 @@ Normal A1 target:
 - 2 OCPU,
 - 12 GB RAM.
 
+If Always Free A1 capacity is unavailable during the first deployment, enable
+`.github/workflows/oci-bootstrap-capacity.yml` with
+`KATCHA_OCI_BOOTSTRAP_POLL_ENABLED=true`. The workflow polls every five
+minutes, tries the primary and every configured alternate AD at the full
+2-OCPU/12-GB A1 target, never selects a paid shape, and creates/attaches the
+50-GB durable volume only after compute placement succeeds. It reconciles an
+uncertain launch response by searching for the exact production instance before
+trying another AD, which prevents duplicate instances after provider/API
+timeouts. The poller is idempotent and is automatically skipped once
+`KATCHA_OCI_RECOVERY_CONFIGURED=true`.
+
 The host should not expose PostgreSQL, Temporal, or the Katcha API directly to
 the public internet.
 
@@ -329,10 +340,13 @@ Configure repository secrets required by the OCI recovery workflow:
 - break-glass escrow key.
 
 Configure all current repository variables referenced by
-`.github/workflows/oci-recovery.yml`, including:
+`.github/workflows/oci-recovery.yml` and
+`.github/workflows/oci-bootstrap-capacity.yml`, including:
 
 - OCI region/compartment/AD/subnet/image settings,
 - alternate-AD target JSON,
+- `KATCHA_OCI_SSH_PUBLIC_KEY` for the initial private A1 host,
+- `KATCHA_OCI_BOOTSTRAP_POLL_ENABLED` while first-placement polling is needed,
 - durable-volume identity/device path,
 - backup freshness limit,
 - retired-volume grace period,
@@ -447,7 +461,12 @@ After commit, verify the fence assertion authorizes only that deployment/epoch.
 Configure watchdog recovery only after the initial leader is healthy and GitHub
 recovery variables/secrets are complete.
 
-Use a conservative failure threshold first.
+Use a conservative failure threshold first. The production default is a
+60-second probe interval, three consecutive failures, and a 300-second
+unresolved-recovery redispatch interval. The independent GitHub Actions
+backstop also probes every five minutes, but both paths reuse the same Durable
+Object incident state and therefore cannot independently authorize competing
+recoveries.
 
 Verify:
 

@@ -19,7 +19,7 @@ export function defaultAuthorityState() {
       enabled: false,
       interval_seconds: 60,
       failure_threshold: 3,
-      recovery_retry_seconds: 900,
+      recovery_retry_seconds: 300,
     },
     incident: null,
     external_compute: {
@@ -294,7 +294,7 @@ export function configureWatchdog(
     enabled,
     intervalSeconds,
     failureThreshold,
-    recoveryRetrySeconds = 900,
+    recoveryRetrySeconds = 300,
   },
   nowMs = Date.now(),
 ) {
