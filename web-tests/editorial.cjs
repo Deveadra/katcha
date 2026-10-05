@@ -149,11 +149,26 @@ const draft = {
         await page.getByText(/No editorial projects yet/).waitFor();
         await page.locator("#editorial-prompt").fill("Investigate the trailer clues");
         await page.locator("#editorial-urls").fill("https://www.youtube.com/watch?v=fixture");
-        await page.getByRole("button", { name: "Save brief", exact: true }).click();
+        await page.getByRole("button", { name: "Create project", exact: true }).click();
         await page.getByText(/Connection interrupted/).waitFor();
         assert.equal(await page.locator("#editorial-prompt").inputValue(), "Investigate the trailer clues");
-        await page.getByRole("button", { name: "Save brief", exact: true }).click();
+        await page.getByRole("button", { name: "Create project", exact: true }).click();
         await page.locator("#editorial-detail").waitFor({ state: "visible" });
+        assert.deepEqual(
+            await page.locator("[data-editorial-stage]").allTextContents(),
+            ["Research", "Script", "Assets", "Storyboard", "Preview"],
+        );
+        assert.equal(await page.locator('[data-editorial-stage="research"]').getAttribute("aria-selected"), "true");
+        assert.equal(await page.locator('[data-editorial-stage-panel="research"]').isVisible(), true);
+        assert.equal(await page.locator('[data-editorial-stage-panel="script"]').isHidden(), true);
+        const researchAiHref = await page.locator('[data-editorial-ai="research"]').getAttribute("href");
+        assert.match(researchAiHref, /\/ai\?/);
+        assert.match(decodeURIComponent(researchAiHref), /Inspect editorial project/);
+        await page.locator('[data-editorial-stage="research"]').focus();
+        await page.keyboard.press("ArrowRight");
+        assert.equal(await page.locator('[data-editorial-stage="script"]').getAttribute("aria-selected"), "true");
+        await page.keyboard.press("ArrowLeft");
+        assert.equal(await page.locator('[data-editorial-stage="research"]').getAttribute("aria-selected"), "true");
         const creates = calls.filter((call) => call.method === "POST" && call.path.endsWith("/editorial-projects"));
         assert.equal(creates.length, 2);
         assert.equal(creates[0].body.idempotency_key, creates[1].body.idempotency_key);
@@ -224,6 +239,7 @@ const draft = {
         const reviewCalls = calls.filter(call => call.path.endsWith('/review') && call.body);
         assert.equal(reviewCalls.length, 2);
         assert.deepEqual(reviewCalls[0].body, reviewCalls[1].body);
+        await page.locator('[data-editorial-stage="storyboard"]').click();
         await page.locator('#editorial-presentation').selectOption('narrated');
         await page.locator('[data-narration-file]').setInputFiles({name: 'recording.wav', mimeType: 'audio/wav', buffer: Buffer.from('synthetic transport only')});
         await page.locator('[data-narration-permitted]').check();
@@ -235,7 +251,7 @@ const draft = {
         const uploads = calls.filter(call => call.uploadKey);
         assert.equal(uploads.length, 2); assert.equal(uploads[0].uploadKey, uploads[1].uploadKey);
         assert.equal(await page.locator('[data-narration-select]').inputValue(), 'audio-id');
-        await page.getByText('Generate recordings with the channel voice', {exact: true}).click();
+        await page.getByText('Generate channel narration', {exact: true}).click();
         await page.locator('#editorial-generate-narration').click();
         await page.getByText('Confirm use of the channel voice and budget.', {exact: true}).waitFor();
         assert.equal(calls.filter(call => call.body?.target === 'narration').length, 0);
@@ -279,7 +295,8 @@ const draft = {
         const voiced = calls.find(call => call.body?.storyboard?.presentation_mode === 'narrated');
         assert.equal(voiced.body.storyboard.narration_ids.beat, 'generated-audio');
         assert(voiced, 'Expected a narrated storyboard call to exist');
-        await page.getByText('Let Katcha plan the visuals', {exact: true}).click();
+        await page.locator('[data-editorial-stage="storyboard"]').click();
+        await page.getByText('AI visual director', {exact: true}).click();
         await page.locator('#editorial-direct').click();
         await page.getByText(/Visual plan response lost/).waitFor();
         assert.equal(await page.locator('#editorial-storyboard input[type=number]').inputValue(), '1.5');
@@ -300,7 +317,8 @@ const draft = {
         assert.equal(directedRender.body.storyboard.beats[0].media[0].push_in, 1.1);
         assert.equal(directedRender.body.storyboard.narration_ids.beat, 'generated-audio');
         await page.setViewportSize({width: 1440, height: 1000});
-        await page.getByText('Upload still images', {exact: true}).click();
+        await page.locator('[data-editorial-stage="assets"]').click();
+        await page.getByText('Upload still image', {exact: true}).click();
         await page.locator('#editorial-image-file').setInputFiles({name: 'owned.png', mimeType: 'image/png', buffer: Buffer.from('synthetic upload transport')});
         await page.locator('#editorial-image-title').fill('Original synthetic art');
         await page.locator('#editorial-image-source').fill('Owned art');
@@ -318,6 +336,7 @@ const draft = {
         const imageUploads = calls.filter(call => call.path.endsWith('/images') && call.method === 'POST');
         assert.equal(imageUploads.length, 2);
         assert.equal(imageUploads[0].query, imageUploads[1].query);
+        await page.locator('[data-editorial-stage="storyboard"]').click();
         await page.locator('#editorial-storyboard select').selectOption('image:still-image');
         await page.setViewportSize({width: 390, height: 844});
         assert(await page.evaluate(() => document.documentElement.scrollWidth <= 390));
@@ -332,6 +351,7 @@ const draft = {
         await page.getByText(/Review approved for this rendered revision/).waitFor();
         assert.equal(imageRender.storyboard.beats[0].image_id, 'still-image');
         assert.equal(imageRender.storyboard.beats[0].layout, 'image');
+        await page.locator('[data-editorial-stage="assets"]').click();
         await page.locator('[data-image-revoke]').click();
         await page.getByText(/Previous approval is no longer valid/).waitFor();
         assert.equal(await page.locator('#editorial-storyboard select option[value="image:still-image"]').count(), 0);
@@ -342,6 +362,7 @@ const draft = {
         const newImageUpload = calls.filter(call => call.path.endsWith('/images') && call.method === 'POST').at(-1);
         assert.notEqual(new URLSearchParams(newImageUpload.query).get('idempotency_key'), new URLSearchParams(imageUploads[0].query).get('idempotency_key'));
         await page.setViewportSize({width: 1440, height: 1000});
+        await page.locator('[data-editorial-stage="script"]').click();
         // Independent history must preserve edits and current review/preview identity.
         await page.locator('[data-beat-narration="0"]').fill('Unsaved current script stays here.');
         const writesBeforeHistory = calls.filter(call => call.method === 'POST').length;
@@ -370,6 +391,8 @@ const draft = {
         await page.setViewportSize({ width: 390, height: 844 });
         assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
         assert.equal(await page.locator(".editorial-form").evaluate((node) => getComputedStyle(node).display), "grid");
+        assert.equal(await page.locator(".editorial-stage-tabs").isVisible(), true);
+        assert.equal(await page.locator(".editorial-project-rail").evaluate((node) => getComputedStyle(node).borderRightWidth), "0px");
         await page.screenshot({ path: path.resolve(__dirname, "test-results/editorial-mobile.png"), fullPage: true });
         await page.locator('#editorial-history-detail').scrollIntoViewIfNeeded();
         await page.screenshot({path: path.resolve(__dirname, 'test-results/editorial-history-mobile.png')});
