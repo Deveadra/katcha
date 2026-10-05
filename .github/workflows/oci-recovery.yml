@@ -261,9 +261,9 @@ jobs:
             event_path=/tmp/katcha-recovery-event.json
           fi
 
-          output="$(python -m katcha.ops.oci_recovery recover --event "$event_path")"
-          printf '%s\n' "$output"
-          result="$(printf '%s\n' "$output" | tail -n 1)"
+          output_file="$RUNNER_TEMP/katcha-recovery-output.log"
+          python -m katcha.ops.oci_recovery recover --event "$event_path" | tee "$output_file"
+          result="$(tail -n 1 "$output_file")"
           echo "$result" | jq -e '.status == "committed"' >/dev/null
 
           {
