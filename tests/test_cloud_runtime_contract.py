@@ -232,6 +232,9 @@ def test_oci_github_auth_probe_stays_compartment_scoped() -> None:
     assert "KATCHA_OCI_RECOVERY_CONFIGURED" in configurator
     assert "KATCHA_OCI_PAID_FALLBACK_ENABLED" in configurator
     assert "KATCHA_EXTERNAL_COMPUTE_ENABLED" in configurator
+    assert "KATCHA_GITHUB_AUTOMATION_TOKEN" in configurator
+    assert "KATCHA_TELEGRAM_BOT_TOKEN" in configurator
+    assert "KATCHA_TELEGRAM_CHAT_ID" in configurator
     assert "gh secret set OCI_API_PRIVATE_KEY" in configurator
     assert "cat \"$PRIVATE_KEY_FILE\"" not in configurator
 
@@ -280,6 +283,111 @@ def test_oci_bootstrap_capacity_poll_is_gated_and_full_size() -> None:
     assert "initial capacity poller is intentionally pinned" in poller
     assert '"KatchaPaidFallback": "false"' in poller
     assert '--assign-public-ip",\n                    "false"' in poller
+    assert "BOOTSTRAP_CAPACITY_ATTEMPT" in poller
+    assert "BOOTSTRAP_CAPACITY_UNAVAILABLE" in poller
+    assert "BOOTSTRAP_CAPACITY_ACQUIRED" in poller
+
+
+def test_bootstrap_capacity_search_self_chains_with_cron_as_backstop() -> None:
+    workflow = (
+        ROOT / ".github" / "workflows" / "oci-bootstrap-capacity.yml"
+    ).read_text(encoding="utf-8")
+    configurator = (
+        ROOT / "scripts" / "configure-github-oci-bootstrap.sh"
+    ).read_text(encoding="utf-8")
+
+    assert "Continue autonomous capacity search" in workflow
+    assert "inputs.mode == 'validate'" in workflow
+    assert "inputs.mode == 'poll'" in workflow
+    assert "-f mode=poll" in workflow
+    assert "-f mode=validate" in configurator
+    assert "steps.bootstrap.outputs.status == 'capacity-unavailable'" in workflow
+    assert "steps.handoff.outcome == 'failure'" in workflow
+    assert "vars.KATCHA_OCI_BOOTSTRAP_POLL_ENABLED == 'true'" in workflow
+    assert "gh workflow run oci-bootstrap-capacity.yml" in workflow
+    assert "dead-man/backstop" in workflow.lower()
+    assert "Starting the first autonomous capacity pass" in configurator
+    assert "gh workflow run oci-bootstrap-capacity.yml" in configurator
+    assert "five-minute GitHub schedule remains only as a dead-man/backstop" in configurator
+
+
+def test_recovery_notification_configurator_proves_pat_and_telegram() -> None:
+    configurator = (
+        ROOT / "scripts" / "configure-github-recovery-notifications.sh"
+    ).read_text(encoding="utf-8")
+
+    assert "read -r -s -p" in configurator
+    assert "gh secret set KATCHA_GITHUB_AUTOMATION_TOKEN" in configurator
+    assert "gh secret set KATCHA_TELEGRAM_BOT_TOKEN" in configurator
+    assert "gh secret set KATCHA_TELEGRAM_CHAT_ID" in configurator
+    assert "KATCHA_GITHUB_AUTOMATION_TOKEN_VALIDATED" in configurator
+    assert 'GH_TOKEN="$AUTOMATION_TOKEN"' in configurator
+    assert "gh workflow run telegram-notification-test.yml" in configurator
+    assert "gh run watch" in configurator
+    assert 'echo "$AUTOMATION_TOKEN"' not in configurator
+    assert 'echo "$BOT_TOKEN"' not in configurator
+
+
+def test_bootstrap_acquisition_transitions_and_notifies_before_stopping() -> None:
+    workflow = (
+        ROOT / ".github" / "workflows" / "oci-bootstrap-capacity.yml"
+    ).read_text(encoding="utf-8")
+    transition = (
+        ROOT / "scripts" / "transition-oci-bootstrap.sh"
+    ).read_text(encoding="utf-8")
+    notifier = (
+        ROOT / "scripts" / "notify-telegram.sh"
+    ).read_text(encoding="utf-8")
+
+    assert "Transition acquired capacity" in workflow
+    assert "KATCHA_GITHUB_AUTOMATION_TOKEN" in workflow
+    assert "KATCHA_TELEGRAM_BOT_TOKEN" in workflow
+    assert "KATCHA_TELEGRAM_CHAT_ID" in workflow
+    assert 'KATCHA_TELEGRAM_REQUIRED: "true"' in workflow
+    assert "KATCHA_OCI_PRIMARY_INSTANCE_ID" in transition
+    assert "KATCHA_OCI_BOOTSTRAP_ACQUIRED" in transition
+    assert "KATCHA_OCI_CROSS_AD_TARGETS_JSON" in transition
+    assert "KATCHA_OCI_BOOTSTRAP_NOTIFICATION_SENT" in transition
+    notify_position = transition.index("bash scripts/notify-telegram.sh")
+    stop_position = transition.rindex(
+        "gh variable set KATCHA_OCI_BOOTSTRAP_POLL_ENABLED"
+    )
+    assert notify_position < stop_position
+    assert "/sendMessage" in notifier
+    assert "KATCHA_TELEGRAM_REQUIRED" in notifier
+
+
+def test_recovery_notifies_only_after_commit_and_public_health() -> None:
+    workflow = (
+        ROOT / ".github" / "workflows" / "oci-recovery.yml"
+    ).read_text(encoding="utf-8")
+
+    recover_position = workflow.index("name: Recover Katcha control plane")
+    health_position = workflow.index(
+        "name: Verify committed recovery is publicly healthy"
+    )
+    notify_position = workflow.index(
+        "name: Notify operator that Katcha is back online"
+    )
+    assert recover_position < health_position < notify_position
+    assert "steps.recovery.outputs.status == 'committed'" in workflow
+    assert "KATCHA_PUBLIC_HEALTH_URL" in workflow
+    assert "committed leadership and is authoritative" in workflow
+    assert 'KATCHA_TELEGRAM_REQUIRED: "true"' in workflow
+
+
+def test_telegram_notification_test_is_manual_only() -> None:
+    workflow = (
+        ROOT / ".github" / "workflows" / "telegram-notification-test.yml"
+    ).read_text(encoding="utf-8")
+
+    assert "workflow_dispatch:" in workflow
+    assert "schedule:" not in workflow
+    assert "repository_dispatch" not in workflow
+    assert "KATCHA_TELEGRAM_BOT_TOKEN" in workflow
+    assert "KATCHA_TELEGRAM_CHAT_ID" in workflow
+    assert 'KATCHA_TELEGRAM_REQUIRED: "true"' in workflow
+    assert "notify-telegram.sh" in workflow
 
 
 def test_cloudflare_recovery_retry_default_is_five_minutes() -> None:

@@ -274,6 +274,10 @@ def structured_call(
         )
         if consumed + reserved > row.options.get("max_model_tokens", 1_000_000):
             raise EditorialBlocked("The project's token budget cannot reserve another call")
+        # Local input failures prove no provider request was sent. Keep them outside the
+        # durable submission boundary, while retaining serialized receipt/replay checks.
+        native_video = video if provider == "gemini" else None
+        image = ObjectStore().get_bytes(image_key) if image_key and not native_video else None
         calls[key] = {
             "status": "started",
             "digest": digest,
@@ -286,8 +290,6 @@ def structured_call(
         submissions = calls[key]["submissions"]
         row.artifacts = {**row.artifacts, "provider_calls": calls}
     # No retry/fallback after this point: a request might have reached the provider.
-    native_video = video if provider == "gemini" else None
-    image = ObjectStore().get_bytes(image_key) if image_key and not native_video else None
     try:
         response = _invoke(provider, prompt, schema, search=search, image=image, video=native_video)
     except Exception as exc:

@@ -110,6 +110,22 @@ echo "Configured OCI secret names:"
 gh secret list --repo "$REPO" | grep -E '^OCI_(TENANCY_OCID|USER_OCID|FINGERPRINT|API_PRIVATE_KEY)' || true
 
 if [[ "$ENABLE" == "true" ]]; then
+    required_transition_secrets=(
+        KATCHA_GITHUB_AUTOMATION_TOKEN
+        KATCHA_TELEGRAM_BOT_TOKEN
+        KATCHA_TELEGRAM_CHAT_ID
+    )
+    configured_secret_names="$(
+        gh secret list --repo "$REPO" --json name --jq '.[].name'
+    )"
+    for secret_name in "${required_transition_secrets[@]}"; do
+        if ! grep -Fxq "$secret_name" <<<"$configured_secret_names"; then
+            echo "Missing required transition secret: $secret_name" >&2
+            echo "Polling will not be enabled until acquisition handoff/Telegram notification can complete." >&2
+            exit 14
+        fi
+    done
+
     echo
     echo "Running one-shot OCI bootstrap validation before enabling the scheduler..."
 
@@ -123,7 +139,7 @@ if [[ "$ENABLE" == "true" ]]; then
             --jq '.[0].databaseId // empty'
     )"
 
-    gh workflow run oci-bootstrap-capacity.yml --repo "$REPO"
+    gh workflow run oci-bootstrap-capacity.yml --repo "$REPO" -f mode=validate
 
     run_id=""
     for _ in {1..30}; do
@@ -157,12 +173,16 @@ if [[ "$ENABLE" == "true" ]]; then
     fi
 
     echo
-    echo "Validation succeeded. Enabling five-minute A1 bootstrap polling..."
+    echo "Validation succeeded. Enabling autonomous A1 bootstrap polling..."
     gh variable set KATCHA_OCI_BOOTSTRAP_POLL_ENABLED --repo "$REPO" --body "true"
+
+    echo "Starting the first autonomous capacity pass..."
+    gh workflow run oci-bootstrap-capacity.yml --repo "$REPO" --ref main -f mode=poll
 
     echo
     echo "Bootstrap polling is ENABLED."
-    echo "The scheduled workflow will retry the full 2 OCPU / 12 GB A1 target every five minutes."
+    echo "Each completed AD1→AD2→AD3 miss immediately dispatches the next serialized pass."
+    echo "The five-minute GitHub schedule remains only as a dead-man/backstop."
 else
     echo
     echo "Configuration installed with polling DISABLED."
