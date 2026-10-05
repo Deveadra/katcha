@@ -263,6 +263,7 @@ let browser;
     await page.locator("#signal-chart .chart").waitFor();
 
     await page.locator("#compare").click();
+    assert.equal(await page.locator("#comparison").isHidden(), true);
     await page.locator('[data-topic="beta"]').click();
     await page
         .getByRole("heading", { name: "TEST FIXTURE beta", exact: true })
