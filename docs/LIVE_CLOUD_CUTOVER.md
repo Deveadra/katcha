@@ -327,6 +327,21 @@ restores disaster-backup protection automatically.
 
 ## Phase 6 — GitHub recovery credentials
 
+Use a dedicated OCI identity for GitHub recovery rather than a personal
+administrator API key. In the Default identity domain create a group named
+`katcha-github-recovery`, place the dedicated service user in that group, and
+attach a tenancy policy with only:
+
+```text
+Allow group 'Default'/'katcha-github-recovery' to manage instance-family in compartment katcha-prod
+Allow group 'Default'/'katcha-github-recovery' to manage volume-family in compartment katcha-prod
+Allow group 'Default'/'katcha-github-recovery' to use virtual-network-family in compartment katcha-prod
+Allow group 'Default'/'katcha-github-recovery' to read instance-images in tenancy
+```
+
+The GitHub workflows validate OCI authentication by listing instances only in
+`katcha-prod`; they do not require tenancy-wide region-subscription access.
+
 Configure repository secrets required by the OCI recovery workflow:
 
 - `OCI_TENANCY_OCID`
@@ -359,6 +374,12 @@ Configure all current repository variables referenced by
 - public Katcha health URL.
 
 Leave paid external compute disabled until the budget ledger has been configured.
+
+For the live Ashburn bootstrap, `scripts/configure-github-oci-bootstrap.sh`
+installs the known AD/subnet/image/volume/SSH settings and the four OCI API
+credentials through `gh` without printing the private key. Run it once without
+`--enable` to stage configuration, then rerun with `--enable` after the
+dedicated OCI API key has been uploaded and its fingerprint verified.
 
 Keep `KATCHA_OCI_RECOVERY_CONFIGURED` unset or `false` while live OCI
 variables/secrets are incomplete. Set it to `true` only after the recovery

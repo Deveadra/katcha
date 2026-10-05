@@ -6,6 +6,7 @@ on:
       - .github/workflows/oci-bootstrap-capacity.yml
       - src/katcha/ops/oci_bootstrap_capacity.py
       - tests/test_oci_bootstrap_capacity.py
+      - scripts/configure-github-oci-bootstrap.sh
   workflow_dispatch:
   schedule:
     # Five-minute pre-deployment capacity polling, offset from the recovery
@@ -31,6 +32,7 @@ jobs:
         run: |
           python -m pip install -e '.[dev]'
           python -m py_compile src/katcha/ops/oci_bootstrap_capacity.py
+          bash -n scripts/configure-github-oci-bootstrap.sh
           pytest -q tests/test_oci_bootstrap_capacity.py
 
   poll:
@@ -110,8 +112,10 @@ jobs:
           key_file=$HOME/.oci/oci_api_key.pem
           EOF
 
-          oci iam region-subscription list \
-            --query 'data[0]."region-name"' \
+          oci compute instance list \
+            --compartment-id "$KATCHA_OCI_COMPARTMENT_ID" \
+            --limit 1 \
+            --query 'length(data)' \
             --raw-output >/dev/null
 
       - name: Poll all configured A1 availability domains

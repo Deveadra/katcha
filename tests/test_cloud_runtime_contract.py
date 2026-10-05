@@ -212,6 +212,30 @@ def test_oci_recovery_has_independent_scheduled_watchdog_backstop() -> None:
     ) in workflow
 
 
+def test_oci_github_auth_probe_stays_compartment_scoped() -> None:
+    bootstrap_workflow = (
+        ROOT / ".github" / "workflows" / "oci-bootstrap-capacity.yml"
+    ).read_text(encoding="utf-8")
+    recovery_workflow = (
+        ROOT / ".github" / "workflows" / "oci-recovery.yml"
+    ).read_text(encoding="utf-8")
+    configurator = (
+        ROOT / "scripts" / "configure-github-oci-bootstrap.sh"
+    ).read_text(encoding="utf-8")
+
+    for workflow in (bootstrap_workflow, recovery_workflow):
+        assert "oci iam region-subscription list" not in workflow
+        assert "oci compute instance list" in workflow
+        assert 'KATCHA_OCI_COMPARTMENT_ID' in workflow
+
+    assert "KATCHA_OCI_BOOTSTRAP_POLL_ENABLED" in configurator
+    assert "KATCHA_OCI_RECOVERY_CONFIGURED" in configurator
+    assert "KATCHA_OCI_PAID_FALLBACK_ENABLED" in configurator
+    assert "KATCHA_EXTERNAL_COMPUTE_ENABLED" in configurator
+    assert "gh secret set OCI_API_PRIVATE_KEY" in configurator
+    assert "cat \"$PRIVATE_KEY_FILE\"" not in configurator
+
+
 def test_oci_bootstrap_capacity_poll_is_gated_and_full_size() -> None:
     workflow = (
         ROOT / ".github" / "workflows" / "oci-bootstrap-capacity.yml"
