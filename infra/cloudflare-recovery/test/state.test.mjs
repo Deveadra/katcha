@@ -8,6 +8,10 @@ import {
   commitAuthority,
   configureExternalCompute,
   configureWatchdog,
+  configureBootstrapWatchdog,
+  bootstrapWatchdogDecision,
+  markBootstrapRedispatched,
+  recordBootstrapHeartbeat,
   defaultAuthorityState,
   externalComputeStatus,
   fenceResult,
@@ -133,6 +137,90 @@ test("prepare is idempotent and abort never changes active authority", () => {
   });
   assert.equal(aborted.state.active, null);
   assert.equal(aborted.state.pending, null);
+});
+
+test("bootstrap watchdog starts with a fresh grace window", () => {
+  const now = Date.UTC(2026, 9, 5, 12, 0, 0);
+  const state = configureBootstrapWatchdog(
+    defaultAuthorityState(),
+    {
+      enabled: true,
+      checkIntervalSeconds: 60,
+      staleAfterSeconds: 900,
+      redispatchCooldownSeconds: 1200,
+    },
+    now,
+  );
+
+  assert.equal(state.bootstrap_watchdog.enabled, true);
+  assert.equal(state.bootstrap_watchdog.last_heartbeat_at_ms, now);
+  assert.equal(
+    bootstrapWatchdogDecision(state, now + 899_000).shouldDispatch,
+    false,
+  );
+  const stale = bootstrapWatchdogDecision(state, now + 901_000);
+  assert.equal(stale.shouldDispatch, true);
+  assert.equal(stale.reason, "bootstrap heartbeat is stale");
+});
+
+test("bootstrap redispatch cooldown prevents outage dispatch storms", () => {
+  const now = Date.UTC(2026, 9, 5, 12, 0, 0);
+  let state = configureBootstrapWatchdog(
+    defaultAuthorityState(),
+    {
+      enabled: true,
+      checkIntervalSeconds: 60,
+      staleAfterSeconds: 900,
+      redispatchCooldownSeconds: 1200,
+    },
+    now,
+  );
+
+  state = markBootstrapRedispatched(state, now + 901_000);
+  assert.equal(
+    bootstrapWatchdogDecision(state, now + 1_500_000).shouldDispatch,
+    false,
+  );
+  assert.equal(
+    bootstrapWatchdogDecision(state, now + 2_102_000).shouldDispatch,
+    true,
+  );
+});
+
+test("bootstrap heartbeat resets staleness and terminal acquisition disables rescue", () => {
+  const now = Date.UTC(2026, 9, 5, 12, 0, 0);
+  let state = configureBootstrapWatchdog(
+    defaultAuthorityState(),
+    {
+      enabled: true,
+      checkIntervalSeconds: 60,
+      staleAfterSeconds: 900,
+      redispatchCooldownSeconds: 1200,
+    },
+    now,
+  );
+
+  state = recordBootstrapHeartbeat(
+    state,
+    { runId: "123", status: "started", terminal: false },
+    now + 600_000,
+  );
+  assert.equal(
+    bootstrapWatchdogDecision(state, now + 1_000_000).shouldDispatch,
+    false,
+  );
+  assert.equal(state.bootstrap_watchdog.last_run_id, "123");
+
+  state = recordBootstrapHeartbeat(
+    state,
+    { runId: "123", status: "acquired", terminal: true },
+    now + 1_100_000,
+  );
+  assert.equal(state.bootstrap_watchdog.enabled, false);
+  assert.equal(
+    bootstrapWatchdogDecision(state, now + 10_000_000).shouldDispatch,
+    false,
+  );
 });
 
 test("watchdog defaults unresolved recovery retry to five minutes", () => {
