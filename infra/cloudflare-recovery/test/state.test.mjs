@@ -135,6 +135,19 @@ test("prepare is idempotent and abort never changes active authority", () => {
   assert.equal(aborted.state.pending, null);
 });
 
+test("watchdog defaults unresolved recovery retry to five minutes", () => {
+  const state = defaultAuthorityState();
+  assert.equal(state.watchdog.recovery_retry_seconds, 300);
+
+  const configured = configureWatchdog(state, {
+    enabled: true,
+    intervalSeconds: 60,
+    failureThreshold: 3,
+  });
+  assert.equal(configured.watchdog.recovery_retry_seconds, 300);
+});
+
+
 test("watchdog opens one incident at threshold and recovers cleanly", () => {
   let state = prepareAuthority(defaultAuthorityState(), {
     deploymentId: "oci-a1",
