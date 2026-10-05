@@ -224,7 +224,11 @@ jobs:
           region=$OCI_REGION
           key_file=$HOME/.oci/oci_api_key.pem
           EOF
-          oci iam region-subscription list --query 'data[0]."region-name"' --raw-output >/dev/null
+          oci compute instance list \
+            --compartment-id "$KATCHA_OCI_COMPARTMENT_ID" \
+            --limit 1 \
+            --query 'length(data)' \
+            --raw-output >/dev/null
 
       - name: Build recovery event
         if: github.event_name == 'workflow_dispatch'
