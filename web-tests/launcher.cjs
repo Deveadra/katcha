@@ -122,13 +122,15 @@ const assert = require('node:assert/strict');
             backdropFilter:getComputedStyle(node).backdropFilter||getComputedStyle(node).webkitBackdropFilter
         }));
         assert.match(shortcutStyle.backgroundImage,/linear-gradient/);
-        assert.match(shortcutStyle.backdropFilter,/blur/);
-        const panelGlass=await workspace.locator('.home-panel').first().evaluate(node=>({
+        assert.equal(shortcutStyle.backdropFilter,'none');
+        const panelMaterial=await workspace.locator('.home-panel').first().evaluate(node=>({
             backgroundImage:getComputedStyle(node).backgroundImage,
-            backdropFilter:getComputedStyle(node).backdropFilter||getComputedStyle(node).webkitBackdropFilter
+            backdropFilter:getComputedStyle(node).backdropFilter||getComputedStyle(node).webkitBackdropFilter,
+            borderRadius:parseFloat(getComputedStyle(node).borderRadius)
         }));
-        assert.match(panelGlass.backgroundImage,/linear-gradient/);
-        assert.match(panelGlass.backdropFilter,/blur/);
+        assert.equal(panelMaterial.backgroundImage,'none');
+        assert.equal(panelMaterial.backdropFilter,'none');
+        assert(panelMaterial.borderRadius<=6);
 
         // Trends must render with its complete design system through the real launcher.
         const trends=await browser.newPage({viewport:{width:1440,height:1000}});
