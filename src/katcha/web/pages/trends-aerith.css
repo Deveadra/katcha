@@ -584,30 +584,30 @@ body[data-katcha-page="trends"] .trends-support-strip details[open] {
 
 @media (min-width: 1001px) {
     body[data-katcha-page="trends"] {
-        overflow: auto;
+        overflow: hidden;
     }
 
     body[data-katcha-page="trends"] .app-shell,
     body[data-katcha-page="trends"] main {
-        height: auto;
-        min-height: 100dvh;
-        overflow: visible;
+        height: 100dvh;
+        min-height: 0;
+        overflow: hidden;
     }
 
     body[data-katcha-page="trends"] .main-content {
-        height: auto;
-        min-height: calc(100dvh - 60px);
-        overflow: visible;
+        height: calc(100dvh - 60px);
+        min-height: 0;
+        overflow: hidden;
     }
 
     body[data-katcha-page="trends"] .explorer {
-        height: auto;
-        grid-template-rows: none;
+        height: 100%;
+        grid-template-rows: auto auto auto auto minmax(0, 1fr) auto;
         min-height: 0;
     }
 
     body[data-katcha-page="trends"] .workspace-grid {
-        min-height: 520px;
+        min-height: 0;
     }
 }
 
