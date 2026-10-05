@@ -177,15 +177,6 @@ if [[ "$ENABLE" == "true" ]]; then
     gh variable set KATCHA_OCI_BOOTSTRAP_POLL_ENABLED --repo "$REPO" --body "true"
 
     echo "Starting the first autonomous capacity pass..."
-    GH_TOKEN="$(
-        gh secret list --repo "$REPO" --json name --jq '
-            if any(.[]; .name == "KATCHA_GITHUB_AUTOMATION_TOKEN")
-            then "configured"
-            else ""
-            end
-        '
-    )"
-    unset GH_TOKEN
     gh workflow run oci-bootstrap-capacity.yml --repo "$REPO" --ref main
 
     echo
