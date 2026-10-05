@@ -159,7 +159,7 @@ function installWorkspaceMenu() {
             savedState = null;
         }
         const containsCurrent = group.workspaces.includes(current.key);
-        section.open = containsCurrent || savedState !== 'closed';
+        section.open = containsCurrent || savedState === 'open';
 
         const rows = group.workspaces
             .map((key) => KATCHA_WORKSPACES.find((workspace) => workspace.key === key))
