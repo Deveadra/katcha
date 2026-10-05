@@ -304,7 +304,7 @@ const draft = {
         assert.equal(voiced.body.storyboard.narration_ids.beat, 'generated-audio');
         assert(voiced, 'Expected a narrated storyboard call to exist');
         await page.locator('[data-editorial-stage="storyboard"]').click();
-        await page.getByText('AI visual director', {exact: true}).click();
+        assert.equal(await page.locator('.editorial-ai-drawer').getAttribute('open'), '');
         await page.locator('#editorial-direct').click();
         await page.getByText(/Visual plan response lost/).waitFor();
         assert.equal(await page.locator('#editorial-storyboard input[type=number]').inputValue(), '1.5');
