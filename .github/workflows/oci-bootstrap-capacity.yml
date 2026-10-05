@@ -37,8 +37,13 @@ jobs:
 
   poll:
     if: >-
-      (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') &&
-      vars.KATCHA_OCI_BOOTSTRAP_POLL_ENABLED == 'true' &&
+      (
+        github.event_name == 'workflow_dispatch' ||
+        (
+          github.event_name == 'schedule' &&
+          vars.KATCHA_OCI_BOOTSTRAP_POLL_ENABLED == 'true'
+        )
+      ) &&
       vars.KATCHA_OCI_RECOVERY_CONFIGURED != 'true'
     runs-on: ubuntu-latest
     concurrency:

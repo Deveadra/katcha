@@ -111,11 +111,54 @@ gh secret list --repo "$REPO" | grep -E '^OCI_(TENANCY_OCID|USER_OCID|FINGERPRIN
 
 if [[ "$ENABLE" == "true" ]]; then
     echo
-    echo "Enabling five-minute A1 bootstrap polling..."
-    gh variable set KATCHA_OCI_BOOTSTRAP_POLL_ENABLED --repo "$REPO" --body "true"
+    echo "Running one-shot OCI bootstrap validation before enabling the scheduler..."
 
-    echo "Triggering an immediate bootstrap workflow run..."
-    gh workflow run "OCI A1 bootstrap capacity" --repo "$REPO"
+    previous_run_id="$(
+        gh run list \
+            --repo "$REPO" \
+            --workflow oci-bootstrap-capacity.yml \
+            --event workflow_dispatch \
+            --limit 1 \
+            --json databaseId \
+            --jq '.[0].databaseId // empty'
+    )"
+
+    gh workflow run oci-bootstrap-capacity.yml --repo "$REPO"
+
+    run_id=""
+    for _ in {1..30}; do
+        candidate="$(
+            gh run list \
+                --repo "$REPO" \
+                --workflow oci-bootstrap-capacity.yml \
+                --event workflow_dispatch \
+                --limit 1 \
+                --json databaseId \
+                --jq '.[0].databaseId // empty'
+        )"
+        if [[ -n "$candidate" && "$candidate" != "$previous_run_id" ]]; then
+            run_id="$candidate"
+            break
+        fi
+        sleep 2
+    done
+
+    if [[ -z "$run_id" ]]; then
+        echo "Could not identify the validation workflow run; polling remains disabled." >&2
+        exit 12
+    fi
+
+    echo "Validation run: $run_id"
+    if ! gh run watch "$run_id" --repo "$REPO" --exit-status; then
+        echo
+        echo "OCI bootstrap validation FAILED."
+        echo "Scheduled polling remains disabled."
+        exit 13
+    fi
+
+    echo
+    echo "Validation succeeded. Enabling five-minute A1 bootstrap polling..."
+    gh variable set KATCHA_OCI_BOOTSTRAP_POLL_ENABLED --repo "$REPO" --body "true"
 
     echo
     echo "Bootstrap polling is ENABLED."
