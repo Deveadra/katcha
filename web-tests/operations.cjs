@@ -245,6 +245,33 @@ function payload(selected = "") {
     try {
         await page.goto("http://127.0.0.1:" + port + "/operations.html");
         assert.equal(await page.getByRole("heading", { name: "Your channel briefing." }).count(), 1);
+        assert.equal(await page.locator(".rail").count(), 1);
+        assert.equal(await page.locator(".operations-nav").count(), 0);
+        const routeRelativeAssets = await page
+            .locator('link[rel="stylesheet"][href], script[src]')
+            .evaluateAll((nodes) =>
+                nodes
+                    .map((node) => node.getAttribute("href") || node.getAttribute("src"))
+                    .filter((value) => value && !value.startsWith("/") && !/^https?:/.test(value)),
+            );
+        assert.deepEqual(routeRelativeAssets, []);
+        const workspaceTree = page.locator(".workspace-tree");
+        assert.deepEqual(
+            await workspaceTree.locator(".workspace-group > summary > span").allTextContents(),
+            ["Plan", "Create", "Grow"],
+        );
+        assert.equal(
+            (await workspaceTree.locator(".workspace-tree-link.is-current b").textContent()).trim(),
+            "Home",
+        );
+        const panelMaterial = await page.locator(".ops-panel").first().evaluate((node) => ({
+            backgroundImage: getComputedStyle(node).backgroundImage,
+            backdropFilter: getComputedStyle(node).backdropFilter || getComputedStyle(node).webkitBackdropFilter,
+            borderRadius: parseFloat(getComputedStyle(node).borderRadius),
+        }));
+        assert.equal(panelMaterial.backgroundImage, "none");
+        assert.equal(panelMaterial.backdropFilter, "none");
+        assert(panelMaterial.borderRadius <= 6);
         await page.locator("#token").fill("fixture-token");
         await page.locator("#connect-form button").click();
 
@@ -335,7 +362,7 @@ function payload(selected = "") {
         assert.equal(await page.evaluate(() => localStorage.length), 0);
 
         require("node:fs").mkdirSync(path.join(__dirname, "test-results"), {recursive: true});
-        await page.screenshot({path: path.join(__dirname, "test-results/home-desktop.png"), fullPage: true});
+        await page.screenshot({path: path.join(__dirname, "test-results/operations-desktop.png"), fullPage: true});
         await page.setViewportSize({ width: 390, height: 844 });
         assert.equal(
             await page.evaluate(() => document.documentElement.scrollWidth > innerWidth),
