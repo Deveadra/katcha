@@ -348,9 +348,13 @@ Leave paid external compute disabled until the budget ledger has been configured
 
 Keep `KATCHA_OCI_RECOVERY_CONFIGURED` unset or `false` while live OCI
 variables/secrets are incomplete. Set it to `true` only after the recovery
-configuration is fully populated and validated; this enables the scheduled
-paid-fallback TTL/retired-volume cleanup job without generating false failures
-during provisioning.
+configuration is fully populated and validated. Once enabled, GitHub Actions
+provides an independent five-minute watchdog backstop that calls the recovery
+coordinator's authenticated `/v1/watchdog/probe-now` endpoint. The coordinator
+remains the single incident/dispatch authority, so this backstop reuses the same
+failure threshold, idempotent incident state, and serialized recovery workflow
+rather than creating a competing recovery path. The separate fifteen-minute
+schedule continues to enforce paid-fallback TTL and retired-volume cleanup.
 
 ## Phase 7 — prepare the durable host
 
