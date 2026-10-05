@@ -89,3 +89,33 @@ body[data-katcha-page="settings"] .settings-shell{
 }
 .usage-window small,.usage-foot span{color:var(--ae-text-tertiary);font-size:8px}
 .usage-foot button{min-height:30px!important;padding:0 9px!important;font-size:8px!important}
+
+
+/* Crystal UX: settings use clear system panels instead of promotional cards. */
+body[data-katcha-page="settings"] .settings-shell {
+    width: min(100%, var(--ae-content-max));
+    max-width: var(--ae-content-max);
+    padding: 32px clamp(20px, 3vw, 48px) 64px;
+}
+
+body[data-katcha-page="settings"] .settings-card {
+    border-radius: var(--ae-radius-panel);
+    background: var(--ae-surface);
+    box-shadow: var(--ae-shadow-panel);
+}
+
+body[data-katcha-page="settings"] .field input,
+body[data-katcha-page="settings"] .field select,
+body[data-katcha-page="settings"] .account-panel {
+    border-radius: var(--ae-radius-control);
+}
+
+body[data-katcha-page="settings"] .status-pill {
+    border-radius: var(--ae-radius-control);
+}
+
+@media (max-width: 720px) {
+    body[data-katcha-page="settings"] .settings-shell {
+        padding-inline: 14px;
+    }
+}
