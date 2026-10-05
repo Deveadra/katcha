@@ -566,8 +566,17 @@ function overview(source) {
         await page.locator("#next").click();
         assert.equal(await page.locator("#save").innerText(), "Save changes");
         assert.match(await page.locator("#save-explanation").innerText(), /history are preserved/i);
+        const marvelEditFindsRefresh = page.waitForResponse((response) => {
+            const url = new URL(response.url());
+            return response.request().method() === "GET" &&
+                url.pathname === "/v1/discovery/sources/" + marvel.id + "/finds";
+        });
         await page.locator("#save").click();
         await page.waitForFunction(() => document.querySelector("#source-name")?.textContent === "Marvel Entertainment");
+        await marvelEditFindsRefresh;
+        await page.waitForFunction(() =>
+            !document.querySelector("#all-finds")?.textContent.includes("Loading finds")
+        );
         assert.equal(marvel.source_key, marvelSourceKey);
         assert.equal(marvel.query_template.channel_reference, "@marvel");
         const marvelEdit = [...requests].reverse().find((row) =>

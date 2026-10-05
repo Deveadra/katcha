@@ -4,42 +4,34 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width,initial-scale=1">
     <meta name="theme-color" content="#090b12">
-    <title>Katcha · Home</title>
+    <title>Katcha · Operations</title>
     <link id="aerith-tokens" rel="stylesheet" href="/system/aerith-tokens.css">
     <link id="aerith-base" rel="stylesheet" href="/system/aerith-base.css">
     <link id="aerith-shell" rel="stylesheet" href="/system/aerith-shell.css">
     <link id="aerith-components" rel="stylesheet" href="/system/aerith-components.css">
     <link id="aerith-motion" rel="stylesheet" href="/system/aerith-motion.css">
-    <link rel="stylesheet" href="operations-aerith.css">
-    <script src="operations.js" defer></script>
-    <script src="launcher-bridge.js" defer></script>
+    <link rel="stylesheet" href="/operations-aerith.css">
+    <script src="/operations.js" defer></script>
+    <script src="/launcher-bridge.js" defer></script>
 </head>
 <body data-katcha-page="operations">
-    <a class="ops-skip" href="#main-content">Skip to operations</a>
-    <div class="operations-shell">
-        <header class="operations-nav">
-            <a class="ops-brand" href="/home" aria-label="Katcha Operations home">
-                <span aria-hidden="true">✦</span> katcha<span>.</span>
-            </a>
-            <nav aria-label="Primary workspace">
-                <a href="/home" aria-current="page">Home</a>
-                <a href="/explorer">Trends</a>
-                <a href="/ingestion">Sources</a>
-                <a href="/clips">Clips</a>
-                <a href="/editing">Production</a>
-                <a href="/channels">Channel Studio</a>
-            </nav>
-            <a class="ops-ai-link" href="/ai?focus=chat">Ask Katcha <span aria-hidden="true">✦</span></a>
+<div class="app-shell">
+    <aside class="rail">
+        <a class="brand" href="/home" aria-label="Katcha home">
+            <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
+            katcha<span class="brand-dot">.</span>
+        </a>
+        <div class="rail-spacer"></div>
+        <div class="rail-footer">Operator workspace</div>
+    </aside>
+
+    <main id="main-content" class="operations-main">
+        <header class="topbar">
+            <div class="breadcrumbs">Workspace / <strong>Operations</strong></div>
+            <a class="operations-home-shortcut" href="/home">Home briefing ↗</a>
         </header>
 
-        <main id="main-content" class="operations-main">
-            <form id="connect-form" class="ops-connect">
-                <label for="token">Control-plane token</label>
-                <input id="token" type="password" autocomplete="off" placeholder="Token if required">
-                <button class="primary" type="submit">Connect</button>
-                <small>Kept only in this tab. The Katcha launcher supplies its own credential automatically.</small>
-            </form>
-
+        <div class="operations-content">
             <header class="operations-heading">
                 <div>
                     <div class="ops-kicker">YOUR CHANNELS</div>
@@ -57,10 +49,20 @@
                 </div>
             </header>
 
+            <form id="connect-form" class="ops-connect">
+                <label for="token">Control-plane token</label>
+                <input id="token" type="password" autocomplete="off" placeholder="Token if required">
+                <button class="primary" type="submit">Connect</button>
+                <small>Kept only in this tab. The Katcha launcher supplies its own credential automatically.</small>
+            </form>
+
             <div id="status" class="ops-status" role="status" aria-live="polite">Connect to load live operations.</div>
 
             <section class="ops-panel briefing-panel" aria-labelledby="briefing-title">
-                <div class="panel-head"><div><span class="ops-kicker">KATCHA BRIEFING</span><h2 id="briefing-title">What you should know</h2></div><a class="panel-link" href="/ai?focus=chat">Discuss with Katcha</a></div>
+                <div class="panel-head">
+                    <div><span class="ops-kicker">KATCHA BRIEFING</span><h2 id="briefing-title">What you should know</h2></div>
+                    <a class="panel-link" href="/ai?focus=chat">Discuss with Katcha</a>
+                </div>
                 <div id="briefing-list" class="ops-list"><p>Load your workspace for current insights.</p></div>
                 <p id="home-ai-readiness" role="status"></p>
             </section>
@@ -123,7 +125,8 @@
                 </summary>
                 <div id="activity-list" class="ops-list activity-list"></div>
             </details>
-        </main>
-    </div>
+        </div>
+    </main>
+</div>
 </body>
 </html>
