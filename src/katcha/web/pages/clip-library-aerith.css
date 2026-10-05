@@ -387,3 +387,50 @@ body[data-katcha-page="clips"] footer {
         min-width: 0;
     }
 }
+
+
+/* Crystal UX: the clip library is a working media table, not a card gallery. */
+body[data-katcha-page="clips"] .clip-content {
+    width: min(100%, var(--ae-content-max));
+    max-width: var(--ae-content-max);
+    margin-inline: auto;
+    padding: 24px clamp(20px, 3vw, 48px) 56px;
+}
+
+body[data-katcha-page="clips"] .card,
+body[data-katcha-page="clips"] .library-scope {
+    border-radius: var(--ae-radius-panel) !important;
+    background: var(--ae-surface) !important;
+    box-shadow: var(--ae-shadow-panel) !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+}
+
+body[data-katcha-page="clips"] .clip-stats {
+    gap: 0;
+    padding: 0;
+    border-radius: var(--ae-radius-panel);
+    background: var(--ae-surface-inset);
+}
+
+body[data-katcha-page="clips"] .clip-stat {
+    min-height: 48px;
+    border: 0 !important;
+    border-right: 1px solid var(--ae-line) !important;
+    border-radius: 0 !important;
+}
+
+body[data-katcha-page="clips"] .clip-stat:last-child {
+    border-right: 0 !important;
+}
+
+body[data-katcha-page="clips"] .clip-stat.is-active {
+    background: rgba(169, 239, 247, 0.07) !important;
+    box-shadow: inset 0 -2px var(--ae-cyan) !important;
+}
+
+@media (max-width: 720px) {
+    body[data-katcha-page="clips"] .clip-content {
+        padding-inline: 14px;
+    }
+}
