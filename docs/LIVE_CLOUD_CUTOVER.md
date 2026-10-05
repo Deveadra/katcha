@@ -270,10 +270,14 @@ If Always Free A1 capacity is unavailable during the first deployment, enable
 `KATCHA_OCI_BOOTSTRAP_POLL_ENABLED=true`. GitHub's shortest supported
 scheduled-workflow interval is five minutes, but Katcha does not rely on that
 interval as its active search loop. After a complete AD1→AD2→AD3 miss, the
-workflow immediately dispatches the next serialized pass. The five-minute cron
-is retained only as a dead-man/backstop if a continuation dispatch is ever
-lost. This avoids an artificial five-minute idle gap while still guaranteeing
-that provider-mutating attempts never overlap. The workflow keeps the full
+workflow immediately dispatches the next serialized `mode=poll` pass. The
+five-minute cron is retained only as a dead-man/backstop if a continuation
+dispatch is ever lost. Chained `mode=poll` runs still require
+`KATCHA_OCI_BOOTSTRAP_POLL_ENABLED=true`, so disabling that variable is a hard
+stop even if a continuation was already queued. Explicit operator
+`mode=validate` runs remain available while polling is disabled. This avoids an
+artificial five-minute idle gap while still guaranteeing that provider-mutating
+attempts never overlap. The workflow keeps the full
 2-OCPU/12-GB A1 target, never selects a paid shape, and creates/attaches the
 50-GB durable volume only after compute placement succeeds. It reconciles an
 uncertain launch response by searching for the exact production instance before
