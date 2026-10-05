@@ -1171,3 +1171,82 @@ body[data-katcha-page="sources"] .empty-state > span {
         padding: 13px;
     }
 }
+
+
+/* Crystal UX: source management should read like a guided task, not a dashboard. */
+body[data-katcha-page="sources"] .source-content {
+    width: min(100%, var(--ae-content-max));
+    max-width: var(--ae-content-max);
+    margin-inline: auto;
+    padding: 24px clamp(20px, 3vw, 48px) 72px;
+}
+
+body[data-katcha-page="sources"] #connection-panel,
+body[data-katcha-page="sources"] .builder,
+body[data-katcha-page="sources"] .library {
+    border-radius: var(--ae-radius-panel) !important;
+    background: var(--ae-surface) !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+}
+
+.source-workspace-tabs {
+    display: flex;
+    width: fit-content;
+    gap: 0;
+    margin: 0 0 12px;
+    padding: 0;
+    border: 1px solid var(--ae-line);
+    border-radius: var(--ae-radius-panel);
+    background: var(--ae-surface-inset);
+    box-shadow: none;
+    overflow-x: auto;
+}
+
+.source-workspace-tabs button {
+    min-height: 44px;
+    padding: 8px 16px;
+    border: 0 !important;
+    border-right: 1px solid var(--ae-line) !important;
+    border-radius: 0 !important;
+}
+
+.source-workspace-tabs button:last-child {
+    border-right: 0 !important;
+}
+
+.source-workspace-tabs button:hover {
+    background: rgba(169, 239, 247, 0.035) !important;
+}
+
+.source-workspace-tabs button[aria-selected="true"] {
+    border-color: var(--ae-line) !important;
+    background: rgba(169, 239, 247, 0.07) !important;
+    color: var(--ae-text);
+    box-shadow: inset 0 -2px var(--ae-cyan);
+}
+
+body[data-katcha-page="sources"] .steps li {
+    border-radius: var(--ae-radius-control);
+    background: var(--ae-surface-raised);
+}
+
+body[data-katcha-page="sources"] .steps li[aria-current] {
+    border-color: rgba(98, 220, 235, 0.22);
+    background: rgba(98, 220, 235, 0.07);
+    color: var(--ae-ice);
+}
+
+@media (max-width: 720px) {
+    body[data-katcha-page="sources"] .source-content {
+        padding-inline: 14px;
+    }
+
+    .source-workspace-tabs {
+        width: 100%;
+    }
+
+    .source-workspace-tabs button {
+        flex: 1 0 auto;
+    }
+}
