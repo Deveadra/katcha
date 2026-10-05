@@ -1,0 +1,25 @@
+name: Telegram notification test
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  telegram:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Send test notification
+        shell: bash
+        env:
+          KATCHA_TELEGRAM_BOT_TOKEN: ${{ secrets.KATCHA_TELEGRAM_BOT_TOKEN }}
+          KATCHA_TELEGRAM_CHAT_ID: ${{ secrets.KATCHA_TELEGRAM_CHAT_ID }}
+          KATCHA_TELEGRAM_THREAD_ID: ${{ vars.KATCHA_TELEGRAM_THREAD_ID }}
+          KATCHA_TELEGRAM_REQUIRED: "true"
+        run: |
+          set -euo pipefail
+          bash scripts/notify-telegram.sh             "Katcha notification test succeeded. GitHub can reach your Telegram alert channel."

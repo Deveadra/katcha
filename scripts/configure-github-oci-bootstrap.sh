@@ -110,6 +110,22 @@ echo "Configured OCI secret names:"
 gh secret list --repo "$REPO" | grep -E '^OCI_(TENANCY_OCID|USER_OCID|FINGERPRINT|API_PRIVATE_KEY)' || true
 
 if [[ "$ENABLE" == "true" ]]; then
+    required_transition_secrets=(
+        KATCHA_GITHUB_AUTOMATION_TOKEN
+        KATCHA_TELEGRAM_BOT_TOKEN
+        KATCHA_TELEGRAM_CHAT_ID
+    )
+    configured_secret_names="$(
+        gh secret list --repo "$REPO" --json name --jq '.[].name'
+    )"
+    for secret_name in "${required_transition_secrets[@]}"; do
+        if ! grep -Fxq "$secret_name" <<<"$configured_secret_names"; then
+            echo "Missing required transition secret: $secret_name" >&2
+            echo "Polling will not be enabled until acquisition handoff/Telegram notification can complete." >&2
+            exit 14
+        fi
+    done
+
     echo
     echo "Running one-shot OCI bootstrap validation before enabling the scheduler..."
 

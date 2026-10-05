@@ -7,6 +7,8 @@ on:
       - src/katcha/ops/oci_bootstrap_capacity.py
       - tests/test_oci_bootstrap_capacity.py
       - scripts/configure-github-oci-bootstrap.sh
+      - scripts/transition-oci-bootstrap.sh
+      - scripts/notify-telegram.sh
   workflow_dispatch:
   schedule:
     # Five-minute pre-deployment capacity polling, offset from the recovery
@@ -33,6 +35,8 @@ jobs:
           python -m pip install -e '.[dev]'
           python -m py_compile src/katcha/ops/oci_bootstrap_capacity.py
           bash -n scripts/configure-github-oci-bootstrap.sh
+          bash -n scripts/transition-oci-bootstrap.sh
+          bash -n scripts/notify-telegram.sh
           pytest -q tests/test_oci_bootstrap_capacity.py
 
   poll:
@@ -135,6 +139,14 @@ jobs:
           status="$(echo "$result" | jq -er '.status')"
           echo "status=$status" >> "$GITHUB_OUTPUT"
 
+          if [[ "$status" == "acquired" ]]; then
+            echo "instance_id=$(echo "$result" | jq -er '.instance_id')" >> "$GITHUB_OUTPUT"
+            echo "availability_domain=$(echo "$result" | jq -er '.availability_domain')" >> "$GITHUB_OUTPUT"
+            echo "subnet_id=$(echo "$result" | jq -er '.subnet_id')" >> "$GITHUB_OUTPUT"
+            echo "volume_id=$(echo "$result" | jq -er '.volume_id')" >> "$GITHUB_OUTPUT"
+            echo "attachment_id=$(echo "$result" | jq -er '.attachment_id')" >> "$GITHUB_OUTPUT"
+          fi
+
           {
             echo "## OCI A1 bootstrap capacity"
             echo
@@ -154,4 +166,21 @@ jobs:
           fi
 
           echo "A1 capacity acquired and durable storage attached."
-          echo "The workflow is idempotent; later runs will reuse this instance until production recovery is enabled."
+
+      - name: Transition acquired capacity
+        if: steps.bootstrap.outputs.status == 'acquired'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.KATCHA_GITHUB_AUTOMATION_TOKEN }}
+          KATCHA_BOOTSTRAP_INSTANCE_ID: ${{ steps.bootstrap.outputs.instance_id }}
+          KATCHA_BOOTSTRAP_AVAILABILITY_DOMAIN: ${{ steps.bootstrap.outputs.availability_domain }}
+          KATCHA_BOOTSTRAP_SUBNET_ID: ${{ steps.bootstrap.outputs.subnet_id }}
+          KATCHA_BOOTSTRAP_VOLUME_ID: ${{ steps.bootstrap.outputs.volume_id }}
+          KATCHA_BOOTSTRAP_ATTACHMENT_ID: ${{ steps.bootstrap.outputs.attachment_id }}
+          KATCHA_TELEGRAM_BOT_TOKEN: ${{ secrets.KATCHA_TELEGRAM_BOT_TOKEN }}
+          KATCHA_TELEGRAM_CHAT_ID: ${{ secrets.KATCHA_TELEGRAM_CHAT_ID }}
+          KATCHA_TELEGRAM_THREAD_ID: ${{ vars.KATCHA_TELEGRAM_THREAD_ID }}
+          KATCHA_TELEGRAM_REQUIRED: "true"
+        run: |
+          set -euo pipefail
+          bash scripts/transition-oci-bootstrap.sh
