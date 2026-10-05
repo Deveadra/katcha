@@ -139,7 +139,7 @@ if [[ "$ENABLE" == "true" ]]; then
             --jq '.[0].databaseId // empty'
     )"
 
-    gh workflow run oci-bootstrap-capacity.yml --repo "$REPO"
+    gh workflow run oci-bootstrap-capacity.yml --repo "$REPO" -f mode=validate
 
     run_id=""
     for _ in {1..30}; do
@@ -177,7 +177,7 @@ if [[ "$ENABLE" == "true" ]]; then
     gh variable set KATCHA_OCI_BOOTSTRAP_POLL_ENABLED --repo "$REPO" --body "true"
 
     echo "Starting the first autonomous capacity pass..."
-    gh workflow run oci-bootstrap-capacity.yml --repo "$REPO" --ref main
+    gh workflow run oci-bootstrap-capacity.yml --repo "$REPO" --ref main -f mode=poll
 
     echo
     echo "Bootstrap polling is ENABLED."
