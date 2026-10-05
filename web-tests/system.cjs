@@ -102,6 +102,28 @@ const groupForWorkspace = new Map([
                 expectedOpenGroup ? [expectedOpenGroup] : [],
                 workspace.label + ": only the relevant task group should open by default",
             );
+            assert.deepEqual(
+                await page.evaluate(() =>
+                    Object.keys(sessionStorage)
+                        .filter((key) => key.startsWith("katcha.workspaceGroup."))
+                        .sort()
+                ),
+                [],
+                workspace.label + ": automatic current-group expansion must not become sticky",
+            );
+            if (workspace.label === "Home") {
+                const growGroup = workspaceTree.locator('[data-workspace-group="grow"]');
+                await growGroup.locator("summary").click();
+                await page.waitForFunction(() =>
+                    sessionStorage.getItem("katcha.workspaceGroup.grow") === "open"
+                );
+                assert.equal(await growGroup.evaluate((node) => node.open), true);
+                await growGroup.locator("summary").click();
+                await page.waitForFunction(() =>
+                    sessionStorage.getItem("katcha.workspaceGroup.grow") === "closed"
+                );
+                await page.evaluate(() => sessionStorage.removeItem("katcha.workspaceGroup.grow"));
+            }
             const currentWorkspace = menu.locator('[aria-current="page"]');
             assert.equal(
                 await currentWorkspace.count(),
