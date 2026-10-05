@@ -210,6 +210,28 @@ Configure break-glass lifecycle/escrow using
 
 Run the GitHub **Break-glass escrow drill** before relying on that path.
 
+Live R2 acceptance recorded 2026-10-04:
+
+- `katcha-media-prod`, `katcha-backup-prod`, and
+  `katcha-break-glass-prod` were created independently in ENAM using Standard
+  storage,
+- public `r2.dev` access is disabled for all three buckets,
+- `postgres/` in the backup bucket has a 30-day bucket lock,
+- `postgres/` has a 60-day lifecycle expiry,
+- `bootstrap-handoff/` in the break-glass bucket expires after 24 hours while
+  `escrow/` is not covered by that rule,
+- the media runtime credential proved read/write access only to the media
+  bucket,
+- the backup writer proved read/write access only to the backup bucket,
+- the restore credential proved read-only access only to the backup bucket,
+- the break-glass credential proved read/write access only to the break-glass
+  bucket,
+- every tested cross-bucket operation was denied and all validation objects
+  were cleaned up successfully.
+
+The temporary R2 configuration-admin credential is no longer required after
+these policies are verified and should be revoked before continuing.
+
 ## Phase 4 — initial OCI infrastructure
 
 Provision the initial OCI resources in the chosen home region.
