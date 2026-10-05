@@ -330,6 +330,12 @@ const draft = {
         await page.locator('[data-image-revoke]').click();
         await page.getByText(/Previous approval is no longer valid/).waitFor();
         assert.equal(await page.locator('#editorial-storyboard select option[value="image:still-image"]').count(), 0);
+        await page.locator('#editorial-image-file').setInputFiles({name: 'owned.png', mimeType: 'image/png', buffer: Buffer.from('synthetic upload transport')});
+        await page.locator('#editorial-image-confirm').check();
+        await page.locator('#editorial-image-upload').click();
+        await page.locator('#editorial-images').filter({hasText: 'Original synthetic art'}).waitFor();
+        const newImageUpload = calls.filter(call => call.path.endsWith('/images') && call.method === 'POST').at(-1);
+        assert.notEqual(new URLSearchParams(newImageUpload.query).get('idempotency_key'), new URLSearchParams(imageUploads[0].query).get('idempotency_key'));
         await page.setViewportSize({width: 1440, height: 1000});
         // Independent history must preserve edits and current review/preview identity.
         await page.locator('[data-beat-narration="0"]').fill('Unsaved current script stays here.');

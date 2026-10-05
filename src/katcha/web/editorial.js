@@ -362,7 +362,12 @@ window.KatchaEditorial = (() => {
             const hash = [...new Uint8Array(await crypto.subtle.digest("SHA-256", bytes))].map(value => value.toString(16).padStart(2, "0")).join("");
             if (channel !== state.channel || project !== state.project?.id) return;
             metadata.idempotency_key = identity(`image.${project}`, {...metadata, sha256: hash});
-            await api(path(channel, `/${project}/images?${new URLSearchParams(metadata)}`), {method: "POST", body: bytes, headers: {"Content-Type": "application/octet-stream"}});
+            const requestKey = storageKey(`request.image.${project}`);
+            const uploaded = await api(path(channel, `/${project}/images?${new URLSearchParams(metadata)}`), {method: "POST", body: bytes, headers: {"Content-Type": "application/octet-stream"}});
+            if (uploaded.status !== "active") {
+                sessionStorage.removeItem(requestKey);
+                throw new Error("This earlier upload was removed. Upload again to attach it as a new image.");
+            }
             if (channel === state.channel && project === state.project?.id) {
                 el("editorial-image-file").value = ""; el("editorial-image-confirm").checked = false;
                 await open(project, {focus: false}); feedback("Image saved. Select it as a beat’s visual below.");
@@ -373,7 +378,9 @@ window.KatchaEditorial = (() => {
             if (!button) return;
             void guarded(async () => {
                 const channel = state.channel; const project = state.project.id;
+                const requestKey = storageKey(`request.image.${project}`);
                 await api(path(channel, `/${project}/images/${encodeURIComponent(button.dataset.imageRevoke)}/revoke`), {method: "POST"});
+                sessionStorage.removeItem(requestKey);
                 if (channel === state.channel && project === state.project?.id) await open(project, {focus: false});
             });
         });
