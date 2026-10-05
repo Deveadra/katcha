@@ -849,3 +849,30 @@ This prerequisite does not implement frame-grounded direction or change native-v
 upload recovery. Those features and the E12 remaining items above are still pending.
 Published as draft PR #289 on `fix/editorial-provider-preflight`. Remote CI is now
 available on the pull request; merge remains subject to the normal remote gates.
+
+### E13a acquired-footage sampled-frame direction (2026-10-05)
+
+PR #289 is merged. New visual-direction runs now inspect the acquired supporting
+footage's managed contact sheets before planning shots. Each observation is bound
+to the acquired media checksum, source URL, measured duration and an actual sample
+time. Descriptions of visible people, objects and legible text are retained with
+coverage limitations; they remain model interpretations, not verified identities.
+The planner receives these observations alongside the existing beat/claim evidence.
+
+Current clearance and media identity are checked before observation; missing frame
+analysis blocks with a recovery explanation. Calls use the existing channel-policy,
+budget and uncertain-submission fences. Completed observation and planning receipts
+replay after interruption without another provider call or image download. Old v1
+planning receipts retain their exact prompt/schema recovery path. New planning uses
+a separate v2 receipt key. Compilation still checks current rights and playback bounds.
+
+This is the sampled-frame evidence milestone, not completion of all frame-grounded
+visual direction. Spatial regions/annotations, exact shot-evidence references in the
+compiled plan, continuous-motion analysis and live visual-quality acceptance remain
+pending. Automatic still acquisition, branding, publication handoff and E8 remain
+pending too. No live provider calls or publication were performed.
+
+Validation: the full editorial suite passed **164 tests**. After adding the
+post-observation script/audio fence, all **30 direction tests** passed, including
+the new script-change-during-observation case. Lint and diff checks passed. Tests
+use synthetic provider output; remote CI and live acceptance remain separate gates.
