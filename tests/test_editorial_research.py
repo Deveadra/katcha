@@ -87,18 +87,28 @@ def test_frame_download_failure_can_resume_without_spending_a_submission(saved, 
     assert invoke.call_count == 1
 
 
-def test_ambiguous_request_never_repeated_after_resume(saved, monkeypatch):
+@pytest.mark.parametrize("image_key", [None, "managed/frames.jpg"])
+def test_ambiguous_request_never_repeated_after_resume(saved, monkeypatch, image_key):
     row = new_run(saved)
     monkeypatch.setattr(provider, "select_provider", lambda **kw: "codex")
     invoke = Mock(side_effect=TimeoutError("Response lost"))
     monkeypatch.setattr(provider, "_invoke", invoke)
+    store = Mock()
+    store.get_bytes.return_value = b"frame-image"
+    monkeypatch.setattr(provider, "ObjectStore", lambda: store)
     with pytest.raises(TimeoutError):
-        provider.structured_call(str(row.id), 1, "plan", "Evidence", ResearchPlan)
+        provider.structured_call(
+            str(row.id), 1, "plan", "Evidence", ResearchPlan, image_key=image_key
+        )
     checkpoint(str(row.id), 1, status="failed")
     control_run(row.channel_profile_id, row.project_id, row.id, expected_attempt=1, cancel=False)
+    store.get_bytes.side_effect = AssertionError("Uncertain requests must not fetch inputs again")
     with pytest.raises(provider.EditorialBlocked, match="uncertain"):
-        provider.structured_call(str(row.id), 2, "plan", "Evidence", ResearchPlan)
+        provider.structured_call(
+            str(row.id), 2, "plan", "Evidence", ResearchPlan, image_key=image_key
+        )
     assert invoke.call_count == 1
+    assert store.get_bytes.call_count == int(image_key is not None)
 
 
 def test_provider_call_budget_blocks_before_external_side_effect(saved, monkeypatch):
