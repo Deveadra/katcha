@@ -18,6 +18,7 @@ on:
       - tests/test_external_compute_budget.py
       - tests/test_disaster_backup.py
       - tests/test_cloud_runtime_contract.py
+      - scripts/notify-telegram.sh
   repository_dispatch:
     types: [katcha-recovery]
   workflow_dispatch:
@@ -119,6 +120,7 @@ jobs:
           python -m py_compile src/katcha/ops/oci_recovery.py src/katcha/ops/external_compute_budget.py src/katcha/ops/disaster_backup.py src/katcha/ops/break_glass.py src/katcha/ops/break_glass_lifecycle.py
           bash -n deploy/cloud-init/oci-recovery-candidate.sh.tmpl
           bash -n deploy/scripts/postgres-disaster-restore.sh
+          bash -n scripts/notify-telegram.sh
           pytest -q \
             tests/test_oci_recovery.py \
             tests/test_external_compute_budget.py \
@@ -250,6 +252,7 @@ jobs:
             }' > /tmp/katcha-recovery-event.json
 
       - name: Recover Katcha control plane
+        id: recovery
         shell: bash
         run: |
           set -euo pipefail
@@ -257,7 +260,63 @@ jobs:
           if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
             event_path=/tmp/katcha-recovery-event.json
           fi
-          python -m katcha.ops.oci_recovery recover --event "$event_path"
+
+          output="$(python -m katcha.ops.oci_recovery recover --event "$event_path")"
+          printf '%s\n' "$output"
+          result="$(printf '%s\n' "$output" | tail -n 1)"
+          echo "$result" | jq -e '.status == "committed"' >/dev/null
+
+          {
+            echo "status=$(echo "$result" | jq -er '.status')"
+            echo "instance_id=$(echo "$result" | jq -er '.instance_id')"
+            echo "deployment_id=$(echo "$result" | jq -er '.deployment_id')"
+            echo "deployment_epoch=$(echo "$result" | jq -er '.deployment_epoch')"
+            echo "availability_domain=$(echo "$result" | jq -er '.availability_domain')"
+            echo "mode=$(echo "$result" | jq -er '.mode')"
+            echo "storage_mode=$(echo "$result" | jq -er '.storage_mode')"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Verify committed recovery is publicly healthy
+        if: steps.recovery.outputs.status == 'committed'
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${KATCHA_PUBLIC_HEALTH_URL:-}" ]]; then
+            echo "Missing KATCHA_PUBLIC_HEALTH_URL after recovery commit." >&2
+            exit 43
+          fi
+
+          curl --fail-with-body --silent --show-error \
+            --retry 12 \
+            --retry-delay 5 \
+            --retry-all-errors \
+            --max-time 10 \
+            "$KATCHA_PUBLIC_HEALTH_URL" >/dev/null
+
+      - name: Notify operator that Katcha is back online
+        if: steps.recovery.outputs.status == 'committed'
+        shell: bash
+        env:
+          KATCHA_TELEGRAM_BOT_TOKEN: ${{ secrets.KATCHA_TELEGRAM_BOT_TOKEN }}
+          KATCHA_TELEGRAM_CHAT_ID: ${{ secrets.KATCHA_TELEGRAM_CHAT_ID }}
+          KATCHA_TELEGRAM_THREAD_ID: ${{ vars.KATCHA_TELEGRAM_THREAD_ID }}
+        run: |
+          set -euo pipefail
+          message="$(
+            cat <<EOF
+Katcha is back online.
+
+Deployment: ${{ steps.recovery.outputs.deployment_id }}
+Epoch: ${{ steps.recovery.outputs.deployment_epoch }}
+Availability Domain: ${{ steps.recovery.outputs.availability_domain }}
+Recovery mode: ${{ steps.recovery.outputs.mode }}
+Storage: ${{ steps.recovery.outputs.storage_mode }}
+Public health: confirmed
+
+The replacement deployment has committed leadership and is authoritative.
+EOF
+          )"
+          bash scripts/notify-telegram.sh "$message"
 
       - name: Delete ephemeral break-glass handoff
         if: always() && github.event_name == 'workflow_dispatch' && inputs.secret_source == 'break-glass'
