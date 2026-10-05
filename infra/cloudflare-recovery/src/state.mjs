@@ -21,6 +21,22 @@ export function defaultAuthorityState() {
       failure_threshold: 3,
       recovery_retry_seconds: 300,
     },
+    bootstrap_watchdog: {
+      enabled: false,
+      check_interval_seconds: 300,
+      stale_after_seconds: 900,
+      redispatch_cooldown_seconds: 1800,
+      configured_at: null,
+      last_heartbeat_at: null,
+      last_heartbeat_at_ms: 0,
+      last_run_id: null,
+      last_status: null,
+      last_dispatch_at: null,
+      last_dispatch_at_ms: 0,
+      last_dispatch_attempt_at: null,
+      last_dispatch_attempt_at_ms: 0,
+      last_dispatch_error: null,
+    },
     incident: null,
     external_compute: {
       enabled: false,
@@ -59,6 +75,10 @@ export function normalizeState(value) {
     ...base,
     ...value,
     watchdog: { ...base.watchdog, ...(value.watchdog || {}) },
+    bootstrap_watchdog: {
+      ...base.bootstrap_watchdog,
+      ...(value.bootstrap_watchdog || {}),
+    },
     external_compute: (() => {
       const raw = value.external_compute || {};
       const reservations = Array.isArray(raw.reservations)
@@ -314,6 +334,164 @@ export function configureWatchdog(
     failure_threshold: failureThreshold,
     recovery_retry_seconds: recoveryRetrySeconds,
   });
+  return next;
+}
+
+
+export function configureBootstrapWatchdog(
+  current,
+  {
+    enabled,
+    checkIntervalSeconds = 300,
+    staleAfterSeconds = 900,
+    redispatchCooldownSeconds = 1800,
+  },
+  nowMs = Date.now(),
+) {
+  const state = normalizeState(current);
+  const previous = state.bootstrap_watchdog;
+  const enabling = enabled && !previous.enabled;
+  const heartbeatAtMs = enabling
+    ? nowMs
+    : Number(previous.last_heartbeat_at_ms || 0);
+  let next = {
+    ...state,
+    bootstrap_watchdog: {
+      ...previous,
+      enabled,
+      check_interval_seconds: checkIntervalSeconds,
+      stale_after_seconds: staleAfterSeconds,
+      redispatch_cooldown_seconds: redispatchCooldownSeconds,
+      configured_at: nowIso(nowMs),
+      last_heartbeat_at: heartbeatAtMs
+        ? nowIso(heartbeatAtMs)
+        : previous.last_heartbeat_at,
+      last_heartbeat_at_ms: heartbeatAtMs,
+      last_dispatch_error: enabled ? previous.last_dispatch_error : null,
+    },
+  };
+  next = event(next, "bootstrap_watchdog.configured", nowMs, {
+    enabled,
+    check_interval_seconds: checkIntervalSeconds,
+    stale_after_seconds: staleAfterSeconds,
+    redispatch_cooldown_seconds: redispatchCooldownSeconds,
+  });
+  return next;
+}
+
+export function recordBootstrapHeartbeat(
+  current,
+  { runId, status, terminal = false },
+  nowMs = Date.now(),
+) {
+  const state = normalizeState(current);
+  const nextWatchdog = {
+    ...state.bootstrap_watchdog,
+    enabled: terminal ? false : state.bootstrap_watchdog.enabled,
+    last_heartbeat_at: nowIso(nowMs),
+    last_heartbeat_at_ms: nowMs,
+    last_run_id: String(runId || "").slice(0, 128) || null,
+    last_status: String(status || "").slice(0, 128) || null,
+    last_dispatch_error: null,
+  };
+  let next = {
+    ...state,
+    bootstrap_watchdog: nextWatchdog,
+  };
+  next = event(next, "bootstrap_watchdog.heartbeat", nowMs, {
+    run_id: nextWatchdog.last_run_id,
+    status: nextWatchdog.last_status,
+    terminal,
+  });
+  return next;
+}
+
+export function bootstrapWatchdogDecision(current, nowMs = Date.now()) {
+  const state = normalizeState(current);
+  const watchdog = state.bootstrap_watchdog;
+  if (!watchdog.enabled) {
+    return {
+      state,
+      shouldDispatch: false,
+      reason: "bootstrap watchdog is disabled",
+      stale_seconds: 0,
+    };
+  }
+
+  const heartbeatMs = Number(
+    watchdog.last_heartbeat_at_ms ||
+      Date.parse(watchdog.configured_at || "") ||
+      0,
+  );
+  const staleMs = Math.max(0, nowMs - heartbeatMs);
+  const staleSeconds = Math.floor(staleMs / 1000);
+  if (staleMs < watchdog.stale_after_seconds * 1000) {
+    return {
+      state,
+      shouldDispatch: false,
+      reason: "bootstrap heartbeat is fresh",
+      stale_seconds: staleSeconds,
+    };
+  }
+
+  const lastAttemptMs = Math.max(
+    Number(watchdog.last_dispatch_at_ms || 0),
+    Number(watchdog.last_dispatch_attempt_at_ms || 0),
+  );
+  if (
+    lastAttemptMs &&
+    nowMs - lastAttemptMs <
+      watchdog.redispatch_cooldown_seconds * 1000
+  ) {
+    return {
+      state,
+      shouldDispatch: false,
+      reason: "bootstrap redispatch cooldown is active",
+      stale_seconds: staleSeconds,
+    };
+  }
+
+  return {
+    state,
+    shouldDispatch: true,
+    reason: "bootstrap heartbeat is stale",
+    stale_seconds: staleSeconds,
+  };
+}
+
+export function markBootstrapRedispatched(current, nowMs = Date.now()) {
+  const state = normalizeState(current);
+  let next = {
+    ...state,
+    bootstrap_watchdog: {
+      ...state.bootstrap_watchdog,
+      last_dispatch_at: nowIso(nowMs),
+      last_dispatch_at_ms: nowMs,
+      last_dispatch_attempt_at: nowIso(nowMs),
+      last_dispatch_attempt_at_ms: nowMs,
+      last_dispatch_error: null,
+    },
+  };
+  next = event(next, "bootstrap_watchdog.redispatched", nowMs);
+  return next;
+}
+
+export function markBootstrapRedispatchFailed(
+  current,
+  error,
+  nowMs = Date.now(),
+) {
+  const state = normalizeState(current);
+  let next = {
+    ...state,
+    bootstrap_watchdog: {
+      ...state.bootstrap_watchdog,
+      last_dispatch_attempt_at: nowIso(nowMs),
+      last_dispatch_attempt_at_ms: nowMs,
+      last_dispatch_error: String(error || "dispatch failed").slice(0, 1000),
+    },
+  };
+  next = event(next, "bootstrap_watchdog.redispatch_failed", nowMs);
   return next;
 }
 

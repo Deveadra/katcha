@@ -271,13 +271,39 @@ If Always Free A1 capacity is unavailable during the first deployment, enable
 scheduled-workflow interval is five minutes, but Katcha does not rely on that
 interval as its active search loop. After a complete AD1→AD2→AD3 miss, the
 workflow immediately dispatches the next serialized `mode=poll` pass. The
-five-minute cron is retained only as a dead-man/backstop if a continuation
-dispatch is ever lost. Chained `mode=poll` runs still require
+five-minute GitHub cron is retained as a same-provider backstop, but it is not
+treated as independent recovery because a GitHub Actions outage can affect both
+the active chain and its cron. Chained `mode=poll` runs still require
 `KATCHA_OCI_BOOTSTRAP_POLL_ENABLED=true`, so disabling that variable is a hard
 stop even if a continuation was already queued. Explicit operator
-`mode=validate` runs remain available while polling is disabled. This avoids an
-artificial five-minute idle gap while still guaranteeing that provider-mutating
-attempts never overlap. The workflow keeps the full
+`mode=validate` runs remain available while polling is disabled.
+
+An independent Cloudflare Durable Object dead-man watchdog covers loss of the
+GitHub polling chain. Every bootstrap run records a best-effort heartbeat with
+the recovery coordinator at start and completion. While bootstrap polling is
+enabled, the Durable Object wakes every five minutes; if no heartbeat has been
+seen for 15 minutes, it sends a `katcha-bootstrap-poll`
+`repository_dispatch` through the already-authorized recovery GitHub
+dispatcher. Rescue dispatches are rate-limited to one attempt per 30 minutes so
+a long GitHub-hosted-runner outage cannot build an unbounded queue. When a
+Cloudflare rescue run actually starts, GitHub sends the operator a best-effort
+Telegram "polling recovery" notice. The watchdog automatically disables when
+the acquisition handoff completes. A Cloudflare outage does not stop the primary
+GitHub self-chain because heartbeat delivery is intentionally best-effort.
+
+After deploying the updated recovery Worker, enable this independent watchdog:
+
+```bash
+cd ~/src/katcha
+git pull --ff-only origin main
+npx --yes wrangler@4.146.0 deploy --config infra/cloudflare-recovery/wrangler.jsonc
+bash scripts/configure-cloudflare-bootstrap-watchdog.sh
+```
+
+The configurator prompts privately for the recovery admin token when it is not
+already present in `KATCHA_RECOVERY_ADMIN_TOKEN`; it does not print the token.
+This avoids an artificial five-minute idle gap while still guaranteeing that
+provider-mutating attempts never overlap. The workflow keeps the full
 2-OCPU/12-GB A1 target, never selects a paid shape, and creates/attaches the
 50-GB durable volume only after compute placement succeeds. It reconciles an
 uncertain launch response by searching for the exact production instance before

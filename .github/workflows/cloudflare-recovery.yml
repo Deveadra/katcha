@@ -9,6 +9,9 @@ on:
       - src/katcha/ops/oci_recovery.py
       - tests/test_external_compute_budget.py
       - tests/test_cloud_runtime_contract.py
+      - .github/workflows/oci-bootstrap-capacity.yml
+      - scripts/report-bootstrap-heartbeat.sh
+      - scripts/configure-cloudflare-bootstrap-watchdog.sh
   push:
     branches: [main]
   workflow_dispatch:
@@ -23,7 +26,7 @@ concurrency:
 jobs:
   recovery-coordinator:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 30
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -40,7 +43,10 @@ jobs:
           key: cloudflare-recovery-npm-${{ runner.os }}-wrangler-4.146.0
 
       - name: Test authority state machine
-        run: node --test infra/cloudflare-recovery/test/*.test.mjs
+        run: |
+          node --test infra/cloudflare-recovery/test/*.test.mjs
+          bash -n scripts/report-bootstrap-heartbeat.sh
+          bash -n scripts/configure-cloudflare-bootstrap-watchdog.sh
 
       - name: Validate Worker bundle and Durable Object configuration
         run: >-

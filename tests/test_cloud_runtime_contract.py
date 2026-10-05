@@ -311,6 +311,53 @@ def test_bootstrap_capacity_search_self_chains_with_cron_as_backstop() -> None:
     assert "five-minute GitHub schedule remains only as a dead-man/backstop" in configurator
 
 
+def test_cloudflare_bootstrap_deadman_is_independent_from_actions_cron() -> None:
+    workflow = (
+        ROOT / ".github" / "workflows" / "oci-bootstrap-capacity.yml"
+    ).read_text(encoding="utf-8")
+    worker = (
+        ROOT / "infra" / "cloudflare-recovery" / "src" / "index.js"
+    ).read_text(encoding="utf-8")
+    state = (
+        ROOT / "infra" / "cloudflare-recovery" / "src" / "state.mjs"
+    ).read_text(encoding="utf-8")
+    heartbeat = (
+        ROOT / "scripts" / "report-bootstrap-heartbeat.sh"
+    ).read_text(encoding="utf-8")
+    configurator = (
+        ROOT / "scripts" / "configure-cloudflare-bootstrap-watchdog.sh"
+    ).read_text(encoding="utf-8")
+
+    assert "katcha-bootstrap-poll" in workflow
+    assert "github.event_name == 'repository_dispatch'" in workflow
+    assert "Record bootstrap run start" in workflow
+    assert "Record bootstrap run completion" in workflow
+    assert "Notify operator when Cloudflare revives polling" in workflow
+    assert "Cloudflare restarted OCI A1 polling" in workflow
+    assert "report-bootstrap-heartbeat.sh" in workflow
+    assert "/v1/bootstrap/heartbeat" in heartbeat
+    assert "KATCHA_RECOVERY_CANDIDATE_TOKEN" in workflow
+
+    assert "/v1/bootstrap/watchdog/configure" in worker
+    assert "/v1/bootstrap/watchdog/status" in worker
+    assert "/v1/bootstrap/watchdog/probe-now" in worker
+    assert 'event_type: "katcha-bootstrap-poll"' in worker
+    assert "RECOVERY_DISPATCH_TOKEN" in worker
+    assert "bootstrapWatchdogDecision" in worker
+    assert "markBootstrapRedispatched" in worker
+
+    assert "bootstrap_watchdog" in state
+    assert "stale_after_seconds: 900" in state
+    assert "redispatch_cooldown_seconds: 1800" in state
+    assert "check_interval_seconds: 300" in state
+    assert "terminal ? false" in state
+
+    assert "stale_after_seconds:900" in configurator
+    assert "redispatch_cooldown_seconds:1800" in configurator
+    assert "KATCHA_RECOVERY_ADMIN_TOKEN" in configurator
+    assert 'echo "$ADMIN_TOKEN"' not in configurator
+
+
 def test_recovery_notification_configurator_proves_pat_and_telegram() -> None:
     configurator = (
         ROOT / "scripts" / "configure-github-recovery-notifications.sh"

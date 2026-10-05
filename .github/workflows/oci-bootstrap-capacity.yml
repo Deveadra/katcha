@@ -10,6 +10,9 @@ on:
       - scripts/configure-github-recovery-notifications.sh
       - scripts/transition-oci-bootstrap.sh
       - scripts/notify-telegram.sh
+      - scripts/report-bootstrap-heartbeat.sh
+  repository_dispatch:
+    types: [katcha-bootstrap-poll]
   workflow_dispatch:
     inputs:
       mode:
@@ -48,6 +51,7 @@ jobs:
           bash -n scripts/configure-github-recovery-notifications.sh
           bash -n scripts/transition-oci-bootstrap.sh
           bash -n scripts/notify-telegram.sh
+          bash -n scripts/report-bootstrap-heartbeat.sh
           pytest -q tests/test_oci_bootstrap_capacity.py
 
   poll:
@@ -62,6 +66,11 @@ jobs:
               vars.KATCHA_OCI_BOOTSTRAP_POLL_ENABLED == 'true'
             )
           )
+        ) ||
+        (
+          github.event_name == 'repository_dispatch' &&
+          github.event.action == 'katcha-bootstrap-poll' &&
+          vars.KATCHA_OCI_BOOTSTRAP_POLL_ENABLED == 'true'
         ) ||
         (
           github.event_name == 'schedule' &&
@@ -88,12 +97,33 @@ jobs:
       KATCHA_OCI_CROSS_AD_DATA_VOLUME_SIZE_GB: ${{ vars.KATCHA_OCI_CROSS_AD_DATA_VOLUME_SIZE_GB }}
       KATCHA_OCI_DATA_VOLUME_DEVICE_PATH: ${{ vars.KATCHA_OCI_DATA_VOLUME_DEVICE_PATH }}
       KATCHA_OCI_SSH_PUBLIC_KEY: ${{ vars.KATCHA_OCI_SSH_PUBLIC_KEY }}
+      KATCHA_RECOVERY_COORDINATOR_URL: ${{ vars.KATCHA_RECOVERY_COORDINATOR_URL }}
+      KATCHA_RECOVERY_CANDIDATE_TOKEN: ${{ secrets.KATCHA_RECOVERY_CANDIDATE_TOKEN }}
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+
+      - name: Record bootstrap run start
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash scripts/report-bootstrap-heartbeat.sh started false
+
+      - name: Notify operator when Cloudflare revives polling
+        if: github.event_name == 'repository_dispatch'
+        shell: bash
+        env:
+          KATCHA_TELEGRAM_BOT_TOKEN: ${{ secrets.KATCHA_TELEGRAM_BOT_TOKEN }}
+          KATCHA_TELEGRAM_CHAT_ID: ${{ secrets.KATCHA_TELEGRAM_CHAT_ID }}
+          KATCHA_TELEGRAM_THREAD_ID: ${{ vars.KATCHA_TELEGRAM_THREAD_ID }}
+          KATCHA_TELEGRAM_REQUIRED: "false"
+        run: |
+          set -euo pipefail
+          bash scripts/notify-telegram.sh \
+            "Katcha polling recovery: Cloudflare restarted OCI A1 polling after the GitHub bootstrap heartbeat went stale."
 
       - name: Install isolated OCI CLI
         run: |
@@ -232,3 +262,23 @@ jobs:
             --repo "$GITHUB_REPOSITORY" \
             --ref "$GITHUB_REF_NAME" \
             -f mode=poll
+
+
+      - name: Record bootstrap run completion
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          status="run-failed"
+          terminal=false
+
+          if [[ "${{ steps.bootstrap.outputs.status }}" == "capacity-unavailable" ]]; then
+            status="capacity-unavailable"
+          elif [[ "${{ steps.bootstrap.outputs.status }}" == "acquired" && "${{ steps.handoff.outcome }}" == "success" ]]; then
+            status="acquired"
+            terminal=true
+          elif [[ "${{ steps.bootstrap.outputs.status }}" == "acquired" ]]; then
+            status="handoff-failed"
+          fi
+
+          bash scripts/report-bootstrap-heartbeat.sh "$status" "$terminal"
