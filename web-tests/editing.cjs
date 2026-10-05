@@ -301,11 +301,14 @@ const verifiedPreview = {
         });
 
         await page.goto("http://127.0.0.1:8766/editing.html");
-        await page.locator(".workspace-menu").waitFor();
-        await page.locator(".workspace-menu > summary").click();
-        assert.match(await page.locator(".workspace-menu-popover").innerText(), /Clips/);
-        assert.match(await page.locator(".workspace-menu-popover").innerText(), /Clip Studio/);
-        await page.locator(".workspace-menu > summary").click();
+        await page.locator(".workspace-tree").waitFor();
+        assert.equal(await page.locator(".workspace-menu").isVisible(), false);
+        assert.match(await page.locator(".workspace-tree").innerText(), /Clips/);
+        assert.match(await page.locator(".workspace-tree").innerText(), /Clip Studio/);
+        assert.equal(
+            (await page.locator(".workspace-tree-link.is-current b").textContent()).trim(),
+            "Production",
+        );
         await page.locator("#token").fill("fixture-token");
         await page.locator("#connect-form button").click();
         await page.getByText("Ranking clips").waitFor();

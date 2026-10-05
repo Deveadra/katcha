@@ -191,6 +191,10 @@ let browser;
     });
     await page.goto("http://127.0.0.1:8765");
     assert.equal(await page.locator(".brand").getAttribute("href"), "/home");
+    await page.locator(".workspace-tree").waitFor();
+    assert.equal(await page.locator(".workspace-menu").isVisible(), false);
+    assert.match(await page.locator(".workspace-tree").innerText(), /Trends/);
+    await page.setViewportSize({ width: 900, height: 900 });
     await page.locator(".workspace-menu").waitFor();
     assert.equal(await page.locator(".workspace-menu").count(), 1);
     await page.locator(".workspace-menu > summary").click();
@@ -202,7 +206,6 @@ let browser;
     assert.match(menuText, /Clip Studio/);
     assert.match(menuText, /System/);
     await page.locator(".workspace-menu > summary").click();
-    await page.setViewportSize({ width: 900, height: 900 });
     assert.equal(
         await page.evaluate(() => document.documentElement.scrollWidth > innerWidth),
         false,

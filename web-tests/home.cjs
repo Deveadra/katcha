@@ -99,7 +99,7 @@ const observability = { request_count: 16, p95_latency_ms: 720, estimated_cost_u
 
         await page.getByText("Channel operations are current.").waitFor();
         assert.equal(await page.locator("#channel").inputValue(), "channel-two");
-        const currentWorkspace = page.locator(".workspace-menu [aria-current=page]");
+        const currentWorkspace = page.locator(".workspace-tree-link.is-current");
         assert.equal(await currentWorkspace.count(), 1);
         assert.equal((await currentWorkspace.locator("b").textContent()).trim(), "Home");
         assert.equal(await page.locator(".brand").getAttribute("href"), "/home");
@@ -122,6 +122,7 @@ const observability = { request_count: 16, p95_latency_ms: 720, estimated_cost_u
         assert(heroBox.y >= topbarBox.y + topbarBox.height);
 
         const workspaceMenu = page.locator(".workspace-menu");
+        assert.equal(await workspaceMenu.isVisible(), false);
         assert.equal(await workspaceMenu.evaluate((node) => node.open), false);
         assert.equal(await page.locator(".workspace-menu-popover").isVisible(), false);
 

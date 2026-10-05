@@ -657,6 +657,12 @@
     gap: 12px !important;
 }
 
+@media (min-width: 951px) {
+    .workspace-menu {
+        display: none;
+    }
+}
+
 .workspace-menu > summary {
     min-height: 48px;
     border: 1px solid var(--ae-line) !important;
@@ -833,7 +839,8 @@
 }
 
 @media (max-width: 950px) {
-    .workspace-tree {
+    .app-shell .workspace-tree,
+    .shell .workspace-tree {
         display: none;
     }
 

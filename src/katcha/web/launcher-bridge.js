@@ -159,7 +159,7 @@ function installWorkspaceMenu() {
             savedState = null;
         }
         const containsCurrent = group.workspaces.includes(current.key);
-        section.open = containsCurrent || savedState !== 'closed';
+        section.open = containsCurrent || savedState === 'open';
 
         const rows = group.workspaces
             .map((key) => KATCHA_WORKSPACES.find((workspace) => workspace.key === key))
@@ -178,15 +178,19 @@ function installWorkspaceMenu() {
         section.innerHTML =
             '<summary><span>' + group.label + '</span><small>' + group.workspaces.length + '</small></summary>' +
             '<div class="workspace-group-body">' + rows + '</div>';
-        section.addEventListener('toggle', () => {
-            try {
-                sessionStorage.setItem(
-                    'katcha.workspaceGroup.' + group.key,
-                    section.open ? 'open' : 'closed',
-                );
-            } catch {
-                /* Navigation remains fully functional when storage is unavailable. */
-            }
+        section.querySelector('summary').addEventListener('click', () => {
+            /* Persist only operator intent. Read the state on the next task so the native
+               <details> summary toggle has completed before we save open/closed. */
+            setTimeout(() => {
+                try {
+                    sessionStorage.setItem(
+                        'katcha.workspaceGroup.' + group.key,
+                        section.open ? 'open' : 'closed',
+                    );
+                } catch {
+                    /* Navigation remains fully functional when storage is unavailable. */
+                }
+            }, 0);
         });
         tree.append(section);
     }

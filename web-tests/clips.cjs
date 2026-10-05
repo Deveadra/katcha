@@ -360,7 +360,12 @@ const clips = [
         });
 
         await page.goto("http://127.0.0.1:8768/clips.html");
-        await page.locator(".workspace-menu").waitFor();
+        await page.locator(".workspace-tree").waitFor();
+        assert.equal(await page.locator(".workspace-menu").isVisible(), false);
+        assert.equal(
+            (await page.locator(".workspace-tree-link.is-current b").textContent()).trim(),
+            "Clips",
+        );
         await page.locator("#token").fill("clip-token");
         await page.locator("#connect-form button").click();
 
