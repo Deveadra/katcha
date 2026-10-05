@@ -43,6 +43,10 @@ on:
           - oci-vault
           - break-glass
   schedule:
+    # Independent recovery-health backstop. Deliberately offset from common
+    # top-of-hour schedules to reduce scheduler contention.
+    - cron: "3,8,13,18,23,28,33,38,43,48,53,58 * * * *"
+    # Paid-fallback TTL / retired-volume housekeeping.
     - cron: "7,22,37,52 * * * *"
 
 permissions:
@@ -267,8 +271,55 @@ jobs:
           python -m katcha.ops.break_glass delete-handoff \
             --object-key "$object_key"
 
+  recovery-watchdog-backstop:
+    if: >-
+      github.event_name == 'schedule' &&
+      github.event.schedule == '3,8,13,18,23,28,33,38,43,48,53,58 * * * *' &&
+      vars.KATCHA_OCI_RECOVERY_CONFIGURED == 'true'
+    runs-on: ubuntu-latest
+    concurrency:
+      group: katcha-production-recovery-watchdog
+      cancel-in-progress: true
+    timeout-minutes: 5
+    steps:
+      - name: Force coordinator health probe
+        shell: bash
+        env:
+          KATCHA_RECOVERY_COORDINATOR_URL: ${{ vars.KATCHA_RECOVERY_COORDINATOR_URL }}
+          KATCHA_RECOVERY_ADMIN_TOKEN: ${{ secrets.KATCHA_RECOVERY_ADMIN_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          if [[ -z "${KATCHA_RECOVERY_COORDINATOR_URL:-}" ]]; then
+            echo "Missing KATCHA_RECOVERY_COORDINATOR_URL" >&2
+            exit 41
+          fi
+          if [[ -z "${KATCHA_RECOVERY_ADMIN_TOKEN:-}" ]]; then
+            echo "Missing KATCHA_RECOVERY_ADMIN_TOKEN" >&2
+            exit 42
+          fi
+
+          response="$(
+            curl --fail-with-body --silent --show-error               --max-time 20               -H "Authorization: Bearer $KATCHA_RECOVERY_ADMIN_TOKEN"               -H 'Content-Type: application/json'               -X POST               "$KATCHA_RECOVERY_COORDINATOR_URL/v1/watchdog/probe-now"
+          )"
+
+          echo "$response" | jq -e '
+            if .skipped == true then
+              .reason == "watchdog is disabled or no active deployment is committed"
+            else
+              (.healthy | type) == "boolean"
+            end
+          ' >/dev/null
+
+          healthy="$(echo "$response" | jq -r '.healthy // "skipped"')"
+          incident_status="$(echo "$response" | jq -r '.incident.status // "none"')"
+          echo "Coordinator probe completed: healthy=$healthy incident=$incident_status"
+
   paid-fallback-expiry:
-    if: github.event_name == 'schedule' && vars.KATCHA_OCI_RECOVERY_CONFIGURED == 'true'
+    if: >-
+      github.event_name == 'schedule' &&
+      github.event.schedule == '7,22,37,52 * * * *' &&
+      vars.KATCHA_OCI_RECOVERY_CONFIGURED == 'true'
     runs-on: ubuntu-latest
     concurrency:
       group: katcha-production-recovery
