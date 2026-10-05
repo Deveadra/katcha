@@ -133,6 +133,14 @@ class BootstrapConfig:
                 "KATCHA_OCI_SSH_PUBLIC_KEY must contain one OpenSSH public key"
             )
 
+        data_volume_size_gb = int(
+            _env("KATCHA_OCI_CROSS_AD_DATA_VOLUME_SIZE_GB", "50")
+        )
+        if data_volume_size_gb != 50:
+            raise BootstrapError(
+                "initial bootstrap data volume is intentionally pinned to 50 GB"
+            )
+
         return cls(
             compartment_id=_env("KATCHA_OCI_COMPARTMENT_ID"),
             image_id=_env("KATCHA_OCI_PRIMARY_IMAGE_ID"),
@@ -144,9 +152,7 @@ class BootstrapConfig:
             shape=shape,
             ocpus=ocpus,
             memory_gb=memory_gb,
-            data_volume_size_gb=int(
-                _env("KATCHA_OCI_CROSS_AD_DATA_VOLUME_SIZE_GB", "50")
-            ),
+            data_volume_size_gb=data_volume_size_gb,
             data_volume_device_path=_env(
                 "KATCHA_OCI_DATA_VOLUME_DEVICE_PATH",
                 "/dev/oracleoci/oraclevdb",
