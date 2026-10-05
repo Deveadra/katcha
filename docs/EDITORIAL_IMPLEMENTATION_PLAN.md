@@ -828,3 +828,24 @@ Ruff, compilation, renderer contracts, JavaScript syntax and diff checks passed.
 Remaining: frame-grounded visual direction, automatic image acquisition, image comparison
 and region annotations, approved channel branding, publication handoff and live authorized
 source-to-reviewed-video acceptance. This milestone does not generate artwork or publish.
+
+### Visual-input recovery prerequisite (2026-10-05, local)
+
+PR #286 is merged at `39cdfa5`, resolving source-scout lifecycle ordering. Before
+extending frame-grounded direction, the shared editorial provider gateway now loads
+contact-sheet bytes before recording provider submission. A failed managed-storage
+read therefore leaves no uncertain provider receipt or consumed submission, allowing
+the existing resume flow to retry safely. Receipt, channel-policy and budget checks
+still precede the read. Completed receipts replay without downloading or invoking
+the provider; uncertain submitted requests remain blocked before another input read.
+
+Validation: all **156 editorial tests passed**, including storage failure followed
+by resume, cached frame-response recovery, and both text and visual request timeout
+fencing. Focused lint and diff checks passed. The saved Python environment required
+repairing its missing interpreter link and reinstalling cryptography; no repository
+dependency declarations changed. No live provider calls were made.
+
+This prerequisite does not implement frame-grounded direction or change native-video
+upload recovery. Those features and the E12 remaining items above are still pending.
+Published as draft PR #289 on `fix/editorial-provider-preflight`. Remote CI is now
+available on the pull request; merge remains subject to the normal remote gates.
