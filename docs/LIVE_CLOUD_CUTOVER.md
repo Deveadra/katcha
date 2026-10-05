@@ -268,9 +268,12 @@ Normal A1 target:
 If Always Free A1 capacity is unavailable during the first deployment, enable
 `.github/workflows/oci-bootstrap-capacity.yml` with
 `KATCHA_OCI_BOOTSTRAP_POLL_ENABLED=true`. GitHub's shortest supported
-scheduled-workflow interval is five minutes; the Katcha capacity workflow uses
-that minimum cadence and serializes runs so a long AD1→AD2→AD3 pass does not
-overlap another provider-mutating pass. The workflow keeps the full
+scheduled-workflow interval is five minutes, but Katcha does not rely on that
+interval as its active search loop. After a complete AD1→AD2→AD3 miss, the
+workflow immediately dispatches the next serialized pass. The five-minute cron
+is retained only as a dead-man/backstop if a continuation dispatch is ever
+lost. This avoids an artificial five-minute idle gap while still guaranteeing
+that provider-mutating attempts never overlap. The workflow keeps the full
 2-OCPU/12-GB A1 target, never selects a paid shape, and creates/attaches the
 50-GB durable volume only after compute placement succeeds. It reconciles an
 uncertain launch response by searching for the exact production instance before
@@ -365,8 +368,10 @@ Configure repository secrets required by the OCI recovery workflow:
 - `OCI_USER_OCID`
 - `OCI_FINGERPRINT`
 - `OCI_API_PRIVATE_KEY`
-- `KATCHA_GITHUB_AUTOMATION_TOKEN` — fine-grained PAT scoped to this repository
-  with only the GitHub permissions needed to update Actions variables,
+- `KATCHA_GITHUB_AUTOMATION_TOKEN` — fine-grained PAT scoped only to this
+  repository with repository **Variables: read/write** and **Actions:
+  read/write**. It does not need Secrets write; the operator's local
+  authenticated `gh` session installs secrets,
 - `KATCHA_TELEGRAM_BOT_TOKEN`,
 - `KATCHA_TELEGRAM_CHAT_ID`
 - `KATCHA_RECOVERY_ADMIN_TOKEN`
@@ -405,6 +410,12 @@ into a Telegram forum topic. Acquisition notifications mean only that compute
 and durable storage were secured; they do not claim Katcha is serving traffic.
 The production recovery workflow sends a separate "Katcha is back online"
 message only after authority commit and a fresh public-health check succeed.
+
+Use `scripts/configure-github-recovery-notifications.sh` to install the
+automation PAT and Telegram credentials without echoing them. The script proves
+the PAT can mutate repository variables, uses that PAT to dispatch the manual
+Telegram acceptance workflow, and waits for the real message-delivery test to
+pass. Do this before enabling capacity polling.
 
 For the live Ashburn bootstrap, `scripts/configure-github-oci-bootstrap.sh`
 installs the known AD/subnet/image/volume/SSH settings and the four OCI API
