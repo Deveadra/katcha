@@ -180,6 +180,7 @@ jobs:
           KATCHA_TELEGRAM_BOT_TOKEN: ${{ secrets.KATCHA_TELEGRAM_BOT_TOKEN }}
           KATCHA_TELEGRAM_CHAT_ID: ${{ secrets.KATCHA_TELEGRAM_CHAT_ID }}
           KATCHA_TELEGRAM_THREAD_ID: ${{ vars.KATCHA_TELEGRAM_THREAD_ID }}
+          KATCHA_TELEGRAM_REQUIRED: "true"
         run: |
           set -euo pipefail
           bash scripts/transition-oci-bootstrap.sh
