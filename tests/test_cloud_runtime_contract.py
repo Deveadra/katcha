@@ -297,6 +297,10 @@ def test_bootstrap_capacity_search_self_chains_with_cron_as_backstop() -> None:
     ).read_text(encoding="utf-8")
 
     assert "Continue autonomous capacity search" in workflow
+    assert "inputs.mode == 'validate'" in workflow
+    assert "inputs.mode == 'poll'" in workflow
+    assert "-f mode=poll" in workflow
+    assert "-f mode=validate" in configurator
     assert "steps.bootstrap.outputs.status == 'capacity-unavailable'" in workflow
     assert "steps.handoff.outcome == 'failure'" in workflow
     assert "vars.KATCHA_OCI_BOOTSTRAP_POLL_ENABLED == 'true'" in workflow
