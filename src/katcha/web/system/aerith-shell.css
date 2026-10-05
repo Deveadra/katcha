@@ -498,9 +498,11 @@
     }
 
     #katcha-chat-shortcut {
-        right: 14px;
-        bottom: 14px;
+        position: static;
+        width: calc(100% - 28px);
+        margin: 14px;
         padding: 11px 14px;
+        justify-content: center;
     }
 
     #katcha-chat-shortcut .katcha-chat-label {
