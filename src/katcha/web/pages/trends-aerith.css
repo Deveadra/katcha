@@ -487,3 +487,47 @@ body[data-katcha-page="trends"] .explorer {
         max-height: none;
     }
 }
+
+
+/* Crystal UX: opportunity research stays broad enough for evidence, but visually quiet. */
+body[data-katcha-page="trends"] .main-content {
+    width: min(100%, var(--ae-content-max));
+    max-width: var(--ae-content-max);
+    margin-inline: auto;
+    padding: 24px clamp(20px, 3vw, 48px) 56px;
+}
+
+.result-count {
+    border-radius: var(--ae-radius-control);
+    border-color: var(--ae-line);
+    background: var(--ae-surface-raised);
+    color: var(--ae-ice);
+}
+
+.trends-channel select,
+.trends-actions .primary,
+.watchlist-popover > summary {
+    min-height: var(--ae-control-height);
+}
+
+.watchlist-popover > summary {
+    background: transparent;
+}
+
+.watchlist-popover[open] > summary {
+    border-color: var(--ae-line-hover);
+}
+
+body[data-katcha-page="trends"] .list-panel,
+body[data-katcha-page="trends"] .detail-panel {
+    border-radius: var(--ae-radius-panel) !important;
+    background: var(--ae-surface) !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+}
+
+@media (max-width: 720px) {
+    body[data-katcha-page="trends"] .main-content {
+        padding-inline: 14px;
+    }
+}
