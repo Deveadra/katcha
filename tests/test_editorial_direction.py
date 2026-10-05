@@ -359,12 +359,13 @@ def install_media(row):
 
 
 @pytest.mark.parametrize("fault", ["none", "bounds", "rights", "hash"])
-def test_generated_media_uses_real_compiler_clearance_and_bounds(directing, fault):
+def test_generated_media_uses_real_compiler_clearance_and_bounds(directing, fault, monkeypatch):
     from katcha.acquisition_models import RightsAssessment
     from katcha.models import Clip
 
     row, invoke, _ = directing
     candidate_id = install_media(row)
+    install_frames(monkeypatch)
     value = proposed(
         layout="single",
         quote_source_id=None,
@@ -372,6 +373,8 @@ def test_generated_media_uses_real_compiler_clearance_and_bounds(directing, faul
     )
 
     def respond(*args, **kwargs):
+        if kwargs.get("image"):
+            return output(frame_observations())
         with db.session_scope() as session:
             if fault == "rights":
                 session.add(
@@ -389,5 +392,145 @@ def test_generated_media_uses_real_compiler_clearance_and_bounds(directing, faul
     invoke.side_effect = respond
     expected = "completed" if fault == "none" else "blocked"
     assert direction.direct_visuals(str(row.id), 1)["status"] == expected, refresh(row).error
-    assert invoke.call_count == 1
+    assert invoke.call_count == 2
     assert ("storyboard" in refresh(row).artifacts) == (fault == "none")
+
+
+def install_frames(monkeypatch):
+    from katcha.models import Clip, ClipFeature
+
+    with db.session_scope() as session:
+        clip = session.query(Clip).one()
+        session.add(
+            ClipFeature(
+                clip_id=clip.id,
+                contact_sheet_key="analysis/asset/contact-sheet.jpg",
+                keyframe_keys=["analysis/asset/frame.jpg"],
+            )
+        )
+    monkeypatch.setattr(provider, "ObjectStore", lambda: Mock(get_bytes=Mock(return_value=b"jpeg")))
+
+
+def frame_observations(**changes):
+    value = {
+        "id": "frame-1",
+        "source_url": "https://www.youtube.com/watch?v=asset",
+        "source_duration_seconds": 10,
+        "start_seconds": 5,
+        "end_seconds": 6,
+        "observation": "A red door is visible",
+        "coverage": "sampled_frames",
+    }
+    value.update(changes)
+    return {"observations": [value], "limitations": ["One sampled still; motion unknown"]}
+
+
+def test_missing_supporting_frames_blocks_before_provider(directing):
+    row, invoke, _ = directing
+    install_media(row)
+    assert direction.direct_visuals(str(row.id), 1)["status"] == "blocked"
+    assert "sampled frames" in refresh(row).error
+    invoke.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"source_url": "https://example.com/other"},
+        {"source_duration_seconds": 11},
+        {"start_seconds": 4},
+    ],
+)
+def test_observer_rejects_fabricated_source_or_sample(directing, monkeypatch, changes):
+    row, invoke, _ = directing
+    install_media(row)
+    install_frames(monkeypatch)
+    invoke.return_value = output(frame_observations(**changes))
+    assert direction.direct_visuals(str(row.id), 1)["status"] == "blocked"
+    assert "source or sample time" in refresh(row).error
+    assert invoke.call_count == 1
+    assert "storyboard" not in refresh(row).artifacts
+
+
+def test_frame_evidence_replays_without_provider_or_storage(directing, monkeypatch):
+    row, invoke, _ = directing
+    install_media(row)
+    install_frames(monkeypatch)
+    invoke.side_effect = [output(frame_observations()), output(proposed())]
+    real_compile = direction.compile_project_visuals
+    monkeypatch.setattr(
+        direction, "compile_project_visuals", Mock(side_effect=EditorialConflict("retry"))
+    )
+    assert direction.direct_visuals(str(row.id), 1)["status"] == "blocked"
+    evidence = refresh(row).artifacts["direction_evidence"]["asset"]
+    assert evidence["observations"][0]["end_seconds"] == 5.001
+    assert "red door" in invoke.call_args.args[1]
+    monkeypatch.setattr(provider, "ObjectStore", Mock(side_effect=AssertionError("no download")))
+    monkeypatch.setattr(direction, "compile_project_visuals", real_compile)
+    resumed = resume(row)
+    assert direction.direct_visuals(str(row.id), resumed.attempt)["status"] == "completed"
+    assert invoke.call_count == 2
+
+
+def test_uncertain_observation_cannot_be_repeated(directing, monkeypatch):
+    row, invoke, _ = directing
+    install_media(row)
+    install_frames(monkeypatch)
+    invoke.side_effect = TimeoutError("response lost")
+    assert direction.direct_visuals(str(row.id), 1)["status"] == "blocked"
+    resumed = resume(row)
+    assert direction.direct_visuals(str(row.id), resumed.attempt)["status"] == "blocked"
+    assert invoke.call_count == 1
+    assert "uncertain" in refresh(row).error
+
+
+def test_legacy_direction_receipt_resumes_without_new_observation(directing, monkeypatch):
+    row, invoke, _ = directing
+    install_media(row)
+    real_observe = direction.observe_direction_assets
+    monkeypatch.setattr(direction, "observe_direction_assets", lambda *args: {})
+    real_call = direction.structured_call
+
+    def legacy_call(run_id, attempt, key, *args, **kwargs):
+        return real_call(run_id, attempt, "visual-direction-v1", *args, **kwargs)
+
+    monkeypatch.setattr(direction, "structured_call", legacy_call)
+    real_compile = direction.compile_project_visuals
+    monkeypatch.setattr(
+        direction, "compile_project_visuals", Mock(side_effect=EditorialConflict("retry"))
+    )
+    assert direction.direct_visuals(str(row.id), 1)["status"] == "blocked"
+    monkeypatch.setattr(direction, "observe_direction_assets", real_observe)
+    monkeypatch.setattr(direction, "structured_call", real_call)
+    monkeypatch.setattr(direction, "compile_project_visuals", real_compile)
+    resumed = resume(row)
+    assert direction.direct_visuals(str(row.id), resumed.attempt)["status"] == "completed"
+    assert invoke.call_count == 1
+
+
+def test_changed_media_blocks_before_observation(directing, monkeypatch):
+    from katcha.models import Clip
+
+    row, invoke, _ = directing
+    install_media(row)
+    install_frames(monkeypatch)
+    with db.session_scope() as session:
+        session.query(Clip).one().sha256 = "b" * 64
+    assert direction.direct_visuals(str(row.id), 1)["status"] == "blocked"
+    invoke.assert_not_called()
+
+
+def test_script_change_during_observation_blocks_planning_call(directing, monkeypatch):
+    row, invoke, _ = directing
+    install_media(row)
+    install_frames(monkeypatch)
+
+    def changed(*args, **kwargs):
+        with db.session_scope() as session:
+            session.get(EditorialProject, row.project_id).revision = 2
+        return output(frame_observations())
+
+    invoke.side_effect = changed
+    assert direction.direct_visuals(str(row.id), 1)["status"] == "blocked"
+    assert invoke.call_count == 1
+    assert "storyboard" not in refresh(row).artifacts
