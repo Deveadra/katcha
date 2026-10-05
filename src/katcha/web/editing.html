@@ -64,14 +64,22 @@
                                 <summary><span><small>NEW PROJECT</small><strong>Start from source</strong></span><span aria-hidden="true">＋</span></summary>
                                 <form id="editorial-form"><fieldset id="editorial-form-fields" class="editorial-form" disabled>
                                     <label>Story brief<textarea id="editorial-prompt" rows="3" maxlength="4000" required placeholder="What should Katcha investigate, prove or explain?"></textarea></label>
-                                    <label>Source video links<textarea id="editorial-urls" rows="2" required placeholder="Paste one HTTPS YouTube link per line"></textarea><small>URL intake is live now. Managed clip/file intake will join this same source dock rather than becoming a separate workflow.</small></label>
+                                    <label>Source video links<textarea id="editorial-urls" rows="2" required placeholder="Paste one HTTPS YouTube link per line"></textarea><small>Paste a source link, or pin media Katcha already manages below.</small></label>
+                                    <details class="editorial-source-picker">
+                                        <summary><span><strong>Use existing Katcha clip</strong><small>Reuse downloaded channel media instead of acquiring it again</small></span><span aria-hidden="true">＋</span></summary>
+                                        <div class="editorial-source-picker-body">
+                                            <label>Search Clip Library<input id="editorial-clip-search" type="search" maxlength="500" autocomplete="off" placeholder="Title, creator, topic, tag…"></label>
+                                            <div id="editorial-selected-clips" class="editorial-selected-clips" aria-live="polite"></div>
+                                            <div id="editorial-clip-results" class="editorial-clip-results"><p class="empty">Open this picker to load channel clips.</p></div>
+                                        </div>
+                                    </details>
                                     <label>Target length<input id="editorial-duration" type="number" min="15" max="3600" step="1" value="420" required><small>Seconds; final timing follows actual narration/media.</small></label>
                                     <button class="button primary" type="submit">Create project</button>
                                 </fieldset></form>
                             </details>
                             <div class="editorial-input-dock" aria-label="Available editorial inputs">
                                 <span class="eyebrow">PROJECT INPUTS</span>
-                                <p>Start with source URLs. Add owned/permitted stills in Assets and WAV narration in Storyboard.</p>
+                                <p>Start with source URLs or managed Katcha clips. Add owned/permitted stills in Assets and WAV narration in Storyboard.</p>
                             </div>
                             <div class="editorial-project-list-head"><span class="eyebrow">PROJECT BIN</span><small>Channel scoped</small></div>
                             <div id="editorial-projects"><div class="empty">Select a channel to begin.</div></div>
@@ -84,6 +92,7 @@
                                     <span class="eyebrow">ACTIVE PROJECT</span>
                                     <h2 id="editorial-title" tabindex="-1"></h2>
                                     <p id="editorial-status"></p>
+                                    <div id="editorial-source-bindings" class="editorial-source-bindings"></div>
                                 </div>
                                 <div id="editorial-actions" class="panel-head-actions"></div>
                             </header>
