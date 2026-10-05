@@ -328,6 +328,14 @@ body[data-katcha-page="trends"] .explorer {
 }
 
 @media (min-width: 1001px) {
+    /* Keep comparison over the signal list so the evidence dossier remains usable. */
+    #comparison:not([hidden]) {
+        right: auto;
+        left: 0;
+        width: min(430px, calc(36% - 12px));
+        min-width: 340px;
+    }
+
     body[data-katcha-page="trends"] {
         overflow: hidden;
     }
