@@ -568,6 +568,9 @@ function overview(source) {
         assert.match(await page.locator("#save-explanation").innerText(), /history are preserved/i);
         await page.locator("#save").click();
         await page.waitForFunction(() => document.querySelector("#source-name")?.textContent === "Marvel Entertainment");
+        await page.waitForFunction(() =>
+            !document.querySelector("#all-finds")?.textContent.includes("Loading finds")
+        );
         assert.equal(marvel.source_key, marvelSourceKey);
         assert.equal(marvel.query_template.channel_reference, "@marvel");
         const marvelEdit = [...requests].reverse().find((row) =>
