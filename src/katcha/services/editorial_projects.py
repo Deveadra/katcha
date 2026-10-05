@@ -6,15 +6,16 @@ import hashlib
 import json
 import uuid
 
-from sqlalchemy import select, update
+from sqlalchemy import or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from katcha.db import session_scope
-from katcha.editorial.project_schemas import CreateEditorialProject, SaveEditorialDraft
+from katcha.editorial.project_schemas import CreateEditorialProject, EditorialBrief, SaveEditorialDraft
 from katcha.editorial_models import EditorialProject, EditorialRevision
-from katcha.models import DomainEvent
+from katcha.models import Clip, DomainEvent, SourceItem
 from katcha.services.channel_profiles import ensure_active_profile
+from katcha.services.clip_lifecycle import channel_ids_for_clip
 
 
 class EditorialConflict(ValueError):
@@ -28,6 +29,31 @@ class EditorialNotFound(ValueError):
 def _digest(value: dict) -> str:
     canonical = json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
     return hashlib.sha256(canonical.encode()).hexdigest()
+
+
+def _validate_source_clip_bindings(
+    session: Session,
+    channel_id: uuid.UUID,
+    brief: EditorialBrief,
+) -> None:
+    for source_url, clip_id in brief.source_clip_bindings.items():
+        if session.get(Clip, clip_id) is None:
+            raise EditorialNotFound("Selected source clip not found")
+        if channel_id not in channel_ids_for_clip(session, clip_id):
+            raise EditorialConflict("Selected source clip is not available to this channel")
+        lineage = session.scalar(
+            select(SourceItem.id).where(
+                SourceItem.clip_id == clip_id,
+                or_(
+                    SourceItem.source_url == source_url,
+                    SourceItem.canonical_url == source_url,
+                ),
+            )
+        )
+        if lineage is None:
+            raise EditorialConflict(
+                "Selected source clip does not match the recorded source URL"
+            )
 
 
 def get_project(channel_id: uuid.UUID, project_id: uuid.UUID) -> EditorialProject:
@@ -48,6 +74,7 @@ def create_project(
     try:
         with session_scope() as session:
             ensure_active_profile(session, channel_id)
+            _validate_source_clip_bindings(session, channel_id, request.brief)
             row = session.get(EditorialProject, project_id)
             if row is not None:
                 if row.input_digest != digest:
