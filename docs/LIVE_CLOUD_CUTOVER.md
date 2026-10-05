@@ -105,6 +105,22 @@ curl -fsS https://<recovery-worker-host>/healthz
 
 Expected result: HTTP 200 and an `ok: true` recovery-coordinator response.
 
+Live acceptance recorded 2026-10-04:
+
+- Worker `katcha-recovery-coordinator` deployed successfully,
+- Custom Domain `recovery.katcha.stream` attached,
+- Durable Object `RecoveryAuthority` created,
+- all five Worker secrets bound,
+- public `/healthz` returned `{"ok":true,"service":"katcha-recovery-coordinator"}`,
+- authenticated `GET /v1/authority/status` returned version 1 with
+  `max_epoch: 0`, no active or pending deployment, watchdog disabled, and no
+  active incident.
+
+The live Cloudflare recovery authority is therefore accepted. A local WSL DNS
+resolver issue observed during validation is not a Cloudflare-side blocker
+because both Cloudflare and Google public resolvers returned the Custom Domain
+addresses and direct TLS/HTTP validation through Cloudflare succeeded.
+
 Set GitHub repository variables/secrets used by
 `.github/workflows/oci-recovery.yml`, including:
 
