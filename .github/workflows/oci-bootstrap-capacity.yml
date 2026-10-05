@@ -1,0 +1,148 @@
+name: OCI A1 bootstrap capacity
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/oci-bootstrap-capacity.yml
+      - src/katcha/ops/oci_bootstrap_capacity.py
+      - tests/test_oci_bootstrap_capacity.py
+  workflow_dispatch:
+  schedule:
+    # Five-minute pre-deployment capacity polling, offset from the recovery
+    # watchdog schedule to reduce scheduler contention.
+    - cron: "1,6,11,16,21,26,31,36,41,46,51,56 * * * *"
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Validate bootstrap poller
+        run: |
+          python -m pip install -e '.[dev]'
+          python -m py_compile src/katcha/ops/oci_bootstrap_capacity.py
+          pytest -q tests/test_oci_bootstrap_capacity.py
+
+  poll:
+    if: >-
+      (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') &&
+      vars.KATCHA_OCI_BOOTSTRAP_POLL_ENABLED == 'true' &&
+      vars.KATCHA_OCI_RECOVERY_CONFIGURED != 'true'
+    runs-on: ubuntu-latest
+    concurrency:
+      group: katcha-oci-bootstrap-capacity
+      cancel-in-progress: false
+    timeout-minutes: 35
+    env:
+      KATCHA_OCI_COMPARTMENT_ID: ${{ vars.KATCHA_OCI_COMPARTMENT_ID }}
+      KATCHA_OCI_AVAILABILITY_DOMAIN: ${{ vars.KATCHA_OCI_AVAILABILITY_DOMAIN }}
+      KATCHA_OCI_SUBNET_ID: ${{ vars.KATCHA_OCI_SUBNET_ID }}
+      KATCHA_OCI_CROSS_AD_TARGETS_JSON: ${{ vars.KATCHA_OCI_CROSS_AD_TARGETS_JSON }}
+      KATCHA_OCI_PRIMARY_IMAGE_ID: ${{ vars.KATCHA_OCI_PRIMARY_IMAGE_ID }}
+      KATCHA_OCI_PRIMARY_SHAPE: ${{ vars.KATCHA_OCI_PRIMARY_SHAPE }}
+      KATCHA_OCI_PRIMARY_OCPUS: ${{ vars.KATCHA_OCI_PRIMARY_OCPUS }}
+      KATCHA_OCI_PRIMARY_MEMORY_GB: ${{ vars.KATCHA_OCI_PRIMARY_MEMORY_GB }}
+      KATCHA_OCI_ASSIGN_PUBLIC_IP: ${{ vars.KATCHA_OCI_ASSIGN_PUBLIC_IP }}
+      KATCHA_OCI_DATA_VOLUME_ID: ${{ vars.KATCHA_OCI_DATA_VOLUME_ID }}
+      KATCHA_OCI_CROSS_AD_DATA_VOLUME_SIZE_GB: ${{ vars.KATCHA_OCI_CROSS_AD_DATA_VOLUME_SIZE_GB }}
+      KATCHA_OCI_DATA_VOLUME_DEVICE_PATH: ${{ vars.KATCHA_OCI_DATA_VOLUME_DEVICE_PATH }}
+      KATCHA_OCI_SSH_PUBLIC_KEY: ${{ vars.KATCHA_OCI_SSH_PUBLIC_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install isolated OCI CLI
+        run: |
+          set -euo pipefail
+          python -m venv /tmp/katcha-oci-cli
+          /tmp/katcha-oci-cli/bin/python -m pip install --upgrade pip
+          /tmp/katcha-oci-cli/bin/python -m pip install 'oci-cli==3.94.1'
+          echo "/tmp/katcha-oci-cli/bin" >> "$GITHUB_PATH"
+
+      - name: Configure OCI API authentication
+        shell: bash
+        env:
+          OCI_TENANCY_OCID: ${{ secrets.OCI_TENANCY_OCID }}
+          OCI_USER_OCID: ${{ secrets.OCI_USER_OCID }}
+          OCI_FINGERPRINT: ${{ secrets.OCI_FINGERPRINT }}
+          OCI_API_PRIVATE_KEY: ${{ secrets.OCI_API_PRIVATE_KEY }}
+          OCI_REGION: ${{ vars.OCI_REGION }}
+        run: |
+          set -euo pipefail
+
+          require() {
+            local name="$1"
+            local value="$2"
+            if [[ -z "$value" ]]; then
+              echo "Missing required bootstrap credential/config: $name" >&2
+              exit 41
+            fi
+          }
+
+          require OCI_TENANCY_OCID "$OCI_TENANCY_OCID"
+          require OCI_USER_OCID "$OCI_USER_OCID"
+          require OCI_FINGERPRINT "$OCI_FINGERPRINT"
+          require OCI_API_PRIVATE_KEY "$OCI_API_PRIVATE_KEY"
+          require OCI_REGION "$OCI_REGION"
+
+          umask 077
+          mkdir -p "$HOME/.oci"
+          printf '%s\n' "$OCI_API_PRIVATE_KEY" > "$HOME/.oci/oci_api_key.pem"
+          cat > "$HOME/.oci/config" <<EOF
+          [DEFAULT]
+          user=$OCI_USER_OCID
+          fingerprint=$OCI_FINGERPRINT
+          tenancy=$OCI_TENANCY_OCID
+          region=$OCI_REGION
+          key_file=$HOME/.oci/oci_api_key.pem
+          EOF
+
+          oci iam region-subscription list \
+            --query 'data[0]."region-name"' \
+            --raw-output >/dev/null
+
+      - name: Poll all configured A1 availability domains
+        id: bootstrap
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          result="$(PYTHONPATH=src python -m katcha.ops.oci_bootstrap_capacity)"
+          echo "$result" | jq .
+
+          status="$(echo "$result" | jq -er '.status')"
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+
+          {
+            echo "## OCI A1 bootstrap capacity"
+            echo
+            echo '```json'
+            echo "$result" | jq .
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          if [[ "$status" == "capacity-unavailable" ]]; then
+            echo "No 2 OCPU / 12 GB A1 capacity is available yet; the next scheduled run will retry."
+            exit 0
+          fi
+
+          if [[ "$status" != "acquired" ]]; then
+            echo "Unexpected bootstrap status: $status" >&2
+            exit 42
+          fi
+
+          echo "A1 capacity acquired and durable storage attached."
+          echo "The workflow is idempotent; later runs will reuse this instance until production recovery is enabled."
