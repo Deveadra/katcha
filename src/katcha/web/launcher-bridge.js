@@ -178,15 +178,19 @@ function installWorkspaceMenu() {
         section.innerHTML =
             '<summary><span>' + group.label + '</span><small>' + group.workspaces.length + '</small></summary>' +
             '<div class="workspace-group-body">' + rows + '</div>';
-        section.addEventListener('toggle', () => {
-            try {
-                sessionStorage.setItem(
-                    'katcha.workspaceGroup.' + group.key,
-                    section.open ? 'open' : 'closed',
-                );
-            } catch {
-                /* Navigation remains fully functional when storage is unavailable. */
-            }
+        section.querySelector('summary').addEventListener('click', () => {
+            /* Persist only operator intent. Programmatic current-group expansion also emits
+               a toggle event, so listening to toggle would incorrectly make that state sticky. */
+            queueMicrotask(() => {
+                try {
+                    sessionStorage.setItem(
+                        'katcha.workspaceGroup.' + group.key,
+                        section.open ? 'open' : 'closed',
+                    );
+                } catch {
+                    /* Navigation remains fully functional when storage is unavailable. */
+                }
+            });
         });
         tree.append(section);
     }
