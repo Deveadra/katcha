@@ -210,6 +210,18 @@ Configure break-glass lifecycle/escrow using
 
 Run the GitHub **Break-glass escrow drill** before relying on that path.
 
+Live break-glass GitHub configuration recorded 2026-10-04:
+
+- repository secrets `KATCHA_BREAK_GLASS_R2_ACCESS_KEY`,
+  `KATCHA_BREAK_GLASS_R2_SECRET_KEY`, and
+  `KATCHA_BREAK_GLASS_ESCROW_KEY` are configured,
+- repository variables for the R2 endpoint, bucket, handoff prefix, escrow
+  prefix, region, path-style mode, and 1800-second handoff TTL are configured,
+- the escrow key is also retained in a protected operator-controlled local file,
+- `KATCHA_BREAK_GLASS_ESCROW_OBJECT_KEY` intentionally remains unset until a
+  real encrypted escrow is published from the final production environment and
+  AWS bootstrap bundle.
+
 Live R2 acceptance recorded 2026-10-04:
 
 - `katcha-media-prod`, `katcha-backup-prod`, and
