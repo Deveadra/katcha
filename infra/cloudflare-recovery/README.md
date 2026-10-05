@@ -71,7 +71,9 @@ External-compute token:
 The watchdog probes the committed deployment's exact HTTPS health URL. After the
 configured consecutive-failure threshold it creates one incident and sends one
 idempotent recovery dispatch. Failed dispatches are retried on later probes using
-the same `Idempotency-Key`.
+the same `Idempotency-Key`. The default unresolved-recovery redispatch interval is
+300 seconds (five minutes), which matches the independent GitHub watchdog
+backstop cadence.
 
 A recovered leader does not automatically receive a new epoch, and the watchdog
 never commits a replacement. Recovery automation must re-check incident/authority
