@@ -911,3 +911,30 @@ Validation: the full editorial suite passed **164 tests**. After adding the
 post-observation script/audio fence, all **30 direction tests** passed, including
 the new script-change-during-observation case. Lint and diff checks passed. Tests
 use synthetic provider output; remote CI and live acceptance remain separate gates.
+
+### E13b shot-linked sampled-frame evidence (2026-10-05)
+
+PR #294 is merged at `38a8e74`. New automatic direction uses a version-3
+planning receipt and requires one candidate-scoped observation reference per footage
+use. After authoritative compilation, the cited sample must fall inside the actual
+playback interval (including playback speed and measured narration timing), or match
+the selected freeze time. Missing, ambiguous, duplicate and unselected references
+block promotion. Quote cards continue to use their existing source-evidence checks.
+
+The completed run retains resolved observations, media checksums and coverage
+limitations bound to the exact storyboard digest. These are direction audit artifacts,
+not additional fields in renderer manifests. Existing v1/v2 planning prompts and
+schemas remain unchanged for receipt recovery; manual storyboards and previously
+approved render hashes remain unchanged. Invalid proposals remain inspectable and
+resume does not repeat completed provider calls.
+
+This establishes temporal citation consistency, not proof of semantic relevance,
+continuous visibility or motion. Compiler-wide evidence enforcement for manually
+edited plans, spatial regions/annotations, operator-facing frame citations and live
+visual-quality acceptance remain pending, along with the other E13a remaining work.
+No live provider calls or publication of generated videos were performed.
+
+Validation: all **177 editorial tests passed**, including 42 direction cases,
+v1/v2 receipt recovery, v3 footage-citation replay, invalid references, playback
+speed and freeze checks. Ruff and diff checks passed. Tests are synthetic; remote
+CI and live visual-quality acceptance remain separate gates.

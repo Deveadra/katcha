@@ -371,6 +371,9 @@ def test_generated_media_uses_real_compiler_clearance_and_bounds(directing, faul
         quote_source_id=None,
         media=[{"candidate_id": "asset", "start_seconds": 9 if fault == "bounds" else 1}],
     )
+    value["shot_evidence"] = [
+        {"beat_id": "beat-1", "candidate_id": "asset", "observation_id": "frame-1"}
+    ]
 
     def respond(*args, **kwargs):
         if kwargs.get("image"):
@@ -456,7 +459,15 @@ def test_frame_evidence_replays_without_provider_or_storage(directing, monkeypat
     row, invoke, _ = directing
     install_media(row)
     install_frames(monkeypatch)
-    invoke.side_effect = [output(frame_observations()), output(proposed())]
+    value = proposed(
+        layout="single",
+        quote_source_id=None,
+        media=[{"candidate_id": "asset", "start_seconds": 1}],
+    )
+    value["shot_evidence"] = [
+        {"beat_id": "beat-1", "candidate_id": "asset", "observation_id": "frame-1"}
+    ]
+    invoke.side_effect = [output(frame_observations()), output(value)]
     real_compile = direction.compile_project_visuals
     monkeypatch.setattr(
         direction, "compile_project_visuals", Mock(side_effect=EditorialConflict("retry"))
@@ -470,6 +481,15 @@ def test_frame_evidence_replays_without_provider_or_storage(directing, monkeypat
     resumed = resume(row)
     assert direction.direct_visuals(str(row.id), resumed.attempt)["status"] == "completed"
     assert invoke.call_count == 2
+    current = refresh(row)
+    from katcha.services.editorial_projects import _digest
+
+    assert current.artifacts["direction_shot_evidence"]["storyboard_digest"] == _digest(
+        current.artifacts["storyboard"]
+    )
+    assert (
+        current.artifacts["direction_shot_evidence"]["shots"][0]["observation"]["id"] == "frame-1"
+    )
 
 
 def test_uncertain_observation_cannot_be_repeated(directing, monkeypatch):
@@ -492,7 +512,8 @@ def test_legacy_direction_receipt_resumes_without_new_observation(directing, mon
     real_call = direction.structured_call
 
     def legacy_call(run_id, attempt, key, *args, **kwargs):
-        return real_call(run_id, attempt, "visual-direction-v1", *args, **kwargs)
+        prompt = args[0].split("\nFor every selected footage use,")[0]
+        return real_call(run_id, attempt, "visual-direction-v1", prompt, DirectionResult, **kwargs)
 
     monkeypatch.setattr(direction, "structured_call", legacy_call)
     real_compile = direction.compile_project_visuals
@@ -534,3 +555,108 @@ def test_script_change_during_observation_blocks_planning_call(directing, monkey
     assert direction.direct_visuals(str(row.id), 1)["status"] == "blocked"
     assert invoke.call_count == 1
     assert "storyboard" not in refresh(row).artifacts
+
+
+@pytest.mark.parametrize(
+    "fault",
+    [
+        "none",
+        "missing",
+        "unknown",
+        "duplicate",
+        "wrong-beat",
+        "outside",
+        "freeze",
+        "freeze-match",
+        "empty",
+        "ambiguous",
+    ],
+)
+def test_shot_references_are_bound_to_observed_playback(directing, monkeypatch, fault):
+    row, invoke, _ = directing
+    install_media(row)
+    install_frames(monkeypatch)
+    value = proposed(
+        layout="single",
+        quote_source_id=None,
+        media=[
+            {
+                "candidate_id": "asset",
+                "start_seconds": 5 if fault == "freeze-match" else 1,
+                "freeze": fault in {"freeze", "freeze-match"},
+                "playback_rate": 0.25 if fault == "outside" else 1,
+            }
+        ],
+    )
+    reference = {"beat_id": "beat-1", "candidate_id": "asset", "observation_id": "frame-1"}
+    if fault == "unknown":
+        reference["observation_id"] = "invented"
+    if fault == "wrong-beat":
+        reference["beat_id"] = "other"
+    value["shot_evidence"] = [] if fault == "missing" else [reference]
+    if fault == "duplicate":
+        value["shot_evidence"].append(reference)
+    observations = frame_observations()
+    if fault == "empty":
+        observations["observations"] = []
+    if fault == "ambiguous":
+        observations["observations"] *= 2
+    invoke.side_effect = [output(observations), output(value)]
+    success = fault in {"none", "freeze-match"}
+    assert direction.direct_visuals(str(row.id), 1)["status"] == (
+        "completed" if success else "blocked"
+    ), refresh(row).error
+    current = refresh(row)
+    assert ("storyboard" in current.artifacts) == success
+    if success:
+        shot = current.artifacts["direction_shot_evidence"]["shots"][0]
+        assert shot["sha256"] == "a" * 64
+        assert shot["observation"]["id"] == "frame-1"
+        assert shot["observation"]["start_seconds"] == 5
+    else:
+        resumed = resume(row)
+        assert direction.direct_visuals(str(row.id), resumed.attempt)["status"] == "blocked"
+        assert invoke.call_count == 2
+
+
+def test_quote_cannot_claim_unselected_frame_evidence(directing):
+    row, invoke, _ = directing
+    invoke.return_value = output(
+        {
+            **proposed(),
+            "shot_evidence": [
+                {"beat_id": "beat-1", "candidate_id": "asset", "observation_id": "frame-1"}
+            ],
+        }
+    )
+    assert direction.direct_visuals(str(row.id), 1)["status"] == "blocked"
+    assert "selected footage" in refresh(row).error
+
+
+def test_v2_receipt_keeps_original_schema_and_prompt_on_resume(directing, monkeypatch):
+    row, invoke, _ = directing
+    install_media(row)
+    install_frames(monkeypatch)
+    invoke.side_effect = [output(frame_observations()), output(proposed())]
+    real_call = direction.structured_call
+    real_compile = direction.compile_project_visuals
+
+    def v2_call(run_id, attempt, key, prompt, schema, **kwargs):
+        if key == "visual-direction-v3":
+            key = "visual-direction-v2"
+            prompt = prompt.split("\nFor every selected footage use,")[0]
+            schema = DirectionResult
+        return real_call(run_id, attempt, key, prompt, schema, **kwargs)
+
+    monkeypatch.setattr(direction, "structured_call", v2_call)
+    monkeypatch.setattr(
+        direction, "compile_project_visuals", Mock(side_effect=EditorialConflict("retry"))
+    )
+    assert direction.direct_visuals(str(row.id), 1)["status"] == "blocked"
+    monkeypatch.setattr(direction, "structured_call", real_call)
+    monkeypatch.setattr(direction, "compile_project_visuals", real_compile)
+    monkeypatch.setattr(provider, "ObjectStore", Mock(side_effect=AssertionError("no download")))
+    resumed = resume(row)
+    assert direction.direct_visuals(str(row.id), resumed.attempt)["status"] == "completed"
+    assert invoke.call_count == 2
+    assert "direction_shot_evidence" not in refresh(row).artifacts

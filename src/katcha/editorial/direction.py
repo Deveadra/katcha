@@ -14,12 +14,17 @@ from katcha.editorial.project_schemas import EditorialDraft
 from katcha.editorial.provider import EditorialBlocked, structured_call
 from katcha.editorial.research_schemas import Observations
 from katcha.editorial.visual_compiler import compile_project_visuals
-from katcha.editorial.visual_schemas import DirectionOptions, DirectionResult, StoryboardPlan
+from katcha.editorial.visual_schemas import (
+    DirectionOptions,
+    DirectionResult,
+    GroundedDirectionResult,
+    StoryboardPlan,
+)
 from katcha.editorial_models import EditorialProject, EditorialRevision, EditorialRun
 from katcha.media.preprocess import sample_timestamps
 from katcha.models import Clip, ClipFeature
 from katcha.services.channel_profiles import ensure_active_profile
-from katcha.services.editorial_projects import EditorialConflict
+from katcha.services.editorial_projects import EditorialConflict, _digest
 from katcha.services.editorial_runs import EditorialStopped, checkpoint
 
 
@@ -194,11 +199,60 @@ def direction_warnings(manifest) -> list[str]:
     return warnings
 
 
+def resolve_shot_evidence(result: GroundedDirectionResult, evidence: dict, manifest) -> list[dict]:
+    """Bind each planned source use to one sampled observation inside its actual playback."""
+    references = {}
+    for reference in result.shot_evidence:
+        key = (reference.beat_id, reference.candidate_id)
+        if key in references:
+            raise EditorialBlocked("Each directed shot requires exactly one frame reference")
+        references[key] = reference.observation_id
+    resolved = []
+    hashes = {item.candidate_id: item.sha256 for item in manifest.media}
+    for scene in manifest.timeline:
+        for use in scene.media:
+            observation_id = references.pop((scene.beat_id, use.candidate_id), None)
+            source = evidence.get(use.candidate_id, {})
+            matches = [
+                item for item in source.get("observations", []) if item["id"] == observation_id
+            ]
+            if len(matches) != 1 or source.get("sha256") != hashes[use.candidate_id]:
+                raise EditorialBlocked(
+                    "Each directed shot must cite a unique observed source frame"
+                )
+            observation = matches[0]
+            timestamp = observation["start_seconds"]
+            end = use.start_seconds + scene.duration_frames / manifest.fps * use.playback_rate
+            within = (
+                abs(timestamp - use.start_seconds) < 0.001
+                if use.freeze
+                else use.start_seconds <= timestamp < end
+            )
+            if not within:
+                raise EditorialBlocked("Cited frame is outside the directed shot's playback")
+            resolved.append(
+                {
+                    "beat_id": scene.beat_id,
+                    "candidate_id": use.candidate_id,
+                    "sha256": source["sha256"],
+                    "observation": observation,
+                    "limitations": source.get("limitations", []),
+                }
+            )
+    if references:
+        raise EditorialBlocked("Frame references must belong to selected footage shots")
+    return resolved
+
+
 def direct_visuals(run_id: str, attempt: int) -> dict:
     try:
         row = checkpoint(run_id, attempt, stage="directing_visuals")
         context = direction_context(row)
         legacy = "visual-direction-v1" in (row.artifacts.get("provider_calls") or {})
+        grounded = not any(
+            key in (row.artifacts.get("provider_calls") or {})
+            for key in ("visual-direction-v1", "visual-direction-v2")
+        )
         evidence = {} if legacy else observe_direction_assets(row, attempt)
         # Observation can take time; fence script/audio changes before another paid call.
         if evidence:
@@ -231,12 +285,22 @@ def direct_visuals(run_id: str, attempt: int) -> dict:
                 "a coverage gap. Spatial overlays remain unsupported.\n"
                 + json.dumps(evidence, sort_keys=True)
             )
+        if grounded:
+            prompt += (
+                "\nFor every selected footage use, supply exactly one shot_evidence reference "
+                "with its beat_id, candidate_id and observation_id from that candidate's "
+                "observations. The cited sample must lie inside the selected playback interval "
+                "(exclusive end), or match the exact start of a freeze. Quote cards have no "
+                "frame references. A sample does not establish continuous visibility or motion."
+            )
         result, _ = structured_call(
             run_id,
             attempt,
-            "visual-direction-v1" if legacy else "visual-direction-v2",
+            "visual-direction-v3"
+            if grounded
+            else ("visual-direction-v1" if legacy else "visual-direction-v2"),
             prompt,
-            DirectionResult,
+            GroundedDirectionResult if grounded else DirectionResult,
         )
         options = DirectionOptions.model_validate(row.options["direction"])
         plan = StoryboardPlan(
@@ -258,6 +322,7 @@ def direct_visuals(run_id: str, attempt: int) -> dict:
             uuid.UUID(row.options["asset_run_id"]),
             plan,
         )
+        shot_evidence = resolve_shot_evidence(result, evidence, manifest) if grounded else None
         checkpoint(
             run_id,
             attempt,
@@ -268,6 +333,16 @@ def direct_visuals(run_id: str, attempt: int) -> dict:
                 "direction_warnings": direction_warnings(manifest),
                 "direction_asset_run_id": row.options["asset_run_id"],
                 "direction_duration_seconds": manifest.output_duration_seconds,
+                **(
+                    {
+                        "direction_shot_evidence": {
+                            "storyboard_digest": _digest(plan.model_dump(mode="json")),
+                            "shots": shot_evidence,
+                        }
+                    }
+                    if grounded
+                    else {}
+                ),
             },
         )
         return {"editorial_run_id": run_id, "status": "completed"}
