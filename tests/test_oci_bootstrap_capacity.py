@@ -116,6 +116,14 @@ def test_bootstrap_config_refuses_accidental_downsize(monkeypatch) -> None:
         bootstrap.BootstrapConfig.from_env()
 
 
+def test_bootstrap_config_refuses_unplanned_volume_size(monkeypatch) -> None:
+    _base_env(monkeypatch)
+    monkeypatch.setenv("KATCHA_OCI_CROSS_AD_DATA_VOLUME_SIZE_GB", "100")
+
+    with pytest.raises(bootstrap.BootstrapError, match="pinned to 50 GB"):
+        bootstrap.BootstrapConfig.from_env()
+
+
 class CapacityOnlyClient:
     def __init__(self) -> None:
         self.commands: list[list[str]] = []
