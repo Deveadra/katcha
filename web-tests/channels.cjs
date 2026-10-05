@@ -1005,6 +1005,10 @@ const analytics = [
     assert.equal(await page.locator("#monetization").isHidden(), false);
     assert.equal(await page.locator("#growth").isHidden(), false);
     assert.equal(await page.locator("#content").isHidden(), true);
+    const customGoalEditor = page.locator("#custom-goal-editor");
+    if (!(await customGoalEditor.evaluate((node) => node.open))) {
+        await customGoalEditor.locator("summary").click();
+    }
     await page.locator("#custom-goal-metric").selectOption("subscribers");
     await page.locator("#custom-goal-target").fill("5000");
     await page.locator("#custom-goal-priority").selectOption("5");
