@@ -228,6 +228,7 @@ const draft = {
         await page.locator('[data-editorial-stage="assets"]').click();
         await page.getByText(/Managed media available/).waitFor();
         await page.locator('[data-editorial-stage="storyboard"]').click();
+        await page.locator('[data-editorial-stage="preview"]').click();
         await page.getByRole('button', {name: 'Create silent captioned preview', exact: true}).click();
         await page.getByRole('button', {name: 'Load private preview', exact: true}).waitFor();
         const rendering = calls.find(call => call.body?.target === 'render');
@@ -297,6 +298,7 @@ const draft = {
         assert.equal(billings.length, 2);
         assert.deepEqual(billings[0].body, billings[1].body);
         await page.locator('[data-narration-select]').selectOption('generated-audio');
+        await page.locator('[data-editorial-stage="preview"]').click();
         await Promise.all([
             page.waitForResponse(response => response.request().method() === 'POST' && new URL(response.url()).pathname.endsWith('/runs') && response.request().postDataJSON()?.storyboard?.presentation_mode === 'narrated'),
             page.getByRole('button', {name: 'Create narrated preview', exact: true}).click(),
@@ -351,6 +353,7 @@ const draft = {
         await page.locator('#editorial-image-form').screenshot({path: path.resolve(__dirname, 'test-results/editorial-images-mobile.png')});
         await page.locator('[data-editorial-stage="storyboard"]').click();
         await page.locator('#editorial-storyboard select').selectOption('image:still-image');
+        await page.locator('[data-editorial-stage="preview"]').click();
         const imageRenderRequest = page.waitForRequest((request) => {
             if (request.method() !== 'POST') return false;
             if (!new URL(request.url()).pathname.endsWith('/runs')) return false;
