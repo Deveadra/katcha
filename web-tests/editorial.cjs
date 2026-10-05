@@ -322,11 +322,16 @@ const draft = {
         await page.setViewportSize({width: 390, height: 844});
         assert(await page.evaluate(() => document.documentElement.scrollWidth <= 390));
         await page.locator('#editorial-image-form').screenshot({path: path.resolve(__dirname, 'test-results/editorial-images-mobile.png')});
+        const imageRenderRequest = page.waitForRequest((request) => {
+            if (request.method() !== 'POST') return false;
+            if (!new URL(request.url()).pathname.endsWith('/runs')) return false;
+            try { return request.postDataJSON()?.target === 'render'; } catch { return false; }
+        });
         await page.getByRole('button', {name: 'Create narrated preview', exact: true}).click();
+        const imageRender = (await imageRenderRequest).postDataJSON();
         await page.getByText(/Review approved for this rendered revision/).waitFor();
-        const imageRender = calls.filter(call => call.body?.target === 'render').at(-1);
-        assert.equal(imageRender.body.storyboard.beats[0].image_id, 'still-image');
-        assert.equal(imageRender.body.storyboard.beats[0].layout, 'image');
+        assert.equal(imageRender.storyboard.beats[0].image_id, 'still-image');
+        assert.equal(imageRender.storyboard.beats[0].layout, 'image');
         await page.locator('[data-image-revoke]').click();
         await page.getByText(/Previous approval is no longer valid/).waitFor();
         assert.equal(await page.locator('#editorial-storyboard select option[value="image:still-image"]').count(), 0);
