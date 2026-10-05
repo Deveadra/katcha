@@ -641,6 +641,12 @@ class BootstrapProvisioner:
         existing = self._find_existing_instance()
         if existing is not None:
             target = self._target_for_instance(existing)
+            print(
+                "BOOTSTRAP_CAPACITY_REUSE: existing instance in "
+                f"{target.availability_domain}",
+                file=sys.stderr,
+                flush=True,
+            )
             result = self._finish(existing, target)
             result["reused_instance"] = True
             return result
@@ -648,15 +654,35 @@ class BootstrapProvisioner:
         attempted: list[str] = []
         for target in self.config.targets:
             attempted.append(target.availability_domain)
+            print(
+                "BOOTSTRAP_CAPACITY_ATTEMPT: "
+                f"{target.availability_domain} "
+                f"{self.config.shape} {self.config.ocpus:g} OCPU / "
+                f"{self.config.memory_gb:g} GB",
+                file=sys.stderr,
+                flush=True,
+            )
             try:
                 instance = self._launch(target)
             except CapacityUnavailable:
+                print(
+                    "BOOTSTRAP_CAPACITY_UNAVAILABLE: "
+                    f"{target.availability_domain}",
+                    file=sys.stderr,
+                    flush=True,
+                )
                 continue
             except BootstrapError:
                 instance = self._reconcile_uncertain_launch()
                 if instance is None:
                     raise
                 target = self._target_for_instance(instance)
+            print(
+                "BOOTSTRAP_CAPACITY_ACQUIRED: "
+                f"{target.availability_domain}",
+                file=sys.stderr,
+                flush=True,
+            )
             result = self._finish(instance, target)
             result["reused_instance"] = False
             result["attempted"] = attempted
