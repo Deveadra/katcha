@@ -6,6 +6,11 @@ import {
   applyProbe,
   commitAuthority,
   configureWatchdog,
+  configureBootstrapWatchdog,
+  bootstrapWatchdogDecision,
+  markBootstrapRedispatched,
+  markBootstrapRedispatchFailed,
+  recordBootstrapHeartbeat,
   configureExternalCompute,
   externalComputeStatus,
   fenceResult,
@@ -453,6 +458,117 @@ export class RecoveryAuthority extends DurableObject {
         });
       }
 
+      if (
+        request.method === "POST" &&
+        path === "/v1/bootstrap/watchdog/configure"
+      ) {
+        requireSecret(
+          request,
+          this.env.RECOVERY_ADMIN_TOKEN,
+          "RECOVERY_ADMIN_TOKEN",
+        );
+        const body = await requestJson(request);
+        const enabled = body.enabled === true;
+        if (enabled && !String(this.env.RECOVERY_DISPATCH_URL || "").trim()) {
+          throw new HttpError(
+            409,
+            "RECOVERY_DISPATCH_URL must be configured before enabling bootstrap watchdog",
+          );
+        }
+        const state = await this.updateState((current) =>
+          configureBootstrapWatchdog(current, {
+            enabled,
+            checkIntervalSeconds: positiveInt(
+              body.check_interval_seconds ?? 60,
+              "check_interval_seconds",
+              3600,
+            ),
+            staleAfterSeconds: positiveInt(
+              body.stale_after_seconds ?? 900,
+              "stale_after_seconds",
+              86400,
+            ),
+            redispatchCooldownSeconds: positiveInt(
+              body.redispatch_cooldown_seconds ?? 1200,
+              "redispatch_cooldown_seconds",
+              86400,
+            ),
+          }),
+        );
+        if (state.bootstrap_watchdog.check_interval_seconds < 30) {
+          throw new HttpError(
+            400,
+            "check_interval_seconds must be at least 30",
+          );
+        }
+        if (state.bootstrap_watchdog.stale_after_seconds < 300) {
+          throw new HttpError(
+            400,
+            "stale_after_seconds must be at least 300",
+          );
+        }
+        if (
+          state.bootstrap_watchdog.redispatch_cooldown_seconds <
+          state.bootstrap_watchdog.stale_after_seconds
+        ) {
+          throw new HttpError(
+            400,
+            "redispatch_cooldown_seconds must be at least stale_after_seconds",
+          );
+        }
+        await this.scheduleWatchdog(state);
+        return json({ bootstrap_watchdog: state.bootstrap_watchdog });
+      }
+
+      if (
+        request.method === "POST" &&
+        path === "/v1/bootstrap/heartbeat"
+      ) {
+        requireSecret(
+          request,
+          this.env.RECOVERY_CANDIDATE_TOKEN,
+          "RECOVERY_CANDIDATE_TOKEN",
+        );
+        const body = await requestJson(request);
+        const status = tokenId(body.status, "status", 64);
+        const terminal = body.terminal === true;
+        const state = await this.updateState((current) =>
+          recordBootstrapHeartbeat(current, {
+            runId: tokenId(body.run_id, "run_id", 128),
+            status,
+            terminal,
+          }),
+        );
+        await this.scheduleWatchdog(state);
+        return json({ bootstrap_watchdog: state.bootstrap_watchdog });
+      }
+
+      if (
+        request.method === "GET" &&
+        path === "/v1/bootstrap/watchdog/status"
+      ) {
+        requireSecret(
+          request,
+          this.env.RECOVERY_ADMIN_TOKEN,
+          "RECOVERY_ADMIN_TOKEN",
+        );
+        return json({
+          bootstrap_watchdog: (await this.readState()).bootstrap_watchdog,
+        });
+      }
+
+      if (
+        request.method === "POST" &&
+        path === "/v1/bootstrap/watchdog/probe-now"
+      ) {
+        requireSecret(
+          request,
+          this.env.RECOVERY_ADMIN_TOKEN,
+          "RECOVERY_ADMIN_TOKEN",
+        );
+        return json(await this.runBootstrapWatchdog());
+      }
+
       if (request.method === "POST" && path === "/v1/watchdog/configure") {
         requireSecret(
           request,
@@ -519,6 +635,7 @@ export class RecoveryAuthority extends DurableObject {
 
   async alarm() {
     try {
+      await this.runBootstrapWatchdog();
       await this.runProbe();
     } finally {
       await this.scheduleWatchdog(await this.readState());
@@ -527,13 +644,62 @@ export class RecoveryAuthority extends DurableObject {
 
   async scheduleWatchdog(state) {
     const current = normalizeState(state);
-    if (!current.watchdog.enabled || !current.active) {
+    const intervals = [];
+    if (current.watchdog.enabled && current.active) {
+      intervals.push(current.watchdog.interval_seconds);
+    }
+    if (current.bootstrap_watchdog.enabled) {
+      intervals.push(current.bootstrap_watchdog.check_interval_seconds);
+    }
+    if (!intervals.length) {
       await this.ctx.storage.deleteAlarm();
       return;
     }
     await this.ctx.storage.setAlarm(
-      Date.now() + current.watchdog.interval_seconds * 1000,
+      Date.now() + Math.min(...intervals) * 1000,
     );
+  }
+
+  async runBootstrapWatchdog() {
+    const before = await this.readState();
+    const decision = bootstrapWatchdogDecision(before);
+    if (!decision.shouldDispatch) {
+      return {
+        skipped: true,
+        reason: decision.reason,
+        stale_seconds: decision.stale_seconds,
+        bootstrap_watchdog: decision.state.bootstrap_watchdog,
+      };
+    }
+
+    try {
+      await this.dispatchBootstrapPoll(decision.state, decision);
+      const state = await this.updateState((current) =>
+        markBootstrapRedispatched(current),
+      );
+      return {
+        skipped: false,
+        dispatched: true,
+        reason: decision.reason,
+        stale_seconds: decision.stale_seconds,
+        bootstrap_watchdog: state.bootstrap_watchdog,
+      };
+    } catch (error) {
+      const state = await this.updateState((current) =>
+        markBootstrapRedispatchFailed(
+          current,
+          error?.message || String(error),
+        ),
+      );
+      return {
+        skipped: false,
+        dispatched: false,
+        reason: decision.reason,
+        stale_seconds: decision.stale_seconds,
+        error: state.bootstrap_watchdog.last_dispatch_error,
+        bootstrap_watchdog: state.bootstrap_watchdog,
+      };
+    }
   }
 
   async runProbe() {
@@ -607,6 +773,57 @@ export class RecoveryAuthority extends DurableObject {
       active: latest.active,
       incident: latest.incident,
     };
+  }
+
+  async dispatchBootstrapPoll(state, decision) {
+    const endpoint = httpsUrl(
+      this.env.RECOVERY_DISPATCH_URL,
+      "RECOVERY_DISPATCH_URL",
+    );
+    const token = String(this.env.RECOVERY_DISPATCH_TOKEN || "").trim();
+    if (!token) {
+      throw new Error("RECOVERY_DISPATCH_TOKEN is not configured");
+    }
+    const provider = String(
+      this.env.RECOVERY_DISPATCH_PROVIDER || "generic",
+    ).trim().toLowerCase();
+    if (provider !== "github") {
+      throw new Error(
+        "bootstrap dead-man redispatch currently requires github provider",
+      );
+    }
+    const payload = {
+      reason: "bootstrap_heartbeat_stale",
+      observed_at: new Date().toISOString(),
+      stale_seconds: decision.stale_seconds,
+      last_run_id: state.bootstrap_watchdog.last_run_id,
+      last_status: state.bootstrap_watchdog.last_status,
+      last_heartbeat_at: state.bootstrap_watchdog.last_heartbeat_at,
+    };
+    const response = await fetch(endpoint, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: "application/vnd.github+json",
+        "Content-Type": "application/json",
+        "X-GitHub-Api-Version": "2026-03-10",
+        "Idempotency-Key": `bootstrap-${state.bootstrap_watchdog.last_heartbeat_at_ms || "none"}`,
+      },
+      body: JSON.stringify({
+        event_type: "katcha-bootstrap-poll",
+        client_payload: payload,
+      }),
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (!response.ok) {
+      const body = (await response.text()).slice(0, 500);
+      throw new Error(
+        `bootstrap redispatch failed with HTTP ${response.status}: ${body}`,
+      );
+    }
+    if (response.body) {
+      await response.body.cancel();
+    }
   }
 
   async dispatchRecovery(state, incident) {
