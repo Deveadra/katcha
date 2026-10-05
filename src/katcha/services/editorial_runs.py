@@ -12,9 +12,8 @@ from sqlalchemy.orm import Session
 from katcha.db import session_scope
 from katcha.editorial.run_schemas import StartEditorialRun
 from katcha.editorial_models import EditorialProject, EditorialRevision, EditorialRun
-from katcha.models import Clip, DomainEvent
+from katcha.models import DomainEvent
 from katcha.services.channel_profiles import ensure_active_profile
-from katcha.services.clip_lifecycle import channel_ids_for_clip
 from katcha.services.editorial_projects import (
     EditorialConflict,
     EditorialNotFound,
