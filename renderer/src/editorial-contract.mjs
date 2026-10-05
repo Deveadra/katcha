@@ -6,8 +6,9 @@ const text = (value, max) => typeof value === 'string' && value.length > 0 && va
 const key = (value) => text(value, 1000) && !/[:\\\x00-\x1f]/.test(value) && !value.startsWith('/') && !value.split('/').some(part => part === '..' || part === '.');
 
 export const validateEditorialManifest = (manifest) => {
-  check(['editorial-render-v1', 'editorial-render-v2'].includes(manifest?.version), 'version');
-  const narrated = manifest.version === 'editorial-render-v2';
+  check(['editorial-render-v1', 'editorial-render-v2', 'editorial-render-v3'].includes(manifest?.version), 'version');
+  const narrated = manifest.presentation_mode === 'narrated';
+  check(manifest.version === 'editorial-render-v3' || narrated === (manifest.version === 'editorial-render-v2'), 'version presentation');
   check(manifest.presentation_mode === (narrated ? 'narrated' : 'captioned_silent') && manifest.requires_editorial_review === true, 'presentation and review');
   check(narrated ? Array.isArray(manifest.narration) && manifest.narration.length > 0 && manifest.narration.length <= 100 : !manifest.narration?.length, 'narration mode');
   const narration = new Map();
@@ -31,6 +32,16 @@ export const validateEditorialManifest = (manifest) => {
     check(integer(asset.width, 1, 16384) && integer(asset.height, 1, 16384) && number(asset.duration_seconds, Number.MIN_VALUE, Number.MAX_VALUE), 'measured media');
     assets.set(asset.candidate_id, asset);
   }
+  const images = new Map();
+  check(manifest.version === 'editorial-render-v3' ? Array.isArray(manifest.images) && manifest.images.length > 0 && manifest.images.length <= 100 : !manifest.images?.length, 'image version');
+  for (const image of manifest.images || []) {
+    check(text(image.image_id, 100) && !images.has(image.image_id) && text(image.beat_id, 120), 'image identity');
+    check(/^[a-f0-9]{64}$/.test(image.sha256) && key(image.storage_key) && image.storage_key === `editorial/${manifest.project_id}/images/${image.image_id}/${image.sha256}.png` && !('url' in image), 'managed image');
+    check(integer(image.width, 1, 8192) && integer(image.height, 1, 8192) && image.width * image.height <= 16000000, 'image dimensions');
+    check(text(image.title, 200) && typeof image.illustration === 'boolean', 'image attribution');
+    images.set(image.image_id, image);
+  }
+  const usedImages = new Set();
   check(Array.isArray(manifest.timeline) && manifest.timeline.length > 0 && manifest.timeline.length <= 100, 'timeline');
   let cursor = 0;
   const beats = new Set();
@@ -42,9 +53,14 @@ export const validateEditorialManifest = (manifest) => {
       const audio = narration.get(scene.beat_id);
       check(audio && scene.duration_frames === Math.ceil(audio.sample_frames * 30 / audio.sample_rate), 'narration timing');
     }
-    check(['single', 'comparison', 'quote'].includes(scene.layout), 'layout');
-    check(Array.isArray(scene.media) && scene.media.length === {single: 1, comparison: 2, quote: 0}[scene.layout], 'layout media');
+    check(['single', 'comparison', 'quote', 'image'].includes(scene.layout), 'layout');
+    check(Array.isArray(scene.media) && scene.media.length === {single: 1, comparison: 2, quote: 0, image: 0}[scene.layout], 'layout media');
     if (scene.layout === 'quote') check(text(scene.quote_source_id, 120) && text(scene.quote_text, 300) && text(scene.source_credit, 200), 'quote provenance');
+    if (scene.layout === 'image') {
+      const image = images.get(scene.image_id);
+      check(image && image.beat_id === scene.beat_id && number(scene.image_push_in, 1, 1.15), 'image selection');
+      usedImages.add(scene.image_id);
+    } else check(!scene.image_id && (scene.image_push_in == null || scene.image_push_in === 1), 'image layout');
     for (const use of scene.media) {
       const asset = assets.get(use.candidate_id);
       check(asset && number(use.start_seconds, 0, asset.duration_seconds) && use.start_seconds < asset.duration_seconds, 'source start');
@@ -68,6 +84,7 @@ export const validateEditorialManifest = (manifest) => {
     check(captionCursor === scene.duration_frames, 'caption end');
     cursor += scene.duration_frames;
   }
+  check(usedImages.size === images.size, 'image coverage');
   check(!narrated || (narration.size === beats.size && manifest.narration.every((audio, index) => audio.beat_id === manifest.timeline[index]?.beat_id)), 'narration coverage');
   check(cursor <= 108000 && Math.abs(cursor / 30 - manifest.output_duration_seconds) < 1e-6, 'duration');
   return manifest;

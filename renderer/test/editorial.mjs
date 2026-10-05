@@ -61,3 +61,32 @@ await verifyNarrationBytes(Readable.from([bytes]), createHash('sha256').update(b
 await assert.rejects(() => verifyNarrationBytes(Readable.from([bytes]), '0'.repeat(64)), /checksum/);
 await assert.rejects(() => verifyNarrationBytes(Readable.from([Buffer.alloc(32 * 1024 * 1024 + 1)]), '0'.repeat(64)), /32 MiB/);
 console.log('Narrated manifests and audio checksum bounds passed');
+
+const still = structuredClone(fixture);
+still.version = 'editorial-render-v3'; still.media = []; still.narration = [];
+still.images = [{image_id: 'still', beat_id: 'beat', storage_key: `editorial/test-project/images/still/${'f'.repeat(64)}.png`, sha256: 'f'.repeat(64), width: 320, height: 180, title: 'Original illustration', illustration: true}];
+still.timeline[0] = {...still.timeline[0], layout: 'image', media: [], overlays: [], image_id: 'still', image_push_in: 1.1};
+validateEditorialManifest(still);
+const voicedStill = structuredClone(still); voicedStill.presentation_mode = 'narrated'; voicedStill.narration = narrated.narration;
+validateEditorialManifest(voicedStill);
+for (const mutate of [
+  m => { m.version = 'editorial-render-v1'; },
+  m => { m.images[0].url = 'https://untrusted.example/image'; },
+  m => { m.images[0].storage_key = 'raw/unapproved.png'; },
+  m => { m.images[0].beat_id = 'other'; },
+  m => { m.images[0].width = 8193; },
+  m => { m.timeline[0].image_push_in = 2; },
+  m => { m.timeline[0].image_id = 'missing'; },
+  m => { m.images.push({...m.images[0], image_id: 'unused'}); },
+]) {
+  const value = structuredClone(still); mutate(value);
+  assert.throws(() => validateEditorialManifest(value), /invalid editorial manifest/);
+}
+const {verifyImageBytes} = await import('../src/editorial-media.mjs');
+const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLbtAAAAABJRU5ErkJggg==', 'base64');
+const image = {sha256: createHash('sha256').update(png).digest('hex'), width: 1, height: 1};
+await verifyImageBytes(Readable.from([png]), image);
+await assert.rejects(() => verifyImageBytes(Readable.from([png]), {...image, sha256: '0'.repeat(64)}), /checksum/);
+await assert.rejects(() => verifyImageBytes(Readable.from([png]), {...image, width: 2}), /dimensions/);
+await assert.rejects(() => verifyImageBytes(Readable.from([Buffer.alloc(16 * 1024 * 1024 + 1)]), image), /16 MiB/);
+console.log('Still-image manifests, narration, PNG identity and byte limits passed');

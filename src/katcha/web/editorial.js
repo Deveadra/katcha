@@ -63,7 +63,7 @@ window.KatchaEditorial = (() => {
         if (changed) {
             el("editorial-narration-confirm").checked = false;
             window.KatchaEditorialHistory.reset();
-            clearPreview(); state.boardKey = ""; state.assetRun = null;
+            clearPreview(); state.boardKey = ""; state.assetRun = null; state.imageFormKey = ""; el("editorial-image-file").value = ""; el("editorial-image-confirm").checked = false;
             state.project = null; state.revision = null; state.run = null; state.editorKey = ""; state.renderKey = "";
             el("editorial-detail").hidden = true;
         }
@@ -100,6 +100,7 @@ window.KatchaEditorial = (() => {
         const review = run?.target === "render" && run.status === "completed"
             ? await api(`${base}/runs/${encodeURIComponent(run.editorial_run_id)}/review`).catch(error => ({error: error.message})) : null;
         const narration = project.revision > 0 ? await api(`${base}/narration?revision=${project.revision}`).catch(error => ({error: error.message, recordings: []})) : {voice_enabled: true, recordings: []};
+        const images = project.revision > 0 ? await api(`${base}/images?revision=${project.revision}`).catch(error => ({error: error.message, images: []})) : {images: []};
         const acquisition = runs.find(item => item.target === "acquire_assets" && item.status === "completed" && item.input_revision === project.revision);
         const assetRun = acquisition ? (acquisition.editorial_run_id === run?.editorial_run_id ? run : await api(`${base}/runs/${encodeURIComponent(acquisition.editorial_run_id)}`)) : null;
         const directed = runs.find(item => item.target === "direction" && item.status === "completed" && item.input_revision === project.revision);
@@ -108,7 +109,7 @@ window.KatchaEditorial = (() => {
         state.directionRun = run?.target === "direction" && run.status !== "completed" ? null : directionRun;
         if (state.project?.id !== id || state.run?.editorial_run_id !== run?.editorial_run_id) clearPreview();
         window.KatchaEditorialHistory.context(channel, id);
-        state.assetRun = assetRun; state.review = review; state.narration = narration;
+        state.assetRun = assetRun; state.review = review; state.narration = narration; state.images = images;
         const pending = read(storageKey(`pending.${id}`), null);
         state.project = project; state.revision = revisions[0] || null; state.run = run;
         state.stale = Boolean(pending && pending.revision < project.revision);
@@ -120,7 +121,7 @@ window.KatchaEditorial = (() => {
             : "Brief saved. Choose source analysis or research and scripting.";
         el("editorial-discard").hidden = !state.stale;
         feedback(run?.error || "Project loaded. Generated claims and scripts need editorial review.", Boolean(run?.error));
-        renderActions(); renderEvidence(); renderScript(); renderStoryboard(); renderDirection(); renderReview(); renderNarration(); renderActions();
+        renderActions(); renderEvidence(); renderScript(); renderImages(); renderStoryboard(); renderDirection(); renderReview(); renderNarration(); renderActions();
         if (state.stale) feedback("A newer script revision is available. Your unsaved text is retained below. Copy it before discarding edits to load the latest version.", true);
         if (focus) el("editorial-title").focus();
         if (run && ["queued", "running"].includes(run.status)) {
@@ -149,10 +150,11 @@ window.KatchaEditorial = (() => {
         el("editorial-detail").querySelectorAll("button").forEach((button) => { button.disabled = state.busy; });
         el("editorial-save-script").disabled = state.busy || !state.revision || Boolean(active) || state.stale;
         assetControls();
-        el("editorial-render").disabled = state.busy || Boolean(active) || state.stale || !state.assetRun || Boolean(read(storageKey(`pending.${state.project.id}`), null));
+        el("editorial-render").disabled = state.busy || Boolean(active) || state.stale || !state.revision?.draft.script?.length || Boolean(read(storageKey(`pending.${state.project.id}`), null));
         el("editorial-render").disabled ||= el("editorial-presentation").value === "narrated" && !state.narration?.voice_enabled;
         el("editorial-generate-narration").disabled = state.busy || Boolean(active) || state.stale || !state.narration?.voice_enabled || !state.revision?.draft.script?.length || Boolean(read(storageKey(`pending.${state.project.id}`), null));
-        el("editorial-direct").disabled = el("editorial-render").disabled;
+        el("editorial-direct").disabled = el("editorial-render").disabled || !state.assetRun;
+        el("editorial-image-upload").disabled = state.busy || Boolean(active) || state.stale || !state.revision?.draft.script?.length || Boolean(read(storageKey(`pending.${state.project.id}`), null));
         el("editorial-render-directed").disabled = state.busy || Boolean(active) || state.stale || !state.directionRun || Boolean(read(storageKey(`pending.${state.project.id}`), null));
         el("editorial-render").textContent = el("editorial-presentation").value === "narrated" ? "Create narrated preview" : "Create silent captioned preview";
         el("editorial-play").hidden = state.run?.stage !== "render_ready_for_review" || state.run?.status !== "completed";
@@ -205,21 +207,50 @@ window.KatchaEditorial = (() => {
         }));
         remember(boardStorage(), rows);
     }
+    function imageFormKey() { return storageKey(`image-form.${state.project.id}.${state.project.revision}`); }
+    const imageFields = ["title", "source", "permission", "beat"];
+    function saveImageForm() {
+        const value = Object.fromEntries(imageFields.map(name => [name, el(`editorial-image-${name}`).value]));
+        value.illustration = el("editorial-image-illustration").checked;
+        remember(imageFormKey(), value);
+    }
+    function renderImages() {
+        const key = imageFormKey();
+        if (key !== state.imageFormKey) {
+            state.imageFormKey = key;
+            const saved = read(key, {});
+            el("editorial-image-beat").innerHTML = (state.revision?.draft.script || []).map((beat, index) => `<option value="${esc(beat.id)}">Beat ${index + 1} · ${esc(beat.role)}</option>`).join("");
+            imageFields.forEach(name => { if (saved[name] != null || name !== "beat") el(`editorial-image-${name}`).value = saved[name] || ""; });
+            el("editorial-image-file").value = "";
+            el("editorial-image-illustration").checked = Boolean(saved.illustration);
+            el("editorial-image-confirm").checked = false;
+        }
+        el("editorial-images").innerHTML = state.images?.error
+            ? `<p class="error">Images unavailable: ${esc(state.images.error)}. Refresh projects to retry.</p>`
+            : (state.images?.images || []).filter(item => item.status === "active").map(item => `<article class="item"><div><h4>${esc(item.title)}</h4><p>${item.width} × ${item.height} · ${item.illustration ? "Illustration" : "Still image"}</p><p>Source: ${esc(item.source_reference)}</p><p>Use: ${esc(item.use_note)}</p><button class="mini" type="button" data-image-revoke="${esc(item.id)}">Remove image</button></div></article>`).join("") || '<p class="empty">No images for this revision. Upload an image, then select it as a beat’s visual below.</p>';
+    }
+    function showFootageControls() {
+        el("editorial-storyboard").querySelectorAll("[data-board-beat]").forEach(row => {
+            const footage = row.querySelector("select").value.startsWith("media:");
+            row.querySelectorAll("input").forEach(input => { input.closest("label").hidden = !footage; });
+        });
+    }
     function renderStoryboard() {
-        const key = boardStorage();
+        const key = boardStorage() + JSON.stringify(state.images);
         if (key === state.boardKey) return;
         state.boardKey = key;
         const choices = state.assetRun?.artifacts?.asset_selection || [];
         const receipts = state.assetRun?.artifacts?.acquired_assets || {};
         const draft = state.revision?.draft || {};
-        const saved = read(key, []);
+        const saved = read(boardStorage(), []);
         el("editorial-storyboard").innerHTML = (draft.script || []).map((beat, index) => {
             const claims = (draft.claims || []).filter(claim => beat.claim_ids.includes(claim.id));
             const sourceIds = new Set(claims.flatMap(claim => claim.source_ids));
             const sources = (draft.sources || []).filter(source => sourceIds.has(source.id));
-            const options = [...choices.filter(item => item.beat_id === beat.id && receipts[item.id]).map(item => ({value: `media:${item.id}`, label: item.title})), ...sources.map(item => ({value: `quote:${item.id}`, label: `Evidence quote: ${item.title}`}))];
+            const options = [...(state.images?.images || []).filter(item => item.status === "active" && item.beat_id === beat.id).map(item => ({value: `image:${item.id}`, label: `${item.illustration ? "Illustration" : "Image"}: ${item.title}`})), ...choices.filter(item => item.beat_id === beat.id && receipts[item.id]).map(item => ({value: `media:${item.id}`, label: item.title})), ...sources.map(item => ({value: `quote:${item.id}`, label: `Evidence quote: ${item.title}`}))];
             return `<fieldset class="editorial-beat" data-board-beat="${esc(beat.id)}"><legend>Beat ${index + 1} · ${beat.planned_duration_seconds}s</legend><label>Visual<select>${'<option value="">Choose a visual</option>'}${options.map(item => `<option value="${esc(item.value)}" ${saved[index]?.choice === item.value ? "selected" : ""}>${esc(item.label)}</option>`).join("")}</select></label><label>Footage start (seconds)<input type="number" min="0" step="0.1" value="${esc(saved[index]?.start || "0")}"></label><label class="check-row"><input type="checkbox" ${saved[index]?.freeze ? "checked" : ""}> Hold this frame</label></fieldset>`;
-        }).join("") || '<p class="empty">Save a script and acquire supporting media to prepare a preview.</p>';
+        }).join("") || '<p class="empty">Save a script and choose supporting media to prepare a preview.</p>';
+        showFootageControls();
     }
     function renderDirection() {
         const artifacts = state.directionRun?.artifacts || {};
@@ -243,6 +274,7 @@ window.KatchaEditorial = (() => {
             const value = row.querySelector("select").value;
             if (!value) throw new Error("Choose a visual for each script beat.");
             const [kind, ...parts] = value.split(":"); const id = parts.join(":");
+            if (kind === "image") return {beat_id: row.dataset.boardBeat, layout: "image", image_id: id, media: [], image_push_in: 1};
             return kind === "quote" ? {beat_id: row.dataset.boardBeat, layout: "quote", quote_source_id: id, media: []} : {beat_id: row.dataset.boardBeat, layout: "single", media: [{candidate_id: id, start_seconds: Number(row.querySelector("input[type=number]").value), freeze: row.querySelector("input[type=checkbox]").checked}]};
         });
         const mode = el("editorial-presentation").value;
@@ -318,6 +350,33 @@ window.KatchaEditorial = (() => {
             await api(path(channel, `/${project}/runs`), {method: "POST", body: JSON.stringify(payload)});
             if (channel === state.channel) await open(project, {focus: false});
         }));
+        el("editorial-image-form").addEventListener("input", saveImageForm);
+        el("editorial-image-upload").addEventListener("click", () => void guarded(async () => {
+            const channel = state.channel; const project = state.project.id; const revision = state.project.revision;
+            const file = el("editorial-image-file").files[0];
+            if (!file || file.size > 16 * 1024 * 1024) throw new Error("Choose a PNG/JPEG image no larger than 16 MiB.");
+            if (!el("editorial-image-confirm").checked) throw new Error("Confirm permission to use this image.");
+            const metadata = {revision, beat_id: el("editorial-image-beat").value, title: el("editorial-image-title").value.trim(), source_reference: el("editorial-image-source").value.trim(), use_note: el("editorial-image-permission").value.trim(), illustration: el("editorial-image-illustration").checked, permitted_use: true};
+            if (!metadata.title || !metadata.source_reference || !metadata.use_note) throw new Error("Enter the on-screen credit, source and permitted-use basis.");
+            const bytes = await file.arrayBuffer();
+            const hash = [...new Uint8Array(await crypto.subtle.digest("SHA-256", bytes))].map(value => value.toString(16).padStart(2, "0")).join("");
+            if (channel !== state.channel || project !== state.project?.id) return;
+            metadata.idempotency_key = identity(`image.${project}`, {...metadata, sha256: hash});
+            await api(path(channel, `/${project}/images?${new URLSearchParams(metadata)}`), {method: "POST", body: bytes, headers: {"Content-Type": "application/octet-stream"}});
+            if (channel === state.channel && project === state.project?.id) {
+                el("editorial-image-file").value = ""; el("editorial-image-confirm").checked = false;
+                await open(project, {focus: false}); feedback("Image saved. Select it as a beat’s visual below.");
+            }
+        }));
+        el("editorial-images").addEventListener("click", event => {
+            const button = event.target.closest("[data-image-revoke]");
+            if (!button) return;
+            void guarded(async () => {
+                const channel = state.channel; const project = state.project.id;
+                await api(path(channel, `/${project}/images/${encodeURIComponent(button.dataset.imageRevoke)}/revoke`), {method: "POST"});
+                if (channel === state.channel && project === state.project?.id) await open(project, {focus: false});
+            });
+        });
         window.KatchaEditorialHistory.init(transport, blobTransport);
         el("editorial-presentation").addEventListener("change", () => { saveNarrationChoices(); renderNarration(); renderActions(); });
         el("editorial-narration").addEventListener("change", saveNarrationChoices);
@@ -380,10 +439,10 @@ window.KatchaEditorial = (() => {
             await api(path(channel, `/${project}/runs`), {method: "POST", body: JSON.stringify(payload)});
             if (channel === state.channel) await open(project, {focus: false});
         }));
-        el("editorial-storyboard").addEventListener("input", saveStoryboard);
+        el("editorial-storyboard").addEventListener("input", () => { saveStoryboard(); showFootageControls(); });
         el("editorial-render").addEventListener("click", () => void guarded(async () => {
             const channel = state.channel; const project = state.project.id;
-            const payload = {target: "render", expected_revision: state.project.revision, asset_run_id: state.assetRun.editorial_run_id, storyboard: storyboardPlan()};
+            const payload = {target: "render", expected_revision: state.project.revision, asset_run_id: state.assetRun?.editorial_run_id || null, storyboard: storyboardPlan()};
             await api(path(channel, `/${project}/storyboard/preflight`), {method: "POST", body: JSON.stringify({expected_revision: payload.expected_revision, asset_run_id: payload.asset_run_id, plan: payload.storyboard})});
             payload.idempotency_key = identity(`render.${project}`, payload);
             await api(path(channel, `/${project}/runs`), {method: "POST", body: JSON.stringify(payload)});

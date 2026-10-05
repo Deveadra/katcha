@@ -28,7 +28,7 @@ def current_manifest(
         row.channel_profile_id,
         row.project_id,
         row.input_revision,
-        uuid.UUID(row.options["asset_run_id"]),
+        uuid.UUID(row.options["asset_run_id"]) if row.options.get("asset_run_id") else None,
         StoryboardPlan.model_validate(row.options["storyboard"]),
         session=session,
     )

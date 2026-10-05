@@ -30,9 +30,86 @@ router = APIRouter(
 )
 
 
+@router.get("/{project_id}/images")
+def images_list(
+    channel_profile_id: uuid.UUID,
+    project_id: uuid.UUID,
+    request: Request,
+    revision: int = Query(ge=1),
+):
+    from katcha.editorial.images import list_images
+
+    _authorize(request, channel_profile_id)
+    try:
+        return list_images(channel_profile_id, project_id, revision)
+    except ValueError as exc:
+        raise _error(exc) from exc
+
+
+@router.post("/{project_id}/images", status_code=201)
+async def image_upload(
+    channel_profile_id: uuid.UUID,
+    project_id: uuid.UUID,
+    request: Request,
+    revision: int = Query(ge=1),
+    beat_id: str = Query(min_length=1, max_length=120),
+    idempotency_key: str = Query(min_length=1, max_length=120),
+    title: str = Query(min_length=1, max_length=200),
+    source_reference: str = Query(min_length=1, max_length=2000),
+    use_note: str = Query(min_length=1, max_length=2000),
+    illustration: bool = Query(False),
+    permitted_use: bool = Query(False),
+):
+    from katcha.editorial.images import MAX_IMAGE_BYTES, ImageUpload, import_image
+
+    _authorize(request, channel_profile_id, write=True)
+    try:
+        await run_in_threadpool(get_project, channel_profile_id, project_id)
+        metadata = ImageUpload(
+            revision=revision,
+            beat_id=beat_id,
+            idempotency_key=idempotency_key,
+            title=title,
+            source_reference=source_reference,
+            use_note=use_note,
+            illustration=illustration,
+            permitted_use=permitted_use,
+        )
+        data = bytearray()
+        async for chunk in request.stream():
+            if len(data) + len(chunk) > MAX_IMAGE_BYTES:
+                raise HTTPException(413, "Upload an image no larger than 16 MiB")
+            data.extend(chunk)
+        return await run_in_threadpool(
+            import_image,
+            channel_profile_id,
+            project_id,
+            request=metadata,
+            data=bytes(data),
+            actor=control_actor(request),
+        )
+    except ValueError as exc:
+        raise _error(exc) from exc
+
+
+@router.post("/{project_id}/images/{image_id}/revoke")
+def image_revoke(
+    channel_profile_id: uuid.UUID, project_id: uuid.UUID, image_id: uuid.UUID, request: Request
+):
+    from katcha.editorial.images import revoke_image
+
+    _authorize(request, channel_profile_id, write=True)
+    try:
+        return revoke_image(channel_profile_id, project_id, image_id, actor=control_actor(request))
+    except ValueError as exc:
+        raise _error(exc) from exc
+
+
 @router.get("/{project_id}/narration")
 def narration_list(
-    channel_profile_id: uuid.UUID, project_id: uuid.UUID, request: Request,
+    channel_profile_id: uuid.UUID,
+    project_id: uuid.UUID,
+    request: Request,
     revision: int = Query(ge=1),
 ):
     from katcha.editorial.narration import list_narration
@@ -46,8 +123,11 @@ def narration_list(
 
 @router.post("/{project_id}/narration", status_code=201)
 async def narration_upload(
-    channel_profile_id: uuid.UUID, project_id: uuid.UUID, request: Request,
-    revision: int = Query(ge=1), beat_id: str = Query(min_length=1, max_length=120),
+    channel_profile_id: uuid.UUID,
+    project_id: uuid.UUID,
+    request: Request,
+    revision: int = Query(ge=1),
+    beat_id: str = Query(min_length=1, max_length=120),
     idempotency_key: str = Query(min_length=1, max_length=120),
     permitted_use: bool = Query(False),
 ):
@@ -62,9 +142,15 @@ async def narration_upload(
                 raise HTTPException(413, "Upload a WAV recording no larger than 32 MiB")
             data.extend(chunk)
         return await run_in_threadpool(
-            import_narration, channel_profile_id, project_id, revision=revision,
-            beat_id=beat_id, idempotency_key=idempotency_key, audio=bytes(data),
-            actor=control_actor(request), permitted_use=permitted_use,
+            import_narration,
+            channel_profile_id,
+            project_id,
+            revision=revision,
+            beat_id=beat_id,
+            idempotency_key=idempotency_key,
+            audio=bytes(data),
+            actor=control_actor(request),
+            permitted_use=permitted_use,
         )
     except ValueError as exc:
         raise _error(exc) from exc
@@ -72,8 +158,10 @@ async def narration_upload(
 
 @router.post("/{project_id}/narration/{narration_id}/revoke")
 def narration_revoke(
-    channel_profile_id: uuid.UUID, project_id: uuid.UUID,
-    narration_id: uuid.UUID, request: Request,
+    channel_profile_id: uuid.UUID,
+    project_id: uuid.UUID,
+    narration_id: uuid.UUID,
+    request: Request,
 ):
     from katcha.editorial.narration import revoke_narration
 
@@ -198,7 +286,10 @@ def history(
 
 @router.get("/{project_id}/revisions/{revision}", response_model=EditorialRevisionResponse)
 def revision_detail(
-    channel_profile_id: uuid.UUID, project_id: uuid.UUID, revision: int, request: Request,
+    channel_profile_id: uuid.UUID,
+    project_id: uuid.UUID,
+    revision: int,
+    request: Request,
 ) -> EditorialRevisionResponse:
     _authorize(request, channel_profile_id)
     try:

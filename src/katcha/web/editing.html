@@ -73,10 +73,24 @@
                         <h3>Research and evidence</h3><p id="editorial-gaps" role="status"></p><div id="editorial-evidence"></div>
                         <h3>Script</h3><p id="editorial-script-note"></p><button id="editorial-discard" class="mini" type="button" hidden>Discard edits and load latest script</button><div id="editorial-script"></div>
                         <button id="editorial-save-script" class="button secondary" type="button" disabled>Save script revision</button>
-                        <h3>Supporting assets</h3><p>Download selected YouTube videos for review. Downloads do not grant reuse permission. Images and other sources currently require manual acquisition through Sources.</p><p id="editorial-asset-gaps"></p><div id="editorial-assets"></div>
+                        <h3>Supporting assets</h3><p>Download selected YouTube videos for review. Downloads do not grant reuse permission. Upload still images below. Other source videos currently require manual acquisition through Sources.</p><p id="editorial-asset-gaps"></p><div id="editorial-assets"></div>
                         <button id="editorial-acquire-assets" class="button secondary" type="button" disabled>Download selected videos for review</button>
                         <details class="ae-help"><summary>Visual requests and missing material</summary><pre id="editorial-asset-requests"></pre></details>
-                        <h3>Video preview</h3><p>Choose footage or an evidence quote for each saved script beat. Current media clearance is required; publication remains a separate review.</p>
+                        <details class="ae-help"><summary>Upload still images</summary>
+                            <p>Attach PNG/JPEG images to saved script beats (16 MiB, 16 megapixels maximum). Record your source and permission; uploads do not independently establish rights or factual accuracy. Generated artwork must be marked as an illustration.</p>
+                            <div id="editorial-image-form" class="editorial-beat">
+                                <label>Script beat<select id="editorial-image-beat"></select></label>
+                                <label>Image<input id="editorial-image-file" type="file" accept="image/png,image/jpeg,.png,.jpg,.jpeg"></label>
+                                <label>On-screen credit / title<input id="editorial-image-title" maxlength="200"></label>
+                                <label>Original source or ownership reference<input id="editorial-image-source" maxlength="2000"></label>
+                                <label>Permission or permitted-use basis<textarea id="editorial-image-permission" maxlength="2000" rows="2"></textarea></label>
+                                <label class="check-row"><input id="editorial-image-illustration" type="checkbox"> Illustration or generated artwork (shown on screen)</label>
+                                <label class="check-row"><input id="editorial-image-confirm" type="checkbox"> I have permission to use this image in this video</label>
+                                <button id="editorial-image-upload" type="button" class="mini">Upload image</button>
+                            </div>
+                            <div id="editorial-images" role="status"></div>
+                        </details>
+                        <h3>Video preview</h3><p>Choose footage, an uploaded image or an evidence quote for each saved script beat. Current media clearance is required; publication remains a separate review.</p>
                         <label>Presentation<select id="editorial-presentation"><option value="captioned_silent">Silent with captions</option><option value="narrated">Narration with captions</option></select></label>
                         <p id="editorial-narration-status" role="status"></p>
                         <section id="editorial-narration-billing" hidden aria-label="Unresolved speech charges"></section>
