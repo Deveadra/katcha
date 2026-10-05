@@ -1263,6 +1263,8 @@ function renderMonetization() {
     if (state.goalChannelId !== state.channelId) {
         state.goalChannelId = state.channelId;
         state.goalDraft = (goals.custom_targets || []).map((item) => ({ ...item }));
+        const customGoalEditor = $("custom-goal-editor");
+        if (customGoalEditor) customGoalEditor.open = state.goalDraft.length > 0;
     }
     $("growth-objective").value = goals.objective || "ads_revenue";
     $("growth-path").value = goals.path || "fastest";
