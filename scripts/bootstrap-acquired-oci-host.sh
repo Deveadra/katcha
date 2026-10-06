@@ -388,6 +388,24 @@ if [[ -z "$admin_nsg_id" ]]; then
 fi
 
 rules_json="$(oci_cmd network nsg rules list --nsg-id "$admin_nsg_id" --all)"
+stale_rule_ids="$(
+    jq -c --arg source "$bastion_ip/32" '[
+      .data[]
+      | select(
+          .description == "OCI Bastion SSH to Katcha primary"
+          and .source != $source
+        )
+      | .id
+    ]' <<<"$rules_json"
+)"
+if [[ "$(jq 'length' <<<"$stale_rule_ids")" -gt 0 ]]; then
+    log "Removing stale Bastion SSH rule(s) from the admin NSG"
+    oci_cmd network nsg rules remove \
+        --nsg-id "$admin_nsg_id" \
+        --security-rule-ids "$stale_rule_ids" >/dev/null
+    rules_json="$(oci_cmd network nsg rules list --nsg-id "$admin_nsg_id" --all)"
+fi
+
 has_ssh_rule="$(
     jq -r --arg source "$bastion_ip/32" '
       any(.data[]?;
