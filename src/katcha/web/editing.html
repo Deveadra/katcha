@@ -194,19 +194,40 @@
                                     <div class="editorial-subpanel-head editorial-timeline-head"><div><h4>Beat timeline</h4><p>Select a story beat to inspect its visual treatment. Sequence follows the saved Script revision.</p></div><div id="editorial-timeline-summary" class="editorial-timeline-summary" aria-live="polite"></div></div>
                                     <div class="editorial-timeline-shell">
                                         <div id="editorial-beat-timeline" class="editorial-beat-timeline" role="tablist" aria-label="Storyboard beats"></div>
-                                        <section id="editorial-source-monitor" class="editorial-source-monitor" aria-label="Selected footage source monitor" hidden>
-                                            <div class="editorial-source-monitor-head">
+                                        <section id="editorial-source-monitor" class="editorial-monitor editorial-source-monitor" aria-label="Selected footage source monitor" hidden>
+                                            <div class="editorial-monitor-head">
                                                 <div><span class="eyebrow">SOURCE MONITOR</span><strong id="editorial-source-monitor-title">Selected footage</strong></div>
                                                 <span id="editorial-source-monitor-meta"></span>
                                             </div>
-                                            <div class="editorial-source-monitor-canvas">
+                                            <div class="editorial-monitor-canvas editorial-source-monitor-canvas">
                                                 <img id="editorial-source-monitor-image" alt="" hidden>
                                                 <p id="editorial-source-monitor-empty">Choose acquired footage to inspect sampled source frames.</p>
                                             </div>
                                             <div id="editorial-source-monitor-times" class="editorial-source-monitor-times"></div>
                                             <p id="editorial-source-monitor-status" class="editorial-source-monitor-status" role="status"></p>
                                         </section>
-                                        <div id="editorial-storyboard" class="editorial-beat-inspector"></div>
+                                        <section id="editorial-program-monitor" class="editorial-monitor editorial-program-monitor" aria-label="Current rendered program monitor">
+                                            <div class="editorial-monitor-head">
+                                                <div><span class="eyebrow">PROGRAM MONITOR</span><strong>Current private preview</strong></div>
+                                                <span id="editorial-program-monitor-meta">No preview loaded</span>
+                                            </div>
+                                            <div class="editorial-monitor-canvas editorial-program-monitor-canvas">
+                                                <video id="editorial-program-monitor-video" controls playsinline hidden></video>
+                                                <p id="editorial-program-monitor-empty">Create a preview to inspect the assembled cut against the selected source.</p>
+                                            </div>
+                                            <div class="editorial-program-monitor-actions">
+                                                <button id="editorial-program-load" class="mini" type="button" hidden>Load current preview</button>
+                                                <span id="editorial-program-monitor-status" role="status">The program monitor follows the latest completed render.</span>
+                                            </div>
+                                        </section>
+                                        <section class="editorial-context-inspector" aria-label="Selected beat context inspector">
+                                            <div class="editorial-context-inspector-head">
+                                                <div><span class="eyebrow">CONTEXT INSPECTOR</span><strong id="editorial-context-title">Selected beat</strong></div>
+                                                <a class="editorial-ai-link" data-editorial-ai="beat" href="/ai?focus=chat">Ask Katcha about this beat ✦</a>
+                                            </div>
+                                            <div id="editorial-context-summary" class="editorial-context-summary" aria-live="polite"></div>
+                                            <div id="editorial-storyboard" class="editorial-beat-inspector"></div>
+                                        </section>
                                     </div>
                                 </section>
 
