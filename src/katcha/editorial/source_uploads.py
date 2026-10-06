@@ -188,6 +188,12 @@ def import_source_media(
         )
         session.add(source)
         lifecycle = ensure_lifecycle(session, clip)
+        stale_archive_key = lifecycle.archive_key
+        if lifecycle.lifecycle_state != "hot":
+            lifecycle.lifecycle_state = "hot"
+            lifecycle.archive_key = None
+            lifecycle.archived_at = None
+            lifecycle.purged_at = None
         refresh_search_document(session, clip, lifecycle)
         session.add(
             DomainEvent(
@@ -209,6 +215,9 @@ def import_source_media(
         )
         session.flush()
         clip_id = clip.id
+
+    if stale_archive_key and stale_archive_key != key and store.exists(stale_archive_key):
+        store.delete(stale_archive_key)
 
     return ImportedSourceMedia(
         source_id=source_id,
