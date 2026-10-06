@@ -45,8 +45,13 @@ done
 gh auth status --hostname github.com >/dev/null 2>&1 ||
     fail "GitHub CLI is not authenticated"
 
+github_variables_json="$(
+    gh api "repos/$REPO/actions/variables?per_page=100"
+)" || fail "could not read GitHub Actions variables"
+
 gh_var() {
-    gh variable get "$1" --repo "$REPO" 2>/dev/null || true
+    local name="$1"
+    jq -r --arg name "$name"         '.variables[]? | select(.name == $name) | .value'         <<<"$github_variables_json" | head -n 1
 }
 
 acquired="$(gh_var KATCHA_OCI_BOOTSTRAP_ACQUIRED)"
