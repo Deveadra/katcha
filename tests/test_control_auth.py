@@ -28,6 +28,7 @@ def _request(
     *,
     method: str = "GET",
     path_params: dict[str, str] | None = None,
+    query_string: str = "",
 ) -> Request:
     return Request(
         {
@@ -36,7 +37,7 @@ def _request(
             "path": path,
             "raw_path": path.encode(),
             "headers": [],
-            "query_string": b"",
+            "query_string": query_string.encode(),
             "scheme": "http",
             "server": ("testserver", 80),
             "client": ("127.0.0.1", 12345),
@@ -687,6 +688,46 @@ def test_global_control_dependency_enforces_channel_allowlist(
         )
 
     assert exc.value.status_code == 403
+
+
+def test_named_principal_clip_media_requires_read_scope_and_allowed_channel() -> None:
+    channel_id = uuid.uuid4()
+    path = f"/v1/clips/{uuid.uuid4()}/media"
+    allowed = _request(
+        path,
+        query_string=f"channel_profile_id={channel_id}",
+    )
+    _authenticate(
+        allowed,
+        _credentials("aerith-fixture-token-000001"),
+        _settings(channel_id=channel_id, scopes=["ai:read"]),
+    )
+    _require_named_principal_route_access(allowed)
+
+    missing_channel = _request(path)
+    _authenticate(
+        missing_channel,
+        _credentials("aerith-fixture-token-000001"),
+        _settings(channel_id=channel_id, scopes=["ai:read"]),
+    )
+    with pytest.raises(HTTPException) as exc:
+        _require_named_principal_route_access(missing_channel)
+    assert exc.value.status_code == 403
+    assert "Choose a channel" in str(exc.value.detail)
+
+    wrong_scope = _request(
+        path,
+        query_string=f"channel_profile_id={channel_id}",
+    )
+    _authenticate(
+        wrong_scope,
+        _credentials("aerith-fixture-token-000001"),
+        _settings(channel_id=channel_id, scopes=["channels:read"]),
+    )
+    with pytest.raises(HTTPException) as exc:
+        _require_named_principal_route_access(wrong_scope)
+    assert exc.value.status_code == 403
+    assert "ai:read" in str(exc.value.detail)
 
 
 def test_global_control_dependency_denies_unmapped_route(
