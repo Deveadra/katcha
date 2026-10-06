@@ -171,6 +171,98 @@ async def test_proposal_mode_and_cancel_stop_frozen_action(saved, monkeypatch):
     assert await goal_runner.advance_goal(goal.id) == "cancelled"
 
 
+async def test_rejecting_waiting_goal_closes_frozen_step(saved, monkeypatch):
+    from katcha.services.command_actions import reject_action_proposal
+
+    goal = receipt(saved[0], "Propose a Storyboard change")
+    monkeypatch.setattr(
+        goal_runner,
+        "decide_goal",
+        lambda **kwargs: decision(
+            "save_watch",
+            {"body": {"watch_key": "storyboard-fixture", "name": "Fixture"}},
+            allowed=["save_watch"],
+            mode="propose",
+        ),
+    )
+    assert await goal_runner.advance_goal(goal.id) == "waiting_confirmation"
+
+    with db.session_scope() as session:
+        step = session.scalar(
+            select(CommandGoalStep).where(CommandGoalStep.goal_id == goal.id)
+        )
+        proposal_id = step.proposal_id
+
+    rejected = reject_action_proposal(
+        proposal_id,
+        actor="local-development",
+        reason="Operator wants a different edit.",
+    )
+    assert rejected.status == "rejected"
+
+    current = get_goal(goal.id)
+    assert current.status == "cancelled"
+    assert current.summary == "Proposal rejected. No action was applied."
+    assert current.result["intent"] == "goal_cancelled"
+    assert current.result["actions"] == []
+    assert current.observations[-1]["result"]["rejected"] is True
+    assert current.observations[-1]["result"]["proposal_id"] == str(proposal_id)
+
+    with db.session_scope() as session:
+        step = session.scalar(
+            select(CommandGoalStep).where(CommandGoalStep.goal_id == goal.id)
+        )
+        assert step.status == "observed"
+        assert step.result["rejected"] is True
+
+
+def test_durable_goal_preserves_editorial_beat_selector_and_revision(
+    saved,
+    monkeypatch,
+):
+    from katcha.services.goal_receipts import selected_resource_evidence
+
+    project_id = uuid.uuid4()
+    captured = {}
+
+    def resolve(channel_id, refs):
+        captured["channel_id"] = channel_id
+        captured["refs"] = refs
+        return [
+            {
+                "kind": "editorial_project",
+                "id": str(project_id),
+                "selected_beat": {"id": "beat-1", "revision": 3},
+            }
+        ]
+
+    monkeypatch.setattr(
+        "katcha.services.command_resources.resolve_command_resources",
+        resolve,
+    )
+    evidence = selected_resource_evidence(
+        {
+            "channel_profile_id": str(saved[0]),
+            "resource_refs": [
+                {
+                    "kind": "editorial_project",
+                    "id": str(project_id),
+                    "selector": "beat-1",
+                    "revision": 3,
+                }
+            ],
+            "selected_clip_ids": [],
+            "selected_production_id": None,
+        }
+    )
+
+    assert captured["channel_id"] == saved[0]
+    assert captured["refs"] == [
+        ("editorial_project", project_id, "beat-1", 3)
+    ]
+    assert evidence[0]["selected_beat"] == {"id": "beat-1", "revision": 3}
+
+
 async def test_uncertain_mutation_is_not_repeated(saved, monkeypatch):
     goal = receipt(saved[0])
     args = {"body": {"watch_key": "xbox", "name": "Xbox"}}
