@@ -272,7 +272,7 @@ def test_editorial_project_context_is_channel_scoped_and_bounded() -> None:
 
     selected = resolve_command_resources(
         profile_id,
-        [("editorial_project", project_id, "one")],
+        [("editorial_project", project_id, "one", 2)],
     )[0]
     assert selected["selected_beat"]["id"] == "one"
     assert selected["selected_beat"]["revision"] == 2
@@ -282,7 +282,13 @@ def test_editorial_project_context_is_channel_scoped_and_bounded() -> None:
     with pytest.raises(ValueError, match="editorial beat not found"):
         resolve_command_resources(
             profile_id,
-            [("editorial_project", project_id, "missing")],
+            [("editorial_project", project_id, "missing", 2)],
+        )
+
+    with pytest.raises(ValueError, match="selector is stale"):
+        resolve_command_resources(
+            profile_id,
+            [("editorial_project", project_id, "one", 1)],
         )
 
     with pytest.raises(ValueError, match="different channel"):
