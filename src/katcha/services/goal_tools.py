@@ -21,7 +21,10 @@ from katcha.editorial.storyboard_schemas import StoryboardWorkspaceBeat
 from katcha.goal_models import CommandGoal
 from katcha.services.command_actions import ActionProposalSpec
 from katcha.services.command_environment import command_environment
-from katcha.services.goal_receipts import resolve_goal_authority
+from katcha.services.goal_receipts import (
+    resolve_goal_authority,
+    selected_resource_evidence,
+)
 
 
 class EditorialStoryboardEditSelection(BaseModel):
@@ -702,6 +705,39 @@ def tool_schema(name: str) -> dict:
     return _expand_schema(result, api.get("components", {}).get("schemas", {}))
 
 
+def _observed_editorial_identity_values(goal: CommandGoal) -> set[str]:
+    """Opaque Editorial IDs must come from structured Katcha observations, not prompt text."""
+    values: set[str] = set()
+
+    def visit(value, key=""):
+        if isinstance(value, dict):
+            for name, item in value.items():
+                visit(item, name)
+        elif isinstance(value, list):
+            singular = key[:-1] if key.endswith("_ids") else key
+            for item in value:
+                visit(item, singular)
+        elif key in {
+            "candidate_id",
+            "source_id",
+            "image_id",
+            "asset_run_id",
+            "direction_run_id",
+            "id",
+        } and value is not None:
+            text = str(value).strip()
+            if text:
+                values.add(text)
+
+    visit(selected_resource_evidence(goal.request))
+    visit(goal.observations)
+    from katcha.services.command_history import list_command_turns
+
+    for turn in list_command_turns(goal.thread_id)[-12:]:
+        visit(turn.evidence)
+    return values
+
+
 def _known_ids(goal: CommandGoal) -> set[str]:
     from katcha.services.command_history import list_command_turns, list_thread_proposals
 
@@ -790,6 +826,17 @@ def action_spec(goal: CommandGoal, name: str, args: dict, step_id: uuid.UUID) ->
         if any(str(identity) not in known for identity in identities):
             raise ValueError(
                 "Storyboard edits may only reference observed project, run and image identities"
+            )
+        observed_editorial = _observed_editorial_identity_values(goal)
+        opaque_ids = [
+            use.candidate_id
+            for use in selection.beat.media
+        ]
+        if selection.beat.quote_source_id:
+            opaque_ids.append(selection.beat.quote_source_id)
+        if any(str(identity) not in observed_editorial for identity in opaque_ids):
+            raise ValueError(
+                "Storyboard footage and evidence must come from observed Editorial records"
             )
         payload = selection.model_dump(mode="json")
         return ActionProposalSpec(
