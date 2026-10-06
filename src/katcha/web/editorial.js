@@ -2,11 +2,84 @@
 window.KatchaEditorial = (() => {
     const el = (id) => document.getElementById(id);
     const esc = (value) => String(value ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
-    const state = { channel: "", epoch: 0, project: null, revision: null, run: null, busy: false, timer: null, editorKey: "", sourceClipBindings: {}, clipResults: [], clipPickerEpoch: 0, clipSearchTimer: null, scriptSeedMeta: null };
+    const state = { channel: "", epoch: 0, project: null, revision: null, run: null, busy: false, timer: null, editorKey: "", sourceClipBindings: {}, clipResults: [], clipPickerEpoch: 0, clipSearchTimer: null, scriptSeedMeta: null, sourceMonitorKey: "", sourceMonitorUrl: null, sourceMonitorEpoch: 0 };
     let api, apiBlob;
     function clearPreview() {
         if (state.previewUrl) URL.revokeObjectURL(state.previewUrl);
         state.previewUrl = null; el("editorial-preview").removeAttribute("src"); el("editorial-preview").hidden = true;
+    }
+    function clearSourceMonitor(message = "Choose acquired footage to inspect sampled source frames.") {
+        state.sourceMonitorEpoch += 1;
+        state.sourceMonitorKey = "";
+        if (state.sourceMonitorUrl) URL.revokeObjectURL(state.sourceMonitorUrl);
+        state.sourceMonitorUrl = null;
+        el("editorial-source-monitor").hidden = true;
+        el("editorial-source-monitor-image").hidden = true;
+        el("editorial-source-monitor-image").removeAttribute("src");
+        el("editorial-source-monitor-title").textContent = "Selected footage";
+        el("editorial-source-monitor-meta").textContent = "";
+        el("editorial-source-monitor-times").innerHTML = "";
+        el("editorial-source-monitor-empty").textContent = message;
+        el("editorial-source-monitor-empty").hidden = false;
+        el("editorial-source-monitor-status").textContent = "";
+    }
+    async function loadSourceMonitor() {
+        const row = [...el("editorial-storyboard").querySelectorAll("[data-board-beat]")]
+            .find(item => !item.hidden);
+        const value = row?.querySelector("[data-primary-visual]")?.value || "";
+        if (!value.startsWith("media:") || !state.project || !state.assetRun) {
+            clearSourceMonitor();
+            return;
+        }
+        const candidateId = value.slice("media:".length);
+        const runId = state.assetRun.editorial_run_id;
+        const key = [state.channel, state.project.id, state.project.revision, runId, candidateId].join(":");
+        if (state.sourceMonitorKey === key && state.sourceMonitorUrl) {
+            el("editorial-source-monitor").hidden = false;
+            return;
+        }
+        const epoch = ++state.sourceMonitorEpoch;
+        state.sourceMonitorKey = key;
+        if (state.sourceMonitorUrl) URL.revokeObjectURL(state.sourceMonitorUrl);
+        state.sourceMonitorUrl = null;
+        el("editorial-source-monitor").hidden = false;
+        el("editorial-source-monitor-image").hidden = true;
+        el("editorial-source-monitor-empty").hidden = false;
+        el("editorial-source-monitor-empty").textContent = "Loading sampled source frames…";
+        el("editorial-source-monitor-times").innerHTML = "";
+        el("editorial-source-monitor-status").textContent = "";
+        const base = path(
+            state.channel,
+            `/${encodeURIComponent(state.project.id)}/runs/${encodeURIComponent(runId)}/assets/${encodeURIComponent(candidateId)}`,
+        );
+        try {
+            const [metadata, imageBlob] = await Promise.all([
+                api(`${base}/source-monitor`),
+                apiBlob(`${base}/contact-sheet`),
+            ]);
+            if (epoch !== state.sourceMonitorEpoch || state.sourceMonitorKey !== key) return;
+            const objectUrl = URL.createObjectURL(imageBlob);
+            if (state.sourceMonitorUrl) URL.revokeObjectURL(state.sourceMonitorUrl);
+            state.sourceMonitorUrl = objectUrl;
+            el("editorial-source-monitor-title").textContent = metadata.title;
+            el("editorial-source-monitor-meta").textContent =
+                `${duration(metadata.duration_seconds)} · ${metadata.frame_count} sampled frame${metadata.frame_count === 1 ? "" : "s"}`;
+            el("editorial-source-monitor-image").src = objectUrl;
+            el("editorial-source-monitor-image").alt =
+                `Sampled source frames for ${metadata.title}`;
+            el("editorial-source-monitor-image").hidden = false;
+            el("editorial-source-monitor-empty").hidden = true;
+            el("editorial-source-monitor-times").innerHTML = metadata.sample_times
+                .map((seconds, index) => `<span>F${index + 1} · ${timelineClock(seconds)}</span>`)
+                .join("");
+            el("editorial-source-monitor-status").textContent = metadata.limitation;
+        } catch (error) {
+            if (epoch !== state.sourceMonitorEpoch || state.sourceMonitorKey !== key) return;
+            el("editorial-source-monitor-image").hidden = true;
+            el("editorial-source-monitor-empty").hidden = false;
+            el("editorial-source-monitor-empty").textContent = "Sampled frames unavailable.";
+            el("editorial-source-monitor-status").textContent = error.message;
+        }
     }
     const path = (channel, suffix = "") => `/v1/channels/${encodeURIComponent(channel)}/editorial-projects${suffix}`;
     const storageKey = (name) => `katcha.editorial.${state.channel}.${name}`;
@@ -257,7 +330,7 @@ window.KatchaEditorial = (() => {
         if (changed) {
             el("editorial-narration-confirm").checked = false;
             window.KatchaEditorialHistory.reset();
-            clearPreview(); state.boardKey = ""; state.assetRun = null; state.imageFormKey = ""; el("editorial-image-file").value = ""; el("editorial-image-confirm").checked = false;
+            clearPreview(); clearSourceMonitor(); state.boardKey = ""; state.assetRun = null; state.imageFormKey = ""; el("editorial-image-file").value = ""; el("editorial-image-confirm").checked = false;
             clearTimeout(state.clipSearchTimer); state.clipPickerEpoch += 1; state.clipResults = []; state.sourceClipBindings = {}; state.scriptSeedMeta = null;
             state.project = null; state.revision = null; state.run = null; state.editorKey = ""; state.renderKey = "";
             el("editorial-detail").hidden = true;
@@ -481,6 +554,7 @@ window.KatchaEditorial = (() => {
             }
         });
         if (persist) remember(timelineStorage(), selected);
+        void loadSourceMonitor();
     }
     function showFootageControls() {
         el("editorial-storyboard").querySelectorAll("[data-board-beat]").forEach(row => {
@@ -908,7 +982,10 @@ window.KatchaEditorial = (() => {
             await api(path(channel, `/${project}/runs`), {method: "POST", body: JSON.stringify(payload)});
             if (channel === state.channel) { await open(project, {focus: false}); advanceStage("preview"); }
         }));
-        const persistStoryboardChoice = () => { saveStoryboard(); showFootageControls(); refreshTimelineStatus(); };
+        const persistStoryboardChoice = (event) => {
+            saveStoryboard(); showFootageControls(); refreshTimelineStatus();
+            if (event?.target?.matches("[data-primary-visual]")) void loadSourceMonitor();
+        };
         el("editorial-storyboard").addEventListener("input", persistStoryboardChoice);
         el("editorial-storyboard").addEventListener("change", persistStoryboardChoice);
         el("editorial-render").addEventListener("click", () => void guarded(async () => {
