@@ -231,6 +231,8 @@ const draft = {
         const researchAiUrl = new URL(researchAiHref, "http://127.0.0.1");
         assert.equal(researchAiUrl.pathname, "/ai");
         assert.equal(researchAiUrl.searchParams.get("channel"), "one");
+        assert.equal(researchAiUrl.searchParams.get("resource_kind"), "editorial_project");
+        assert.equal(researchAiUrl.searchParams.get("resource_id"), project.id);
         assert.match(researchAiUrl.searchParams.get("prompt"), /Inspect editorial project/);
         await page.locator('[data-editorial-stage="research"]').focus();
         await page.keyboard.press("ArrowRight");
