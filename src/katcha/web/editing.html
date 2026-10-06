@@ -191,7 +191,24 @@
                                     <div class="editorial-subpanel-head editorial-timeline-head"><div><h4>Beat timeline</h4><p>Select a story beat to inspect its visual treatment. Sequence follows the saved Script revision.</p></div><div id="editorial-timeline-summary" class="editorial-timeline-summary" aria-live="polite"></div></div>
                                     <div class="editorial-timeline-shell">
                                         <div id="editorial-beat-timeline" class="editorial-beat-timeline" role="tablist" aria-label="Storyboard beats"></div>
-                                        <div id="editorial-storyboard" class="editorial-beat-inspector"></div>
+                                        <div class="editorial-edit-bay">
+                                            <section class="editorial-source-monitor" aria-label="Source monitor">
+                                                <div class="editorial-source-monitor-head">
+                                                    <div><span class="eyebrow">SOURCE MONITOR</span><strong id="editorial-source-monitor-title">No footage selected</strong></div>
+                                                    <span id="editorial-source-monitor-status">Choose acquired footage for this beat.</span>
+                                                </div>
+                                                <div class="editorial-source-monitor-viewport">
+                                                    <video id="editorial-source-monitor-video" controls playsinline preload="metadata" hidden></video>
+                                                    <div id="editorial-source-monitor-empty" class="empty">Choose acquired footage to inspect the source and set its trim start visually.</div>
+                                                </div>
+                                                <div class="editorial-source-monitor-actions">
+                                                    <button id="editorial-source-monitor-jump" class="mini" type="button" disabled>Go to trim start</button>
+                                                    <button id="editorial-source-monitor-set-in" class="mini" type="button" disabled>Set trim start from playhead</button>
+                                                    <button id="editorial-source-monitor-reload" class="mini" type="button" disabled>Reload source</button>
+                                                </div>
+                                            </section>
+                                            <div id="editorial-storyboard" class="editorial-beat-inspector"></div>
+                                        </div>
                                     </div>
                                 </section>
 
