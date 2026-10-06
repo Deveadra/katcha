@@ -11,7 +11,11 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from katcha.db import session_scope
-from katcha.editorial.project_schemas import CreateEditorialProject, EditorialBrief, SaveEditorialDraft
+from katcha.editorial.project_schemas import (
+    CreateEditorialProject,
+    EditorialBrief,
+    SaveEditorialDraft,
+)
 from katcha.editorial_models import EditorialProject, EditorialRevision
 from katcha.models import Clip, DomainEvent, SourceItem
 from katcha.services.channel_profiles import ensure_active_profile
