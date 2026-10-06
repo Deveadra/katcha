@@ -239,6 +239,7 @@ def save_storyboard(
                 updated_at=EditorialProject.updated_at,
             )
         )
+        session.refresh(project)
         replay = session.scalar(
             select(EditorialStoryboardRevision).where(
                 EditorialStoryboardRevision.request_id == request_id
@@ -328,6 +329,7 @@ def undo_storyboard(
                 updated_at=EditorialProject.updated_at,
             )
         )
+        session.refresh(project)
         replay = session.scalar(
             select(EditorialStoryboardRevision).where(
                 EditorialStoryboardRevision.request_id == request_id
