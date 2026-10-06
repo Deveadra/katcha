@@ -252,6 +252,34 @@ def _editorial_project_evidence(
         .order_by(desc(EditorialRun.updated_at), desc(EditorialRun.created_at))
         .limit(1)
     )
+    latest_direction = session.scalar(
+        select(EditorialRun)
+        .where(
+            EditorialRun.project_id == row.id,
+            EditorialRun.channel_profile_id == channel_profile_id,
+            EditorialRun.input_revision == row.revision,
+            EditorialRun.status == "completed",
+        )
+        .order_by(desc(EditorialRun.updated_at), desc(EditorialRun.created_at))
+    )
+    if latest_direction is not None and latest_direction.options.get("target") != "direction":
+        directions = list(
+            session.scalars(
+                select(EditorialRun)
+                .where(
+                    EditorialRun.project_id == row.id,
+                    EditorialRun.channel_profile_id == channel_profile_id,
+                    EditorialRun.input_revision == row.revision,
+                    EditorialRun.status == "completed",
+                )
+                .order_by(desc(EditorialRun.updated_at), desc(EditorialRun.created_at))
+                .limit(20)
+            )
+        )
+        latest_direction = next(
+            (candidate for candidate in directions if candidate.options.get("target") == "direction"),
+            None,
+        )
 
     revision_summary: dict[str, object] | None = None
     if latest_revision is not None:
@@ -307,6 +335,18 @@ def _editorial_project_evidence(
         ),
         "latest_revision": revision_summary,
         "latest_run": run_summary,
+        "latest_direction": (
+            {
+                "id": str(latest_direction.id),
+                "status": latest_direction.status,
+                "stage": latest_direction.stage,
+                "input_revision": latest_direction.input_revision,
+                "asset_run_id": latest_direction.artifacts.get("direction_asset_run_id"),
+                "updated_at": latest_direction.updated_at.isoformat(),
+            }
+            if latest_direction is not None
+            else None
+        ),
         "updated_at": row.updated_at.isoformat(),
         "context_source": "typed_resource",
     }
