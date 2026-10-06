@@ -352,25 +352,59 @@ def undo_storyboard(
             raise EditorialConflict(
                 "Storyboard changed; reload the current workspace before undoing"
             )
-        if current.parent_version is None:
-            raise EditorialConflict("No earlier Storyboard edit is available to undo")
-        target = session.get(
-            EditorialStoryboardRevision,
-            (project_id, request.script_revision, current.parent_version),
+        target = (
+            session.get(
+                EditorialStoryboardRevision,
+                (project_id, request.script_revision, current.parent_version),
+            )
+            if current.parent_version is not None
+            else None
         )
-        if target is None:
+        if current.parent_version is not None and target is None:
             raise EditorialConflict("Storyboard undo history is incomplete")
+        if current.parent_version is None and (
+            current.version != 1 or current.origin == "undo"
+        ):
+            raise EditorialConflict(
+                "No earlier Storyboard edit is available to undo"
+            )
+        if target is None:
+            revision = session.get(
+                EditorialRevision,
+                (project_id, request.script_revision),
+            )
+            if revision is None:
+                raise EditorialNotFound("Script revision not found in this project")
+            draft = EditorialDraft.model_validate(revision.draft)
+            restored_workspace = StoryboardWorkspace(
+                beats=[
+                    {"beat_id": beat.id, "layout": "unassigned"}
+                    for beat in draft.script
+                ]
+            )
+            restored_digest = _digest(
+                restored_workspace.model_dump(mode="json")
+            )
+            restored_parent = None
+            restored_version = 0
+        else:
+            restored_workspace = StoryboardWorkspace.model_validate(
+                target.workspace
+            )
+            restored_digest = target.digest
+            restored_parent = target.parent_version
+            restored_version = target.version
 
         row = EditorialStoryboardRevision(
             project_id=project_id,
             script_revision=request.script_revision,
             version=current.version + 1,
             channel_profile_id=channel_id,
-            parent_version=target.parent_version,
+            parent_version=restored_parent,
             request_id=request_id,
             request_digest=request_digest,
-            digest=target.digest,
-            workspace=dict(target.workspace),
+            digest=restored_digest,
+            workspace=restored_workspace.model_dump(mode="json"),
             origin="undo",
             actor=actor,
         )
@@ -387,7 +421,7 @@ def undo_storyboard(
                     "project_id": str(project_id),
                     "script_revision": request.script_revision,
                     "version": row.version,
-                    "restored_version": target.version,
+                    "restored_version": restored_version,
                     "parent_version": row.parent_version,
                     "actor": actor,
                 },
