@@ -146,11 +146,14 @@ class CommandResourceRef(BaseModel):
         max_length=80,
         pattern=r"^[A-Za-z0-9_-]+$",
     )
+    revision: int | None = Field(default=None, ge=0)
 
     @model_validator(mode="after")
     def valid_selector(self):
         if self.selector and self.kind != "editorial_project":
             raise ValueError("resource selectors are only supported for editorial projects")
+        if (self.selector is None) != (self.revision is None):
+            raise ValueError("editorial beat selectors require an exact revision")
         return self
 
 
@@ -964,7 +967,7 @@ async def command(http_request: Request, request: CommandRequest) -> CommandResp
             resource_inherited_from_thread = bool(effective_resource_refs)
 
     resource_pairs = [
-        (item.kind, item.id, item.selector)
+        (item.kind, item.id, item.selector, item.revision)
         for item in effective_resource_refs
     ]
     try:
@@ -1236,7 +1239,14 @@ async def command(http_request: Request, request: CommandRequest) -> CommandResp
                         {
                             "kind": item.kind,
                             "id": str(item.id),
-                            **({"selector": item.selector} if item.selector else {}),
+                            **(
+                                {
+                                    "selector": item.selector,
+                                    "revision": item.revision,
+                                }
+                                if item.selector
+                                else {}
+                            ),
                         }
                         for item in effective_resource_refs
                     ],
