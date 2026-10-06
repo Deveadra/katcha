@@ -1222,31 +1222,57 @@ window.KatchaEditorial = (() => {
         return {presentation_mode, narration_ids, ...(el("editorial-auto-regions").checked ? {annotate_regions: true} : {})};
     }
     function storyboardPlan() {
-        const beats = [...el("editorial-storyboard").querySelectorAll("[data-board-beat]")].map(row => {
-            const value = row.querySelector("select").value;
-            if (!value) throw new Error("Choose a visual for each script beat.");
-            const [kind, ...parts] = value.split(":"); const id = parts.join(":");
-            if (kind === "image") {
-                const compare = row.querySelector("[data-image-compare]").value;
-                const available = new Set((state.images?.images || []).filter(item => item.status === "active" && item.beat_id === row.dataset.boardBeat).map(item => item.id));
-                if (!available.has(id) || (compare && !available.has(compare))) throw new Error("An image is no longer available. Choose a replacement before rendering.");
-                if (compare === id) throw new Error("Choose two different images for comparison.");
-                const annotation = Object.fromEntries([...row.querySelectorAll("[data-region]")].map(input => [input.dataset.region, input.value]));
-                const overlays = [];
-                if (annotation.kind) {
-                    const region = Object.fromEntries(["x", "y", "width", "height"].map(key => [key, Number(annotation[key]) / 100]));
-                    if (Object.values(region).some(value => !Number.isFinite(value)) || region.x < 0 || region.y < 0 || region.width <= 0 || region.height <= 0 || region.x + region.width > 1 || region.y + region.height > 1) throw new Error("Keep the annotation within the original image (0–100%).");
-                    if (annotation.target === "1" && !compare) throw new Error("Choose a second image before marking it.");
-                    overlays.push({kind: annotation.kind, media_index: Number(annotation.target), region, label: annotation.label.trim() || null});
-                }
-                return {beat_id: row.dataset.boardBeat, layout: compare ? "image_comparison" : "image", ...(compare ? {image_ids: [id, compare]} : {image_id: id}), media: [], image_push_in: 1, overlays};
+        const workspace = storyboardWorkspaceDraft();
+        if (!workspace) throw new Error("Save a script before preparing a Storyboard.");
+        if (workspace.beats.some(beat => beat.layout === "unassigned")) {
+            throw new Error("Choose a visual for each script beat.");
+        }
+        const availableImages = new Set(
+            (state.images?.images || [])
+                .filter(item => item.status === "active")
+                .map(item => item.id),
+        );
+        for (const beat of workspace.beats) {
+            const imageIds = beat.layout === "image"
+                ? [beat.image_id]
+                : beat.layout === "image_comparison"
+                  ? beat.image_ids
+                  : [];
+            if (
+                imageIds.some(id => !availableImages.has(id))
+                || (
+                    beat.layout === "image_comparison"
+                    && new Set(imageIds).size !== imageIds.length
+                )
+            ) {
+                throw new Error(
+                    "An image is no longer available or the comparison repeats one image. "
+                    + "Choose current distinct images before rendering.",
+                );
             }
-            return kind === "quote" ? {beat_id: row.dataset.boardBeat, layout: "quote", quote_source_id: id, media: []} : {beat_id: row.dataset.boardBeat, layout: "single", media: [{candidate_id: id, start_seconds: Number(row.querySelector("input[type=number]").value), freeze: row.querySelector("input[type=checkbox]").checked}]};
-        });
-        const mode = el("editorial-presentation").value;
-        const narration_ids = Object.fromEntries([...el("editorial-narration").querySelectorAll("[data-narration-select]")].map(input => [input.dataset.narrationSelect, input.value]));
-        if (mode === "narrated" && (beats.some(beat => !narration_ids[beat.beat_id]) || !state.narration?.voice_enabled)) throw new Error("Enable voice and choose a recording for every beat.");
-        return {presentation_mode: mode, beats, ...(mode === "narrated" ? {narration_ids} : {})};
+        }
+        if (
+            workspace.presentation_mode === "narrated"
+            && (
+                workspace.beats.some(
+                    beat => !workspace.narration_ids[beat.beat_id],
+                )
+                || !state.narration?.voice_enabled
+            )
+        ) {
+            throw new Error(
+                "Enable voice and choose a recording for every beat.",
+            );
+        }
+        return {
+            presentation_mode: workspace.presentation_mode,
+            beats: workspace.beats,
+            ...(
+                workspace.presentation_mode === "narrated"
+                    ? {narration_ids: workspace.narration_ids}
+                    : {}
+            ),
+        };
     }
     function renderEvidence() {
         const artifacts = state.run?.artifacts || {};
