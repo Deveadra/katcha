@@ -223,6 +223,14 @@ def _require_named_principal_route_access(request: Request) -> None:
             raise HTTPException(403, "Choose a channel for resource retrieval")
         require_control_channel(request, channel)
         return
+    if method in {"GET", "HEAD"} and re.fullmatch(r"/v1/clips/[^/]+/media", path):
+        require_control_scope(request, "ai:read")
+        channel = request.query_params.get("channel_profile_id")
+        if not channel:
+            raise HTTPException(403, "Choose a channel for clip media playback")
+        require_control_channel(request, channel)
+        return
+
     if path == "/v1/control/session":
         return
 
