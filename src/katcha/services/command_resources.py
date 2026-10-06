@@ -8,6 +8,7 @@ from sqlalchemy import desc, func, or_, select
 
 from katcha.acquisition_models import IntelligenceRecord
 from katcha.db import session_scope
+from katcha.editorial_models import EditorialProject, EditorialRevision, EditorialRun
 from katcha.intelligence_models import ChannelProfile
 from katcha.models import Clip, ClipFeature, SourceItem
 from katcha.production_models import Production
@@ -23,6 +24,7 @@ SUPPORTED_RESOURCE_KINDS = {
     "publication",
     "trend_opportunity",
     "intelligence_record",
+    "editorial_project",
 }
 
 
@@ -220,6 +222,96 @@ def _trend_evidence(
     }
 
 
+def _editorial_project_evidence(
+    session,
+    channel_profile_id: uuid.UUID,
+    resource_id: uuid.UUID,
+) -> dict[str, object]:
+    row = session.get(EditorialProject, resource_id)
+    if row is None:
+        raise ValueError(f"editorial project not found: {resource_id}")
+    if row.channel_profile_id != channel_profile_id:
+        raise ValueError("editorial project belongs to a different channel")
+
+    brief = dict(row.brief or {})
+    source_urls = [str(value) for value in brief.get("source_urls") or []][:20]
+    bindings = {
+        str(key): str(value)
+        for key, value in dict(brief.get("source_clip_bindings") or {}).items()
+    }
+    script_seed = dict(brief.get("script_seed") or {})
+    latest_revision = session.scalar(
+        select(EditorialRevision)
+        .where(EditorialRevision.project_id == row.id)
+        .order_by(desc(EditorialRevision.revision))
+        .limit(1)
+    )
+    latest_run = session.scalar(
+        select(EditorialRun)
+        .where(EditorialRun.project_id == row.id)
+        .order_by(desc(EditorialRun.updated_at), desc(EditorialRun.created_at))
+        .limit(1)
+    )
+
+    revision_summary: dict[str, object] | None = None
+    if latest_revision is not None:
+        draft = dict(latest_revision.draft or {})
+        script = list(draft.get("script") or [])
+        narration = [
+            str(beat.get("narration") or "")
+            for beat in script
+            if isinstance(beat, dict)
+        ]
+        revision_summary = {
+            "revision": latest_revision.revision,
+            "digest": latest_revision.digest,
+            "script_beat_count": len(script),
+            "script_word_count": sum(
+                len(text.split()) for text in narration if text.strip()
+            ),
+            "created_at": latest_revision.created_at.isoformat(),
+        }
+
+    run_summary: dict[str, object] | None = None
+    if latest_run is not None:
+        run_summary = {
+            "id": str(latest_run.id),
+            "status": latest_run.status,
+            "stage": latest_run.stage,
+            "target": dict(latest_run.options or {}).get("target"),
+            "input_revision": latest_run.input_revision,
+            "attempt": latest_run.attempt,
+            "error": latest_run.error,
+            "updated_at": latest_run.updated_at.isoformat(),
+        }
+
+    return {
+        "kind": "editorial_project",
+        "id": str(row.id),
+        "title": str(brief.get("prompt") or "Editorial project"),
+        "revision": row.revision,
+        "target_seconds": brief.get("target_seconds"),
+        "source_urls": source_urls,
+        "source_count": len(source_urls),
+        "managed_clip_count": len(bindings),
+        "managed_clip_ids": list(dict.fromkeys(bindings.values()))[:20],
+        "script_seed": (
+            {
+                "origin": script_seed.get("origin"),
+                "filename": script_seed.get("filename"),
+                "media_type": script_seed.get("media_type"),
+                "content_sha256": script_seed.get("content_sha256"),
+            }
+            if script_seed
+            else None
+        ),
+        "latest_revision": revision_summary,
+        "latest_run": run_summary,
+        "updated_at": row.updated_at.isoformat(),
+        "context_source": "typed_resource",
+    }
+
+
 def _intelligence_record_evidence(
     session,
     channel_profile_id: uuid.UUID,
@@ -324,6 +416,12 @@ def resolve_command_resources(
                 item = _publication_evidence(session, channel_profile_id, resource_id)
             elif kind == "trend_opportunity":
                 item = _trend_evidence(session, channel_profile_id, resource_id)
+            elif kind == "editorial_project":
+                item = _editorial_project_evidence(
+                    session,
+                    channel_profile_id,
+                    resource_id,
+                )
             else:
                 item = _intelligence_record_evidence(
                     session,
