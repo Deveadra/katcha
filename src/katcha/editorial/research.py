@@ -40,6 +40,7 @@ def question_key(question: str) -> str:
 def investigate_and_write(run_id: str, attempt: int) -> dict:
     row = checkpoint(run_id, attempt, stage="observing")
     brief = row.artifacts["brief"]
+    observation_brief = {key: value for key, value in brief.items() if key != "script_seed"}
     observations = list(row.artifacts.get("observations") or [])
     if not observations:
         snapshots = dict(row.artifacts["source_snapshots"])
@@ -59,7 +60,7 @@ def investigate_and_write(run_id: str, attempt: int) -> dict:
                 "Use the exact source URL and measured duration.\n"
                 + _json(
                     {
-                        "brief": brief,
+                        "brief": observation_brief,
                         "source_url": source["source_url"],
                         "source_duration_seconds": source["duration_seconds"],
                         "sample_times": timestamps,
