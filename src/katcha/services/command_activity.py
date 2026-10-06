@@ -32,6 +32,9 @@ _WORKFLOW_CYCLE_EVENTS = {
     "command_center.workflow_cycle_completed",
     "command_center.workflow_cycle_failed",
 }
+_SYNCHRONOUS_ACTION_TYPES = {
+    "editorial_storyboard_edit",
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -250,6 +253,11 @@ def _state(
         return status, False
 
     if resource is None:
+        if (
+            proposal.status == "executed"
+            and proposal.action_type in _SYNCHRONOUS_ACTION_TYPES
+        ):
+            return "executed", True
         if proposal.status == "executed":
             return "workflow_started", False
         return proposal.status, False
