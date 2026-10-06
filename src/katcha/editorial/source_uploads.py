@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
@@ -80,6 +81,7 @@ def import_source_media(
     content_type: str,
     title: str | None,
     permitted_use: bool,
+    idempotency_key: str,
     actor: str,
 ) -> ImportedSourceMedia:
     clean_name = Path(filename).name
@@ -101,13 +103,52 @@ def import_source_media(
     probe, duration, width, height = _probe_video(path)
     digest = _sha256(path)
     key = ObjectStore.raw_key(digest, extension)
+    source_id = uuid.uuid5(channel_id, f"editorial-source-upload:{idempotency_key}")
+    source_url = f"https://upload.katcha.invalid/{source_id}"
+    display_title = (title or "").strip() or clean_name
+    request_digest = hashlib.sha256(
+        json.dumps(
+            {
+                "sha256": digest,
+                "filename": clean_name,
+                "content_type": content_type,
+                "title": display_title,
+                "permitted_use": True,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode()
+    ).hexdigest()
+
+    with session_scope() as session:
+        ensure_active_profile(session, channel_id)
+        previous = session.get(SourceItem, source_id)
+        if previous is not None:
+            metadata = dict(previous.source_metadata or {})
+            if metadata.get("upload_request_sha256") != request_digest:
+                raise ValueError("Upload identity was already used for different source media")
+            clip = session.get(Clip, previous.clip_id) if previous.clip_id else None
+            if clip is None:
+                raise ValueError("Previous source upload is missing its managed clip")
+            return ImportedSourceMedia(
+                source_id=previous.id,
+                clip_id=clip.id,
+                source_url=previous.source_url,
+                title=previous.title or display_title,
+                filename=str(metadata.get("original_filename") or clean_name),
+                sha256=clip.sha256,
+                size_bytes=int(clip.size_bytes or size_bytes),
+                duration_seconds=float(clip.duration_seconds or duration),
+                width=int(clip.width or width),
+                height=int(clip.height or height),
+                extension=clip.extension or extension,
+                deduplicated=True,
+            )
+
     store = ObjectStore()
     if not store.exists(key):
         store.put_file(path, key, content_type=content_type)
 
-    source_id = uuid.uuid4()
-    source_url = f"https://upload.katcha.invalid/{source_id}"
-    display_title = (title or "").strip() or clean_name
     with session_scope() as session:
         ensure_active_profile(session, channel_id)
         clip = session.scalar(select(Clip).where(Clip.sha256 == digest))
@@ -140,6 +181,7 @@ def import_source_media(
                 "original_filename": clean_name,
                 "content_type": content_type,
                 "permitted_use_confirmed": True,
+                "upload_request_sha256": request_digest,
                 "actor": actor,
             },
             clip_id=clip.id,
