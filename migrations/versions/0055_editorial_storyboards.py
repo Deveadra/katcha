@@ -48,8 +48,13 @@ def upgrade() -> None:
             name="ck_editorial_storyboard_version",
         ),
         sa.CheckConstraint(
-            "parent_version IS NULL OR parent_version > 0",
+            "parent_version IS NULL OR "
+            "(parent_version > 0 AND parent_version < version)",
             name="ck_editorial_storyboard_parent_version",
+        ),
+        sa.CheckConstraint(
+            "origin IN ('operator', 'ai_apply', 'undo')",
+            name="ck_editorial_storyboard_origin",
         ),
     )
     op.create_index(
