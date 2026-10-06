@@ -556,13 +556,34 @@ def test_command_center_accepts_typed_resource_context_schema() -> None:
             "channel_profile_id": str(uuid.uuid4()),
             "prompt": "Inspect this Editorial project.",
             "resource_refs": [
-                {"kind": "editorial_project", "id": str(project_id), "selector": "beat-1"},
+                {
+                    "kind": "editorial_project",
+                    "id": str(project_id),
+                    "selector": "beat-1",
+                    "revision": 3,
+                },
             ],
         }
     )
     assert editorial.resource_refs[0].kind == "editorial_project"
     assert editorial.resource_refs[0].id == project_id
     assert editorial.resource_refs[0].selector == "beat-1"
+    assert editorial.resource_refs[0].revision == 3
+
+    with pytest.raises(ValueError, match="exact revision"):
+        CommandRequest.model_validate(
+            {
+                "channel_profile_id": str(uuid.uuid4()),
+                "prompt": "Inspect a stale beat selector.",
+                "resource_refs": [
+                    {
+                        "kind": "editorial_project",
+                        "id": str(project_id),
+                        "selector": "beat-1",
+                    },
+                ],
+            }
+        )
 
 
 @pytest.mark.parametrize("prompt", ["Hi!", "Hello", "What can you do?", "How can you help?"])
