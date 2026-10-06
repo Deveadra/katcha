@@ -53,10 +53,13 @@ window.KatchaEditorial = (() => {
             const lineage = item.platform === "upload"
                 ? `<span class="editorial-upload-lineage">${esc(item.filename || "Local source upload")}</span>`
                 : `<a href="${safeLink(url)}" target="_blank" rel="noopener noreferrer">${esc(url)}</a>`;
+            const action = item.platform === "upload"
+                ? `<button type="button" class="mini" data-editorial-remove-source="${esc(url)}">Remove source</button>`
+                : `<button type="button" class="mini" data-editorial-unpin-clip="${esc(url)}">Use URL instead</button>`;
             return `
             <article class="editorial-selected-clip">
                 <div><strong>${esc(clipLabel(item))}</strong><small>${esc(item.creator || item.platform || "Managed Katcha media")} · ${esc(duration(item.duration_seconds))}</small>${lineage}</div>
-                <button type="button" class="mini" data-editorial-unpin-clip="${esc(url)}">Use URL instead</button>
+                ${action}
             </article>`;
         }).join("") : '<p class="empty">No managed clips pinned. Source links will be acquired only when needed.</p>';
     }
@@ -655,6 +658,16 @@ window.KatchaEditorial = (() => {
                 .catch((error) => { feedback(error.message, true); renderClipResults(); });
         });
         el("editorial-selected-clips").addEventListener("click", (event) => {
+            const remove = event.target.closest("[data-editorial-remove-source]");
+            if (remove) {
+                const sourceUrl = remove.dataset.editorialRemoveSource;
+                delete state.sourceClipBindings[sourceUrl];
+                el("editorial-urls").value = sourceUrls().filter(url => url !== sourceUrl).join("\n");
+                saveBrief();
+                renderClipResults();
+                feedback("Uploaded source removed from this new project.");
+                return;
+            }
             const button = event.target.closest("[data-editorial-unpin-clip]");
             if (!button) return;
             delete state.sourceClipBindings[button.dataset.editorialUnpinClip];
