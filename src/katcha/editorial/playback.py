@@ -32,6 +32,10 @@ class PlaybackSource:
     clip_id: uuid.UUID
 
 
+def _utc(value: datetime) -> datetime:
+    return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
+
+
 def playback_cookie_name(ticket_id: uuid.UUID) -> str:
     return f"katcha_playback_{ticket_id.hex}"
 
@@ -50,7 +54,7 @@ def issue_playback_grant(
     now: datetime | None = None,
 ) -> PlaybackGrant:
     evidence = source_monitor(channel_id, project_id, run_id, candidate_id)
-    current = now or datetime.now(UTC)
+    current = _utc(now or datetime.now(UTC))
     expires_at = current + timedelta(seconds=PLAYBACK_TTL_SECONDS)
     ticket_id = uuid.uuid4()
     token = secrets.token_urlsafe(32)
@@ -87,7 +91,7 @@ def resolve_playback_grant(
         ticket = session.get(EditorialPlaybackTicket, ticket_id)
         if ticket is None:
             raise EditorialConflict("Playback ticket is not available")
-        if ticket.expires_at <= current:
+        if _utc(ticket.expires_at) <= current:
             session.delete(ticket)
             raise EditorialConflict("Playback ticket expired")
         if not token or not secrets.compare_digest(
