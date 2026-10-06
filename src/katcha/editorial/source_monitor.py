@@ -59,6 +59,7 @@ def source_monitor(
             raise EditorialConflict("Selected footage frame evidence has an invalid storage identity")
         frame_count = len(features.keyframe_keys)
         duration = float(clip.duration_seconds or 0)
+        contact_sheet_key = features.contact_sheet_key
 
     selection = next(
         (
@@ -77,7 +78,7 @@ def source_monitor(
         "duration_seconds": duration,
         "frame_count": frame_count,
         "sample_times": sample_timestamps(duration, frame_count),
-        "contact_sheet_key": features.contact_sheet_key,
+        "contact_sheet_key": contact_sheet_key,
         "coverage": "sampled_frames",
         "limitation": (
             "These frames are samples, not continuous playback. Verify exact motion and timing "
