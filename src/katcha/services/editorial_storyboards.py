@@ -17,6 +17,7 @@ from katcha.editorial.project_schemas import EditorialDraft
 from katcha.editorial.storyboard_schemas import (
     SaveStoryboardWorkspace,
     StoryboardWorkspace,
+    StoryboardWorkspaceBeat,
     UndoStoryboardWorkspace,
 )
 from katcha.editorial_models import (
@@ -303,6 +304,98 @@ def save_storyboard(
         session.refresh(row)
         session.expunge(row)
         return row
+
+
+def apply_storyboard_beat_edit(
+    channel_id: uuid.UUID,
+    project_id: uuid.UUID,
+    *,
+    script_revision: int,
+    expected_version: int,
+    beat: StoryboardWorkspaceBeat,
+    asset_run_id: uuid.UUID | None,
+    idempotency_key: str,
+    actor: str,
+) -> EditorialStoryboardRevision:
+    """Apply one confirmed AI visual edit without changing other Storyboard beats."""
+    with session_scope() as session:
+        ensure_active_profile(session, channel_id)
+        project = _project(session, channel_id, project_id)
+        if project.revision != script_revision:
+            raise EditorialConflict(
+                "Script changed; regenerate this edit proposal against the latest revision"
+            )
+        revision = session.get(
+            EditorialRevision,
+            (project_id, script_revision),
+        )
+        if revision is None:
+            raise EditorialNotFound("Script revision not found in this project")
+        draft = EditorialDraft.model_validate(revision.draft)
+        beat_ids = [item.id for item in draft.script]
+        if beat.beat_id not in beat_ids:
+            raise EditorialConflict(
+                "The proposed Storyboard beat no longer exists in this script"
+            )
+
+        current = _latest(session, project_id, script_revision)
+        current_version = current.version if current is not None else 0
+        if current_version != expected_version:
+            raise EditorialConflict(
+                "Storyboard changed; regenerate this edit proposal against the current workspace"
+            )
+        if current is None:
+            workspace = StoryboardWorkspace(
+                beats=[
+                    {"beat_id": item.id, "layout": "unassigned"}
+                    for item in draft.script
+                ]
+            )
+        else:
+            workspace = StoryboardWorkspace.model_validate(current.workspace)
+
+    current_asset_run = workspace.asset_run_id
+    if beat.media:
+        effective_asset_run = current_asset_run or asset_run_id
+        if effective_asset_run is None:
+            raise EditorialConflict(
+                "Footage edits must identify the acquisition run they came from"
+            )
+        if (
+            current_asset_run is not None
+            and asset_run_id is not None
+            and current_asset_run != asset_run_id
+        ):
+            raise EditorialConflict(
+                "This workspace already uses another acquisition run; "
+                "rebuild the workspace against one acquisition before applying"
+            )
+    else:
+        effective_asset_run = current_asset_run
+
+    beats = list(workspace.beats)
+    index = beat_ids.index(beat.beat_id)
+    beats[index] = beat
+    if effective_asset_run is not None and not any(item.media for item in beats):
+        effective_asset_run = None
+    updated = StoryboardWorkspace(
+        presentation_mode=workspace.presentation_mode,
+        asset_run_id=effective_asset_run,
+        beats=beats,
+        narration_ids=workspace.narration_ids,
+    )
+    return save_storyboard(
+        channel_id,
+        project_id,
+        SaveStoryboardWorkspace(
+            script_revision=script_revision,
+            expected_version=expected_version,
+            workspace=updated,
+            idempotency_key=idempotency_key,
+        ),
+        actor=actor,
+        origin="ai_apply",
+    )
 
 
 def undo_storyboard(
