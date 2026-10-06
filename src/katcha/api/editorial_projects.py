@@ -4,7 +4,7 @@ import tempfile
 import uuid
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, HTTPException, Query, Request, Response
 from sqlalchemy import select
 from starlette.concurrency import run_in_threadpool
 
@@ -397,9 +397,58 @@ def storyboard_source_monitor(
     _authorize(request, channel_profile_id)
     try:
         result = source_monitor(channel_profile_id, project_id, run_id, candidate_id)
-        return {key: value for key, value in result.items() if key != "contact_sheet_key"}
+        return {
+            key: value
+            for key, value in result.items()
+            if key not in {"contact_sheet_key", "media_storage_key"}
+        }
     except ValueError as exc:
         raise _error(exc) from exc
+
+
+@router.post(
+    "/{project_id}/runs/{run_id}/assets/{candidate_id}/playback-ticket",
+    status_code=201,
+)
+def storyboard_source_playback_ticket(
+    channel_profile_id: uuid.UUID,
+    project_id: uuid.UUID,
+    run_id: uuid.UUID,
+    candidate_id: str,
+    request: Request,
+    response: Response,
+):
+    from katcha.editorial.playback import (
+        PLAYBACK_TTL_SECONDS,
+        issue_playback_grant,
+        playback_cookie_name,
+    )
+
+    _authorize(request, channel_profile_id)
+    try:
+        grant = issue_playback_grant(
+            channel_profile_id,
+            project_id,
+            run_id,
+            candidate_id,
+            actor=control_actor(request),
+        )
+    except ValueError as exc:
+        raise _error(exc) from exc
+    playback_url = f"/v1/editorial-playback/{grant.id}"
+    response.set_cookie(
+        key=playback_cookie_name(grant.id),
+        value=grant.token,
+        max_age=PLAYBACK_TTL_SECONDS,
+        path=playback_url,
+        secure=get_settings().env == "production",
+        httponly=True,
+        samesite="strict",
+    )
+    return {
+        "playback_url": playback_url,
+        "expires_at": grant.expires_at,
+    }
 
 
 @router.get(
