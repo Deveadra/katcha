@@ -199,7 +199,7 @@ const draft = {
         });
         await page.locator("#editorial-source-upload-confirm").check();
         await page.locator("#editorial-source-upload-button").click();
-        await page.getByText(/Upload response interrupted/).waitFor();
+        await page.locator("#editorial-source-upload-status").getByText(/Upload response interrupted/).waitFor();
         await page.locator("#editorial-source-upload-button").click();
         await page.getByText(/owned-source\.mp4 ready/).waitFor();
         assert.match(await page.locator("#editorial-selected-clips").innerText(), /Owned local source/);
