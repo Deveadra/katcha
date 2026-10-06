@@ -226,6 +226,8 @@ def _editorial_project_evidence(
     session,
     channel_profile_id: uuid.UUID,
     resource_id: uuid.UUID,
+    *,
+    selector: str | None = None,
 ) -> dict[str, object]:
     row = session.get(EditorialProject, resource_id)
     if row is None:
@@ -254,6 +256,7 @@ def _editorial_project_evidence(
     )
 
     revision_summary: dict[str, object] | None = None
+    selected_beat: dict[str, object] | None = None
     if latest_revision is not None:
         draft = dict(latest_revision.draft or {})
         script = list(draft.get("script") or [])
@@ -271,6 +274,101 @@ def _editorial_project_evidence(
             ),
             "created_at": latest_revision.created_at.isoformat(),
         }
+        if selector:
+            beat = next(
+                (
+                    value
+                    for value in script
+                    if isinstance(value, dict)
+                    and str(value.get("id") or value.get("beat_id") or "") == selector
+                ),
+                None,
+            )
+            if beat is None:
+                raise ValueError(
+                    f"editorial beat not found in latest revision: {selector}"
+                )
+            claim_ids = [
+                str(value)
+                for value in list(beat.get("claim_ids") or [])[:30]
+                if value
+            ]
+            claims = [
+                value
+                for value in list(draft.get("claims") or [])
+                if isinstance(value, dict)
+                and str(value.get("id") or "") in set(claim_ids)
+            ][:20]
+            source_ids = {
+                str(value)
+                for claim in claims
+                for value in list(claim.get("source_ids") or [])
+                if value
+            }
+            observation_ids = {
+                str(value)
+                for claim in claims
+                for value in list(claim.get("observation_ids") or [])
+                if value
+            }
+            sources = [
+                value
+                for value in list(draft.get("sources") or [])
+                if isinstance(value, dict)
+                and str(value.get("id") or "") in source_ids
+            ][:20]
+            observations = [
+                value
+                for value in list(draft.get("observations") or [])
+                if isinstance(value, dict)
+                and str(value.get("id") or "") in observation_ids
+            ][:20]
+            selected_beat = {
+                "id": selector,
+                "revision": latest_revision.revision,
+                "role": beat.get("role"),
+                "narration": beat.get("narration"),
+                "visual_intent": beat.get("visual_intent"),
+                "planned_duration_seconds": beat.get("planned_duration_seconds"),
+                "nonfactual": bool(beat.get("nonfactual")),
+                "uncertainty_disclosure": beat.get("uncertainty_disclosure"),
+                "claim_ids": claim_ids,
+                "claims": [
+                    {
+                        "id": claim.get("id"),
+                        "text": claim.get("text"),
+                        "classification": claim.get("classification"),
+                        "verification": claim.get("verification"),
+                        "verification_note": claim.get("verification_note"),
+                        "source_ids": list(claim.get("source_ids") or [])[:20],
+                        "observation_ids": list(claim.get("observation_ids") or [])[:20],
+                    }
+                    for claim in claims
+                ],
+                "sources": [
+                    {
+                        "id": source.get("id"),
+                        "title": source.get("title"),
+                        "url": source.get("url"),
+                        "category": source.get("category"),
+                        "locator": source.get("locator"),
+                    }
+                    for source in sources
+                ],
+                "observations": [
+                    {
+                        "id": observation.get("id"),
+                        "source_url": observation.get("source_url"),
+                        "start_seconds": observation.get("start_seconds"),
+                        "end_seconds": observation.get("end_seconds"),
+                        "observation": observation.get("observation"),
+                        "coverage": observation.get("coverage"),
+                    }
+                    for observation in observations
+                ],
+            }
+    elif selector:
+        raise ValueError("editorial project has no saved revision to select a beat from")
 
     run_summary: dict[str, object] | None = None
     if latest_run is not None:
@@ -306,6 +404,7 @@ def _editorial_project_evidence(
             else None
         ),
         "latest_revision": revision_summary,
+        "selected_beat": selected_beat,
         "latest_run": run_summary,
         "updated_at": row.updated_at.isoformat(),
         "context_source": "typed_resource",
@@ -392,20 +491,26 @@ def research_context(
 
 def resolve_command_resources(
     channel_profile_id: uuid.UUID,
-    refs: list[tuple[str, uuid.UUID]],
+    refs: list[
+        tuple[str, uuid.UUID] | tuple[str, uuid.UUID, str | None]
+    ],
 ) -> list[dict[str, object]]:
     if len(refs) > 8:
         raise ValueError("at most 8 typed resources may be attached to one command")
     evidence: list[dict[str, object]] = []
-    seen: set[tuple[str, uuid.UUID]] = set()
+    seen: set[tuple[str, uuid.UUID, str | None]] = set()
     with session_scope() as session:
-        for kind, resource_id in refs:
-            key = (kind, resource_id)
+        for ref in refs:
+            kind, resource_id, *selector_values = ref
+            selector = selector_values[0] if selector_values else None
+            key = (kind, resource_id, selector)
             if key in seen:
                 continue
             seen.add(key)
             if kind not in SUPPORTED_RESOURCE_KINDS:
                 raise ValueError(f"unsupported command resource kind: {kind}")
+            if selector and kind != "editorial_project":
+                raise ValueError("resource selectors are only supported for editorial projects")
             if kind == "clip":
                 item = _clip_evidence(session, channel_profile_id, resource_id)
             elif kind == "production":
@@ -421,6 +526,7 @@ def resolve_command_resources(
                     session,
                     channel_profile_id,
                     resource_id,
+                    selector=selector,
                 )
             else:
                 item = _intelligence_record_evidence(
