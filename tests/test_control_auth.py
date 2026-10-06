@@ -325,6 +325,59 @@ def test_named_principal_ai_command_and_write_scopes_are_distinct() -> None:
     _require_named_principal_route_access(command_request)
 
 
+def test_ticketed_editorial_playback_path_bypasses_bearer_auth() -> None:
+    ticket_id = uuid.uuid4()
+    request = _request(f"/v1/editorial-playback/{ticket_id}")
+
+    require_control_token(request, None)
+
+    assert control_principal_name(request) is None
+
+
+def test_named_principal_storyboard_playback_ticket_uses_ai_read_scope() -> None:
+    channel_id = uuid.uuid4()
+    project_id = uuid.uuid4()
+    run_id = uuid.uuid4()
+    path = (
+        f"/v1/channels/{channel_id}/editorial-projects/{project_id}/runs/{run_id}/"
+        "assets/candidate/playback-ticket"
+    )
+    request = _request(
+        path,
+        method="POST",
+        path_params={
+            "channel_profile_id": str(channel_id),
+            "project_id": str(project_id),
+            "run_id": str(run_id),
+        },
+    )
+    _authenticate(
+        request,
+        _credentials("aerith-fixture-token-000001"),
+        _settings(channel_id=channel_id, scopes=["ai:read"]),
+    )
+    _require_named_principal_route_access(request)
+
+    denied = _request(
+        path,
+        method="POST",
+        path_params={
+            "channel_profile_id": str(channel_id),
+            "project_id": str(project_id),
+            "run_id": str(run_id),
+        },
+    )
+    _authenticate(
+        denied,
+        _credentials("aerith-fixture-token-000001"),
+        _settings(channel_id=channel_id, scopes=["channels:read"]),
+    )
+    with pytest.raises(HTTPException) as exc:
+        _require_named_principal_route_access(denied)
+    assert exc.value.status_code == 403
+    assert "ai:read" in str(exc.value.detail)
+
+
 @pytest.mark.parametrize("suffix", ["source-monitor", "contact-sheet"])
 def test_named_principal_storyboard_source_monitor_uses_ai_read_scope(
     suffix: str,
