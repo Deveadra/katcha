@@ -833,7 +833,10 @@ window.KatchaEditorial = (() => {
                 resource_id: state.project.id,
                 prompt,
             };
-            if (kind === "beat" && selectedBeat?.id) params.resource_selector = selectedBeat.id;
+            if (kind === "beat" && selectedBeat?.id && state.revision) {
+                params.resource_selector = selectedBeat.id;
+                params.resource_revision = String(state.revision.revision);
+            }
             link.href = "/ai?" + new URLSearchParams(params).toString();
         });
     }
