@@ -73,6 +73,10 @@ export const validateEditorialManifest = (manifest) => {
       const asset = assets.get(use.candidate_id);
       check(asset && number(use.start_seconds, 0, asset.duration_seconds) && use.start_seconds < asset.duration_seconds, 'source start');
       check(number(use.playback_rate, 0.25, 2) && typeof use.freeze === 'boolean' && number(use.push_in, 1, 1.15), 'playback');
+      if (use.crop != null) {
+        const crop = use.crop;
+        check(crop && number(crop.x, 0, 1) && number(crop.y, 0, 1) && number(crop.width, Number.MIN_VALUE, 1) && number(crop.height, Number.MIN_VALUE, 1) && crop.x + crop.width <= 1 && crop.y + crop.height <= 1, 'crop region');
+      }
       check(use.start_seconds + (use.freeze ? 0 : scene.duration_frames / 30 * use.playback_rate) <= asset.duration_seconds + 1e-6, 'source end');
     }
     check(Array.isArray(scene.overlays) && scene.overlays.length <= 8, 'annotations');
@@ -84,6 +88,12 @@ export const validateEditorialManifest = (manifest) => {
       check(overlay.label == null || text(overlay.label, 100), 'annotation label');
     }
     check(scene.uncertainty_disclosure == null || text(scene.uncertainty_disclosure, 180), 'disclosure');
+    check(scene.caption_position == null || ['bottom', 'center'].includes(scene.caption_position), 'caption position');
+    check(scene.caption_scale == null || number(scene.caption_scale, 0.75, 1.35), 'caption scale');
+    check(scene.caption_background == null || typeof scene.caption_background === 'boolean', 'caption background');
+    check(scene.transition == null || ['cut', 'fade'].includes(scene.transition), 'transition');
+    if (scene.transition === 'fade') check(integer(scene.transition_frames, 3, 15), 'transition frames');
+    else check(scene.transition_frames == null, 'cut transition frames');
     check(Array.isArray(scene.captions) && scene.captions.length > 0 && scene.captions.length <= 100, 'captions');
     let captionCursor = 0;
     for (const caption of scene.captions) {
@@ -103,4 +113,32 @@ export const validateEditorialManifest = (manifest) => {
 export const containRect = (width, height, boxWidth, boxHeight) => {
   const scale = Math.min(boxWidth / width, boxHeight / height);
   return {width: width * scale, height: height * scale, left: (boxWidth - width * scale) / 2, top: (boxHeight - height * scale) / 2};
+};
+
+
+export const sourceViewport = (width, height, boxWidth, boxHeight, crop = null) => {
+  if (!crop) {
+    return {
+      viewport: containRect(width, height, boxWidth, boxHeight),
+      content: {left: 0, top: 0, width: '100%', height: '100%'},
+    };
+  }
+  const cropWidth = width * crop.width;
+  const cropHeight = height * crop.height;
+  const scale = Math.min(boxWidth / cropWidth, boxHeight / cropHeight);
+  const viewport = {
+    width: cropWidth * scale,
+    height: cropHeight * scale,
+    left: (boxWidth - cropWidth * scale) / 2,
+    top: (boxHeight - cropHeight * scale) / 2,
+  };
+  return {
+    viewport,
+    content: {
+      left: -width * crop.x * scale,
+      top: -height * crop.y * scale,
+      width: width * scale,
+      height: height * scale,
+    },
+  };
 };
