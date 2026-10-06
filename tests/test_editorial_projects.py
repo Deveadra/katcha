@@ -264,6 +264,14 @@ def test_operator_source_upload_is_managed_replay_safe_and_channel_scoped(
     assert first.clip_id == replay.clip_id
     assert replay.deduplicated is True
     assert first.source_url.startswith("https://upload.katcha.invalid/")
+    body = brief("uploaded-source-project")
+    body["brief"]["source_urls"] = [first.source_url]
+    body["brief"]["source_clip_bindings"] = {first.source_url: str(first.clip_id)}
+    response = saved[0].post(root(channel), json=body)
+    assert response.status_code == 201, response.text
+    assert response.json()["brief"]["source_clip_bindings"] == {
+        first.source_url: str(first.clip_id)
+    }
     with db.session_scope() as session:
         assert channel in channel_ids_for_clip(session, first.clip_id)
         assert len(list(session.scalars(select(SourceItem).where(SourceItem.clip_id == first.clip_id)))) == 1
