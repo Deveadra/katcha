@@ -120,6 +120,14 @@ oci_cmd() {
 }
 
 log "Verifying the acquired host before any network mutation"
+subnet_json="$(oci_cmd network subnet get --subnet-id "$subnet_id")"
+actual_vcn_id="$(jq -er '.data."vcn-id"' <<<"$subnet_json")"
+actual_route_table_id="$(jq -er '.data."route-table-id"' <<<"$subnet_json")"
+[[ "$actual_vcn_id" == "$VCN_ID" ]] ||
+    fail "winning subnet is not attached to the expected production VCN"
+[[ "$actual_route_table_id" == "$ROUTE_TABLE_ID" ]] ||
+    fail "winning subnet is not using the expected private route table"
+
 instance_json="$(oci_cmd compute instance get --instance-id "$instance_id")"
 instance_state="$(jq -r '.data."lifecycle-state"' <<<"$instance_json")"
 instance_shape="$(jq -r '.data.shape' <<<"$instance_json")"
