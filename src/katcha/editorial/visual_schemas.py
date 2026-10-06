@@ -27,6 +27,14 @@ class VisualMediaUse(Contract):
     playback_rate: float = Field(default=1, ge=0.25, le=2)
     freeze: bool = False
     push_in: float = Field(default=1, ge=1, le=1.15)
+    crop: Region | None = None
+
+    @model_serializer(mode="wrap")
+    def preserve_existing_media_use(self, handler):
+        value = handler(self)
+        if self.crop is None:
+            value.pop("crop", None)
+        return value
 
 
 class VisualOverlay(Contract):
@@ -45,6 +53,11 @@ class VisualBeat(Contract):
     image_ids: list[UUID] = Field(default_factory=list, max_length=2)
     image_push_in: float = Field(default=1, ge=1, le=1.15)
     overlays: list[VisualOverlay] = Field(default_factory=list, max_length=8)
+    caption_position: Literal["bottom", "center"] = "bottom"
+    caption_scale: float = Field(default=1, ge=0.75, le=1.35)
+    caption_background: bool = False
+    transition: Literal["cut", "fade"] = "cut"
+    transition_frames: int = Field(default=8, ge=3, le=15, strict=True)
 
     @model_validator(mode="after")
     def coherent_layout(self) -> Self:
@@ -81,6 +94,15 @@ class VisualBeat(Contract):
         if self.layout not in {"image", "image_comparison"}:
             value.pop("image_id", None)
             value.pop("image_push_in", None)
+        if self.caption_position == "bottom":
+            value.pop("caption_position", None)
+        if self.caption_scale == 1:
+            value.pop("caption_scale", None)
+        if not self.caption_background:
+            value.pop("caption_background", None)
+        if self.transition == "cut":
+            value.pop("transition", None)
+            value.pop("transition_frames", None)
         return value
 
 
