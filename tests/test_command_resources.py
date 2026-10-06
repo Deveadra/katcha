@@ -6,6 +6,7 @@ import pytest
 
 from katcha.db import session_scope
 from katcha.domain import ChannelStatus
+from katcha.editorial_models import EditorialProject, EditorialRevision, EditorialRun
 from katcha.intelligence_models import ChannelProfile
 from katcha.models import Clip
 from katcha.production_models import Production
@@ -173,6 +174,100 @@ def test_typed_resources_are_channel_scoped_and_grounded() -> None:
 
     with pytest.raises(ValueError, match="different channel|not available"):
         resolve_command_resources(other_profile_id, [("production", production_id)])
+
+
+def test_editorial_project_context_is_channel_scoped_and_bounded() -> None:
+    profile_id, _ = _channel("Editorial Context")
+    other_profile_id, _ = _channel("Other Editorial Context")
+    project_id = uuid.uuid4()
+    run_id = uuid.uuid4()
+    source_urls = [
+        "https://example.com/source",
+        "https://upload.katcha.invalid/local",
+    ]
+    with session_scope() as session:
+        session.add(
+            EditorialProject(
+                id=project_id,
+                channel_profile_id=profile_id,
+                input_digest="a" * 64,
+                brief={
+                    "prompt": "Investigate the trailer clues",
+                    "target_seconds": 420,
+                    "source_urls": source_urls,
+                    "source_clip_bindings": {
+                        source_urls[0]: str(uuid.uuid4()),
+                        source_urls[1]: str(uuid.uuid4()),
+                    },
+                    "script_seed": {
+                        "text": "This raw seed must not enter command evidence.",
+                        "origin": "operator_file",
+                        "filename": "draft.md",
+                        "media_type": "text/markdown",
+                        "content_sha256": "b" * 64,
+                    },
+                },
+                revision=2,
+            )
+        )
+        session.add(
+            EditorialRevision(
+                project_id=project_id,
+                revision=2,
+                request_id=uuid.uuid4(),
+                request_digest="c" * 64,
+                digest="d" * 64,
+                draft={
+                    "script": [
+                        {"beat_id": "one", "narration": "First grounded beat."},
+                        {"beat_id": "two", "narration": "Second grounded beat here."},
+                    ]
+                },
+                actor="control-principal:editor",
+            )
+        )
+        session.add(
+            EditorialRun(
+                id=run_id,
+                project_id=project_id,
+                channel_profile_id=profile_id,
+                input_digest="e" * 64,
+                input_revision=2,
+                options={"target": "direction"},
+                status="completed",
+                stage="direction_ready",
+                artifacts={},
+                actor="control-principal:editor",
+            )
+        )
+
+    evidence = resolve_command_resources(
+        profile_id,
+        [("editorial_project", project_id)],
+    )
+
+    assert len(evidence) == 1
+    item = evidence[0]
+    assert item["kind"] == "editorial_project"
+    assert item["title"] == "Investigate the trailer clues"
+    assert item["source_urls"] == source_urls
+    assert item["source_count"] == 2
+    assert item["managed_clip_count"] == 2
+    assert item["script_seed"]["filename"] == "draft.md"
+    assert "text" not in item["script_seed"]
+    assert item["latest_revision"]["revision"] == 2
+    assert item["latest_revision"]["script_beat_count"] == 2
+    assert item["latest_revision"]["script_word_count"] == 7
+    assert item["latest_run"]["id"] == str(run_id)
+    assert item["latest_run"]["stage"] == "direction_ready"
+    assert item["latest_run"]["target"] == "direction"
+    assert "Investigate the trailer clues" in resource_context_summary(evidence)
+
+    with pytest.raises(ValueError, match="different channel"):
+        resolve_command_resources(
+            other_profile_id,
+            [("editorial_project", project_id)],
+        )
 
 
 def test_typed_resource_context_deduplicates_and_caps_input() -> None:
