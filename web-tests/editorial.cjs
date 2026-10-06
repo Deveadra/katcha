@@ -23,6 +23,8 @@ const frameReceipt = {storyboard_digest: 'fixture', shots: [{beat_id: 'beat', ca
 const regionSuggestion = {kind: 'circle', region: {x: .1, y: .2, width: .3, height: .4}, description: 'A visible <door>', label: 'Door'};
 frameReceipt.shots[0].regions = {regions: [regionSuggestion], limitations: ['Exact frozen sample only']};
 let directionRun = null, failFrameImage = true;
+let storyboardWorkspace = null;
+const storyboardHistory = [];
 let failHistoryPage = true, failHistoryPreview = true, delayedHistory = null;
 let historyRequestStarted;
 const historyStarted = new Promise(resolve => { historyRequestStarted = resolve; });
@@ -182,6 +184,46 @@ const draft = {
                     run.artifacts.narration_billing = [];
                     if (loseBillingResponse) { loseBillingResponse = false; return send({detail: 'Billing response lost. Retry the same receipt.'}, 503); }
                     return send({outcome: body.outcome}, 201);
+                }
+                if (url.pathname.endsWith('/storyboard/history')) {
+                    return send([...storyboardHistory].reverse());
+                }
+                if (url.pathname.endsWith('/storyboard/undo')) {
+                    const current = storyboardWorkspace;
+                    assert(current, 'Undo requires a saved Storyboard workspace');
+                    assert.equal(body.expected_version, current.version);
+                    const target = storyboardHistory.find(
+                        item => item.version === current.parent_version,
+                    );
+                    if (!target) return send({detail: 'No earlier Storyboard edit is available to undo'}, 409);
+                    storyboardWorkspace = {
+                        ...target,
+                        version: current.version + 1,
+                        parent_version: target.parent_version,
+                        origin: 'undo',
+                        created_at: '2026-10-06T22:30:00Z',
+                    };
+                    storyboardHistory.push(storyboardWorkspace);
+                    return send(storyboardWorkspace, 201);
+                }
+                if (url.pathname.endsWith('/storyboard')) {
+                    if (request.method() === 'GET') return send(storyboardWorkspace);
+                    const currentVersion = storyboardWorkspace?.version || 0;
+                    if (body.expected_version !== currentVersion) {
+                        return send({detail: 'Storyboard changed; reload the current workspace before saving'}, 409);
+                    }
+                    storyboardWorkspace = {
+                        script_revision: body.script_revision,
+                        version: currentVersion + 1,
+                        parent_version: currentVersion || null,
+                        digest: String(currentVersion + 1).padStart(64, 'a').slice(0, 64),
+                        workspace: body.workspace,
+                        origin: 'operator',
+                        actor: 'control-principal:editor',
+                        created_at: '2026-10-06T22:30:00Z',
+                    };
+                    storyboardHistory.push(storyboardWorkspace);
+                    return send(storyboardWorkspace, 201);
                 }
                 if (url.pathname.endsWith('/images/still-image/revoke')) { stillImages[0].status = 'revoked'; review = {...review, status: 'invalidated', can_approve: false}; return send(stillImages[0]); }
                 if (url.pathname.endsWith('/images')) {
@@ -415,6 +457,17 @@ const draft = {
         });
         await page.locator('#editorial-storyboard input[type=number]:not([data-region])').fill('1.5');
         await page.locator('#editorial-storyboard input[type=checkbox]').check();
+        await page.getByText(/Saved workspace · v\d+/).waitFor();
+        const firstSavedWorkspace = calls.filter(
+            call => call.method === 'POST' && call.path.endsWith('/storyboard'),
+        ).at(-1);
+        assert.equal(firstSavedWorkspace.body.script_revision, 3);
+        assert.equal(firstSavedWorkspace.body.workspace.asset_run_id, 'acquire');
+        assert.equal(firstSavedWorkspace.body.workspace.beats[0].beat_id, 'beat');
+        assert.equal(firstSavedWorkspace.body.workspace.beats[0].layout, 'single');
+        assert.equal(firstSavedWorkspace.body.workspace.beats[0].media[0].candidate_id, 'candidate');
+        assert.equal(firstSavedWorkspace.body.workspace.beats[0].media[0].start_seconds, 1.5);
+        assert.equal(firstSavedWorkspace.body.workspace.beats[0].media[0].freeze, true);
         assert.match(await page.locator("#editorial-timeline-summary").innerText(), /1\/1 visuals assigned/);
         assert.equal(await page.locator("[data-timeline-status]").innerText(), "Footage");
         assert.equal(await page.locator("[data-timeline-beat]").evaluate(node => node.classList.contains("is-ready")), true);
@@ -424,6 +477,17 @@ const draft = {
         assert.equal(await page.locator('#editorial-storyboard input[type=number]:not([data-region])').inputValue(), '1.5');
         await page.locator('#editorial-source-monitor').waitFor({state: 'visible'});
         assert.equal(await page.locator('#editorial-source-monitor-title').innerText(), 'Supporting interview');
+        await page.locator('#editorial-storyboard input[type=number]:not([data-region])').fill('2.0');
+        const previousVersion = storyboardWorkspace.version;
+        await page.getByText(new RegExp(`Saved workspace · v${previousVersion + 1}`)).waitFor();
+        assert.equal(await page.locator('#editorial-storyboard-undo').isDisabled(), false);
+        await page.getByRole('button', {name: 'Undo last edit', exact: true}).click();
+        await page.getByText(/Storyboard restored/).waitFor();
+        assert.equal(
+            await page.locator('#editorial-storyboard input[type=number]:not([data-region])').inputValue(),
+            '1.5',
+        );
+        assert.equal(storyboardWorkspace.origin, 'undo');
         await page.locator('[data-editorial-stage="assets"]').click();
         await page.getByText(/Managed media available/).waitFor();
         await page.locator('[data-editorial-stage="storyboard"]').click();
