@@ -654,10 +654,10 @@ window.KatchaEditorial = (() => {
     }
     function regionFromControls(row, attribute, label) {
         const values = Object.fromEntries(
-            [...row.querySelectorAll(`[${attribute}]`)].map(input => [
-                input.getAttribute(attribute),
-                Number(input.value) / 100,
-            ]),
+            ["x", "y", "width", "height"].map(key => {
+                const input = row.querySelector(`[${attribute}="${key}"]`);
+                return [key, Number(input?.value) / 100];
+            }),
         );
         if (
             ["x", "y", "width", "height"].some(key => !Number.isFinite(values[key]))
@@ -1088,13 +1088,29 @@ window.KatchaEditorial = (() => {
             void loadSourceMonitor();
         }
     }
+    function updateSourceOut(row) {
+        const output = row.querySelector("[data-footage-out]");
+        if (!output) return;
+        const start = Number(row.querySelector('[data-footage="start"]')?.value || 0);
+        const rate = Number(row.querySelector('[data-footage="rate"]')?.value || 1);
+        const duration = Number(row.dataset.beatDuration || 0);
+        const frozen = row.querySelector('[data-footage="freeze"]')?.checked;
+        output.textContent = frozen
+            ? `Held at ${start.toFixed(2)}s`
+            : `Source out ≈ ${(start + duration * rate).toFixed(2)}s`;
+    }
     function showFootageControls() {
         el("editorial-storyboard").querySelectorAll("[data-board-beat]").forEach(row => {
-            const footage = row.querySelector("select").value.startsWith("media:");
-            row.querySelectorAll("input:not([data-region])").forEach(input => { input.closest("label").hidden = !footage; });
-            const image = row.querySelector("select").value.startsWith("image:");
+            const choice = row.querySelector("[data-primary-visual]").value;
+            const footage = choice.startsWith("media:");
+            row.querySelector("[data-footage-tools]").hidden = !footage;
+            row.querySelector("[data-crop-fields]").hidden = !row.querySelector("[data-crop-enabled]").checked;
+            const image = choice.startsWith("image:");
             row.querySelector("[data-image-tools]").hidden = !image;
             row.querySelector("[data-region-fields]").hidden = !row.querySelector('[data-region="kind"]').value;
+            row.querySelector("[data-transition-frame-control]").hidden =
+                row.querySelector("[data-transition]").value !== "fade";
+            updateSourceOut(row);
         });
     }
     function renderStoryboard() {
