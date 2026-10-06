@@ -21,7 +21,6 @@ class StoryboardWorkspaceBeat(Contract):
     layout: Literal[
         "unassigned",
         "single",
-        "comparison",
         "quote",
         "image",
         "image_comparison",
@@ -31,7 +30,7 @@ class StoryboardWorkspaceBeat(Contract):
     image_id: UUID | None = None
     image_ids: list[UUID] = Field(default_factory=list, max_length=2)
     image_push_in: float = Field(default=1, ge=1, le=1.15)
-    overlays: list[VisualOverlay] = Field(default_factory=list, max_length=8)
+    overlays: list[VisualOverlay] = Field(default_factory=list, max_length=1)
 
     @model_validator(mode="after")
     def coherent_partial_visual(self) -> Self:
