@@ -40,19 +40,21 @@ class EditorialScriptSeed(Contract):
     content_sha256: Sha256
     filename: SeedFilename | None = None
     media_type: Literal["text/plain", "text/markdown"] = "text/plain"
-    file_sha256: Sha256 | None = None
+    source_file_sha256: Sha256 | None = None
 
     @model_validator(mode="after")
     def valid_provenance(self) -> Self:
+        if not self.text.strip():
+            raise ValueError("script seed cannot be blank")
         expected = hashlib.sha256(self.text.encode("utf-8")).hexdigest()
         if self.content_sha256 != expected:
             raise ValueError("script seed content hash does not match its text")
         if self.origin == "operator_file":
-            if not self.filename or not self.file_sha256:
-                raise ValueError("uploaded script seeds require filename and file hash")
+            if not self.filename or not self.source_file_sha256:
+                raise ValueError("uploaded script seeds require filename and source file hash")
             if "/" in self.filename or "\\" in self.filename or "\x00" in self.filename:
                 raise ValueError("script seed filename must be a plain file name")
-        elif self.filename is not None or self.file_sha256 is not None:
+        elif self.filename is not None or self.source_file_sha256 is not None:
             raise ValueError("pasted script seeds cannot claim file provenance")
         return self
 
@@ -207,6 +209,7 @@ class EditorialProjectResponse(Contract):
             "draft_storage",
             "evidence_validation",
             "source_intake",
+            "script_seed_import",
             "research",
             "script_generation",
             "asset_scout",
