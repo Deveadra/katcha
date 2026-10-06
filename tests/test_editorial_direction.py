@@ -10,7 +10,7 @@ from test_editorial_projects import saved as _saved
 from test_editorial_research import output
 
 from katcha import db
-from katcha.editorial import direction, provider, source_monitor
+from katcha.editorial import direction, playback, provider, source_monitor
 from katcha.editorial.run_schemas import StartEditorialRun
 from katcha.editorial.visual_schemas import DirectionResult
 from katcha.editorial_models import EditorialProject
@@ -475,6 +475,61 @@ def test_storyboard_source_monitor_rejects_untrusted_frame_storage(directing):
             uuid.UUID(row.options["asset_run_id"]),
             "asset",
         )
+
+
+def test_storyboard_playback_ticket_is_short_lived_and_revalidated(directing):
+    row, _, _ = directing
+    install_media(row)
+    install_monitor_frames()
+    acquired_id = uuid.UUID(row.options["asset_run_id"])
+
+    grant = playback.issue_playback_grant(
+        row.channel_profile_id,
+        row.project_id,
+        acquired_id,
+        "asset",
+        actor="test",
+    )
+    source = playback.resolve_playback_grant(grant.id, grant.token)
+
+    assert source.storage_key == "raw/asset.mp4"
+    assert source.filename == "editorial-source-asset.mp4"
+    with pytest.raises(EditorialConflict, match="invalid"):
+        playback.resolve_playback_grant(grant.id, "wrong-token")
+    with pytest.raises(EditorialConflict, match="expired"):
+        playback.resolve_playback_grant(
+            grant.id,
+            grant.token,
+            now=grant.expires_at,
+        )
+
+
+def test_storyboard_playback_rechecks_current_clearance(directing):
+    from katcha.acquisition_models import RightsAssessment
+
+    row, _, _ = directing
+    candidate_id = install_media(row)
+    install_monitor_frames()
+    acquired_id = uuid.UUID(row.options["asset_run_id"])
+    grant = playback.issue_playback_grant(
+        row.channel_profile_id,
+        row.project_id,
+        acquired_id,
+        "asset",
+        actor="test",
+    )
+    with db.session_scope() as session:
+        session.add(
+            RightsAssessment(
+                discovery_candidate_id=candidate_id,
+                version=2,
+                production_eligible=False,
+                actor="test",
+            )
+        )
+
+    with pytest.raises(EditorialConflict, match="changed or needs current clearance"):
+        playback.resolve_playback_grant(grant.id, grant.token)
 
 
 def test_storyboard_source_monitor_requires_acquired_run(directing):
