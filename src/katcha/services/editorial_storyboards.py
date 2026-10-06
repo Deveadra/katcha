@@ -134,7 +134,6 @@ def _validate_workspace(
                 or image.channel_profile_id != project.channel_profile_id
                 or image.revision != script_revision
                 or image.beat_id != visual.beat_id
-                or image.status != "active"
             ):
                 raise EditorialConflict(
                     "Storyboard image was removed or belongs to another "
@@ -151,7 +150,6 @@ def _validate_workspace(
             or narration.channel_profile_id != project.channel_profile_id
             or narration.revision != script_revision
             or narration.beat_id != beat_id
-            or narration.status != "active"
         ):
             raise EditorialConflict(
                 "Storyboard narration must belong to the matching saved beat"
