@@ -672,7 +672,18 @@ const draft = {
             await page.locator("[data-timeline-beat]").evaluate(node => getComputedStyle(node).flexBasis),
             "128px",
         );
+        const imageWorkspaceSaved = page.waitForResponse(response => {
+            const request = response.request();
+            if (request.method() !== 'POST') return false;
+            if (!new URL(response.url()).pathname.endsWith('/storyboard')) return false;
+            try {
+                return request.postDataJSON()?.workspace?.beats?.[0]?.layout === 'image';
+            } catch {
+                return false;
+            }
+        });
         await page.locator('#editorial-storyboard select[data-primary-visual]').selectOption('image:still-image');
+        await imageWorkspaceSaved;
         await page.locator('#editorial-source-monitor').waitFor({state: 'hidden'});
         await page.locator('[data-editorial-stage="preview"]').click();
         const imageRenderRequest = page.waitForRequest((request) => {
