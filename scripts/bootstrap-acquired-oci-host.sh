@@ -38,7 +38,7 @@ require_command() {
     command -v "$1" >/dev/null 2>&1 || fail "missing required command: $1"
 }
 
-for command in gh curl jq python3 ssh git; do
+for command in gh curl jq python3 ssh ssh-keygen git; do
     require_command "$command"
 done
 
@@ -82,6 +82,11 @@ fi
 [[ -s "$SSH_PUBLIC_KEY_FILE" ]] || fail "missing SSH public key: $SSH_PUBLIC_KEY_FILE"
 [[ -s "$SSH_PRIVATE_KEY_FILE" ]] || fail "missing SSH private key: $SSH_PRIVATE_KEY_FILE"
 chmod 0600 "$SSH_PRIVATE_KEY_FILE"
+
+target_public_key="$(awk '{print $1 " " $2}' "$SSH_PUBLIC_KEY_FILE")"
+derived_target_public_key="$(ssh-keygen -y -f "$SSH_PRIVATE_KEY_FILE")"
+[[ "$derived_target_public_key" == "$target_public_key" ]] ||
+    fail "SSH private key does not match Katcha target public key"
 
 mkdir -p "$(dirname "$OCI_CONFIG_FILE")"
 chmod 0700 "$(dirname "$OCI_CONFIG_FILE")"
@@ -482,12 +487,34 @@ if [[ "$desired_nsgs" != "$current_nsgs" ]]; then
         --force >/dev/null
 fi
 
+session_key_dir="$(mktemp -d)"
+session_private_key="$session_key_dir/id_rsa"
+session_public_key="$session_private_key.pub"
+known_hosts="$(mktemp)"
+tunnel_log="$(mktemp)"
+tunnel_pid=""
+cleanup() {
+    if [[ -n "$tunnel_pid" ]]; then
+        kill "$tunnel_pid" >/dev/null 2>&1 || true
+        wait "$tunnel_pid" >/dev/null 2>&1 || true
+    fi
+    rm -rf "$session_key_dir"
+    rm -f "$known_hosts" "$tunnel_log"
+}
+trap cleanup EXIT
+
+# OCI recommends a fresh SSH key pair for every Bastion session. Use a
+# short-lived RSA key for the Bastion hop while retaining the persistent
+# Katcha key only for the target Ubuntu instance.
+ssh-keygen -q -t rsa -b 3072 -N '' -f "$session_private_key"
+chmod 0600 "$session_private_key"
+
 log "Creating a three-hour SSH port-forwarding Bastion session"
 session_id="$(
     oci_cmd bastion session create-port-forwarding \
         --bastion-id "$bastion_id" \
         --display-name "katcha-bootstrap" \
-        --ssh-public-key-file "$SSH_PUBLIC_KEY_FILE" \
+        --ssh-public-key-file "$session_public_key" \
         --target-private-ip "$private_ip" \
         --target-port 22 \
         --session-ttl 10800 \
@@ -508,22 +535,11 @@ for _ in $(seq 1 60); do
 done
 [[ "${session_state:-}" == "ACTIVE" ]] || fail "Bastion session did not become ACTIVE"
 
-known_hosts="$(mktemp)"
-tunnel_log="$(mktemp)"
-tunnel_pid=""
-cleanup() {
-    if [[ -n "$tunnel_pid" ]]; then
-        kill "$tunnel_pid" >/dev/null 2>&1 || true
-        wait "$tunnel_pid" >/dev/null 2>&1 || true
-    fi
-    rm -f "$known_hosts" "$tunnel_log"
-}
-trap cleanup EXIT
-
 bastion_host="host.bastion.$OCI_REGION.oci.oraclecloud.com"
 ssh \
-    -i "$SSH_PRIVATE_KEY_FILE" \
+    -i "$session_private_key" \
     -o IdentitiesOnly=yes \
+    -o PubkeyAcceptedAlgorithms=+ssh-rsa \
     -o StrictHostKeyChecking=accept-new \
     -o UserKnownHostsFile="$known_hosts" \
     -o ExitOnForwardFailure=yes \
