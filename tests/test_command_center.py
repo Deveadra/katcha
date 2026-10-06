@@ -35,6 +35,7 @@ def test_command_center_routes_are_mounted() -> None:
     assert "/v1/ai/actions/{proposal_id}" in paths
     assert "/v1/ai/actions/{proposal_id}/activity" in paths
     assert "/v1/ai/actions/{proposal_id}/execute" in paths
+    assert "/v1/ai/actions/{proposal_id}/reject" in paths
     assert "/v1/ai/observability" in paths
     assert "/v1/ai/threads" in paths
     assert "/v1/ai/threads/{thread_id}" in paths
@@ -284,6 +285,79 @@ async def test_named_source_action_starts_search_and_prepare_workflow(
     assert captured["ingest_task_queue"] == "katcha-media"
     assert result["prepare_for_production"] is True
     assert result["workflow_id"] == f"command-source-prepare-{run_id}"
+
+
+async def test_editorial_storyboard_edit_executes_exact_frozen_beat(
+    monkeypatch,
+) -> None:
+    project_id = uuid.uuid4()
+    asset_run_id = uuid.uuid4()
+    captured = {}
+
+    def apply_edit(channel_id, project, **kwargs):
+        captured.update(
+            channel_id=channel_id,
+            project_id=project,
+            **kwargs,
+        )
+        return SimpleNamespace(
+            project_id=project,
+            script_revision=kwargs["script_revision"],
+            version=5,
+            parent_version=4,
+            origin="ai_apply",
+        )
+
+    monkeypatch.setattr(
+        "katcha.services.editorial_storyboards.apply_storyboard_beat_edit",
+        apply_edit,
+    )
+    proposal = SimpleNamespace(
+        id=uuid.uuid4(),
+        idempotency_key="goal-step:fixture",
+        request_id=uuid.uuid4(),
+        channel_profile_id=uuid.uuid4(),
+        action_type="editorial_storyboard_edit",
+        payload={
+            "project_id": str(project_id),
+            "script_revision": 3,
+            "expected_workspace_version": 4,
+            "asset_run_id": str(asset_run_id),
+            "beat": {
+                "beat_id": "beat-1",
+                "layout": "single",
+                "media": [
+                    {
+                        "candidate_id": "candidate-1",
+                        "start_seconds": 2.5,
+                        "freeze": True,
+                    }
+                ],
+            },
+            "rationale": "Use the closer observed shot.",
+        },
+    )
+
+    result = await command_api._execute_proposal(
+        proposal,  # type: ignore[arg-type]
+        actor="control-principal:editor",
+    )
+
+    assert captured["project_id"] == project_id
+    assert captured["script_revision"] == 3
+    assert captured["expected_version"] == 4
+    assert captured["asset_run_id"] == asset_run_id
+    assert captured["beat"].beat_id == "beat-1"
+    assert captured["beat"].media[0].candidate_id == "candidate-1"
+    assert captured["idempotency_key"] == "goal-step:fixture"
+    assert result == {
+        "project_id": str(project_id),
+        "script_revision": 3,
+        "workspace_version": 5,
+        "parent_version": 4,
+        "beat_id": "beat-1",
+        "origin": "ai_apply",
+    }
 
 
 def test_selected_clip_explanation_is_read_only_intent() -> None:

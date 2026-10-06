@@ -12,6 +12,7 @@ from katcha.command_center_models import (
     CommandTurn,
 )
 from katcha.db import session_scope
+from katcha.goal_models import CommandGoal, CommandGoalStep
 from katcha.models import DomainEvent
 from katcha.services.channel_profiles import ensure_active_profile
 
@@ -331,6 +332,120 @@ def complete_action_proposal(
                     },
                 )
             )
+        session.flush()
+        session.refresh(proposal)
+        session.expunge(proposal)
+        return proposal
+
+
+def reject_action_proposal(
+    proposal_id: uuid.UUID,
+    *,
+    actor: str,
+    reason: str = "",
+    credential_id: str | None = None,
+    credential_fingerprint: str | None = None,
+) -> CommandActionProposal:
+    with session_scope() as session:
+        proposal = session.scalar(
+            select(CommandActionProposal)
+            .where(CommandActionProposal.id == proposal_id)
+            .with_for_update()
+        )
+        if proposal is None:
+            raise ValueError(f"command action proposal not found: {proposal_id}")
+        if proposal.status == "rejected":
+            session.expunge(proposal)
+            return proposal
+        if proposal.status not in {"proposed", "failed"}:
+            raise ValueError(
+                f"command action proposal cannot be rejected from status {proposal.status}"
+            )
+        proposal.status = "rejected"
+        proposal.result = {
+            "rejected": True,
+            "reason": reason[:1000],
+        }
+        proposal.error = None
+
+        goal_step = session.scalar(
+            select(CommandGoalStep).where(
+                CommandGoalStep.proposal_id == proposal.id
+            )
+        )
+        if goal_step is not None:
+            goal = session.scalar(
+                select(CommandGoal)
+                .where(CommandGoal.id == goal_step.goal_id)
+                .with_for_update()
+            )
+            if goal is None:
+                raise ValueError("saved goal for this proposal was not found")
+            if goal.actor != actor:
+                raise ValueError("This saved goal belongs to a different actor")
+            rejection_result = {
+                "rejected": True,
+                "reason": reason[:1000],
+                "proposal_id": str(proposal.id),
+            }
+            goal_step.status = "observed"
+            goal_step.result = rejection_result
+            goal_step.error = None
+            if goal.status not in {
+                "completed",
+                "blocked",
+                "needs_input",
+                "failed",
+                "cancelled",
+            }:
+                goal.observations = [
+                    *list(goal.observations or []),
+                    {
+                        "step": goal_step.number,
+                        "tool": goal_step.decision.get("tool"),
+                        "arguments": goal_step.decision.get("arguments", {}),
+                        "result": rejection_result,
+                        "error": None,
+                    },
+                ]
+                goal.step_count = max(goal.step_count, goal_step.number + 1)
+                goal.status = "cancelled"
+                goal.summary = "Proposal rejected. No action was applied."
+                goal.result = {
+                    "answer": goal.summary,
+                    "thread_id": str(goal.thread_id),
+                    "request_id": str(goal.command_id),
+                    "intent": "goal_cancelled",
+                    "narrator": "Katcha goal runner",
+                    "evidence": [],
+                    "actions": [],
+                }
+
+        session.add(
+            DomainEvent(
+                aggregate_type="command_action_proposal",
+                aggregate_id=str(proposal.id),
+                event_type="command_center.proposal_rejected",
+                payload={
+                    "proposal_id": str(proposal.id),
+                    "request_id": str(proposal.request_id),
+                    "thread_id": (
+                        str(proposal.thread_id) if proposal.thread_id else None
+                    ),
+                    "source_turn_id": (
+                        str(proposal.source_turn_id)
+                        if proposal.source_turn_id
+                        else None
+                    ),
+                    "channel_profile_id": str(proposal.channel_profile_id),
+                    "action_type": proposal.action_type,
+                    "actor": actor,
+                    "credential_id": credential_id,
+                    "credential_fingerprint": credential_fingerprint,
+                    "reason": reason[:1000],
+                },
+            )
+        )
         session.flush()
         session.refresh(proposal)
         session.expunge(proposal)

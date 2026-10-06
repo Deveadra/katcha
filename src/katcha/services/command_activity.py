@@ -32,6 +32,9 @@ _WORKFLOW_CYCLE_EVENTS = {
     "command_center.workflow_cycle_completed",
     "command_center.workflow_cycle_failed",
 }
+_SYNCHRONOUS_ACTION_TYPES = {
+    "editorial_storyboard_edit",
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -232,7 +235,7 @@ def _state(
     resource: ActionResourceActivity | None,
     terminal_event: DomainEvent | None,
 ) -> tuple[str, bool]:
-    if proposal.status in {"expired", "failed"}:
+    if proposal.status in {"expired", "failed", "rejected"}:
         return proposal.status, True
     if proposal.status in {"proposed", "executing"}:
         return proposal.status, False
@@ -250,6 +253,11 @@ def _state(
         return status, False
 
     if resource is None:
+        if (
+            proposal.status == "executed"
+            and proposal.action_type in _SYNCHRONOUS_ACTION_TYPES
+        ):
+            return "executed", True
         if proposal.status == "executed":
             return "workflow_started", False
         return proposal.status, False

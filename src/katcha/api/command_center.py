@@ -64,6 +64,7 @@ from katcha.services.command_actions import (
     create_action_proposals,
     fail_action_proposal,
     get_action_proposal,
+    reject_action_proposal,
 )
 from katcha.services.command_activity import get_action_activity
 from katcha.services.command_center import (
@@ -124,6 +125,7 @@ ActionType = Literal[
     "create_ranked_short_episode",
     "recover_production_render",
     "start_source_scout",
+    "editorial_storyboard_edit",
 ]
 
 ResourceKind = Literal[
@@ -387,6 +389,10 @@ def command_observability(
 
 class ExecuteActionRequest(BaseModel):
     confirmed: bool
+
+
+class RejectActionRequest(BaseModel):
+    reason: str = Field(default="", max_length=1000)
 
 
 class ExecuteActionResponse(BaseModel):
@@ -1697,6 +1703,34 @@ def action_activity(
     )
 
 
+@router.post(
+    "/actions/{proposal_id}/reject",
+    response_model=ActionProposalStatusResponse,
+)
+def reject_action(
+    proposal_id: uuid.UUID,
+    http_request: Request,
+    request: RejectActionRequest,
+) -> ActionProposalStatusResponse:
+    require_control_scope(http_request, "ai:write")
+    actor = control_actor(http_request)
+    credential_id = control_credential_id(http_request)
+    credential_fingerprint = control_credential_fingerprint(http_request)
+    try:
+        current = get_action_proposal(proposal_id)
+        require_control_channel(http_request, current.channel_profile_id)
+        proposal = reject_action_proposal(
+            proposal_id,
+            actor=actor,
+            reason=request.reason,
+            credential_id=credential_id,
+            credential_fingerprint=credential_fingerprint,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return _proposal_status(proposal)
+
+
 @router.get(
     "/actions/{proposal_id}",
     response_model=ActionProposalStatusResponse,
@@ -1727,6 +1761,35 @@ async def _execute_proposal(
     if proposal.action_type == "native_tool":
         from katcha.services.goal_runner import execute_native_goal_proposal
         return await execute_native_goal_proposal(proposal, actor)
+
+    if proposal.action_type == "editorial_storyboard_edit":
+        from katcha.editorial.storyboard_schemas import StoryboardWorkspaceBeat
+        from katcha.services.editorial_storyboards import (
+            apply_storyboard_beat_edit,
+        )
+
+        row = apply_storyboard_beat_edit(
+            proposal.channel_profile_id,
+            uuid.UUID(str(payload["project_id"])),
+            script_revision=int(payload["script_revision"]),
+            expected_version=int(payload["expected_workspace_version"]),
+            beat=StoryboardWorkspaceBeat.model_validate(payload["beat"]),
+            asset_run_id=(
+                uuid.UUID(str(payload["asset_run_id"]))
+                if payload.get("asset_run_id")
+                else None
+            ),
+            idempotency_key=proposal.idempotency_key,
+            actor=actor,
+        )
+        return {
+            "project_id": str(row.project_id),
+            "script_revision": row.script_revision,
+            "workspace_version": row.version,
+            "parent_version": row.parent_version,
+            "beat_id": str(payload["beat"]["beat_id"]),
+            "origin": row.origin,
+        }
 
     if proposal.action_type == "refresh_channel_intelligence":
         run_key = f"command-proposal-{proposal.id}"

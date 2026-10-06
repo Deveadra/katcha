@@ -101,6 +101,11 @@ def test_catalog_native_schemas_resolve_registered_operations():
     assert TOOLS["publish_production"].confirm
     assert TOOLS["review_editorial_render"].confirm
     assert TOOLS["review_editorial_render"].retry_safe
+    assert TOOLS["propose_editorial_storyboard_edit"].confirm
+    assert TOOLS["propose_editorial_storyboard_edit"].retry_safe
+    edit_schema = tool_schema("propose_editorial_storyboard_edit")
+    assert "expected_workspace_version" in edit_schema["properties"]
+    assert "beat" in edit_schema["properties"]
     assert not TOOLS["publish_production"].retry_safe
     assert "path" in tool_schema("save_watch")["properties"]
 
@@ -164,6 +169,98 @@ async def test_proposal_mode_and_cancel_stop_frozen_action(saved, monkeypatch):
     with pytest.raises(ValueError, match="stopped"):
         goal_runner.validate_goal_proposal(proposal, "local-development")
     assert await goal_runner.advance_goal(goal.id) == "cancelled"
+
+
+async def test_rejecting_waiting_goal_closes_frozen_step(saved, monkeypatch):
+    from katcha.services.command_actions import reject_action_proposal
+
+    goal = receipt(saved[0], "Propose a Storyboard change")
+    monkeypatch.setattr(
+        goal_runner,
+        "decide_goal",
+        lambda **kwargs: decision(
+            "save_watch",
+            {"body": {"watch_key": "storyboard-fixture", "name": "Fixture"}},
+            allowed=["save_watch"],
+            mode="propose",
+        ),
+    )
+    assert await goal_runner.advance_goal(goal.id) == "waiting_confirmation"
+
+    with db.session_scope() as session:
+        step = session.scalar(
+            select(CommandGoalStep).where(CommandGoalStep.goal_id == goal.id)
+        )
+        proposal_id = step.proposal_id
+
+    rejected = reject_action_proposal(
+        proposal_id,
+        actor="local-development",
+        reason="Operator wants a different edit.",
+    )
+    assert rejected.status == "rejected"
+
+    current = get_goal(goal.id)
+    assert current.status == "cancelled"
+    assert current.summary == "Proposal rejected. No action was applied."
+    assert current.result["intent"] == "goal_cancelled"
+    assert current.result["actions"] == []
+    assert current.observations[-1]["result"]["rejected"] is True
+    assert current.observations[-1]["result"]["proposal_id"] == str(proposal_id)
+
+    with db.session_scope() as session:
+        step = session.scalar(
+            select(CommandGoalStep).where(CommandGoalStep.goal_id == goal.id)
+        )
+        assert step.status == "observed"
+        assert step.result["rejected"] is True
+
+
+def test_durable_goal_preserves_editorial_beat_selector_and_revision(
+    saved,
+    monkeypatch,
+):
+    from katcha.services.goal_receipts import selected_resource_evidence
+
+    project_id = uuid.uuid4()
+    captured = {}
+
+    def resolve(channel_id, refs):
+        captured["channel_id"] = channel_id
+        captured["refs"] = refs
+        return [
+            {
+                "kind": "editorial_project",
+                "id": str(project_id),
+                "selected_beat": {"id": "beat-1", "revision": 3},
+            }
+        ]
+
+    monkeypatch.setattr(
+        "katcha.services.command_resources.resolve_command_resources",
+        resolve,
+    )
+    evidence = selected_resource_evidence(
+        {
+            "channel_profile_id": str(saved[0]),
+            "resource_refs": [
+                {
+                    "kind": "editorial_project",
+                    "id": str(project_id),
+                    "selector": "beat-1",
+                    "revision": 3,
+                }
+            ],
+            "selected_clip_ids": [],
+            "selected_production_id": None,
+        }
+    )
+
+    assert captured["channel_id"] == saved[0]
+    assert captured["refs"] == [
+        ("editorial_project", project_id, "beat-1", 3)
+    ]
+    assert evidence[0]["selected_beat"] == {"id": "beat-1", "revision": 3}
 
 
 async def test_uncertain_mutation_is_not_repeated(saved, monkeypatch):
@@ -382,6 +479,120 @@ async def test_pending_decision_survives_retry_without_new_inference(saved, monk
     monkeypatch.setattr(goal_runner, "decide_goal", lambda **kwargs: pytest.fail("Already saved"))
     assert await goal_runner.advance_goal(goal.id) == "running"
     assert get_goal(goal.id).step_count == 1
+
+
+def test_storyboard_edit_proposal_freezes_observed_workspace_identity(
+    saved,
+    monkeypatch,
+):
+    from katcha.services.goal_tools import action_spec
+
+    project_id = uuid.uuid4()
+    asset_run_id = uuid.uuid4()
+    monkeypatch.setattr(
+        "katcha.services.goal_tools.selected_resource_evidence",
+        lambda request: [
+            {
+                "kind": "editorial_project",
+                "id": str(project_id),
+                "selected_beat": {
+                    "id": "beat-1",
+                    "revision": 3,
+                    "storyboard": {
+                        "workspace_version": 4,
+                        "asset_run_id": str(asset_run_id),
+                        "visual": {
+                            "media": [{"candidate_id": "candidate-1"}],
+                        },
+                    },
+                },
+            }
+        ],
+    )
+    goal = receipt(saved[0], "Use the close-up for this beat")
+    with db.session_scope() as session:
+        current = session.get(CommandGoal, goal.id)
+        current.request = {
+            **current.request,
+            "resource_refs": [
+                {
+                    "kind": "editorial_project",
+                    "id": str(project_id),
+                    "selector": "beat-1",
+                    "revision": 3,
+                }
+            ],
+        }
+        current.observations = [
+            {
+                "step": 0,
+                "tool": "editorial_storyboard",
+                "result": {
+                    "project_id": str(project_id),
+                    "asset_run_id": str(asset_run_id),
+                    "version": 4,
+                },
+            }
+        ]
+    goal = get_goal(goal.id)
+    spec = action_spec(
+        goal,
+        "propose_editorial_storyboard_edit",
+        {
+            "project_id": str(project_id),
+            "script_revision": 3,
+            "expected_workspace_version": 4,
+            "asset_run_id": str(asset_run_id),
+            "beat": {
+                "beat_id": "beat-1",
+                "layout": "single",
+                "media": [
+                    {
+                        "candidate_id": "candidate-1",
+                        "start_seconds": 2.5,
+                    }
+                ],
+            },
+            "rationale": "Use the closer acquired shot for the named clue.",
+        },
+        uuid.uuid4(),
+    )
+    assert spec.action_type == "editorial_storyboard_edit"
+    assert spec.payload["project_id"] == str(project_id)
+    assert spec.payload["expected_workspace_version"] == 4
+    assert spec.payload["beat"]["beat_id"] == "beat-1"
+    assert spec.payload["beat"]["media"][0]["candidate_id"] == "candidate-1"
+
+    with pytest.raises(ValueError, match="observed project, run and image"):
+        action_spec(
+            goal,
+            "propose_editorial_storyboard_edit",
+            {
+                **spec.payload,
+                "project_id": str(uuid.uuid4()),
+            },
+            uuid.uuid4(),
+        )
+
+    invented = {
+        **spec.payload,
+        "beat": {
+            **spec.payload["beat"],
+            "media": [
+                {
+                    **spec.payload["beat"]["media"][0],
+                    "candidate_id": "invented-candidate",
+                }
+            ],
+        },
+    }
+    with pytest.raises(ValueError, match="observed Editorial records"):
+        action_spec(
+            goal,
+            "propose_editorial_storyboard_edit",
+            invented,
+            uuid.uuid4(),
+        )
 
 
 def test_workflow_cancellation_rejects_unobserved_target(saved):
