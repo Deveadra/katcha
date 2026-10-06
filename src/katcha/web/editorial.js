@@ -2,7 +2,7 @@
 window.KatchaEditorial = (() => {
     const el = (id) => document.getElementById(id);
     const esc = (value) => String(value ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
-    const state = { channel: "", epoch: 0, project: null, revision: null, run: null, busy: false, timer: null, editorKey: "", sourceClipBindings: {}, clipResults: [], clipPickerEpoch: 0, clipSearchTimer: null, scriptSeedMeta: null, sourceMonitorKey: "", sourceMonitorUrl: null, sourceMonitorEpoch: 0 };
+    const state = { channel: "", epoch: 0, project: null, revision: null, run: null, busy: false, timer: null, editorKey: "", sourceClipBindings: {}, clipResults: [], clipPickerEpoch: 0, clipSearchTimer: null, scriptSeedMeta: null, sourceMonitorKey: "", sourceMonitorUrl: null, sourceMonitorEpoch: 0, storyboardWorkspace: null, storyboardSaveTimer: null, storyboardSaving: false, storyboardDirty: false };
     let api, apiBlob;
     function previewReady() {
         return state.run?.stage === "render_ready_for_review" && state.run?.status === "completed";
@@ -412,6 +412,7 @@ window.KatchaEditorial = (() => {
         if (state.project?.id !== id) window.KatchaFrameInspector.reset();
         if (state.project?.id !== id) el("editorial-narration-confirm").checked = false;
         clearTimeout(state.timer);
+        clearTimeout(state.storyboardSaveTimer);
         if (state.project?.id !== id) window.KatchaEditorialHistory.reset();
         const epoch = ++state.epoch;
         const channel = state.channel;
@@ -423,8 +424,13 @@ window.KatchaEditorial = (() => {
         const run = runs[0] ? await api(`${base}/runs/${encodeURIComponent(runs[0].editorial_run_id)}`) : null;
         const review = run?.target === "render" && run.status === "completed"
             ? await api(`${base}/runs/${encodeURIComponent(run.editorial_run_id)}/review`).catch(error => ({error: error.message})) : null;
-        const narration = project.revision > 0 ? await api(`${base}/narration?revision=${project.revision}`).catch(error => ({error: error.message, recordings: []})) : {voice_enabled: true, recordings: []};
-        const images = project.revision > 0 ? await api(`${base}/images?revision=${project.revision}`).catch(error => ({error: error.message, images: []})) : {images: []};
+        const [narration, images, storyboardWorkspace] = project.revision > 0
+            ? await Promise.all([
+                api(`${base}/narration?revision=${project.revision}`).catch(error => ({error: error.message, recordings: []})),
+                api(`${base}/images?revision=${project.revision}`).catch(error => ({error: error.message, images: []})),
+                api(`${base}/storyboard?script_revision=${project.revision}`).catch(error => ({error: error.message})),
+            ])
+            : [{voice_enabled: true, recordings: []}, {images: []}, null];
         const acquisition = runs.find(item => item.target === "acquire_assets" && item.status === "completed" && item.input_revision === project.revision);
         const assetRun = acquisition ? (acquisition.editorial_run_id === run?.editorial_run_id ? run : await api(`${base}/runs/${encodeURIComponent(acquisition.editorial_run_id)}`)) : null;
         const directed = runs.find(item => item.target === "direction" && item.status === "completed" && item.input_revision === project.revision);
@@ -438,6 +444,11 @@ window.KatchaEditorial = (() => {
         state.project = project; state.revision = revisions[0] || null; state.run = run;
         state.stale = Boolean(pending && pending.revision < project.revision);
         if (state.stale) state.revision = pending;
+        state.storyboardWorkspace = !state.stale && storyboardWorkspace?.workspace
+            ? storyboardWorkspace
+            : null;
+        state.storyboardDirty = false;
+        state.storyboardSaving = false;
         el("editorial-detail").hidden = false;
         el("editorial-title").textContent = project.brief.prompt;
         el("editorial-status").textContent = run
