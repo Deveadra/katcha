@@ -315,7 +315,8 @@ function renderSelection() {
         parts.push(
             ref.kind.replaceAll("_", " ") +
                 " " +
-                String(ref.id).slice(0, 8),
+                String(ref.id).slice(0, 8) +
+                (ref.selector ? " · beat " + ref.selector : ""),
         );
     }
     host.hidden = false;
@@ -424,6 +425,7 @@ function applyDeepLinkContext() {
     const requestedChannel = launchParams.get("channel");
     const kind = launchParams.get("resource_kind");
     const id = launchParams.get("resource_id");
+    const selector = launchParams.get("resource_selector");
     const prompt = launchParams.get("prompt");
     const allowedKinds = new Set([
         "clip",
@@ -441,13 +443,18 @@ function applyDeepLinkContext() {
         state.threadId = "";
         state.selectedClipIds = [];
         state.selectedProductionId = kind === "production" ? id : null;
-        state.resourceRefs = [{ kind, id }];
+        state.resourceRefs = [{
+            kind,
+            id,
+            ...(kind === "editorial_project" && selector ? {selector} : {}),
+        }];
         $("thread-history").value = "";
         $("archive-thread").disabled = true;
         resetConversationView(
             "Typed " +
                 kind.replaceAll("_", " ") +
-                " context is attached from another Katcha workspace.",
+                (kind === "editorial_project" && selector ? " beat context" : " context") +
+                " is attached from another Katcha workspace.",
         );
         renderSelection();
     }
