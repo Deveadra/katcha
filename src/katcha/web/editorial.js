@@ -552,14 +552,37 @@ window.KatchaEditorial = (() => {
         }).join("");
     }
     function boardStorage() { return storageKey(`board.${state.project.id}.${state.project.revision}.${state.assetRun?.editorial_run_id || "none"}`); }
-    function saveStoryboard() {
-        const rows = [...el("editorial-storyboard").querySelectorAll("[data-board-beat]")].map(row => ({
-            choice: row.querySelector("select").value, start: row.querySelector("input[type=number]").value,
-            freeze: row.querySelector("input[type=checkbox]").checked,
+    function rawStoryboardRows() {
+        return [...el("editorial-storyboard").querySelectorAll("[data-board-beat]")].map(row => ({
+            choice: row.querySelector("[data-primary-visual]").value,
+            start: row.querySelector('[data-footage="start"]').value,
+            rate: row.querySelector('[data-footage="rate"]').value,
+            push: row.querySelector('[data-footage="push"]').value,
+            freeze: row.querySelector('[data-footage="freeze"]').checked,
+            cropEnabled: row.querySelector("[data-crop-enabled]").checked,
+            crop: Object.fromEntries(
+                [...row.querySelectorAll("[data-crop]")].map(input => [
+                    input.dataset.crop,
+                    input.value,
+                ]),
+            ),
+            imagePush: row.querySelector("[data-image-push]").value,
             compare: row.querySelector("[data-image-compare]").value,
-            annotation: Object.fromEntries([...row.querySelectorAll("[data-region]")].map(input => [input.dataset.region, input.value])),
+            annotation: Object.fromEntries(
+                [...row.querySelectorAll("[data-region]")].map(input => [
+                    input.dataset.region,
+                    input.value,
+                ]),
+            ),
+            captionPosition: row.querySelector("[data-caption-position]").value,
+            captionScale: row.querySelector("[data-caption-scale]").value,
+            captionBackground: row.querySelector("[data-caption-background]").checked,
+            transition: row.querySelector("[data-transition]").value,
+            transitionFrames: row.querySelector("[data-transition-frames]").value,
         }));
-        remember(boardStorage(), rows);
+    }
+    function saveStoryboard() {
+        remember(boardStorage(), rawStoryboardRows());
     }
     function workspaceSavedRows(workspace) {
         return (workspace?.beats || []).map(beat => {
@@ -575,11 +598,22 @@ window.KatchaEditorial = (() => {
                 choice = `image:${beat.image_ids[0]}`;
                 compare = beat.image_ids[1];
             }
+            const media = beat.media?.[0] || {};
             const overlay = beat.overlays?.[0];
             return {
                 choice,
-                start: String(beat.media?.[0]?.start_seconds ?? 0),
-                freeze: Boolean(beat.media?.[0]?.freeze),
+                start: String(media.start_seconds ?? 0),
+                rate: String(media.playback_rate ?? 1),
+                push: String(media.push_in ?? 1),
+                freeze: Boolean(media.freeze),
+                cropEnabled: Boolean(media.crop),
+                crop: media.crop ? {
+                    x: String(Number(media.crop.x) * 100),
+                    y: String(Number(media.crop.y) * 100),
+                    width: String(Number(media.crop.width) * 100),
+                    height: String(Number(media.crop.height) * 100),
+                } : {},
+                imagePush: String(beat.image_push_in ?? 1),
                 compare,
                 annotation: overlay ? {
                     kind: overlay.kind,
@@ -590,6 +624,11 @@ window.KatchaEditorial = (() => {
                     height: String(Number(overlay.region.height) * 100),
                     label: overlay.label || "",
                 } : {},
+                captionPosition: beat.caption_position || "bottom",
+                captionScale: String(beat.caption_scale ?? 1),
+                captionBackground: Boolean(beat.caption_background),
+                transition: beat.transition || "cut",
+                transitionFrames: String(beat.transition_frames ?? 8),
             };
         });
     }
@@ -606,12 +645,119 @@ window.KatchaEditorial = (() => {
             ),
         });
     }
+    function boundedNumber(row, selector, label, min, max) {
+        const value = Number(row.querySelector(selector).value);
+        if (!Number.isFinite(value) || value < min || value > max) {
+            throw new Error(`${label} must be between ${min} and ${max}.`);
+        }
+        return value;
+    }
+    function regionFromControls(row, attribute, label) {
+        const values = Object.fromEntries(
+            [...row.querySelectorAll(`[${attribute}]`)].map(input => [
+                input.getAttribute(attribute),
+                Number(input.value) / 100,
+            ]),
+        );
+        if (
+            ["x", "y", "width", "height"].some(key => !Number.isFinite(values[key]))
+            || values.x < 0
+            || values.y < 0
+            || values.width <= 0
+            || values.height <= 0
+            || values.x + values.width > 1
+            || values.y + values.height > 1
+        ) {
+            throw new Error(`Keep the ${label} within the original source (0–100%).`);
+        }
+        return values;
+    }
+    function beatTreatment(row) {
+        const captionScale = boundedNumber(
+            row,
+            "[data-caption-scale]",
+            "Caption scale",
+            0.75,
+            1.35,
+        );
+        const transition = row.querySelector("[data-transition]").value;
+        const transitionFrames = boundedNumber(
+            row,
+            "[data-transition-frames]",
+            "Fade length",
+            3,
+            15,
+        );
+        return {
+            caption_position: row.querySelector("[data-caption-position]").value,
+            caption_scale: captionScale,
+            caption_background: row.querySelector("[data-caption-background]").checked,
+            transition,
+            transition_frames: transitionFrames,
+        };
+    }
+    function footageUse(row, candidateId) {
+        const start = boundedNumber(
+            row,
+            '[data-footage="start"]',
+            "Footage start",
+            0,
+            Number.MAX_SAFE_INTEGER,
+        );
+        const playbackRate = boundedNumber(
+            row,
+            '[data-footage="rate"]',
+            "Playback speed",
+            0.25,
+            2,
+        );
+        const pushIn = boundedNumber(
+            row,
+            '[data-footage="push"]',
+            "Push-in",
+            1,
+            1.15,
+        );
+        const crop = row.querySelector("[data-crop-enabled]").checked
+            ? regionFromControls(row, "data-crop", "crop")
+            : null;
+        return {
+            candidate_id: candidateId,
+            start_seconds: start,
+            playback_rate: playbackRate,
+            freeze: row.querySelector('[data-footage="freeze"]').checked,
+            push_in: pushIn,
+            ...(crop ? {crop} : {}),
+        };
+    }
+    function imageOverlay(row, compare) {
+        const kind = row.querySelector('[data-region="kind"]').value;
+        if (!kind) return [];
+        const region = regionFromControls(row, "data-region", "annotation");
+        const target = row.querySelector('[data-region="target"]').value;
+        if (target === "1" && !compare) {
+            throw new Error("Choose a second image before marking it.");
+        }
+        return [{
+            kind,
+            media_index: Number(target),
+            region,
+            label: row.querySelector('[data-region="label"]').value.trim() || null,
+        }];
+    }
     function storyboardWorkspaceDraft() {
         const rows = [...el("editorial-storyboard").querySelectorAll("[data-board-beat]")];
         if (!rows.length) return null;
         const beats = rows.map(row => {
+            const treatment = beatTreatment(row);
             const value = row.querySelector("[data-primary-visual]").value;
-            if (!value) return {beat_id: row.dataset.boardBeat, layout: "unassigned"};
+            if (!value) {
+                return {
+                    beat_id: row.dataset.boardBeat,
+                    layout: "unassigned",
+                    ...treatment,
+                };
+            }
             const [kind, ...parts] = value.split(":");
             const id = parts.join(":");
             if (kind === "quote") {
@@ -619,65 +765,32 @@ window.KatchaEditorial = (() => {
                     beat_id: row.dataset.boardBeat,
                     layout: "quote",
                     quote_source_id: id,
+                    ...treatment,
                 };
             }
             if (kind === "media") {
-                const start = Number(row.querySelector("input[type=number]").value);
-                if (!Number.isFinite(start) || start < 0) {
-                    throw new Error("Enter a valid footage start time.");
-                }
                 return {
                     beat_id: row.dataset.boardBeat,
                     layout: "single",
-                    media: [{
-                        candidate_id: id,
-                        start_seconds: start,
-                        freeze: row.querySelector("input[type=checkbox]").checked,
-                    }],
+                    media: [footageUse(row, id)],
+                    ...treatment,
                 };
             }
             if (kind !== "image") throw new Error("Choose a supported visual.");
             const compare = row.querySelector("[data-image-compare]").value;
-            const annotation = Object.fromEntries(
-                [...row.querySelectorAll("[data-region]")].map(input => [
-                    input.dataset.region,
-                    input.value,
-                ]),
-            );
-            const overlays = [];
-            if (annotation.kind) {
-                const region = Object.fromEntries(
-                    ["x", "y", "width", "height"].map(key => [
-                        key,
-                        Number(annotation[key]) / 100,
-                    ]),
-                );
-                if (
-                    Object.values(region).some(value => !Number.isFinite(value))
-                    || region.x < 0
-                    || region.y < 0
-                    || region.width <= 0
-                    || region.height <= 0
-                    || region.x + region.width > 1
-                    || region.y + region.height > 1
-                ) {
-                    throw new Error("Keep the annotation within the original image.");
-                }
-                if (annotation.target === "1" && !compare) {
-                    throw new Error("Choose a second image before marking it.");
-                }
-                overlays.push({
-                    kind: annotation.kind,
-                    media_index: Number(annotation.target),
-                    region,
-                    label: annotation.label.trim() || null,
-                });
-            }
             return {
                 beat_id: row.dataset.boardBeat,
                 layout: compare ? "image_comparison" : "image",
                 ...(compare ? {image_ids: [id, compare]} : {image_id: id}),
-                overlays,
+                image_push_in: boundedNumber(
+                    row,
+                    "[data-image-push]",
+                    "Image push-in",
+                    1,
+                    1.15,
+                ),
+                overlays: imageOverlay(row, compare),
+                ...treatment,
             };
         });
         const mode = el("editorial-presentation").value;
