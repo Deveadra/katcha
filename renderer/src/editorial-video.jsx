@@ -1,6 +1,6 @@
 import React from 'react';
 import {AbsoluteFill, Audio, Freeze, Img, OffthreadVideo, Sequence, useCurrentFrame} from 'remotion';
-import {containRect} from './editorial-contract.mjs';
+import {containRect, sourceViewport} from './editorial-contract.mjs';
 
 const Annotation = ({overlay}) => {
   const r = overlay.region;
@@ -17,6 +17,17 @@ const Scene = ({scene, assets, images}) => {
   const boxHeight = 744;
   const imageIds = scene.layout === 'image' ? [scene.image_id] : (scene.image_ids || []);
   const imageZoom = 1 + ((scene.image_push_in || 1) - 1) * frame / Math.max(1, scene.duration_frames - 1);
+  const captionScale = scene.caption_scale || 1;
+  const captionPosition = scene.caption_position || 'bottom';
+  const transitionFrames = Math.min(scene.transition_frames || 8, Math.max(1, Math.floor(scene.duration_frames / 2)));
+  const transitionOpacity = scene.transition === 'fade'
+    ? Math.max(
+        frame < transitionFrames ? 1 - frame / transitionFrames : 0,
+        frame >= scene.duration_frames - transitionFrames
+          ? (frame - (scene.duration_frames - transitionFrames)) / transitionFrames
+          : 0,
+      )
+    : 0;
   return <AbsoluteFill style={{background: '#101217', color: '#f8f8fa', fontFamily: 'Arial, sans-serif'}}>
     {['image', 'image_comparison'].includes(scene.layout) ? imageIds.map((id, index) => {
       const image = images.get(id);
@@ -30,16 +41,39 @@ const Scene = ({scene, assets, images}) => {
       </div>;
     }) : scene.layout === 'quote' ? <div style={{position: 'absolute', left: 160, right: 160, top: 140, height: 590, display: 'flex', flexDirection: 'column', justifyContent: 'center', gap: 36}}><div style={{fontSize: 54, lineHeight: 1.3, overflowWrap: 'anywhere'}}>“{scene.quote_text}”</div><div style={{fontSize: 28, color: '#b8bfce', overflowWrap: 'anywhere'}}>{scene.source_credit}</div></div> : scene.media.map((use, index) => {
       const asset = assets.get(use.candidate_id);
-      const rect = containRect(asset.width, asset.height, boxWidth, boxHeight);
+      const geometry = sourceViewport(asset.width, asset.height, boxWidth, boxHeight, use.crop || null);
       const zoom = 1 + (use.push_in - 1) * frame / Math.max(1, scene.duration_frames - 1);
       const video = <OffthreadVideo src={asset.url} startFrom={Math.floor(use.start_seconds * 30)} playbackRate={use.playback_rate} muted style={{width: '100%', height: '100%'}} />;
-      return <div key={index} style={{position: 'absolute', left: 48 + index * boxWidth, top: 96, width: boxWidth, height: boxHeight, overflow: 'hidden'}}><div style={{position: 'absolute', ...rect, transform: `scale(${zoom})`}}>
-        {use.freeze ? <Freeze frame={0}>{video}</Freeze> : video}
-        {scene.overlays.filter(item => item.media_index === index).map((overlay, i) => <Annotation key={i} overlay={overlay} />)}
-      </div></div>;
+      return <div key={index} style={{position: 'absolute', left: 48 + index * boxWidth, top: 96, width: boxWidth, height: boxHeight, overflow: 'hidden'}}>
+        <div style={{position: 'absolute', ...geometry.viewport, overflow: 'hidden'}}>
+          <div style={{position: 'absolute', ...geometry.content, transform: `scale(${zoom})`}}>
+            {use.freeze ? <Freeze frame={0}>{video}</Freeze> : video}
+            {scene.overlays.filter(item => item.media_index === index).map((overlay, i) => <Annotation key={i} overlay={overlay} />)}
+          </div>
+        </div>
+      </div>;
     })}
     {scene.uncertainty_disclosure && <div style={{position: 'absolute', top: 24, left: 48, right: 48, fontSize: 26, lineHeight: 1.2, color: '#ffe09a'}}>{scene.uncertainty_disclosure}</div>}
-    <div style={{position: 'absolute', left: 120, right: 120, top: 880, bottom: 40, display: 'flex', justifyContent: 'center', alignItems: 'center', textAlign: 'center', fontSize: (caption?.text.length || 0) > 120 ? 30 : 46, lineHeight: 1.25, overflowWrap: 'anywhere'}}>{caption?.text}</div>
+    <div style={{
+      position: 'absolute',
+      left: captionPosition === 'center' ? 220 : 120,
+      right: captionPosition === 'center' ? 220 : 120,
+      top: captionPosition === 'center' ? 430 : 880,
+      bottom: captionPosition === 'center' ? 300 : 40,
+      display: 'flex',
+      justifyContent: 'center',
+      alignItems: 'center',
+      textAlign: 'center',
+      fontSize: ((caption?.text.length || 0) > 120 ? 30 : 46) * captionScale,
+      lineHeight: 1.25,
+      overflowWrap: 'anywhere',
+      zIndex: 3,
+    }}><span style={{
+      background: scene.caption_background ? '#101217dd' : 'transparent',
+      padding: scene.caption_background ? '10px 18px' : 0,
+      borderRadius: scene.caption_background ? 12 : 0,
+    }}>{caption?.text}</span></div>
+    {transitionOpacity > 0 && <AbsoluteFill style={{background: '#000', opacity: transitionOpacity, zIndex: 10}} />}
   </AbsoluteFill>;
 };
 
