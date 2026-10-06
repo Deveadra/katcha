@@ -7,6 +7,8 @@ on:
       - src/katcha/ops/oci_bootstrap_capacity.py
       - tests/test_oci_bootstrap_capacity.py
       - scripts/configure-github-oci-bootstrap.sh
+      - scripts/bootstrap-acquired-oci-host.sh
+      - deploy/scripts/bootstrap-initial-primary.sh
       - scripts/configure-github-recovery-notifications.sh
       - scripts/transition-oci-bootstrap.sh
       - scripts/notify-telegram.sh
@@ -48,6 +50,8 @@ jobs:
           python -m pip install -e '.[dev]'
           python -m py_compile src/katcha/ops/oci_bootstrap_capacity.py
           bash -n scripts/configure-github-oci-bootstrap.sh
+          bash -n scripts/bootstrap-acquired-oci-host.sh
+          bash -n deploy/scripts/bootstrap-initial-primary.sh
           bash -n scripts/configure-github-recovery-notifications.sh
           bash -n scripts/transition-oci-bootstrap.sh
           bash -n scripts/notify-telegram.sh

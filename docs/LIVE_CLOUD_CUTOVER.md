@@ -323,6 +323,79 @@ a duplicate. The poller is also skipped once
 The host should not expose PostgreSQL, Temporal, or the Katcha API directly to
 the public internet.
 
+### After A1 capacity is acquired
+
+Do **not** rerun `scripts/configure-github-oci-bootstrap.sh` after a successful
+acquisition. The winning AD/subnet/volume becomes the production-primary
+placement, and the configurator now refuses to overwrite that state.
+
+The first acquired Ubuntu/Ampere host intentionally has no public IP. Use OCI
+Bastion **SSH port forwarding**, not Managed SSH, for the one-time foundation
+bootstrap. Oracle documents a Managed-SSH limitation for Ampere A1 instances
+running Ubuntu; port-forwarding sessions do not require the Bastion agent plugin.
+
+The dedicated recovery identity needs a temporary elevation for this initial
+administrative path because creating the service gateway, route, NSG, and VNIC
+membership requires network-management permissions. Add these statements to the
+existing root-tenancy Katcha policy for the bootstrap:
+
+```text
+Allow group katcha-github-recovery to manage bastion-family in compartment katcha-prod
+Allow group katcha-github-recovery to manage virtual-network-family in compartment katcha-prod
+```
+
+After the foundation bootstrap succeeds, downgrade the network grant back to the
+normal recovery permission:
+
+```text
+Allow group katcha-github-recovery to use virtual-network-family in compartment katcha-prod
+```
+
+The Bastion grant can remain while private emergency administration is needed,
+or later be narrowed to session-only access once the operator-access path is
+fully finalized.
+
+Then inspect the planned changes without mutating OCI:
+
+```bash
+cd ~/src/katcha
+git pull --ff-only origin main
+bash scripts/bootstrap-acquired-oci-host.sh
+```
+
+The script verifies that:
+
+- GitHub records capacity as acquired and polling is disabled,
+- the recorded primary instance is RUNNING at exactly 2 OCPU / 12 GB,
+- the VNIC has no public IP and is in the recorded winning subnet,
+- the recorded durable block volume is ATTACHED to that exact instance,
+- the operator source address can be restricted to one IPv4 /32.
+
+When run with `--apply`, it idempotently:
+
+1. creates/reuses the regional OCI service gateway and appends its route without
+   replacing the existing NAT route,
+2. creates/reuses a free OCI Bastion restricted to the operator's current /32,
+3. creates a target-specific NSG that permits TCP/22 only from the Bastion
+   private endpoint and attaches that NSG only to the production VNIC,
+4. uses a three-hour Bastion port-forwarding session to reach the Ubuntu host,
+5. runs `deploy/scripts/bootstrap-initial-primary.sh` as root,
+6. formats the new data volume only when it has no filesystem, mounts it at
+   `/srv/katcha`, installs the minimal Docker/runtime foundation, and checks
+   out the exact `origin/main` SHA,
+7. records the filesystem UUID and foundation-ready metadata back into GitHub.
+
+Run:
+
+```bash
+bash scripts/bootstrap-acquired-oci-host.sh --apply
+```
+
+This stage deliberately does **not** copy production secrets, start Katcha, set
+`KATCHA_OCI_RECOVERY_CONFIGURED=true`, or send the "Katcha is back online"
+notification. Those remain gated on Vault, Tunnel, runtime readiness, fencing,
+authority commit, and public health.
+
 Record:
 
 - tenancy OCID,
@@ -451,7 +524,9 @@ For the live Ashburn bootstrap, `scripts/configure-github-oci-bootstrap.sh`
 installs the known AD/subnet/image/volume/SSH settings and the four OCI API
 credentials through `gh` without printing the private key. Run it once without
 `--enable` to stage configuration, then rerun with `--enable` after the
-dedicated OCI API key has been uploaded and its fingerprint verified.
+dedicated OCI API key has been uploaded and its fingerprint verified. After an
+acquisition transition records `KATCHA_OCI_BOOTSTRAP_ACQUIRED=true`, the
+configurator fails closed rather than resetting the winning placement.
 
 Keep `KATCHA_OCI_RECOVERY_CONFIGURED` unset or `false` while live OCI
 variables/secrets are incomplete. Set it to `true` only after the recovery

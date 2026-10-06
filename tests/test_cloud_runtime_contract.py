@@ -239,6 +239,76 @@ def test_oci_github_auth_probe_stays_compartment_scoped() -> None:
     assert "cat \"$PRIVATE_KEY_FILE\"" not in configurator
 
 
+def test_acquired_capacity_cannot_be_overwritten_by_bootstrap_configurator() -> None:
+    configurator = (
+        ROOT / "scripts" / "configure-github-oci-bootstrap.sh"
+    ).read_text(encoding="utf-8")
+
+    acquired_guard = configurator.index(
+        "KATCHA_OCI_BOOTSTRAP_ACQUIRED"
+    )
+    first_mutation = configurator.index(
+        "Disabling bootstrap/recovery gates while configuration is written"
+    )
+    assert acquired_guard < first_mutation
+    assert "Refusing to rewrite the winning AD/subnet/volume" in configurator
+    assert "exit 15" in configurator
+
+
+def test_initial_primary_bootstrap_preserves_private_only_acquired_host() -> None:
+    access = (
+        ROOT / "scripts" / "bootstrap-acquired-oci-host.sh"
+    ).read_text(encoding="utf-8")
+    host = (
+        ROOT / "deploy" / "scripts" / "bootstrap-initial-primary.sh"
+    ).read_text(encoding="utf-8")
+
+    assert "KATCHA_OCI_BOOTSTRAP_ACQUIRED" in access
+    assert "KATCHA_OCI_BOOTSTRAP_POLL_ENABLED" in access
+    assert "KATCHA_OCI_PRIMARY_INSTANCE_ID" in access
+    assert "unexpectedly has public IP" in access
+    assert "VM.Standard.A1.Flex" in access
+    assert "2 OCPU" in access
+    assert "12 GB" in access
+    assert "durable volume is not attached" in access
+
+    # Ubuntu on Ampere A1 has a documented Managed-SSH Bastion limitation.
+    # Initial access therefore uses a short-lived port-forwarding session.
+    assert "bastion session create-port-forwarding" in access
+    assert "create-managed-ssh" not in access
+    assert "--target-port 22" in access
+    assert "--session-ttl 10800" in access
+
+    # Bastion reachability is scoped to one target VNIC instead of opening the
+    # subnet-wide private security list.
+    assert "katcha-prod-admin-nsg" in access
+    assert "network nsg rules add" in access
+    assert "network nsg rules remove" in access
+    assert "OCI Bastion SSH to Katcha primary" in access
+    assert "network vnic update" in access
+    assert "security-list update" not in access
+
+    assert "service-gateway create" in access
+    assert "SERVICE_CIDR_BLOCK" in access
+    assert "Katcha private access to Oracle Services Network" in access
+    assert "Allow group katcha-github-recovery to manage bastion-family" in access
+
+    # Foundation bootstrap can format only an unformatted acquired data volume;
+    # an existing filesystem is preserved and a conflicting mount fails closed.
+    assert 'if [[ -z "$filesystem_type" ]]' in host
+    assert 'mkfs.ext4 -F "$DEVICE"' in host
+    assert "preserving it" in host
+    assert "already mounted from a different filesystem" in host
+    assert "KATCHA_INITIAL_STAGE=foundation-ready" in host
+    assert "install-production-units.sh --start" not in host
+
+    # Foundation readiness is not production readiness.
+    assert "KATCHA_OCI_INITIAL_FOUNDATION_READY" in access
+    assert "KATCHA_OCI_DATA_VOLUME_FS_UUID" in access
+    assert "KATCHA_OCI_RECOVERY_CONFIGURED remains disabled" in access
+    assert "gh variable set KATCHA_OCI_RECOVERY_CONFIGURED" not in access
+
+
 def test_bootstrap_enable_validates_before_turning_on_cron() -> None:
     workflow = (
         ROOT / ".github" / "workflows" / "oci-bootstrap-capacity.yml"
@@ -308,7 +378,8 @@ def test_bootstrap_capacity_search_self_chains_with_cron_as_backstop() -> None:
     assert "dead-man/backstop" in workflow.lower()
     assert "Starting the first autonomous capacity pass" in configurator
     assert "gh workflow run oci-bootstrap-capacity.yml" in configurator
-    assert "five-minute GitHub schedule remains only as a dead-man/backstop" in configurator
+    assert "five-minute GitHub schedule remains a same-provider backstop" in configurator
+    assert "Cloudflare provides the independent dead-man" in configurator
 
 
 def test_cloudflare_bootstrap_deadman_is_independent_from_actions_cron() -> None:
