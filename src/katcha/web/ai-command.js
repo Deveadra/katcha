@@ -316,7 +316,9 @@ function renderSelection() {
             ref.kind.replaceAll("_", " ") +
                 " " +
                 String(ref.id).slice(0, 8) +
-                (ref.selector ? " · beat " + ref.selector : ""),
+                (ref.selector
+                    ? " · revision " + ref.revision + " · beat " + ref.selector
+                    : ""),
         );
     }
     host.hidden = false;
@@ -426,6 +428,11 @@ function applyDeepLinkContext() {
     const kind = launchParams.get("resource_kind");
     const id = launchParams.get("resource_id");
     const selector = launchParams.get("resource_selector");
+    const revisionParam = launchParams.get("resource_revision");
+    const revision =
+        revisionParam != null && /^\d+$/.test(revisionParam)
+            ? Number(revisionParam)
+            : null;
     const prompt = launchParams.get("prompt");
     const allowedKinds = new Set([
         "clip",
@@ -446,7 +453,11 @@ function applyDeepLinkContext() {
         state.resourceRefs = [{
             kind,
             id,
-            ...(kind === "editorial_project" && selector ? {selector} : {}),
+            ...(
+                kind === "editorial_project" && selector && revision != null
+                    ? {selector, revision}
+                    : {}
+            ),
         }];
         $("thread-history").value = "";
         $("archive-thread").disabled = true;
