@@ -589,7 +589,13 @@ window.KatchaEditorial = (() => {
         };
         document.querySelectorAll("[data-editorial-ai]").forEach((link) => {
             const prompt = prompts[link.dataset.editorialAi] || prompts.research;
-            link.href = "/ai?" + new URLSearchParams({focus: "chat", channel: state.channel, prompt}).toString();
+            link.href = "/ai?" + new URLSearchParams({
+                focus: "chat",
+                channel: state.channel,
+                resource_kind: "editorial_project",
+                resource_id: state.project.id,
+                prompt,
+            }).toString();
         });
     }
     function advanceStage(stage) {

@@ -353,6 +353,16 @@ function evidenceSummary(record) {
             ...(record.reasons || []).slice(0, 2),
         ].filter(Boolean).join(" · ");
     }
+    if (record.kind === "editorial_project") {
+        const run = record.latest_run || {};
+        return [
+            "revision " + String(record.revision ?? 0),
+            String(record.source_count || 0) + " sources",
+            String(record.managed_clip_count || 0) + " managed clips",
+            run.stage ? "latest stage " + String(run.stage).replaceAll("_", " ") : "",
+            run.error || "",
+        ].filter(Boolean).join(" · ");
+    }
     if (record.kind === "edit_performance") {
         return (
             String(record.publication_count || 0) +
@@ -421,6 +431,7 @@ function applyDeepLinkContext() {
         "short_episode",
         "publication",
         "trend_opportunity",
+        "editorial_project",
     ]);
     if (requestedChannel && state.channels.some((row) => row.id === requestedChannel)) {
         state.channelId = requestedChannel;

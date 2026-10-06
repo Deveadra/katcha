@@ -727,6 +727,31 @@ let browser;
         fullPage: true,
     });
 
+    const editorialProjectId = "77777777-7777-4777-8777-777777777777";
+    await page.goto(
+        "http://127.0.0.1:8770/ai.html?channel=" +
+            channelId +
+            "&resource_kind=editorial_project&resource_id=" +
+            editorialProjectId +
+            "&prompt=" +
+            encodeURIComponent("Review the current script stage.") +
+            "&focus=chat",
+    );
+    await page.locator("#command-center:not([hidden])").waitFor();
+    await page.waitForFunction(() =>
+        /editorial project 77777777/i.test(
+            document.querySelector("#selection-bar")?.textContent || "",
+        ),
+    );
+    assert.match(
+        await page.locator("#selection-bar").innerText(),
+        /editorial project 77777777/i,
+    );
+    assert.equal(
+        await page.locator("#prompt").inputValue(),
+        "Review the current script stage.",
+    );
+
     await page.goto("http://127.0.0.1:8770/index.html");
     assert.equal(
         await page.locator("#katcha-chat-shortcut").getAttribute("href"),

@@ -133,6 +133,7 @@ ResourceKind = Literal[
     "publication",
     "trend_opportunity",
     "intelligence_record",
+    "editorial_project",
 ]
 
 
