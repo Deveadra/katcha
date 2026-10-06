@@ -20,6 +20,7 @@ from sqlalchemy.pool import StaticPool
 from katcha import db
 from katcha.api.main import app
 from katcha.config import Settings
+from katcha.editorial import source_uploads
 from katcha.editorial.project_schemas import (
     CreateEditorialProject,
     EditorialDraft,
@@ -29,6 +30,7 @@ from katcha.editorial_models import EditorialProject, EditorialRevision
 from katcha.intelligence_models import ChannelProfile
 from katcha.models import Clip, DomainEvent, SourceItem
 from katcha.services import goal_tools
+from katcha.services.clip_lifecycle import channel_ids_for_clip
 from katcha.services.editorial_projects import EditorialConflict, create_project, save_draft
 
 
@@ -203,6 +205,122 @@ def test_api_roundtrip_replay_history_and_audit(saved):
             )
         )
         assert len(events) == 3
+
+
+def test_operator_source_upload_is_managed_replay_safe_and_channel_scoped(
+    saved, tmp_path, monkeypatch
+):
+    _, channel, _ = saved
+    media = tmp_path / "owned-source.mp4"
+    media.write_bytes(b"synthetic-video-transport")
+
+    class FakeStore:
+        objects = set()
+
+        @staticmethod
+        def raw_key(sha256, extension):
+            return f"raw/{sha256}.{extension}"
+
+        def exists(self, key):
+            return key in self.objects
+
+        def put_file(self, path, key, content_type=None):
+            assert path == media
+            assert content_type == "video/mp4"
+            self.objects.add(key)
+
+    monkeypatch.setattr(source_uploads, "ObjectStore", FakeStore)
+    monkeypatch.setattr(
+        source_uploads,
+        "ffprobe",
+        lambda path: {
+            "format": {"duration": "42.5", "size": str(path.stat().st_size)},
+            "streams": [{"codec_type": "video", "width": 1920, "height": 1080}],
+        },
+    )
+
+    first = source_uploads.import_source_media(
+        channel,
+        media,
+        filename="owned-source.mp4",
+        content_type="video/mp4",
+        title="Owned source",
+        permitted_use=True,
+        idempotency_key="upload-1",
+        actor="test",
+    )
+    replay = source_uploads.import_source_media(
+        channel,
+        media,
+        filename="owned-source.mp4",
+        content_type="video/mp4",
+        title="Owned source",
+        permitted_use=True,
+        idempotency_key="upload-1",
+        actor="test",
+    )
+
+    assert first.source_id == replay.source_id
+    assert first.clip_id == replay.clip_id
+    assert replay.deduplicated is True
+    assert first.source_url.startswith("https://upload.katcha.invalid/")
+    with db.session_scope() as session:
+        assert channel in channel_ids_for_clip(session, first.clip_id)
+        assert len(list(session.scalars(select(SourceItem).where(SourceItem.clip_id == first.clip_id)))) == 1
+
+
+def test_operator_source_upload_rejects_reused_identity_for_different_media(
+    saved, tmp_path, monkeypatch
+):
+    _, channel, _ = saved
+    first_path = tmp_path / "first.mp4"
+    second_path = tmp_path / "second.mp4"
+    first_path.write_bytes(b"first-video")
+    second_path.write_bytes(b"second-video")
+
+    class FakeStore:
+        objects = set()
+
+        @staticmethod
+        def raw_key(sha256, extension):
+            return f"raw/{sha256}.{extension}"
+
+        def exists(self, key):
+            return key in self.objects
+
+        def put_file(self, path, key, content_type=None):
+            self.objects.add(key)
+
+    monkeypatch.setattr(source_uploads, "ObjectStore", FakeStore)
+    monkeypatch.setattr(
+        source_uploads,
+        "ffprobe",
+        lambda path: {
+            "format": {"duration": "10", "size": str(path.stat().st_size)},
+            "streams": [{"codec_type": "video", "width": 1280, "height": 720}],
+        },
+    )
+    source_uploads.import_source_media(
+        channel,
+        first_path,
+        filename="first.mp4",
+        content_type="video/mp4",
+        title=None,
+        permitted_use=True,
+        idempotency_key="same-request",
+        actor="test",
+    )
+    with pytest.raises(ValueError, match="already used for different source media"):
+        source_uploads.import_source_media(
+            channel,
+            second_path,
+            filename="second.mp4",
+            content_type="video/mp4",
+            title=None,
+            permitted_use=True,
+            idempotency_key="same-request",
+            actor="test",
+        )
 
 
 def test_project_persists_provenance_checked_script_seed(saved):
