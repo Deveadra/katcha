@@ -165,10 +165,18 @@ const draft = {
         await page.getByRole("button", {name: "Use URL instead", exact: true}).waitFor();
         assert.equal(await page.locator("#editorial-urls").inputValue(), managedSourceUrl);
         assert.match(await page.locator("#editorial-selected-clips").innerText(), /Marvel Entertainment/);
+        await page.getByText("Start from a script", {exact: true}).click();
+        await page.locator("#editorial-script-seed-file").setInputFiles({
+            name: "operator-draft.md",
+            mimeType: "text/markdown",
+            buffer: Buffer.from("# Draft\n\nKeep this voice, but verify the factual claims."),
+        });
+        await page.getByText(/operator-draft\.md imported/).waitFor();
         await page.getByRole("button", { name: "Create project", exact: true }).click();
         await page.getByText(/Connection interrupted/).waitFor();
         assert.equal(await page.locator("#editorial-prompt").inputValue(), "Investigate the trailer clues");
         assert.match(await page.locator("#editorial-selected-clips").innerText(), /Official trailer/);
+        assert.match(await page.locator("#editorial-script-seed-status").innerText(), /operator-draft\.md imported/);
         await page.getByRole("button", { name: "Create project", exact: true }).click();
         await page.locator("#editorial-detail").waitFor({ state: "visible" });
         assert.deepEqual(
@@ -192,7 +200,12 @@ const draft = {
         assert.equal(creates.length, 2);
         assert.equal(creates[0].body.idempotency_key, creates[1].body.idempotency_key);
         assert.deepEqual(creates[1].body.brief.source_clip_bindings, {[managedSourceUrl]: managedClipId});
+        assert.equal(creates[1].body.brief.script_seed.origin, "operator_file");
+        assert.equal(creates[1].body.brief.script_seed.filename, "operator-draft.md");
+        assert.match(creates[1].body.brief.script_seed.content_sha256, /^[0-9a-f]{64}$/);
+        assert.match(creates[1].body.brief.script_seed.source_file_sha256, /^[0-9a-f]{64}$/);
         assert.match(await page.locator("#editorial-source-bindings").innerText(), /Managed clip · youtube.com/);
+        assert.match(await page.locator("#editorial-source-bindings").innerText(), /Script seed · operator-draft\.md/);
         await page.getByRole("button", { name: "Research and draft script", exact: true }).click();
         await page.getByText(/Provider quota rejected/).waitFor();
         assert.equal(calls.find((call) => call.method === "POST" && call.path.endsWith("/runs")).body.target, "script");
