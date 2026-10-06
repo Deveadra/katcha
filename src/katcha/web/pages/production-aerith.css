@@ -1020,8 +1020,16 @@ body[data-katcha-page="production"] .editorial-stage-panel .editorial-beat {
 }
 
 .editorial-program-monitor-canvas {
+    display: grid;
+    place-items: center;
     min-height: 250px;
     aspect-ratio: 16 / 9;
+    overflow: hidden;
+    background:
+        linear-gradient(rgba(255, 255, 255, 0.015) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255, 255, 255, 0.015) 1px, transparent 1px),
+        #020303;
+    background-size: 24px 24px;
 }
 
 #editorial-program-monitor-video {
