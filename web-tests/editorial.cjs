@@ -298,11 +298,61 @@ const draft = {
         await page.getByText(/Managed media available/).waitFor();
         assert.match(await page.locator("#editorial-assets").innerText(), /review required/);
         await page.locator('[data-editorial-stage="storyboard"]').click();
+        assert.equal(await page.locator("#editorial-beat-timeline [data-timeline-beat]").count(), 1);
+        assert.equal(
+            await page.locator("#editorial-beat-timeline [data-timeline-beat]").getAttribute("aria-selected"),
+            "true",
+        );
+        assert.equal(await page.locator('#editorial-storyboard [data-board-beat]:visible').count(), 1);
+        assert.match(await page.locator("#editorial-timeline-summary").innerText(), /1 beat · 0:08 planned · 0\/1 visuals assigned/);
+        await page.screenshot({path: path.resolve(__dirname, "test-results/editorial-timeline-desktop.png"), fullPage: true});
+
+        await page.evaluate(() => {
+            const timeline = document.querySelector("#editorial-beat-timeline");
+            const storyboard = document.querySelector("#editorial-storyboard");
+            const firstButton = timeline.querySelector("[data-timeline-beat]");
+            const firstPanel = storyboard.querySelector("[data-board-beat]");
+            const secondButton = firstButton.cloneNode(true);
+            secondButton.dataset.timelineBeat = "synthetic-second";
+            secondButton.setAttribute("aria-controls", "board-panel-synthetic-second");
+            secondButton.setAttribute("aria-selected", "false");
+            secondButton.tabIndex = -1;
+            secondButton.querySelector(".editorial-timeline-index").textContent = "02";
+            secondButton.querySelector("strong").textContent = "transition";
+            timeline.append(secondButton);
+            const secondPanel = firstPanel.cloneNode(true);
+            secondPanel.id = "board-panel-synthetic-second";
+            secondPanel.dataset.boardBeat = "synthetic-second";
+            secondPanel.hidden = true;
+            storyboard.append(secondPanel);
+        });
+        await page.locator('#editorial-beat-timeline [data-timeline-beat="beat"]').focus();
+        await page.keyboard.press("ArrowRight");
+        assert.equal(
+            await page.locator('#editorial-beat-timeline [data-timeline-beat="synthetic-second"]').getAttribute("aria-selected"),
+            "true",
+        );
+        assert.equal(await page.locator('#editorial-storyboard [data-board-beat="beat"]').isHidden(), true);
+        assert.equal(await page.locator('#editorial-storyboard [data-board-beat="synthetic-second"]').isVisible(), true);
+        await page.keyboard.press("Home");
+        assert.equal(
+            await page.locator('#editorial-beat-timeline [data-timeline-beat="beat"]').getAttribute("aria-selected"),
+            "true",
+        );
+        await page.evaluate(() => {
+            document.querySelector('[data-timeline-beat="synthetic-second"]')?.remove();
+            document.querySelector('[data-board-beat="synthetic-second"]')?.remove();
+        });
+
         await page.locator('#editorial-storyboard select[data-primary-visual]').selectOption('media:candidate');
         await page.locator('#editorial-storyboard input[type=number]:not([data-region])').fill('1.5');
         await page.locator('#editorial-storyboard input[type=checkbox]').check();
+        assert.match(await page.locator("#editorial-timeline-summary").innerText(), /1\/1 visuals assigned/);
+        assert.equal(await page.locator("[data-timeline-status]").innerText(), "Footage");
+        assert.equal(await page.locator("[data-timeline-beat]").evaluate(node => node.classList.contains("is-ready")), true);
         await page.locator('#editorial-refresh').click();
         assert.equal(await page.locator('[data-editorial-stage="storyboard"]').getAttribute("aria-selected"), "true");
+        assert.equal(await page.locator("[data-timeline-beat]").getAttribute("aria-selected"), "true");
         assert.equal(await page.locator('#editorial-storyboard input[type=number]:not([data-region])').inputValue(), '1.5');
         await page.locator('[data-editorial-stage="assets"]').click();
         await page.getByText(/Managed media available/).waitFor();
@@ -438,6 +488,11 @@ const draft = {
         assert(await page.evaluate(() => document.documentElement.scrollWidth <= 390));
         await page.locator('#editorial-image-form').screenshot({path: path.resolve(__dirname, 'test-results/editorial-images-mobile.png')});
         await page.locator('[data-editorial-stage="storyboard"]').click();
+        assert.equal(await page.locator("#editorial-beat-timeline").isVisible(), true);
+        assert.equal(
+            await page.locator("[data-timeline-beat]").evaluate(node => getComputedStyle(node).flexBasis),
+            "128px",
+        );
         await page.locator('#editorial-storyboard select[data-primary-visual]').selectOption('image:still-image');
         await page.locator('[data-editorial-stage="preview"]').click();
         const imageRenderRequest = page.waitForRequest((request) => {
