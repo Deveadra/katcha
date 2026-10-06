@@ -286,6 +286,15 @@ class EditorialRenderManifest(Contract):
 
 
 class DirectionOptions(Contract):
+    annotate_regions: bool = False
+
+    @model_serializer(mode="wrap")
+    def preserve_existing_options(self, handler):
+        value = handler(self)
+        if not self.annotate_regions:
+            value.pop("annotate_regions", None)
+        return value
+
     presentation_mode: Literal["captioned_silent", "narrated"]
     narration_ids: dict[Identity, UUID] = Field(default_factory=dict, max_length=100)
 

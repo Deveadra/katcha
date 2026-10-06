@@ -454,9 +454,7 @@ def test_storyboard_source_monitor_revalidates_acquired_frame_evidence(directing
     assert result["frame_count"] == 3
     assert result["sample_times"] == [0.25, 5.0, 9.75]
     assert result["coverage"] == "sampled_frames"
-    assert result["contact_sheet_key"] == (
-        f"analysis/aa/{'a' * 64}/contact-sheet.jpg"
-    )
+    assert result["contact_sheet_key"] == (f"analysis/aa/{'a' * 64}/contact-sheet.jpg")
 
 
 def test_storyboard_source_monitor_rejects_untrusted_frame_storage(directing):
@@ -873,6 +871,257 @@ def test_native_direction_selection_requires_observed_identity(monkeypatch):
 def test_direction_receipt_is_only_valid_for_rendering():
     with pytest.raises(ValidationError, match="only be selected for rendering"):
         StartEditorialRun(
-            target="analysis", expected_revision=0,
-            idempotency_key="bad-reference", direction_run_id=uuid.uuid4(),
+            target="analysis",
+            expected_revision=0,
+            idempotency_key="bad-reference",
+            direction_run_id=uuid.uuid4(),
         )
+
+
+@pytest.fixture
+def region_direction(directing, monkeypatch):
+    from katcha.editorial.visual_schemas import DirectionOptions
+    from katcha.models import Clip, ClipFeature
+
+    old, invoke, request = directing
+    control_run(old.channel_profile_id, old.project_id, old.id, expected_attempt=1, cancel=True)
+    row = start_run(
+        old.channel_profile_id,
+        old.project_id,
+        request.model_copy(
+            update={
+                "idempotency_key": "regions",
+                "direction": DirectionOptions(
+                    presentation_mode="captioned_silent",
+                    annotate_regions=True,
+                ),
+            }
+        ),
+        actor="test",
+    )
+    install_media(row)
+    install_frames(monkeypatch)
+    with db.session_scope() as session:
+        clip = session.query(Clip).one()
+        features = session.get(ClipFeature, clip.id)
+        features.keyframe_keys = [f"analysis/{clip.sha256[:2]}/{clip.sha256}/frames/frame-00.jpg"]
+    proposal = proposed(
+        layout="single",
+        quote_source_id=None,
+        media=[
+            {
+                "candidate_id": "asset",
+                "start_seconds": 5,
+                "freeze": True,
+            }
+        ],
+    )
+    proposal["shot_evidence"] = [
+        {"beat_id": "beat-1", "candidate_id": "asset", "observation_id": "frame-1"}
+    ]
+    regions = {
+        "regions": [
+            {
+                "kind": "circle",
+                "region": {
+                    "x": 0.1,
+                    "y": 0.2,
+                    "width": 0.3,
+                    "height": 0.4,
+                },
+                "description": "The visible red door",
+                "label": "Door",
+            }
+        ],
+        "limitations": ["Identity uncertain"],
+    }
+    invoke.side_effect = [output(frame_observations()), output(proposal), output(regions)]
+    return row, invoke, proposal, regions
+
+
+def test_opt_in_regions_inspect_exact_frame_and_preserve_render_receipt(
+    region_direction, monkeypatch
+):
+    row, invoke, _, _ = region_direction
+    store = Mock(get_bytes=Mock(return_value=b"jpeg"))
+    monkeypatch.setattr(provider, "ObjectStore", lambda: store)
+    assert direction.direct_visuals(str(row.id), 1)["status"] == "completed", refresh(row).error
+    current = refresh(row)
+    overlay = current.artifacts["storyboard"]["beats"][0]["overlays"][0]
+    assert overlay["kind"] == "circle" and overlay["media_index"] == 0
+    assert overlay["region"]["width"] == 0.3
+    assert store.get_bytes.call_args_list[-1].args[0].endswith("/frames/frame-00.jpg")
+    assert "ONE full source frame" in invoke.call_args.args[1]
+    assert invoke.call_count == 3
+    evidence = current.artifacts["direction_shot_evidence"]
+    assert evidence["shots"][0]["regions"]["regions"][0]["description"] == "The visible red door"
+    rendered = start_run(
+        row.channel_profile_id,
+        row.project_id,
+        StartEditorialRun(
+            target="render",
+            expected_revision=1,
+            idempotency_key="region-render",
+            asset_run_id=row.options["asset_run_id"],
+            direction_run_id=row.id,
+            storyboard=current.artifacts["storyboard"],
+        ),
+        actor="test",
+    )
+    from katcha.editorial.render import current_manifest
+
+    assert current_manifest(rendered).timeline[0].overlays[0].kind == "circle"
+    assert rendered.artifacts["direction_shot_evidence"] == evidence
+
+
+def test_region_receipts_recover_without_repeat_provider_charge(region_direction, monkeypatch):
+    row, invoke, _, _ = region_direction
+    real_compile = direction.compile_project_visuals
+    calls = 0
+
+    def compile_once(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise EditorialConflict("Interrupted promotion")
+        return real_compile(*args, **kwargs)
+
+    monkeypatch.setattr(direction, "compile_project_visuals", compile_once)
+    assert direction.direct_visuals(str(row.id), 1)["status"] == "blocked"
+    assert invoke.call_count == 3
+    monkeypatch.setattr(provider, "ObjectStore", Mock(side_effect=AssertionError("no download")))
+    resumed = resume(row)
+    assert direction.direct_visuals(str(row.id), resumed.attempt)["status"] == "completed"
+    assert invoke.call_count == 3
+
+
+def test_unknown_region_response_blocks_automatic_retry(region_direction):
+    row, invoke, proposal, _ = region_direction
+    invoke.side_effect = [output(frame_observations()), output(proposal), TimeoutError("lost")]
+    assert direction.direct_visuals(str(row.id), 1)["status"] == "blocked"
+    assert "storyboard" not in refresh(row).artifacts
+    resumed = resume(row)
+    assert direction.direct_visuals(str(row.id), resumed.attempt)["status"] == "blocked"
+    assert invoke.call_count == 3
+
+
+@pytest.mark.parametrize("fault", ["bounds", "key", "changed_key", "revision", "coverage"])
+def test_region_failures_do_not_promote_plan(region_direction, monkeypatch, fault):
+    from katcha.models import ClipFeature
+
+    row, invoke, proposal, regions = region_direction
+    if fault == "bounds":
+        regions["regions"][0]["region"]["x"] = 0.9
+    if fault == "key":
+        with db.session_scope() as session:
+            session.query(ClipFeature).one().keyframe_keys = ["private/unrelated.jpg"]
+    calls = 0
+
+    def respond(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return output(frame_observations())
+        if calls == 2:
+            return output(proposal)
+        if fault == "changed_key":
+            with db.session_scope() as session:
+                session.query(ClipFeature).one().keyframe_keys = ["other.jpg"]
+        if fault == "revision":
+            with db.session_scope() as session:
+                session.get(EditorialProject, row.project_id).revision = 2
+        return output(regions)
+
+    invoke.side_effect = respond
+    if fault == "coverage":
+        from katcha.editorial import regions as module
+
+        original = module.structured_call
+
+        def wrong_coverage(*args, **kwargs):
+            result, receipt = original(*args, **kwargs)
+            return result, {**receipt, "coverage": "text"}
+
+        monkeypatch.setattr(module, "structured_call", wrong_coverage)
+    assert direction.direct_visuals(str(row.id), 1)["status"] == "blocked"
+    assert "storyboard" not in refresh(row).artifacts
+    assert invoke.call_count == (2 if fault == "key" else 3)
+
+
+@pytest.mark.parametrize("freeze,empty", [(False, False), (True, True)])
+def test_no_forced_annotations_on_motion_or_uncertain_frames(region_direction, freeze, empty):
+    row, invoke, proposal, regions = region_direction
+    proposal["beats"][0]["media"][0]["freeze"] = freeze
+    if not freeze:
+        proposal["beats"][0]["media"][0]["start_seconds"] = 1
+    if empty:
+        regions["regions"] = []
+    invoke.side_effect = [output(frame_observations()), output(proposal), output(regions)]
+    assert direction.direct_visuals(str(row.id), 1)["status"] == "completed", refresh(row).error
+    assert not refresh(row).artifacts["storyboard"]["beats"][0]["overlays"]
+    assert invoke.call_count == (3 if freeze else 2)
+
+
+def test_region_option_preserves_old_request_serialization():
+    from katcha.editorial.visual_schemas import DirectionOptions
+
+    options = DirectionOptions(presentation_mode="captioned_silent")
+    assert options.model_dump() == {"presentation_mode": "captioned_silent", "narration_ids": {}}
+
+
+def test_region_frame_must_match_rendered_freeze_frame(region_direction):
+    from katcha.editorial.regions import frame_input
+
+    row, _, _, _ = region_direction
+    with pytest.raises(provider.EditorialBlocked, match="exact sampled source frame"):
+        frame_input(row, "asset", 4.9999)
+
+
+def test_region_storage_failure_can_resume_before_dispatch(region_direction, monkeypatch):
+    row, invoke, _, _ = region_direction
+    reads = 0
+
+    def get_bytes(key):
+        nonlocal reads
+        reads += 1
+        if "/frames/" in key and reads == 2:
+            raise OSError("temporary image storage failure")
+        return b"jpeg"
+
+    monkeypatch.setattr(provider, "ObjectStore", lambda: Mock(get_bytes=get_bytes))
+    assert direction.direct_visuals(str(row.id), 1)["status"] == "blocked"
+    assert invoke.call_count == 2
+    resumed = resume(row)
+    assert direction.direct_visuals(str(row.id), resumed.attempt)["status"] == "completed"
+    assert invoke.call_count == 3
+
+
+def test_region_clearance_change_during_observation_blocks_promotion(region_direction):
+    from katcha.acquisition_models import DiscoveryCandidate, RightsAssessment
+
+    row, invoke, proposal, regions = region_direction
+    count = 0
+
+    def respond(*args, **kwargs):
+        nonlocal count
+        count += 1
+        if count == 1:
+            return output(frame_observations())
+        if count == 2:
+            return output(proposal)
+        with db.session_scope() as session:
+            candidate = session.query(DiscoveryCandidate).one()
+            session.add(
+                RightsAssessment(
+                    discovery_candidate_id=candidate.id,
+                    version=2,
+                    production_eligible=False,
+                    actor="test",
+                )
+            )
+        return output(regions)
+
+    invoke.side_effect = respond
+    assert direction.direct_visuals(str(row.id), 1)["status"] == "blocked"
+    assert "clearance" in refresh(row).error
+    assert "storyboard" not in refresh(row).artifacts
