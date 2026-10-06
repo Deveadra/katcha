@@ -269,7 +269,7 @@ def test_source_upload_api_streams_to_temp_and_cleans_up(saved, monkeypatch):
     assert captured["title"] == "Owned footage"
     assert captured["permitted_use"] is True
     assert captured["idempotency_key"] == "upload-api-1"
-    assert captured["actor"] == "editor"
+    assert captured["actor"] == "control-principal:editor"
     assert not captured["path"].exists()
 
 
