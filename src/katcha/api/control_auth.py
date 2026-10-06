@@ -279,6 +279,14 @@ def _require_named_principal_route_access(request: Request) -> None:
         return
 
     if method == "GET" and re.fullmatch(
+        r"/v1/channels/[^/]+/editorial-projects/[^/]+/runs/[^/]+/assets/[^/]+/"
+        r"(?:source-monitor|contact-sheet)",
+        path,
+    ):
+        require_control_scope(request, "ai:read")
+        return
+
+    if method == "GET" and re.fullmatch(
         r"/v1/channels/[^/]+/editorial-projects/[^/]+/runs/[^/]+/preview", path
     ):
         # Binary playback shares editorial read scope; the router checks channel,
