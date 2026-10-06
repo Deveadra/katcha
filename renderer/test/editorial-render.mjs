@@ -14,6 +14,7 @@ try {
   execFileSync('ffmpeg', ['-y', '-f', 'lavfi', '-i', 'testsrc2=size=640x360:rate=30', '-t', '4', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', path.join(publicDir, 'test.mp4')], {stdio: 'ignore'});
   execFileSync('ffmpeg', ['-y', '-f', 'lavfi', '-i', 'sine=frequency=440:sample_rate=24000:duration=2', '-c:a', 'pcm_s16le', path.join(publicDir, 'narration.wav')], {stdio: 'ignore'});
   execFileSync('ffmpeg', ['-y', '-f', 'lavfi', '-i', 'color=c=navy:size=640x360', '-frames:v', '1', path.join(publicDir, 'still.png')], {stdio: 'ignore'});
+  execFileSync('ffmpeg', ['-y', '-f', 'lavfi', '-i', 'color=c=teal:size=360x640', '-frames:v', '1', path.join(publicDir, 'portrait.png')], {stdio: 'ignore'});
   const serveUrl = await bundle({entryPoint: path.resolve('src/entry.jsx'), publicDir});
   const props = structuredClone(fixture);
   const comparison = structuredClone(props.timeline[0]);
@@ -60,6 +61,26 @@ try {
   const stillProbe = JSON.parse(execFileSync('ffprobe', ['-v', 'error', '-show_streams', '-of', 'json', stillOutput]));
   if (!stillProbe.streams.some(s => s.codec_type === 'audio') || Number(stillProbe.streams.find(s => s.codec_type === 'video').nb_frames) !== 60) throw new Error('Still render verification failed');
   execFileSync('ffmpeg', ['-y', '-ss', '1', '-i', stillOutput, '-frames:v', '1', path.resolve('test-results/editorial-still.png')], {stdio: 'ignore'});
+  const compared = structuredClone(still);
+  delete compared.images[0].url;
+  compared.narration.forEach(audio => { delete audio.url; });
+  compared.version = 'editorial-render-v4';
+  const portraitSha = createHash('sha256').update(await fs.readFile(path.join(publicDir, 'portrait.png'))).digest('hex');
+  compared.images.push({...compared.images[0], image_id: 'portrait', sha256: portraitSha, width: 360, height: 640, title: 'Synthetic portrait', storage_key: `editorial/${compared.project_id}/images/portrait/${portraitSha}.png`});
+  Object.assign(compared.timeline[0], {layout: 'image_comparison', image_id: null, image_ids: ['still', 'portrait'], overlays: [
+    {kind: 'highlight', media_index: 0, region: {x: .1, y: .1, width: .8, height: .8}, label: 'Landscape'},
+    {kind: 'circle', media_index: 1, region: {x: .1, y: .1, width: .8, height: .8}, label: 'Portrait'},
+  ]});
+  validateEditorialManifest(compared);
+  compared.images[0].url = '/public/still.png'; compared.images[1].url = '/public/portrait.png';
+  compared.narration.forEach(audio => { audio.url = '/public/narration.wav'; });
+  const compareOutput = path.resolve('test-results/editorial-image-comparison.mp4');
+  const compareComposition = await selectComposition({serveUrl, id: 'Editorial', inputProps: compared, ...options});
+  await renderMedia({serveUrl, composition: compareComposition, inputProps: compared, codec: 'h264', outputLocation: compareOutput, concurrency: 1, ...options});
+  const compareProbe = JSON.parse(execFileSync('ffprobe', ['-v', 'error', '-show_streams', '-of', 'json', compareOutput]));
+  if (!compareProbe.streams.some(s => s.codec_type === 'audio') || Number(compareProbe.streams.find(s => s.codec_type === 'video').nb_frames) !== 60) throw new Error('Image comparison render verification failed');
+  execFileSync('ffmpeg', ['-y', '-ss', '1', '-i', compareOutput, '-frames:v', '1', path.resolve('test-results/editorial-image-comparison.png')], {stdio: 'ignore'});
+  console.log('Verified image comparison: landscape/portrait, source regions, narration and credits');
   console.log('Verified still-image render: 60 frames with narration and illustration credit');
   console.log('Verified narrated render: 180 frames with real synthetic PCM audio');
   console.log('Verified synthetic editorial render: 1920x1080, 180 frames, silent; single, comparison, freeze and quote scenes');

@@ -13,12 +13,22 @@ const Annotation = ({overlay}) => {
 const Scene = ({scene, assets, images}) => {
   const frame = useCurrentFrame();
   const caption = scene.captions.find(item => frame >= item.start_frame && frame < item.start_frame + item.duration_frames);
-  const boxWidth = scene.layout === 'comparison' ? 912 : 1824;
+  const boxWidth = ['comparison', 'image_comparison'].includes(scene.layout) ? 912 : 1824;
   const boxHeight = 744;
-  const image = images.get(scene.image_id);
+  const imageIds = scene.layout === 'image' ? [scene.image_id] : (scene.image_ids || []);
   const imageZoom = 1 + ((scene.image_push_in || 1) - 1) * frame / Math.max(1, scene.duration_frames - 1);
   return <AbsoluteFill style={{background: '#101217', color: '#f8f8fa', fontFamily: 'Arial, sans-serif'}}>
-    {scene.layout === 'image' ? <div style={{position: 'absolute', left: 48, top: 96, width: 1824, height: 744, overflow: 'hidden'}}><Img src={image.url} style={{width: '100%', height: '100%', objectFit: 'contain', transform: `scale(${imageZoom})`}} /><div style={{position: 'absolute', bottom: 12, left: 24, right: 24, fontSize: 22, background: '#101217dd', padding: 8, overflowWrap: 'anywhere'}}>{image.illustration ? 'Illustration · ' : ''}{image.title}</div></div> : scene.layout === 'quote' ? <div style={{position: 'absolute', left: 160, right: 160, top: 140, height: 590, display: 'flex', flexDirection: 'column', justifyContent: 'center', gap: 36}}><div style={{fontSize: 54, lineHeight: 1.3, overflowWrap: 'anywhere'}}>“{scene.quote_text}”</div><div style={{fontSize: 28, color: '#b8bfce', overflowWrap: 'anywhere'}}>{scene.source_credit}</div></div> : scene.media.map((use, index) => {
+    {['image', 'image_comparison'].includes(scene.layout) ? imageIds.map((id, index) => {
+      const image = images.get(id);
+      const rect = containRect(image.width, image.height, boxWidth, boxHeight);
+      return <div key={id} style={{position: 'absolute', left: 48 + index * boxWidth, top: 96, width: boxWidth, height: boxHeight, overflow: 'hidden'}}>
+        <div style={{position: 'absolute', ...rect, transform: `scale(${imageZoom})`}}>
+          <Img src={image.url} style={{width: '100%', height: '100%'}} />
+          {scene.overlays.filter(item => item.media_index === index).map((overlay, i) => <Annotation key={i} overlay={overlay} />)}
+        </div>
+        <div style={{position: 'absolute', bottom: 12, left: 24, right: 24, fontSize: 22, background: '#101217dd', padding: 8, overflowWrap: 'anywhere'}}>{image.illustration ? 'Illustration · ' : ''}{image.title}</div>
+      </div>;
+    }) : scene.layout === 'quote' ? <div style={{position: 'absolute', left: 160, right: 160, top: 140, height: 590, display: 'flex', flexDirection: 'column', justifyContent: 'center', gap: 36}}><div style={{fontSize: 54, lineHeight: 1.3, overflowWrap: 'anywhere'}}>“{scene.quote_text}”</div><div style={{fontSize: 28, color: '#b8bfce', overflowWrap: 'anywhere'}}>{scene.source_credit}</div></div> : scene.media.map((use, index) => {
       const asset = assets.get(use.candidate_id);
       const rect = containRect(asset.width, asset.height, boxWidth, boxHeight);
       const zoom = 1 + (use.push_in - 1) * frame / Math.max(1, scene.duration_frames - 1);

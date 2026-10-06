@@ -286,3 +286,126 @@ def test_narrated_image_render_and_approval_revocation(still, monkeypatch):
     assert review_status(channel, project, run.id)["status"] == "approve"
     images.revoke_image(channel, project, first["id"], actor="test")
     assert review_status(channel, project, run.id)["status"] == "invalidated"
+
+
+def test_comparison_annotations_compile_both_receipts_and_revoke(still):
+    from katcha.editorial.visual_schemas import EditorialRenderManifest
+
+    channel, project, *_ = still
+    first = upload(still)
+    second = upload(still, idempotency_key="second", title="Second image")
+    storyboard = StoryboardPlan(
+        presentation_mode="captioned_silent",
+        beats=[
+            {
+                "beat_id": "beat-1",
+                "layout": "image_comparison",
+                "image_ids": [first["id"], second["id"]],
+                "image_push_in": 1.1,
+                "overlays": [
+                    {
+                        "kind": "circle",
+                        "media_index": 1,
+                        "region": {"x": 0.1, "y": 0.2, "width": 0.3, "height": 0.4},
+                    }
+                ],
+            }
+        ],
+    )
+    result = compile_project_visuals(channel, project, 1, None, storyboard)
+    assert result.version == "editorial-render-v4"
+    assert [image.image_id for image in result.images] == [first["id"], second["id"]]
+    assert EditorialRenderManifest.model_validate_json(result.model_dump_json()) == result
+    assert result.timeline[0].overlays[0].media_index == 1
+    images.revoke_image(channel, project, second["id"], actor="test")
+    with pytest.raises(EditorialConflict, match="removed"):
+        compile_project_visuals(channel, project, 1, None, storyboard)
+
+
+def test_single_image_annotation_versions_without_changing_old_serialization(still):
+    from pydantic import ValidationError
+
+    from katcha.editorial.visual_schemas import EditorialRenderManifest
+
+    channel, project, *_ = still
+    storyboard = plan(upload(still)["id"])
+    original = compile_project_visuals(channel, project, 1, None, storyboard)
+    assert "image_ids" not in original.model_dump()["timeline"][0]
+    data = storyboard.model_dump(mode="json")
+    data["beats"][0]["overlays"] = [
+        {
+            "kind": "highlight",
+            "region": {
+                "x": 0,
+                "y": 0,
+                "width": 1,
+                "height": 1,
+            },
+        }
+    ]
+    annotated = compile_project_visuals(
+        channel, project, 1, None, StoryboardPlan.model_validate(data)
+    )
+    assert annotated.version == "editorial-render-v4"
+    with pytest.raises(ValidationError, match="version 4"):
+        EditorialRenderManifest.model_validate(
+            {**annotated.model_dump(), "version": "editorial-render-v3"}
+        )
+    assert compile_project_visuals(channel, project, 1, None, storyboard) == original
+
+
+@pytest.mark.parametrize("change", ["duplicate", "missing", "index", "bounds", "single"])
+def test_invalid_image_comparisons_rejected(change):
+    import uuid
+
+    from pydantic import ValidationError
+
+    from katcha.editorial.visual_schemas import VisualBeat
+
+    ids = [str(uuid.uuid4()), str(uuid.uuid4())]
+    value = {
+        "beat_id": "beat",
+        "layout": "image_comparison",
+        "image_ids": ids,
+        "overlays": [
+            {
+                "kind": "arrow",
+                "media_index": 1,
+                "region": {"x": 0, "y": 0, "width": 0.5, "height": 0.5},
+            }
+        ],
+    }
+    if change == "duplicate":
+        value["image_ids"] = [ids[0], ids[0]]
+    elif change == "missing":
+        value["image_ids"] = [ids[0]]
+    elif change == "index":
+        value["overlays"][0]["media_index"] = 2
+    elif change == "bounds":
+        value["overlays"][0]["region"]["x"] = 0.9
+    else:
+        value["layout"] = "image"
+        value["image_id"] = ids[0]
+    with pytest.raises(ValidationError):
+        VisualBeat.model_validate(value)
+
+
+@pytest.mark.parametrize("field,value", [("beat_id", "other-beat"), ("revision", 2)])
+def test_second_comparison_image_must_match_current_beat(still, field, value):
+    channel, project, *_ = still
+    first = upload(still)
+    second = upload(still, idempotency_key="second")
+    storyboard = StoryboardPlan(
+        presentation_mode="captioned_silent",
+        beats=[
+            {
+                "beat_id": "beat-1",
+                "layout": "image_comparison",
+                "image_ids": [first["id"], second["id"]],
+            }
+        ],
+    )
+    with db.session_scope() as session:
+        setattr(session.get(EditorialImage, second["id"]), field, value)
+    with pytest.raises(EditorialConflict, match="another script beat or revision"):
+        compile_project_visuals(channel, project, 1, None, storyboard)

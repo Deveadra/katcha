@@ -339,6 +339,8 @@ window.KatchaEditorial = (() => {
         const rows = [...el("editorial-storyboard").querySelectorAll("[data-board-beat]")].map(row => ({
             choice: row.querySelector("select").value, start: row.querySelector("input[type=number]").value,
             freeze: row.querySelector("input[type=checkbox]").checked,
+            compare: row.querySelector("[data-image-compare]").value,
+            annotation: Object.fromEntries([...row.querySelectorAll("[data-region]")].map(input => [input.dataset.region, input.value])),
         }));
         remember(boardStorage(), rows);
     }
@@ -367,7 +369,10 @@ window.KatchaEditorial = (() => {
     function showFootageControls() {
         el("editorial-storyboard").querySelectorAll("[data-board-beat]").forEach(row => {
             const footage = row.querySelector("select").value.startsWith("media:");
-            row.querySelectorAll("input").forEach(input => { input.closest("label").hidden = !footage; });
+            row.querySelectorAll("input:not([data-region])").forEach(input => { input.closest("label").hidden = !footage; });
+            const image = row.querySelector("select").value.startsWith("image:");
+            row.querySelector("[data-image-tools]").hidden = !image;
+            row.querySelector("[data-region-fields]").hidden = !row.querySelector('[data-region="kind"]').value;
         });
     }
     function renderStoryboard() {
@@ -383,7 +388,13 @@ window.KatchaEditorial = (() => {
             const sourceIds = new Set(claims.flatMap(claim => claim.source_ids));
             const sources = (draft.sources || []).filter(source => sourceIds.has(source.id));
             const options = [...(state.images?.images || []).filter(item => item.status === "active" && item.beat_id === beat.id).map(item => ({value: `image:${item.id}`, label: `${item.illustration ? "Illustration" : "Image"}: ${item.title}`})), ...choices.filter(item => item.beat_id === beat.id && receipts[item.id]).map(item => ({value: `media:${item.id}`, label: item.title})), ...sources.map(item => ({value: `quote:${item.id}`, label: `Evidence quote: ${item.title}`}))];
-            return `<fieldset class="editorial-beat" data-board-beat="${esc(beat.id)}"><legend>Beat ${index + 1} · ${beat.planned_duration_seconds}s</legend><label>Visual<select>${'<option value="">Choose a visual</option>'}${options.map(item => `<option value="${esc(item.value)}" ${saved[index]?.choice === item.value ? "selected" : ""}>${esc(item.label)}</option>`).join("")}</select></label><label>Footage start (seconds)<input type="number" min="0" step="0.1" value="${esc(saved[index]?.start || "0")}"></label><label class="check-row"><input type="checkbox" ${saved[index]?.freeze ? "checked" : ""}> Hold this frame</label></fieldset>`;
+            return `<fieldset class="editorial-beat" data-board-beat="${esc(beat.id)}"><legend>Beat ${index + 1} · ${beat.planned_duration_seconds}s</legend><label>Visual<select data-primary-visual>${'<option value="">Choose a visual</option>'}${options.map(item => `<option value="${esc(item.value)}" ${saved[index]?.choice === item.value ? "selected" : ""}>${esc(item.label)}</option>`).join("")}</select></label><label>Footage start (seconds)<input type="number" min="0" step="0.1" value="${esc(saved[index]?.start || "0")}"></label><label class="check-row"><input type="checkbox" ${saved[index]?.freeze ? "checked" : ""}> Hold this frame</label>
+                <div data-image-tools hidden><label>Compare with another image<select data-image-compare><option value="">Single image</option>${saved[index]?.compare && !(state.images?.images || []).some(item => item.id === saved[index].compare && item.status === "active" && item.beat_id === beat.id) ? `<option value="${esc(saved[index].compare)}" selected>Unavailable image · choose a replacement</option>` : ""}${(state.images?.images || []).filter(item => item.status === "active" && item.beat_id === beat.id).map(item => `<option value="${esc(item.id)}" ${saved[index]?.compare === item.id ? "selected" : ""}>${esc(item.title)}</option>`).join("")}</select></label>
+                <details class="ae-help"><summary>Mark a source region</summary><p>Manual placement on the original image. Percentages follow the image through resizing and push-in. Check the preview before approval.</p>
+                <label>Annotation<select data-region="kind">${[["", "None"], ["circle", "Circle"], ["arrow", "Arrow"], ["highlight", "Highlight"]].map(([value, label]) => `<option value="${value}" ${saved[index]?.annotation?.kind === value ? "selected" : ""}>${label}</option>`).join("")}</select></label>
+                <div data-region-fields><label>Image to mark<select data-region="target"><option value="0">First image</option><option value="1" ${saved[index]?.annotation?.target === "1" ? "selected" : ""}>Second image</option></select></label>
+                ${[["x", "Left", 25], ["y", "Top", 25], ["width", "Width", 50], ["height", "Height", 50]].map(([key, label, fallback]) => `<label>${label} (%)<input data-region="${key}" type="number" min="${key === "width" || key === "height" ? 0.1 : 0}" max="100" step="0.1" value="${esc(saved[index]?.annotation?.[key] ?? fallback)}"></label>`).join("")}
+                <label>Optional label<input data-region="label" maxlength="100" value="${esc(saved[index]?.annotation?.label || "")}"></label></div></details></div></fieldset>`;
         }).join("") || '<p class="empty">Save a script and choose supporting media to prepare a preview.</p>';
         showFootageControls();
     }
@@ -419,7 +430,21 @@ window.KatchaEditorial = (() => {
             const value = row.querySelector("select").value;
             if (!value) throw new Error("Choose a visual for each script beat.");
             const [kind, ...parts] = value.split(":"); const id = parts.join(":");
-            if (kind === "image") return {beat_id: row.dataset.boardBeat, layout: "image", image_id: id, media: [], image_push_in: 1};
+            if (kind === "image") {
+                const compare = row.querySelector("[data-image-compare]").value;
+                const available = new Set((state.images?.images || []).filter(item => item.status === "active" && item.beat_id === row.dataset.boardBeat).map(item => item.id));
+                if (!available.has(id) || (compare && !available.has(compare))) throw new Error("An image is no longer available. Choose a replacement before rendering.");
+                if (compare === id) throw new Error("Choose two different images for comparison.");
+                const annotation = Object.fromEntries([...row.querySelectorAll("[data-region]")].map(input => [input.dataset.region, input.value]));
+                const overlays = [];
+                if (annotation.kind) {
+                    const region = Object.fromEntries(["x", "y", "width", "height"].map(key => [key, Number(annotation[key]) / 100]));
+                    if (Object.values(region).some(value => !Number.isFinite(value)) || region.x < 0 || region.y < 0 || region.width <= 0 || region.height <= 0 || region.x + region.width > 1 || region.y + region.height > 1) throw new Error("Keep the annotation within the original image (0–100%).");
+                    if (annotation.target === "1" && !compare) throw new Error("Choose a second image before marking it.");
+                    overlays.push({kind: annotation.kind, media_index: Number(annotation.target), region, label: annotation.label.trim() || null});
+                }
+                return {beat_id: row.dataset.boardBeat, layout: compare ? "image_comparison" : "image", ...(compare ? {image_ids: [id, compare]} : {image_id: id}), media: [], image_push_in: 1, overlays};
+            }
             return kind === "quote" ? {beat_id: row.dataset.boardBeat, layout: "quote", quote_source_id: id, media: []} : {beat_id: row.dataset.boardBeat, layout: "single", media: [{candidate_id: id, start_seconds: Number(row.querySelector("input[type=number]").value), freeze: row.querySelector("input[type=checkbox]").checked}]};
         });
         const mode = el("editorial-presentation").value;

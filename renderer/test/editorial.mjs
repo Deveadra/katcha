@@ -90,3 +90,27 @@ await assert.rejects(() => verifyImageBytes(Readable.from([png]), {...image, sha
 await assert.rejects(() => verifyImageBytes(Readable.from([png]), {...image, width: 2}), /dimensions/);
 await assert.rejects(() => verifyImageBytes(Readable.from([Buffer.alloc(16 * 1024 * 1024 + 1)]), image), /16 MiB/);
 console.log('Still-image manifests, narration, PNG identity and byte limits passed');
+
+const imageComparison = structuredClone(still);
+imageComparison.version = 'editorial-render-v4';
+imageComparison.images.push({...imageComparison.images[0], image_id: 'second', width: 180, height: 320, storage_key: `editorial/test-project/images/second/${'f'.repeat(64)}.png`});
+Object.assign(imageComparison.timeline[0], {layout: 'image_comparison', image_id: null, image_ids: ['still', 'second'], overlays: [{kind: 'circle', media_index: 1, region: {x: .1, y: .1, width: .8, height: .8}}]});
+validateEditorialManifest(imageComparison);
+for (const mutate of [
+  m => { m.version = 'editorial-render-v3'; },
+  m => { m.timeline[0].image_ids = ['still', 'still']; },
+  m => { m.timeline[0].image_ids[1] = 'absent'; },
+  m => { m.timeline[0].overlays[0].media_index = 2; },
+  m => { m.timeline[0].overlays[0].region.x = .9; },
+  m => { m.images[1].beat_id = 'other'; },
+]) {
+  const value = structuredClone(imageComparison); mutate(value);
+  assert.throws(() => validateEditorialManifest(value), /invalid editorial manifest/);
+}
+const annotatedStill = structuredClone(still);
+annotatedStill.version = 'editorial-render-v4';
+annotatedStill.timeline[0].overlays = [{kind: 'highlight', media_index: 0, region: {x: 0, y: 0, width: 1, height: 1}}];
+validateEditorialManifest(annotatedStill);
+annotatedStill.version = 'editorial-render-v3';
+assert.throws(() => validateEditorialManifest(annotatedStill), /image annotation version/);
+console.log('Versioned image comparison and source-region contracts passed');

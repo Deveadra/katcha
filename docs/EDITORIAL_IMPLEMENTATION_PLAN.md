@@ -965,3 +965,35 @@ editorial browser journey passed current/historical citation display, keyboard d
 observation text, preserved manual edits and 390px layout. A damaged cached Chromium
 binary was re-extracted for testing; no runtime dependency change was needed.
 No live provider calls, paid work or generated-video publication were performed.
+
+### E14 manual still comparisons and source-region annotations (2026-10-06)
+
+PR #299 is merged at `490517a`. Operators can now select a second uploaded image
+for a side-by-side comparison and mark a region on either image with a circle,
+arrow or highlight. The compact storyboard disclosure accepts source-relative
+percentages and an optional label; selections survive refresh and failed requests.
+An unavailable comparison image remains visible as a replacement requirement.
+The UI authors one annotation per beat; the typed contract supports up to eight.
+
+A version-4 manifest carries image comparisons and annotated stills. Both compiler
+and renderer validate selected images, beat/revision ownership, bounded coordinates
+and target indices. Current permission-attested image status is rechecked during
+compile/render/review. Each image preserves its aspect ratio, credit and illustration
+label. Annotations share the contained image's transform during push-in. Existing
+v1–v3 serialization and hashes remain unchanged for their original capabilities.
+Native tools expose the same comparison and manual-region contracts.
+
+This is manual still-image authoring, not automatic object detection, moving-object
+tracking, image/video mixed comparisons or automatic image acquisition. Frame-grounded
+AI region interpretation, approved branding, publication handoff and live authorized
+acceptance remain pending. No live provider calls or paid rendering were used.
+
+Validation: **204 editorial tests passed**; after adding second-image ownership
+regressions, all **22 image tests passed**. Renderer contract/configuration checks
+and the synthetic browser journey passed, including invalid-region recovery,
+retained comparison/annotation controls and 390px layout. Actual local Chromium /
+Remotion / FFmpeg renders passed existing video, narration and image cases plus a
+60-frame narrated landscape/portrait comparison. The rendered annotations, credits
+and mobile controls were visually inspected. A test-only loopback fallback was
+needed because this environment cannot enumerate network interfaces; production
+code was not changed for it. No live editorial-quality acceptance is claimed.

@@ -127,6 +127,7 @@ const draft = {
                 if (url.pathname.endsWith('/images')) {
                     if (request.method() === 'GET') return send({images: stillImages});
                     stillImages = [{id: 'still-image', beat_id: url.searchParams.get('beat_id'), revision: 3, status: 'active', width: 320, height: 180, title: url.searchParams.get('title'), source_reference: url.searchParams.get('source_reference'), use_note: url.searchParams.get('use_note'), illustration: url.searchParams.get('illustration') === 'true'}];
+                    stillImages.push({...stillImages[0], id: 'second-image', title: 'Second portrait image', width: 180, height: 320});
                     if (loseImageResponse) { loseImageResponse = false; return send({detail: 'Image response lost. Retry to recover upload.'}, 503); }
                     return send(stillImages[0], 201);
                 }
@@ -252,12 +253,12 @@ const draft = {
         await page.getByText(/Managed media available/).waitFor();
         assert.match(await page.locator("#editorial-assets").innerText(), /review required/);
         await page.locator('[data-editorial-stage="storyboard"]').click();
-        await page.locator('#editorial-storyboard select').selectOption('media:candidate');
-        await page.locator('#editorial-storyboard input[type=number]').fill('1.5');
+        await page.locator('#editorial-storyboard select[data-primary-visual]').selectOption('media:candidate');
+        await page.locator('#editorial-storyboard input[type=number]:not([data-region])').fill('1.5');
         await page.locator('#editorial-storyboard input[type=checkbox]').check();
         await page.locator('#editorial-refresh').click();
         assert.equal(await page.locator('[data-editorial-stage="storyboard"]').getAttribute("aria-selected"), "true");
-        assert.equal(await page.locator('#editorial-storyboard input[type=number]').inputValue(), '1.5');
+        assert.equal(await page.locator('#editorial-storyboard input[type=number]:not([data-region])').inputValue(), '1.5');
         await page.locator('[data-editorial-stage="assets"]').click();
         await page.getByText(/Managed media available/).waitFor();
         await page.locator('[data-editorial-stage="storyboard"]').click();
@@ -344,7 +345,7 @@ const draft = {
         assert.equal(await page.locator('.editorial-ai-drawer').getAttribute('open'), '');
         await page.locator('#editorial-direct').click();
         await page.getByText(/Visual plan response lost/).waitFor();
-        assert.equal(await page.locator('#editorial-storyboard input[type=number]').inputValue(), '1.5');
+        assert.equal(await page.locator('#editorial-storyboard input[type=number]:not([data-region])').inputValue(), '1.5');
         await page.locator('#editorial-direct').click();
         await page.locator('#editorial-direction').filter({hasText: 'Hold attention on the linked interview'}).waitFor();
         const directions = calls.filter(call => call.body?.target === 'direction');
@@ -392,7 +393,7 @@ const draft = {
         assert(await page.evaluate(() => document.documentElement.scrollWidth <= 390));
         await page.locator('#editorial-image-form').screenshot({path: path.resolve(__dirname, 'test-results/editorial-images-mobile.png')});
         await page.locator('[data-editorial-stage="storyboard"]').click();
-        await page.locator('#editorial-storyboard select').selectOption('image:still-image');
+        await page.locator('#editorial-storyboard select[data-primary-visual]').selectOption('image:still-image');
         await page.locator('[data-editorial-stage="preview"]').click();
         const imageRenderRequest = page.waitForRequest((request) => {
             if (request.method() !== 'POST') return false;
@@ -404,11 +405,36 @@ const draft = {
         await page.getByText(/Review approved for this rendered revision/).waitFor();
         assert.equal(imageRender.storyboard.beats[0].image_id, 'still-image');
         assert.equal(imageRender.storyboard.beats[0].layout, 'image');
+        await page.locator('[data-editorial-stage="storyboard"]').click();
+        await page.locator('[data-image-compare]').selectOption('second-image');
+        await page.locator('#editorial-storyboard summary').click();
+        await page.locator('[data-region="kind"]').selectOption('circle');
+        await page.locator('[data-region="target"]').selectOption('1');
+        await page.locator('[data-region="x"]').fill('90');
+        await page.locator('[data-editorial-stage="preview"]').click();
+        await page.getByRole('button', {name: 'Create narrated preview', exact: true}).click();
+        await page.getByText(/Keep the annotation within the original image/).waitFor();
+        await page.locator('[data-editorial-stage="storyboard"]').click();
+        await page.locator('[data-region="x"]').fill('10');
+        await page.locator('[data-region="label"]').fill('Compare the symbol');
+        assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
+        await page.locator('#editorial-storyboard').screenshot({path: path.resolve(__dirname, 'test-results/editorial-image-comparison-mobile.png')});
+        await page.locator('[data-editorial-stage="preview"]').click();
+        const comparisonRequest = page.waitForRequest(request => request.method() === 'POST' && new URL(request.url()).pathname.endsWith('/runs') && request.postDataJSON()?.storyboard?.beats[0]?.layout === 'image_comparison');
+        await page.getByRole('button', {name: 'Create narrated preview', exact: true}).click();
+        const compared = (await comparisonRequest).postDataJSON().storyboard.beats[0];
+        assert.deepEqual(compared.image_ids, ['still-image', 'second-image']);
+        assert.deepEqual(compared.overlays[0], {kind: 'circle', media_index: 1, region: {x: .1, y: .25, width: .5, height: .5}, label: 'Compare the symbol'});
+        await page.getByText(/Review approved for this rendered revision/).waitFor();
+        await page.locator('[data-editorial-stage="storyboard"]').click();
+        assert.equal(await page.locator('[data-image-compare]').inputValue(), 'second-image');
+        assert.equal(await page.locator('[data-region="x"]').inputValue(), '10');
+
         await page.locator('[data-editorial-stage="assets"]').click();
-        await page.locator('[data-image-revoke]').click();
+        await page.locator('[data-image-revoke="still-image"]').click();
         await page.locator('[data-editorial-stage="preview"]').click();
         await page.getByText(/Previous approval is no longer valid/).waitFor();
-        assert.equal(await page.locator('#editorial-storyboard select option[value="image:still-image"]').count(), 0);
+        assert.equal(await page.locator('#editorial-storyboard select[data-primary-visual] option[value="image:still-image"]').count(), 0);
         await page.locator('[data-editorial-stage="assets"]').click();
         await page.locator('#editorial-image-file').setInputFiles({name: 'owned.png', mimeType: 'image/png', buffer: Buffer.from('synthetic upload transport')});
         await page.locator('#editorial-image-confirm').check();
