@@ -465,7 +465,7 @@ def test_storyboard_workspace_preserves_footage_beat_lineage(saved):
     assert "scouted beat" in rejected.json()["detail"]
 
 
-def test_storyboard_workspace_rejects_revoked_image_and_narration(saved):
+def test_storyboard_workspace_rejects_cross_beat_image_and_narration(saved):
     client, channel, _ = saved
     project = client.post(root(channel), json=brief("storyboard-revoked")).json()
     revision_url = f"{root(channel)}/{project['id']}/revisions"
@@ -487,13 +487,13 @@ def test_storyboard_workspace_rejects_revoked_image_and_narration(saved):
                 project_id=project_id,
                 channel_profile_id=channel,
                 revision=1,
-                beat_id="beat-1",
+                beat_id="another-beat",
                 request_digest="a" * 64,
                 sha256="b" * 64,
                 storage_key=f"editorial/{project_id}/1/images/{image_id}/{'b' * 64}.png",
                 width=320,
                 height=180,
-                title="Revoked still",
+                title="Wrong-beat still",
                 source_reference="operator",
                 use_note="Synthetic fixture",
                 illustration=False,
@@ -507,7 +507,7 @@ def test_storyboard_workspace_rejects_revoked_image_and_narration(saved):
                 project_id=project_id,
                 channel_profile_id=channel,
                 revision=1,
-                beat_id="beat-1",
+                beat_id="another-beat",
                 text_digest="c" * 64,
                 sha256="d" * 64,
                 storage_key=f"editorial/{project_id}/1/narration/beat-1/{'d' * 64}.wav",
@@ -535,7 +535,7 @@ def test_storyboard_workspace_rejects_revoked_image_and_narration(saved):
         },
     )
     assert image_response.status_code == 409
-    assert "Image was removed" in image_response.json()["detail"]
+    assert "another script beat" in image_response.json()["detail"]
 
     narration_workspace = storyboard_workspace()
     narration_workspace["presentation_mode"] = "narrated"
@@ -550,7 +550,7 @@ def test_storyboard_workspace_rejects_revoked_image_and_narration(saved):
         },
     )
     assert narration_response.status_code == 409
-    assert "Narration was removed" in narration_response.json()["detail"]
+    assert "matching saved beat" in narration_response.json()["detail"]
 
 
 def test_storyboard_migration_roundtrip():
