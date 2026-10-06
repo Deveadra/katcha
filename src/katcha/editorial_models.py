@@ -128,6 +128,27 @@ class EditorialNarration(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
+class EditorialPlaybackTicket(Base):
+    __tablename__ = "editorial_playback_tickets"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
+    channel_profile_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("channel_profiles.id"), index=True
+    )
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("editorial_projects.id"), index=True
+    )
+    run_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("editorial_runs.id"), index=True
+    )
+    clip_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("clips.id"), index=True)
+    candidate_id: Mapped[str] = mapped_column(String(200))
+    token_digest: Mapped[str] = mapped_column(String(64), unique=True)
+    actor: Mapped[str] = mapped_column(String(255))
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
 class EditorialImage(Base):
     __tablename__ = "editorial_images"
     __table_args__ = (
