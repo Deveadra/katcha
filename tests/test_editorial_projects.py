@@ -274,7 +274,10 @@ def test_operator_source_upload_is_managed_replay_safe_and_channel_scoped(
     }
     with db.session_scope() as session:
         assert channel in channel_ids_for_clip(session, first.clip_id)
-        assert len(list(session.scalars(select(SourceItem).where(SourceItem.clip_id == first.clip_id)))) == 1
+        sources = list(
+            session.scalars(select(SourceItem).where(SourceItem.clip_id == first.clip_id))
+        )
+        assert len(sources) == 1
 
 
 def test_operator_source_upload_rejects_reused_identity_for_different_media(
