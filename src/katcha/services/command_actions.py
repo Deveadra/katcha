@@ -337,6 +337,66 @@ def complete_action_proposal(
         return proposal
 
 
+def reject_action_proposal(
+    proposal_id: uuid.UUID,
+    *,
+    actor: str,
+    reason: str = "",
+    credential_id: str | None = None,
+    credential_fingerprint: str | None = None,
+) -> CommandActionProposal:
+    with session_scope() as session:
+        proposal = session.scalar(
+            select(CommandActionProposal)
+            .where(CommandActionProposal.id == proposal_id)
+            .with_for_update()
+        )
+        if proposal is None:
+            raise ValueError(f"command action proposal not found: {proposal_id}")
+        if proposal.status == "rejected":
+            session.expunge(proposal)
+            return proposal
+        if proposal.status not in {"proposed", "failed"}:
+            raise ValueError(
+                f"command action proposal cannot be rejected from status {proposal.status}"
+            )
+        proposal.status = "rejected"
+        proposal.result = {
+            "rejected": True,
+            "reason": reason[:1000],
+        }
+        proposal.error = None
+        session.add(
+            DomainEvent(
+                aggregate_type="command_action_proposal",
+                aggregate_id=str(proposal.id),
+                event_type="command_center.proposal_rejected",
+                payload={
+                    "proposal_id": str(proposal.id),
+                    "request_id": str(proposal.request_id),
+                    "thread_id": (
+                        str(proposal.thread_id) if proposal.thread_id else None
+                    ),
+                    "source_turn_id": (
+                        str(proposal.source_turn_id)
+                        if proposal.source_turn_id
+                        else None
+                    ),
+                    "channel_profile_id": str(proposal.channel_profile_id),
+                    "action_type": proposal.action_type,
+                    "actor": actor,
+                    "credential_id": credential_id,
+                    "credential_fingerprint": credential_fingerprint,
+                    "reason": reason[:1000],
+                },
+            )
+        )
+        session.flush()
+        session.refresh(proposal)
+        session.expunge(proposal)
+        return proposal
+
+
 def fail_action_proposal(
     proposal_id: uuid.UUID,
     *,
