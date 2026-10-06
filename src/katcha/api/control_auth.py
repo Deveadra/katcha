@@ -278,6 +278,17 @@ def _require_named_principal_route_access(request: Request) -> None:
         require_control_scope(request, "ai:read" if method == "GET" else "production:create")
         return
 
+    if re.fullmatch(
+        r"/v1/channels/[^/]+/editorial-projects/[^/]+/storyboard"
+        r"(?:/history|/undo)?",
+        path,
+    ):
+        require_control_scope(
+            request,
+            "ai:read" if method in {"GET", "HEAD"} else "production:create",
+        )
+        return
+
     if method == "GET" and re.fullmatch(
         r"/v1/channels/[^/]+/editorial-projects/[^/]+/runs/[^/]+/assets/[^/]+/"
         r"(?:source-monitor|contact-sheet)",
