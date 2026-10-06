@@ -228,6 +228,7 @@ def _editorial_project_evidence(
     resource_id: uuid.UUID,
     *,
     selector: str | None = None,
+    expected_revision: int | None = None,
 ) -> dict[str, object]:
     row = session.get(EditorialProject, resource_id)
     if row is None:
@@ -255,9 +256,21 @@ def _editorial_project_evidence(
         .limit(1)
     )
 
+    if (selector is None) != (expected_revision is None):
+        raise ValueError("editorial beat selectors require an exact revision")
+
     revision_summary: dict[str, object] | None = None
     selected_beat: dict[str, object] | None = None
     if latest_revision is not None:
+        if (
+            expected_revision is not None
+            and latest_revision.revision != expected_revision
+        ):
+            raise ValueError(
+                "editorial beat selector is stale: "
+                f"expected revision {expected_revision}, "
+                f"current revision {latest_revision.revision}"
+            )
         draft = dict(latest_revision.draft or {})
         script = list(draft.get("script") or [])
         narration = [
@@ -492,25 +505,35 @@ def research_context(
 def resolve_command_resources(
     channel_profile_id: uuid.UUID,
     refs: list[
-        tuple[str, uuid.UUID] | tuple[str, uuid.UUID, str | None]
+        tuple[str, uuid.UUID]
+        | tuple[str, uuid.UUID, str | None, int | None]
     ],
 ) -> list[dict[str, object]]:
     if len(refs) > 8:
         raise ValueError("at most 8 typed resources may be attached to one command")
     evidence: list[dict[str, object]] = []
-    seen: set[tuple[str, uuid.UUID, str | None]] = set()
+    seen: set[tuple[str, uuid.UUID, str | None, int | None]] = set()
     with session_scope() as session:
         for ref in refs:
             kind, resource_id, *selector_values = ref
+            if len(selector_values) not in {0, 2}:
+                raise ValueError(
+                    "resource selectors require both a selector and exact revision"
+                )
             selector = selector_values[0] if selector_values else None
-            key = (kind, resource_id, selector)
+            expected_revision = selector_values[1] if selector_values else None
+            key = (kind, resource_id, selector, expected_revision)
             if key in seen:
                 continue
             seen.add(key)
             if kind not in SUPPORTED_RESOURCE_KINDS:
                 raise ValueError(f"unsupported command resource kind: {kind}")
             if selector and kind != "editorial_project":
-                raise ValueError("resource selectors are only supported for editorial projects")
+                raise ValueError(
+                    "resource selectors are only supported for editorial projects"
+                )
+            if (selector is None) != (expected_revision is None):
+                raise ValueError("editorial beat selectors require an exact revision")
             if kind == "clip":
                 item = _clip_evidence(session, channel_profile_id, resource_id)
             elif kind == "production":
@@ -527,6 +550,7 @@ def resolve_command_resources(
                     channel_profile_id,
                     resource_id,
                     selector=selector,
+                    expected_revision=expected_revision,
                 )
             else:
                 item = _intelligence_record_evidence(
