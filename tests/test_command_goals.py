@@ -481,11 +481,34 @@ async def test_pending_decision_survives_retry_without_new_inference(saved, monk
     assert get_goal(goal.id).step_count == 1
 
 
-def test_storyboard_edit_proposal_freezes_observed_workspace_identity(saved):
+def test_storyboard_edit_proposal_freezes_observed_workspace_identity(
+    saved,
+    monkeypatch,
+):
     from katcha.services.goal_tools import action_spec
 
     project_id = uuid.uuid4()
     asset_run_id = uuid.uuid4()
+    monkeypatch.setattr(
+        "katcha.services.goal_tools.selected_resource_evidence",
+        lambda request: [
+            {
+                "kind": "editorial_project",
+                "id": str(project_id),
+                "selected_beat": {
+                    "id": "beat-1",
+                    "revision": 3,
+                    "storyboard": {
+                        "workspace_version": 4,
+                        "asset_run_id": str(asset_run_id),
+                        "visual": {
+                            "media": [{"candidate_id": "candidate-1"}],
+                        },
+                    },
+                },
+            }
+        ],
+    )
     goal = receipt(saved[0], "Use the close-up for this beat")
     with db.session_scope() as session:
         current = session.get(CommandGoal, goal.id)
@@ -548,6 +571,26 @@ def test_storyboard_edit_proposal_freezes_observed_workspace_identity(saved):
                 **spec.payload,
                 "project_id": str(uuid.uuid4()),
             },
+            uuid.uuid4(),
+        )
+
+    invented = {
+        **spec.payload,
+        "beat": {
+            **spec.payload["beat"],
+            "media": [
+                {
+                    **spec.payload["beat"]["media"][0],
+                    "candidate_id": "invented-candidate",
+                }
+            ],
+        },
+    }
+    with pytest.raises(ValueError, match="observed Editorial records"):
+        action_spec(
+            goal,
+            "propose_editorial_storyboard_edit",
+            invented,
             uuid.uuid4(),
         )
 
