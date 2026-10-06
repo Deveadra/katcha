@@ -173,7 +173,7 @@ window.KatchaEditorial = (() => {
             el("editorial-projects").innerHTML = rows.length ? rows.map((row) => `
                 <article class="item"><div><h3>${esc(row.brief.prompt)}</h3><p>${row.brief.source_urls.length} source(s) · ${Object.keys(row.brief.source_clip_bindings || {}).length} managed · Revision ${row.revision}</p></div>
                 <button type="button" class="mini" data-open-editorial="${esc(row.id)}">Open project</button></article>`).join("")
-                : '<div class="empty">No editorial projects yet. Add a brief and a source link to create one.</div>';
+                : '<div class="empty">No editorial projects yet. Add a brief and choose a source link or managed clip.</div>';
             if (state.project) await open(state.project.id, { focus: false });
         } catch (error) {
             if (epoch !== state.epoch) return;
