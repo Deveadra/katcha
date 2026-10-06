@@ -1456,7 +1456,14 @@ async def command(http_request: Request, request: CommandRequest) -> CommandResp
                     {
                         "kind": item.kind,
                         "id": str(item.id),
-                        **({"selector": item.selector} if item.selector else {}),
+                        **(
+                            {
+                                "selector": item.selector,
+                                "revision": item.revision,
+                            }
+                            if item.selector
+                            else {}
+                        ),
                     }
                     for item in effective_resource_refs
                 ],
