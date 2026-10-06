@@ -358,7 +358,9 @@ function evidenceSummary(record) {
     }
     if (record.kind === "editorial_project") {
         const run = record.latest_run || {};
+        const beat = record.selected_beat || {};
         return [
+            beat.id ? "selected beat " + beat.id + " · revision " + beat.revision : "",
             "revision " + String(record.revision ?? 0),
             String(record.source_count || 0) + " sources",
             String(record.managed_clip_count || 0) + " managed clips",
@@ -433,6 +435,8 @@ function applyDeepLinkContext() {
         revisionParam != null && /^\d+$/.test(revisionParam)
             ? Number(revisionParam)
             : null;
+    const beatContextReady =
+        kind === "editorial_project" && selector && revision != null;
     const prompt = launchParams.get("prompt");
     const allowedKinds = new Set([
         "clip",
@@ -454,9 +458,7 @@ function applyDeepLinkContext() {
             kind,
             id,
             ...(
-                kind === "editorial_project" && selector && revision != null
-                    ? {selector, revision}
-                    : {}
+                beatContextReady ? {selector, revision} : {}
             ),
         }];
         $("thread-history").value = "";
@@ -464,7 +466,7 @@ function applyDeepLinkContext() {
         resetConversationView(
             "Typed " +
                 kind.replaceAll("_", " ") +
-                (kind === "editorial_project" && selector ? " beat context" : " context") +
+                (beatContextReady ? " beat context" : " context") +
                 " is attached from another Katcha workspace.",
         );
         renderSelection();
