@@ -378,7 +378,8 @@ def test_bootstrap_capacity_search_self_chains_with_cron_as_backstop() -> None:
     assert "dead-man/backstop" in workflow.lower()
     assert "Starting the first autonomous capacity pass" in configurator
     assert "gh workflow run oci-bootstrap-capacity.yml" in configurator
-    assert "five-minute GitHub schedule remains only as a dead-man/backstop" in configurator
+    assert "five-minute GitHub schedule remains a same-provider backstop" in configurator
+    assert "Cloudflare provides the independent dead-man" in configurator
 
 
 def test_cloudflare_bootstrap_deadman_is_independent_from_actions_cron() -> None:
