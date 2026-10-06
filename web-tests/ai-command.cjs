@@ -22,6 +22,9 @@ const requests = [];
 const threadId = "77777777-7777-4777-8777-777777777777";
 const channelId = "11111111-1111-4111-8111-111111111111";
 const proposalId = "66666666-6666-4666-8666-666666666666";
+const editorialApplyProposalId = "66666666-6666-4666-8666-666666666661";
+const editorialModifyProposalId = "66666666-6666-4666-8666-666666666662";
+const editorialRejectProposalId = "66666666-6666-4666-8666-666666666663";
 const storedTurns = [];
 let threadExists = false;
 let commandCount = 0;
@@ -128,6 +131,10 @@ let browser;
                               required_scope: "discovery:write",
                               allowed: false,
                           },
+                          editorial_storyboard_edit: {
+                              required_scope: "production:create",
+                              allowed: false,
+                          },
                       },
                       event_stream: {
                           read_endpoint: "/v1/control/events",
@@ -196,6 +203,10 @@ let browser;
                           },
                           start_source_scout: {
                               required_scope: "discovery:write",
+                              allowed: true,
+                          },
+                          editorial_storyboard_edit: {
+                              required_scope: "production:create",
                               allowed: true,
                           },
                       },
@@ -338,6 +349,11 @@ let browser;
             };
         } else if (url.pathname === "/v1/ai/command") {
             commandCount += 1;
+            const editorialProposalId = {
+                "Use the close-up for this beat": editorialApplyProposalId,
+                "Use a different crop for this beat": editorialModifyProposalId,
+                "Try another visual for this beat": editorialRejectProposalId,
+            }[body.prompt] || null;
             const contextSourceTurnId =
                 storedTurns.filter((turn) => turn.role === "assistant").at(-1)?.turn_id || null;
             const turnSuffix = String(commandCount).padStart(2, "0");
@@ -433,23 +449,55 @@ let browser;
                 key_points: ["The answer uses stored clip evidence."],
                 caveats: [],
                 evidence,
-                actions: [
-                    {
-                        proposal_id: proposalId,
-                        thread_id: threadId,
-                        source_turn_id: assistantTurnId,
-                        type: "create_short_production",
-                        label: "Make a short from top clip",
-                        description: "Start a channel-scoped production using the current channel defaults.",
-                        status: "proposed",
-                        expires_at: "2026-09-28T13:30:00Z",
-                        payload: {
-                            clip_id: "44444444-4444-4444-8444-444444444444",
-                            edit_blueprint_key: "persona_commentary",
-                        },
-                        requires_confirmation: true,
-                    },
-                ],
+                actions: editorialProposalId
+                    ? [
+                          {
+                              proposal_id: editorialProposalId,
+                              thread_id: threadId,
+                              source_turn_id: assistantTurnId,
+                              type: "editorial_storyboard_edit",
+                              label: "Apply Storyboard edit · beat-1",
+                              description: "Use the closer observed shot without changing narration.",
+                              status: "proposed",
+                              expires_at: "2026-09-28T13:30:00Z",
+                              payload: {
+                                  project_id: "77777777-7777-4777-8777-777777777777",
+                                  script_revision: 3,
+                                  expected_workspace_version: 4,
+                                  asset_run_id: "55555555-5555-4555-8555-555555555551",
+                                  beat: {
+                                      beat_id: "beat-1",
+                                      layout: "single",
+                                      media: [
+                                          {
+                                              candidate_id: "candidate-1",
+                                              start_seconds: 2.5,
+                                              freeze: true,
+                                          },
+                                      ],
+                                  },
+                                  rationale: "Use the closer observed shot.",
+                              },
+                              requires_confirmation: true,
+                          },
+                      ]
+                    : [
+                          {
+                              proposal_id: proposalId,
+                              thread_id: threadId,
+                              source_turn_id: assistantTurnId,
+                              type: "create_short_production",
+                              label: "Make a short from top clip",
+                              description: "Start a channel-scoped production using the current channel defaults.",
+                              status: "proposed",
+                              expires_at: "2026-09-28T13:30:00Z",
+                              payload: {
+                                  clip_id: "44444444-4444-4444-8444-444444444444",
+                                  edit_blueprint_key: "persona_commentary",
+                              },
+                              requires_confirmation: true,
+                          },
+                      ],
                 planning: {
                     intent,
                     source: "deterministic",
@@ -472,6 +520,67 @@ let browser;
                 },
                 grounded: true,
                 narrator: "fixture/grounded-command-v1",
+            };
+        } else if (
+            url.pathname ===
+            "/v1/ai/actions/" + editorialApplyProposalId + "/execute"
+        ) {
+            assert.deepEqual(body, { confirmed: true });
+            data = {
+                proposal_id: editorialApplyProposalId,
+                action_type: "editorial_storyboard_edit",
+                status: "executed",
+                execution_attempts: 1,
+                result: {
+                    project_id: "77777777-7777-4777-8777-777777777777",
+                    script_revision: 3,
+                    workspace_version: 5,
+                    parent_version: 4,
+                    beat_id: "beat-1",
+                    origin: "ai_apply",
+                },
+            };
+        } else if (
+            url.pathname ===
+            "/v1/ai/actions/" + editorialApplyProposalId + "/activity"
+        ) {
+            data = {
+                proposal_id: editorialApplyProposalId,
+                action_type: "editorial_storyboard_edit",
+                proposal_status: "executed",
+                workflow_id: null,
+                state: "executed",
+                settled: true,
+                resource: null,
+                events: [],
+            };
+        } else if (
+            [
+                "/v1/ai/actions/" + editorialModifyProposalId + "/reject",
+                "/v1/ai/actions/" + editorialRejectProposalId + "/reject",
+            ].includes(url.pathname)
+        ) {
+            data = {
+                proposal_id: url.pathname.includes(editorialModifyProposalId)
+                    ? editorialModifyProposalId
+                    : editorialRejectProposalId,
+                request_id: "33333333-3333-4333-8333-333333333333",
+                thread_id: threadId,
+                source_turn_id: null,
+                channel_profile_id: channelId,
+                action_type: "editorial_storyboard_edit",
+                label: "Apply Storyboard edit · beat-1",
+                description: "Use the closer observed shot without changing narration.",
+                status: "rejected",
+                execution_attempts: 0,
+                expires_at: "2026-09-28T13:30:00Z",
+                confirmed_by: null,
+                confirmed_at: null,
+                execution_started_at: null,
+                executed_at: null,
+                result: {rejected: true, reason: body.reason},
+                error: null,
+                payload: {},
             };
         } else if (
             url.pathname ===
