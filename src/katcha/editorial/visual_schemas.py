@@ -38,32 +38,47 @@ class VisualOverlay(Contract):
 
 class VisualBeat(Contract):
     beat_id: Identity
-    layout: Literal["single", "comparison", "quote", "image"]
+    layout: Literal["single", "comparison", "quote", "image", "image_comparison"]
     media: list[VisualMediaUse] = Field(default_factory=list, max_length=2)
     quote_source_id: Identity | None = None
     image_id: UUID | None = None
+    image_ids: list[UUID] = Field(default_factory=list, max_length=2)
     image_push_in: float = Field(default=1, ge=1, le=1.15)
     overlays: list[VisualOverlay] = Field(default_factory=list, max_length=8)
 
     @model_validator(mode="after")
     def coherent_layout(self) -> Self:
-        expected = {"single": 1, "comparison": 2, "quote": 0, "image": 0}[self.layout]
+        expected = {"single": 1, "comparison": 2, "quote": 0, "image": 0, "image_comparison": 0}[
+            self.layout
+        ]
         if len(self.media) != expected:
             raise ValueError("Visual layout has the wrong number of media sources")
         if (self.layout == "image") != bool(self.image_id):
             raise ValueError("Only image layouts require an uploaded image")
-        if self.layout != "image" and self.image_push_in != 1:
+        if self.layout == "image_comparison":
+            if len(self.image_ids) != 2 or len(set(self.image_ids)) != 2:
+                raise ValueError("Image comparisons require two distinct uploaded images")
+        elif self.image_ids:
+            raise ValueError("Only image comparisons may select multiple images")
+        if self.layout not in {"image", "image_comparison"} and self.image_push_in != 1:
             raise ValueError("Image motion is only valid for image layouts")
         if (self.layout == "quote") != bool(self.quote_source_id):
             raise ValueError("Only quote layouts require a research source")
-        if any(overlay.media_index >= len(self.media) for overlay in self.overlays):
+        sources = (
+            len(self.image_ids)
+            if self.layout == "image_comparison"
+            else (1 if self.layout == "image" else len(self.media))
+        )
+        if any(overlay.media_index >= sources for overlay in self.overlays):
             raise ValueError("Visual annotation references an absent source")
         return self
 
     @model_serializer(mode="wrap")
     def preserve_existing_visuals(self, handler):
         value = handler(self)
-        if self.layout != "image":
+        if self.layout != "image_comparison":
+            value.pop("image_ids", None)
+        if self.layout not in {"image", "image_comparison"}:
             value.pop("image_id", None)
             value.pop("image_push_in", None)
         return value
@@ -170,9 +185,9 @@ class EditorialScene(VisualBeat):
 
 
 class EditorialRenderManifest(Contract):
-    version: Literal["editorial-render-v1", "editorial-render-v2", "editorial-render-v3"] = (
-        "editorial-render-v1"
-    )
+    version: Literal[
+        "editorial-render-v1", "editorial-render-v2", "editorial-render-v3", "editorial-render-v4"
+    ] = "editorial-render-v1"
     project_id: str
     revision: int = Field(gt=0, strict=True)
     draft_digest: str = Field(pattern=r"^[a-f0-9]{64}$")
@@ -193,14 +208,14 @@ class EditorialRenderManifest(Contract):
         value = handler(self)
         if self.version == "editorial-render-v1":
             value.pop("narration", None)
-        if self.version != "editorial-render-v3":
+        if self.version not in {"editorial-render-v3", "editorial-render-v4"}:
             value.pop("images", None)
         return value
 
     @model_validator(mode="after")
     def valid_timeline(self) -> Self:
         narrated = self.presentation_mode == "narrated"
-        if self.version != "editorial-render-v3" and narrated != (
+        if self.version not in {"editorial-render-v3", "editorial-render-v4"} and narrated != (
             self.version == "editorial-render-v2"
         ):
             raise ValueError("Narrated rendering requires manifest version 2")
@@ -215,16 +230,28 @@ class EditorialRenderManifest(Contract):
             if scene.duration_frames != frames:
                 raise ValueError("Scene duration must follow the measured narration samples")
         images = {item.image_id: item for item in self.images}
-        selected_images = {scene.image_id for scene in self.timeline if scene.layout == "image"}
+        selected_images = {
+            identity
+            for scene in self.timeline
+            for identity in ([scene.image_id] if scene.image_id else scene.image_ids)
+        }
+        if self.version != "editorial-render-v4" and any(
+            scene.layout == "image_comparison" or (scene.layout == "image" and scene.overlays)
+            for scene in self.timeline
+        ):
+            raise ValueError("Image comparisons and annotations require manifest version 4")
         if (
             len(images) != len(self.images)
             or set(images) != selected_images
-            or bool(images) != (self.version == "editorial-render-v3")
+            or bool(images) != (self.version in {"editorial-render-v3", "editorial-render-v4"})
         ):
-            raise ValueError("Image manifests must cover exactly the selected images in version 3")
+            raise ValueError(
+                "Image manifests must cover exactly the selected images in version 3 or 4"
+            )
         for scene in self.timeline:
-            if scene.image_id and images[scene.image_id].beat_id != scene.beat_id:
-                raise ValueError("Image must belong to its saved script beat")
+            for identity in [scene.image_id] if scene.image_id else scene.image_ids:
+                if images[identity].beat_id != scene.beat_id:
+                    raise ValueError("Image must belong to its saved script beat")
         media = {item.candidate_id: item for item in self.media}
         if len(media) != len(self.media):
             raise ValueError("Render media identities must be unique")

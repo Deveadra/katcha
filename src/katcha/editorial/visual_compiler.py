@@ -110,6 +110,11 @@ def compile_visuals(
         value.update(
             version="editorial-render-v3", images=[item.model_dump(mode="json") for item in images]
         )
+    if any(
+        beat.layout == "image_comparison" or (beat.layout == "image" and beat.overlays)
+        for beat in plan.beats
+    ):
+        value["version"] = "editorial-render-v4"
     digest = _digest(
         {
             **value,

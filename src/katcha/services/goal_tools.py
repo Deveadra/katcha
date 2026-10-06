@@ -45,7 +45,9 @@ TOOLS = {
         GoalTool(
             "editorial_images",
             "List permission-attested still images for a saved script revision. "
-            "Select a returned image_id in an image storyboard layout. Does not generate images.",
+            "Select a returned image_id in an image layout, or two image_ids in image_comparison. "
+            "Manual overlays use normalized source regions and media_index 0 or 1. "
+            "Does not generate images or infer object regions.",
             "ai:read", "GET",
             "/v1/channels/{channel_profile_id}/editorial-projects/{project_id}/images",
         ),

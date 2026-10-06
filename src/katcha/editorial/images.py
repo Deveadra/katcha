@@ -205,27 +205,26 @@ def import_image(channel_id, project_id, *, request: ImageUpload, data: bytes, a
 def resolve_images(session, channel_id, project_id, revision, plan) -> list[RenderImage]:
     result = []
     for visual in plan.beats:
-        if visual.image_id is None:
-            continue
-        row = session.get(EditorialImage, visual.image_id)
-        if row is None or (row.project_id, row.channel_profile_id) != (project_id, channel_id):
-            raise EditorialNotFound("Image not found in this project")
-        if row.status != "active" or row.revision != revision or row.beat_id != visual.beat_id:
-            raise EditorialConflict(
-                "Image was removed or belongs to another script beat or revision"
+        for identity in [visual.image_id] if visual.image_id else visual.image_ids:
+            row = session.get(EditorialImage, identity)
+            if row is None or (row.project_id, row.channel_profile_id) != (project_id, channel_id):
+                raise EditorialNotFound("Image not found in this project")
+            if row.status != "active" or row.revision != revision or row.beat_id != visual.beat_id:
+                raise EditorialConflict(
+                    "Image was removed or belongs to another script beat or revision"
+                )
+            result.append(
+                RenderImage(
+                    image_id=row.id,
+                    beat_id=row.beat_id,
+                    storage_key=row.storage_key,
+                    sha256=row.sha256,
+                    width=row.width,
+                    height=row.height,
+                    title=row.title,
+                    illustration=row.illustration,
+                )
             )
-        result.append(
-            RenderImage(
-                image_id=row.id,
-                beat_id=row.beat_id,
-                storage_key=row.storage_key,
-                sha256=row.sha256,
-                width=row.width,
-                height=row.height,
-                title=row.title,
-                illustration=row.illustration,
-            )
-        )
     return result
 
 
