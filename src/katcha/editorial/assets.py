@@ -73,6 +73,43 @@ def inspect_managed_candidate(
         return result
 
 
+def inspect_image_candidate(
+    url: str,
+    channel_id: uuid.UUID,
+    *,
+    acquired: bool,
+    session: Session | None = None,
+) -> dict:
+    """Current rights state for a review-fetched still; acquisition never grants permission."""
+    unknown = {
+        "rights_status": "unreviewed",
+        "acquired": acquired,
+        "production_eligible": False,
+        "discovery_candidate_id": None,
+        "rights_assessment_id": None,
+        "rights_checked_at": datetime.now(UTC).isoformat(),
+    }
+    with (session_scope() if session is None else nullcontext(session)) as active:
+        candidate = active.scalar(
+            select(DiscoveryCandidate).where(
+                DiscoveryCandidate.canonical_url == canonicalize_url(url)
+            )
+        )
+        if candidate is None:
+            return unknown
+        if str((candidate.candidate_metadata or {}).get("channel_profile_id")) != str(channel_id):
+            return unknown
+        assessment = latest_rights_assessment(active, candidate.id)
+        cleared = bool(assessment and assessment.production_eligible)
+        return {
+            **unknown,
+            "rights_status": "cleared" if cleared else "review_required",
+            "discovery_candidate_id": str(candidate.id),
+            "rights_assessment_id": str(assessment.id) if assessment else None,
+            "production_eligible": bool(acquired and cleared),
+        }
+
+
 def scout_assets(run_id: str, attempt: int) -> dict:
     row = checkpoint(run_id, attempt, stage="sourcing_assets")
     draft = EditorialDraft.model_validate(row.artifacts["input_draft"])
