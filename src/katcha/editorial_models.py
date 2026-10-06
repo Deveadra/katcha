@@ -153,6 +153,15 @@ class EditorialImage(Base):
     source_reference: Mapped[str] = mapped_column(String(2000))
     use_note: Mapped[str] = mapped_column(String(2000))
     illustration: Mapped[bool] = mapped_column(default=False)
+    discovery_candidate_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("discovery_candidates.id"), nullable=True, index=True
+    )
+    rights_assessment_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("rights_assessments.id"), nullable=True, index=True
+    )
+    acquisition_run_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("editorial_runs.id"), nullable=True, index=True
+    )
     status: Mapped[str] = mapped_column(String(32), default="active")
     actor: Mapped[str] = mapped_column(String(255))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
