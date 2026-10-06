@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+import tempfile
 import uuid
+from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from sqlalchemy import select
 from starlette.concurrency import run_in_threadpool
 
 from katcha.api.control_auth import control_actor, require_control_channel, require_control_scope
+from katcha.config import get_settings
 from katcha.db import session_scope
 from katcha.editorial.project_schemas import (
     CreateEditorialProject,
@@ -28,6 +31,63 @@ from katcha.services.editorial_projects import (
 router = APIRouter(
     prefix="/v1/channels/{channel_profile_id}/editorial-projects", tags=["editorial-projects"]
 )
+
+
+@router.post("/source-uploads", status_code=201)
+async def source_media_upload(
+    channel_profile_id: uuid.UUID,
+    request: Request,
+    filename: str = Query(min_length=1, max_length=255),
+    title: str | None = Query(default=None, max_length=300),
+    permitted_use: bool = Query(False),
+):
+    from katcha.editorial.source_uploads import (
+        MAX_SOURCE_UPLOAD_BYTES,
+        import_source_media,
+    )
+
+    _authorize(request, channel_profile_id, write=True)
+    content_type = request.headers.get("content-type", "application/octet-stream").split(";", 1)[0]
+    content_length = request.headers.get("content-length")
+    if content_length:
+        try:
+            if int(content_length) > MAX_SOURCE_UPLOAD_BYTES:
+                raise HTTPException(413, "Upload a source video no larger than 512 MiB")
+        except ValueError:
+            pass
+
+    settings = get_settings()
+    suffix = Path(filename).suffix[:16]
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            prefix="editorial-source-",
+            suffix=suffix,
+            dir=settings.work_dir,
+            delete=False,
+        ) as handle:
+            temporary = Path(handle.name)
+            received = 0
+            async for chunk in request.stream():
+                received += len(chunk)
+                if received > MAX_SOURCE_UPLOAD_BYTES:
+                    raise HTTPException(413, "Upload a source video no larger than 512 MiB")
+                handle.write(chunk)
+        return await run_in_threadpool(
+            import_source_media,
+            channel_profile_id,
+            temporary,
+            filename=filename,
+            content_type=content_type,
+            title=title,
+            permitted_use=permitted_use,
+            actor=control_actor(request),
+        )
+    except ValueError as exc:
+        raise _error(exc) from exc
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
 
 
 @router.get("/{project_id}/images")
