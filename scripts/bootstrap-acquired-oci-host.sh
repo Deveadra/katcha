@@ -84,7 +84,10 @@ fi
 chmod 0600 "$SSH_PRIVATE_KEY_FILE"
 
 target_public_key="$(awk '{print $1 " " $2}' "$SSH_PUBLIC_KEY_FILE")"
-derived_target_public_key="$(ssh-keygen -y -f "$SSH_PRIVATE_KEY_FILE")"
+derived_target_public_key="$(
+    ssh-keygen -y -f "$SSH_PRIVATE_KEY_FILE" |
+        awk '{print $1 " " $2}'
+)"
 [[ "$derived_target_public_key" == "$target_public_key" ]] ||
     fail "SSH private key does not match Katcha target public key"
 

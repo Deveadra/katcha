@@ -38,7 +38,8 @@ def test_bastion_session_uses_ephemeral_rsa_key_and_target_key_stays_separate() 
     assert '--ssh-public-key-file "$session_public_key"' in script
     assert '-i "$session_private_key"' in script
     assert "PubkeyAcceptedAlgorithms=+ssh-rsa" in script
-    assert 'derived_target_public_key="$(ssh-keygen -y -f "$SSH_PRIVATE_KEY_FILE")"' in script
+    assert 'ssh-keygen -y -f "$SSH_PRIVATE_KEY_FILE"' in script
+    assert "awk '{print $1 \" \" $2}'" in script
     assert "SSH private key does not match Katcha target public key" in script
     assert 'rm -rf "$session_key_dir"' in script
 
