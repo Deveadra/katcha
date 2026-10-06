@@ -1073,3 +1073,30 @@ image retry, region toggling, escaped text, unchanged manual edits, read-only
 requests and late-response dismissal. The mobile dialog was visually inspected;
 its image fixture is synthetic. Renderer contracts, lint and diff checks passed.
 No live provider calls or live visual-quality acceptance were performed.
+
+
+### E17 beat-native monitor workspace and typed AI selection (2026-10-06, draft)
+
+Storyboard now completes the first professional-editor workspace boundary around the
+saved script beat. The existing beat rail remains the story/timing spine. Acquired
+footage stays in the grounded Source Monitor, while the latest completed private render
+can be loaded into a separate Program Monitor without leaving Storyboard. A dedicated
+Context Inspector keeps the selected beat's visual controls in one place and summarizes
+its planned time and evidence support.
+
+“Ask Katcha about this beat” does not create a second beat database. The existing
+typed `editorial_project` command resource now accepts an optional revision-bound beat
+selector. The server resolves that selector against the latest saved revision and
+attaches bounded narration, visual intent, timing, claim verification, research-source
+references and source observations. Cross-channel project checks remain unchanged, and
+an unknown/stale beat selector is rejected instead of silently falling back to project
+context. Deep-link/thread context preserves the selector explicitly.
+
+This slice establishes selected-beat AI context and Source/Program/Inspector editing
+surfaces; it does **not** yet let Katcha apply storyboard mutations directly. The next
+boundary is a durable edit-proposal contract with Apply / Modify / Reject / Undo over
+the same storyboard/revision state, followed by finer program/source time navigation.
+
+Validation coverage is added for selected-beat resource resolution, request/deep-link
+serialization, Context Inspector state and Program Monitor loading. Remote CI and full
+browser/launcher gates remain required before merge.

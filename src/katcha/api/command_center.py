@@ -11,7 +11,7 @@ from time import monotonic
 from typing import Literal
 
 from fastapi import APIRouter, HTTPException, Query, Request, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from sqlalchemy import or_, select
 from starlette.concurrency import run_in_threadpool
 
@@ -140,6 +140,21 @@ ResourceKind = Literal[
 class CommandResourceRef(BaseModel):
     kind: ResourceKind
     id: uuid.UUID
+    selector: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=80,
+        pattern=r"^[A-Za-z0-9_-]+$",
+    )
+    revision: int | None = Field(default=None, ge=0)
+
+    @model_validator(mode="after")
+    def valid_selector(self):
+        if self.selector and self.kind != "editorial_project":
+            raise ValueError("resource selectors are only supported for editorial projects")
+        if (self.selector is None) != (self.revision is None):
+            raise ValueError("editorial beat selectors require an exact revision")
+        return self
 
 
 class CommandRequest(BaseModel):
@@ -951,7 +966,10 @@ async def command(http_request: Request, request: CommandRequest) -> CommandResp
                     continue
             resource_inherited_from_thread = bool(effective_resource_refs)
 
-    resource_pairs = [(item.kind, item.id) for item in effective_resource_refs]
+    resource_pairs = [
+        (item.kind, item.id, item.selector, item.revision)
+        for item in effective_resource_refs
+    ]
     try:
         resource_evidence = resolve_command_resources(
             request.channel_profile_id,
@@ -1218,7 +1236,18 @@ async def command(http_request: Request, request: CommandRequest) -> CommandResp
                         else None
                     ),
                     "resource_refs": [
-                        {"kind": item.kind, "id": str(item.id)}
+                        {
+                            "kind": item.kind,
+                            "id": str(item.id),
+                            **(
+                                {
+                                    "selector": item.selector,
+                                    "revision": item.revision,
+                                }
+                                if item.selector
+                                else {}
+                            ),
+                        }
                         for item in effective_resource_refs
                     ],
                     "requested_edit_blueprint_key": blueprint_key,
@@ -1424,7 +1453,18 @@ async def command(http_request: Request, request: CommandRequest) -> CommandResp
                     else None
                 ),
                 "resource_refs": [
-                    {"kind": item.kind, "id": str(item.id)}
+                    {
+                        "kind": item.kind,
+                        "id": str(item.id),
+                        **(
+                            {
+                                "selector": item.selector,
+                                "revision": item.revision,
+                            }
+                            if item.selector
+                            else {}
+                        ),
+                    }
                     for item in effective_resource_refs
                 ],
                 "inherited_from_thread": resolution.inherited_from_thread,

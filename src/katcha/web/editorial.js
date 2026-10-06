@@ -4,9 +4,62 @@ window.KatchaEditorial = (() => {
     const esc = (value) => String(value ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
     const state = { channel: "", epoch: 0, project: null, revision: null, run: null, busy: false, timer: null, editorKey: "", sourceClipBindings: {}, clipResults: [], clipPickerEpoch: 0, clipSearchTimer: null, scriptSeedMeta: null, sourceMonitorKey: "", sourceMonitorUrl: null, sourceMonitorEpoch: 0 };
     let api, apiBlob;
+    function previewReady() {
+        return state.run?.stage === "render_ready_for_review" && state.run?.status === "completed";
+    }
+    function syncProgramMonitor() {
+        const ready = previewReady();
+        const video = el("editorial-program-monitor-video");
+        const empty = el("editorial-program-monitor-empty");
+        const loadButton = el("editorial-program-load");
+        const meta = el("editorial-program-monitor-meta");
+        const status = el("editorial-program-monitor-status");
+        loadButton.hidden = !ready || Boolean(state.previewUrl);
+        if (state.previewUrl) {
+            video.src = state.previewUrl;
+            video.hidden = false;
+            empty.hidden = true;
+            meta.textContent = `Loaded · revision ${state.run?.input_revision ?? state.project?.revision ?? "?"}`;
+            status.textContent = "Current private preview is loaded. Use this monitor to compare the assembled cut with the selected source.";
+            return;
+        }
+        video.pause();
+        video.removeAttribute("src");
+        video.load();
+        video.hidden = true;
+        empty.hidden = false;
+        if (ready) {
+            empty.textContent = "A completed private preview is ready. Load it here without leaving the storyboard.";
+            meta.textContent = `Ready · revision ${state.run?.input_revision ?? state.project?.revision ?? "?"}`;
+            status.textContent = "The program monitor follows the latest completed render for this project revision.";
+        } else {
+            empty.textContent = "Create a preview to inspect the assembled cut against the selected source.";
+            meta.textContent = "No preview loaded";
+            status.textContent = "The program monitor follows the latest completed render.";
+        }
+    }
     function clearPreview() {
         if (state.previewUrl) URL.revokeObjectURL(state.previewUrl);
-        state.previewUrl = null; el("editorial-preview").removeAttribute("src"); el("editorial-preview").hidden = true;
+        state.previewUrl = null;
+        el("editorial-preview").pause();
+        el("editorial-preview").removeAttribute("src");
+        el("editorial-preview").load();
+        el("editorial-preview").hidden = true;
+        syncProgramMonitor();
+    }
+    async function loadCurrentPreview({advance = false} = {}) {
+        if (!previewReady()) throw new Error("Create a completed private preview before loading the program monitor.");
+        const epoch = state.epoch;
+        const blob = await apiBlob(path(state.channel, `/${state.project.id}/runs/${state.run.editorial_run_id}/preview`));
+        if (epoch !== state.epoch) return;
+        clearPreview();
+        state.previewUrl = URL.createObjectURL(blob);
+        el("editorial-preview").src = state.previewUrl;
+        el("editorial-preview").hidden = false;
+        syncProgramMonitor();
+        if (advance) advanceStage("preview");
+        feedback("Preview loaded. Review the evidence, timing and media before publication.");
+        renderActions();
     }
     function clearSourceMonitor(message = "Choose acquired footage to inspect sampled source frames.") {
         state.sourceMonitorEpoch += 1;
@@ -431,7 +484,8 @@ window.KatchaEditorial = (() => {
         el("editorial-image-upload").disabled = state.busy || Boolean(active) || state.stale || !state.revision?.draft.script?.length || Boolean(read(storageKey(`pending.${state.project.id}`), null));
         el("editorial-render-directed").disabled = state.busy || Boolean(active) || state.stale || !state.directionRun || Boolean(read(storageKey(`pending.${state.project.id}`), null));
         el("editorial-render").textContent = el("editorial-presentation").value === "narrated" ? "Create narrated preview" : "Create silent captioned preview";
-        el("editorial-play").hidden = state.run?.stage !== "render_ready_for_review" || state.run?.status !== "completed";
+        el("editorial-play").hidden = !previewReady();
+        syncProgramMonitor();
         el("editorial-approve").disabled = state.busy || !state.review?.can_approve || !state.previewUrl || state.stale || Boolean(read(storageKey(`pending.${state.project.id}`), null));
         el("editorial-request-changes").disabled = state.busy || !state.review || Boolean(state.review.error);
     }
@@ -540,6 +594,28 @@ window.KatchaEditorial = (() => {
             ? `${rows.length} beat${rows.length === 1 ? "" : "s"} · ${timelineClock(total)} planned · ${assigned}/${rows.length} visuals assigned`
             : "";
     }
+    function selectedTimelineBeat() {
+        const row = [...el("editorial-storyboard").querySelectorAll("[data-board-beat]")]
+            .find(item => !item.hidden);
+        if (!row) return null;
+        return (state.revision?.draft.script || []).find(beat => beat.id === row.dataset.boardBeat) || null;
+    }
+    function refreshContextInspector(beatId) {
+        const script = state.revision?.draft.script || [];
+        const beat = script.find(item => item.id === beatId);
+        if (!beat) {
+            el("editorial-context-title").textContent = "Selected beat";
+            el("editorial-context-summary").textContent = "Choose a saved script beat to inspect its editorial context.";
+            return;
+        }
+        const index = script.findIndex(item => item.id === beatId);
+        const claims = (state.revision?.draft.claims || []).filter(claim => beat.claim_ids.includes(claim.id));
+        const supported = claims.filter(claim => claim.verification === "supported").length;
+        el("editorial-context-title").textContent = `Beat ${index + 1} · ${beat.role}`;
+        el("editorial-context-summary").textContent =
+            `${timelineClock(beat.planned_duration_seconds)} planned · ${claims.length} claim${claims.length === 1 ? "" : "s"} · ${supported}/${claims.length} supported`
+            + (beat.uncertainty_disclosure ? ` · disclosure: ${beat.uncertainty_disclosure}` : "");
+    }
     function selectTimelineBeat(beatId, {focus = false, persist = true} = {}) {
         const rows = [...el("editorial-storyboard").querySelectorAll("[data-board-beat]")];
         if (!rows.length) return;
@@ -558,6 +634,8 @@ window.KatchaEditorial = (() => {
             }
         });
         if (persist) remember(timelineStorage(), selected);
+        refreshContextInspector(selected);
+        setAiLinks();
         if (!document.querySelector('[data-editorial-stage-panel="storyboard"]').hidden) {
             void loadSourceMonitor();
         }
@@ -734,22 +812,32 @@ window.KatchaEditorial = (() => {
     function setAiLinks() {
         if (!state.project) return;
         const title = state.project.brief?.prompt || "the current editorial project";
+        const selectedBeat = selectedTimelineBeat();
         const prompts = {
             research: `Inspect editorial project ${state.project.id} for "${title}". Review source observations, evidence quality, contradictions and research gaps. Do not invent evidence. Recommend the next research action.`,
             script: `Inspect editorial project ${state.project.id} for "${title}". Help improve the current script while preserving evidence links, uncertainty wording, pacing and viewer payoff. Flag unsupported lines instead of rewriting them as facts.`,
             assets: `Inspect editorial project ${state.project.id} for "${title}". Help fill the current asset requests using relevant, rights-aware supporting media. Prefer clear provenance and explain any gaps that need operator-supplied material.`,
             storyboard: `Inspect editorial project ${state.project.id} for "${title}". Review the visual direction and storyboard for pacing, evidence alignment, repetition and clarity. Suggest changes using cleared project assets; keep every suggestion operator-reviewable.`,
+            beat: selectedBeat
+                ? `Work on the selected Editorial beat. Preserve its evidence and narration unless I explicitly ask to change them. Use the attached typed beat context to explain or propose visual, timing, crop, caption, overlay, or source changes. Keep proposals operator-reviewable and identify any evidence or rights blocker.`
+                : `Inspect the current Editorial storyboard and help me choose a beat to improve.`,
             preview: `Inspect editorial project ${state.project.id} for "${title}". Review render/review status, blockers and downstream publication readiness. Identify what still needs operator verification before approval.`,
         };
         document.querySelectorAll("[data-editorial-ai]").forEach((link) => {
-            const prompt = prompts[link.dataset.editorialAi] || prompts.research;
-            link.href = "/ai?" + new URLSearchParams({
+            const kind = link.dataset.editorialAi;
+            const prompt = prompts[kind] || prompts.research;
+            const params = {
                 focus: "chat",
                 channel: state.channel,
                 resource_kind: "editorial_project",
                 resource_id: state.project.id,
                 prompt,
-            }).toString();
+            };
+            if (kind === "beat" && selectedBeat?.id && state.revision) {
+                params.resource_selector = selectedBeat.id;
+                params.resource_revision = String(state.revision.revision);
+            }
+            link.href = "/ai?" + new URLSearchParams(params).toString();
         });
     }
     function advanceStage(stage) {
@@ -1009,13 +1097,10 @@ window.KatchaEditorial = (() => {
             if (channel === state.channel) { await open(project, {focus: false}); advanceStage("preview"); }
         }));
         el("editorial-play").addEventListener("click", () => void guarded(async () => {
-            const epoch = state.epoch;
-            const blob = await apiBlob(path(state.channel, `/${state.project.id}/runs/${state.run.editorial_run_id}/preview`));
-            if (epoch !== state.epoch) return;
-            clearPreview(); state.previewUrl = URL.createObjectURL(blob);
-            el("editorial-preview").src = state.previewUrl; el("editorial-preview").hidden = false;
-            advanceStage("preview");
-            feedback("Preview loaded. Review the evidence, timing and media before publication.");
+            await loadCurrentPreview({advance: true});
+        }));
+        el("editorial-program-load").addEventListener("click", () => void guarded(async () => {
+            await loadCurrentPreview();
         }));
         el("editorial-form").addEventListener("input", saveBrief);
         el("editorial-form").addEventListener("submit", (event) => {

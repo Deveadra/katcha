@@ -315,7 +315,10 @@ function renderSelection() {
         parts.push(
             ref.kind.replaceAll("_", " ") +
                 " " +
-                String(ref.id).slice(0, 8),
+                String(ref.id).slice(0, 8) +
+                (ref.selector
+                    ? " · revision " + ref.revision + " · beat " + ref.selector
+                    : ""),
         );
     }
     host.hidden = false;
@@ -355,7 +358,9 @@ function evidenceSummary(record) {
     }
     if (record.kind === "editorial_project") {
         const run = record.latest_run || {};
+        const beat = record.selected_beat || {};
         return [
+            beat.id ? "selected beat " + beat.id + " · revision " + beat.revision : "",
             "revision " + String(record.revision ?? 0),
             String(record.source_count || 0) + " sources",
             String(record.managed_clip_count || 0) + " managed clips",
@@ -424,6 +429,14 @@ function applyDeepLinkContext() {
     const requestedChannel = launchParams.get("channel");
     const kind = launchParams.get("resource_kind");
     const id = launchParams.get("resource_id");
+    const selector = launchParams.get("resource_selector");
+    const revisionParam = launchParams.get("resource_revision");
+    const revision =
+        revisionParam != null && /^\d+$/.test(revisionParam)
+            ? Number(revisionParam)
+            : null;
+    const beatContextReady =
+        kind === "editorial_project" && selector && revision != null;
     const prompt = launchParams.get("prompt");
     const allowedKinds = new Set([
         "clip",
@@ -441,13 +454,20 @@ function applyDeepLinkContext() {
         state.threadId = "";
         state.selectedClipIds = [];
         state.selectedProductionId = kind === "production" ? id : null;
-        state.resourceRefs = [{ kind, id }];
+        state.resourceRefs = [{
+            kind,
+            id,
+            ...(
+                beatContextReady ? {selector, revision} : {}
+            ),
+        }];
         $("thread-history").value = "";
         $("archive-thread").disabled = true;
         resetConversationView(
             "Typed " +
                 kind.replaceAll("_", " ") +
-                " context is attached from another Katcha workspace.",
+                (beatContextReady ? " beat context" : " context") +
+                " is attached from another Katcha workspace.",
         );
         renderSelection();
     }

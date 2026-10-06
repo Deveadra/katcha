@@ -733,6 +733,8 @@ let browser;
             channelId +
             "&resource_kind=editorial_project&resource_id=" +
             editorialProjectId +
+            "&resource_selector=beat-1" +
+            "&resource_revision=3" +
             "&prompt=" +
             encodeURIComponent("Review the current script stage.") +
             "&focus=chat",
@@ -746,6 +748,10 @@ let browser;
     assert.match(
         await page.locator("#selection-bar").innerText(),
         /editorial project 77777777/i,
+    );
+    assert.match(
+        await page.locator("#selection-bar").innerText(),
+        /revision 3 · beat beat-1/i,
     );
     assert.equal(
         await page.locator("#prompt").inputValue(),

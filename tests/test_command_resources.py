@@ -219,7 +219,14 @@ def test_editorial_project_context_is_channel_scoped_and_bounded() -> None:
                 digest="d" * 64,
                 draft={
                     "script": [
-                        {"beat_id": "one", "narration": "First grounded beat."},
+                        {
+                            "beat_id": "one",
+                            "role": "reveal",
+                            "narration": "First grounded beat.",
+                            "visual_intent": "Show the exact clue.",
+                            "planned_duration_seconds": 8,
+                            "claim_ids": [],
+                        },
                         {"beat_id": "two", "narration": "Second grounded beat here."},
                     ]
                 },
@@ -262,6 +269,27 @@ def test_editorial_project_context_is_channel_scoped_and_bounded() -> None:
     assert item["latest_run"]["stage"] == "direction_ready"
     assert item["latest_run"]["target"] == "direction"
     assert "Investigate the trailer clues" in resource_context_summary(evidence)
+
+    selected = resolve_command_resources(
+        profile_id,
+        [("editorial_project", project_id, "one", 2)],
+    )[0]
+    assert selected["selected_beat"]["id"] == "one"
+    assert selected["selected_beat"]["revision"] == 2
+    assert selected["selected_beat"]["narration"] == "First grounded beat."
+    assert selected["selected_beat"]["visual_intent"] == "Show the exact clue."
+
+    with pytest.raises(ValueError, match="editorial beat not found"):
+        resolve_command_resources(
+            profile_id,
+            [("editorial_project", project_id, "missing", 2)],
+        )
+
+    with pytest.raises(ValueError, match="selector is stale"):
+        resolve_command_resources(
+            profile_id,
+            [("editorial_project", project_id, "one", 1)],
+        )
 
     with pytest.raises(ValueError, match="different channel"):
         resolve_command_resources(
