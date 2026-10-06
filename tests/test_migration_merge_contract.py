@@ -4,7 +4,7 @@ from alembic.script import ScriptDirectory
 
 def test_ranked_trend_editing_activation_and_render_revisions_share_one_history() -> None:
     script = ScriptDirectory.from_config(Config("alembic.ini"))
-    assert script.get_heads() == ["0054_editorial_images"]
+    assert script.get_heads() == ["0055_editorial_storyboards"]
     assert script.get_revision("0054_editorial_images").down_revision == "0053_editorial_narration"
     assert (
         script.get_revision("0053_editorial_narration").down_revision

@@ -26,7 +26,14 @@ from katcha.editorial.project_schemas import (
     EditorialDraft,
     SaveEditorialDraft,
 )
-from katcha.editorial_models import EditorialProject, EditorialRevision
+from katcha.editorial_models import (
+    EditorialImage,
+    EditorialNarration,
+    EditorialProject,
+    EditorialRevision,
+    EditorialRun,
+    EditorialStoryboardRevision,
+)
 from katcha.intelligence_models import ChannelProfile
 from katcha.models import Clip, DomainEvent, SourceItem
 from katcha.services import goal_tools
@@ -170,6 +177,22 @@ def draft():
     }
 
 
+def storyboard_workspace(*, quote=False):
+    beat = {"beat_id": "beat-1", "layout": "unassigned"}
+    if quote:
+        beat = {
+            "beat_id": "beat-1",
+            "layout": "quote",
+            "quote_source_id": "source-1",
+        }
+    return {
+        "presentation_mode": "captioned_silent",
+        "asset_run_id": None,
+        "beats": [beat],
+        "narration_ids": {},
+    }
+
+
 def test_api_roundtrip_replay_history_and_audit(saved):
     client, channel, _ = saved
     url = root(channel)
@@ -205,6 +228,378 @@ def test_api_roundtrip_replay_history_and_audit(saved):
             )
         )
         assert len(events) == 3
+
+
+def test_storyboard_workspace_autosave_history_and_undo(saved):
+    client, channel, _ = saved
+    project = client.post(root(channel), json=brief("storyboard-workspace")).json()
+    revision_url = f"{root(channel)}/{project['id']}/revisions"
+    assert (
+        client.post(
+            revision_url,
+            json={
+                "expected_revision": 0,
+                "idempotency_key": "script-1",
+                "draft": draft(),
+            },
+        ).status_code
+        == 201
+    )
+
+    workspace_url = f"{root(channel)}/{project['id']}/storyboard"
+    first_body = {
+        "script_revision": 1,
+        "expected_version": 0,
+        "idempotency_key": "board-1",
+        "workspace": storyboard_workspace(),
+    }
+    first = client.post(workspace_url, json=first_body)
+    assert first.status_code == 201, first.text
+    assert first.json()["version"] == 1
+    assert first.json()["parent_version"] is None
+    assert first.json()["origin"] == "operator"
+    assert client.post(workspace_url, json=first_body).json() == first.json()
+
+    second_body = {
+        "script_revision": 1,
+        "expected_version": 1,
+        "idempotency_key": "board-2",
+        "workspace": storyboard_workspace(quote=True),
+    }
+    second = client.post(workspace_url, json=second_body)
+    assert second.status_code == 201, second.text
+    assert second.json()["version"] == 2
+    assert second.json()["parent_version"] == 1
+    assert second.json()["workspace"]["beats"][0]["layout"] == "quote"
+
+    latest = client.get(workspace_url, params={"script_revision": 1})
+    assert latest.status_code == 200
+    assert latest.json()["version"] == 2
+    history = client.get(
+        f"{workspace_url}/history",
+        params={"script_revision": 1},
+    )
+    assert [row["version"] for row in history.json()] == [2, 1]
+
+    undone = client.post(
+        f"{workspace_url}/undo",
+        json={
+            "script_revision": 1,
+            "expected_version": 2,
+            "idempotency_key": "undo-2",
+        },
+    )
+    assert undone.status_code == 201, undone.text
+    assert undone.json()["version"] == 3
+    assert undone.json()["parent_version"] is None
+    assert undone.json()["origin"] == "undo"
+    assert undone.json()["workspace"]["beats"][0]["layout"] == "unassigned"
+
+    no_more = client.post(
+        f"{workspace_url}/undo",
+        json={
+            "script_revision": 1,
+            "expected_version": 3,
+            "idempotency_key": "undo-3",
+        },
+    )
+    assert no_more.status_code == 409
+    assert "No earlier Storyboard edit" in no_more.json()["detail"]
+
+    with db.session_scope() as session:
+        rows = list(
+            session.scalars(
+                select(EditorialStoryboardRevision).where(
+                    EditorialStoryboardRevision.project_id
+                    == uuid.UUID(project["id"])
+                )
+            )
+        )
+        assert len(rows) == 3
+        events = list(
+            session.scalars(
+                select(DomainEvent).where(
+                    DomainEvent.aggregate_type == "editorial_storyboard"
+                )
+            )
+        )
+        assert [event.event_type for event in events] == [
+            "editorial.storyboard_saved",
+            "editorial.storyboard_saved",
+            "editorial.storyboard_undone",
+        ]
+
+
+def test_storyboard_workspace_rejects_stale_script_and_unknown_evidence(saved):
+    client, channel, _ = saved
+    project = client.post(root(channel), json=brief("storyboard-stale")).json()
+    revision_url = f"{root(channel)}/{project['id']}/revisions"
+    assert client.post(
+        revision_url,
+        json={
+            "expected_revision": 0,
+            "idempotency_key": "script-1",
+            "draft": draft(),
+        },
+    ).status_code == 201
+    workspace_url = f"{root(channel)}/{project['id']}/storyboard"
+
+    invalid = storyboard_workspace(quote=True)
+    invalid["beats"][0]["quote_source_id"] = "invented"
+    response = client.post(
+        workspace_url,
+        json={
+            "script_revision": 1,
+            "expected_version": 0,
+            "idempotency_key": "bad-source",
+            "workspace": invalid,
+        },
+    )
+    assert response.status_code == 409
+    assert "unknown research source" in response.json()["detail"]
+
+    changed = draft()
+    changed["script"][0]["narration"] = "A later saved theory."
+    assert client.post(
+        revision_url,
+        json={
+            "expected_revision": 1,
+            "idempotency_key": "script-2",
+            "draft": changed,
+        },
+    ).status_code == 201
+    stale = client.post(
+        workspace_url,
+        json={
+            "script_revision": 1,
+            "expected_version": 0,
+            "idempotency_key": "stale-board",
+            "workspace": storyboard_workspace(),
+        },
+    )
+    assert stale.status_code == 409
+    assert "Script changed" in stale.json()["detail"]
+
+
+def test_storyboard_workspace_preserves_footage_beat_lineage(saved):
+    client, channel, _ = saved
+    project = client.post(root(channel), json=brief("storyboard-footage")).json()
+    revision_url = f"{root(channel)}/{project['id']}/revisions"
+    saved_revision = client.post(
+        revision_url,
+        json={
+            "expected_revision": 0,
+            "idempotency_key": "script-1",
+            "draft": draft(),
+        },
+    ).json()
+    asset_run_id = uuid.uuid4()
+    with db.session_scope() as session:
+        session.add(
+            EditorialRun(
+                id=asset_run_id,
+                project_id=uuid.UUID(project["id"]),
+                channel_profile_id=channel,
+                input_digest="a" * 64,
+                input_revision=1,
+                options={"target": "acquire_assets"},
+                attempt=1,
+                status="completed",
+                stage="assets_acquired_for_review",
+                artifacts={
+                    "input_draft_digest": saved_revision["digest"],
+                    "acquired_assets": {"candidate": {"clip_id": "fixture"}},
+                    "asset_selection": [
+                        {
+                            "id": "candidate",
+                            "beat_id": "beat-1",
+                            "claim_ids": ["claim-1"],
+                        }
+                    ],
+                },
+                actor="test",
+            )
+        )
+
+    workspace = storyboard_workspace()
+    workspace["asset_run_id"] = str(asset_run_id)
+    workspace["beats"][0] = {
+        "beat_id": "beat-1",
+        "layout": "single",
+        "media": [{"candidate_id": "candidate", "start_seconds": 1.5}],
+    }
+    workspace_url = f"{root(channel)}/{project['id']}/storyboard"
+    accepted = client.post(
+        workspace_url,
+        json={
+            "script_revision": 1,
+            "expected_version": 0,
+            "idempotency_key": "media-1",
+            "workspace": workspace,
+        },
+    )
+    assert accepted.status_code == 201, accepted.text
+
+    with db.session_scope() as session:
+        run = session.get(EditorialRun, asset_run_id)
+        run.artifacts = {
+            **run.artifacts,
+            "asset_selection": [
+                {
+                    "id": "candidate",
+                    "beat_id": "another-beat",
+                    "claim_ids": ["claim-1"],
+                }
+            ],
+        }
+    rejected = client.post(
+        workspace_url,
+        json={
+            "script_revision": 1,
+            "expected_version": 1,
+            "idempotency_key": "media-2",
+            "workspace": workspace,
+        },
+    )
+    assert rejected.status_code == 409
+    assert "scouted beat" in rejected.json()["detail"]
+
+
+def test_storyboard_workspace_rejects_cross_beat_image_and_narration(saved):
+    client, channel, _ = saved
+    project = client.post(root(channel), json=brief("storyboard-revoked")).json()
+    revision_url = f"{root(channel)}/{project['id']}/revisions"
+    assert client.post(
+        revision_url,
+        json={
+            "expected_revision": 0,
+            "idempotency_key": "script-1",
+            "draft": draft(),
+        },
+    ).status_code == 201
+    project_id = uuid.UUID(project["id"])
+    image_id = uuid.uuid4()
+    narration_id = uuid.uuid4()
+    with db.session_scope() as session:
+        session.add(
+            EditorialImage(
+                id=image_id,
+                project_id=project_id,
+                channel_profile_id=channel,
+                revision=1,
+                beat_id="another-beat",
+                request_digest="a" * 64,
+                sha256="b" * 64,
+                storage_key=f"editorial/{project_id}/1/images/{image_id}/{'b' * 64}.png",
+                width=320,
+                height=180,
+                title="Wrong-beat still",
+                source_reference="operator",
+                use_note="Synthetic fixture",
+                illustration=False,
+                status="revoked",
+                actor="test",
+            )
+        )
+        session.add(
+            EditorialNarration(
+                id=narration_id,
+                project_id=project_id,
+                channel_profile_id=channel,
+                revision=1,
+                beat_id="another-beat",
+                text_digest="c" * 64,
+                sha256="d" * 64,
+                storage_key=f"editorial/{project_id}/1/narration/beat-1/{'d' * 64}.wav",
+                sample_rate=48000,
+                sample_frames=96000,
+                status="revoked",
+                actor="test",
+            )
+        )
+
+    workspace_url = f"{root(channel)}/{project['id']}/storyboard"
+    image_workspace = storyboard_workspace()
+    image_workspace["beats"][0] = {
+        "beat_id": "beat-1",
+        "layout": "image",
+        "image_id": str(image_id),
+    }
+    image_response = client.post(
+        workspace_url,
+        json={
+            "script_revision": 1,
+            "expected_version": 0,
+            "idempotency_key": "revoked-image",
+            "workspace": image_workspace,
+        },
+    )
+    assert image_response.status_code == 409
+    assert "another script beat" in image_response.json()["detail"]
+
+    narration_workspace = storyboard_workspace()
+    narration_workspace["presentation_mode"] = "narrated"
+    narration_workspace["narration_ids"] = {"beat-1": str(narration_id)}
+    narration_response = client.post(
+        workspace_url,
+        json={
+            "script_revision": 1,
+            "expected_version": 0,
+            "idempotency_key": "revoked-narration",
+            "workspace": narration_workspace,
+        },
+    )
+    assert narration_response.status_code == 409
+    assert "matching saved beat" in narration_response.json()["detail"]
+
+    with db.session_scope() as session:
+        session.get(EditorialImage, image_id).beat_id = "beat-1"
+        session.get(EditorialNarration, narration_id).beat_id = "beat-1"
+
+    retained = storyboard_workspace()
+    retained["presentation_mode"] = "narrated"
+    retained["narration_ids"] = {"beat-1": str(narration_id)}
+    retained["beats"][0] = {
+        "beat_id": "beat-1",
+        "layout": "image",
+        "image_id": str(image_id),
+    }
+    retained_response = client.post(
+        workspace_url,
+        json={
+            "script_revision": 1,
+            "expected_version": 0,
+            "idempotency_key": "retained-unavailable-intent",
+            "workspace": retained,
+        },
+    )
+    assert retained_response.status_code == 201, retained_response.text
+
+
+def test_storyboard_migration_roundtrip():
+    path = Path(__file__).parents[1] / "migrations/versions/0055_editorial_storyboards.py"
+    spec = importlib.util.spec_from_file_location("storyboard_migration", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    engine = create_engine("sqlite://")
+    with engine.begin() as connection:
+        module.op = Operations(MigrationContext.configure(connection))
+        module.upgrade()
+        inspector = inspect(connection)
+        assert "editorial_storyboard_revisions" in inspector.get_table_names()
+        checks = {
+            item["name"]
+            for item in inspector.get_check_constraints(
+                "editorial_storyboard_revisions"
+            )
+        }
+        assert "ck_editorial_storyboard_version" in checks
+        module.downgrade()
+        assert (
+            "editorial_storyboard_revisions"
+            not in inspect(connection).get_table_names()
+        )
+    engine.dispose()
 
 
 def test_storyboard_source_monitor_metadata_hides_storage_key(saved, monkeypatch):

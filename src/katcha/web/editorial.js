@@ -2,7 +2,7 @@
 window.KatchaEditorial = (() => {
     const el = (id) => document.getElementById(id);
     const esc = (value) => String(value ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
-    const state = { channel: "", epoch: 0, project: null, revision: null, run: null, busy: false, timer: null, editorKey: "", sourceClipBindings: {}, clipResults: [], clipPickerEpoch: 0, clipSearchTimer: null, scriptSeedMeta: null, sourceMonitorKey: "", sourceMonitorUrl: null, sourceMonitorEpoch: 0 };
+    const state = { channel: "", epoch: 0, project: null, revision: null, run: null, busy: false, timer: null, editorKey: "", sourceClipBindings: {}, clipResults: [], clipPickerEpoch: 0, clipSearchTimer: null, scriptSeedMeta: null, sourceMonitorKey: "", sourceMonitorUrl: null, sourceMonitorEpoch: 0, storyboardWorkspace: null, storyboardSaveTimer: null, storyboardSaving: false, storyboardDirty: false, storyboardRetryCount: 0 };
     let api, apiBlob;
     function previewReady() {
         return state.run?.stage === "render_ready_for_review" && state.run?.status === "completed";
@@ -412,6 +412,7 @@ window.KatchaEditorial = (() => {
         if (state.project?.id !== id) window.KatchaFrameInspector.reset();
         if (state.project?.id !== id) el("editorial-narration-confirm").checked = false;
         clearTimeout(state.timer);
+        clearTimeout(state.storyboardSaveTimer);
         if (state.project?.id !== id) window.KatchaEditorialHistory.reset();
         const epoch = ++state.epoch;
         const channel = state.channel;
@@ -423,8 +424,13 @@ window.KatchaEditorial = (() => {
         const run = runs[0] ? await api(`${base}/runs/${encodeURIComponent(runs[0].editorial_run_id)}`) : null;
         const review = run?.target === "render" && run.status === "completed"
             ? await api(`${base}/runs/${encodeURIComponent(run.editorial_run_id)}/review`).catch(error => ({error: error.message})) : null;
-        const narration = project.revision > 0 ? await api(`${base}/narration?revision=${project.revision}`).catch(error => ({error: error.message, recordings: []})) : {voice_enabled: true, recordings: []};
-        const images = project.revision > 0 ? await api(`${base}/images?revision=${project.revision}`).catch(error => ({error: error.message, images: []})) : {images: []};
+        const [narration, images, storyboardWorkspace] = project.revision > 0
+            ? await Promise.all([
+                api(`${base}/narration?revision=${project.revision}`).catch(error => ({error: error.message, recordings: []})),
+                api(`${base}/images?revision=${project.revision}`).catch(error => ({error: error.message, images: []})),
+                api(`${base}/storyboard?script_revision=${project.revision}`).catch(error => ({error: error.message})),
+            ])
+            : [{voice_enabled: true, recordings: []}, {images: []}, null];
         const acquisition = runs.find(item => item.target === "acquire_assets" && item.status === "completed" && item.input_revision === project.revision);
         const assetRun = acquisition ? (acquisition.editorial_run_id === run?.editorial_run_id ? run : await api(`${base}/runs/${encodeURIComponent(acquisition.editorial_run_id)}`)) : null;
         const directed = runs.find(item => item.target === "direction" && item.status === "completed" && item.input_revision === project.revision);
@@ -438,6 +444,12 @@ window.KatchaEditorial = (() => {
         state.project = project; state.revision = revisions[0] || null; state.run = run;
         state.stale = Boolean(pending && pending.revision < project.revision);
         if (state.stale) state.revision = pending;
+        state.storyboardWorkspace = !state.stale && storyboardWorkspace?.workspace
+            ? storyboardWorkspace
+            : null;
+        state.storyboardDirty = false;
+        state.storyboardSaving = false;
+        if (state.storyboardWorkspace) hydrateStoryboardLocalState(state.storyboardWorkspace);
         el("editorial-detail").hidden = false;
         el("editorial-title").textContent = project.brief.prompt;
         el("editorial-status").textContent = run
@@ -446,7 +458,15 @@ window.KatchaEditorial = (() => {
         el("editorial-discard").hidden = !state.stale;
         feedback(run?.error || "Project loaded. Generated claims and scripts need editorial review.", Boolean(run?.error));
         renderProjectSources();
-        renderActions(); renderEvidence(); renderScript(); renderImages(); renderStoryboard(); renderDirection(); renderReview(); renderNarration(); renderActions();
+        renderActions(); renderEvidence(); renderScript(); renderImages(); renderNarration(); renderStoryboard(); renderDirection(); renderReview(); renderActions();
+        if (storyboardWorkspace?.error && !state.stale) {
+            storyboardSyncStatus(
+                `Workspace unavailable · ${storyboardWorkspace.error}`,
+                {error: true},
+            );
+        } else {
+            updateStoryboardUndo();
+        }
         setAiLinks(); restoreStage();
         if (state.stale) feedback("A newer script revision is available. Your unsaved text is retained below. Copy it before discarding edits to load the latest version.", true);
         if (focus) el("editorial-title").focus();
@@ -488,6 +508,7 @@ window.KatchaEditorial = (() => {
         syncProgramMonitor();
         el("editorial-approve").disabled = state.busy || !state.review?.can_approve || !state.previewUrl || state.stale || Boolean(read(storageKey(`pending.${state.project.id}`), null));
         el("editorial-request-changes").disabled = state.busy || !state.review || Boolean(state.review.error);
+        updateStoryboardUndo();
     }
     function reviewNoteKey() { return storageKey(`review-note.${state.run?.editorial_run_id}`); }
     function renderReview() {
@@ -524,7 +545,10 @@ window.KatchaEditorial = (() => {
         state.narrationKey = key;
         el("editorial-narration").innerHTML = (state.revision?.draft.script || []).map((beat, index) => {
             const recordings = (data.recordings || []).filter(item => item.beat_id === beat.id && item.status === "active");
-            return `<fieldset class="editorial-beat" data-narration-beat="${esc(beat.id)}"><legend>Beat ${index + 1}</legend><p>${esc(beat.narration)}</p><label>Recording for beat ${index + 1}<select data-narration-select="${esc(beat.id)}"><option value="">Choose a recording</option>${recordings.map(item => `<option value="${esc(item.id)}" ${saved.choices[beat.id] === item.id ? "selected" : ""}>${Number(item.duration_seconds).toFixed(2)}s · ${esc(item.created_at)}</option>`).join("")}</select></label><button type="button" class="mini" data-narration-revoke>Remove selected recording</button><label>WAV recording for beat ${index + 1}<input type="file" accept=".wav,audio/wav" data-narration-file></label><label class="check-row"><input type="checkbox" data-narration-permitted> I have permission to use this recording</label><button type="button" class="mini" data-narration-upload>Upload recording</button></fieldset>`;
+            const savedRecording = saved.choices[beat.id] || "";
+            const unavailableRecording = savedRecording
+                && !recordings.some(item => item.id === savedRecording);
+            return `<fieldset class="editorial-beat" data-narration-beat="${esc(beat.id)}"><legend>Beat ${index + 1}</legend><p>${esc(beat.narration)}</p><label>Recording for beat ${index + 1}<select data-narration-select="${esc(beat.id)}"><option value="">Choose a recording</option>${unavailableRecording ? `<option value="${esc(savedRecording)}" selected>Unavailable recording · choose a replacement</option>` : ""}${recordings.map(item => `<option value="${esc(item.id)}" ${savedRecording === item.id ? "selected" : ""}>${Number(item.duration_seconds).toFixed(2)}s · ${esc(item.created_at)}</option>`).join("")}</select></label><button type="button" class="mini" data-narration-revoke>Remove selected recording</button><label>WAV recording for beat ${index + 1}<input type="file" accept=".wav,audio/wav" data-narration-file></label><label class="check-row"><input type="checkbox" data-narration-permitted> I have permission to use this recording</label><button type="button" class="mini" data-narration-upload>Upload recording</button></fieldset>`;
         }).join("");
     }
     function boardStorage() { return storageKey(`board.${state.project.id}.${state.project.revision}.${state.assetRun?.editorial_run_id || "none"}`); }
@@ -536,6 +560,311 @@ window.KatchaEditorial = (() => {
             annotation: Object.fromEntries([...row.querySelectorAll("[data-region]")].map(input => [input.dataset.region, input.value])),
         }));
         remember(boardStorage(), rows);
+    }
+    function workspaceSavedRows(workspace) {
+        return (workspace?.beats || []).map(beat => {
+            let choice = "";
+            let compare = "";
+            if (beat.layout === "single" && beat.media?.[0]) {
+                choice = `media:${beat.media[0].candidate_id}`;
+            } else if (beat.layout === "quote" && beat.quote_source_id) {
+                choice = `quote:${beat.quote_source_id}`;
+            } else if (beat.layout === "image" && beat.image_id) {
+                choice = `image:${beat.image_id}`;
+            } else if (beat.layout === "image_comparison" && beat.image_ids?.length === 2) {
+                choice = `image:${beat.image_ids[0]}`;
+                compare = beat.image_ids[1];
+            }
+            const overlay = beat.overlays?.[0];
+            return {
+                choice,
+                start: String(beat.media?.[0]?.start_seconds ?? 0),
+                freeze: Boolean(beat.media?.[0]?.freeze),
+                compare,
+                annotation: overlay ? {
+                    kind: overlay.kind,
+                    target: String(overlay.media_index ?? 0),
+                    x: String(Number(overlay.region.x) * 100),
+                    y: String(Number(overlay.region.y) * 100),
+                    width: String(Number(overlay.region.width) * 100),
+                    height: String(Number(overlay.region.height) * 100),
+                    label: overlay.label || "",
+                } : {},
+            };
+        });
+    }
+    function hydrateStoryboardLocalState(row) {
+        if (!row?.workspace || !state.project) return;
+        remember(boardStorage(), workspaceSavedRows(row.workspace));
+        remember(narrationKey(), {
+            mode: row.workspace.presentation_mode,
+            choices: Object.fromEntries(
+                (state.revision?.draft.script || []).map(beat => [
+                    beat.id,
+                    row.workspace.narration_ids?.[beat.id] || "",
+                ]),
+            ),
+        });
+    }
+    function storyboardWorkspaceDraft() {
+        const rows = [...el("editorial-storyboard").querySelectorAll("[data-board-beat]")];
+        if (!rows.length) return null;
+        const beats = rows.map(row => {
+            const value = row.querySelector("[data-primary-visual]").value;
+            if (!value) return {beat_id: row.dataset.boardBeat, layout: "unassigned"};
+            const [kind, ...parts] = value.split(":");
+            const id = parts.join(":");
+            if (kind === "quote") {
+                return {
+                    beat_id: row.dataset.boardBeat,
+                    layout: "quote",
+                    quote_source_id: id,
+                };
+            }
+            if (kind === "media") {
+                const start = Number(row.querySelector("input[type=number]").value);
+                if (!Number.isFinite(start) || start < 0) {
+                    throw new Error("Enter a valid footage start time.");
+                }
+                return {
+                    beat_id: row.dataset.boardBeat,
+                    layout: "single",
+                    media: [{
+                        candidate_id: id,
+                        start_seconds: start,
+                        freeze: row.querySelector("input[type=checkbox]").checked,
+                    }],
+                };
+            }
+            if (kind !== "image") throw new Error("Choose a supported visual.");
+            const compare = row.querySelector("[data-image-compare]").value;
+            const annotation = Object.fromEntries(
+                [...row.querySelectorAll("[data-region]")].map(input => [
+                    input.dataset.region,
+                    input.value,
+                ]),
+            );
+            const overlays = [];
+            if (annotation.kind) {
+                const region = Object.fromEntries(
+                    ["x", "y", "width", "height"].map(key => [
+                        key,
+                        Number(annotation[key]) / 100,
+                    ]),
+                );
+                if (
+                    Object.values(region).some(value => !Number.isFinite(value))
+                    || region.x < 0
+                    || region.y < 0
+                    || region.width <= 0
+                    || region.height <= 0
+                    || region.x + region.width > 1
+                    || region.y + region.height > 1
+                ) {
+                    throw new Error("Keep the annotation within the original image.");
+                }
+                if (annotation.target === "1" && !compare) {
+                    throw new Error("Choose a second image before marking it.");
+                }
+                overlays.push({
+                    kind: annotation.kind,
+                    media_index: Number(annotation.target),
+                    region,
+                    label: annotation.label.trim() || null,
+                });
+            }
+            return {
+                beat_id: row.dataset.boardBeat,
+                layout: compare ? "image_comparison" : "image",
+                ...(compare ? {image_ids: [id, compare]} : {image_id: id}),
+                overlays,
+            };
+        });
+        const mode = el("editorial-presentation").value;
+        const narration_ids = mode === "narrated"
+            ? Object.fromEntries(
+                [...el("editorial-narration").querySelectorAll("[data-narration-select]")]
+                    .filter(input => input.value)
+                    .map(input => [input.dataset.narrationSelect, input.value]),
+            )
+            : {};
+        return {
+            presentation_mode: mode,
+            asset_run_id: beats.some(beat => beat.media?.length)
+                ? state.assetRun?.editorial_run_id || null
+                : null,
+            beats,
+            narration_ids,
+        };
+    }
+    function storyboardSyncStatus(message, {error = false, saving = false} = {}) {
+        const status = el("editorial-storyboard-sync-status");
+        const host = status.closest(".editorial-storyboard-sync");
+        status.textContent = message;
+        host.classList.toggle("is-error", error);
+        host.classList.toggle("is-saving", saving);
+    }
+    function updateStoryboardUndo() {
+        const row = state.storyboardWorkspace;
+        el("editorial-storyboard-undo").disabled = (
+            state.busy
+            || state.stale
+            || state.storyboardSaving
+            || state.storyboardDirty
+            || !row
+            || (
+                !row.parent_version
+                && !(row.version === 1 && row.origin !== "undo")
+            )
+        );
+        if (state.storyboardSaving || state.storyboardDirty) return;
+        if (row?.version) {
+            storyboardSyncStatus(
+                `Saved workspace · v${row.version} · ${String(row.origin || "operator").replaceAll("_", " ")}`,
+            );
+        } else if (!state.stale) {
+            storyboardSyncStatus("Storyboard workspace is local until the first edit.");
+        }
+    }
+    async function flushStoryboardWorkspace() {
+        clearTimeout(state.storyboardSaveTimer);
+        state.storyboardSaveTimer = null;
+        if (
+            state.storyboardSaving
+            || state.stale
+            || !state.project
+            || !state.revision
+            || read(storageKey(`pending.${state.project.id}`), null)
+        ) {
+            if (state.storyboardSaving) state.storyboardDirty = true;
+            return;
+        }
+        let workspace;
+        try {
+            workspace = storyboardWorkspaceDraft();
+        } catch (error) {
+            storyboardSyncStatus(`Complete this edit to save · ${error.message}`);
+            return;
+        }
+        if (!workspace) return;
+        const epoch = state.epoch;
+        const channel = state.channel;
+        const project = state.project.id;
+        const scriptRevision = state.project.revision;
+        const expectedVersion = state.storyboardWorkspace?.version || 0;
+        const body = {
+            script_revision: scriptRevision,
+            expected_version: expectedVersion,
+            workspace,
+        };
+        body.idempotency_key = identity(`storyboard.${project}`, body);
+        state.storyboardSaving = true;
+        state.storyboardDirty = false;
+        let failed = false;
+        storyboardSyncStatus("Saving Storyboard workspace…", {saving: true});
+        updateStoryboardUndo();
+        try {
+            const saved = await api(path(channel, `/${project}/storyboard`), {
+                method: "POST",
+                body: JSON.stringify(body),
+            });
+            if (
+                epoch === state.epoch
+                && channel === state.channel
+                && project === state.project?.id
+                && scriptRevision === state.project?.revision
+            ) {
+                state.storyboardWorkspace = saved;
+                state.storyboardRetryCount = 0;
+                storyboardSyncStatus(`Saved workspace · v${saved.version}`);
+            }
+        } catch (error) {
+            failed = true;
+            if (epoch === state.epoch && project === state.project?.id) {
+                state.storyboardDirty = true;
+                storyboardSyncStatus(
+                    `Workspace not saved · ${error.message}`,
+                    {error: true},
+                );
+            }
+        } finally {
+            if (epoch === state.epoch && project === state.project?.id) {
+                state.storyboardSaving = false;
+                updateStoryboardUndo();
+                if (state.storyboardDirty) {
+                    if (!failed) {
+                        state.storyboardSaveTimer = setTimeout(
+                            () => void flushStoryboardWorkspace(),
+                            500,
+                        );
+                    } else if (state.storyboardRetryCount < 1) {
+                        state.storyboardRetryCount += 1;
+                        state.storyboardSaveTimer = setTimeout(
+                            () => void flushStoryboardWorkspace(),
+                            1500,
+                        );
+                    }
+                }
+            }
+        }
+    }
+    function scheduleStoryboardWorkspaceSave() {
+        if (!state.project || !state.revision) return;
+        if (state.stale || read(storageKey(`pending.${state.project.id}`), null)) {
+            storyboardSyncStatus(
+                "Save or discard script edits before saving Storyboard changes.",
+            );
+            return;
+        }
+        state.storyboardDirty = true;
+        state.storyboardRetryCount = 0;
+        clearTimeout(state.storyboardSaveTimer);
+        storyboardSyncStatus("Unsaved Storyboard changes");
+        updateStoryboardUndo();
+        state.storyboardSaveTimer = setTimeout(
+            () => void flushStoryboardWorkspace(),
+            700,
+        );
+    }
+    async function undoStoryboardWorkspace() {
+        const current = state.storyboardWorkspace;
+        const canUndo = current && (
+            current.parent_version
+            || (current.version === 1 && current.origin !== "undo")
+        );
+        if (!canUndo || state.storyboardDirty) {
+            throw new Error("Save the current Storyboard before undoing.");
+        }
+        const epoch = state.epoch;
+        const channel = state.channel;
+        const project = state.project.id;
+        const body = {
+            script_revision: state.project.revision,
+            expected_version: current.version,
+        };
+        body.idempotency_key = identity(`storyboard.undo.${project}`, body);
+        const restored = await api(path(channel, `/${project}/storyboard/undo`), {
+            method: "POST",
+            body: JSON.stringify(body),
+        });
+        if (
+            epoch !== state.epoch
+            || channel !== state.channel
+            || project !== state.project?.id
+        ) return;
+        state.storyboardWorkspace = restored;
+        state.storyboardDirty = false;
+        state.boardKey = "";
+        state.narrationKey = "";
+        hydrateStoryboardLocalState(restored);
+        renderNarration();
+        renderStoryboard();
+        updateStoryboardUndo();
+        feedback(
+            current.parent_version
+                ? `Storyboard restored from v${current.parent_version}.`
+                : "Storyboard restored to the blank script baseline.",
+        );
     }
     function imageFormKey() { return storageKey(`image-form.${state.project.id}.${state.project.revision}`); }
     const imageFields = ["title", "source", "permission", "beat"];
@@ -568,7 +897,8 @@ window.KatchaEditorial = (() => {
         const remainder = Math.round(value % 60);
         return `${minutes}:${String(remainder).padStart(2, "0")}`;
     }
-    function timelineVisualStatus(choice) {
+    function timelineVisualStatus(choice, unavailable = false) {
+        if (unavailable) return "Needs replacement";
         if (!choice) return "Needs visual";
         if (choice.startsWith("media:")) return "Footage";
         if (choice.startsWith("image:")) return "Image";
@@ -580,11 +910,16 @@ window.KatchaEditorial = (() => {
         const buttons = [...el("editorial-beat-timeline").querySelectorAll("[data-timeline-beat]")];
         let assigned = 0;
         rows.forEach((row, index) => {
-            const choice = row.querySelector("[data-primary-visual]")?.value || "";
-            if (choice) assigned += 1;
+            const select = row.querySelector("[data-primary-visual]");
+            const choice = select?.value || "";
+            const unavailable = select?.selectedOptions?.[0]?.dataset.unavailable === "true";
+            if (choice && !unavailable) assigned += 1;
             const status = buttons[index]?.querySelector("[data-timeline-status]");
-            if (status) status.textContent = timelineVisualStatus(choice);
-            buttons[index]?.classList.toggle("is-ready", Boolean(choice));
+            if (status) status.textContent = timelineVisualStatus(choice, unavailable);
+            buttons[index]?.classList.toggle(
+                "is-ready",
+                Boolean(choice) && !unavailable,
+            );
         });
         const total = (state.revision?.draft.script || []).reduce(
             (sum, beat) => sum + Number(beat.planned_duration_seconds || 0),
@@ -650,7 +985,9 @@ window.KatchaEditorial = (() => {
         });
     }
     function renderStoryboard() {
-        const key = boardStorage() + JSON.stringify(state.images);
+        const key = boardStorage()
+            + ":" + String(state.storyboardWorkspace?.version || 0)
+            + JSON.stringify(state.images);
         if (key === state.boardKey) {
             refreshTimelineStatus();
             return;
@@ -677,8 +1014,16 @@ window.KatchaEditorial = (() => {
             const claims = (draft.claims || []).filter(claim => beat.claim_ids.includes(claim.id));
             const sourceIds = new Set(claims.flatMap(claim => claim.source_ids));
             const sources = (draft.sources || []).filter(source => sourceIds.has(source.id));
+            const savedChoice = saved[index]?.choice || "";
             const options = [...(state.images?.images || []).filter(item => item.status === "active" && item.beat_id === beat.id).map(item => ({value: `image:${item.id}`, label: `${item.illustration ? "Illustration" : "Image"}: ${item.title}`})), ...choices.filter(item => item.beat_id === beat.id && receipts[item.id]).map(item => ({value: `media:${item.id}`, label: item.title})), ...sources.map(item => ({value: `quote:${item.id}`, label: `Evidence quote: ${item.title}`}))];
-            return `<fieldset id="board-panel-${esc(beat.id)}" class="editorial-beat editorial-beat-editor" role="tabpanel" data-board-beat="${esc(beat.id)}"><legend><span>Beat ${index + 1} · ${esc(beat.role)}</span><small>${timelineClock(beat.planned_duration_seconds)} planned</small></legend><p class="editorial-beat-intent">${esc(beat.visual_intent)}</p><label>Visual<select data-primary-visual>${'<option value="">Choose a visual</option>'}${options.map(item => `<option value="${esc(item.value)}" ${saved[index]?.choice === item.value ? "selected" : ""}>${esc(item.label)}</option>`).join("")}</select></label><label>Footage start (seconds)<input type="number" min="0" step="0.1" value="${esc(saved[index]?.start || "0")}"></label><label class="check-row"><input type="checkbox" ${saved[index]?.freeze ? "checked" : ""}> Hold this frame</label>
+            if (savedChoice && !options.some(item => item.value === savedChoice)) {
+                options.unshift({
+                    value: savedChoice,
+                    label: "Unavailable visual · choose a replacement",
+                    unavailable: true,
+                });
+            }
+            return `<fieldset id="board-panel-${esc(beat.id)}" class="editorial-beat editorial-beat-editor" role="tabpanel" data-board-beat="${esc(beat.id)}"><legend><span>Beat ${index + 1} · ${esc(beat.role)}</span><small>${timelineClock(beat.planned_duration_seconds)} planned</small></legend><p class="editorial-beat-intent">${esc(beat.visual_intent)}</p><label>Visual<select data-primary-visual>${'<option value="">Choose a visual</option>'}${options.map(item => `<option value="${esc(item.value)}" ${item.unavailable ? 'data-unavailable="true"' : ""} ${savedChoice === item.value ? "selected" : ""}>${esc(item.label)}</option>`).join("")}</select></label><label>Footage start (seconds)<input type="number" min="0" step="0.1" value="${esc(saved[index]?.start || "0")}"></label><label class="check-row"><input type="checkbox" ${saved[index]?.freeze ? "checked" : ""}> Hold this frame</label>
                 <div data-image-tools hidden><label>Compare with another image<select data-image-compare><option value="">Single image</option>${saved[index]?.compare && !(state.images?.images || []).some(item => item.id === saved[index].compare && item.status === "active" && item.beat_id === beat.id) ? `<option value="${esc(saved[index].compare)}" selected>Unavailable image · choose a replacement</option>` : ""}${(state.images?.images || []).filter(item => item.status === "active" && item.beat_id === beat.id).map(item => `<option value="${esc(item.id)}" ${saved[index]?.compare === item.id ? "selected" : ""}>${esc(item.title)}</option>`).join("")}</select></label>
                 <details class="ae-help"><summary>Mark a source region</summary><p>Manual placement on the original image. Percentages follow the image through resizing and push-in. Check the preview before approval.</p>
                 <label>Annotation<select data-region="kind">${[["", "None"], ["circle", "Circle"], ["arrow", "Arrow"], ["highlight", "Highlight"]].map(([value, label]) => `<option value="${value}" ${saved[index]?.annotation?.kind === value ? "selected" : ""}>${label}</option>`).join("")}</select></label>
@@ -1018,8 +1363,18 @@ window.KatchaEditorial = (() => {
             });
         });
         window.KatchaEditorialHistory.init(transport, blobTransport);
-        el("editorial-presentation").addEventListener("change", () => { saveNarrationChoices(); renderNarration(); renderActions(); });
-        el("editorial-narration").addEventListener("change", saveNarrationChoices);
+        el("editorial-presentation").addEventListener("change", () => {
+            saveNarrationChoices();
+            renderNarration();
+            renderActions();
+            scheduleStoryboardWorkspaceSave();
+        });
+        el("editorial-narration").addEventListener("change", event => {
+            saveNarrationChoices();
+            if (event.target.matches("[data-narration-select]")) {
+                scheduleStoryboardWorkspaceSave();
+            }
+        });
         el("editorial-narration").addEventListener("click", event => {
             const button = event.target.closest("[data-narration-upload], [data-narration-revoke]");
             if (!button) return;
@@ -1027,6 +1382,7 @@ window.KatchaEditorial = (() => {
             void guarded(async () => {
                 const channel = state.channel; const project = state.project.id; const revision = state.project.revision;
                 if (state.stale || read(storageKey(`pending.${project}`), null)) throw new Error("Save or discard script edits before changing recordings.");
+                if (state.storyboardDirty) await flushStoryboardWorkspace();
                 const base = path(channel, `/${project}/narration`);
                 if (button.hasAttribute("data-narration-revoke")) {
                     const selected = row.querySelector("select").value;
@@ -1045,7 +1401,22 @@ window.KatchaEditorial = (() => {
                     const uploaded = await api(`${base}?${query}`, {method: "POST", body: audio, headers: {"Content-Type": "audio/wav"}});
                     if (channel === state.channel && project === state.project?.id) {
                         const saved = read(narrationKey(), {mode: "narrated", choices: {}});
-                        saved.choices[payload.beat_id] = uploaded.id; remember(narrationKey(), saved);
+                        saved.mode = "narrated";
+                        saved.choices[payload.beat_id] = uploaded.id;
+                        remember(narrationKey(), saved);
+                        state.narration = {
+                            ...(state.narration || {}),
+                            recordings: [
+                                ...((state.narration?.recordings || []).filter(
+                                    item => item.id !== uploaded.id,
+                                )),
+                                uploaded,
+                            ],
+                        };
+                        state.narrationKey = "";
+                        renderNarration();
+                        scheduleStoryboardWorkspaceSave();
+                        await flushStoryboardWorkspace();
                     }
                 }
                 if (channel === state.channel) { state.narrationKey = ""; await open(project, {focus: false}); }
@@ -1064,6 +1435,9 @@ window.KatchaEditorial = (() => {
             }));
         }
         el("editorial-auto-regions").addEventListener("change", () => remember(boardStorage() + ".auto-regions", el("editorial-auto-regions").checked));
+        el("editorial-storyboard-undo").addEventListener("click", () => {
+            void guarded(undoStoryboardWorkspace);
+        });
         el("editorial-direct").addEventListener("click", () => void guarded(async () => {
             const channel = state.channel; const project = state.project.id;
             const payload = {target: "direction", expected_revision: state.project.revision, asset_run_id: state.assetRun.editorial_run_id, direction: directionOptions()};
@@ -1081,7 +1455,10 @@ window.KatchaEditorial = (() => {
             if (channel === state.channel) { await open(project, {focus: false}); advanceStage("preview"); }
         }));
         const persistStoryboardChoice = (event) => {
-            saveStoryboard(); showFootageControls(); refreshTimelineStatus();
+            saveStoryboard();
+            showFootageControls();
+            refreshTimelineStatus();
+            scheduleStoryboardWorkspaceSave();
             if (event?.type === "change" && event.target.matches("[data-primary-visual]")) {
                 void loadSourceMonitor();
             }
