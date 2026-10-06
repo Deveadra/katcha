@@ -714,7 +714,19 @@ const draft = {
         await page.locator('[data-image-revoke="still-image"]').click();
         await page.locator('[data-editorial-stage="preview"]').click();
         await page.getByText(/Previous approval is no longer valid/).waitFor();
-        assert.equal(await page.locator('#editorial-storyboard select[data-primary-visual] option[value="image:still-image"]').count(), 0);
+        await page.locator('[data-editorial-stage="storyboard"]').click();
+        assert.equal(
+            await page.locator('#editorial-storyboard select[data-primary-visual]').inputValue(),
+            'image:still-image',
+        );
+        assert.match(
+            await page.locator('#editorial-storyboard select[data-primary-visual] option:checked').innerText(),
+            /Unavailable visual · choose a replacement/,
+        );
+        assert.equal(
+            await page.locator('[data-timeline-status]').innerText(),
+            'Needs replacement',
+        );
         await page.locator('[data-editorial-stage="assets"]').click();
         await page.locator('#editorial-image-file').setInputFiles({name: 'owned.png', mimeType: 'image/png', buffer: Buffer.from('synthetic upload transport')});
         await page.locator('#editorial-image-confirm').check();
