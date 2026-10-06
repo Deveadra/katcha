@@ -348,6 +348,7 @@ const draft = {
         assert.equal(beatAiUrl.searchParams.get("resource_kind"), "editorial_project");
         assert.equal(beatAiUrl.searchParams.get("resource_id"), project.id);
         assert.equal(beatAiUrl.searchParams.get("resource_selector"), "beat");
+        assert.equal(beatAiUrl.searchParams.get("resource_revision"), "3");
         assert.match(beatAiUrl.searchParams.get("prompt"), /selected Editorial beat/i);
         await page.screenshot({path: path.resolve(__dirname, "test-results/editorial-timeline-desktop.png"), fullPage: true});
 
