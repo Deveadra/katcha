@@ -160,3 +160,39 @@ def test_action_activity_without_resource_reports_workflow_started() -> None:
     assert activity.workflow_id == "fixture-intelligence-workflow"
     assert activity.state == "workflow_started"
     assert activity.settled is False
+
+
+def test_synchronous_editorial_edit_activity_is_settled() -> None:
+    profile_id, _ = _profile_and_production()
+    proposal = create_action_proposals(
+        request_id=uuid.uuid4(),
+        channel_profile_id=profile_id,
+        specs=[
+            ActionProposalSpec(
+                action_type="editorial_storyboard_edit",
+                label="Apply Storyboard edit",
+                description="Fixture synchronous edit",
+                payload={"project_id": str(uuid.uuid4())},
+            )
+        ],
+    )[0]
+    claim_action_proposal(proposal.id, actor="control-token:fixture")
+    complete_action_proposal(
+        proposal.id,
+        result={
+            "project_id": str(uuid.uuid4()),
+            "script_revision": 3,
+            "workspace_version": 5,
+            "parent_version": 4,
+            "beat_id": "beat-1",
+            "origin": "ai_apply",
+        },
+    )
+
+    activity = get_action_activity(proposal.id)
+
+    assert activity.proposal.status == "executed"
+    assert activity.workflow_id is None
+    assert activity.resource is None
+    assert activity.state == "executed"
+    assert activity.settled is True
