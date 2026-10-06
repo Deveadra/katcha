@@ -207,6 +207,72 @@ def test_api_roundtrip_replay_history_and_audit(saved):
         assert len(events) == 3
 
 
+def test_source_upload_api_streams_to_temp_and_cleans_up(saved, monkeypatch):
+    client, channel, _ = saved
+    captured = {}
+
+    def fake_import(
+        channel_id,
+        path,
+        *,
+        filename,
+        content_type,
+        title,
+        permitted_use,
+        idempotency_key,
+        actor,
+    ):
+        captured.update(
+            channel_id=channel_id,
+            path=path,
+            bytes=path.read_bytes(),
+            filename=filename,
+            content_type=content_type,
+            title=title,
+            permitted_use=permitted_use,
+            idempotency_key=idempotency_key,
+            actor=actor,
+        )
+        return source_uploads.ImportedSourceMedia(
+            source_id=uuid.uuid4(),
+            clip_id=uuid.uuid4(),
+            source_url="https://upload.katcha.invalid/test",
+            title=title or filename,
+            filename=filename,
+            sha256="a" * 64,
+            size_bytes=9,
+            duration_seconds=12.5,
+            width=1920,
+            height=1080,
+            extension="mp4",
+            deduplicated=False,
+        )
+
+    monkeypatch.setattr(source_uploads, "import_source_media", fake_import)
+    response = client.post(
+        f"{root(channel)}/source-uploads",
+        params={
+            "filename": "owned.mp4",
+            "title": "Owned footage",
+            "idempotency_key": "upload-api-1",
+            "permitted_use": "true",
+        },
+        content=b"video-api",
+        headers={"Content-Type": "video/mp4"},
+    )
+
+    assert response.status_code == 201, response.text
+    assert captured["channel_id"] == channel
+    assert captured["bytes"] == b"video-api"
+    assert captured["filename"] == "owned.mp4"
+    assert captured["content_type"] == "video/mp4"
+    assert captured["title"] == "Owned footage"
+    assert captured["permitted_use"] is True
+    assert captured["idempotency_key"] == "upload-api-1"
+    assert captured["actor"] == "editor"
+    assert not captured["path"].exists()
+
+
 def test_operator_source_upload_is_managed_replay_safe_and_channel_scoped(
     saved, tmp_path, monkeypatch
 ):
