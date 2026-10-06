@@ -552,6 +552,29 @@ def test_storyboard_workspace_rejects_cross_beat_image_and_narration(saved):
     assert narration_response.status_code == 409
     assert "matching saved beat" in narration_response.json()["detail"]
 
+    with db.session_scope() as session:
+        session.get(EditorialImage, image_id).beat_id = "beat-1"
+        session.get(EditorialNarration, narration_id).beat_id = "beat-1"
+
+    retained = storyboard_workspace()
+    retained["presentation_mode"] = "narrated"
+    retained["narration_ids"] = {"beat-1": str(narration_id)}
+    retained["beats"][0] = {
+        "beat_id": "beat-1",
+        "layout": "image",
+        "image_id": str(image_id),
+    }
+    retained_response = client.post(
+        workspace_url,
+        json={
+            "script_revision": 1,
+            "expected_version": 0,
+            "idempotency_key": "retained-unavailable-intent",
+            "workspace": retained,
+        },
+    )
+    assert retained_response.status_code == 201, retained_response.text
+
 
 def test_storyboard_migration_roundtrip():
     path = Path(__file__).parents[1] / "migrations/versions/0055_editorial_storyboards.py"
