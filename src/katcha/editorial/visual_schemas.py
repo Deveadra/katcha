@@ -295,6 +295,16 @@ class DirectionResult(Contract):
     beats: list[DirectedBeat] = Field(min_length=1, max_length=100)
 
 
+class ShotEvidenceReference(Contract):
+    beat_id: Identity
+    candidate_id: Identity
+    observation_id: Identity
+
+
+class GroundedDirectionResult(DirectionResult):
+    shot_evidence: list[ShotEvidenceReference] = Field(default_factory=list, max_length=200)
+
+
 class StoryboardPreflightRequest(Contract):
     expected_revision: int = Field(gt=0, strict=True)
     asset_run_id: UUID | None = None
