@@ -12,6 +12,7 @@ from katcha.services.command_actions import (
     claim_action_proposal,
     complete_action_proposal,
     create_action_proposals,
+    reject_action_proposal,
 )
 from katcha.services.command_activity import get_action_activity
 
@@ -196,3 +197,32 @@ def test_synchronous_editorial_edit_activity_is_settled() -> None:
     assert activity.resource is None
     assert activity.state == "executed"
     assert activity.settled is True
+
+
+def test_rejected_action_activity_is_settled() -> None:
+    profile_id, _ = _profile_and_production()
+    proposal = create_action_proposals(
+        request_id=uuid.uuid4(),
+        channel_profile_id=profile_id,
+        specs=[
+            ActionProposalSpec(
+                action_type="editorial_storyboard_edit",
+                label="Apply Storyboard edit",
+                description="Fixture rejected edit",
+                payload={"project_id": str(uuid.uuid4())},
+            )
+        ],
+    )[0]
+    reject_action_proposal(
+        proposal.id,
+        actor="control-token:fixture",
+        reason="Use a different visual.",
+    )
+
+    activity = get_action_activity(proposal.id)
+
+    assert activity.proposal.status == "rejected"
+    assert activity.state == "rejected"
+    assert activity.settled is True
+    assert activity.workflow_id is None
+    assert activity.resource is None
