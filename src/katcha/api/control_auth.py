@@ -19,6 +19,10 @@ from katcha.config import (
     Settings,
     get_settings,
 )
+from katcha.services.media_playback import (
+    MEDIA_PLAYBACK_COOKIE,
+    validate_media_playback_grant,
+)
 
 _bearer = HTTPBearer(auto_error=False)
 _PUBLIC_PATHS = {
@@ -223,6 +227,14 @@ def _require_named_principal_route_access(request: Request) -> None:
             raise HTTPException(403, "Choose a channel for resource retrieval")
         require_control_channel(request, channel)
         return
+    if method == "POST" and re.fullmatch(r"/v1/clips/[^/]+/media-session", path):
+        require_control_scope(request, "ai:read")
+        channel = request.query_params.get("channel_profile_id")
+        if not channel:
+            raise HTTPException(403, "Choose a channel for clip media playback")
+        require_control_channel(request, channel)
+        return
+
     if method in {"GET", "HEAD"} and re.fullmatch(r"/v1/clips/[^/]+/media", path):
         require_control_scope(request, "ai:read")
         channel = request.query_params.get("channel_profile_id")
@@ -352,11 +364,39 @@ def _require_named_principal_route_access(request: Request) -> None:
     )
 
 
+def _valid_media_playback_cookie(request: Request) -> bool:
+    if request.method.upper() not in {"GET", "HEAD"}:
+        return False
+    match = re.fullmatch(r"/v1/clips/([^/]+)/media", request.url.path)
+    if match is None:
+        return False
+    token = request.cookies.get(MEDIA_PLAYBACK_COOKIE)
+    channel = request.query_params.get("channel_profile_id")
+    if not token or not channel:
+        return False
+    try:
+        clip_id = uuid.UUID(match.group(1))
+        channel_id = uuid.UUID(channel)
+    except ValueError:
+        return False
+    return (
+        validate_media_playback_grant(
+            token,
+            clip_id,
+            channel_id,
+            settings=get_settings(),
+        )
+        is not None
+    )
+
+
 def require_control_token(
     request: Request,
     credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(_bearer)],
 ) -> None:
     if not request.url.path.startswith("/v1/") or request.url.path in _PUBLIC_PATHS:
+        return
+    if _valid_media_playback_cookie(request):
         return
 
     _authenticate(request, credentials, get_settings())
