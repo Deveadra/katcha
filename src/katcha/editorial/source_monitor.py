@@ -54,9 +54,14 @@ def source_monitor(
         expected_prefix = f"analysis/{clip.sha256[:2]}/{clip.sha256}/"
         if (
             features.contact_sheet_key != f"{expected_prefix}contact-sheet.jpg"
-            or any(not key.startswith(f"{expected_prefix}frames/") for key in features.keyframe_keys)
+            or any(
+                not key.startswith(f"{expected_prefix}frames/")
+                for key in features.keyframe_keys
+            )
         ):
-            raise EditorialConflict("Selected footage frame evidence has an invalid storage identity")
+            raise EditorialConflict(
+                "Selected footage frame evidence has an invalid storage identity"
+            )
         frame_count = len(features.keyframe_keys)
         duration = float(clip.duration_seconds or 0)
         contact_sheet_key = features.contact_sheet_key
