@@ -307,9 +307,15 @@ if [[ -z "$bastion_list" ]]; then
     if grep -qiE 'not authorized|notallowed|authorization' /tmp/katcha-bastion-list.err; then
         cat >&2 <<'EOF'
 The dedicated OCI recovery identity does not yet have Bastion permission.
-Add this policy statement to the existing root-tenancy Katcha policy, then rerun:
+Add these temporary initial-bootstrap policy statements to the existing
+root-tenancy Katcha policy, then rerun:
 
 Allow group katcha-github-recovery to manage bastion-family in compartment katcha-prod
+Allow group katcha-github-recovery to manage virtual-network-family in compartment katcha-prod
+
+After this foundation bootstrap succeeds, downgrade virtual-network-family back
+to the normal recovery permission documented in the runbook:
+Allow group katcha-github-recovery to use virtual-network-family in compartment katcha-prod
 EOF
         exit 21
     fi
