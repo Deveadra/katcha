@@ -325,6 +325,38 @@ def test_named_principal_ai_command_and_write_scopes_are_distinct() -> None:
     _require_named_principal_route_access(command_request)
 
 
+def test_named_principal_editorial_source_upload_uses_production_scope() -> None:
+    channel_id = uuid.uuid4()
+    request = _request(
+        f"/v1/channels/{channel_id}/editorial-projects/source-uploads",
+        method="POST",
+        path_params={"channel_profile_id": str(channel_id)},
+    )
+    settings = _settings(channel_id=channel_id, scopes=["production:create"])
+    _authenticate(
+        request,
+        _credentials("aerith-fixture-token-000001"),
+        settings,
+    )
+
+    _require_named_principal_route_access(request)
+
+    denied = _request(
+        f"/v1/channels/{channel_id}/editorial-projects/source-uploads",
+        method="POST",
+        path_params={"channel_profile_id": str(channel_id)},
+    )
+    _authenticate(
+        denied,
+        _credentials("aerith-fixture-token-000001"),
+        _settings(channel_id=channel_id, scopes=["channels:write"]),
+    )
+    with pytest.raises(HTTPException) as exc:
+        _require_named_principal_route_access(denied)
+    assert exc.value.status_code == 403
+    assert "production:create" in str(exc.value.detail)
+
+
 def test_named_principal_route_policy_requires_surface_scope() -> None:
     read_request = _request("/v1/channels")
     settings = _settings(scopes=["channels:read"])

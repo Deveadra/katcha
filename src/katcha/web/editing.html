@@ -73,6 +73,16 @@
                                             <div id="editorial-clip-results" class="editorial-clip-results"><p class="empty">Open this picker to load channel clips.</p></div>
                                         </div>
                                     </details>
+                                    <details id="editorial-source-upload" class="editorial-source-picker">
+                                        <summary><span><strong>Upload source video</strong><small>Import owned/permitted local media into Katcha's shared Clip Library</small></span><span aria-hidden="true">＋</span></summary>
+                                        <div class="editorial-source-picker-body">
+                                            <label>Video file<input id="editorial-source-upload-file" type="file" accept="video/mp4,video/quicktime,video/webm,video/x-matroska,.mp4,.mov,.m4v,.mkv,.webm"></label>
+                                            <label>Display title<input id="editorial-source-upload-title" maxlength="300" placeholder="Optional; defaults to the filename"></label>
+                                            <label class="check-row"><input id="editorial-source-upload-confirm" type="checkbox"> I have permission to use this source video in this channel</label>
+                                            <div id="editorial-source-upload-status" class="editorial-seed-status" role="status">No local source uploaded.</div>
+                                            <button id="editorial-source-upload-button" type="button" class="mini">Upload and pin source</button>
+                                        </div>
+                                    </details>
                                     <details id="editorial-script-seed-import" class="editorial-source-picker">
                                         <summary><span><strong>Start from a script</strong><small>Paste a draft or import UTF-8 .txt/.md as unverified writing intent</small></span><span aria-hidden="true">＋</span></summary>
                                         <div class="editorial-source-picker-body">
@@ -88,7 +98,7 @@
                             </details>
                             <div class="editorial-input-dock" aria-label="Available editorial inputs">
                                 <span class="eyebrow">PROJECT INPUTS</span>
-                                <p>Start with source URLs, managed clips, or an operator script seed. Add owned/permitted stills in Assets and WAV narration in Storyboard.</p>
+                                <p>Start with source URLs, managed clips, local video uploads, or an operator script seed. Add owned/permitted stills in Assets and WAV narration in Storyboard.</p>
                             </div>
                             <div class="editorial-project-list-head"><span class="eyebrow">PROJECT BIN</span><small>Channel scoped</small></div>
                             <div id="editorial-projects"><div class="empty">Select a channel to begin.</div></div>

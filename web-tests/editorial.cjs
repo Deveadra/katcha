@@ -8,6 +8,9 @@ const calls = [];
 let project = null, run = null, revision = null, acquisitionRun = null;
 const managedClipId = "11111111-1111-4111-8111-111111111111";
 const managedSourceUrl = "https://www.youtube.com/watch?v=fixture";
+const uploadedClipId = "22222222-2222-4222-8222-222222222222";
+const uploadedSourceUrl = "https://upload.katcha.invalid/33333333-3333-4333-8333-333333333333";
+let loseSourceMediaResponse = true;
 let loseCreateResponse = true, loseSaveResponse = true;
 let review = {status: "unreviewed", sequence: 0, can_approve: true, reviews: []};
 let loseReviewResponse = true;
@@ -37,7 +40,7 @@ const draft = {
         await page.route("**/v1/**", (route) => {
             const request = route.request();
             const url = new URL(request.url());
-            const body = request.method() === "POST" && !url.pathname.endsWith("/narration") && !url.pathname.endsWith("/images") ? request.postDataJSON() : null;
+            const body = request.method() === "POST" && !url.pathname.endsWith("/narration") && !url.pathname.endsWith("/images") && !url.pathname.endsWith("/source-uploads") ? request.postDataJSON() : null;
             calls.push({ query: url.search, path: url.pathname, method: request.method(), body, auth: request.headers().authorization });
             const send = (value, status = 200) => route.fulfill({ status, contentType: "application/json", body: JSON.stringify(value) });
             if (url.pathname === "/v1/channels") return send([{ id: "one", status: "active", profile_metadata: { name: "FORESCENE" } }, { id: "two", status: "active", profile_metadata: { name: "Other channel" } }]);
@@ -50,6 +53,27 @@ const draft = {
                 platform: "youtube", status: "ready", title: "Official trailer",
                 creator: "Marvel Entertainment", discovered_at: "2026-10-01T12:00:00Z",
             }]);
+            if (url.pathname.endsWith("/editorial-projects/source-uploads")) {
+                calls.at(-1).sourceUploadKey = url.searchParams.get("idempotency_key");
+                if (loseSourceMediaResponse) {
+                    loseSourceMediaResponse = false;
+                    return send({detail: "Upload response interrupted. Retry to recover the managed source."}, 503);
+                }
+                return send({
+                    source_id: "33333333-3333-4333-8333-333333333333",
+                    clip_id: uploadedClipId,
+                    source_url: uploadedSourceUrl,
+                    title: "Owned local source",
+                    filename: "owned-source.mp4",
+                    sha256: "a".repeat(64),
+                    size_bytes: 23,
+                    duration_seconds: 42.5,
+                    width: 1920,
+                    height: 1080,
+                    extension: "mp4",
+                    deduplicated: true,
+                }, 201);
+            }
             if (url.pathname.includes("/editorial-projects")) {
                 if (url.pathname.includes("/two/")) return send([]);
                 if (url.pathname.endsWith("/editorial-projects")) {
@@ -167,6 +191,21 @@ const draft = {
         await page.getByRole("button", {name: "Use URL instead", exact: true}).waitFor();
         assert.equal(await page.locator("#editorial-urls").inputValue(), managedSourceUrl);
         assert.match(await page.locator("#editorial-selected-clips").innerText(), /Marvel Entertainment/);
+        await page.getByText("Upload source video", {exact: true}).click();
+        await page.locator("#editorial-source-upload-file").setInputFiles({
+            name: "owned-source.mp4",
+            mimeType: "video/mp4",
+            buffer: Buffer.from("synthetic-video-transport"),
+        });
+        await page.locator("#editorial-source-upload-confirm").check();
+        await page.locator("#editorial-source-upload-button").click();
+        await page.locator("#editorial-source-upload-status").getByText(/Upload response interrupted/).waitFor();
+        await page.locator("#editorial-source-upload-button").click();
+        await page.getByText(/owned-source\.mp4 ready/).waitFor();
+        assert.match(await page.locator("#editorial-selected-clips").innerText(), /Owned local source/);
+        const sourceUploads = calls.filter(call => call.path.endsWith("/source-uploads"));
+        assert.equal(sourceUploads.length, 2);
+        assert.equal(sourceUploads[0].sourceUploadKey, sourceUploads[1].sourceUploadKey);
         await page.getByText("Start from a script", {exact: true}).click();
         await page.locator("#editorial-script-seed-file").setInputFiles({
             name: "operator-draft.md",
@@ -201,12 +240,16 @@ const draft = {
         const creates = calls.filter((call) => call.method === "POST" && call.path.endsWith("/editorial-projects"));
         assert.equal(creates.length, 2);
         assert.equal(creates[0].body.idempotency_key, creates[1].body.idempotency_key);
-        assert.deepEqual(creates[1].body.brief.source_clip_bindings, {[managedSourceUrl]: managedClipId});
+        assert.deepEqual(creates[1].body.brief.source_clip_bindings, {
+            [managedSourceUrl]: managedClipId,
+            [uploadedSourceUrl]: uploadedClipId,
+        });
         assert.equal(creates[1].body.brief.script_seed.origin, "operator_file");
         assert.equal(creates[1].body.brief.script_seed.filename, "operator-draft.md");
         assert.match(creates[1].body.brief.script_seed.content_sha256, /^[0-9a-f]{64}$/);
         assert.match(creates[1].body.brief.script_seed.source_file_sha256, /^[0-9a-f]{64}$/);
         assert.match(await page.locator("#editorial-source-bindings").innerText(), /Managed clip · youtube.com/);
+        assert.match(await page.locator("#editorial-source-bindings").innerText(), /Uploaded source · local media/);
         assert.match(await page.locator("#editorial-source-bindings").innerText(), /Script seed · operator-draft\.md/);
         await page.getByRole("button", { name: "Research and draft script", exact: true }).click();
         await page.getByText(/Provider quota rejected/).waitFor();
@@ -293,7 +336,7 @@ const draft = {
         assert.equal(await page.locator('[data-narration-file]').evaluate(input => input.files.length), 1);
         await page.getByRole('button', {name: 'Upload recording', exact: true}).click();
         await page.locator('[data-narration-select] option[value="audio-id"]').waitFor({state: 'attached'});
-        const uploads = calls.filter(call => call.uploadKey);
+        const uploads = calls.filter(call => call.path.endsWith("/narration") && call.uploadKey);
         assert.equal(uploads.length, 2); assert.equal(uploads[0].uploadKey, uploads[1].uploadKey);
         assert.equal(await page.locator('[data-narration-select]').inputValue(), 'audio-id');
         await page.getByText('Generate channel narration', {exact: true}).click();
