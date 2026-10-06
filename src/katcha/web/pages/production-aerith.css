@@ -1030,8 +1030,15 @@ body[data-katcha-page="production"] .editorial-beat-inspector .editorial-beat-ed
         grid-template-columns: 1fr;
     }
 
+    .editorial-timeline-head {
+        align-items: flex-start;
+        flex-direction: column;
+        gap: 6px;
+    }
+
     .editorial-timeline-summary {
-        width: 100%;
+        width: auto;
+        max-width: 100%;
     }
 
     .editorial-beat-timeline {
