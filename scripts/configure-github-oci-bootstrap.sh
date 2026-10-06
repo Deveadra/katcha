@@ -27,9 +27,12 @@ if ! gh auth status --hostname github.com >/dev/null 2>&1; then
     exit 4
 fi
 
-acquired="$(
-    gh variable get KATCHA_OCI_BOOTSTRAP_ACQUIRED --repo "$REPO" 2>/dev/null || true
-)"
+if ! acquired="$(
+    gh api "repos/$REPO/actions/variables?per_page=100"         --jq '.variables[]? | select(.name == "KATCHA_OCI_BOOTSTRAP_ACQUIRED") | .value'
+)"; then
+    echo "Could not read repository Actions variables; refusing to mutate bootstrap state." >&2
+    exit 16
+fi
 if [[ "$acquired" == "true" ]]; then
     echo "OCI A1 capacity has already been acquired for this repository." >&2
     echo "Refusing to rewrite the winning AD/subnet/volume or re-enable capacity polling." >&2
