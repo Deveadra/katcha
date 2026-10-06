@@ -121,7 +121,8 @@ if [[ ! -x "$OCI_BIN" ]]; then
 fi
 
 oci_cmd() {
-    "$OCI_BIN" --config-file "$OCI_CONFIG_FILE" "$@"
+    SUPPRESS_LABEL_WARNING=True \
+        "$OCI_BIN" --config-file "$OCI_CONFIG_FILE" "$@"
 }
 
 log "Verifying the acquired host before any network mutation"
@@ -303,13 +304,19 @@ PY
     fi
 fi
 
-bastion_list="$(
+bastion_list_err="$(mktemp)"
+if bastion_list="$(
     oci_cmd bastion bastion list \
         --compartment-id "$COMPARTMENT_ID" \
-        --all 2>/tmp/katcha-bastion-list.err || true
-)"
-if [[ -z "$bastion_list" ]]; then
-    if grep -qiE 'not authorized|notallowed|authorization' /tmp/katcha-bastion-list.err; then
+        --all 2>"$bastion_list_err"
+)"; then
+    # OCI CLI 3.94.1 may emit an empty successful response when a compartment
+    # contains no Bastions. Treat exit status, not stdout length, as success.
+    if [[ -z "$bastion_list" ]]; then
+        bastion_list='{"data":[]}'
+    fi
+else
+    if grep -qiE 'notauthorizedornotfound|not authorized|notallowed|authorization' "$bastion_list_err"; then
         cat >&2 <<'EOF'
 The dedicated OCI recovery identity does not yet have Bastion permission.
 Add these temporary initial-bootstrap policy statements to the existing
@@ -323,12 +330,14 @@ After this foundation bootstrap succeeds, downgrade virtual-network-family back
 to the normal recovery permission documented in the runbook:
 Allow group katcha-github-recovery to use virtual-network-family in compartment katcha-prod
 EOF
+        rm -f "$bastion_list_err"
         exit 21
     fi
-    cat /tmp/katcha-bastion-list.err >&2
+    cat "$bastion_list_err" >&2
+    rm -f "$bastion_list_err"
     fail "could not list OCI bastions"
 fi
-rm -f /tmp/katcha-bastion-list.err
+rm -f "$bastion_list_err"
 
 bastion_id="$(
     jq -r --arg name "$BASTION_NAME" '
