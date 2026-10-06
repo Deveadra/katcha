@@ -6,7 +6,12 @@ import pytest
 
 from katcha.db import session_scope
 from katcha.domain import ChannelStatus
-from katcha.editorial_models import EditorialProject, EditorialRevision, EditorialRun
+from katcha.editorial_models import (
+    EditorialProject,
+    EditorialRevision,
+    EditorialRun,
+    EditorialStoryboardRevision,
+)
 from katcha.intelligence_models import ChannelProfile
 from katcha.models import Clip
 from katcha.production_models import Production
@@ -247,6 +252,30 @@ def test_editorial_project_context_is_channel_scoped_and_bounded() -> None:
                 actor="control-principal:editor",
             )
         )
+        session.add(
+            EditorialStoryboardRevision(
+                project_id=project_id,
+                script_revision=2,
+                version=3,
+                channel_profile_id=profile_id,
+                parent_version=2,
+                request_id=uuid.uuid4(),
+                request_digest="f" * 64,
+                digest="1" * 64,
+                workspace={
+                    "version": "editorial-storyboard-workspace-v1",
+                    "presentation_mode": "captioned_silent",
+                    "asset_run_id": None,
+                    "beats": [
+                        {"beat_id": "one", "layout": "unassigned"},
+                        {"beat_id": "two", "layout": "unassigned"},
+                    ],
+                    "narration_ids": {},
+                },
+                origin="operator",
+                actor="control-principal:editor",
+            )
+        )
 
     evidence = resolve_command_resources(
         profile_id,
@@ -268,6 +297,9 @@ def test_editorial_project_context_is_channel_scoped_and_bounded() -> None:
     assert item["latest_run"]["id"] == str(run_id)
     assert item["latest_run"]["stage"] == "direction_ready"
     assert item["latest_run"]["target"] == "direction"
+    assert item["latest_storyboard"]["version"] == 3
+    assert item["latest_storyboard"]["assigned_beat_count"] == 0
+    assert item["latest_storyboard"]["beat_count"] == 2
     assert "Investigate the trailer clues" in resource_context_summary(evidence)
 
     selected = resolve_command_resources(
@@ -278,6 +310,8 @@ def test_editorial_project_context_is_channel_scoped_and_bounded() -> None:
     assert selected["selected_beat"]["revision"] == 2
     assert selected["selected_beat"]["narration"] == "First grounded beat."
     assert selected["selected_beat"]["visual_intent"] == "Show the exact clue."
+    assert selected["selected_beat"]["storyboard"]["workspace_version"] == 3
+    assert selected["selected_beat"]["storyboard"]["visual"]["layout"] == "unassigned"
 
     with pytest.raises(ValueError, match="editorial beat not found"):
         resolve_command_resources(
