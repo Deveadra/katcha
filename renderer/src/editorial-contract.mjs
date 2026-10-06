@@ -6,9 +6,9 @@ const text = (value, max) => typeof value === 'string' && value.length > 0 && va
 const key = (value) => text(value, 1000) && !/[:\\\x00-\x1f]/.test(value) && !value.startsWith('/') && !value.split('/').some(part => part === '..' || part === '.');
 
 export const validateEditorialManifest = (manifest) => {
-  check(['editorial-render-v1', 'editorial-render-v2', 'editorial-render-v3', 'editorial-render-v4'].includes(manifest?.version), 'version');
+  check(['editorial-render-v1', 'editorial-render-v2', 'editorial-render-v3', 'editorial-render-v4', 'editorial-render-v5'].includes(manifest?.version), 'version');
   const narrated = manifest.presentation_mode === 'narrated';
-  check(['editorial-render-v3', 'editorial-render-v4'].includes(manifest.version) || narrated === (manifest.version === 'editorial-render-v2'), 'version presentation');
+  check(['editorial-render-v3', 'editorial-render-v4', 'editorial-render-v5'].includes(manifest.version) || narrated === (manifest.version === 'editorial-render-v2'), 'version presentation');
   check(manifest.presentation_mode === (narrated ? 'narrated' : 'captioned_silent') && manifest.requires_editorial_review === true, 'presentation and review');
   check(narrated ? Array.isArray(manifest.narration) && manifest.narration.length > 0 && manifest.narration.length <= 100 : !manifest.narration?.length, 'narration mode');
   const narration = new Map();
@@ -33,7 +33,16 @@ export const validateEditorialManifest = (manifest) => {
     assets.set(asset.candidate_id, asset);
   }
   const images = new Map();
-  check(['editorial-render-v3', 'editorial-render-v4'].includes(manifest.version) ? Array.isArray(manifest.images) && manifest.images.length > 0 && manifest.images.length <= 100 : !manifest.images?.length, 'image version');
+  const imageVersion = ['editorial-render-v3', 'editorial-render-v4'].includes(manifest.version);
+  const flexibleImageVersion = manifest.version === 'editorial-render-v5';
+  check(
+    imageVersion
+      ? Array.isArray(manifest.images) && manifest.images.length > 0 && manifest.images.length <= 100
+      : flexibleImageVersion
+        ? Array.isArray(manifest.images) && manifest.images.length <= 100
+        : !manifest.images?.length,
+    'image version',
+  );
   for (const image of manifest.images || []) {
     check(text(image.image_id, 100) && !images.has(image.image_id) && text(image.beat_id, 120), 'image identity');
     check(/^[a-f0-9]{64}$/.test(image.sha256) && key(image.storage_key) && image.storage_key === `editorial/${manifest.project_id}/images/${image.image_id}/${image.sha256}.png` && !('url' in image), 'managed image');
@@ -59,7 +68,7 @@ export const validateEditorialManifest = (manifest) => {
     const imageLayout = ['image', 'image_comparison'].includes(scene.layout);
     const imageIds = scene.layout === 'image' ? [scene.image_id] : (scene.image_ids || []);
     if (scene.layout === 'image_comparison') {
-      check(manifest.version === 'editorial-render-v4' && Array.isArray(scene.image_ids) && imageIds.length === 2 && new Set(imageIds).size === 2 && !scene.image_id, 'image comparison');
+      check(['editorial-render-v4', 'editorial-render-v5'].includes(manifest.version) && Array.isArray(scene.image_ids) && imageIds.length === 2 && new Set(imageIds).size === 2 && !scene.image_id, 'image comparison');
     } else check(!scene.image_ids?.length, 'unexpected image comparison');
     if (imageLayout) {
       check(number(scene.image_push_in, 1, 1.15), 'image motion');
@@ -80,7 +89,7 @@ export const validateEditorialManifest = (manifest) => {
       check(use.start_seconds + (use.freeze ? 0 : scene.duration_frames / 30 * use.playback_rate) <= asset.duration_seconds + 1e-6, 'source end');
     }
     check(Array.isArray(scene.overlays) && scene.overlays.length <= 8, 'annotations');
-    if (imageLayout && scene.overlays.length) check(manifest.version === 'editorial-render-v4', 'image annotation version');
+    if (imageLayout && scene.overlays.length) check(['editorial-render-v4', 'editorial-render-v5'].includes(manifest.version), 'image annotation version');
     for (const overlay of scene.overlays) {
       check(['circle', 'arrow', 'highlight'].includes(overlay.kind) && integer(overlay.media_index, 0, (imageLayout ? imageIds.length : scene.media.length) - 1), 'annotation target');
       const r = overlay.region;
