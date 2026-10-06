@@ -21,6 +21,10 @@ from katcha.api.control_auth import (
     require_control_token,
 )
 from katcha.config import Settings
+from katcha.services.media_playback import (
+    MEDIA_PLAYBACK_COOKIE,
+    issue_media_playback_grant,
+)
 
 
 def _request(
@@ -29,14 +33,18 @@ def _request(
     method: str = "GET",
     path_params: dict[str, str] | None = None,
     query_string: str = "",
+    cookie: str | None = None,
 ) -> Request:
+    headers = []
+    if cookie:
+        headers.append((b"cookie", cookie.encode()))
     return Request(
         {
             "type": "http",
             "method": method,
             "path": path,
             "raw_path": path.encode(),
-            "headers": [],
+            "headers": headers,
             "query_string": query_string.encode(),
             "scheme": "http",
             "server": ("testserver", 80),
@@ -728,6 +736,61 @@ def test_named_principal_clip_media_requires_read_scope_and_allowed_channel() ->
         _require_named_principal_route_access(wrong_scope)
     assert exc.value.status_code == 403
     assert "ai:read" in str(exc.value.detail)
+
+
+def test_signed_media_cookie_only_bypasses_exact_clip_playback(monkeypatch) -> None:
+    channel_id = uuid.uuid4()
+    clip_id = uuid.uuid4()
+    settings = _settings(channel_id=channel_id, scopes=["ai:read"])
+    token, _ = issue_media_playback_grant(
+        clip_id,
+        channel_id,
+        settings=settings,
+        now=1000,
+        ttl_seconds=60,
+    )
+    monkeypatch.setattr("katcha.api.control_auth.get_settings", lambda: settings)
+    monkeypatch.setattr("katcha.services.media_playback.time.time", lambda: 1001)
+
+    media = _request(
+        f"/v1/clips/{clip_id}/media",
+        query_string=f"channel_profile_id={channel_id}",
+        cookie=f"{MEDIA_PLAYBACK_COOKIE}={token}",
+    )
+    require_control_token(media, None)
+
+    other = _request(
+        f"/v1/clips/{uuid.uuid4()}/media",
+        query_string=f"channel_profile_id={channel_id}",
+        cookie=f"{MEDIA_PLAYBACK_COOKIE}={token}",
+    )
+    with pytest.raises(HTTPException) as exc:
+        require_control_token(other, None)
+    assert exc.value.status_code == 401
+
+    unrelated = _request(
+        "/v1/channels",
+        cookie=f"{MEDIA_PLAYBACK_COOKIE}={token}",
+    )
+    with pytest.raises(HTTPException) as exc:
+        require_control_token(unrelated, None)
+    assert exc.value.status_code == 401
+
+
+def test_named_principal_media_session_uses_ai_read_scope() -> None:
+    channel_id = uuid.uuid4()
+    path = f"/v1/clips/{uuid.uuid4()}/media-session"
+    request = _request(
+        path,
+        method="POST",
+        query_string=f"channel_profile_id={channel_id}",
+    )
+    _authenticate(
+        request,
+        _credentials("aerith-fixture-token-000001"),
+        _settings(channel_id=channel_id, scopes=["ai:read"]),
+    )
+    _require_named_principal_route_access(request)
 
 
 def test_global_control_dependency_denies_unmapped_route(
