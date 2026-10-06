@@ -8,7 +8,12 @@ from sqlalchemy import desc, func, or_, select
 
 from katcha.acquisition_models import IntelligenceRecord
 from katcha.db import session_scope
-from katcha.editorial_models import EditorialProject, EditorialRevision, EditorialRun
+from katcha.editorial_models import (
+    EditorialProject,
+    EditorialRevision,
+    EditorialRun,
+    EditorialStoryboardRevision,
+)
 from katcha.intelligence_models import ChannelProfile
 from katcha.models import Clip, ClipFeature, SourceItem
 from katcha.production_models import Production
@@ -255,6 +260,20 @@ def _editorial_project_evidence(
         .order_by(desc(EditorialRun.updated_at), desc(EditorialRun.created_at))
         .limit(1)
     )
+    latest_storyboard = (
+        session.scalar(
+            select(EditorialStoryboardRevision)
+            .where(
+                EditorialStoryboardRevision.project_id == row.id,
+                EditorialStoryboardRevision.script_revision
+                == latest_revision.revision,
+            )
+            .order_by(EditorialStoryboardRevision.version.desc())
+            .limit(1)
+        )
+        if latest_revision is not None
+        else None
+    )
 
     if (selector is None) != (expected_revision is None):
         raise ValueError("editorial beat selectors require an exact revision")
@@ -336,6 +355,20 @@ def _editorial_project_evidence(
                 if isinstance(value, dict)
                 and str(value.get("id") or "") in observation_ids
             ][:20]
+            storyboard_beat = None
+            if latest_storyboard is not None:
+                storyboard_beat = next(
+                    (
+                        value
+                        for value in list(
+                            dict(latest_storyboard.workspace or {}).get("beats")
+                            or []
+                        )
+                        if isinstance(value, dict)
+                        and str(value.get("beat_id") or "") == selector
+                    ),
+                    None,
+                )
             selected_beat = {
                 "id": selector,
                 "revision": latest_revision.revision,
@@ -379,9 +412,67 @@ def _editorial_project_evidence(
                     }
                     for observation in observations
                 ],
+                "storyboard": (
+                    {
+                        "workspace_version": latest_storyboard.version,
+                        "origin": latest_storyboard.origin,
+                        "presentation_mode": dict(
+                            latest_storyboard.workspace or {}
+                        ).get("presentation_mode"),
+                        "asset_run_id": dict(
+                            latest_storyboard.workspace or {}
+                        ).get("asset_run_id"),
+                        "narration_id": dict(
+                            dict(latest_storyboard.workspace or {}).get(
+                                "narration_ids"
+                            )
+                            or {}
+                        ).get(selector),
+                        "visual": {
+                            "layout": storyboard_beat.get("layout"),
+                            "media": list(storyboard_beat.get("media") or [])[:2],
+                            "quote_source_id": storyboard_beat.get(
+                                "quote_source_id"
+                            ),
+                            "image_id": storyboard_beat.get("image_id"),
+                            "image_ids": list(
+                                storyboard_beat.get("image_ids") or []
+                            )[:2],
+                            "image_push_in": storyboard_beat.get(
+                                "image_push_in"
+                            ),
+                            "overlays": list(
+                                storyboard_beat.get("overlays") or []
+                            )[:8],
+                        },
+                    }
+                    if latest_storyboard is not None
+                    and storyboard_beat is not None
+                    else None
+                ),
             }
     elif selector:
         raise ValueError("editorial project has no saved revision to select a beat from")
+
+    storyboard_summary: dict[str, object] | None = None
+    if latest_storyboard is not None:
+        workspace = dict(latest_storyboard.workspace or {})
+        storyboard_summary = {
+            "script_revision": latest_storyboard.script_revision,
+            "version": latest_storyboard.version,
+            "parent_version": latest_storyboard.parent_version,
+            "origin": latest_storyboard.origin,
+            "presentation_mode": workspace.get("presentation_mode"),
+            "asset_run_id": workspace.get("asset_run_id"),
+            "assigned_beat_count": sum(
+                1
+                for beat in list(workspace.get("beats") or [])
+                if isinstance(beat, dict)
+                and beat.get("layout") != "unassigned"
+            ),
+            "beat_count": len(list(workspace.get("beats") or [])),
+            "created_at": latest_storyboard.created_at.isoformat(),
+        }
 
     run_summary: dict[str, object] | None = None
     if latest_run is not None:
@@ -417,6 +508,7 @@ def _editorial_project_evidence(
             else None
         ),
         "latest_revision": revision_summary,
+        "latest_storyboard": storyboard_summary,
         "selected_beat": selected_beat,
         "latest_run": run_summary,
         "updated_at": row.updated_at.isoformat(),
