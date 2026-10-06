@@ -341,6 +341,14 @@ const draft = {
         );
         assert.equal(await page.locator('#editorial-storyboard [data-board-beat]:visible').count(), 1);
         assert.match(await page.locator("#editorial-timeline-summary").innerText(), /1 beat · 0:08 planned · 0\/1 visuals assigned/);
+        assert.match(await page.locator("#editorial-context-title").innerText(), /Beat 1 · reveal/);
+        assert.match(await page.locator("#editorial-context-summary").innerText(), /1 claim · 1\/1 supported/);
+        const beatAiHref = await page.locator('[data-editorial-ai="beat"]').getAttribute("href");
+        const beatAiUrl = new URL(beatAiHref, "http://127.0.0.1");
+        assert.equal(beatAiUrl.searchParams.get("resource_kind"), "editorial_project");
+        assert.equal(beatAiUrl.searchParams.get("resource_id"), project.id);
+        assert.equal(beatAiUrl.searchParams.get("resource_selector"), "beat");
+        assert.match(beatAiUrl.searchParams.get("prompt"), /selected Editorial beat/i);
         await page.screenshot({path: path.resolve(__dirname, "test-results/editorial-timeline-desktop.png"), fullPage: true});
 
         await page.evaluate(() => {
@@ -428,8 +436,12 @@ const draft = {
         assert.equal(rendering.body.storyboard.beats[0].media[0].freeze, true);
         assert(calls.find(call => call.path.endsWith('/storyboard/preflight')));
         assert.equal(await page.locator('#editorial-approve').isDisabled(), true);
-        await page.getByRole('button', {name: 'Load private preview', exact: true}).click();
+        await page.locator('[data-editorial-stage="storyboard"]').click();
+        await page.getByRole('button', {name: 'Load current preview', exact: true}).click();
         await page.getByText(/Preview loaded/).waitFor();
+        assert.equal(await page.locator('#editorial-program-monitor-video').isVisible(), true);
+        assert.match(await page.locator('#editorial-program-monitor-meta').innerText(), /Loaded · revision 3/);
+        await page.locator('[data-editorial-stage="preview"]').click();
         assert.equal(await page.locator('#editorial-preview').isVisible(), true);
         await page.locator('#editorial-review-note').fill('Evidence and timing checked.');
         await page.locator('#editorial-approve').click();
