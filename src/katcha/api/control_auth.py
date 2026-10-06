@@ -278,6 +278,14 @@ def _require_named_principal_route_access(request: Request) -> None:
         require_control_scope(request, "ai:read" if method == "GET" else "production:create")
         return
 
+    if method == "POST" and re.fullmatch(
+        r"/v1/channels/[^/]+/editorial-projects/[^/]+/runs/[^/]+/assets/[^/]+/"
+        r"playback-ticket",
+        path,
+    ):
+        require_control_scope(request, "ai:read")
+        return
+
     if method == "GET" and re.fullmatch(
         r"/v1/channels/[^/]+/editorial-projects/[^/]+/runs/[^/]+/assets/[^/]+/"
         r"(?:source-monitor|contact-sheet)",
@@ -356,7 +364,17 @@ def require_control_token(
     request: Request,
     credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(_bearer)],
 ) -> None:
-    if not request.url.path.startswith("/v1/") or request.url.path in _PUBLIC_PATHS:
+    if (
+        not request.url.path.startswith("/v1/")
+        or request.url.path in _PUBLIC_PATHS
+        or (
+            request.method.upper() in {"GET", "HEAD"}
+            and re.fullmatch(
+                r"/v1/editorial-playback/[0-9a-fA-F-]{36}",
+                request.url.path,
+            )
+        )
+    ):
         return
 
     _authenticate(request, credentials, get_settings())
