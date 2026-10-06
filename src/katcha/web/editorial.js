@@ -2,7 +2,7 @@
 window.KatchaEditorial = (() => {
     const el = (id) => document.getElementById(id);
     const esc = (value) => String(value ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
-    const state = { channel: "", epoch: 0, project: null, revision: null, run: null, busy: false, timer: null, editorKey: "", sourceClipBindings: {}, clipResults: [], clipPickerEpoch: 0, clipSearchTimer: null };
+    const state = { channel: "", epoch: 0, project: null, revision: null, run: null, busy: false, timer: null, editorKey: "", sourceClipBindings: {}, clipResults: [], clipPickerEpoch: 0, clipSearchTimer: null, scriptSeedMeta: null };
     let api, apiBlob;
     function clearPreview() {
         if (state.previewUrl) URL.revokeObjectURL(state.previewUrl);
@@ -55,6 +55,36 @@ window.KatchaEditorial = (() => {
                 <button type="button" class="mini" data-editorial-unpin-clip="${esc(url)}">Use URL instead</button>
             </article>`).join("") : '<p class="empty">No managed clips pinned. Source links will be acquired only when needed.</p>';
     }
+    async function sha256Hex(bytes) {
+        const digest = await crypto.subtle.digest("SHA-256", bytes);
+        return [...new Uint8Array(digest)].map(value => value.toString(16).padStart(2, "0")).join("");
+    }
+    function renderScriptSeedStatus() {
+        const text = el("editorial-script-seed").value;
+        const meta = state.scriptSeedMeta;
+        if (!text.trim()) {
+            el("editorial-script-seed-status").textContent = "No script seed. Katcha will write from the brief and verified research.";
+            return;
+        }
+        const words = text.trim().split(/\s+/).length;
+        el("editorial-script-seed-status").textContent = meta?.origin === "operator_file" && meta.loadedText === text
+            ? `${meta.filename} imported · ${words.toLocaleString()} words · unverified writing intent`
+            : `Pasted/edited draft · ${words.toLocaleString()} words · unverified writing intent`;
+    }
+    async function scriptSeedPayload() {
+        const text = el("editorial-script-seed").value;
+        if (!text.trim()) return null;
+        const content_sha256 = await sha256Hex(new TextEncoder().encode(text));
+        const meta = state.scriptSeedMeta;
+        if (meta?.origin === "operator_file" && meta.loadedText === text) {
+            return {
+                text, origin: "operator_file", content_sha256,
+                filename: meta.filename, media_type: meta.media_type,
+                source_file_sha256: meta.source_file_sha256,
+            };
+        }
+        return {text, origin: "operator_paste", content_sha256, media_type: "text/plain"};
+    }
     function saveBrief() {
         if (!state.channel) return;
         reconcileSourceClipBindings();
@@ -62,6 +92,7 @@ window.KatchaEditorial = (() => {
         remember(storageKey("brief"), {
             prompt: el("editorial-prompt").value, urls: el("editorial-urls").value,
             seconds: el("editorial-duration").value, sourceClipBindings: state.sourceClipBindings,
+            scriptSeedText: el("editorial-script-seed").value, scriptSeedMeta: state.scriptSeedMeta,
         });
     }
     function restoreBrief() {
@@ -70,8 +101,11 @@ window.KatchaEditorial = (() => {
         el("editorial-urls").value = value.urls || "";
         el("editorial-duration").value = value.seconds || "420";
         state.sourceClipBindings = value.sourceClipBindings || {};
+        state.scriptSeedMeta = value.scriptSeedMeta || null;
+        el("editorial-script-seed").value = value.scriptSeedText || "";
         reconcileSourceClipBindings();
         renderSelectedClips();
+        renderScriptSeedStatus();
     }
     function renderClipResults() {
         const selectedIds = new Set(Object.values(state.sourceClipBindings || {}).map(item => item.clip_id));
@@ -127,13 +161,16 @@ window.KatchaEditorial = (() => {
     function renderProjectSources() {
         if (!state.project) return;
         const bindings = state.project.brief?.source_clip_bindings || {};
-        el("editorial-source-bindings").innerHTML = (state.project.brief?.source_urls || []).map(url => {
+        const sources = (state.project.brief?.source_urls || []).map(url => {
             const value = String(url);
             const managed = bindings[value];
             let host = value;
             try { host = new URL(value).hostname.replace(/^www\./, ""); } catch {}
             return `<span class="editorial-source-chip ${managed ? "managed" : ""}">${managed ? "Managed clip" : "Source URL"} · ${esc(host)}</span>`;
-        }).join("");
+        });
+        const seed = state.project.brief?.script_seed;
+        if (seed) sources.push(`<span class="editorial-source-chip managed">Script seed · ${esc(seed.filename || "pasted draft")}</span>`);
+        el("editorial-source-bindings").innerHTML = sources.join("");
     }
     async function guarded(action) {
         if (state.busy || !state.channel) return;
@@ -159,7 +196,7 @@ window.KatchaEditorial = (() => {
             el("editorial-narration-confirm").checked = false;
             window.KatchaEditorialHistory.reset();
             clearPreview(); state.boardKey = ""; state.assetRun = null; state.imageFormKey = ""; el("editorial-image-file").value = ""; el("editorial-image-confirm").checked = false;
-            clearTimeout(state.clipSearchTimer); state.clipPickerEpoch += 1; state.clipResults = []; state.sourceClipBindings = {};
+            clearTimeout(state.clipSearchTimer); state.clipPickerEpoch += 1; state.clipResults = []; state.sourceClipBindings = {}; state.scriptSeedMeta = null;
             state.project = null; state.revision = null; state.run = null; state.editorKey = ""; state.renderKey = "";
             el("editorial-detail").hidden = true;
         }
@@ -171,7 +208,7 @@ window.KatchaEditorial = (() => {
             const rows = await api(path(channel, "?limit=100"));
             if (epoch !== state.epoch) return;
             el("editorial-projects").innerHTML = rows.length ? rows.map((row) => `
-                <article class="item"><div><h3>${esc(row.brief.prompt)}</h3><p>${row.brief.source_urls.length} source(s) · ${Object.keys(row.brief.source_clip_bindings || {}).length} managed · Revision ${row.revision}</p></div>
+                <article class="item"><div><h3>${esc(row.brief.prompt)}</h3><p>${row.brief.source_urls.length} source(s) · ${Object.keys(row.brief.source_clip_bindings || {}).length} managed${row.brief.script_seed ? " · script seed" : ""} · Revision ${row.revision}</p></div>
                 <button type="button" class="mini" data-open-editorial="${esc(row.id)}">Open project</button></article>`).join("")
                 : '<div class="empty">No editorial projects yet. Add a brief and choose a source link or managed clip.</div>';
             if (state.project) await open(state.project.id, { focus: false });
@@ -464,6 +501,35 @@ window.KatchaEditorial = (() => {
     }
     function init(transport, blobTransport) {
         api = transport; apiBlob = blobTransport;
+        el("editorial-script-seed-file").addEventListener("change", () => void (async () => {
+            const file = el("editorial-script-seed-file").files[0];
+            if (!file) return;
+            if (file.size > 256 * 1024) throw new Error("Script seed files must be 256 KiB or smaller.");
+            const name = file.name.toLowerCase();
+            if (!name.endsWith(".txt") && !name.endsWith(".md")) throw new Error("Import a UTF-8 .txt or .md file.");
+            const bytes = await file.arrayBuffer();
+            let text;
+            try { text = new TextDecoder("utf-8", {fatal: true}).decode(bytes); }
+            catch { throw new Error("Script seed files must be valid UTF-8 text."); }
+            if (!text.trim() || text.length > 120000) throw new Error("Script seed text must be between 1 and 120,000 characters.");
+            el("editorial-script-seed").value = text;
+            state.scriptSeedMeta = {
+                origin: "operator_file", filename: file.name,
+                media_type: name.endsWith(".md") ? "text/markdown" : "text/plain",
+                source_file_sha256: await sha256Hex(bytes), loadedText: text,
+            };
+            renderScriptSeedStatus(); saveBrief();
+        })().catch(error => feedback(error.message, true)));
+        el("editorial-script-seed").addEventListener("input", () => {
+            if (state.scriptSeedMeta?.loadedText !== el("editorial-script-seed").value) state.scriptSeedMeta = null;
+            renderScriptSeedStatus();
+        });
+        el("editorial-script-seed-clear").addEventListener("click", () => {
+            el("editorial-script-seed").value = "";
+            el("editorial-script-seed-file").value = "";
+            state.scriptSeedMeta = null;
+            renderScriptSeedStatus(); saveBrief();
+        });
         el("editorial-source-picker").addEventListener("toggle", () => {
             if (el("editorial-source-picker").open && state.channel) void loadClipPicker(el("editorial-clip-search").value);
         });
@@ -648,12 +714,14 @@ window.KatchaEditorial = (() => {
             void guarded(async () => {
                 const channel = state.channel;
                 reconcileSourceClipBindings();
+                const seed = await scriptSeedPayload();
                 const payload = { brief: {
                     prompt: el("editorial-prompt").value.trim(),
                     source_urls: sourceUrls(),
                     source_clip_bindings: Object.fromEntries(
                         Object.entries(state.sourceClipBindings).map(([url, item]) => [url, item.clip_id]),
                     ),
+                    ...(seed ? {script_seed: seed} : {}),
                     target_duration_seconds: Number(el("editorial-duration").value),
                 } };
                 payload.idempotency_key = identity("create", payload);
