@@ -439,7 +439,13 @@ async def advance_goal(goal_id: uuid.UUID) -> str:
             tool.confirm or authorization["mode"] == "propose"
         ):
             with session_scope() as session:
-                current = session.get(CommandGoal, goal.id)
+                current = session.scalar(
+                    select(CommandGoal)
+                    .where(CommandGoal.id == goal.id)
+                    .with_for_update()
+                )
+                if current.status in TERMINAL_GOAL_STATES:
+                    return current.status
                 current.status = "waiting_confirmation"
                 current.summary = "The exact operation is ready for your review and confirmation."
                 current.result = {
