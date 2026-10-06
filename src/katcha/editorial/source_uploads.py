@@ -120,6 +120,7 @@ def import_source_media(
         ).encode()
     ).hexdigest()
 
+    store = ObjectStore()
     replay_source_exists = False
     with session_scope() as session:
         ensure_active_profile(session, channel_id)
@@ -132,7 +133,7 @@ def import_source_media(
             if clip is None:
                 raise ValueError("Previous source upload is missing its managed clip")
             lifecycle = ensure_lifecycle(session, clip)
-            if lifecycle.lifecycle_state == "hot":
+            if lifecycle.lifecycle_state == "hot" and store.exists(clip.storage_key):
                 return ImportedSourceMedia(
                     source_id=previous.id,
                     clip_id=clip.id,
@@ -149,7 +150,6 @@ def import_source_media(
                 )
             replay_source_exists = True
 
-    store = ObjectStore()
     if not store.exists(key):
         store.put_file(path, key, content_type=content_type)
 
