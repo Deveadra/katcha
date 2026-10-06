@@ -17,6 +17,7 @@ from katcha.services.command_actions import (
     complete_action_proposal,
     create_action_proposals,
     get_action_proposal,
+    reject_action_proposal,
 )
 
 
@@ -165,3 +166,87 @@ def test_action_proposal_claim_is_idempotent() -> None:
         == "abc123def456"
         for event in audited
     )
+
+
+def test_action_proposal_rejection_is_audited_and_terminal() -> None:
+    connection_id = __import__("uuid").uuid4()
+    profile_id = __import__("uuid").uuid4()
+    request_id = __import__("uuid").uuid4()
+    now = datetime.now(UTC)
+
+    with session_scope() as session:
+        session.add(
+            YouTubeConnection(
+                id=connection_id,
+                channel_id=f"fixture-{connection_id}",
+                channel_title="Fixture channel",
+                status="active",
+                scopes=[],
+                encrypted_access_token="fixture",
+                encrypted_refresh_token="fixture",
+                token_expires_at=now + timedelta(hours=1),
+                connection_metadata={},
+            )
+        )
+        session.flush()
+        session.add(
+            ChannelProfile(
+                id=profile_id,
+                youtube_connection_id=connection_id,
+                status=ChannelStatus.ACTIVE.value,
+                timezone="UTC",
+                active_strategy_version=1,
+                active_automation_version=1,
+                profile_metadata={"channel_title": "Fixture channel"},
+            )
+        )
+
+    proposal = create_action_proposals(
+        request_id=request_id,
+        channel_profile_id=profile_id,
+        specs=[
+            ActionProposalSpec(
+                action_type="editorial_storyboard_edit",
+                label="Apply Storyboard edit",
+                description="Fixture edit",
+                payload={"project_id": str(__import__("uuid").uuid4())},
+            )
+        ],
+    )[0]
+
+    rejected = reject_action_proposal(
+        proposal.id,
+        actor="control-principal:editor",
+        reason="Use a different shot.",
+        credential_id="editor-key",
+        credential_fingerprint="fingerprint",
+    )
+    assert rejected.status == "rejected"
+    assert rejected.result == {
+        "rejected": True,
+        "reason": "Use a different shot.",
+    }
+
+    replay = reject_action_proposal(
+        proposal.id,
+        actor="control-principal:editor",
+        reason="Use a different shot.",
+    )
+    assert replay.status == "rejected"
+
+    with pytest.raises(ValueError, match="cannot execute from status rejected"):
+        claim_action_proposal(
+            proposal.id,
+            actor="control-principal:editor",
+        )
+
+    with session_scope() as session:
+        event = session.scalar(
+            select(DomainEvent).where(
+                DomainEvent.aggregate_id == str(proposal.id),
+                DomainEvent.event_type == "command_center.proposal_rejected",
+            )
+        )
+    assert event is not None
+    assert event.payload["actor"] == "control-principal:editor"
+    assert event.payload["credential_id"] == "editor-key"
