@@ -169,7 +169,17 @@ def selected_resource_evidence(request: dict) -> list[dict]:
     from katcha.services.command_resources import resolve_command_resources
 
     channel_id = uuid.UUID(request["channel_profile_id"])
-    refs = [(row["kind"], uuid.UUID(row["id"])) for row in request.get("resource_refs", [])]
+    refs = []
+    for row in request.get("resource_refs", []):
+        kind = row["kind"]
+        resource_id = uuid.UUID(row["id"])
+        selector = row.get("selector")
+        revision = row.get("revision")
+        refs.append(
+            (kind, resource_id, selector, revision)
+            if selector is not None or revision is not None
+            else (kind, resource_id)
+        )
     refs.extend(("clip", uuid.UUID(value)) for value in request.get("selected_clip_ids", []))
     if request.get("selected_production_id"):
         refs.append(("production", uuid.UUID(request["selected_production_id"])))
