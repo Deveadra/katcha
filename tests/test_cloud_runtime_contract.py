@@ -255,6 +255,17 @@ def test_acquired_capacity_cannot_be_overwritten_by_bootstrap_configurator() -> 
     assert "exit 15" in configurator
 
 
+def test_oci_bootstrap_variable_reads_are_cli_version_compatible() -> None:
+    for relative_path in (
+        "scripts/bootstrap-acquired-oci-host.sh",
+        "scripts/configure-github-oci-bootstrap.sh",
+        "scripts/transition-oci-bootstrap.sh",
+    ):
+        script = (ROOT / relative_path).read_text(encoding="utf-8")
+        assert "gh variable get" not in script
+        assert "actions/variables?per_page=100" in script
+
+
 def test_initial_primary_bootstrap_preserves_private_only_acquired_host() -> None:
     access = (
         ROOT / "scripts" / "bootstrap-acquired-oci-host.sh"
