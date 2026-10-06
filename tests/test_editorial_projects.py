@@ -207,6 +207,38 @@ def test_api_roundtrip_replay_history_and_audit(saved):
         assert len(events) == 3
 
 
+def test_storyboard_source_monitor_metadata_hides_storage_key(saved, monkeypatch):
+    client, channel, _ = saved
+    project_id = uuid.uuid4()
+    run_id = uuid.uuid4()
+
+    monkeypatch.setattr(
+        "katcha.editorial.source_monitor.source_monitor",
+        lambda *args: {
+            "candidate_id": "candidate",
+            "title": "Supporting interview",
+            "source_url": "https://example.com/source",
+            "clip_id": str(uuid.uuid4()),
+            "sha256": "a" * 64,
+            "duration_seconds": 10,
+            "frame_count": 3,
+            "sample_times": [0.25, 5.0, 9.75],
+            "contact_sheet_key": "analysis/private/contact-sheet.jpg",
+            "coverage": "sampled_frames",
+            "limitation": "Sampled frames only.",
+        },
+    )
+
+    response = client.get(
+        f"{root(channel)}/{project_id}/runs/{run_id}/assets/candidate/source-monitor"
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["candidate_id"] == "candidate"
+    assert response.json()["sample_times"] == [0.25, 5.0, 9.75]
+    assert "contact_sheet_key" not in response.json()
+
+
 def test_source_upload_api_streams_to_temp_and_cleans_up(saved, monkeypatch):
     client, channel, _ = saved
     captured = {}
