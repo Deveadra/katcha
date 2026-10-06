@@ -208,7 +208,11 @@ class EditorialScene(VisualBeat):
 
 class EditorialRenderManifest(Contract):
     version: Literal[
-        "editorial-render-v1", "editorial-render-v2", "editorial-render-v3", "editorial-render-v4"
+        "editorial-render-v1",
+        "editorial-render-v2",
+        "editorial-render-v3",
+        "editorial-render-v4",
+        "editorial-render-v5",
     ] = "editorial-render-v1"
     project_id: str
     revision: int = Field(gt=0, strict=True)
@@ -230,17 +234,23 @@ class EditorialRenderManifest(Contract):
         value = handler(self)
         if self.version == "editorial-render-v1":
             value.pop("narration", None)
-        if self.version not in {"editorial-render-v3", "editorial-render-v4"}:
+        if self.version not in {
+            "editorial-render-v3",
+            "editorial-render-v4",
+            "editorial-render-v5",
+        }:
             value.pop("images", None)
         return value
 
     @model_validator(mode="after")
     def valid_timeline(self) -> Self:
         narrated = self.presentation_mode == "narrated"
-        if self.version not in {"editorial-render-v3", "editorial-render-v4"} and narrated != (
-            self.version == "editorial-render-v2"
-        ):
-            raise ValueError("Narrated rendering requires manifest version 2")
+        if self.version not in {
+            "editorial-render-v3",
+            "editorial-render-v4",
+            "editorial-render-v5",
+        } and narrated != (self.version == "editorial-render-v2"):
+            raise ValueError("Narrated rendering requires a narration-capable manifest")
         if not narrated and self.narration:
             raise ValueError("Silent rendering cannot contain narration")
         if narrated and [item.beat_id for item in self.narration] != [
@@ -257,19 +267,27 @@ class EditorialRenderManifest(Contract):
             for scene in self.timeline
             for identity in ([scene.image_id] if scene.image_id else scene.image_ids)
         }
-        if self.version != "editorial-render-v4" and any(
-            scene.layout == "image_comparison" or (scene.layout == "image" and scene.overlays)
+        if self.version not in {"editorial-render-v4", "editorial-render-v5"} and any(
+            scene.layout == "image_comparison"
+            or (scene.layout == "image" and scene.overlays)
             for scene in self.timeline
         ):
-            raise ValueError("Image comparisons and annotations require manifest version 4")
-        if (
-            len(images) != len(self.images)
-            or set(images) != selected_images
-            or bool(images) != (self.version in {"editorial-render-v3", "editorial-render-v4"})
-        ):
             raise ValueError(
-                "Image manifests must cover exactly the selected images in version 3 or 4"
+                "Image comparisons and annotations require manifest version 4 or 5"
             )
+        if len(images) != len(self.images) or set(images) != selected_images:
+            raise ValueError("Image manifests must cover exactly the selected images")
+        if self.version in {"editorial-render-v3", "editorial-render-v4"} and not images:
+            raise ValueError("Manifest version 3 or 4 requires selected images")
+        if (
+            self.version not in {
+                "editorial-render-v3",
+                "editorial-render-v4",
+                "editorial-render-v5",
+            }
+            and images
+        ):
+            raise ValueError("This manifest version does not support images")
         for scene in self.timeline:
             for identity in [scene.image_id] if scene.image_id else scene.image_ids:
                 if images[identity].beat_id != scene.beat_id:
