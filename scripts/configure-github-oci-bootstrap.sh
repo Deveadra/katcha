@@ -27,6 +27,16 @@ if ! gh auth status --hostname github.com >/dev/null 2>&1; then
     exit 4
 fi
 
+acquired="$(
+    gh variable get KATCHA_OCI_BOOTSTRAP_ACQUIRED --repo "$REPO" 2>/dev/null || true
+)"
+if [[ "$acquired" == "true" ]]; then
+    echo "OCI A1 capacity has already been acquired for this repository." >&2
+    echo "Refusing to rewrite the winning AD/subnet/volume or re-enable capacity polling." >&2
+    echo "Continue with initial host provisioning or production recovery instead." >&2
+    exit 15
+fi
+
 if [[ ! -s "$PRIVATE_KEY_FILE" ]]; then
     echo "Missing OCI API private key: $PRIVATE_KEY_FILE" >&2
     exit 5
@@ -182,7 +192,8 @@ if [[ "$ENABLE" == "true" ]]; then
     echo
     echo "Bootstrap polling is ENABLED."
     echo "Each completed AD1→AD2→AD3 miss immediately dispatches the next serialized pass."
-    echo "The five-minute GitHub schedule remains only as a dead-man/backstop."
+    echo "The five-minute GitHub schedule remains a same-provider backstop."
+    echo "Cloudflare provides the independent dead-man once its bootstrap watchdog is enabled."
 else
     echo
     echo "Configuration installed with polling DISABLED."
