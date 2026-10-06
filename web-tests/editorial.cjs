@@ -165,6 +165,7 @@ const draft = {
         await page.getByRole("button", {name: "Use URL instead", exact: true}).waitFor();
         assert.equal(await page.locator("#editorial-urls").inputValue(), managedSourceUrl);
         assert.match(await page.locator("#editorial-selected-clips").innerText(), /Marvel Entertainment/);
+        await page.getByText("Start from a script", {exact: true}).click();
         await page.locator("#editorial-script-seed-file").setInputFiles({
             name: "operator-draft.md",
             mimeType: "text/markdown",
