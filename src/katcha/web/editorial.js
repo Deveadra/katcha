@@ -545,7 +545,10 @@ window.KatchaEditorial = (() => {
         state.narrationKey = key;
         el("editorial-narration").innerHTML = (state.revision?.draft.script || []).map((beat, index) => {
             const recordings = (data.recordings || []).filter(item => item.beat_id === beat.id && item.status === "active");
-            return `<fieldset class="editorial-beat" data-narration-beat="${esc(beat.id)}"><legend>Beat ${index + 1}</legend><p>${esc(beat.narration)}</p><label>Recording for beat ${index + 1}<select data-narration-select="${esc(beat.id)}"><option value="">Choose a recording</option>${recordings.map(item => `<option value="${esc(item.id)}" ${saved.choices[beat.id] === item.id ? "selected" : ""}>${Number(item.duration_seconds).toFixed(2)}s · ${esc(item.created_at)}</option>`).join("")}</select></label><button type="button" class="mini" data-narration-revoke>Remove selected recording</button><label>WAV recording for beat ${index + 1}<input type="file" accept=".wav,audio/wav" data-narration-file></label><label class="check-row"><input type="checkbox" data-narration-permitted> I have permission to use this recording</label><button type="button" class="mini" data-narration-upload>Upload recording</button></fieldset>`;
+            const savedRecording = saved.choices[beat.id] || "";
+            const unavailableRecording = savedRecording
+                && !recordings.some(item => item.id === savedRecording);
+            return `<fieldset class="editorial-beat" data-narration-beat="${esc(beat.id)}"><legend>Beat ${index + 1}</legend><p>${esc(beat.narration)}</p><label>Recording for beat ${index + 1}<select data-narration-select="${esc(beat.id)}"><option value="">Choose a recording</option>${unavailableRecording ? `<option value="${esc(savedRecording)}" selected>Unavailable recording · choose a replacement</option>` : ""}${recordings.map(item => `<option value="${esc(item.id)}" ${savedRecording === item.id ? "selected" : ""}>${Number(item.duration_seconds).toFixed(2)}s · ${esc(item.created_at)}</option>`).join("")}</select></label><button type="button" class="mini" data-narration-revoke>Remove selected recording</button><label>WAV recording for beat ${index + 1}<input type="file" accept=".wav,audio/wav" data-narration-file></label><label class="check-row"><input type="checkbox" data-narration-permitted> I have permission to use this recording</label><button type="button" class="mini" data-narration-upload>Upload recording</button></fieldset>`;
         }).join("");
     }
     function boardStorage() { return storageKey(`board.${state.project.id}.${state.project.revision}.${state.assetRun?.editorial_run_id || "none"}`); }
@@ -825,7 +828,11 @@ window.KatchaEditorial = (() => {
     }
     async function undoStoryboardWorkspace() {
         const current = state.storyboardWorkspace;
-        if (!current?.parent_version || state.storyboardDirty) {
+        const canUndo = current && (
+            current.parent_version
+            || (current.version === 1 && current.origin !== "undo")
+        );
+        if (!canUndo || state.storyboardDirty) {
             throw new Error("Save the current Storyboard before undoing.");
         }
         const epoch = state.epoch;
@@ -853,7 +860,11 @@ window.KatchaEditorial = (() => {
         renderNarration();
         renderStoryboard();
         updateStoryboardUndo();
-        feedback(`Storyboard restored from v${current.parent_version}.`);
+        feedback(
+            current.parent_version
+                ? `Storyboard restored from v${current.parent_version}.`
+                : "Storyboard restored to the blank script baseline.",
+        );
     }
     function imageFormKey() { return storageKey(`image-form.${state.project.id}.${state.project.revision}`); }
     const imageFields = ["title", "source", "permission", "beat"];
@@ -886,7 +897,8 @@ window.KatchaEditorial = (() => {
         const remainder = Math.round(value % 60);
         return `${minutes}:${String(remainder).padStart(2, "0")}`;
     }
-    function timelineVisualStatus(choice) {
+    function timelineVisualStatus(choice, unavailable = false) {
+        if (unavailable) return "Needs replacement";
         if (!choice) return "Needs visual";
         if (choice.startsWith("media:")) return "Footage";
         if (choice.startsWith("image:")) return "Image";
@@ -898,11 +910,16 @@ window.KatchaEditorial = (() => {
         const buttons = [...el("editorial-beat-timeline").querySelectorAll("[data-timeline-beat]")];
         let assigned = 0;
         rows.forEach((row, index) => {
-            const choice = row.querySelector("[data-primary-visual]")?.value || "";
-            if (choice) assigned += 1;
+            const select = row.querySelector("[data-primary-visual]");
+            const choice = select?.value || "";
+            const unavailable = select?.selectedOptions?.[0]?.dataset.unavailable === "true";
+            if (choice && !unavailable) assigned += 1;
             const status = buttons[index]?.querySelector("[data-timeline-status]");
-            if (status) status.textContent = timelineVisualStatus(choice);
-            buttons[index]?.classList.toggle("is-ready", Boolean(choice));
+            if (status) status.textContent = timelineVisualStatus(choice, unavailable);
+            buttons[index]?.classList.toggle(
+                "is-ready",
+                Boolean(choice) && !unavailable,
+            );
         });
         const total = (state.revision?.draft.script || []).reduce(
             (sum, beat) => sum + Number(beat.planned_duration_seconds || 0),
@@ -997,8 +1014,16 @@ window.KatchaEditorial = (() => {
             const claims = (draft.claims || []).filter(claim => beat.claim_ids.includes(claim.id));
             const sourceIds = new Set(claims.flatMap(claim => claim.source_ids));
             const sources = (draft.sources || []).filter(source => sourceIds.has(source.id));
+            const savedChoice = saved[index]?.choice || "";
             const options = [...(state.images?.images || []).filter(item => item.status === "active" && item.beat_id === beat.id).map(item => ({value: `image:${item.id}`, label: `${item.illustration ? "Illustration" : "Image"}: ${item.title}`})), ...choices.filter(item => item.beat_id === beat.id && receipts[item.id]).map(item => ({value: `media:${item.id}`, label: item.title})), ...sources.map(item => ({value: `quote:${item.id}`, label: `Evidence quote: ${item.title}`}))];
-            return `<fieldset id="board-panel-${esc(beat.id)}" class="editorial-beat editorial-beat-editor" role="tabpanel" data-board-beat="${esc(beat.id)}"><legend><span>Beat ${index + 1} · ${esc(beat.role)}</span><small>${timelineClock(beat.planned_duration_seconds)} planned</small></legend><p class="editorial-beat-intent">${esc(beat.visual_intent)}</p><label>Visual<select data-primary-visual>${'<option value="">Choose a visual</option>'}${options.map(item => `<option value="${esc(item.value)}" ${saved[index]?.choice === item.value ? "selected" : ""}>${esc(item.label)}</option>`).join("")}</select></label><label>Footage start (seconds)<input type="number" min="0" step="0.1" value="${esc(saved[index]?.start || "0")}"></label><label class="check-row"><input type="checkbox" ${saved[index]?.freeze ? "checked" : ""}> Hold this frame</label>
+            if (savedChoice && !options.some(item => item.value === savedChoice)) {
+                options.unshift({
+                    value: savedChoice,
+                    label: "Unavailable visual · choose a replacement",
+                    unavailable: true,
+                });
+            }
+            return `<fieldset id="board-panel-${esc(beat.id)}" class="editorial-beat editorial-beat-editor" role="tabpanel" data-board-beat="${esc(beat.id)}"><legend><span>Beat ${index + 1} · ${esc(beat.role)}</span><small>${timelineClock(beat.planned_duration_seconds)} planned</small></legend><p class="editorial-beat-intent">${esc(beat.visual_intent)}</p><label>Visual<select data-primary-visual>${'<option value="">Choose a visual</option>'}${options.map(item => `<option value="${esc(item.value)}" ${item.unavailable ? 'data-unavailable="true"' : ""} ${savedChoice === item.value ? "selected" : ""}>${esc(item.label)}</option>`).join("")}</select></label><label>Footage start (seconds)<input type="number" min="0" step="0.1" value="${esc(saved[index]?.start || "0")}"></label><label class="check-row"><input type="checkbox" ${saved[index]?.freeze ? "checked" : ""}> Hold this frame</label>
                 <div data-image-tools hidden><label>Compare with another image<select data-image-compare><option value="">Single image</option>${saved[index]?.compare && !(state.images?.images || []).some(item => item.id === saved[index].compare && item.status === "active" && item.beat_id === beat.id) ? `<option value="${esc(saved[index].compare)}" selected>Unavailable image · choose a replacement</option>` : ""}${(state.images?.images || []).filter(item => item.status === "active" && item.beat_id === beat.id).map(item => `<option value="${esc(item.id)}" ${saved[index]?.compare === item.id ? "selected" : ""}>${esc(item.title)}</option>`).join("")}</select></label>
                 <details class="ae-help"><summary>Mark a source region</summary><p>Manual placement on the original image. Percentages follow the image through resizing and push-in. Check the preview before approval.</p>
                 <label>Annotation<select data-region="kind">${[["", "None"], ["circle", "Circle"], ["arrow", "Arrow"], ["highlight", "Highlight"]].map(([value, label]) => `<option value="${value}" ${saved[index]?.annotation?.kind === value ? "selected" : ""}>${label}</option>`).join("")}</select></label>
