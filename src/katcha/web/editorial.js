@@ -449,6 +449,7 @@ window.KatchaEditorial = (() => {
             : null;
         state.storyboardDirty = false;
         state.storyboardSaving = false;
+        if (state.storyboardWorkspace) hydrateStoryboardLocalState(state.storyboardWorkspace);
         el("editorial-detail").hidden = false;
         el("editorial-title").textContent = project.brief.prompt;
         el("editorial-status").textContent = run
@@ -457,7 +458,15 @@ window.KatchaEditorial = (() => {
         el("editorial-discard").hidden = !state.stale;
         feedback(run?.error || "Project loaded. Generated claims and scripts need editorial review.", Boolean(run?.error));
         renderProjectSources();
-        renderActions(); renderEvidence(); renderScript(); renderImages(); renderStoryboard(); renderDirection(); renderReview(); renderNarration(); renderActions();
+        renderActions(); renderEvidence(); renderScript(); renderImages(); renderNarration(); renderStoryboard(); renderDirection(); renderReview(); renderActions();
+        if (storyboardWorkspace?.error && !state.stale) {
+            storyboardSyncStatus(
+                `Workspace unavailable · ${storyboardWorkspace.error}`,
+                {error: true},
+            );
+        } else {
+            updateStoryboardUndo();
+        }
         setAiLinks(); restoreStage();
         if (state.stale) feedback("A newer script revision is available. Your unsaved text is retained below. Copy it before discarding edits to load the latest version.", true);
         if (focus) el("editorial-title").focus();
@@ -499,6 +508,7 @@ window.KatchaEditorial = (() => {
         syncProgramMonitor();
         el("editorial-approve").disabled = state.busy || !state.review?.can_approve || !state.previewUrl || state.stale || Boolean(read(storageKey(`pending.${state.project.id}`), null));
         el("editorial-request-changes").disabled = state.busy || !state.review || Boolean(state.review.error);
+        updateStoryboardUndo();
     }
     function reviewNoteKey() { return storageKey(`review-note.${state.run?.editorial_run_id}`); }
     function renderReview() {
@@ -697,9 +707,10 @@ window.KatchaEditorial = (() => {
             state.busy
             || state.stale
             || state.storyboardSaving
+            || state.storyboardDirty
             || !row?.parent_version
         );
-        if (state.storyboardSaving) return;
+        if (state.storyboardSaving || state.storyboardDirty) return;
         if (row?.version) {
             storyboardSyncStatus(
                 `Saved workspace · v${row.version} · ${String(row.origin || "operator").replaceAll("_", " ")}`,
@@ -756,7 +767,6 @@ window.KatchaEditorial = (() => {
                 && scriptRevision === state.project?.revision
             ) {
                 state.storyboardWorkspace = saved;
-                hydrateStoryboardLocalState(saved);
                 storyboardSyncStatus(`Saved workspace · v${saved.version}`);
             }
         } catch (error) {
@@ -791,10 +801,43 @@ window.KatchaEditorial = (() => {
         state.storyboardDirty = true;
         clearTimeout(state.storyboardSaveTimer);
         storyboardSyncStatus("Unsaved Storyboard changes");
+        updateStoryboardUndo();
         state.storyboardSaveTimer = setTimeout(
             () => void flushStoryboardWorkspace(),
             700,
         );
+    }
+    async function undoStoryboardWorkspace() {
+        const current = state.storyboardWorkspace;
+        if (!current?.parent_version || state.storyboardDirty) {
+            throw new Error("Save the current Storyboard before undoing.");
+        }
+        const epoch = state.epoch;
+        const channel = state.channel;
+        const project = state.project.id;
+        const body = {
+            script_revision: state.project.revision,
+            expected_version: current.version,
+        };
+        body.idempotency_key = identity(`storyboard.undo.${project}`, body);
+        const restored = await api(path(channel, `/${project}/storyboard/undo`), {
+            method: "POST",
+            body: JSON.stringify(body),
+        });
+        if (
+            epoch !== state.epoch
+            || channel !== state.channel
+            || project !== state.project?.id
+        ) return;
+        state.storyboardWorkspace = restored;
+        state.storyboardDirty = false;
+        state.boardKey = "";
+        state.narrationKey = "";
+        hydrateStoryboardLocalState(restored);
+        renderNarration();
+        renderStoryboard();
+        updateStoryboardUndo();
+        feedback(`Storyboard restored from v${current.parent_version}.`);
     }
     function imageFormKey() { return storageKey(`image-form.${state.project.id}.${state.project.revision}`); }
     const imageFields = ["title", "source", "permission", "beat"];
