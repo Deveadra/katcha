@@ -63,8 +63,13 @@ class EditorialStoryboardRevision(Base):
         ),
         CheckConstraint("version > 0", name="ck_editorial_storyboard_version"),
         CheckConstraint(
-            "parent_version IS NULL OR parent_version > 0",
+            "parent_version IS NULL OR "
+            "(parent_version > 0 AND parent_version < version)",
             name="ck_editorial_storyboard_parent_version",
+        ),
+        CheckConstraint(
+            "origin IN ('operator', 'ai_apply', 'undo')",
+            name="ck_editorial_storyboard_origin",
         ),
     )
 
