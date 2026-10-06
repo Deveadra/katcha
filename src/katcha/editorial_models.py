@@ -54,6 +54,40 @@ class EditorialRevision(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
+class EditorialStoryboardRevision(Base):
+    __tablename__ = "editorial_storyboard_revisions"
+    __table_args__ = (
+        CheckConstraint(
+            "script_revision > 0",
+            name="ck_editorial_storyboard_script_revision",
+        ),
+        CheckConstraint("version > 0", name="ck_editorial_storyboard_version"),
+        CheckConstraint(
+            "parent_version IS NULL OR parent_version > 0",
+            name="ck_editorial_storyboard_parent_version",
+        ),
+    )
+
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("editorial_projects.id"), primary_key=True
+    )
+    script_revision: Mapped[int] = mapped_column(Integer, primary_key=True)
+    version: Mapped[int] = mapped_column(Integer, primary_key=True)
+    channel_profile_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("channel_profiles.id"), index=True
+    )
+    parent_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    request_id: Mapped[uuid.UUID] = mapped_column(Uuid, unique=True)
+    request_digest: Mapped[str] = mapped_column(String(64))
+    digest: Mapped[str] = mapped_column(String(64))
+    workspace: Mapped[dict[str, Any]] = mapped_column(JSON)
+    origin: Mapped[str] = mapped_column(String(32))
+    actor: Mapped[str] = mapped_column(String(255))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+
 class EditorialRun(Base):
     __tablename__ = "editorial_runs"
     __table_args__ = (CheckConstraint("attempt > 0", name="ck_editorial_run_attempt"),)
