@@ -3,7 +3,7 @@ from contextlib import contextmanager
 from types import SimpleNamespace
 
 import pytest
-from fastapi import HTTPException
+from fastapi import HTTPException, Response
 from starlette.requests import Request
 
 import katcha.api.main as api_main
@@ -18,6 +18,7 @@ def test_clip_library_lifecycle_routes_are_registered() -> None:
         "/v1/clips/library",
         "/v1/clips/library/summary",
         "/v1/clips/{clip_id}/media",
+        "/v1/clips/{clip_id}/media-session",
         "/v1/clips/{clip_id}/sources",
         "/v1/clips/{clip_id}/library-state",
         "/v1/clips/{clip_id}/library-metadata",
@@ -30,24 +31,31 @@ def test_clip_library_lifecycle_routes_are_registered() -> None:
     }
     assert expected <= set(paths)
     assert "get" in paths["/v1/clips/{clip_id}/media"]
+    assert "post" in paths["/v1/clips/{clip_id}/media-session"]
     assert "patch" in paths["/v1/clips/{clip_id}/library-metadata"]
     assert "post" in paths["/v1/clips/{clip_id}/purge"]
     assert "put" in paths["/v1/channels/{channel_profile_id}/clip-retention"]
 
 
-def _media_request(range_value: str | None = None) -> Request:
+def _media_request(
+    range_value: str | None = None,
+    *,
+    method: str = "GET",
+    path: str = "/v1/clips/test/media",
+    scheme: str = "http",
+) -> Request:
     headers = []
     if range_value:
         headers.append((b"range", range_value.encode()))
     return Request(
         {
             "type": "http",
-            "method": "GET",
-            "path": "/v1/clips/test/media",
-            "raw_path": b"/v1/clips/test/media",
+            "method": method,
+            "path": path,
+            "raw_path": path.encode(),
             "headers": headers,
             "query_string": b"",
-            "scheme": "http",
+            "scheme": scheme,
             "server": ("testserver", 80),
             "client": ("127.0.0.1", 12345),
         }
@@ -138,3 +146,25 @@ async def test_clip_media_streams_only_authorized_channel_range(monkeypatch) -> 
             channel_profile_id=uuid.uuid4(),
         )
     assert exc.value.status_code == 404
+
+    cookie_response = Response()
+    value = api_main.create_clip_media_session(
+        clip_id,
+        channel_id,
+        _media_request(
+            method="POST",
+            path=f"/v1/clips/{clip_id}/media-session",
+            scheme="https",
+        ),
+        cookie_response,
+    )
+    assert value["media_url"] == (
+        f"/v1/clips/{clip_id}/media?channel_profile_id={channel_id}"
+    )
+    cookie = cookie_response.headers["set-cookie"]
+    assert "katcha_media_playback=" in cookie
+    assert "HttpOnly" in cookie
+    assert "SameSite=strict" in cookie
+    assert "Secure" in cookie
+    assert f"Path=/v1/clips/{clip_id}/media" in cookie
+    assert cookie_response.headers["cache-control"] == "no-store"
