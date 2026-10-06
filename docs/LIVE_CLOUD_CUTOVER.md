@@ -334,12 +334,26 @@ Bastion **SSH port forwarding**, not Managed SSH, for the one-time foundation
 bootstrap. Oracle documents a Managed-SSH limitation for Ampere A1 instances
 running Ubuntu; port-forwarding sessions do not require the Bastion agent plugin.
 
-The dedicated recovery identity needs one additional account-side policy for
-this initial administrative path:
+The dedicated recovery identity needs a temporary elevation for this initial
+administrative path because creating the service gateway, route, NSG, and VNIC
+membership requires network-management permissions. Add these statements to the
+existing root-tenancy Katcha policy for the bootstrap:
 
 ```text
 Allow group katcha-github-recovery to manage bastion-family in compartment katcha-prod
+Allow group katcha-github-recovery to manage virtual-network-family in compartment katcha-prod
 ```
+
+After the foundation bootstrap succeeds, downgrade the network grant back to the
+normal recovery permission:
+
+```text
+Allow group katcha-github-recovery to use virtual-network-family in compartment katcha-prod
+```
+
+The Bastion grant can remain while private emergency administration is needed,
+or later be narrowed to session-only access once the operator-access path is
+fully finalized.
 
 Then inspect the planned changes without mutating OCI:
 
@@ -439,7 +453,6 @@ attach a tenancy policy with only:
 Allow group katcha-github-recovery to manage instance-family in compartment katcha-prod
 Allow group katcha-github-recovery to manage volume-family in compartment katcha-prod
 Allow group katcha-github-recovery to use virtual-network-family in compartment katcha-prod
-Allow group katcha-github-recovery to manage bastion-family in compartment katcha-prod
 Allow group katcha-github-recovery to read instance-images in tenancy
 Allow group katcha-github-recovery to read app-catalog-listing in tenancy
 ```
