@@ -202,7 +202,7 @@ service_id="$(
     jq -er '.data[] | select((.name // "") | test("^All .* Services In Oracle Services Network$")) | .id' <<<"$services_json"
 )"
 service_cidr="$(
-    jq -er '.data[] | select(.id == $id) | ."cidr-block"' --arg id "$service_id" <<<"$services_json"
+    jq -er --arg id "$service_id" '.data[] | select(.id == $id) | ."cidr-block"' <<<"$services_json"
 )"
 
 gateway_list="$(
@@ -254,10 +254,11 @@ if [[ -n "$gateway_id" ]]; then
         else
             log "Adding service-gateway route while preserving existing routes"
             route_rules="$(
-                python3 - "$gateway_id" "$service_cidr" <<'PY' <<<"$route_json"
+                ROUTE_JSON="$route_json" python3 - "$gateway_id" "$service_cidr" <<'PY'
 import json
+import os
 import sys
-payload = json.load(sys.stdin)
+payload = json.loads(os.environ["ROUTE_JSON"])
 gateway_id, service_cidr = sys.argv[1], sys.argv[2]
 rules = []
 for row in payload["data"].get("route-rules", []):
