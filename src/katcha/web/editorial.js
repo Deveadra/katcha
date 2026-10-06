@@ -554,7 +554,9 @@ window.KatchaEditorial = (() => {
             }
         });
         if (persist) remember(timelineStorage(), selected);
-        void loadSourceMonitor();
+        if (!document.querySelector('[data-editorial-stage-panel="storyboard"]').hidden) {
+            void loadSourceMonitor();
+        }
     }
     function showFootageControls() {
         el("editorial-storyboard").querySelectorAll("[data-board-beat]").forEach(row => {
@@ -719,6 +721,7 @@ window.KatchaEditorial = (() => {
             panel.hidden = panel.dataset.editorialStagePanel !== stage;
         });
         if (persist && state.project) remember(stageKey(), stage);
+        if (stage === "storyboard") void loadSourceMonitor();
     }
     function restoreStage() {
         selectStage(read(stageKey(), "research"), {persist: false});
