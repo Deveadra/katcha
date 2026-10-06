@@ -12,6 +12,7 @@ from katcha.command_center_models import (
     CommandTurn,
 )
 from katcha.db import session_scope
+from katcha.goal_models import CommandGoal, CommandGoalStep
 from katcha.models import DomainEvent
 from katcha.services.channel_profiles import ensure_active_profile
 
@@ -366,6 +367,60 @@ def reject_action_proposal(
             "reason": reason[:1000],
         }
         proposal.error = None
+
+        goal_step = session.scalar(
+            select(CommandGoalStep).where(
+                CommandGoalStep.proposal_id == proposal.id
+            )
+        )
+        if goal_step is not None:
+            goal = session.scalar(
+                select(CommandGoal)
+                .where(CommandGoal.id == goal_step.goal_id)
+                .with_for_update()
+            )
+            if goal is None:
+                raise ValueError("saved goal for this proposal was not found")
+            if goal.actor != actor:
+                raise ValueError("This saved goal belongs to a different actor")
+            rejection_result = {
+                "rejected": True,
+                "reason": reason[:1000],
+                "proposal_id": str(proposal.id),
+            }
+            goal_step.status = "observed"
+            goal_step.result = rejection_result
+            goal_step.error = None
+            if goal.status not in {
+                "completed",
+                "blocked",
+                "needs_input",
+                "failed",
+                "cancelled",
+            }:
+                goal.observations = [
+                    *list(goal.observations or []),
+                    {
+                        "step": goal_step.number,
+                        "tool": goal_step.decision.get("tool"),
+                        "arguments": goal_step.decision.get("arguments", {}),
+                        "result": rejection_result,
+                        "error": None,
+                    },
+                ]
+                goal.step_count = max(goal.step_count, goal_step.number + 1)
+                goal.status = "cancelled"
+                goal.summary = "Proposal rejected. No action was applied."
+                goal.result = {
+                    "answer": goal.summary,
+                    "thread_id": str(goal.thread_id),
+                    "request_id": str(goal.command_id),
+                    "intent": "goal_cancelled",
+                    "narrator": "Katcha goal runner",
+                    "evidence": [],
+                    "actions": [],
+                }
+
         session.add(
             DomainEvent(
                 aggregate_type="command_action_proposal",
