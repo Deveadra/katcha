@@ -550,6 +550,19 @@ def test_command_center_accepts_typed_resource_context_schema() -> None:
     assert request.resource_refs[0].kind == "clip"
     assert request.resource_refs[0].id == clip_id
 
+    project_id = uuid.uuid4()
+    editorial = CommandRequest.model_validate(
+        {
+            "channel_profile_id": str(uuid.uuid4()),
+            "prompt": "Inspect this Editorial project.",
+            "resource_refs": [
+                {"kind": "editorial_project", "id": str(project_id)},
+            ],
+        }
+    )
+    assert editorial.resource_refs[0].kind == "editorial_project"
+    assert editorial.resource_refs[0].id == project_id
+
 
 @pytest.mark.parametrize("prompt", ["Hi!", "Hello", "What can you do?", "How can you help?"])
 def test_basic_conversation_has_a_read_only_route(prompt):
