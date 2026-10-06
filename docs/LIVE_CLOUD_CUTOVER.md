@@ -342,6 +342,7 @@ existing root-tenancy Katcha policy for the bootstrap:
 ```text
 Allow group katcha-github-recovery to manage bastion-family in compartment katcha-prod
 Allow group katcha-github-recovery to manage virtual-network-family in compartment katcha-prod
+Allow group katcha-github-recovery to inspect work-requests in tenancy
 ```
 
 After the foundation bootstrap succeeds, downgrade the network grant back to the

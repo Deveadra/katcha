@@ -312,6 +312,7 @@ root-tenancy Katcha policy, then rerun:
 
 Allow group katcha-github-recovery to manage bastion-family in compartment katcha-prod
 Allow group katcha-github-recovery to manage virtual-network-family in compartment katcha-prod
+Allow group katcha-github-recovery to inspect work-requests in tenancy
 
 After this foundation bootstrap succeeds, downgrade virtual-network-family back
 to the normal recovery permission documented in the runbook:
