@@ -738,6 +738,11 @@ let browser;
             "&focus=chat",
     );
     await page.locator("#command-center:not([hidden])").waitFor();
+    await page.waitForFunction(() =>
+        /editorial project 77777777/i.test(
+            document.querySelector("#selection-bar")?.textContent || "",
+        ),
+    );
     assert.match(
         await page.locator("#selection-bar").innerText(),
         /editorial project 77777777/i,
