@@ -22,7 +22,7 @@ let loseBillingResponse = true, loseDirectionResponse = true;
 const frameReceipt = {storyboard_digest: 'fixture', shots: [{beat_id: 'beat', candidate_id: 'candidate', observation: {start_seconds: 2.5, source_url: 'https://example.com/footage', observation: 'A red door <script>unsafe</script> is visible.'}, limitations: ['Sparse sampling; movement is unverified.']}]};
 const regionSuggestion = {kind: 'circle', region: {x: .1, y: .2, width: .3, height: .4}, description: 'A visible <door>', label: 'Door'};
 frameReceipt.shots[0].regions = {regions: [regionSuggestion], limitations: ['Exact frozen sample only']};
-let directionRun = null;
+let directionRun = null, failFrameImage = true;
 let failHistoryPage = true, failHistoryPreview = true, delayedHistory = null;
 let historyRequestStarted;
 const historyStarted = new Promise(resolve => { historyRequestStarted = resolve; });
@@ -45,6 +45,16 @@ const draft = {
             const body = request.method() === "POST" && !url.pathname.endsWith("/narration") && !url.pathname.endsWith("/images") && !url.pathname.endsWith("/source-uploads") ? request.postDataJSON() : null;
             calls.push({ query: url.search, path: url.pathname, method: request.method(), body, auth: request.headers().authorization });
             const send = (value, status = 200) => route.fulfill({ status, contentType: "application/json", body: JSON.stringify(value) });
+            if (/\/frames\/0(?:\/image)?$/.test(url.pathname)) {
+                if (url.pathname.endsWith('/image')) {
+                    if (failFrameImage) { failFrameImage = false; return send({detail: 'Image temporarily unavailable'}, 503); }
+                    assert.equal(url.searchParams.get('evidence_digest'), 'a'.repeat(64));
+                    return route.fulfill({status: 200, contentType: 'image/png', body: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2cS8AAAAASUVORK5CYII=', 'base64')});
+                }
+                return send({sample_seconds: 2.5, observation: frameReceipt.shots[0].observation.observation, frozen: true,
+                    evidence_digest: 'a'.repeat(64), overlays: [regionSuggestion], limitations: frameReceipt.shots[0].limitations,
+                    regions: frameReceipt.shots[0].regions});
+            }
             if (url.pathname === "/v1/channels") return send([{ id: "one", status: "active", profile_metadata: { name: "FORESCENE" } }, { id: "two", status: "active", profile_metadata: { name: "Other channel" } }]);
             if (url.pathname === "/v1/clips/library") return send({
                 items: [{id: managedClipId, title: "Official trailer", creator: "Marvel Entertainment", platform: "youtube", duration_seconds: 90, status: "scored", lifecycle_state: "hot"}],
@@ -512,6 +522,40 @@ const draft = {
         assert.match(await page.locator('#editorial-direction').innerText(), /Exact frozen sample only/);
         assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
         await page.locator('#editorial-direction').screenshot({path: path.resolve(__dirname, 'test-results/editorial-direction-mobile.png')});
+        const writesBeforeInspect = calls.filter(call => call.method === 'POST').length;
+        await page.locator('#editorial-direction [data-frame-run]').click();
+        await page.locator('#editorial-frame-status').filter({hasText: 'Frame unavailable'}).waitFor();
+        await page.locator('#editorial-frame-retry').click();
+        await page.locator('#editorial-frame-canvas img').waitFor();
+        assert.equal(await page.locator('#editorial-frame-canvas .editorial-frame-circle').evaluate(el => el.style.left), '10%');
+        assert.equal(await page.locator('#editorial-frame-description script').count(), 0);
+        assert.match(await page.locator('#editorial-frame-description').innerText(), /<script>unsafe<\/script>/);
+        await page.locator('#editorial-frame-marks').uncheck();
+        assert.equal(await page.locator('.editorial-frame-regions').isVisible(), false);
+        await page.locator('#editorial-frame-marks').check();
+        await page.locator('#editorial-frame-dialog').screenshot({path: path.resolve(__dirname, 'test-results/editorial-frame-mobile.png')});
+        await page.keyboard.press('Escape');
+        assert.equal(await page.locator('#editorial-frame-dialog').isVisible(), false);
+        assert.equal(await page.locator('#editorial-frame-canvas img').count(), 0);
+        assert.equal(await page.locator('#editorial-storyboard input[type=number]:not([data-region])').inputValue(), '1.5');
+        assert.equal(calls.filter(call => call.method === 'POST').length, writesBeforeInspect);
+        let releaseFrame, frameRequested;
+        const frameStarted = new Promise(resolve => { frameRequested = resolve; });
+        await page.route('**/runs/direction/frames/0', async route => {
+            frameRequested();
+            await new Promise(resolve => { releaseFrame = resolve; });
+            await route.fulfill({status: 200, contentType: 'application/json', body: JSON.stringify({evidence_digest: 'a'.repeat(64)})});
+        });
+        await page.locator('#editorial-direction [data-frame-run]').click();
+        await frameStarted;
+        await page.keyboard.press('Escape');
+        const closedFrameResponse = page.waitForResponse(response => new URL(response.url()).pathname.endsWith('/runs/direction/frames/0'));
+        releaseFrame();
+        await closedFrameResponse;
+        await page.evaluate(() => new Promise(requestAnimationFrame));
+        assert.equal(await page.locator('#editorial-frame-dialog').isVisible(), false);
+        assert.equal(await page.locator('#editorial-frame-canvas img').count(), 0);
+        await page.unroute('**/runs/direction/frames/0');
         // Rendering the saved plan preserves speed and push-in, independent of manual controls.
         await page.locator('#editorial-render-directed').click();
         await page.getByText(/Review approved for this rendered revision/).waitFor();
@@ -613,6 +657,10 @@ const draft = {
         await page.locator('#editorial-history-review').filter({hasText: 'Previous approval is no longer valid'}).waitFor();
         assert.match(await page.locator('#editorial-history-script').innerText(), /This might be a connection/);
         await page.locator('#editorial-history-frames summary').click();
+        await page.locator('#editorial-history-frames [data-frame-run]').click();
+        await page.locator('#editorial-frame-canvas img').waitFor();
+        assert(calls.some(call => call.path.endsWith('/runs/past-0/frames/0/image')));
+        await page.locator('#editorial-frame-close').click();
         assert.match(await page.locator('#editorial-history-frames').innerText(), /red door <script>unsafe/);
         assert.equal(await page.locator('#editorial-history-frames script').count(), 0);
         assert.equal(await page.locator('[data-beat-narration="0"]').inputValue(), 'Unsaved current script stays here.');

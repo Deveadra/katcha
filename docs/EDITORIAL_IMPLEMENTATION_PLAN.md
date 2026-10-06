@@ -1042,3 +1042,34 @@ request serialization. The synthetic browser journey passed opt-in replay, regio
 review, unchanged manual inputs, annotated render handoff and channel isolation at
 390px; the region disclosure was visually inspected. Renderer contracts, lint and
 diff checks passed. These fixtures do not establish live AI localization accuracy.
+
+### E16 exact cited-frame inspection (2026-10-06)
+
+Built on merged E15 and integrated main through `600e84f`. Operators can open
+“Inspect cited frame” from a current directed plan or saved direction/render work.
+The authenticated viewer loads the exact managed sample, displays source-coordinate
+circles/arrows/highlights for freezes, and lets operators hide the regions to
+inspect the original. Moving-shot citations show only their sampled image; the
+viewer does not claim tracking or continuous visibility. Final zoom, timing and
+caption placement still require the rendered preview.
+
+Both metadata and image reads recompile under current source clearance and check
+saved storyboard/citation bindings. Images require the digest of the rechecked
+metadata; changed evidence cannot silently substitute a different view. Storage
+keys are server-selected and hidden from metadata responses. Reads use existing
+editorial read/channel authorization and no-store responses. Inspection makes no
+provider calls, creates no renders and changes no approval or storyboard state.
+
+The shared dialog supports keyboard dismissal, mobile sizing, image retry, region
+toggling and escaped observation text. Closing it or changing channel/project or
+historical selection invalidates outstanding requests and releases image URLs.
+Errors preserve manual inputs and offer a retry.
+
+Validation: **288 editorial, command-goal and authorization tests passed**. Added
+checks cover current rights, citation drift, saved-render inspection, channel
+isolation, read scope, hidden storage keys and metadata/image digest mismatch.
+The synthetic browser journey passed mobile current/history inspection, failed
+image retry, region toggling, escaped text, unchanged manual edits, read-only
+requests and late-response dismissal. The mobile dialog was visually inspected;
+its image fixture is synthetic. Renderer contracts, lint and diff checks passed.
+No live provider calls or live visual-quality acceptance were performed.

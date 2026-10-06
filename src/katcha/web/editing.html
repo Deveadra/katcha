@@ -12,6 +12,7 @@
     <link id="aerith-components" rel="stylesheet" href="/system/aerith-components.css">
     <link id="aerith-motion" rel="stylesheet" href="/system/aerith-motion.css">
     <link rel="stylesheet" href="/pages/production-aerith.css">
+    <script src="/editorial-frame-inspector.js" defer></script>
     <script src="/editorial-history.js" defer></script>
     <script src="/editorial.js" defer></script>
     <script src="/editing.js" defer></script>
@@ -353,6 +354,16 @@
             </div>
             <button id="record-invideo-metrics" class="button secondary" type="button" disabled>Save provider results</button>
         </div>
+    </dialog>
+    <dialog id="editorial-frame-dialog" aria-labelledby="editorial-frame-title">
+        <div class="editorial-subpanel-head"><h3 id="editorial-frame-title">Inspect cited frame</h3><button id="editorial-frame-close" type="button" class="mini">Close</button></div>
+        <p id="editorial-frame-status" role="status"></p>
+        <p id="editorial-frame-description"></p>
+        <label class="check-row"><input id="editorial-frame-marks" type="checkbox" checked> Show source regions</label>
+        <div id="editorial-frame-canvas"></div>
+        <div id="editorial-frame-notes"></div>
+        <p>This is the original sampled image. Check the rendered preview for final zoom, timing, captions and placement.</p>
+        <button id="editorial-frame-retry" class="mini" type="button">Retry inspection</button>
     </dialog>
 </body>
 </html>

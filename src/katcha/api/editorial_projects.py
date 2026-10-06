@@ -427,6 +427,55 @@ def storyboard_source_monitor_image(
         raise _error(exc) from exc
 
 
+@router.get("/{project_id}/runs/{run_id}/frames/{shot_index}")
+def cited_frame_info(
+    channel_profile_id: uuid.UUID,
+    project_id: uuid.UUID,
+    run_id: uuid.UUID,
+    shot_index: int,
+    request: Request,
+):
+    from fastapi.responses import JSONResponse
+
+    from katcha.editorial.frame_inspection import inspect_frame
+
+    _authorize(request, channel_profile_id)
+    try:
+        result = inspect_frame(channel_profile_id, project_id, run_id, shot_index)
+        return JSONResponse(
+            {key: value for key, value in result.items() if key != "image_key"},
+            headers={"Cache-Control": "no-store"},
+        )
+    except ValueError as exc:
+        raise _error(exc) from exc
+
+
+@router.get("/{project_id}/runs/{run_id}/frames/{shot_index}/image")
+def cited_frame_image(
+    channel_profile_id: uuid.UUID,
+    project_id: uuid.UUID,
+    run_id: uuid.UUID,
+    shot_index: int,
+    request: Request,
+    evidence_digest: str = Query(pattern=r"^[a-f0-9]{64}$"),
+):
+    from katcha.api.studio import _stream_object
+    from katcha.editorial.frame_inspection import inspect_frame
+
+    _authorize(request, channel_profile_id)
+    try:
+        result = inspect_frame(channel_profile_id, project_id, run_id, shot_index)
+        if result["evidence_digest"] != evidence_digest:
+            raise EditorialConflict("Frame evidence changed; reload this inspection")
+        response = _stream_object(request, result["image_key"], f"editorial-frame-{shot_index}.jpg")
+        response.headers["Cache-Control"] = "no-store"
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["Content-Type"] = "image/jpeg"
+        return response
+    except ValueError as exc:
+        raise _error(exc) from exc
+
+
 @router.get("/{project_id}/runs/{run_id}/preview")
 def preview_render(
     channel_profile_id: uuid.UUID, project_id: uuid.UUID, run_id: uuid.UUID, request: Request

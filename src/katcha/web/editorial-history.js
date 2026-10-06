@@ -21,6 +21,7 @@ window.KatchaEditorialHistory = (() => {
     }
     function status(text) { el("status").textContent = text; }
     function reset() {
+        window.KatchaFrameInspector.reset();
         generation++; request++; channel = ""; project = "";
         pages = [null]; rows = []; more = false; loaded = false; busy = false; selected = null;
         clearPreview(); el("").hidden = true; el("").open = false;
@@ -62,6 +63,7 @@ window.KatchaEditorialHistory = (() => {
             }).join("");
     }
     async function inspect(id) {
+        window.KatchaFrameInspector.reset();
         if (!project || busy) return;
         const fence = generation, ticket = ++request;
         busy = true; controls(); clearPreview(); selected = null; el("detail").hidden = true;
@@ -89,7 +91,7 @@ window.KatchaEditorialHistory = (() => {
             const shots = row.artifacts?.direction_shot_evidence?.shots;
             el("frames").innerHTML = Array.isArray(shots)
                 ? '<h4>Saved frame citations</h4>' + (shots.length
-                    ? shots.map(shot => `<article class="item"><div><p>Beat ${esc(shot.beat_id)} · ${esc(shot.candidate_id)}</p>${window.KatchaEditorial.frameCitations(row.artifacts, shot.beat_id, shot.candidate_id)}</div></article>`).join("")
+                    ? shots.map(shot => `<article class="item"><div><p>Beat ${esc(shot.beat_id)} · ${esc(shot.candidate_id)}</p>${window.KatchaEditorial.frameCitations(row.artifacts, shot.beat_id, shot.candidate_id, {run: row.editorial_run_id, channel, project})}</div></article>`).join("")
                     : '<p>This plan uses no footage requiring frame citations.</p>')
                 : ['direction', 'render'].includes(row.target) ? '<p>No saved frame citations for this work. Older or manual plans may not include them.</p>' : '';
             el("play").hidden = row.target !== "render" || row.status !== "completed";
