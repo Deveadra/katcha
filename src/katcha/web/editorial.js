@@ -2,7 +2,7 @@
 window.KatchaEditorial = (() => {
     const el = (id) => document.getElementById(id);
     const esc = (value) => String(value ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
-    const state = { channel: "", epoch: 0, project: null, revision: null, run: null, busy: false, timer: null, editorKey: "", sourceClipBindings: {}, clipResults: [], clipPickerEpoch: 0, clipSearchTimer: null, scriptSeedMeta: null, sourceMonitorKey: "", sourceMonitorUrl: null, sourceMonitorEpoch: 0, storyboardWorkspace: null, storyboardSaveTimer: null, storyboardSaving: false, storyboardDirty: false };
+    const state = { channel: "", epoch: 0, project: null, revision: null, run: null, busy: false, timer: null, editorKey: "", sourceClipBindings: {}, clipResults: [], clipPickerEpoch: 0, clipSearchTimer: null, scriptSeedMeta: null, sourceMonitorKey: "", sourceMonitorUrl: null, sourceMonitorEpoch: 0, storyboardWorkspace: null, storyboardSaveTimer: null, storyboardSaving: false, storyboardDirty: false, storyboardRetryCount: 0 };
     let api, apiBlob;
     function previewReady() {
         return state.run?.stage === "render_ready_for_review" && state.run?.status === "completed";
@@ -708,7 +708,11 @@ window.KatchaEditorial = (() => {
             || state.stale
             || state.storyboardSaving
             || state.storyboardDirty
-            || !row?.parent_version
+            || !row
+            || (
+                !row.parent_version
+                && !(row.version === 1 && row.origin !== "undo")
+            )
         );
         if (state.storyboardSaving || state.storyboardDirty) return;
         if (row?.version) {
@@ -753,6 +757,7 @@ window.KatchaEditorial = (() => {
         body.idempotency_key = identity(`storyboard.${project}`, body);
         state.storyboardSaving = true;
         state.storyboardDirty = false;
+        let failed = false;
         storyboardSyncStatus("Saving Storyboard workspace…", {saving: true});
         updateStoryboardUndo();
         try {
@@ -767,9 +772,11 @@ window.KatchaEditorial = (() => {
                 && scriptRevision === state.project?.revision
             ) {
                 state.storyboardWorkspace = saved;
+                state.storyboardRetryCount = 0;
                 storyboardSyncStatus(`Saved workspace · v${saved.version}`);
             }
         } catch (error) {
+            failed = true;
             if (epoch === state.epoch && project === state.project?.id) {
                 state.storyboardDirty = true;
                 storyboardSyncStatus(
@@ -782,10 +789,18 @@ window.KatchaEditorial = (() => {
                 state.storyboardSaving = false;
                 updateStoryboardUndo();
                 if (state.storyboardDirty) {
-                    state.storyboardSaveTimer = setTimeout(
-                        () => void flushStoryboardWorkspace(),
-                        500,
-                    );
+                    if (!failed) {
+                        state.storyboardSaveTimer = setTimeout(
+                            () => void flushStoryboardWorkspace(),
+                            500,
+                        );
+                    } else if (state.storyboardRetryCount < 1) {
+                        state.storyboardRetryCount += 1;
+                        state.storyboardSaveTimer = setTimeout(
+                            () => void flushStoryboardWorkspace(),
+                            1500,
+                        );
+                    }
                 }
             }
         }
@@ -799,6 +814,7 @@ window.KatchaEditorial = (() => {
             return;
         }
         state.storyboardDirty = true;
+        state.storyboardRetryCount = 0;
         clearTimeout(state.storyboardSaveTimer);
         storyboardSyncStatus("Unsaved Storyboard changes");
         updateStoryboardUndo();
@@ -952,7 +968,9 @@ window.KatchaEditorial = (() => {
         });
     }
     function renderStoryboard() {
-        const key = boardStorage() + JSON.stringify(state.images);
+        const key = boardStorage()
+            + ":" + String(state.storyboardWorkspace?.version || 0)
+            + JSON.stringify(state.images);
         if (key === state.boardKey) {
             refreshTimelineStatus();
             return;
