@@ -224,6 +224,8 @@ def test_storyboard_source_monitor_metadata_hides_storage_key(saved, monkeypatch
             "frame_count": 3,
             "sample_times": [0.25, 5.0, 9.75],
             "contact_sheet_key": "analysis/private/contact-sheet.jpg",
+            "media_storage_key": "raw/private.mp4",
+            "extension": "mp4",
             "coverage": "sampled_frames",
             "limitation": "Sampled frames only.",
         },
@@ -237,6 +239,42 @@ def test_storyboard_source_monitor_metadata_hides_storage_key(saved, monkeypatch
     assert response.json()["candidate_id"] == "candidate"
     assert response.json()["sample_times"] == [0.25, 5.0, 9.75]
     assert "contact_sheet_key" not in response.json()
+    assert "media_storage_key" not in response.json()
+
+
+def test_storyboard_playback_ticket_uses_httponly_scoped_cookie(
+    saved, monkeypatch
+):
+    from datetime import UTC, datetime, timedelta
+
+    from katcha.editorial.playback import PlaybackGrant
+
+    client, channel, _ = saved
+    project_id = uuid.uuid4()
+    run_id = uuid.uuid4()
+    ticket_id = uuid.uuid4()
+    expires_at = datetime.now(UTC) + timedelta(minutes=10)
+    monkeypatch.setattr(
+        "katcha.editorial.playback.issue_playback_grant",
+        lambda *args, **kwargs: PlaybackGrant(
+            id=ticket_id,
+            token="private-playback-token",
+            expires_at=expires_at,
+        ),
+    )
+
+    response = client.post(
+        f"{root(channel)}/{project_id}/runs/{run_id}/assets/candidate/playback-ticket"
+    )
+
+    assert response.status_code == 201, response.text
+    assert response.json()["playback_url"] == f"/v1/editorial-playback/{ticket_id}"
+    assert "token" not in response.json()
+    cookie = response.headers["set-cookie"]
+    assert f"katcha_playback_{ticket_id.hex}=private-playback-token" in cookie
+    assert "HttpOnly" in cookie
+    assert "SameSite=strict" in cookie
+    assert f"Path=/v1/editorial-playback/{ticket_id}" in cookie
 
 
 def test_source_upload_api_streams_to_temp_and_cleans_up(saved, monkeypatch):
