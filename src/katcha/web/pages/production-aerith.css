@@ -1027,3 +1027,14 @@ body[data-katcha-page="production"] .editorial-stage-panel .editorial-beat {
         width: 100%;
     }
 }
+
+
+.editorial-seed-status {
+    padding: 8px 9px;
+    border: 1px solid var(--ae-line);
+    border-radius: var(--ae-radius-control);
+    background: rgba(169, 239, 247, 0.035);
+    color: var(--ae-text-secondary);
+    font-size: 8px;
+    line-height: 1.45;
+}
