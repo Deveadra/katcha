@@ -63,8 +63,11 @@ class StoryboardWorkspace(Contract):
         beat_ids = [beat.beat_id for beat in self.beats]
         if len(set(beat_ids)) != len(beat_ids):
             raise ValueError("Storyboard workspace beat IDs must be unique")
-        if any(beat.media for beat in self.beats) and self.asset_run_id is None:
+        has_footage = any(beat.media for beat in self.beats)
+        if has_footage and self.asset_run_id is None:
             raise ValueError("Footage selections require their acquisition run")
+        if not has_footage and self.asset_run_id is not None:
+            raise ValueError("An acquisition run is only valid with selected footage")
         if not set(self.narration_ids) <= set(beat_ids):
             raise ValueError("Narration selections must reference workspace beats")
         if self.presentation_mode == "captioned_silent" and self.narration_ids:
