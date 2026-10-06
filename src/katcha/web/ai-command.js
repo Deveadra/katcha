@@ -509,6 +509,20 @@ function actionPayloadSummary(action) {
             " topic terms"
         );
     }
+    if (action.type === "editorial_storyboard_edit") {
+        const beat = payload.beat || {};
+        const version = Number(payload.expected_workspace_version || 0);
+        return (
+            "beat " +
+            String(beat.beat_id || "?") +
+            " · workspace v" +
+            version +
+            " → v" +
+            (version + 1) +
+            " · " +
+            String(beat.layout || "unassigned").replaceAll("_", " ")
+        );
+    }
     return "";
 }
 
@@ -597,9 +611,15 @@ function renderContext(result) {
     const actions = (result.actions || [])
         .map((action) => {
             const principalCanExecute = actionAllowed(action);
-            const canExecute =
-                principalCanExecute &&
-                ["proposed", "failed"].includes(action.status || "proposed");
+            const actionable = ["proposed", "failed"].includes(
+                action.status || "proposed",
+            );
+            const canExecute = principalCanExecute && actionable;
+            const canRevise = capability("ai_write") && actionable;
+            const applyLabel =
+                action.type === "editorial_storyboard_edit"
+                    ? "Apply edit"
+                    : "Review & confirm";
             const buttonLabel =
                 action.status === "executed"
                     ? "✓ Executed"
@@ -609,7 +629,7 @@ function renderContext(result) {
                         ? "Expired"
                         : !principalCanExecute
                           ? "Not permitted"
-                          : "Review & confirm";
+                          : applyLabel;
             return (
                 '<article class="action-card" data-action-card="' +
                 esc(action.proposal_id) +
@@ -632,6 +652,13 @@ function renderContext(result) {
                 ">" +
                 esc(buttonLabel) +
                 "</button>" +
+                (canRevise
+                    ? '<button type="button" class="activity-button" data-modify-action="' +
+                      esc(action.proposal_id) +
+                      '">Modify</button><button type="button" class="activity-button" data-reject-action="' +
+                      esc(action.proposal_id) +
+                      '">Reject</button>'
+                    : "") +
                 (["executed", "executing"].includes(action.status)
                     ? '<button type="button" class="activity-button" data-activity-id="' +
                       esc(action.proposal_id) +
@@ -724,13 +751,95 @@ function renderContext(result) {
         };
     });
 
+    async function rejectRenderedAction(action, card, reason) {
+        const response = await api(
+            "/v1/ai/actions/" + encodeURIComponent(action.proposal_id) + "/reject",
+            {
+                method: "POST",
+                body: JSON.stringify({ reason }),
+            },
+        );
+        const output = card.querySelector(".action-result");
+        output.hidden = false;
+        output.textContent = "rejected" + (reason ? " · " + reason : "");
+        card.querySelectorAll(
+            "[data-action-id], [data-modify-action], [data-reject-action]",
+        ).forEach((control) => {
+            control.disabled = true;
+        });
+        const apply = card.querySelector("[data-action-id]");
+        if (apply) apply.textContent = "Rejected";
+        return response;
+    }
+
+    $("context-panel").querySelectorAll("[data-reject-action]").forEach((button) => {
+        button.onclick = async () => {
+            const action = byId.get(button.dataset.rejectAction);
+            if (!action) return;
+            const card = button.closest("[data-action-card]");
+            button.disabled = true;
+            button.textContent = "Rejecting…";
+            try {
+                await rejectRenderedAction(
+                    action,
+                    card,
+                    "Operator rejected this proposal.",
+                );
+            } catch (error) {
+                const output = card.querySelector(".action-result");
+                output.hidden = false;
+                output.textContent = error.message;
+                button.disabled = false;
+                button.textContent = "Reject";
+            }
+        };
+    });
+
+    $("context-panel").querySelectorAll("[data-modify-action]").forEach((button) => {
+        button.onclick = async () => {
+            const action = byId.get(button.dataset.modifyAction);
+            if (!action) return;
+            const card = button.closest("[data-action-card]");
+            button.disabled = true;
+            button.textContent = "Preparing…";
+            try {
+                await rejectRenderedAction(
+                    action,
+                    card,
+                    "Operator requested a modified proposal.",
+                );
+                $("prompt").value =
+                    "Modify the rejected proposal \"" +
+                    action.label +
+                    "\" (" +
+                    action.proposal_id +
+                    "). Keep the same goal, but change it so that ";
+                autoResize();
+                $("prompt").focus();
+                $("prompt").setSelectionRange(
+                    $("prompt").value.length,
+                    $("prompt").value.length,
+                );
+            } catch (error) {
+                const output = card.querySelector(".action-result");
+                output.hidden = false;
+                output.textContent = error.message;
+                button.disabled = false;
+                button.textContent = "Modify";
+            }
+        };
+    });
+
     $("context-panel").querySelectorAll("[data-action-id]").forEach((button) => {
         button.onclick = async () => {
             const action = byId.get(button.dataset.actionId);
             if (!action) return;
             if (!button.classList.contains("confirming")) {
                 button.classList.add("confirming");
-                button.textContent = "Confirm: " + action.label;
+                button.textContent =
+                    action.type === "editorial_storyboard_edit"
+                        ? "Confirm: Apply edit"
+                        : "Confirm: " + action.label;
                 return;
             }
             button.disabled = true;
@@ -757,7 +866,13 @@ function renderContext(result) {
                     execution.status === "executed" ? "✓ Executed" : "✓ " + execution.status;
                 await refreshActionActivity(action.proposal_id, card, 0, true);
                 appendKatcha({
-                    answer: action.label + " was accepted by the Katcha control plane. The evidence panel contains the returned workflow reference.",
+                    answer:
+                        action.type === "editorial_storyboard_edit"
+                            ? "Storyboard edit applied as workspace version " +
+                              String(execution.result?.workspace_version || "?") +
+                              ". You can undo it from Editorial Studio."
+                            : action.label +
+                              " was accepted by the Katcha control plane. The evidence panel contains the returned workflow reference.",
                     intent: "action_execution",
                     evidence: [],
                 });
@@ -766,7 +881,10 @@ function renderContext(result) {
                 output.textContent = error.message;
                 button.disabled = false;
                 button.classList.remove("confirming");
-                button.textContent = "Review & confirm";
+                button.textContent =
+                    action.type === "editorial_storyboard_edit"
+                        ? "Apply edit"
+                        : "Review & confirm";
             }
         };
     });
