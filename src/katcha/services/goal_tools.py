@@ -55,7 +55,8 @@ TOOLS = {
         GoalTool(
             "editorial_storyboard",
             "Read the latest durable Storyboard workspace for an exact saved script revision. "
-            "This is editing intent, not render eligibility; unavailable selections may be retained.",
+            "This is editing intent, not render eligibility; unavailable selections may be "
+            "retained.",
             "ai:read",
             "GET",
             "/v1/channels/{channel_profile_id}/editorial-projects/{project_id}/storyboard",
