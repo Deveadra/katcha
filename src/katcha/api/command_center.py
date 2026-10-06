@@ -1437,7 +1437,11 @@ async def command(http_request: Request, request: CommandRequest) -> CommandResp
                     else None
                 ),
                 "resource_refs": [
-                    {"kind": item.kind, "id": str(item.id)}
+                    {
+                        "kind": item.kind,
+                        "id": str(item.id),
+                        **({"selector": item.selector} if item.selector else {}),
+                    }
                     for item in effective_resource_refs
                 ],
                 "inherited_from_thread": resolution.inherited_from_thread,
