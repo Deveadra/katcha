@@ -757,6 +757,7 @@ def _known_ids(goal: CommandGoal) -> set[str]:
     visit(goal.request.get("selected_clip_ids", []))
     visit(goal.request.get("resource_refs", []))
     visit(goal.request.get("selected_production_id"))
+    visit(selected_resource_evidence(goal.request))
     visit(goal.observations)
     visit(command_environment(goal.channel_profile_id))
     for turn in list_command_turns(goal.thread_id)[-12:]:
