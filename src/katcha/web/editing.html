@@ -188,8 +188,11 @@
                                         <div id="editorial-direction" role="status"></div>
                                         <button id="editorial-render-directed" class="mini" type="button" hidden>Create preview from this plan</button>
                                     </details>
-                                    <div class="editorial-subpanel-head"><div><h4>Manual storyboard</h4><p>Every AI choice remains editable before render.</p></div></div>
-                                    <div id="editorial-storyboard"></div>
+                                    <div class="editorial-subpanel-head editorial-timeline-head"><div><h4>Beat timeline</h4><p>Select a story beat to inspect its visual treatment. Sequence follows the saved Script revision.</p></div><div id="editorial-timeline-summary" class="editorial-timeline-summary" aria-live="polite"></div></div>
+                                    <div class="editorial-timeline-shell">
+                                        <div id="editorial-beat-timeline" class="editorial-beat-timeline" role="tablist" aria-label="Storyboard beats"></div>
+                                        <div id="editorial-storyboard" class="editorial-beat-inspector"></div>
+                                    </div>
                                 </section>
 
                                 <section class="editorial-stage-panel" data-editorial-stage-panel="preview" hidden>

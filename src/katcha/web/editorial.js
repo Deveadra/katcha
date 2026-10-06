@@ -428,6 +428,60 @@ window.KatchaEditorial = (() => {
             ? `<p class="error">Images unavailable: ${esc(state.images.error)}. Refresh projects to retry.</p>`
             : (state.images?.images || []).filter(item => item.status === "active").map(item => `<article class="item"><div><h4>${esc(item.title)}</h4><p>${item.width} × ${item.height} · ${item.illustration ? "Illustration" : "Still image"}</p><p>Source: ${esc(item.source_reference)}</p><p>Use: ${esc(item.use_note)}</p><button class="mini" type="button" data-image-revoke="${esc(item.id)}">Remove image</button></div></article>`).join("") || '<p class="empty">No images for this revision. Upload an image, then select it as a beat’s visual below.</p>';
     }
+    function timelineStorage() {
+        return storageKey(`timeline.${state.project.id}.${state.project.revision}`);
+    }
+    function timelineClock(seconds) {
+        const value = Math.max(0, Number(seconds) || 0);
+        const minutes = Math.floor(value / 60);
+        const remainder = Math.round(value % 60);
+        return `${minutes}:${String(remainder).padStart(2, "0")}`;
+    }
+    function timelineVisualStatus(choice) {
+        if (!choice) return "Needs visual";
+        if (choice.startsWith("media:")) return "Footage";
+        if (choice.startsWith("image:")) return "Image";
+        if (choice.startsWith("quote:")) return "Evidence";
+        return "Visual set";
+    }
+    function refreshTimelineStatus() {
+        const rows = [...el("editorial-storyboard").querySelectorAll("[data-board-beat]")];
+        const buttons = [...el("editorial-beat-timeline").querySelectorAll("[data-timeline-beat]")];
+        let assigned = 0;
+        rows.forEach((row, index) => {
+            const choice = row.querySelector("[data-primary-visual]")?.value || "";
+            if (choice) assigned += 1;
+            const status = buttons[index]?.querySelector("[data-timeline-status]");
+            if (status) status.textContent = timelineVisualStatus(choice);
+            buttons[index]?.classList.toggle("is-ready", Boolean(choice));
+        });
+        const total = (state.revision?.draft.script || []).reduce(
+            (sum, beat) => sum + Number(beat.planned_duration_seconds || 0),
+            0,
+        );
+        el("editorial-timeline-summary").textContent = rows.length
+            ? `${rows.length} beat${rows.length === 1 ? "" : "s"} · ${timelineClock(total)} planned · ${assigned}/${rows.length} visuals assigned`
+            : "";
+    }
+    function selectTimelineBeat(beatId, {focus = false, persist = true} = {}) {
+        const rows = [...el("editorial-storyboard").querySelectorAll("[data-board-beat]")];
+        if (!rows.length) return;
+        const available = new Set(rows.map(row => row.dataset.boardBeat));
+        const selected = available.has(beatId) ? beatId : rows[0].dataset.boardBeat;
+        rows.forEach(row => {
+            row.hidden = row.dataset.boardBeat !== selected;
+        });
+        el("editorial-beat-timeline").querySelectorAll("[data-timeline-beat]").forEach(button => {
+            const active = button.dataset.timelineBeat === selected;
+            button.setAttribute("aria-selected", active ? "true" : "false");
+            button.tabIndex = active ? 0 : -1;
+            if (active && focus) {
+                button.focus();
+                button.scrollIntoView({block: "nearest", inline: "nearest"});
+            }
+        });
+        if (persist) remember(timelineStorage(), selected);
+    }
     function showFootageControls() {
         el("editorial-storyboard").querySelectorAll("[data-board-beat]").forEach(row => {
             const footage = row.querySelector("select").value.startsWith("media:");
@@ -439,18 +493,34 @@ window.KatchaEditorial = (() => {
     }
     function renderStoryboard() {
         const key = boardStorage() + JSON.stringify(state.images);
-        if (key === state.boardKey) return;
+        if (key === state.boardKey) {
+            refreshTimelineStatus();
+            return;
+        }
         state.boardKey = key;
         const choices = state.assetRun?.artifacts?.asset_selection || [];
         const receipts = state.assetRun?.artifacts?.acquired_assets || {};
         const draft = state.revision?.draft || {};
+        const script = draft.script || [];
         const saved = read(boardStorage(), []);
-        el("editorial-storyboard").innerHTML = (draft.script || []).map((beat, index) => {
+        let elapsed = 0;
+        el("editorial-beat-timeline").innerHTML = script.map((beat, index) => {
+            const start = elapsed;
+            const duration = Number(beat.planned_duration_seconds || 0);
+            elapsed += duration;
+            const choice = saved[index]?.choice || "";
+            return `<button type="button" role="tab" class="editorial-timeline-beat ${choice ? "is-ready" : ""}" data-timeline-beat="${esc(beat.id)}" aria-selected="false" aria-controls="board-panel-${esc(beat.id)}" style="--beat-grow:${Math.max(1, Math.min(duration || 1, 60))}">
+                <span class="editorial-timeline-index">${String(index + 1).padStart(2, "0")}</span>
+                <strong>${esc(beat.role)}</strong>
+                <small>${timelineClock(start)}–${timelineClock(elapsed)} · <span data-timeline-status>${timelineVisualStatus(choice)}</span></small>
+            </button>`;
+        }).join("");
+        el("editorial-storyboard").innerHTML = script.map((beat, index) => {
             const claims = (draft.claims || []).filter(claim => beat.claim_ids.includes(claim.id));
             const sourceIds = new Set(claims.flatMap(claim => claim.source_ids));
             const sources = (draft.sources || []).filter(source => sourceIds.has(source.id));
             const options = [...(state.images?.images || []).filter(item => item.status === "active" && item.beat_id === beat.id).map(item => ({value: `image:${item.id}`, label: `${item.illustration ? "Illustration" : "Image"}: ${item.title}`})), ...choices.filter(item => item.beat_id === beat.id && receipts[item.id]).map(item => ({value: `media:${item.id}`, label: item.title})), ...sources.map(item => ({value: `quote:${item.id}`, label: `Evidence quote: ${item.title}`}))];
-            return `<fieldset class="editorial-beat" data-board-beat="${esc(beat.id)}"><legend>Beat ${index + 1} · ${beat.planned_duration_seconds}s</legend><label>Visual<select data-primary-visual>${'<option value="">Choose a visual</option>'}${options.map(item => `<option value="${esc(item.value)}" ${saved[index]?.choice === item.value ? "selected" : ""}>${esc(item.label)}</option>`).join("")}</select></label><label>Footage start (seconds)<input type="number" min="0" step="0.1" value="${esc(saved[index]?.start || "0")}"></label><label class="check-row"><input type="checkbox" ${saved[index]?.freeze ? "checked" : ""}> Hold this frame</label>
+            return `<fieldset id="board-panel-${esc(beat.id)}" class="editorial-beat editorial-beat-editor" role="tabpanel" data-board-beat="${esc(beat.id)}"><legend><span>Beat ${index + 1} · ${esc(beat.role)}</span><small>${timelineClock(beat.planned_duration_seconds)} planned</small></legend><p class="editorial-beat-intent">${esc(beat.visual_intent)}</p><label>Visual<select data-primary-visual>${'<option value="">Choose a visual</option>'}${options.map(item => `<option value="${esc(item.value)}" ${saved[index]?.choice === item.value ? "selected" : ""}>${esc(item.label)}</option>`).join("")}</select></label><label>Footage start (seconds)<input type="number" min="0" step="0.1" value="${esc(saved[index]?.start || "0")}"></label><label class="check-row"><input type="checkbox" ${saved[index]?.freeze ? "checked" : ""}> Hold this frame</label>
                 <div data-image-tools hidden><label>Compare with another image<select data-image-compare><option value="">Single image</option>${saved[index]?.compare && !(state.images?.images || []).some(item => item.id === saved[index].compare && item.status === "active" && item.beat_id === beat.id) ? `<option value="${esc(saved[index].compare)}" selected>Unavailable image · choose a replacement</option>` : ""}${(state.images?.images || []).filter(item => item.status === "active" && item.beat_id === beat.id).map(item => `<option value="${esc(item.id)}" ${saved[index]?.compare === item.id ? "selected" : ""}>${esc(item.title)}</option>`).join("")}</select></label>
                 <details class="ae-help"><summary>Mark a source region</summary><p>Manual placement on the original image. Percentages follow the image through resizing and push-in. Check the preview before approval.</p>
                 <label>Annotation<select data-region="kind">${[["", "None"], ["circle", "Circle"], ["arrow", "Arrow"], ["highlight", "Highlight"]].map(([value, label]) => `<option value="${value}" ${saved[index]?.annotation?.kind === value ? "selected" : ""}>${label}</option>`).join("")}</select></label>
@@ -459,6 +529,8 @@ window.KatchaEditorial = (() => {
                 <label>Optional label<input data-region="label" maxlength="100" value="${esc(saved[index]?.annotation?.label || "")}"></label></div></details></div></fieldset>`;
         }).join("") || '<p class="empty">Save a script and choose supporting media to prepare a preview.</p>';
         showFootageControls();
+        refreshTimelineStatus();
+        selectTimelineBeat(read(timelineStorage(), script[0]?.id || ""), {persist: false});
     }
     function frameCitations(artifacts, beatId, candidateId) {
         const evidence = artifacts.direction_shot_evidence;
@@ -683,6 +755,23 @@ window.KatchaEditorial = (() => {
             renderClipResults();
             feedback("Managed clip unpinned. The source URL remains available for normal intake.");
         });
+        el("editorial-beat-timeline").addEventListener("click", event => {
+            const button = event.target.closest("[data-timeline-beat]");
+            if (button) selectTimelineBeat(button.dataset.timelineBeat);
+        });
+        el("editorial-beat-timeline").addEventListener("keydown", event => {
+            if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+            const buttons = [...el("editorial-beat-timeline").querySelectorAll("[data-timeline-beat]")];
+            const current = buttons.indexOf(event.target.closest("[data-timeline-beat]"));
+            if (current < 0 || !buttons.length) return;
+            event.preventDefault();
+            let next = current;
+            if (event.key === "ArrowLeft") next = (current - 1 + buttons.length) % buttons.length;
+            if (event.key === "ArrowRight") next = (current + 1) % buttons.length;
+            if (event.key === "Home") next = 0;
+            if (event.key === "End") next = buttons.length - 1;
+            selectTimelineBeat(buttons[next].dataset.timelineBeat, {focus: true});
+        });
         el("editorial-stage-tabs").addEventListener("click", (event) => {
             const button = event.target.closest("[data-editorial-stage]");
             if (button) selectStage(button.dataset.editorialStage);
@@ -819,7 +908,7 @@ window.KatchaEditorial = (() => {
             await api(path(channel, `/${project}/runs`), {method: "POST", body: JSON.stringify(payload)});
             if (channel === state.channel) { await open(project, {focus: false}); advanceStage("preview"); }
         }));
-        const persistStoryboardChoice = () => { saveStoryboard(); showFootageControls(); };
+        const persistStoryboardChoice = () => { saveStoryboard(); showFootageControls(); refreshTimelineStatus(); };
         el("editorial-storyboard").addEventListener("input", persistStoryboardChoice);
         el("editorial-storyboard").addEventListener("change", persistStoryboardChoice);
         el("editorial-render").addEventListener("click", () => void guarded(async () => {

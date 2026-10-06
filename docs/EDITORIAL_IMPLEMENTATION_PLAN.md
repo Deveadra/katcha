@@ -271,6 +271,14 @@ successful action, but must remain directly navigable and keyboard accessible. P
 unsaved work per project/channel and never hide blockers solely because another stage
 is active.
 
+Storyboard uses the saved script beat as its native timeline unit. The beat rail should
+show story position, planned timing and visual-readiness at a glance while one focused
+inspector exposes media choice, trims, still comparison, region annotations and other
+manual overrides. Story order belongs to the Script revision contract; reordering must
+create or save a script revision rather than silently mutating render-only browser
+state. Hidden/non-selected beat inspectors must remain part of durable storyboard
+preflight so focusing the UI never drops another beat from the render plan.
+
 AI assistance should be contextual at each stage. Katcha AI must receive channel,
 project and requested stage/task context through typed project tools or explicit project
 identity; a generic chat link without project context is not the long-term integration.

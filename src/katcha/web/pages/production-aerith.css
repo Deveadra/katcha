@@ -766,10 +766,159 @@ body[data-katcha-page="production"] .editorial-stage-panel .editorial-beat {
     font-size: 8px;
 }
 
-#editorial-storyboard {
+.editorial-timeline-summary {
+    flex: 0 0 auto;
+    color: var(--ae-text-tertiary);
+    font-size: 8px;
+    font-variant-numeric: tabular-nums;
+}
+
+.editorial-timeline-shell {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-    gap: 9px;
+    gap: 10px;
+    min-width: 0;
+}
+
+.editorial-beat-timeline {
+    display: flex;
+    align-items: stretch;
+    gap: 4px;
+    min-width: 0;
+    padding: 6px;
+    overflow-x: auto;
+    border: 1px solid var(--ae-line);
+    border-radius: var(--ae-radius-panel);
+    background: rgba(0, 0, 0, 0.16);
+    scroll-snap-type: x proximity;
+}
+
+.editorial-timeline-beat {
+    --beat-grow: 1;
+    position: relative;
+    flex: var(--beat-grow) 1 108px;
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    grid-template-areas:
+        "index role"
+        "index meta";
+    column-gap: 7px;
+    min-width: 108px;
+    max-width: 280px;
+    min-height: 58px;
+    padding: 8px 9px;
+    overflow: hidden;
+    border: 1px solid var(--ae-line);
+    border-radius: var(--ae-radius-control);
+    background: var(--ae-surface-raised);
+    color: var(--ae-text-secondary);
+    text-align: left;
+    cursor: pointer;
+    scroll-snap-align: start;
+}
+
+.editorial-timeline-beat::after {
+    content: "";
+    position: absolute;
+    inset: auto 0 0;
+    height: 2px;
+    background: var(--ae-line);
+}
+
+.editorial-timeline-beat.is-ready::after {
+    background: rgba(169, 239, 247, 0.46);
+}
+
+.editorial-timeline-beat:hover {
+    border-color: var(--ae-line-hover);
+    background: rgba(169, 239, 247, 0.055);
+}
+
+.editorial-timeline-beat[aria-selected="true"] {
+    border-color: rgba(169, 239, 247, 0.48);
+    background: rgba(169, 239, 247, 0.085);
+    color: var(--ae-text);
+    box-shadow: inset 0 0 0 1px rgba(169, 239, 247, 0.08);
+}
+
+.editorial-timeline-beat[aria-selected="true"]::after {
+    background: var(--ae-cyan);
+}
+
+.editorial-timeline-index {
+    grid-area: index;
+    align-self: center;
+    color: var(--ae-text-tertiary);
+    font-size: 8px;
+    font-variant-numeric: tabular-nums;
+}
+
+.editorial-timeline-beat strong {
+    grid-area: role;
+    overflow: hidden;
+    font-size: 9px;
+    text-transform: capitalize;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.editorial-timeline-beat small {
+    grid-area: meta;
+    overflow: hidden;
+    color: var(--ae-text-tertiary);
+    font-size: 7px;
+    line-height: 1.35;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.editorial-beat-inspector {
+    min-width: 0;
+}
+
+body[data-katcha-page="production"] .editorial-beat-inspector .editorial-beat-editor {
+    display: grid;
+    gap: 11px;
+    margin: 0;
+    padding: 13px;
+    border: 1px solid var(--ae-line);
+    border-radius: var(--ae-radius-panel);
+    background: var(--ae-surface-raised);
+}
+
+body[data-katcha-page="production"] .editorial-beat-inspector .editorial-beat-editor[hidden] {
+    display: none;
+}
+
+.editorial-beat-editor legend {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 12px;
+    width: 100%;
+    padding: 0 2px 8px;
+}
+
+.editorial-beat-editor legend span {
+    color: var(--ae-text);
+    font-size: 10px;
+    font-weight: 760;
+    text-transform: capitalize;
+}
+
+.editorial-beat-editor legend small {
+    color: var(--ae-text-tertiary);
+    font-size: 8px;
+    font-weight: 500;
+}
+
+.editorial-beat-intent {
+    margin: -2px 0 2px;
+    padding: 8px 9px;
+    border-left: 2px solid rgba(169, 239, 247, 0.36);
+    background: rgba(169, 239, 247, 0.035);
+    color: var(--ae-text-secondary);
+    font-size: 9px;
+    line-height: 1.5;
 }
 
 #editorial-narration {
@@ -881,8 +1030,30 @@ body[data-katcha-page="production"] .editorial-stage-panel .editorial-beat {
         grid-template-columns: 1fr;
     }
 
-    #editorial-storyboard {
-        grid-template-columns: 1fr;
+    .editorial-timeline-head {
+        align-items: flex-start;
+        flex-direction: column;
+        gap: 6px;
+    }
+
+    .editorial-timeline-summary {
+        width: auto;
+        max-width: 100%;
+    }
+
+    .editorial-beat-timeline {
+        margin-inline: -2px;
+    }
+
+    .editorial-timeline-beat {
+        flex: 0 0 128px;
+        max-width: 180px;
+    }
+
+    .editorial-beat-editor legend {
+        align-items: flex-start;
+        flex-direction: column;
+        gap: 3px;
     }
 }
 
