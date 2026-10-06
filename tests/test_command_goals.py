@@ -101,6 +101,11 @@ def test_catalog_native_schemas_resolve_registered_operations():
     assert TOOLS["publish_production"].confirm
     assert TOOLS["review_editorial_render"].confirm
     assert TOOLS["review_editorial_render"].retry_safe
+    assert TOOLS["propose_editorial_storyboard_edit"].confirm
+    assert TOOLS["propose_editorial_storyboard_edit"].retry_safe
+    edit_schema = tool_schema("propose_editorial_storyboard_edit")
+    assert "expected_workspace_version" in edit_schema["properties"]
+    assert "beat" in edit_schema["properties"]
     assert not TOOLS["publish_production"].retry_safe
     assert "path" in tool_schema("save_watch")["properties"]
 
@@ -382,6 +387,77 @@ async def test_pending_decision_survives_retry_without_new_inference(saved, monk
     monkeypatch.setattr(goal_runner, "decide_goal", lambda **kwargs: pytest.fail("Already saved"))
     assert await goal_runner.advance_goal(goal.id) == "running"
     assert get_goal(goal.id).step_count == 1
+
+
+def test_storyboard_edit_proposal_freezes_observed_workspace_identity(saved):
+    from katcha.services.goal_tools import action_spec
+
+    project_id = uuid.uuid4()
+    asset_run_id = uuid.uuid4()
+    goal = receipt(saved[0], "Use the close-up for this beat")
+    with db.session_scope() as session:
+        current = session.get(CommandGoal, goal.id)
+        current.request = {
+            **current.request,
+            "resource_refs": [
+                {
+                    "kind": "editorial_project",
+                    "id": str(project_id),
+                    "selector": "beat-1",
+                    "revision": 3,
+                }
+            ],
+        }
+        current.observations = [
+            {
+                "step": 0,
+                "tool": "editorial_storyboard",
+                "result": {
+                    "project_id": str(project_id),
+                    "asset_run_id": str(asset_run_id),
+                    "version": 4,
+                },
+            }
+        ]
+    goal = get_goal(goal.id)
+    spec = action_spec(
+        goal,
+        "propose_editorial_storyboard_edit",
+        {
+            "project_id": str(project_id),
+            "script_revision": 3,
+            "expected_workspace_version": 4,
+            "asset_run_id": str(asset_run_id),
+            "beat": {
+                "beat_id": "beat-1",
+                "layout": "single",
+                "media": [
+                    {
+                        "candidate_id": "candidate-1",
+                        "start_seconds": 2.5,
+                    }
+                ],
+            },
+            "rationale": "Use the closer acquired shot for the named clue.",
+        },
+        uuid.uuid4(),
+    )
+    assert spec.action_type == "editorial_storyboard_edit"
+    assert spec.payload["project_id"] == str(project_id)
+    assert spec.payload["expected_workspace_version"] == 4
+    assert spec.payload["beat"]["beat_id"] == "beat-1"
+    assert spec.payload["beat"]["media"][0]["candidate_id"] == "candidate-1"
+
+    with pytest.raises(ValueError, match="observed project, run and image"):
+        action_spec(
+            goal,
+            "propose_editorial_storyboard_edit",
+            {
+                **spec.payload,
+                "project_id": str(uuid.uuid4()),
+            },
+            uuid.uuid4(),
+        )
 
 
 def test_workflow_cancellation_rejects_unobserved_target(saved):
