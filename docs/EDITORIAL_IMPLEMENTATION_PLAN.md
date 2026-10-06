@@ -1100,3 +1100,38 @@ the same storyboard/revision state, followed by finer program/source time naviga
 Validation coverage is added for selected-beat resource resolution, request/deep-link
 serialization, Context Inspector state and Program Monitor loading. Remote CI and full
 browser/launcher gates remain required before merge.
+
+
+### E18 durable beat-native Storyboard workspace (2026-10-06, draft)
+
+Editorial Storyboard editing state is moving out of browser-session-only storage into
+an immutable, script-revision-bound workspace history. The workspace deliberately
+accepts incomplete beats: an operator can leave visuals unassigned while continuing
+to edit. It does not authorize a render, provider call, rights claim, review decision
+or publication. Existing strict StoryboardPlan compilation remains the render gate.
+
+Each workspace version preserves beat order, presentation mode, optional narration,
+visual source identity, source trim/freeze, still comparisons and annotations, plus
+the acquisition run that owns any footage candidate. Saves use optimistic version
+checks, project-row serialization and deterministic request identities. A lost save
+response gets one bounded replay-safe recovery attempt; a real concurrent-version
+conflict stops retrying and remains visible to the operator.
+
+The editor hydrates the latest server workspace, debounces autosave, keeps unavailable
+or revoked source choices visible as replacement requirements, and provides
+history-preserving Undo. The first durable edit can return to an implicit blank
+Storyboard for the exact saved script. Current eligibility is intentionally rechecked
+later by render/preflight, so a rights or asset-status change cannot erase editing
+intent or make unrelated Storyboard autosaves impossible.
+
+Typed Editorial AI context now also includes the latest workspace version and the
+selected beat's saved visual state. Project + script revision + beat remain the
+authoritative AI selector. This is the prerequisite for the next boundary: durable AI
+edit proposals with Apply / Modify / Reject over an exact workspace version, with
+operator and AI changes converging on the same version/history/Undo contract.
+
+Validation coverage includes migration round-trip, replay and concurrency guards,
+stale-script rejection, footage beat/claim lineage, image/narration beat ownership,
+retained unavailable intent, browser autosave/hydration/Undo, responsive replacement
+state, and Storyboard-aware typed AI context. Remote CI/launcher/browser gates remain
+required before merge.
