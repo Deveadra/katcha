@@ -20,6 +20,8 @@ let loseUploadResponse = true;
 let loseGenerationResponse = true;
 let loseBillingResponse = true, loseDirectionResponse = true;
 const frameReceipt = {storyboard_digest: 'fixture', shots: [{beat_id: 'beat', candidate_id: 'candidate', observation: {start_seconds: 2.5, source_url: 'https://example.com/footage', observation: 'A red door <script>unsafe</script> is visible.'}, limitations: ['Sparse sampling; movement is unverified.']}]};
+const regionSuggestion = {kind: 'circle', region: {x: .1, y: .2, width: .3, height: .4}, description: 'A visible <door>', label: 'Door'};
+frameReceipt.shots[0].regions = {regions: [regionSuggestion], limitations: ['Exact frozen sample only']};
 let directionRun = null;
 let failHistoryPage = true, failHistoryPreview = true, delayedHistory = null;
 let historyRequestStarted;
@@ -136,8 +138,8 @@ const draft = {
                         return send(run, 202);
                     }
                     if (body.target === 'direction') {
-                        const beat = {beat_id: 'beat', layout: 'single', media: [{candidate_id: 'candidate', start_seconds: 2, playback_rate: .5, freeze: false, push_in: 1.1}], overlays: []};
-                        directionRun = {editorial_run_id: 'direction', target: 'direction', input_revision: 3, attempt: 1, status: 'completed', stage: 'storyboard_ready_for_review', artifacts: {storyboard: {...body.direction, beats: [beat]}, direction_proposal: {beats: [{...beat, rationale: 'Hold attention on the linked interview'}]}, direction_asset_run_id: 'acquire', direction_duration_seconds: 2, direction_warnings: ['Review the selected footage against the script.'], direction_shot_evidence: frameReceipt}};
+                        const beat = {beat_id: 'beat', layout: 'single', media: [{candidate_id: 'candidate', start_seconds: 2.5, playback_rate: .5, freeze: true, push_in: 1.1}], overlays: [{kind: regionSuggestion.kind, region: regionSuggestion.region, label: regionSuggestion.label, media_index: 0}]};
+                        directionRun = {editorial_run_id: 'direction', target: 'direction', input_revision: 3, attempt: 1, status: 'completed', stage: 'storyboard_ready_for_review', artifacts: {storyboard: {presentation_mode: body.direction.presentation_mode, narration_ids: body.direction.narration_ids, beats: [beat]}, direction_proposal: {beats: [{...beat, rationale: 'Hold attention on the linked interview'}]}, direction_asset_run_id: 'acquire', direction_duration_seconds: 2, direction_warnings: ['Review the selected footage against the script.'], direction_shot_evidence: frameReceipt}};
                         run = directionRun;
                         if (loseDirectionResponse) { loseDirectionResponse = false; return send({detail: 'Visual plan response lost. Retry to recover saved work.'}, 503); }
                         return send(run, 202);
@@ -487,6 +489,7 @@ const draft = {
         assert(voiced, 'Expected a narrated storyboard call to exist');
         await page.locator('[data-editorial-stage="storyboard"]').click();
         assert.equal(await page.locator('.editorial-ai-drawer').getAttribute('open'), '');
+        await page.locator('#editorial-auto-regions').check();
         await page.locator('#editorial-direct').click();
         await page.getByText(/Visual plan response lost/).waitFor();
         assert.equal(await page.locator('#editorial-storyboard input[type=number]:not([data-region])').inputValue(), '1.5');
@@ -496,6 +499,8 @@ const draft = {
         assert.equal(directions.length, 2);
         assert.deepEqual(directions[0].body, directions[1].body);
         assert.equal(directions[0].body.direction.narration_ids.beat, 'generated-audio');
+        assert.equal(directions[0].body.direction.annotate_regions, true);
+        assert.equal(await page.locator('#editorial-auto-regions').isChecked(), true);
         await page.setViewportSize({width: 390, height: 844});
         assert(await page.evaluate(() => document.documentElement.scrollWidth <= 390));
         const frameSummary = page.locator('#editorial-direction summary').filter({hasText: 'Observed frame · 2.500s'});
@@ -503,6 +508,8 @@ const draft = {
         await page.keyboard.press('Enter');
         assert.match(await page.locator('#editorial-direction').innerText(), /Sparse sampling; movement is unverified/);
         assert.equal(await page.locator('#editorial-direction script').count(), 0);
+        assert.match(await page.locator('#editorial-direction').innerText(), /A visible <door>/);
+        assert.match(await page.locator('#editorial-direction').innerText(), /Exact frozen sample only/);
         assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
         await page.locator('#editorial-direction').screenshot({path: path.resolve(__dirname, 'test-results/editorial-direction-mobile.png')});
         // Rendering the saved plan preserves speed and push-in, independent of manual controls.
@@ -510,6 +517,8 @@ const draft = {
         await page.getByText(/Review approved for this rendered revision/).waitFor();
         const directedRender = calls.filter(call => call.body?.target === 'render').at(-1);
         assert.equal(directedRender.body.direction_run_id, 'direction');
+        assert.equal(directedRender.body.storyboard.beats[0].overlays[0].kind, 'circle');
+        assert.equal(directedRender.body.storyboard.annotate_regions, undefined);
         assert.equal(directedRender.body.storyboard.beats[0].media[0].playback_rate, .5);
         assert.equal(directedRender.body.storyboard.beats[0].media[0].push_in, 1.1);
         assert.equal(directedRender.body.storyboard.narration_ids.beat, 'generated-audio');
@@ -648,6 +657,7 @@ const draft = {
         await page.getByText(/No editorial projects yet/).waitFor();
         assert.equal(await page.locator("#editorial-detail").isHidden(), true);
         assert.equal(await page.locator("#editorial-narration-confirm").isChecked(), false);
+        assert.equal(await page.locator('#editorial-auto-regions').isChecked(), false);
         assert.equal(await page.locator("#editorial-prompt").inputValue(), "");
         await page.locator("#channel").selectOption("one");
         await page.getByRole("button", { name: "Open project", exact: true }).waitFor();

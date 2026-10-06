@@ -56,7 +56,7 @@ def direction_context(row: EditorialRun) -> dict:
         options = DirectionOptions.model_validate(row.options["direction"])
         # Placeholder visuals are used only to validate audio selection, never rendered.
         audio_plan = StoryboardPlan(
-            **options.model_dump(),
+            **options.model_dump(exclude={"annotate_regions"}),
             beats=[
                 {
                     "beat_id": beat.id,
@@ -304,7 +304,7 @@ def direct_visuals(run_id: str, attempt: int) -> dict:
         )
         options = DirectionOptions.model_validate(row.options["direction"])
         plan = StoryboardPlan(
-            **options.model_dump(),
+            **options.model_dump(exclude={"annotate_regions"}),
             beats=[beat.model_dump(exclude={"rationale"}) for beat in result.beats],
         )
         # Keep the proposal even if compilation rejects it; resuming reuses the provider receipt.
@@ -323,6 +323,25 @@ def direct_visuals(run_id: str, attempt: int) -> dict:
             plan,
         )
         shot_evidence = resolve_shot_evidence(result, evidence, manifest) if grounded else None
+        region_warnings = []
+        if options.annotate_regions:
+            from katcha.editorial.regions import annotate_frozen_regions
+
+            if not grounded:
+                raise EditorialBlocked("Start a new frame-grounded plan to suggest regions")
+            checkpoint(run_id, attempt, stage="observing_freeze_regions")
+            plan, shot_evidence, region_warnings = annotate_frozen_regions(
+                row, attempt, plan, shot_evidence, context
+            )
+            direction_context(row)
+            manifest = compile_project_visuals(
+                row.channel_profile_id,
+                row.project_id,
+                row.input_revision,
+                uuid.UUID(row.options["asset_run_id"]),
+                plan,
+            )
+            resolve_shot_evidence(result, evidence, manifest)
         checkpoint(
             run_id,
             attempt,
@@ -330,7 +349,7 @@ def direct_visuals(run_id: str, attempt: int) -> dict:
             stage="storyboard_ready_for_review",
             artifacts={
                 "storyboard": plan.model_dump(mode="json"),
-                "direction_warnings": direction_warnings(manifest),
+                "direction_warnings": direction_warnings(manifest) + region_warnings,
                 "direction_asset_run_id": row.options["asset_run_id"],
                 "direction_duration_seconds": manifest.output_duration_seconds,
                 **(

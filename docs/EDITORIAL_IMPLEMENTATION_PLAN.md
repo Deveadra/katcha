@@ -1005,3 +1005,40 @@ Remotion / FFmpeg renders passed existing video, narration and image cases plus 
 and mobile controls were visually inspected. A test-only loopback fallback was
 needed because this environment cannot enumerate network interfaces; production
 code was not changed for it. No live editorial-quality acceptance is claimed.
+
+### E15 opt-in observed freeze-region suggestions (2026-10-06)
+
+Integrated with main through `c6c3d11`, including PR #300's manual image regions,
+the source monitor, source-media uploads and OCI bootstrap fixes. The director now
+has an optional, persisted “Suggest callouts on sampled freeze frames” control.
+Normal planning and old provider receipt schemas/prompts remain unchanged.
+
+After grounded shot planning and initial compilation, each selected sampled freeze
+can receive a bounded region pass over its exact individual managed keyframe. This
+is not a coordinate guess from a contact sheet. Source hash, clearance, canonical
+frame storage identity, sample time and rendered freeze-frame index are checked.
+The response may return up to three source-normalized circles/arrows/highlights or
+no suggestion; moving shots never receive automatic regions. Source mappings are
+rechecked after observation; script/narration and final compiled citations are
+revalidated before a plan can be promoted.
+
+The existing provider gateway supplies budget/call limits and uncertainty handling.
+Completed region receipts replay without another image read or provider call.
+Storage failure before dispatch can resume; an unknown provider outcome blocks
+automatic repetition. Region interpretations and limitations are stored inside the
+storyboard-bound shot evidence, shown in current and historical citation review,
+and preserved through the existing directed-render handoff. Placement and factual
+meaning still require operator review; model coordinates are not verified truth.
+
+This does not implement moving-object tracking, automatic image acquisition,
+AI annotation of uploaded stills, approved channel branding or publication handoff.
+No live provider calls, paid work or live visual-quality acceptance were performed.
+
+Validation: **250 editorial and command-goal tests passed**; after the final
+compiled-citation recheck, all **72 direction tests passed**. Coverage includes
+receipt reuse, unknown outcomes, pre-dispatch storage recovery, source clearance
+and key changes, invalid regions, script drift, freeze-frame boundaries and old
+request serialization. The synthetic browser journey passed opt-in replay, region
+review, unchanged manual inputs, annotated render handoff and channel isolation at
+390px; the region disclosure was visually inspected. Renderer contracts, lint and
+diff checks passed. These fixtures do not establish live AI localization accuracy.

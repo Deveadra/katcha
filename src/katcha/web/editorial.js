@@ -328,6 +328,7 @@ window.KatchaEditorial = (() => {
         const changed = state.channel !== channel;
         state.channel = channel;
         if (changed) {
+            el("editorial-auto-regions").checked = false;
             el("editorial-narration-confirm").checked = false;
             window.KatchaEditorialHistory.reset();
             clearPreview(); clearSourceMonitor(); state.boardKey = ""; state.assetRun = null; state.imageFormKey = ""; el("editorial-image-file").value = ""; el("editorial-image-confirm").checked = false;
@@ -424,6 +425,7 @@ window.KatchaEditorial = (() => {
         el("editorial-render").disabled ||= el("editorial-presentation").value === "narrated" && !state.narration?.voice_enabled;
         el("editorial-generate-narration").disabled = state.busy || Boolean(active) || state.stale || !state.narration?.voice_enabled || !state.revision?.draft.script?.length || Boolean(read(storageKey(`pending.${state.project.id}`), null));
         el("editorial-direct").disabled = el("editorial-render").disabled || !state.assetRun;
+        el("editorial-auto-regions").disabled = el("editorial-direct").disabled;
         el("editorial-image-upload").disabled = state.busy || Boolean(active) || state.stale || !state.revision?.draft.script?.length || Boolean(read(storageKey(`pending.${state.project.id}`), null));
         el("editorial-render-directed").disabled = state.busy || Boolean(active) || state.stale || !state.directionRun || Boolean(read(storageKey(`pending.${state.project.id}`), null));
         el("editorial-render").textContent = el("editorial-presentation").value === "narrated" ? "Create narrated preview" : "Create silent captioned preview";
@@ -615,10 +617,11 @@ window.KatchaEditorial = (() => {
         if (!shots.length) return '<p class="error-text">Frame citation unavailable. Plan visuals again before relying on this shot.</p>';
         return shots.map(shot => {
             const observation = shot.observation;
-            return `<details class="ae-help"><summary>Observed frame · ${esc(Number(observation.start_seconds).toFixed(3))}s</summary><p>${esc(observation.observation)}</p><a href="${safeLink(observation.source_url)}" target="_blank" rel="noopener noreferrer">Open source video</a><p>Sampled frame only. This does not establish continuous visibility or verify an identity.</p>${(shot.limitations || []).map(value => `<p>${esc(value)}</p>`).join("")}</details>`;
+            return `<details class="ae-help"><summary>Observed frame · ${esc(Number(observation.start_seconds).toFixed(3))}s</summary><p>${esc(observation.observation)}</p><a href="${safeLink(observation.source_url)}" target="_blank" rel="noopener noreferrer">Open source video</a><p>Sampled frame only. This does not establish continuous visibility or verify an identity.</p>${(shot.limitations || []).map(value => `<p>${esc(value)}</p>`).join("")}${shot.regions ? `<p>AI region suggestions · verify placement and meaning in the preview.</p>${shot.regions.regions.length ? shot.regions.regions.map(region => `<p>${esc(region.kind)} · ${esc(region.description)}${region.label ? ` · Label: ${esc(region.label)}` : ""}</p>`).join("") : "<p>No confident callout suggested for this frame.</p>"}${(shot.regions.limitations || []).map(value => `<p>${esc(value)}</p>`).join("")}` : ""}</details>`;
         }).join("");
     }
     function renderDirection() {
+        el("editorial-auto-regions").checked = read(boardStorage() + ".auto-regions", false);
         const artifacts = state.directionRun?.artifacts || {};
         const proposal = artifacts.direction_proposal || (state.run?.target === "direction" ? state.run.artifacts?.direction_proposal : null);
         el("editorial-render-directed").hidden = !artifacts.storyboard;
@@ -633,7 +636,7 @@ window.KatchaEditorial = (() => {
         const presentation_mode = el("editorial-presentation").value;
         const narration_ids = presentation_mode === "narrated" ? Object.fromEntries([...el("editorial-narration").querySelectorAll("[data-narration-select]")].map(input => [input.dataset.narrationSelect, input.value])) : {};
         if (presentation_mode === "narrated" && (state.revision.draft.script.some(beat => !narration_ids[beat.id]) || !state.narration?.voice_enabled)) throw new Error("Enable voice and choose a recording for every beat.");
-        return {presentation_mode, narration_ids};
+        return {presentation_mode, narration_ids, ...(el("editorial-auto-regions").checked ? {annotate_regions: true} : {})};
     }
     function storyboardPlan() {
         const beats = [...el("editorial-storyboard").querySelectorAll("[data-board-beat]")].map(row => {
@@ -969,6 +972,7 @@ window.KatchaEditorial = (() => {
                 if (channel === state.channel) { await open(project, {focus: false}); advanceStage("preview"); }
             }));
         }
+        el("editorial-auto-regions").addEventListener("change", () => remember(boardStorage() + ".auto-regions", el("editorial-auto-regions").checked));
         el("editorial-direct").addEventListener("click", () => void guarded(async () => {
             const channel = state.channel; const project = state.project.id;
             const payload = {target: "direction", expected_revision: state.project.revision, asset_run_id: state.assetRun.editorial_run_id, direction: directionOptions()};
