@@ -226,7 +226,9 @@ window.KatchaEditorial = (() => {
             const managed = bindings[value];
             let host = value;
             try { host = new URL(value).hostname.replace(/^www\./, ""); } catch {}
-            return `<span class="editorial-source-chip ${managed ? "managed" : ""}">${managed ? "Managed clip" : "Source URL"} · ${esc(host)}</span>`;
+            const uploaded = host === "upload.katcha.invalid";
+            const label = uploaded ? "Uploaded source" : managed ? "Managed clip" : "Source URL";
+            return `<span class="editorial-source-chip ${managed ? "managed" : ""}">${label} · ${esc(uploaded ? "local media" : host)}</span>`;
         });
         const seed = state.project.brief?.script_seed;
         if (seed) sources.push(`<span class="editorial-source-chip managed">Script seed · ${esc(seed.filename || "pasted draft")}</span>`);
