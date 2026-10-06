@@ -242,6 +242,17 @@ def test_storyboard_source_monitor_metadata_hides_storage_key(saved, monkeypatch
     assert "media_storage_key" not in response.json()
 
 
+def test_editorial_playback_route_requires_its_ticket_cookie(saved):
+    anonymous = TestClient(app)
+    try:
+        response = anonymous.get(f"/v1/editorial-playback/{uuid.uuid4()}")
+    finally:
+        anonymous.close()
+
+    assert response.status_code == 401
+    assert response.json()["detail"] == "Playback authorization required"
+
+
 def test_storyboard_playback_ticket_uses_httponly_scoped_cookie(
     saved, monkeypatch
 ):
