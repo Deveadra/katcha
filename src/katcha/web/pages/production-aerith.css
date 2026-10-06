@@ -1341,3 +1341,25 @@ body[data-katcha-page="production"] .editorial-beat-inspector .editorial-beat-ed
     font-size: 8px;
     line-height: 1.45;
 }
+
+/* Source-coordinate overlays stay on the naturally sized cited image. */
+#editorial-frame-dialog {
+    width: min(960px, calc(100vw - 32px));
+    max-height: calc(100dvh - 32px);
+    overflow: auto;
+    padding: 20px;
+    box-sizing: border-box;
+    color: var(--ae-text);
+    background: var(--ae-surface);
+    border: 1px solid var(--ae-line);
+}
+#editorial-frame-dialog::backdrop { background: #000b; }
+#editorial-frame-canvas { position: relative; width: 100%; }
+#editorial-frame-canvas > img { display: block; width: 100%; height: auto; }
+.editorial-frame-regions { position: absolute; inset: 0; pointer-events: none; }
+.editorial-frame-region { position: absolute; box-sizing: border-box; border: 3px solid #ffe09a; }
+.editorial-frame-circle { border-radius: 50%; }
+.editorial-frame-highlight { background: #ffe09a22; }
+.editorial-frame-arrow { border: 0; }
+.editorial-frame-arrow svg { width: 100%; height: 100%; }
+#editorial-frame-description, #editorial-frame-notes { overflow-wrap: anywhere; }

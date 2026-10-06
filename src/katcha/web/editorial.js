@@ -328,6 +328,7 @@ window.KatchaEditorial = (() => {
         const changed = state.channel !== channel;
         state.channel = channel;
         if (changed) {
+            window.KatchaFrameInspector.reset();
             el("editorial-auto-regions").checked = false;
             el("editorial-narration-confirm").checked = false;
             window.KatchaEditorialHistory.reset();
@@ -355,6 +356,7 @@ window.KatchaEditorial = (() => {
         }
     }
     async function open(id, { focus = true } = {}) {
+        if (state.project?.id !== id) window.KatchaFrameInspector.reset();
         if (state.project?.id !== id) el("editorial-narration-confirm").checked = false;
         clearTimeout(state.timer);
         if (state.project?.id !== id) window.KatchaEditorialHistory.reset();
@@ -610,14 +612,14 @@ window.KatchaEditorial = (() => {
         refreshTimelineStatus();
         selectTimelineBeat(read(timelineStorage(), script[0]?.id || ""), {persist: false});
     }
-    function frameCitations(artifacts, beatId, candidateId) {
+    function frameCitations(artifacts, beatId, candidateId, context = {run: state.directionRun?.editorial_run_id, channel: state.channel, project: state.project?.id}) {
         const evidence = artifacts.direction_shot_evidence;
         if (!evidence) return '<p class="muted">No saved frame citation for this older plan. Check the source footage before using it.</p>';
         const shots = (evidence.shots || []).filter(shot => shot.beat_id === beatId && shot.candidate_id === candidateId);
         if (!shots.length) return '<p class="error-text">Frame citation unavailable. Plan visuals again before relying on this shot.</p>';
         return shots.map(shot => {
             const observation = shot.observation;
-            return `<details class="ae-help"><summary>Observed frame · ${esc(Number(observation.start_seconds).toFixed(3))}s</summary><p>${esc(observation.observation)}</p><a href="${safeLink(observation.source_url)}" target="_blank" rel="noopener noreferrer">Open source video</a><p>Sampled frame only. This does not establish continuous visibility or verify an identity.</p>${(shot.limitations || []).map(value => `<p>${esc(value)}</p>`).join("")}${shot.regions ? `<p>AI region suggestions · verify placement and meaning in the preview.</p>${shot.regions.regions.length ? shot.regions.regions.map(region => `<p>${esc(region.kind)} · ${esc(region.description)}${region.label ? ` · Label: ${esc(region.label)}` : ""}</p>`).join("") : "<p>No confident callout suggested for this frame.</p>"}${(shot.regions.limitations || []).map(value => `<p>${esc(value)}</p>`).join("")}` : ""}</details>`;
+            return `<details class="ae-help"><summary>Observed frame · ${esc(Number(observation.start_seconds).toFixed(3))}s</summary><p>${esc(observation.observation)}</p><a href="${safeLink(observation.source_url)}" target="_blank" rel="noopener noreferrer">Open source video</a><p>Sampled frame only. This does not establish continuous visibility or verify an identity.</p>${(shot.limitations || []).map(value => `<p>${esc(value)}</p>`).join("")}${context.run ? `<button type="button" class="mini" data-frame-run="${esc(context.run)}" data-frame-channel="${esc(context.channel)}" data-frame-project="${esc(context.project)}" data-frame-index="${evidence.shots.indexOf(shot)}">Inspect cited frame</button>` : ""}${shot.regions ? `<p>AI region suggestions · verify placement and meaning in the preview.</p>${shot.regions.regions.length ? shot.regions.regions.map(region => `<p>${esc(region.kind)} · ${esc(region.description)}${region.label ? ` · Label: ${esc(region.label)}` : ""}</p>`).join("") : "<p>No confident callout suggested for this frame.</p>"}${(shot.regions.limitations || []).map(value => `<p>${esc(value)}</p>`).join("")}` : ""}</details>`;
         }).join("");
     }
     function renderDirection() {
@@ -755,6 +757,7 @@ window.KatchaEditorial = (() => {
         el("editorial-stage-tabs").scrollIntoView({block: "nearest", behavior: "smooth"});
     }
     function init(transport, blobTransport) {
+        window.KatchaFrameInspector.init(transport, blobTransport);
         api = transport; apiBlob = blobTransport;
         el("editorial-source-upload-file").addEventListener("change", () => {
             const file = el("editorial-source-upload-file").files[0];

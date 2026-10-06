@@ -1,5 +1,6 @@
 """Synthetic model output exercises durable direction and authoritative compilation."""
 
+import copy
 import uuid
 from unittest.mock import Mock
 
@@ -1125,3 +1126,73 @@ def test_region_clearance_change_during_observation_blocks_promotion(region_dire
     assert direction.direct_visuals(str(row.id), 1)["status"] == "blocked"
     assert "clearance" in refresh(row).error
     assert "storyboard" not in refresh(row).artifacts
+
+
+def test_cited_frame_inspection_revalidates_saved_evidence(region_direction):
+    from katcha.editorial.frame_inspection import inspect_frame
+    from katcha.editorial_models import EditorialRun
+
+    row, invoke, _, _ = region_direction
+    assert direction.direct_visuals(str(row.id), 1)["status"] == "completed"
+    info = inspect_frame(row.channel_profile_id, row.project_id, row.id, 0)
+    assert info["sample_seconds"] == 5
+    assert info["image_key"].endswith("/frames/frame-00.jpg")
+    assert info["overlays"][0]["region"]["width"] == 0.3
+    assert info["frozen"] is True
+    assert len(info["evidence_digest"]) == 64
+    assert invoke.call_count == 3  # Inspection does not call a provider.
+    with pytest.raises(EditorialConflict):
+        inspect_frame(row.channel_profile_id, row.project_id, row.id, -1)
+    with db.session_scope() as session:
+        stored = session.get(EditorialRun, row.id)
+        artifacts = dict(stored.artifacts)
+        proof = copy.deepcopy(artifacts["direction_shot_evidence"])
+        proof["shots"][0]["observation"]["observation"] = "Changed evidence"
+        stored.artifacts = {**artifacts, "direction_shot_evidence": proof}
+    with pytest.raises(EditorialConflict, match="evidence changed"):
+        inspect_frame(row.channel_profile_id, row.project_id, row.id, 0)
+
+
+def test_cited_frame_inspection_rechecks_current_rights(region_direction):
+    from katcha.acquisition_models import DiscoveryCandidate, RightsAssessment
+    from katcha.editorial.frame_inspection import inspect_frame
+
+    row, _, _, _ = region_direction
+    assert direction.direct_visuals(str(row.id), 1)["status"] == "completed"
+    with db.session_scope() as session:
+        candidate = session.query(DiscoveryCandidate).one()
+        session.add(
+            RightsAssessment(
+                discovery_candidate_id=candidate.id,
+                version=2,
+                production_eligible=False,
+                actor="test",
+            )
+        )
+    with pytest.raises(ValueError, match="clearance|eligible"):
+        inspect_frame(row.channel_profile_id, row.project_id, row.id, 0)
+
+
+def test_cited_frame_inspection_from_saved_render(region_direction):
+    from katcha.editorial.frame_inspection import inspect_frame
+    from katcha.services.editorial_projects import EditorialNotFound
+
+    row, _, _, _ = region_direction
+    assert direction.direct_visuals(str(row.id), 1)["status"] == "completed"
+    rendered = start_run(
+        row.channel_profile_id,
+        row.project_id,
+        StartEditorialRun(
+            target="render",
+            expected_revision=1,
+            idempotency_key="inspect-render",
+            asset_run_id=row.options["asset_run_id"],
+            direction_run_id=row.id,
+            storyboard=refresh(row).artifacts["storyboard"],
+        ),
+        actor="test",
+    )
+    checkpoint(str(rendered.id), 1, status="completed")
+    assert inspect_frame(row.channel_profile_id, row.project_id, rendered.id, 0)["frozen"]
+    with pytest.raises(EditorialNotFound):
+        inspect_frame(uuid.uuid4(), row.project_id, rendered.id, 0)

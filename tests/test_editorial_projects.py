@@ -673,3 +673,29 @@ def test_concurrent_saves_never_overwrite_a_revision(tmp_path, monkeypatch, same
             assert len(list(session.scalars(select(EditorialRevision)))) == 1
     finally:
         engine.dispose()
+
+
+def test_cited_frame_api_binds_image_to_rechecked_evidence(saved, monkeypatch):
+    from unittest.mock import Mock
+
+    from fastapi.responses import Response
+
+    client, channel, _ = saved
+    base = f"{root(channel)}/{uuid.uuid4()}/runs/{uuid.uuid4()}/frames/0"
+    info = {"image_key": "analysis/private/frame.jpg", "evidence_digest": "a" * 64}
+    inspect = Mock(return_value=info)
+    stream = Mock(return_value=Response(b"jpeg"))
+    monkeypatch.setattr("katcha.editorial.frame_inspection.inspect_frame", inspect)
+    monkeypatch.setattr("katcha.api.studio._stream_object", stream)
+    response = client.get(base)
+    assert response.status_code == 200
+    assert "image_key" not in response.json()
+    assert response.headers["cache-control"] == "no-store"
+    assert client.get(f"{base}/image?evidence_digest={'b' * 64}").status_code == 409
+    stream.assert_not_called()
+    response = client.get(f"{base}/image?evidence_digest={'a' * 64}")
+    assert response.status_code == 200
+    assert response.headers["cache-control"] == "no-store"
+    assert response.headers["content-type"] == "image/jpeg"
+    assert stream.call_args.args[1] == info["image_key"]
+    assert inspect.call_count == 3
