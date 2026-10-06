@@ -58,6 +58,7 @@ def _validate_workspace(
         raise EditorialNotFound("Script revision not found in this project")
     draft = EditorialDraft.model_validate(revision.draft)
     expected_beats = [beat.id for beat in draft.script]
+    draft_beats = {beat.id: beat for beat in draft.script}
     workspace_beats = [beat.beat_id for beat in workspace.beats]
     if workspace_beats != expected_beats:
         raise EditorialConflict(
@@ -89,30 +90,56 @@ def _validate_workspace(
             raise EditorialConflict(
                 "Storyboard footage must use a completed acquisition for this revision"
             )
-        acquired_ids = set(dict(asset_run.artifacts or {}).get("acquired_assets") or {})
+        artifacts = dict(asset_run.artifacts or {})
+        if revision.digest != artifacts.get("input_draft_digest"):
+            raise EditorialConflict(
+                "Storyboard acquisition does not match the frozen script"
+            )
+        acquired_ids = set(artifacts.get("acquired_assets") or {})
         if not media_ids <= acquired_ids:
             raise EditorialConflict(
                 "Storyboard references footage outside its saved acquisition run"
             )
+        selections = {
+            item["id"]: item
+            for item in artifacts.get("asset_selection", [])
+            if isinstance(item, dict) and item.get("id")
+        }
+        for visual in workspace.beats:
+            script_beat = draft_beats[visual.beat_id]
+            for use in visual.media:
+                selection = selections.get(use.candidate_id)
+                if (
+                    selection is None
+                    or selection.get("beat_id") != script_beat.id
+                    or set(selection.get("claim_ids", []))
+                    != set(script_beat.claim_ids)
+                ):
+                    raise EditorialConflict(
+                        "Storyboard footage must preserve its scouted beat "
+                        "and claim references"
+                    )
 
-    image_ids = {
-        value
-        for beat in workspace.beats
-        for value in (
-            [beat.image_id] if beat.image_id is not None else list(beat.image_ids)
+    for visual in workspace.beats:
+        image_ids = (
+            [visual.image_id]
+            if visual.image_id is not None
+            else list(visual.image_ids)
         )
-    }
-    for image_id in image_ids:
-        image = session.get(EditorialImage, image_id)
-        if (
-            image is None
-            or image.project_id != project.id
-            or image.channel_profile_id != project.channel_profile_id
-            or image.revision != script_revision
-        ):
-            raise EditorialConflict(
-                "Storyboard references an image outside this script revision"
-            )
+        for image_id in image_ids:
+            image = session.get(EditorialImage, image_id)
+            if (
+                image is None
+                or image.project_id != project.id
+                or image.channel_profile_id != project.channel_profile_id
+                or image.revision != script_revision
+                or image.beat_id != visual.beat_id
+                or image.status != "active"
+            ):
+                raise EditorialConflict(
+                    "Storyboard image was removed or belongs to another "
+                    "script beat or revision"
+                )
 
     beat_ids = set(expected_beats)
     for beat_id, narration_id in workspace.narration_ids.items():
@@ -124,6 +151,7 @@ def _validate_workspace(
             or narration.channel_profile_id != project.channel_profile_id
             or narration.revision != script_revision
             or narration.beat_id != beat_id
+            or narration.status != "active"
         ):
             raise EditorialConflict(
                 "Storyboard narration must belong to the matching saved beat"
