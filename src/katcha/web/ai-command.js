@@ -627,9 +627,11 @@ function renderContext(result) {
                       ? "Executing…"
                       : action.status === "expired"
                         ? "Expired"
-                        : !principalCanExecute
-                          ? "Not permitted"
-                          : applyLabel;
+                        : action.status === "rejected"
+                          ? "Rejected"
+                          : !principalCanExecute
+                            ? "Not permitted"
+                            : applyLabel;
             return (
                 '<article class="action-card" data-action-card="' +
                 esc(action.proposal_id) +
