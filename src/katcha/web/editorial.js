@@ -548,6 +548,254 @@ window.KatchaEditorial = (() => {
         }));
         remember(boardStorage(), rows);
     }
+    function workspaceSavedRows(workspace) {
+        return (workspace?.beats || []).map(beat => {
+            let choice = "";
+            let compare = "";
+            if (beat.layout === "single" && beat.media?.[0]) {
+                choice = `media:${beat.media[0].candidate_id}`;
+            } else if (beat.layout === "quote" && beat.quote_source_id) {
+                choice = `quote:${beat.quote_source_id}`;
+            } else if (beat.layout === "image" && beat.image_id) {
+                choice = `image:${beat.image_id}`;
+            } else if (beat.layout === "image_comparison" && beat.image_ids?.length === 2) {
+                choice = `image:${beat.image_ids[0]}`;
+                compare = beat.image_ids[1];
+            }
+            const overlay = beat.overlays?.[0];
+            return {
+                choice,
+                start: String(beat.media?.[0]?.start_seconds ?? 0),
+                freeze: Boolean(beat.media?.[0]?.freeze),
+                compare,
+                annotation: overlay ? {
+                    kind: overlay.kind,
+                    target: String(overlay.media_index ?? 0),
+                    x: String(Number(overlay.region.x) * 100),
+                    y: String(Number(overlay.region.y) * 100),
+                    width: String(Number(overlay.region.width) * 100),
+                    height: String(Number(overlay.region.height) * 100),
+                    label: overlay.label || "",
+                } : {},
+            };
+        });
+    }
+    function hydrateStoryboardLocalState(row) {
+        if (!row?.workspace || !state.project) return;
+        remember(boardStorage(), workspaceSavedRows(row.workspace));
+        remember(narrationKey(), {
+            mode: row.workspace.presentation_mode,
+            choices: Object.fromEntries(
+                (state.revision?.draft.script || []).map(beat => [
+                    beat.id,
+                    row.workspace.narration_ids?.[beat.id] || "",
+                ]),
+            ),
+        });
+    }
+    function storyboardWorkspaceDraft() {
+        const rows = [...el("editorial-storyboard").querySelectorAll("[data-board-beat]")];
+        if (!rows.length) return null;
+        const beats = rows.map(row => {
+            const value = row.querySelector("[data-primary-visual]").value;
+            if (!value) return {beat_id: row.dataset.boardBeat, layout: "unassigned"};
+            const [kind, ...parts] = value.split(":");
+            const id = parts.join(":");
+            if (kind === "quote") {
+                return {
+                    beat_id: row.dataset.boardBeat,
+                    layout: "quote",
+                    quote_source_id: id,
+                };
+            }
+            if (kind === "media") {
+                const start = Number(row.querySelector("input[type=number]").value);
+                if (!Number.isFinite(start) || start < 0) {
+                    throw new Error("Enter a valid footage start time.");
+                }
+                return {
+                    beat_id: row.dataset.boardBeat,
+                    layout: "single",
+                    media: [{
+                        candidate_id: id,
+                        start_seconds: start,
+                        freeze: row.querySelector("input[type=checkbox]").checked,
+                    }],
+                };
+            }
+            if (kind !== "image") throw new Error("Choose a supported visual.");
+            const compare = row.querySelector("[data-image-compare]").value;
+            const annotation = Object.fromEntries(
+                [...row.querySelectorAll("[data-region]")].map(input => [
+                    input.dataset.region,
+                    input.value,
+                ]),
+            );
+            const overlays = [];
+            if (annotation.kind) {
+                const region = Object.fromEntries(
+                    ["x", "y", "width", "height"].map(key => [
+                        key,
+                        Number(annotation[key]) / 100,
+                    ]),
+                );
+                if (
+                    Object.values(region).some(value => !Number.isFinite(value))
+                    || region.x < 0
+                    || region.y < 0
+                    || region.width <= 0
+                    || region.height <= 0
+                    || region.x + region.width > 1
+                    || region.y + region.height > 1
+                ) {
+                    throw new Error("Keep the annotation within the original image.");
+                }
+                if (annotation.target === "1" && !compare) {
+                    throw new Error("Choose a second image before marking it.");
+                }
+                overlays.push({
+                    kind: annotation.kind,
+                    media_index: Number(annotation.target),
+                    region,
+                    label: annotation.label.trim() || null,
+                });
+            }
+            return {
+                beat_id: row.dataset.boardBeat,
+                layout: compare ? "image_comparison" : "image",
+                ...(compare ? {image_ids: [id, compare]} : {image_id: id}),
+                overlays,
+            };
+        });
+        const mode = el("editorial-presentation").value;
+        const narration_ids = mode === "narrated"
+            ? Object.fromEntries(
+                [...el("editorial-narration").querySelectorAll("[data-narration-select]")]
+                    .filter(input => input.value)
+                    .map(input => [input.dataset.narrationSelect, input.value]),
+            )
+            : {};
+        return {
+            presentation_mode: mode,
+            asset_run_id: beats.some(beat => beat.media?.length)
+                ? state.assetRun?.editorial_run_id || null
+                : null,
+            beats,
+            narration_ids,
+        };
+    }
+    function storyboardSyncStatus(message, {error = false, saving = false} = {}) {
+        const status = el("editorial-storyboard-sync-status");
+        const host = status.closest(".editorial-storyboard-sync");
+        status.textContent = message;
+        host.classList.toggle("is-error", error);
+        host.classList.toggle("is-saving", saving);
+    }
+    function updateStoryboardUndo() {
+        const row = state.storyboardWorkspace;
+        el("editorial-storyboard-undo").disabled = (
+            state.busy
+            || state.stale
+            || state.storyboardSaving
+            || !row?.parent_version
+        );
+        if (state.storyboardSaving) return;
+        if (row?.version) {
+            storyboardSyncStatus(
+                `Saved workspace · v${row.version} · ${String(row.origin || "operator").replaceAll("_", " ")}`,
+            );
+        } else if (!state.stale) {
+            storyboardSyncStatus("Storyboard workspace is local until the first edit.");
+        }
+    }
+    async function flushStoryboardWorkspace() {
+        clearTimeout(state.storyboardSaveTimer);
+        state.storyboardSaveTimer = null;
+        if (
+            state.storyboardSaving
+            || state.stale
+            || !state.project
+            || !state.revision
+            || read(storageKey(`pending.${state.project.id}`), null)
+        ) {
+            if (state.storyboardSaving) state.storyboardDirty = true;
+            return;
+        }
+        let workspace;
+        try {
+            workspace = storyboardWorkspaceDraft();
+        } catch (error) {
+            storyboardSyncStatus(`Complete this edit to save · ${error.message}`);
+            return;
+        }
+        if (!workspace) return;
+        const epoch = state.epoch;
+        const channel = state.channel;
+        const project = state.project.id;
+        const scriptRevision = state.project.revision;
+        const expectedVersion = state.storyboardWorkspace?.version || 0;
+        const body = {
+            script_revision: scriptRevision,
+            expected_version: expectedVersion,
+            workspace,
+        };
+        body.idempotency_key = identity(`storyboard.${project}`, body);
+        state.storyboardSaving = true;
+        state.storyboardDirty = false;
+        storyboardSyncStatus("Saving Storyboard workspace…", {saving: true});
+        updateStoryboardUndo();
+        try {
+            const saved = await api(path(channel, `/${project}/storyboard`), {
+                method: "POST",
+                body: JSON.stringify(body),
+            });
+            if (
+                epoch === state.epoch
+                && channel === state.channel
+                && project === state.project?.id
+                && scriptRevision === state.project?.revision
+            ) {
+                state.storyboardWorkspace = saved;
+                hydrateStoryboardLocalState(saved);
+                storyboardSyncStatus(`Saved workspace · v${saved.version}`);
+            }
+        } catch (error) {
+            if (epoch === state.epoch && project === state.project?.id) {
+                state.storyboardDirty = true;
+                storyboardSyncStatus(
+                    `Workspace not saved · ${error.message}`,
+                    {error: true},
+                );
+            }
+        } finally {
+            if (epoch === state.epoch && project === state.project?.id) {
+                state.storyboardSaving = false;
+                updateStoryboardUndo();
+                if (state.storyboardDirty) {
+                    state.storyboardSaveTimer = setTimeout(
+                        () => void flushStoryboardWorkspace(),
+                        500,
+                    );
+                }
+            }
+        }
+    }
+    function scheduleStoryboardWorkspaceSave() {
+        if (!state.project || !state.revision) return;
+        if (state.stale || read(storageKey(`pending.${state.project.id}`), null)) {
+            storyboardSyncStatus(
+                "Save or discard script edits before saving Storyboard changes.",
+            );
+            return;
+        }
+        state.storyboardDirty = true;
+        clearTimeout(state.storyboardSaveTimer);
+        storyboardSyncStatus("Unsaved Storyboard changes");
+        state.storyboardSaveTimer = setTimeout(
+            () => void flushStoryboardWorkspace(),
+            700,
+        );
+    }
     function imageFormKey() { return storageKey(`image-form.${state.project.id}.${state.project.revision}`); }
     const imageFields = ["title", "source", "permission", "beat"];
     function saveImageForm() {
