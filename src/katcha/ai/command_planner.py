@@ -75,7 +75,8 @@ class CommandPlan(BaseModel):
     requested_actions: list[Literal[
         "refresh_channel_intelligence", "create_short_production",
         "create_ranked_short_episode", "recover_production_render", "start_source_scout",
-    ]] = Field(default_factory=list, max_length=5)
+        "editorial_operation",
+    ]] = Field(default_factory=list, max_length=6)
     execution: Literal["propose", "run"] = "propose"
     recurring: bool = False
     clip_lookup: ClipLookup = Field(default_factory=ClipLookup)
@@ -156,7 +157,9 @@ def _planner_prompt(
         "Registered actions: start_source_scout (search/discover/prepare media); "
         "refresh_channel_intelligence (refresh learning); create_short_production "
         "(one grounded clip); create_ranked_short_episode (grounded selected clips); "
-        "recover_production_render (grounded failed render). These actions create "
+        "recover_production_render (grounded failed render); editorial_operation "
+        "(start/resume/cancel attached Editorial project work, scout supporting assets, or "
+        "render a previously saved visual-direction receipt). These actions create "
         "server-validated proposals which can run when authorized. Publishing, deletion, "
         "and arbitrary settings changes are not registered actions.\n"
         "For source scouting, recurring defaults to false: an ordinary search is "
