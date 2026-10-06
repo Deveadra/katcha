@@ -124,6 +124,7 @@ ActionType = Literal[
     "create_ranked_short_episode",
     "recover_production_render",
     "start_source_scout",
+    "editorial_operation",
 ]
 
 ResourceKind = Literal[
@@ -614,6 +615,9 @@ def _action_specs(
 ) -> list[ActionProposalSpec]:
     specs: list[ActionProposalSpec] = []
     blueprint_key = infer_edit_blueprint_key(request.prompt)
+
+    for spec in editorial_action_specs(request.prompt, evidence):
+        specs.append(spec)
 
     if intent == "failures":
         for item in evidence:
@@ -1687,6 +1691,9 @@ async def _execute_proposal(
     if proposal.action_type == "native_tool":
         from katcha.services.goal_runner import execute_native_goal_proposal
         return await execute_native_goal_proposal(proposal, actor)
+
+    if proposal.action_type == "editorial_operation":
+        return await execute_editorial_operation(proposal, actor=actor)
 
     if proposal.action_type == "refresh_channel_intelligence":
         run_key = f"command-proposal-{proposal.id}"
