@@ -49,11 +49,68 @@ window.KatchaEditorial = (() => {
     }
     function renderSelectedClips() {
         const entries = Object.entries(state.sourceClipBindings || {});
-        el("editorial-selected-clips").innerHTML = entries.length ? entries.map(([url, item]) => `
+        el("editorial-selected-clips").innerHTML = entries.length ? entries.map(([url, item]) => {
+            const lineage = item.platform === "upload"
+                ? `<span class="editorial-upload-lineage">${esc(item.filename || "Local source upload")}</span>`
+                : `<a href="${safeLink(url)}" target="_blank" rel="noopener noreferrer">${esc(url)}</a>`;
+            return `
             <article class="editorial-selected-clip">
-                <div><strong>${esc(clipLabel(item))}</strong><small>${esc(item.creator || item.platform || "Managed Katcha media")} · ${esc(duration(item.duration_seconds))}</small><a href="${safeLink(url)}" target="_blank" rel="noopener noreferrer">${esc(url)}</a></div>
+                <div><strong>${esc(clipLabel(item))}</strong><small>${esc(item.creator || item.platform || "Managed Katcha media")} · ${esc(duration(item.duration_seconds))}</small>${lineage}</div>
                 <button type="button" class="mini" data-editorial-unpin-clip="${esc(url)}">Use URL instead</button>
-            </article>`).join("") : '<p class="empty">No managed clips pinned. Source links will be acquired only when needed.</p>';
+            </article>`;
+        }).join("") : '<p class="empty">No managed clips pinned. Source links will be acquired only when needed.</p>';
+    }
+    async function uploadSourceMedia() {
+        const file = el("editorial-source-upload-file").files[0];
+        if (!file) throw new Error("Choose a source video to upload.");
+        if (file.size <= 0 || file.size > 512 * 1024 * 1024) {
+            throw new Error("Choose a source video no larger than 512 MiB.");
+        }
+        if (!el("editorial-source-upload-confirm").checked) {
+            throw new Error("Confirm you have permission to use this source video.");
+        }
+        const title = el("editorial-source-upload-title").value.trim();
+        const requestId = identity("source-upload", {
+            filename: file.name,
+            size: file.size,
+            lastModified: file.lastModified,
+            title,
+        });
+        const params = new URLSearchParams({
+            filename: file.name,
+            idempotency_key: requestId,
+            permitted_use: "true",
+        });
+        if (title) params.set("title", title);
+        const button = el("editorial-source-upload-button");
+        button.disabled = true;
+        el("editorial-source-upload-status").textContent = `Uploading ${file.name}…`;
+        try {
+            const result = await api(path(state.channel, `/source-uploads?${params}`), {
+                method: "POST",
+                body: file,
+                headers: {"Content-Type": file.type || "application/octet-stream"},
+            });
+            state.sourceClipBindings[result.source_url] = {
+                clip_id: result.clip_id,
+                title: result.title,
+                creator: "Operator upload",
+                platform: "upload",
+                duration_seconds: result.duration_seconds,
+                filename: result.filename,
+            };
+            const urls = sourceUrls();
+            if (!urls.includes(result.source_url)) {
+                el("editorial-urls").value = [...urls, result.source_url].join("\n");
+            }
+            saveBrief();
+            renderClipResults();
+            el("editorial-source-upload-status").textContent =
+                `${result.filename} ready · ${duration(result.duration_seconds)} · ${result.width}×${result.height}${result.deduplicated ? " · reused existing media" : ""}`;
+            feedback("Source upload is managed by Katcha and pinned to this project.");
+        } finally {
+            button.disabled = false;
+        }
     }
     async function sha256Hex(bytes) {
         const digest = await crypto.subtle.digest("SHA-256", bytes);
@@ -536,6 +593,24 @@ window.KatchaEditorial = (() => {
     }
     function init(transport, blobTransport) {
         api = transport; apiBlob = blobTransport;
+        el("editorial-source-upload-file").addEventListener("change", () => {
+            const file = el("editorial-source-upload-file").files[0];
+            if (!file) {
+                el("editorial-source-upload-status").textContent = "No local source uploaded.";
+                return;
+            }
+            if (!el("editorial-source-upload-title").value.trim()) {
+                el("editorial-source-upload-title").value = file.name.replace(/\.[^.]+$/, "");
+            }
+            el("editorial-source-upload-status").textContent =
+                `${file.name} selected · ${(file.size / (1024 * 1024)).toFixed(1)} MiB`;
+        });
+        el("editorial-source-upload-button").addEventListener("click", () => {
+            void uploadSourceMedia().catch(error => {
+                el("editorial-source-upload-status").textContent = error.message;
+                feedback(error.message, true);
+            });
+        });
         el("editorial-script-seed-file").addEventListener("change", () => void (async () => {
             const file = el("editorial-script-seed-file").files[0];
             if (!file) return;
