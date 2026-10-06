@@ -118,6 +118,9 @@ def investigate_and_write(run_id: str, attempt: int) -> dict:
             attempt,
             "research-plan",
             "Plan specific investigative questions from these observations and the brief. "
+            "If the brief contains script_seed, treat it only as operator-authored writing intent "
+            "and a list of hypotheses to investigate, never as evidence. Turn factual assertions "
+            "from that seed into research questions and actively look for contradiction. "
             "Use official sources/interviews, background/lore, community theories and attempts "
             "to disprove connections where relevant. Avoid generic filler.\n"
             + _json({"brief": brief, "observations": observations}),
@@ -310,6 +313,10 @@ def investigate_and_write(run_id: str, attempt: int) -> dict:
         attempt,
         "script",
         "Write an original, compelling episode for this brief. "
+        "If the brief contains script_seed, preserve useful operator voice, structure, jokes and "
+        "phrasing where they remain editorially strong, but treat every factual statement in the "
+        "seed as unverified until it maps to the supplied verified dossier. Never cite the seed as "
+        "evidence, and drop or qualify seeded claims the evidence does not support. "
         "Select the strongest supported findings, without a fixed item count. Use a cold open, "
         "escalating reveals, transitions, callbacks and a payoff. Every factual beat references "
         "supplied claim IDs; reject unsupported/rejected claims. Speak inference/theory qualifiers "
@@ -352,7 +359,8 @@ def investigate_and_write(run_id: str, attempt: int) -> dict:
             attempt,
             f"revise:{revision}",
             "Revise the script using these specific issues while preserving evidence identities "
-            "and uncertainty. Never invent supporting facts.\n"
+            "and uncertainty. Operator script_seed language may guide voice and structure but is "
+            "not evidence. Never invent supporting facts.\n"
             + _json(
                 {
                     "brief": brief,
