@@ -765,6 +765,89 @@ let browser;
     assert.equal(followUpRequests[2].body.thread_id, threadId);
     assert.match(await page.locator("#selection-bar").innerText(), /1 selected clip/);
 
+    await page.locator("#prompt").fill("Use the close-up for this beat");
+    await page.locator("#command-form").evaluate((form) => form.requestSubmit());
+    const applyCard = page.locator(
+        '[data-action-card="' + editorialApplyProposalId + '"]',
+    );
+    await applyCard.waitFor();
+    assert.match(await applyCard.locator(".action-payload").innerText(), /beat beat-1/i);
+    assert.match(await applyCard.locator(".action-payload").innerText(), /workspace v4 → v5/i);
+    assert.match(await applyCard.locator(".action-payload").innerText(), /single/i);
+    assert.equal(
+        await applyCard.locator("[data-action-id]").innerText(),
+        "Apply edit",
+    );
+    assert.equal(
+        await applyCard.locator("[data-modify-action]").innerText(),
+        "Modify",
+    );
+    assert.equal(
+        await applyCard.locator("[data-reject-action]").innerText(),
+        "Reject",
+    );
+    await applyCard.locator("[data-action-id]").click();
+    assert.equal(
+        await applyCard.locator("[data-action-id]").innerText(),
+        "Confirm: Apply edit",
+    );
+    await applyCard.locator("[data-action-id]").click();
+    await page.getByText(/Storyboard edit applied as workspace version 5/i).waitFor();
+    assert(
+        requests.some(
+            request =>
+                request.path ===
+                    "/v1/ai/actions/" + editorialApplyProposalId + "/execute" &&
+                request.body?.confirmed === true,
+        ),
+    );
+
+    await page.locator("#prompt").fill("Use a different crop for this beat");
+    await page.locator("#command-form").evaluate((form) => form.requestSubmit());
+    const modifyCard = page.locator(
+        '[data-action-card="' + editorialModifyProposalId + '"]',
+    );
+    await modifyCard.waitFor();
+    await modifyCard.locator("[data-modify-action]").click();
+    await page.waitForFunction(() =>
+        document.querySelector("#prompt")?.value.includes(
+            "Modify the rejected proposal",
+        ),
+    );
+    assert(
+        requests.some(
+            request =>
+                request.path ===
+                    "/v1/ai/actions/" + editorialModifyProposalId + "/reject" &&
+                /modified proposal/i.test(request.body?.reason || ""),
+        ),
+    );
+    assert.match(
+        await page.locator("#prompt").inputValue(),
+        /Apply Storyboard edit · beat-1/,
+    );
+
+    await page.locator("#prompt").fill("Try another visual for this beat");
+    await page.locator("#command-form").evaluate((form) => form.requestSubmit());
+    const rejectCard = page.locator(
+        '[data-action-card="' + editorialRejectProposalId + '"]',
+    );
+    await rejectCard.waitFor();
+    await rejectCard.locator("[data-reject-action]").click();
+    await rejectCard.locator(".action-result").filter({hasText: "rejected"}).waitFor();
+    assert.equal(
+        await rejectCard.locator("[data-action-id]").innerText(),
+        "Rejected",
+    );
+    assert(
+        requests.some(
+            request =>
+                request.path ===
+                    "/v1/ai/actions/" + editorialRejectProposalId + "/reject" &&
+                /Operator rejected/i.test(request.body?.reason || ""),
+        ),
+    );
+
     await page.locator("#prompt").fill("Please do something ambiguous");
     await page.locator("#command-form").evaluate((form) => form.requestSubmit());
     await page.waitForFunction(() => document.querySelector("#status").textContent.includes("could not interpret"));
