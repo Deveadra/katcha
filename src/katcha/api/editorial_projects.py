@@ -382,6 +382,51 @@ def preflight_storyboard(
         raise _error(exc) from exc
 
 
+@router.get(
+    "/{project_id}/runs/{run_id}/assets/{candidate_id}/source-monitor"
+)
+def storyboard_source_monitor(
+    channel_profile_id: uuid.UUID,
+    project_id: uuid.UUID,
+    run_id: uuid.UUID,
+    candidate_id: str,
+    request: Request,
+):
+    from katcha.editorial.source_monitor import source_monitor
+
+    _authorize(request, channel_profile_id)
+    try:
+        result = source_monitor(channel_profile_id, project_id, run_id, candidate_id)
+        return {key: value for key, value in result.items() if key != "contact_sheet_key"}
+    except ValueError as exc:
+        raise _error(exc) from exc
+
+
+@router.get(
+    "/{project_id}/runs/{run_id}/assets/{candidate_id}/contact-sheet"
+)
+def storyboard_source_monitor_image(
+    channel_profile_id: uuid.UUID,
+    project_id: uuid.UUID,
+    run_id: uuid.UUID,
+    candidate_id: str,
+    request: Request,
+):
+    from katcha.api.studio import _stream_object
+    from katcha.editorial.source_monitor import source_monitor
+
+    _authorize(request, channel_profile_id)
+    try:
+        result = source_monitor(channel_profile_id, project_id, run_id, candidate_id)
+        return _stream_object(
+            request,
+            str(result["contact_sheet_key"]),
+            f"editorial-{project_id}-{candidate_id}-contact-sheet.jpg",
+        )
+    except ValueError as exc:
+        raise _error(exc) from exc
+
+
 @router.get("/{project_id}/runs/{run_id}/preview")
 def preview_render(
     channel_profile_id: uuid.UUID, project_id: uuid.UUID, run_id: uuid.UUID, request: Request

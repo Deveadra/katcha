@@ -191,6 +191,18 @@
                                     <div class="editorial-subpanel-head editorial-timeline-head"><div><h4>Beat timeline</h4><p>Select a story beat to inspect its visual treatment. Sequence follows the saved Script revision.</p></div><div id="editorial-timeline-summary" class="editorial-timeline-summary" aria-live="polite"></div></div>
                                     <div class="editorial-timeline-shell">
                                         <div id="editorial-beat-timeline" class="editorial-beat-timeline" role="tablist" aria-label="Storyboard beats"></div>
+                                        <section id="editorial-source-monitor" class="editorial-source-monitor" aria-label="Selected footage source monitor" hidden>
+                                            <div class="editorial-source-monitor-head">
+                                                <div><span class="eyebrow">SOURCE MONITOR</span><strong id="editorial-source-monitor-title">Selected footage</strong></div>
+                                                <span id="editorial-source-monitor-meta"></span>
+                                            </div>
+                                            <div class="editorial-source-monitor-canvas">
+                                                <img id="editorial-source-monitor-image" alt="" hidden>
+                                                <p id="editorial-source-monitor-empty">Choose acquired footage to inspect sampled source frames.</p>
+                                            </div>
+                                            <div id="editorial-source-monitor-times" class="editorial-source-monitor-times"></div>
+                                            <p id="editorial-source-monitor-status" class="editorial-source-monitor-status" role="status"></p>
+                                        </section>
                                         <div id="editorial-storyboard" class="editorial-beat-inspector"></div>
                                     </div>
                                 </section>

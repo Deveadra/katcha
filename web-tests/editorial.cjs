@@ -74,6 +74,30 @@ const draft = {
                     deduplicated: true,
                 }, 201);
             }
+            if (url.pathname.endsWith("/runs/acquire/assets/candidate/source-monitor")) {
+                return send({
+                    candidate_id: "candidate",
+                    title: "Supporting interview",
+                    source_url: "https://www.youtube.com/watch?v=support",
+                    clip_id: "clip",
+                    sha256: "a".repeat(64),
+                    duration_seconds: 10,
+                    frame_count: 3,
+                    sample_times: [0.25, 5, 9.75],
+                    coverage: "sampled_frames",
+                    limitation: "These frames are samples, not continuous playback. Verify exact motion and timing in the rendered preview before approval.",
+                });
+            }
+            if (url.pathname.endsWith("/runs/acquire/assets/candidate/contact-sheet")) {
+                return route.fulfill({
+                    status: 200,
+                    contentType: "image/png",
+                    body: Buffer.from(
+                        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2cS8AAAAASUVORK5CYII=",
+                        "base64",
+                    ),
+                });
+            }
             if (url.pathname.includes("/editorial-projects")) {
                 if (url.pathname.includes("/two/")) return send([]);
                 if (url.pathname.endsWith("/editorial-projects")) {
@@ -345,6 +369,29 @@ const draft = {
         });
 
         await page.locator('#editorial-storyboard select[data-primary-visual]').selectOption('media:candidate');
+        await page.locator('#editorial-source-monitor').waitFor({state: 'visible'});
+        await page.locator('#editorial-source-monitor-image').waitFor({state: 'visible'});
+        assert.equal(await page.locator('#editorial-source-monitor-title').innerText(), 'Supporting interview');
+        assert.match(await page.locator('#editorial-source-monitor-meta').innerText(), /10s · 3 sampled frames/);
+        assert.deepEqual(
+            await page.locator('#editorial-source-monitor-times span').allTextContents(),
+            ['F1 · 0:00', 'F2 · 0:05', 'F3 · 0:10'],
+        );
+        assert.match(
+            await page.locator('#editorial-source-monitor-status').innerText(),
+            /samples, not continuous playback/,
+        );
+        assert.equal(
+            calls.some(call => call.path.endsWith('/runs/acquire/assets/candidate/source-monitor')),
+            true,
+        );
+        assert.equal(
+            calls.some(call => call.path.endsWith('/runs/acquire/assets/candidate/contact-sheet')),
+            true,
+        );
+        await page.locator('#editorial-source-monitor').screenshot({
+            path: path.resolve(__dirname, 'test-results/editorial-source-monitor-desktop.png'),
+        });
         await page.locator('#editorial-storyboard input[type=number]:not([data-region])').fill('1.5');
         await page.locator('#editorial-storyboard input[type=checkbox]').check();
         assert.match(await page.locator("#editorial-timeline-summary").innerText(), /1\/1 visuals assigned/);
@@ -354,6 +401,8 @@ const draft = {
         assert.equal(await page.locator('[data-editorial-stage="storyboard"]').getAttribute("aria-selected"), "true");
         assert.equal(await page.locator("[data-timeline-beat]").getAttribute("aria-selected"), "true");
         assert.equal(await page.locator('#editorial-storyboard input[type=number]:not([data-region])').inputValue(), '1.5');
+        await page.locator('#editorial-source-monitor').waitFor({state: 'visible'});
+        assert.equal(await page.locator('#editorial-source-monitor-title').innerText(), 'Supporting interview');
         await page.locator('[data-editorial-stage="assets"]').click();
         await page.getByText(/Managed media available/).waitFor();
         await page.locator('[data-editorial-stage="storyboard"]').click();
@@ -494,6 +543,7 @@ const draft = {
             "128px",
         );
         await page.locator('#editorial-storyboard select[data-primary-visual]').selectOption('image:still-image');
+        await page.locator('#editorial-source-monitor').waitFor({state: 'hidden'});
         await page.locator('[data-editorial-stage="preview"]').click();
         const imageRenderRequest = page.waitForRequest((request) => {
             if (request.method() !== 'POST') return false;

@@ -10,7 +10,7 @@ from test_editorial_projects import saved as _saved
 from test_editorial_research import output
 
 from katcha import db
-from katcha.editorial import direction, provider
+from katcha.editorial import direction, provider, source_monitor
 from katcha.editorial.run_schemas import StartEditorialRun
 from katcha.editorial.visual_schemas import DirectionResult
 from katcha.editorial_models import EditorialProject
@@ -412,6 +412,80 @@ def install_frames(monkeypatch):
             )
         )
     monkeypatch.setattr(provider, "ObjectStore", lambda: Mock(get_bytes=Mock(return_value=b"jpeg")))
+
+
+def install_monitor_frames():
+    from katcha.models import Clip, ClipFeature
+
+    with db.session_scope() as session:
+        clip = session.query(Clip).one()
+        prefix = f"analysis/{clip.sha256[:2]}/{clip.sha256}"
+        session.add(
+            ClipFeature(
+                clip_id=clip.id,
+                contact_sheet_key=f"{prefix}/contact-sheet.jpg",
+                keyframe_keys=[
+                    f"{prefix}/frames/frame-00.jpg",
+                    f"{prefix}/frames/frame-01.jpg",
+                    f"{prefix}/frames/frame-02.jpg",
+                ],
+            )
+        )
+        return clip.id
+
+
+def test_storyboard_source_monitor_revalidates_acquired_frame_evidence(directing):
+    row, _, _ = directing
+    install_media(row)
+    clip_id = install_monitor_frames()
+    acquired_id = uuid.UUID(row.options["asset_run_id"])
+
+    result = source_monitor.source_monitor(
+        row.channel_profile_id,
+        row.project_id,
+        acquired_id,
+        "asset",
+    )
+
+    assert result["candidate_id"] == "asset"
+    assert result["clip_id"] == str(clip_id)
+    assert result["sha256"] == "a" * 64
+    assert result["duration_seconds"] == 10
+    assert result["frame_count"] == 3
+    assert result["sample_times"] == [0.25, 5.0, 9.75]
+    assert result["coverage"] == "sampled_frames"
+    assert result["contact_sheet_key"] == (
+        f"analysis/aa/{'a' * 64}/contact-sheet.jpg"
+    )
+
+
+def test_storyboard_source_monitor_rejects_untrusted_frame_storage(directing):
+    from katcha.models import ClipFeature
+
+    row, _, _ = directing
+    install_media(row)
+    clip_id = install_monitor_frames()
+    with db.session_scope() as session:
+        session.get(ClipFeature, clip_id).contact_sheet_key = "analysis/shared/contact-sheet.jpg"
+
+    with pytest.raises(EditorialConflict, match="invalid storage identity"):
+        source_monitor.source_monitor(
+            row.channel_profile_id,
+            row.project_id,
+            uuid.UUID(row.options["asset_run_id"]),
+            "asset",
+        )
+
+
+def test_storyboard_source_monitor_requires_acquired_run(directing):
+    row, _, _ = directing
+    with pytest.raises(EditorialConflict, match="acquired-assets run"):
+        source_monitor.source_monitor(
+            row.channel_profile_id,
+            row.project_id,
+            row.id,
+            "asset",
+        )
 
 
 def frame_observations(**changes):

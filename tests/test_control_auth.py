@@ -325,6 +325,51 @@ def test_named_principal_ai_command_and_write_scopes_are_distinct() -> None:
     _require_named_principal_route_access(command_request)
 
 
+@pytest.mark.parametrize("suffix", ["source-monitor", "contact-sheet"])
+def test_named_principal_storyboard_source_monitor_uses_ai_read_scope(
+    suffix: str,
+) -> None:
+    channel_id = uuid.uuid4()
+    project_id = uuid.uuid4()
+    run_id = uuid.uuid4()
+    path = (
+        f"/v1/channels/{channel_id}/editorial-projects/{project_id}/runs/{run_id}/"
+        f"assets/candidate/{suffix}"
+    )
+    request = _request(
+        path,
+        path_params={
+            "channel_profile_id": str(channel_id),
+            "project_id": str(project_id),
+            "run_id": str(run_id),
+        },
+    )
+    _authenticate(
+        request,
+        _credentials("aerith-fixture-token-000001"),
+        _settings(channel_id=channel_id, scopes=["ai:read"]),
+    )
+    _require_named_principal_route_access(request)
+
+    denied = _request(
+        path,
+        path_params={
+            "channel_profile_id": str(channel_id),
+            "project_id": str(project_id),
+            "run_id": str(run_id),
+        },
+    )
+    _authenticate(
+        denied,
+        _credentials("aerith-fixture-token-000001"),
+        _settings(channel_id=channel_id, scopes=["channels:read"]),
+    )
+    with pytest.raises(HTTPException) as exc:
+        _require_named_principal_route_access(denied)
+    assert exc.value.status_code == 403
+    assert "ai:read" in str(exc.value.detail)
+
+
 def test_named_principal_editorial_source_upload_uses_production_scope() -> None:
     channel_id = uuid.uuid4()
     request = _request(
