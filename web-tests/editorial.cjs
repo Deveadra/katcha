@@ -54,7 +54,7 @@ const draft = {
                 creator: "Marvel Entertainment", discovered_at: "2026-10-01T12:00:00Z",
             }]);
             if (url.pathname.endsWith("/editorial-projects/source-uploads")) {
-                calls.at(-1).uploadKey = url.searchParams.get("idempotency_key");
+                calls.at(-1).sourceUploadKey = url.searchParams.get("idempotency_key");
                 if (loseSourceMediaResponse) {
                     loseSourceMediaResponse = false;
                     return send({detail: "Upload response interrupted. Retry to recover the managed source."}, 503);
@@ -205,7 +205,7 @@ const draft = {
         assert.match(await page.locator("#editorial-selected-clips").innerText(), /Owned local source/);
         const sourceUploads = calls.filter(call => call.path.endsWith("/source-uploads"));
         assert.equal(sourceUploads.length, 2);
-        assert.equal(sourceUploads[0].uploadKey, sourceUploads[1].uploadKey);
+        assert.equal(sourceUploads[0].sourceUploadKey, sourceUploads[1].sourceUploadKey);
         await page.getByText("Start from a script", {exact: true}).click();
         await page.locator("#editorial-script-seed-file").setInputFiles({
             name: "operator-draft.md",
@@ -336,7 +336,7 @@ const draft = {
         assert.equal(await page.locator('[data-narration-file]').evaluate(input => input.files.length), 1);
         await page.getByRole('button', {name: 'Upload recording', exact: true}).click();
         await page.locator('[data-narration-select] option[value="audio-id"]').waitFor({state: 'attached'});
-        const uploads = calls.filter(call => call.uploadKey);
+        const uploads = calls.filter(call => call.path.endsWith("/narration") && call.uploadKey);
         assert.equal(uploads.length, 2); assert.equal(uploads[0].uploadKey, uploads[1].uploadKey);
         assert.equal(await page.locator('[data-narration-select]').inputValue(), 'audio-id');
         await page.getByText('Generate channel narration', {exact: true}).click();
