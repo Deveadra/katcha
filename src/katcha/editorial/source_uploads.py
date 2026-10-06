@@ -120,6 +120,7 @@ def import_source_media(
         ).encode()
     ).hexdigest()
 
+    replay_source_exists = False
     with session_scope() as session:
         ensure_active_profile(session, channel_id)
         previous = session.get(SourceItem, source_id)
@@ -130,20 +131,23 @@ def import_source_media(
             clip = session.get(Clip, previous.clip_id) if previous.clip_id else None
             if clip is None:
                 raise ValueError("Previous source upload is missing its managed clip")
-            return ImportedSourceMedia(
-                source_id=previous.id,
-                clip_id=clip.id,
-                source_url=previous.source_url,
-                title=previous.title or display_title,
-                filename=str(metadata.get("original_filename") or clean_name),
-                sha256=clip.sha256,
-                size_bytes=int(clip.size_bytes or size_bytes),
-                duration_seconds=float(clip.duration_seconds or duration),
-                width=int(clip.width or width),
-                height=int(clip.height or height),
-                extension=clip.extension or extension,
-                deduplicated=True,
-            )
+            lifecycle = ensure_lifecycle(session, clip)
+            if lifecycle.lifecycle_state == "hot":
+                return ImportedSourceMedia(
+                    source_id=previous.id,
+                    clip_id=clip.id,
+                    source_url=previous.source_url,
+                    title=previous.title or display_title,
+                    filename=str(metadata.get("original_filename") or clean_name),
+                    sha256=clip.sha256,
+                    size_bytes=int(clip.size_bytes or size_bytes),
+                    duration_seconds=float(clip.duration_seconds or duration),
+                    width=int(clip.width or width),
+                    height=int(clip.height or height),
+                    extension=clip.extension or extension,
+                    deduplicated=True,
+                )
+            replay_source_exists = True
 
     store = ObjectStore()
     if not store.exists(key):
@@ -168,25 +172,27 @@ def import_source_media(
             )
             session.add(clip)
             session.flush()
-        source = SourceItem(
-            id=source_id,
-            source_url=source_url,
-            canonical_url=source_url,
-            platform="upload",
-            status=SourceStatus.READY.value,
-            title=display_title,
-            creator="Operator upload",
-            source_metadata={
-                "channel_profile_id": str(channel_id),
-                "original_filename": clean_name,
-                "content_type": content_type,
-                "permitted_use_confirmed": True,
-                "upload_request_sha256": request_digest,
-                "actor": actor,
-            },
-            clip_id=clip.id,
-        )
-        session.add(source)
+        source = session.get(SourceItem, source_id)
+        if source is None:
+            source = SourceItem(
+                id=source_id,
+                source_url=source_url,
+                canonical_url=source_url,
+                platform="upload",
+                status=SourceStatus.READY.value,
+                title=display_title,
+                creator="Operator upload",
+                source_metadata={
+                    "channel_profile_id": str(channel_id),
+                    "original_filename": clean_name,
+                    "content_type": content_type,
+                    "permitted_use_confirmed": True,
+                    "upload_request_sha256": request_digest,
+                    "actor": actor,
+                },
+                clip_id=clip.id,
+            )
+            session.add(source)
         lifecycle = ensure_lifecycle(session, clip)
         stale_archive_key = lifecycle.archive_key
         if lifecycle.lifecycle_state != "hot":
@@ -199,7 +205,11 @@ def import_source_media(
             DomainEvent(
                 aggregate_type="clip",
                 aggregate_id=str(clip.id),
-                event_type="clip.operator_uploaded",
+                event_type=(
+                    "clip.operator_reuploaded"
+                    if replay_source_exists
+                    else "clip.operator_uploaded"
+                ),
                 payload={
                     "channel_profile_id": str(channel_id),
                     "source_id": str(source_id),
