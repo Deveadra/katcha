@@ -133,6 +133,7 @@ from katcha.services.compilations import (
     register_compilation_regeneration,
     review_compilation,
 )
+from katcha.services.clip_lifecycle import channel_ids_for_clip
 from katcha.services.intelligence_automation import (
     advance_processed_handoff_receipt,
     reconcile_authorized_handoff_records,
@@ -1105,12 +1106,57 @@ def list_sources(
         return list(session.scalars(stmt))
 
 
+def _clip_media_range(value: str, size: int) -> tuple[int, int]:
+    if size <= 0 or not value.startswith("bytes=") or "," in value:
+        raise HTTPException(
+            status_code=416,
+            detail="invalid media byte range",
+            headers={"Content-Range": f"bytes */{size}"},
+        )
+    bounds = value[6:].strip()
+    if "-" not in bounds:
+        raise HTTPException(
+            status_code=416,
+            detail="invalid media byte range",
+            headers={"Content-Range": f"bytes */{size}"},
+        )
+    start_text, end_text = bounds.split("-", 1)
+    try:
+        if not start_text:
+            suffix = int(end_text)
+            if suffix <= 0:
+                raise ValueError
+            start_byte = max(size - suffix, 0)
+            end_byte = size - 1
+        else:
+            start_byte = int(start_text)
+            end_byte = size - 1 if not end_text else min(int(end_text), size - 1)
+            if start_byte < 0 or end_byte < start_byte or start_byte >= size:
+                raise ValueError
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=416,
+            detail="invalid media byte range",
+            headers={"Content-Range": f"bytes */{size}"},
+        ) from exc
+    return start_byte, end_byte
+
+
 @app.get("/v1/clips/{clip_id}/media")
-def get_clip_media(clip_id: uuid.UUID) -> StreamingResponse:
+def get_clip_media(
+    clip_id: uuid.UUID,
+    request: Request,
+    channel_profile_id: uuid.UUID | None = Query(default=None),
+) -> StreamingResponse:
     with session_scope() as session:
         clip = session.get(Clip, clip_id)
         if clip is None:
             raise HTTPException(status_code=404, detail="clip not found")
+        if (
+            channel_profile_id is not None
+            and channel_profile_id not in channel_ids_for_clip(session, clip_id)
+        ):
+            raise HTTPException(status_code=404, detail="clip not found for this channel")
         lifecycle = session.get(ClipLifecycle, clip_id)
         if lifecycle is not None and lifecycle.lifecycle_state == "purged":
             raise HTTPException(
@@ -1129,16 +1175,40 @@ def get_clip_media(clip_id: uuid.UUID) -> StreamingResponse:
     store = ObjectStore()
     if not store.exists(storage_key):
         raise HTTPException(status_code=404, detail="stored clip media is missing")
-    media_type = mimetypes.guess_type(f"clip.{extension.lstrip('.')}")[0]
+    stat = store.stat(storage_key)
+    size = int(stat["size_bytes"])
+    if size <= 0:
+        raise HTTPException(status_code=404, detail="stored clip media is empty")
+    guessed = mimetypes.guess_type(f"clip.{extension.lstrip('.')}")[0]
+    stored_type = str(stat.get("content_type") or "")
+    media_type = stored_type if stored_type.startswith("video/") else guessed
+    media_type = media_type or "application/octet-stream"
+    headers = {
+        "Accept-Ranges": "bytes",
+        "Cache-Control": "private, max-age=60",
+        "Content-Disposition": 'inline; filename="clip-preview"',
+    }
+    byte_range = request.headers.get("range")
+    if byte_range:
+        start_byte, end_byte = _clip_media_range(byte_range, size)
+        headers.update(
+            {
+                "Content-Length": str(end_byte - start_byte + 1),
+                "Content-Range": f"bytes {start_byte}-{end_byte}/{size}",
+            }
+        )
+        return StreamingResponse(
+            store.iter_range(storage_key, start_byte, end_byte),
+            status_code=206,
+            media_type=media_type,
+            headers=headers,
+        )
+    headers["Content-Length"] = str(size)
     return StreamingResponse(
         store.iter_bytes(storage_key),
-        media_type=media_type or "application/octet-stream",
-        headers={
-            "Cache-Control": "private, max-age=60",
-            "Content-Disposition": 'inline; filename="clip-preview"',
-        },
+        media_type=media_type,
+        headers=headers,
     )
-
 
 @app.get("/v1/clips/{clip_id}", response_model=ClipResponse)
 def get_clip(clip_id: uuid.UUID) -> Clip:
