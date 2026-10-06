@@ -11,7 +11,7 @@ from time import monotonic
 from typing import Literal
 
 from fastapi import APIRouter, HTTPException, Query, Request, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from sqlalchemy import or_, select
 from starlette.concurrency import run_in_threadpool
 
@@ -146,6 +146,12 @@ class CommandResourceRef(BaseModel):
         max_length=80,
         pattern=r"^[A-Za-z0-9_-]+$",
     )
+
+    @model_validator(mode="after")
+    def valid_selector(self):
+        if self.selector and self.kind != "editorial_project":
+            raise ValueError("resource selectors are only supported for editorial projects")
+        return self
 
 
 class CommandRequest(BaseModel):
