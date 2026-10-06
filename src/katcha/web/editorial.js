@@ -984,7 +984,9 @@ window.KatchaEditorial = (() => {
         }));
         const persistStoryboardChoice = (event) => {
             saveStoryboard(); showFootageControls(); refreshTimelineStatus();
-            if (event?.target?.matches("[data-primary-visual]")) void loadSourceMonitor();
+            if (event?.type === "change" && event.target.matches("[data-primary-visual]")) {
+                void loadSourceMonitor();
+            }
         };
         el("editorial-storyboard").addEventListener("input", persistStoryboardChoice);
         el("editorial-storyboard").addEventListener("change", persistStoryboardChoice);
