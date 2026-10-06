@@ -1382,6 +1382,7 @@ window.KatchaEditorial = (() => {
             void guarded(async () => {
                 const channel = state.channel; const project = state.project.id; const revision = state.project.revision;
                 if (state.stale || read(storageKey(`pending.${project}`), null)) throw new Error("Save or discard script edits before changing recordings.");
+                if (state.storyboardDirty) await flushStoryboardWorkspace();
                 const base = path(channel, `/${project}/narration`);
                 if (button.hasAttribute("data-narration-revoke")) {
                     const selected = row.querySelector("select").value;
@@ -1400,7 +1401,22 @@ window.KatchaEditorial = (() => {
                     const uploaded = await api(`${base}?${query}`, {method: "POST", body: audio, headers: {"Content-Type": "audio/wav"}});
                     if (channel === state.channel && project === state.project?.id) {
                         const saved = read(narrationKey(), {mode: "narrated", choices: {}});
-                        saved.choices[payload.beat_id] = uploaded.id; remember(narrationKey(), saved);
+                        saved.mode = "narrated";
+                        saved.choices[payload.beat_id] = uploaded.id;
+                        remember(narrationKey(), saved);
+                        state.narration = {
+                            ...(state.narration || {}),
+                            recordings: [
+                                ...((state.narration?.recordings || []).filter(
+                                    item => item.id !== uploaded.id,
+                                )),
+                                uploaded,
+                            ],
+                        };
+                        state.narrationKey = "";
+                        renderNarration();
+                        scheduleStoryboardWorkspaceSave();
+                        await flushStoryboardWorkspace();
                     }
                 }
                 if (channel === state.channel) { state.narrationKey = ""; await open(project, {focus: false}); }
