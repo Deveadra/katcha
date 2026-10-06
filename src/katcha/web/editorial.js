@@ -1152,13 +1152,42 @@ window.KatchaEditorial = (() => {
                     unavailable: true,
                 });
             }
-            return `<fieldset id="board-panel-${esc(beat.id)}" class="editorial-beat editorial-beat-editor" role="tabpanel" data-board-beat="${esc(beat.id)}"><legend><span>Beat ${index + 1} · ${esc(beat.role)}</span><small>${timelineClock(beat.planned_duration_seconds)} planned</small></legend><p class="editorial-beat-intent">${esc(beat.visual_intent)}</p><label>Visual<select data-primary-visual>${'<option value="">Choose a visual</option>'}${options.map(item => `<option value="${esc(item.value)}" ${item.unavailable ? 'data-unavailable="true"' : ""} ${savedChoice === item.value ? "selected" : ""}>${esc(item.label)}</option>`).join("")}</select></label><label>Footage start (seconds)<input type="number" min="0" step="0.1" value="${esc(saved[index]?.start || "0")}"></label><label class="check-row"><input type="checkbox" ${saved[index]?.freeze ? "checked" : ""}> Hold this frame</label>
-                <div data-image-tools hidden><label>Compare with another image<select data-image-compare><option value="">Single image</option>${saved[index]?.compare && !(state.images?.images || []).some(item => item.id === saved[index].compare && item.status === "active" && item.beat_id === beat.id) ? `<option value="${esc(saved[index].compare)}" selected>Unavailable image · choose a replacement</option>` : ""}${(state.images?.images || []).filter(item => item.status === "active" && item.beat_id === beat.id).map(item => `<option value="${esc(item.id)}" ${saved[index]?.compare === item.id ? "selected" : ""}>${esc(item.title)}</option>`).join("")}</select></label>
-                <details class="ae-help"><summary>Mark a source region</summary><p>Manual placement on the original image. Percentages follow the image through resizing and push-in. Check the preview before approval.</p>
-                <label>Annotation<select data-region="kind">${[["", "None"], ["circle", "Circle"], ["arrow", "Arrow"], ["highlight", "Highlight"]].map(([value, label]) => `<option value="${value}" ${saved[index]?.annotation?.kind === value ? "selected" : ""}>${label}</option>`).join("")}</select></label>
-                <div data-region-fields><label>Image to mark<select data-region="target"><option value="0">First image</option><option value="1" ${saved[index]?.annotation?.target === "1" ? "selected" : ""}>Second image</option></select></label>
-                ${[["x", "Left", 25], ["y", "Top", 25], ["width", "Width", 50], ["height", "Height", 50]].map(([key, label, fallback]) => `<label>${label} (%)<input data-region="${key}" type="number" min="${key === "width" || key === "height" ? 0.1 : 0}" max="100" step="0.1" value="${esc(saved[index]?.annotation?.[key] ?? fallback)}"></label>`).join("")}
-                <label>Optional label<input data-region="label" maxlength="100" value="${esc(saved[index]?.annotation?.label || "")}"></label></div></details></div></fieldset>`;
+            return `<fieldset id="board-panel-${esc(beat.id)}" class="editorial-beat editorial-beat-editor" role="tabpanel" data-board-beat="${esc(beat.id)}" data-beat-duration="${esc(beat.planned_duration_seconds)}"><legend><span>Beat ${index + 1} · ${esc(beat.role)}</span><small>${timelineClock(beat.planned_duration_seconds)} planned</small></legend><p class="editorial-beat-intent">${esc(beat.visual_intent)}</p>
+                <label>Visual<select data-primary-visual>${'<option value="">Choose a visual</option>'}${options.map(item => `<option value="${esc(item.value)}" ${item.unavailable ? 'data-unavailable="true"' : ""} ${savedChoice === item.value ? "selected" : ""}>${esc(item.label)}</option>`).join("")}</select></label>
+                <div class="editorial-edit-section" data-footage-tools hidden>
+                    <div class="editorial-edit-grid">
+                        <label>Source in (seconds)<input data-footage="start" type="number" min="0" step="0.1" value="${esc(saved[index]?.start ?? "0")}"></label>
+                        <label>Playback speed<input data-footage="rate" type="number" min="0.25" max="2" step="0.05" value="${esc(saved[index]?.rate ?? "1")}"></label>
+                        <label>Push-in<input data-footage="push" type="number" min="1" max="1.15" step="0.01" value="${esc(saved[index]?.push ?? "1")}"></label>
+                        <div class="editorial-derived"><span>Source window</span><strong data-footage-out></strong></div>
+                    </div>
+                    <label class="check-row"><input data-footage="freeze" type="checkbox" ${saved[index]?.freeze ? "checked" : ""}> Hold this source frame</label>
+                    <details class="ae-help"><summary>Crop source frame</summary>
+                        <label class="check-row"><input data-crop-enabled type="checkbox" ${saved[index]?.cropEnabled ? "checked" : ""}> Use a source-coordinate crop</label>
+                        <div class="editorial-edit-grid" data-crop-fields>
+                            ${[["x", "Left", 0], ["y", "Top", 0], ["width", "Width", 100], ["height", "Height", 100]].map(([key, label, fallback]) => `<label>${label} (%)<input data-crop="${key}" type="number" min="${key === "width" || key === "height" ? 0.1 : 0}" max="100" step="0.1" value="${esc(saved[index]?.crop?.[key] ?? fallback)}"></label>`).join("")}
+                        </div>
+                    </details>
+                </div>
+                <div data-image-tools hidden>
+                    <div class="editorial-edit-grid"><label>Image push-in<input data-image-push type="number" min="1" max="1.15" step="0.01" value="${esc(saved[index]?.imagePush ?? "1")}"></label>
+                    <label>Compare with another image<select data-image-compare><option value="">Single image</option>${saved[index]?.compare && !(state.images?.images || []).some(item => item.id === saved[index].compare && item.status === "active" && item.beat_id === beat.id) ? `<option value="${esc(saved[index].compare)}" selected>Unavailable image · choose a replacement</option>` : ""}${(state.images?.images || []).filter(item => item.status === "active" && item.beat_id === beat.id).map(item => `<option value="${esc(item.id)}" ${saved[index]?.compare === item.id ? "selected" : ""}>${esc(item.title)}</option>`).join("")}</select></label></div>
+                    <details class="ae-help"><summary>Mark a source region</summary><p>Manual placement on the original image. Percentages follow the image through resizing and push-in. Check the preview before approval.</p>
+                    <label>Annotation<select data-region="kind">${[["", "None"], ["circle", "Circle"], ["arrow", "Arrow"], ["highlight", "Highlight"]].map(([value, label]) => `<option value="${value}" ${saved[index]?.annotation?.kind === value ? "selected" : ""}>${label}</option>`).join("")}</select></label>
+                    <div data-region-fields><label>Image to mark<select data-region="target"><option value="0">First image</option><option value="1" ${saved[index]?.annotation?.target === "1" ? "selected" : ""}>Second image</option></select></label>
+                    <div class="editorial-edit-grid">${[["x", "Left", 25], ["y", "Top", 25], ["width", "Width", 50], ["height", "Height", 50]].map(([key, label, fallback]) => `<label>${label} (%)<input data-region="${key}" type="number" min="${key === "width" || key === "height" ? 0.1 : 0}" max="100" step="0.1" value="${esc(saved[index]?.annotation?.[key] ?? fallback)}"></label>`).join("")}</div>
+                    <label>Optional label<input data-region="label" maxlength="100" value="${esc(saved[index]?.annotation?.label || "")}"></label></div></details>
+                </div>
+                <details class="ae-help editorial-fine-controls"><summary>Caption & transition</summary>
+                    <div class="editorial-edit-grid">
+                        <label>Caption position<select data-caption-position><option value="bottom" ${(saved[index]?.captionPosition || "bottom") === "bottom" ? "selected" : ""}>Bottom</option><option value="center" ${saved[index]?.captionPosition === "center" ? "selected" : ""}>Center</option></select></label>
+                        <label>Caption scale<input data-caption-scale type="number" min="0.75" max="1.35" step="0.05" value="${esc(saved[index]?.captionScale ?? "1")}"></label>
+                        <label>Transition<select data-transition><option value="cut" ${(saved[index]?.transition || "cut") === "cut" ? "selected" : ""}>Hard cut</option><option value="fade" ${saved[index]?.transition === "fade" ? "selected" : ""}>Fade through black</option></select></label>
+                        <label data-transition-frame-control>Fade frames<input data-transition-frames type="number" min="3" max="15" step="1" value="${esc(saved[index]?.transitionFrames ?? "8")}"></label>
+                    </div>
+                    <label class="check-row"><input data-caption-background type="checkbox" ${saved[index]?.captionBackground ? "checked" : ""}> Add caption background for readability</label>
+                </details>
+            </fieldset>`;
         }).join("") || '<p class="empty">Save a script and choose supporting media to prepare a preview.</p>';
         showFootageControls();
         refreshTimelineStatus();
