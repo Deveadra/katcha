@@ -283,6 +283,7 @@ def test_initial_primary_bootstrap_preserves_private_only_acquired_host() -> Non
     # subnet-wide private security list.
     assert "katcha-prod-admin-nsg" in access
     assert "network nsg rules add" in access
+    assert "network nsg rules remove" in access
     assert "OCI Bastion SSH to Katcha primary" in access
     assert "network vnic update" in access
     assert "security-list update" not in access
