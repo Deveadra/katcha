@@ -1,5 +1,6 @@
 """Synthetic evidence tests; no live research or factual-verification claim."""
 
+import hashlib
 import importlib.util
 import uuid
 from concurrent.futures import ThreadPoolExecutor
@@ -202,6 +203,41 @@ def test_api_roundtrip_replay_history_and_audit(saved):
             )
         )
         assert len(events) == 3
+
+
+def test_project_persists_provenance_checked_script_seed(saved):
+    client, channel, _ = saved
+    body = brief("script-seed")
+    text = "# Draft\n\nThis might connect to earlier material."
+    body["brief"]["script_seed"] = {
+        "text": text,
+        "origin": "operator_file",
+        "content_sha256": hashlib.sha256(text.encode()).hexdigest(),
+        "filename": "draft.md",
+        "media_type": "text/markdown",
+        "source_file_sha256": "a" * 64,
+    }
+
+    response = client.post(root(channel), json=body)
+    assert response.status_code == 201, response.text
+    seed = response.json()["brief"]["script_seed"]
+    assert seed["origin"] == "operator_file"
+    assert seed["filename"] == "draft.md"
+
+
+def test_project_rejects_script_seed_with_mismatched_content_hash(saved):
+    client, channel, _ = saved
+    body = brief("bad-script-seed")
+    body["brief"]["script_seed"] = {
+        "text": "Operator draft",
+        "origin": "operator_paste",
+        "content_sha256": "0" * 64,
+        "media_type": "text/plain",
+    }
+
+    response = client.post(root(channel), json=body)
+    assert response.status_code == 422
+    assert "content hash" in response.text
 
 
 def test_project_persists_verified_managed_source_binding(saved):
