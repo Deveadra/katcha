@@ -959,7 +959,7 @@ let browser;
     restrictedSession = true;
     await page.goto("http://127.0.0.1:8770/ai.html");
     await page.locator("#command-center:not([hidden])").waitFor();
-    await page.getByText(/stored hook and rewatch signals/i).waitFor();
+    await page.getByText(/stored hook and rewatch signals/i).first().waitFor();
     assert.match(await page.locator("#principal-state").innerText(), /auditor/i);
     assert.match(await page.locator("#principal-state").innerText(), /1 channel/i);
     assert.equal(await page.locator("#prompt").isDisabled(), true);
