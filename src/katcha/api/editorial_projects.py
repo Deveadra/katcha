@@ -39,6 +39,7 @@ async def source_media_upload(
     request: Request,
     filename: str = Query(min_length=1, max_length=255),
     title: str | None = Query(default=None, max_length=300),
+    idempotency_key: str = Query(min_length=1, max_length=120),
     permitted_use: bool = Query(False),
 ):
     from katcha.editorial.source_uploads import (
@@ -81,6 +82,7 @@ async def source_media_upload(
             content_type=content_type,
             title=title,
             permitted_use=permitted_use,
+            idempotency_key=idempotency_key,
             actor=control_actor(request),
         )
     except ValueError as exc:
