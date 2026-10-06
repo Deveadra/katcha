@@ -1320,8 +1320,18 @@ window.KatchaEditorial = (() => {
             });
         });
         window.KatchaEditorialHistory.init(transport, blobTransport);
-        el("editorial-presentation").addEventListener("change", () => { saveNarrationChoices(); renderNarration(); renderActions(); });
-        el("editorial-narration").addEventListener("change", saveNarrationChoices);
+        el("editorial-presentation").addEventListener("change", () => {
+            saveNarrationChoices();
+            renderNarration();
+            renderActions();
+            scheduleStoryboardWorkspaceSave();
+        });
+        el("editorial-narration").addEventListener("change", event => {
+            saveNarrationChoices();
+            if (event.target.matches("[data-narration-select]")) {
+                scheduleStoryboardWorkspaceSave();
+            }
+        });
         el("editorial-narration").addEventListener("click", event => {
             const button = event.target.closest("[data-narration-upload], [data-narration-revoke]");
             if (!button) return;
@@ -1366,6 +1376,9 @@ window.KatchaEditorial = (() => {
             }));
         }
         el("editorial-auto-regions").addEventListener("change", () => remember(boardStorage() + ".auto-regions", el("editorial-auto-regions").checked));
+        el("editorial-storyboard-undo").addEventListener("click", () => {
+            void guarded(undoStoryboardWorkspace);
+        });
         el("editorial-direct").addEventListener("click", () => void guarded(async () => {
             const channel = state.channel; const project = state.project.id;
             const payload = {target: "direction", expected_revision: state.project.revision, asset_run_id: state.assetRun.editorial_run_id, direction: directionOptions()};
@@ -1383,7 +1396,10 @@ window.KatchaEditorial = (() => {
             if (channel === state.channel) { await open(project, {focus: false}); advanceStage("preview"); }
         }));
         const persistStoryboardChoice = (event) => {
-            saveStoryboard(); showFootageControls(); refreshTimelineStatus();
+            saveStoryboard();
+            showFootageControls();
+            refreshTimelineStatus();
+            scheduleStoryboardWorkspaceSave();
             if (event?.type === "change" && event.target.matches("[data-primary-visual]")) {
                 void loadSourceMonitor();
             }
