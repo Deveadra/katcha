@@ -235,7 +235,7 @@ def _state(
     resource: ActionResourceActivity | None,
     terminal_event: DomainEvent | None,
 ) -> tuple[str, bool]:
-    if proposal.status in {"expired", "failed"}:
+    if proposal.status in {"expired", "failed", "rejected"}:
         return proposal.status, True
     if proposal.status in {"proposed", "executing"}:
         return proposal.status, False
