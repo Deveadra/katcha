@@ -496,10 +496,16 @@ session_public_key="$session_private_key.pub"
 known_hosts="$(mktemp)"
 tunnel_log="$(mktemp)"
 tunnel_pid=""
+session_id=""
 cleanup() {
     if [[ -n "$tunnel_pid" ]]; then
         kill "$tunnel_pid" >/dev/null 2>&1 || true
         wait "$tunnel_pid" >/dev/null 2>&1 || true
+    fi
+    if [[ -n "$session_id" ]]; then
+        oci_cmd bastion session delete \
+            --session-id "$session_id" \
+            --force >/dev/null 2>&1 || true
     fi
     rm -rf "$session_key_dir"
     rm -f "$known_hosts" "$tunnel_log"
@@ -539,19 +545,53 @@ done
 [[ "${session_state:-}" == "ACTIVE" ]] || fail "Bastion session did not become ACTIVE"
 
 bastion_host="host.bastion.$OCI_REGION.oci.oraclecloud.com"
-ssh \
-    -i "$session_private_key" \
-    -o IdentitiesOnly=yes \
-    -o PubkeyAcceptedAlgorithms=+ssh-rsa \
-    -o StrictHostKeyChecking=accept-new \
-    -o UserKnownHostsFile="$known_hosts" \
-    -o ExitOnForwardFailure=yes \
-    -o ServerAliveInterval=30 \
-    -N \
-    -L "$LOCAL_PORT:$private_ip:22" \
-    -p 22 \
-    "$session_id@$bastion_host" >"$tunnel_log" 2>&1 &
-tunnel_pid=$!
+log "Waiting for Bastion session SSH authentication to propagate"
+tunnel_ready=false
+for attempt in $(seq 1 24); do
+    : >"$tunnel_log"
+    ssh \
+        -F /dev/null \
+        -4 \
+        -i "$session_private_key" \
+        -o IdentitiesOnly=yes \
+        -o IdentityAgent=none \
+        -o HostKeyAlgorithms=+ssh-rsa \
+        -o PubkeyAcceptedAlgorithms=+ssh-rsa \
+        -o StrictHostKeyChecking=accept-new \
+        -o UserKnownHostsFile="$known_hosts" \
+        -o ExitOnForwardFailure=yes \
+        -o ServerAliveInterval=30 \
+        -N \
+        -L "$LOCAL_PORT:$private_ip:22" \
+        -p 22 \
+        "$session_id@$bastion_host" >"$tunnel_log" 2>&1 &
+    tunnel_pid=$!
+
+    sleep 2
+    if kill -0 "$tunnel_pid" >/dev/null 2>&1; then
+        tunnel_ready=true
+        break
+    fi
+
+    wait "$tunnel_pid" >/dev/null 2>&1 || true
+    tunnel_pid=""
+
+    if grep -q 'Permission denied (publickey)' "$tunnel_log"; then
+        if [[ "$attempt" == "1" ]]; then
+            log "Bastion session is ACTIVE; waiting for its SSH key to become usable"
+        fi
+        sleep 3
+        continue
+    fi
+
+    cat "$tunnel_log" >&2
+    fail "Bastion SSH tunnel exited before authentication completed"
+done
+
+if [[ "$tunnel_ready" != "true" ]]; then
+    cat "$tunnel_log" >&2
+    fail "Bastion session SSH key did not become usable before the propagation timeout"
+fi
 
 log "Waiting for the private SSH endpoint through Bastion"
 connected=false
