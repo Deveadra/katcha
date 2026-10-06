@@ -195,16 +195,21 @@ def start_run(
             if not set(request.asset_candidate_ids) <= candidates.keys():
                 raise EditorialConflict("Selected assets were not discovered by this scout")
             selection = [candidates[key] for key in request.asset_candidate_ids]
-            if any(item["medium"] != "video" for item in selection):
+            unsupported = {
+                str(item.get("medium") or "")
+                for item in selection
+                if item.get("medium") not in {"video", "image"}
+            }
+            if unsupported:
                 raise EditorialConflict(
-                    "Automatic asset acquisition currently supports videos only"
+                    "Automatic asset acquisition supports discovered video and still-image leads"
                 )
             artifacts.update(
                 asset_selection=selection,
                 scout_run_id=str(scout.id),
                 asset_scout=scout.artifacts["asset_scout"],
             )
-            urls = [item["url"] for item in selection]
+            urls = [item["url"] for item in selection if item["medium"] == "video"]
         if not set(effective_bindings) <= set(urls):
             raise EditorialConflict("Clip bindings must match source URLs in this brief")
         for url in urls:
