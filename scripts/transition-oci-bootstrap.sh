@@ -47,9 +47,12 @@ gh variable set KATCHA_OCI_CROSS_AD_TARGETS_JSON     --repo "$REPO"     --body "
 gh variable set KATCHA_OCI_BOOTSTRAP_ACQUIRED     --repo "$REPO"     --body "true"
 gh variable set KATCHA_OCI_BOOTSTRAP_ACQUIRED_AT     --repo "$REPO"     --body "$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
 
-notification_sent="$(
-    gh variable get KATCHA_OCI_BOOTSTRAP_NOTIFICATION_SENT         --repo "$REPO" 2>/dev/null || true
-)"
+if ! notification_sent="$(
+    gh api "repos/$REPO/actions/variables?per_page=100"         --jq '.variables[]? | select(.name == "KATCHA_OCI_BOOTSTRAP_NOTIFICATION_SENT") | .value'
+)"; then
+    echo "Could not read bootstrap notification state from GitHub." >&2
+    exit 22
+fi
 
 if [[ "$notification_sent" != "true" ]]; then
     message="$(
