@@ -361,7 +361,6 @@ if [[ -z "$bastion_id" ]]; then
                 --name "$BASTION_NAME" \
                 --client-cidr-list "[\"$operator_cidr\"]" \
                 --max-session-ttl 10800 \
-                --wait-for-state SUCCEEDED \
                 --query 'data.id' \
                 --raw-output
         )"
@@ -388,9 +387,13 @@ for _ in $(seq 1 60); do
     if [[ "$bastion_state" == "ACTIVE" && -n "$bastion_ip" ]]; then
         break
     fi
+    if [[ "$bastion_state" == "FAILED" || "$bastion_state" == "DELETED" ]]; then
+        fail "Bastion entered terminal state: $bastion_state"
+    fi
     sleep 5
 done
-[[ -n "$bastion_ip" ]] || fail "Bastion did not become ACTIVE with a private endpoint"
+[[ "$bastion_state" == "ACTIVE" && -n "$bastion_ip" ]] ||
+    fail "Bastion did not become ACTIVE with a private endpoint"
 
 nsg_list="$(
     oci_cmd network nsg list \
@@ -488,7 +491,6 @@ session_id="$(
         --target-private-ip "$private_ip" \
         --target-port 22 \
         --session-ttl 10800 \
-        --wait-for-state SUCCEEDED \
         --query 'data.id' \
         --raw-output
 )"
@@ -499,6 +501,9 @@ for _ in $(seq 1 60); do
             --query 'data."lifecycle-state"' --raw-output
     )"
     [[ "$session_state" == "ACTIVE" ]] && break
+    if [[ "$session_state" == "FAILED" || "$session_state" == "DELETED" ]]; then
+        fail "Bastion session entered terminal state: $session_state"
+    fi
     sleep 3
 done
 [[ "${session_state:-}" == "ACTIVE" ]] || fail "Bastion session did not become ACTIVE"
