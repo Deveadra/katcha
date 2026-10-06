@@ -660,3 +660,145 @@ def test_v2_receipt_keeps_original_schema_and_prompt_on_resume(directing, monkey
     assert direction.direct_visuals(str(row.id), resumed.attempt)["status"] == "completed"
     assert invoke.call_count == 2
     assert "direction_shot_evidence" not in refresh(row).artifacts
+
+
+@pytest.fixture
+def directed_render(directing, monkeypatch):
+    row, invoke, _ = directing
+    install_media(row)
+    install_frames(monkeypatch)
+    value = proposed(
+        layout="single",
+        quote_source_id=None,
+        media=[{"candidate_id": "asset", "start_seconds": 1}],
+    )
+    value["shot_evidence"] = [
+        {"beat_id": "beat-1", "candidate_id": "asset", "observation_id": "frame-1"}
+    ]
+    invoke.side_effect = [output(frame_observations()), output(value)]
+    assert direction.direct_visuals(str(row.id), 1)["status"] == "completed"
+    row = refresh(row)
+    request = StartEditorialRun(
+        target="render",
+        expected_revision=1,
+        idempotency_key="directed-preview",
+        direction_run_id=row.id,
+        asset_run_id=row.options["asset_run_id"],
+        storyboard=row.artifacts["storyboard"],
+    )
+    return row, request
+
+
+def test_directed_preview_preserves_citations_and_replays(directed_render):
+    from katcha.editorial.render import current_manifest
+
+    row, request = directed_render
+    rendered = start_run(row.channel_profile_id, row.project_id, request, actor="test")
+    assert rendered.artifacts["direction_shot_evidence"] == row.artifacts["direction_shot_evidence"]
+    assert rendered.artifacts["direction_run_id"] == str(row.id)
+    assert current_manifest(rendered).timeline[0].media[0].start_seconds == 1
+    assert (
+        start_run(row.channel_profile_id, row.project_id, request, actor="test").id == rendered.id
+    )
+
+
+@pytest.mark.parametrize(
+    "change", ["trim", "asset", "missing", "project", "channel", "revision", "status", "digest"]
+)
+def test_directed_preview_rejects_mismatched_plan(directed_render, change):
+    from katcha.editorial_models import EditorialRun
+
+    row, request = directed_render
+    if change == "trim":
+        request.storyboard.beats[0].media[0].start_seconds = 2
+    elif change == "asset":
+        request.asset_run_id = uuid.uuid4()
+    elif change == "missing":
+        request.direction_run_id = uuid.uuid4()
+    else:
+        with db.session_scope() as session:
+            stored = session.get(EditorialRun, row.id)
+            if change == "project":
+                stored.project_id = uuid.uuid4()
+            elif change == "channel":
+                stored.channel_profile_id = uuid.uuid4()
+            elif change == "revision":
+                stored.input_revision = 2
+            elif change == "status":
+                stored.status = "blocked"
+            else:
+                stored.artifacts = {
+                    **stored.artifacts,
+                    "direction_shot_evidence": {
+                        **stored.artifacts["direction_shot_evidence"],
+                        "storyboard_digest": "0" * 64,
+                    },
+                }
+    with pytest.raises(EditorialConflict):
+        start_run(row.channel_profile_id, row.project_id, request, actor="test")
+
+
+def test_directed_preview_rechecks_evidence_before_render_and_review(directed_render):
+    from katcha.editorial.render import current_manifest
+    from katcha.editorial_models import EditorialRun
+
+    row, request = directed_render
+    rendered = start_run(row.channel_profile_id, row.project_id, request, actor="test")
+    with db.session_scope() as session:
+        stored = session.get(EditorialRun, row.id)
+        stored.artifacts = {
+            **stored.artifacts,
+            "direction_shot_evidence": {
+                **stored.artifacts["direction_shot_evidence"],
+                "shots": [],
+            },
+        }
+    with pytest.raises(EditorialConflict, match="citations changed"):
+        current_manifest(rendered)
+
+
+def test_legacy_plan_can_render_without_claiming_frame_citations(directing):
+    row, _, _ = directing
+    assert direction.direct_visuals(str(row.id), 1)["status"] == "completed"
+    row = refresh(row)
+    from katcha.editorial_models import EditorialRun
+
+    with db.session_scope() as session:
+        stored = session.get(EditorialRun, row.id)
+        stored.artifacts = {
+            key: value
+            for key, value in stored.artifacts.items()
+            if key != "direction_shot_evidence"
+        }
+    request = StartEditorialRun(
+        target="render",
+        expected_revision=1,
+        idempotency_key="legacy-preview",
+        direction_run_id=row.id,
+        asset_run_id=row.options["asset_run_id"],
+        storyboard=row.artifacts["storyboard"],
+    )
+    rendered = start_run(row.channel_profile_id, row.project_id, request, actor="test")
+    assert "direction_shot_evidence" not in rendered.artifacts
+
+
+def test_native_direction_selection_requires_observed_identity(monkeypatch):
+    from types import SimpleNamespace
+
+    from katcha.services import goal_tools
+
+    identity = str(uuid.uuid4())
+    goal = SimpleNamespace(channel_profile_id=uuid.uuid4())
+    monkeypatch.setattr(goal_tools, "_known_ids", lambda _: set())
+    with pytest.raises(ValueError, match="not observed"):
+        goal_tools.validate_resource_arguments(goal, {"body": {"direction_run_id": identity}})
+    monkeypatch.setattr(goal_tools, "_known_ids", lambda _: {identity})
+    goal_tools.validate_resource_arguments(goal, {"body": {"direction_run_id": identity}})
+
+
+def test_direction_receipt_is_only_valid_for_rendering():
+    with pytest.raises(ValidationError, match="only be selected for rendering"):
+        StartEditorialRun(
+            target="analysis", expected_revision=0,
+            idempotency_key="bad-reference", direction_run_id=uuid.uuid4(),
+        )

@@ -86,6 +86,12 @@ window.KatchaEditorialHistory = (() => {
                 el("review").innerHTML = `<p>${esc(review.error ? `Review status unavailable: ${review.error}` : `${reviewLabels[review.status] || "Review required"}. ${review.blocker || ""}`)}</p>`
                     + (review.reviews || []).map(item => `<article class="item"><div><p>${esc(item.decision === "approve" ? "Approval recorded" : "Changes requested")} · ${esc(item.actor)} · ${esc(date(item.created_at))}</p><p>${esc(item.note)}</p></div></article>`).join("");
             }
+            const shots = row.artifacts?.direction_shot_evidence?.shots;
+            el("frames").innerHTML = Array.isArray(shots)
+                ? '<h4>Saved frame citations</h4>' + (shots.length
+                    ? shots.map(shot => `<article class="item"><div><p>Beat ${esc(shot.beat_id)} · ${esc(shot.candidate_id)}</p>${window.KatchaEditorial.frameCitations(row.artifacts, shot.beat_id, shot.candidate_id)}</div></article>`).join("")
+                    : '<p>This plan uses no footage requiring frame citations.</p>')
+                : ['direction', 'render'].includes(row.target) ? '<p>No saved frame citations for this work. Older or manual plans may not include them.</p>' : '';
             el("play").hidden = row.target !== "render" || row.status !== "completed";
             el("receipts").textContent = JSON.stringify(row.artifacts || {}, null, 2);
             el("detail").hidden = false; el("title").focus();

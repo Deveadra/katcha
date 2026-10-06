@@ -9,6 +9,8 @@ from sqlalchemy import update
 from sqlalchemy.orm import Session
 
 from katcha.db import session_scope
+from katcha.editorial.direction_receipts import resolve_direction_receipt
+from katcha.editorial.run_schemas import StartEditorialRun
 from katcha.editorial.visual_compiler import compile_project_visuals
 from katcha.editorial.visual_schemas import EditorialRenderManifest, StoryboardPlan
 from katcha.editorial_models import EditorialRun
@@ -24,6 +26,21 @@ from katcha.services.editorial_runs import ACTIVE, EditorialStopped, checkpoint
 def current_manifest(
     row: EditorialRun, *, session: Session | None = None
 ) -> EditorialRenderManifest:
+    if row.options.get("direction_run_id"):
+        if session is None:
+            with session_scope() as active_session:
+                return current_manifest(row, session=active_session)
+        receipt = resolve_direction_receipt(
+            session,
+            row.channel_profile_id,
+            row.project_id,
+            row.input_revision,
+            StartEditorialRun.model_validate(row.options),
+        )
+        if any(row.artifacts.get(key) != value for key, value in receipt.items()) or (
+            row.artifacts.get("direction_shot_evidence") != receipt.get("direction_shot_evidence")
+        ):
+            raise EditorialConflict("Saved frame citations changed; create a new preview")
     return compile_project_visuals(
         row.channel_profile_id,
         row.project_id,

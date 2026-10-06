@@ -84,7 +84,8 @@ TOOLS = {
             "target=script interprets sources, researches evidence and drafts a cited script. "
             "target=assets scouts supporting media; target=acquire_assets downloads selected "
             "scout candidates for review. target=render requires an explicit storyboard "
-            "and asset_run_id when using footage. "
+            "and asset_run_id when using footage. Include direction_run_id when rendering a saved "
+            "visual plan to preserve its frame citations; submit that plan unchanged. "
             "Use captioned_silent or narrated presentation. Narrated requires recording IDs for "
             "every beat; uses local rendering with a private review preview. "
             "target=direction creates a reviewable storyboard using completed asset_run_id and "
@@ -726,6 +727,7 @@ def validate_resource_arguments(goal: CommandGoal, arguments: dict) -> None:
                 "editorial_run_id",
                 "scout_run_id",
                 "asset_run_id",
+                "direction_run_id",
             }
             and value is not None
         ):

@@ -387,6 +387,16 @@ window.KatchaEditorial = (() => {
         }).join("") || '<p class="empty">Save a script and choose supporting media to prepare a preview.</p>';
         showFootageControls();
     }
+    function frameCitations(artifacts, beatId, candidateId) {
+        const evidence = artifacts.direction_shot_evidence;
+        if (!evidence) return '<p class="muted">No saved frame citation for this older plan. Check the source footage before using it.</p>';
+        const shots = (evidence.shots || []).filter(shot => shot.beat_id === beatId && shot.candidate_id === candidateId);
+        if (!shots.length) return '<p class="error-text">Frame citation unavailable. Plan visuals again before relying on this shot.</p>';
+        return shots.map(shot => {
+            const observation = shot.observation;
+            return `<details class="ae-help"><summary>Observed frame · ${esc(Number(observation.start_seconds).toFixed(3))}s</summary><p>${esc(observation.observation)}</p><a href="${safeLink(observation.source_url)}" target="_blank" rel="noopener noreferrer">Open source video</a><p>Sampled frame only. This does not establish continuous visibility or verify an identity.</p>${(shot.limitations || []).map(value => `<p>${esc(value)}</p>`).join("")}</details>`;
+        }).join("");
+    }
     function renderDirection() {
         const artifacts = state.directionRun?.artifacts || {};
         const proposal = artifacts.direction_proposal || (state.run?.target === "direction" ? state.run.artifacts?.direction_proposal : null);
@@ -394,7 +404,7 @@ window.KatchaEditorial = (() => {
         const titles = new Map((state.assetRun?.artifacts?.asset_selection || []).map(item => [item.id, item.title]));
         el("editorial-direction").innerHTML = proposal
             ? `<p>${artifacts.storyboard ? `Plan ready · ${esc(artifacts.storyboard.presentation_mode === "narrated" ? "selected narration" : "silent captions")} · ${Number(artifacts.direction_duration_seconds).toFixed(1)}s. Review every choice below.` : "This proposal did not pass validation. Adjust the manual storyboard below."}</p>`
-                + proposal.beats.map((beat, index) => `<article class="item"><div><h4>Beat ${index + 1} · ${esc(beat.layout)}</h4><p>${esc(beat.rationale)}</p>${beat.media.map(use => `<p>${esc(titles.get(use.candidate_id) || use.candidate_id)} · from ${esc(use.start_seconds)}s · ${use.freeze ? "held frame" : `${esc(use.playback_rate)}× playback`} · ${esc(use.push_in)}× push-in</p>`).join("")}${beat.quote_source_id ? `<p>Evidence quote: ${esc((state.revision?.draft.sources || []).find(source => source.id === beat.quote_source_id)?.title || beat.quote_source_id)}</p>` : ""}</div></article>`).join("")
+                + proposal.beats.map((beat, index) => `<article class="item"><div><h4>Beat ${index + 1} · ${esc(beat.layout)}</h4><p>${esc(beat.rationale)}</p>${beat.media.map(use => `<p>${esc(titles.get(use.candidate_id) || use.candidate_id)} · from ${esc(use.start_seconds)}s · ${use.freeze ? "held frame" : `${esc(use.playback_rate)}× playback`} · ${esc(use.push_in)}× push-in</p>${frameCitations(artifacts, beat.beat_id, use.candidate_id)}`).join("")}${beat.quote_source_id ? `<p>Evidence quote: ${esc((state.revision?.draft.sources || []).find(source => source.id === beat.quote_source_id)?.title || beat.quote_source_id)}</p>` : ""}</div></article>`).join("")
                 + (artifacts.direction_warnings || []).map(warning => `<p>${esc(warning)}</p>`).join("")
             : '<p class="empty">No validated plan for this revision yet. Save the script, acquire its supporting media, and choose the presentation above.</p>';
     }
@@ -682,7 +692,7 @@ window.KatchaEditorial = (() => {
         el("editorial-render-directed").addEventListener("click", () => void guarded(async () => {
             const channel = state.channel; const project = state.project.id;
             const artifacts = state.directionRun.artifacts;
-            const payload = {target: "render", expected_revision: state.project.revision, asset_run_id: artifacts.direction_asset_run_id, storyboard: artifacts.storyboard};
+            const payload = {target: "render", expected_revision: state.project.revision, asset_run_id: artifacts.direction_asset_run_id, direction_run_id: state.directionRun.editorial_run_id, storyboard: artifacts.storyboard};
             await api(path(channel, `/${project}/storyboard/preflight`), {method: "POST", body: JSON.stringify({expected_revision: payload.expected_revision, asset_run_id: payload.asset_run_id, plan: payload.storyboard})});
             payload.idempotency_key = identity(`render.${project}`, payload);
             await api(path(channel, `/${project}/runs`), {method: "POST", body: JSON.stringify(payload)});
@@ -794,5 +804,5 @@ window.KatchaEditorial = (() => {
             if (channel === state.channel) { await open(project, { focus: false }); advanceStage("script"); feedback("Script saved as a new revision. Review evidence before production."); }
         }));
     }
-    return { init, load };
+    return { init, load, frameCitations };
 })();

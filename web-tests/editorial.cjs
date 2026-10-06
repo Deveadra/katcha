@@ -16,11 +16,12 @@ let stillImages = [], loseImageResponse = true;
 let loseUploadResponse = true;
 let loseGenerationResponse = true;
 let loseBillingResponse = true, loseDirectionResponse = true;
+const frameReceipt = {storyboard_digest: 'fixture', shots: [{beat_id: 'beat', candidate_id: 'candidate', observation: {start_seconds: 2.5, source_url: 'https://example.com/footage', observation: 'A red door <script>unsafe</script> is visible.'}, limitations: ['Sparse sampling; movement is unverified.']}]};
 let directionRun = null;
 let failHistoryPage = true, failHistoryPreview = true, delayedHistory = null;
 let historyRequestStarted;
 const historyStarted = new Promise(resolve => { historyRequestStarted = resolve; });
-const historyRows = Array.from({length: 23}, (_, index) => ({editorial_run_id: `past-${index}`, target: index ? 'script' : 'render', input_revision: 1, attempt: 1, status: index ? 'blocked' : 'completed', stage: index ? 'researching' : 'render_ready_for_review', created_at: '2026-10-01T12:00:00Z', error: index ? 'Saved provider failure' : null, artifacts: {saved_revision: 1}}));
+const historyRows = Array.from({length: 23}, (_, index) => ({editorial_run_id: `past-${index}`, target: index ? 'script' : 'render', input_revision: 1, attempt: 1, status: index ? 'blocked' : 'completed', stage: index ? 'researching' : 'render_ready_for_review', created_at: '2026-10-01T12:00:00Z', error: index ? 'Saved provider failure' : null, artifacts: {saved_revision: 1, ...(index === 0 ? {direction_shot_evidence: frameReceipt} : {})}}));
 const draft = {
     version: "editorial-draft-v1", observations: [],
     sources: [{ id: "source", title: "Interview", url: "https://example.com/interview", category: "interview", excerpt: "A synthetic quoted clue." }],
@@ -88,7 +89,7 @@ const draft = {
                     }
                     if (body.target === 'direction') {
                         const beat = {beat_id: 'beat', layout: 'single', media: [{candidate_id: 'candidate', start_seconds: 2, playback_rate: .5, freeze: false, push_in: 1.1}], overlays: []};
-                        directionRun = {editorial_run_id: 'direction', target: 'direction', input_revision: 3, attempt: 1, status: 'completed', stage: 'storyboard_ready_for_review', artifacts: {storyboard: {...body.direction, beats: [beat]}, direction_proposal: {beats: [{...beat, rationale: 'Hold attention on the linked interview'}]}, direction_asset_run_id: 'acquire', direction_duration_seconds: 2, direction_warnings: ['Review the selected footage against the script.']}};
+                        directionRun = {editorial_run_id: 'direction', target: 'direction', input_revision: 3, attempt: 1, status: 'completed', stage: 'storyboard_ready_for_review', artifacts: {storyboard: {...body.direction, beats: [beat]}, direction_proposal: {beats: [{...beat, rationale: 'Hold attention on the linked interview'}]}, direction_asset_run_id: 'acquire', direction_duration_seconds: 2, direction_warnings: ['Review the selected footage against the script.'], direction_shot_evidence: frameReceipt}};
                         run = directionRun;
                         if (loseDirectionResponse) { loseDirectionResponse = false; return send({detail: 'Visual plan response lost. Retry to recover saved work.'}, 503); }
                         return send(run, 202);
@@ -352,11 +353,18 @@ const draft = {
         assert.equal(directions[0].body.direction.narration_ids.beat, 'generated-audio');
         await page.setViewportSize({width: 390, height: 844});
         assert(await page.evaluate(() => document.documentElement.scrollWidth <= 390));
+        const frameSummary = page.locator('#editorial-direction summary').filter({hasText: 'Observed frame · 2.500s'});
+        await frameSummary.focus();
+        await page.keyboard.press('Enter');
+        assert.match(await page.locator('#editorial-direction').innerText(), /Sparse sampling; movement is unverified/);
+        assert.equal(await page.locator('#editorial-direction script').count(), 0);
+        assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
         await page.locator('#editorial-direction').screenshot({path: path.resolve(__dirname, 'test-results/editorial-direction-mobile.png')});
         // Rendering the saved plan preserves speed and push-in, independent of manual controls.
         await page.locator('#editorial-render-directed').click();
         await page.getByText(/Review approved for this rendered revision/).waitFor();
         const directedRender = calls.filter(call => call.body?.target === 'render').at(-1);
+        assert.equal(directedRender.body.direction_run_id, 'direction');
         assert.equal(directedRender.body.storyboard.beats[0].media[0].playback_rate, .5);
         assert.equal(directedRender.body.storyboard.beats[0].media[0].push_in, 1.1);
         assert.equal(directedRender.body.storyboard.narration_ids.beat, 'generated-audio');
@@ -419,6 +427,9 @@ const draft = {
         await page.locator('[data-history-run="past-0"]').click();
         await page.locator('#editorial-history-review').filter({hasText: 'Previous approval is no longer valid'}).waitFor();
         assert.match(await page.locator('#editorial-history-script').innerText(), /This might be a connection/);
+        await page.locator('#editorial-history-frames summary').click();
+        assert.match(await page.locator('#editorial-history-frames').innerText(), /red door <script>unsafe/);
+        assert.equal(await page.locator('#editorial-history-frames script').count(), 0);
         assert.equal(await page.locator('[data-beat-narration="0"]').inputValue(), 'Unsaved current script stays here.');
         await page.locator('#editorial-history-play').click();
         await page.locator('#editorial-history-status').filter({hasText: 'Preview clearance changed'}).waitFor();
