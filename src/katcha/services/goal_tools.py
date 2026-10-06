@@ -17,10 +17,20 @@ from sqlalchemy import select
 from katcha.acquisition_models import DiscoveryCandidate, IngestionSource
 from katcha.ai.command_planner import ClipLookup
 from katcha.db import session_scope
+from katcha.editorial.storyboard_schemas import StoryboardWorkspaceBeat
 from katcha.goal_models import CommandGoal
 from katcha.services.command_actions import ActionProposalSpec
 from katcha.services.command_environment import command_environment
 from katcha.services.goal_receipts import resolve_goal_authority
+
+
+class EditorialStoryboardEditSelection(BaseModel):
+    project_id: uuid.UUID
+    script_revision: int = Field(gt=0, strict=True)
+    expected_workspace_version: int = Field(ge=0, strict=True)
+    beat: StoryboardWorkspaceBeat
+    asset_run_id: uuid.UUID | None = None
+    rationale: str = Field(min_length=1, max_length=1000)
 
 
 @dataclass(frozen=True)
@@ -42,6 +52,26 @@ class GoalTool:
 TOOLS = {
     tool.name: tool
     for tool in [
+        GoalTool(
+            "editorial_storyboard",
+            "Read the latest durable Storyboard workspace for an exact saved script revision. "
+            "This is editing intent, not render eligibility; unavailable selections may be retained.",
+            "ai:read",
+            "GET",
+            "/v1/channels/{channel_profile_id}/editorial-projects/{project_id}/storyboard",
+        ),
+        GoalTool(
+            "propose_editorial_storyboard_edit",
+            "Propose one visual edit for one saved Storyboard beat against an exact workspace "
+            "version. Supports the current visual contract: unassigned, footage, quote, image, "
+            "image comparison and overlays. It never changes narration/script text, renders, "
+            "acquires media or publishes. Operator confirmation is required before the edit is "
+            "saved, and stale workspace versions fail closed.",
+            "production:create",
+            action_type="editorial_storyboard_edit",
+            confirm=True,
+            retry_safe=True,
+        ),
         GoalTool(
             "editorial_images",
             "List permission-attested still images for a saved script revision. "
@@ -610,6 +640,7 @@ def tool_schema(name: str) -> dict:
             "scout_web": WebScout,
             "make_short": ProductionSelection,
             "make_ranking": ProductionSelection,
+            "propose_editorial_storyboard_edit": EditorialStoryboardEditSelection,
         }
         if name in schemas:
             return schemas[name].model_json_schema()
@@ -746,6 +777,26 @@ def validate_resource_arguments(goal: CommandGoal, arguments: dict) -> None:
 
 def action_spec(goal: CommandGoal, name: str, args: dict, step_id: uuid.UUID) -> ActionProposalSpec:
     tool = TOOLS[name]
+    if name == "propose_editorial_storyboard_edit":
+        selection = EditorialStoryboardEditSelection.model_validate(args)
+        known = _known_ids(goal)
+        identities = [selection.project_id]
+        if selection.asset_run_id is not None:
+            identities.append(selection.asset_run_id)
+        if selection.beat.image_id is not None:
+            identities.append(selection.beat.image_id)
+        identities.extend(selection.beat.image_ids)
+        if any(str(identity) not in known for identity in identities):
+            raise ValueError(
+                "Storyboard edits may only reference observed project, run and image identities"
+            )
+        payload = selection.model_dump(mode="json")
+        return ActionProposalSpec(
+            "editorial_storyboard_edit",
+            f"Apply Storyboard edit · {selection.beat.beat_id}",
+            selection.rationale,
+            payload,
+        )
     validate_resource_arguments(goal, args)
     if name == "cancel_workflow":
         observed_workflow_id(goal, args)
