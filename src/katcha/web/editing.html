@@ -73,13 +73,22 @@
                                             <div id="editorial-clip-results" class="editorial-clip-results"><p class="empty">Open this picker to load channel clips.</p></div>
                                         </div>
                                     </details>
+                                    <details id="editorial-script-seed-import" class="editorial-source-picker">
+                                        <summary><span><strong>Start from a script</strong><small>Paste a draft or import UTF-8 .txt/.md as unverified writing intent</small></span><span aria-hidden="true">＋</span></summary>
+                                        <div class="editorial-source-picker-body">
+                                            <label>Operator script seed<textarea id="editorial-script-seed" rows="7" maxlength="120000" placeholder="Paste your draft here. Katcha will research its factual assertions before promoting them into the validated script."></textarea></label>
+                                            <label>Import text file<input id="editorial-script-seed-file" type="file" accept=".txt,.md,text/plain,text/markdown"></label>
+                                            <div id="editorial-script-seed-status" class="editorial-seed-status" role="status">No script seed. Katcha will write from the brief and verified research.</div>
+                                            <button id="editorial-script-seed-clear" type="button" class="mini">Clear script seed</button>
+                                        </div>
+                                    </details>
                                     <label>Target length<input id="editorial-duration" type="number" min="15" max="3600" step="1" value="420" required><small>Seconds; final timing follows actual narration/media.</small></label>
                                     <button class="button primary" type="submit">Create project</button>
                                 </fieldset></form>
                             </details>
                             <div class="editorial-input-dock" aria-label="Available editorial inputs">
                                 <span class="eyebrow">PROJECT INPUTS</span>
-                                <p>Start with source URLs or managed Katcha clips. Add owned/permitted stills in Assets and WAV narration in Storyboard.</p>
+                                <p>Start with source URLs, managed clips, or an operator script seed. Add owned/permitted stills in Assets and WAV narration in Storyboard.</p>
                             </div>
                             <div class="editorial-project-list-head"><span class="eyebrow">PROJECT BIN</span><small>Channel scoped</small></div>
                             <div id="editorial-projects"><div class="empty">Select a channel to begin.</div></div>
@@ -117,6 +126,11 @@
 
                                 <section class="editorial-stage-panel" data-editorial-stage-panel="script" hidden>
                                     <div class="editorial-stage-head"><div><span class="eyebrow">2 · SCRIPT</span><h3>Write against frozen evidence</h3><p>Edit narration and visual intent beat by beat. Saving creates an immutable revision.</p></div><a class="editorial-ai-link" data-editorial-ai="script" href="/ai?focus=chat">Ask Katcha ✦</a></div>
+                                    <details id="editorial-script-seed-reference" class="editorial-upload-drawer" hidden>
+                                        <summary><span><strong>Operator script seed · unverified</strong><small id="editorial-script-seed-reference-meta">Starting material only; not evidence</small></span><span aria-hidden="true">⌄</span></summary>
+                                        <p>Research and evidence checks can revise, qualify, or remove seeded factual claims.</p>
+                                        <pre id="editorial-script-seed-reference-text"></pre>
+                                    </details>
                                     <p id="editorial-script-note"></p>
                                     <button id="editorial-discard" class="mini" type="button" hidden>Discard edits and load latest script</button>
                                     <div id="editorial-script"></div>
