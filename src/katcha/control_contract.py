@@ -25,6 +25,7 @@ COMMAND_ACTION_SCOPES: dict[str, str] = {
     "create_ranked_short_episode": "production:create",
     "recover_production_render": "render:recover",
     "start_source_scout": "discovery:write",
+    "editorial_operation": "production:create",
 }
 
 
