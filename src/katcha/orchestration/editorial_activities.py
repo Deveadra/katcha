@@ -234,9 +234,32 @@ def editorial_prepare_asset(run_id: str, attempt: int, position: int) -> dict:
             ),
         )
         return {"blocked": True}
+    if selected["medium"] == "image":
+        from katcha.editorial.image_acquisition import acquire_review_image
+
+        receipt = acquire_review_image(
+            project_id=str(row.project_id),
+            candidate_key=selected["id"],
+            source_url=selected["url"],
+            discovery_candidate_id=str(candidate.id),
+        ).as_dict()
+        receipt.update(
+            candidate_id=selected["id"],
+            request_id=selected["request_id"],
+            beat_id=selected["beat_id"],
+            claim_ids=selected["claim_ids"],
+            title=selected["title"],
+            relevance=selected.get("relevance", ""),
+        )
+        images = dict(row.artifacts.get("acquired_images") or {})
+        images[selected["id"]] = receipt
+        checkpoint(run_id, attempt, artifacts={"acquired_images": images})
+        return {"medium": "image", "complete": True}
+
     # This is a review download. No rights, audio or originality decision is invented here.
     source = promote_discovery_candidate(candidate.id, actor=row.actor, for_review=True)
     result = {
+        "medium": "video",
         "source_id": str(source.id),
         "clip_id": str(source.clip_id) if source.clip_id else None,
         "discovery_candidate_id": str(candidate.id),
@@ -290,14 +313,34 @@ def editorial_capture_asset(run_id: str, attempt: int, position: int, clip_id: s
 def editorial_finish_assets(run_id: str, attempt: int) -> dict:
     from katcha.editorial.assets import inspect_managed_candidate
 
+    from katcha.editorial.assets import inspect_image_candidate
+
     row = checkpoint(run_id, attempt)
-    if set(row.artifacts.get("acquired_assets", {})) != {
-        item["id"] for item in row.artifacts["asset_selection"]
-    }:
+    video_ids = {
+        item["id"] for item in row.artifacts["asset_selection"] if item["medium"] == "video"
+    }
+    image_ids = {
+        item["id"] for item in row.artifacts["asset_selection"] if item["medium"] == "image"
+    }
+    if set(row.artifacts.get("acquired_assets", {})) != video_ids or set(
+        row.artifacts.get("acquired_images", {})
+    ) != image_ids:
         raise ValueError("Asset acquisition is incomplete")
+    acquired_images = dict(row.artifacts.get("acquired_images") or {})
     scout = dict(row.artifacts["asset_scout"])
     scout["candidates"] = [
-        {**item, **inspect_managed_candidate(item["url"], row.channel_profile_id)}
+        {
+            **item,
+            **(
+                inspect_image_candidate(
+                    item["url"],
+                    row.channel_profile_id,
+                    acquired=item["id"] in acquired_images,
+                )
+                if item["medium"] == "image"
+                else inspect_managed_candidate(item["url"], row.channel_profile_id)
+            ),
+        }
         for item in scout["candidates"]
     ]
     checkpoint(
