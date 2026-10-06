@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import uuid
 from datetime import datetime
 from typing import Annotated, Literal, Self
 
@@ -29,12 +30,18 @@ class Contract(BaseModel):
 class EditorialBrief(Contract):
     prompt: Text
     source_urls: list[HttpUrl] = Field(min_length=1, max_length=20)
+    source_clip_bindings: dict[str, uuid.UUID] = Field(default_factory=dict, max_length=20)
     target_duration_seconds: int = Field(default=420, ge=15, le=3600, strict=True)
 
     @model_validator(mode="after")
-    def unique_urls(self) -> Self:
-        if len(set(map(str, self.source_urls))) != len(self.source_urls):
+    def valid_sources(self) -> Self:
+        urls = list(map(str, self.source_urls))
+        if len(set(urls)) != len(urls):
             raise ValueError("source URLs must be unique")
+        if not set(self.source_clip_bindings) <= set(urls):
+            raise ValueError("source clip bindings must reference a source URL in this brief")
+        if len(set(self.source_clip_bindings.values())) != len(self.source_clip_bindings):
+            raise ValueError("a managed clip may only be bound to one source URL")
         return self
 
 

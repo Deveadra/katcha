@@ -3,7 +3,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
-from test_editorial_projects import brief, root
+from test_editorial_projects import brief, managed_clip, root
 from test_editorial_projects import saved as _saved
 
 from katcha import db
@@ -39,6 +39,42 @@ def new_run(saved):
         StartEditorialRun(expected_revision=0, idempotency_key="run-1"),
         actor="test",
     )
+
+
+def test_source_run_automatically_uses_project_managed_clip(saved):
+    client, channel, _ = saved
+    clip_id = managed_clip(channel)
+    body = brief("managed-run")
+    source_url = body["brief"]["source_urls"][0]
+    body["brief"]["source_clip_bindings"] = {source_url: str(clip_id)}
+    project = client.post(root(channel), json=body).json()
+
+    row = start_run(
+        channel,
+        uuid.UUID(project["id"]),
+        StartEditorialRun(expected_revision=0, idempotency_key="managed-run"),
+        actor="test",
+    )
+    assert row.options["clip_bindings"] == {source_url: str(clip_id)}
+    assert row.artifacts["brief"]["source_clip_bindings"] == {source_url: str(clip_id)}
+
+
+def test_low_level_clip_binding_still_requires_matching_lineage(saved):
+    client, channel, _ = saved
+    clip_id = managed_clip(channel, source_url="https://www.youtube.com/watch?v=other")
+    _, project = new_project(saved)
+    source_url = brief()["brief"]["source_urls"][0]
+
+    response = client.post(
+        f"{root(channel)}/{project}/runs",
+        json={
+            "expected_revision": 0,
+            "idempotency_key": "wrong-lineage-run",
+            "clip_bindings": {source_url: str(clip_id)},
+        },
+    )
+    assert response.status_code == 409
+    assert "does not match" in response.json()["detail"]
 
 
 async def test_api_dispatch_failure_preserves_intent_and_replay(saved, monkeypatch):

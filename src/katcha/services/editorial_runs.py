@@ -12,10 +12,14 @@ from sqlalchemy.orm import Session
 from katcha.db import session_scope
 from katcha.editorial.run_schemas import StartEditorialRun
 from katcha.editorial_models import EditorialProject, EditorialRevision, EditorialRun
-from katcha.models import Clip, DomainEvent
+from katcha.models import DomainEvent
 from katcha.services.channel_profiles import ensure_active_profile
-from katcha.services.clip_lifecycle import channel_ids_for_clip
-from katcha.services.editorial_projects import EditorialConflict, EditorialNotFound, _digest
+from katcha.services.editorial_projects import (
+    EditorialConflict,
+    EditorialNotFound,
+    _digest,
+    validate_source_clip_binding,
+)
 
 ACTIVE = ("queued", "running")
 
@@ -60,8 +64,7 @@ def start_run(
     channel_id: uuid.UUID, project_id: uuid.UUID, request: StartEditorialRun, *, actor: str
 ) -> EditorialRun:
     run_id = uuid.uuid5(project_id, f"editorial-run:{request.idempotency_key}")
-    options = request.model_dump(mode="json")
-    digest = _digest(options)
+    request_options = request.model_dump(mode="json")
     with session_scope() as session:
         ensure_active_profile(session, channel_id)
         project = session.scalar(
@@ -74,6 +77,26 @@ def start_run(
         )
         if project is None:
             raise EditorialNotFound("Editorial project not found in this channel")
+        stored_bindings = {
+            source_url: uuid.UUID(str(clip_id))
+            for source_url, clip_id in project.brief.get("source_clip_bindings", {}).items()
+        }
+        effective_bindings = dict(request.clip_bindings)
+        if request.target in {"analysis", "script"}:
+            for source_url, clip_id in stored_bindings.items():
+                if source_url in effective_bindings and effective_bindings[source_url] != clip_id:
+                    raise EditorialConflict(
+                        "Run clip binding conflicts with the managed clip saved in this project"
+                    )
+                effective_bindings[source_url] = clip_id
+        options = {
+            **request_options,
+            "clip_bindings": {
+                source_url: str(clip_id)
+                for source_url, clip_id in effective_bindings.items()
+            },
+        }
+        digest = _digest(options)
         # Serialize start requests on SQLite as well as PostgreSQL.
         session.execute(
             update(EditorialProject)
@@ -88,7 +111,17 @@ def start_run(
             if previous.input_digest != digest:
                 # New optional defaults must not break replay of a pre-upgrade request.
                 normalized_previous = StartEditorialRun.model_validate(previous.options)
-                if _digest(normalized_previous.model_dump(mode="json")) != digest:
+                normalized_options = normalized_previous.model_dump(mode="json")
+                if request.target in {"analysis", "script"}:
+                    replay_bindings = {
+                        **{
+                            source_url: str(clip_id)
+                            for source_url, clip_id in stored_bindings.items()
+                        },
+                        **normalized_options.get("clip_bindings", {}),
+                    }
+                    normalized_options["clip_bindings"] = replay_bindings
+                if _digest(normalized_options) != digest:
                     raise EditorialConflict("Run identity was already used for different options")
             session.expunge(previous)
             return previous
@@ -166,15 +199,12 @@ def start_run(
                 asset_scout=scout.artifacts["asset_scout"],
             )
             urls = [item["url"] for item in selection]
-        if not set(request.clip_bindings) <= set(urls):
+        if not set(effective_bindings) <= set(urls):
             raise EditorialConflict("Clip bindings must match source URLs in this brief")
         for url in urls:
-            clip_id = request.clip_bindings.get(url)
+            clip_id = effective_bindings.get(url)
             if clip_id:
-                if session.get(Clip, clip_id) is None:
-                    raise EditorialNotFound("Selected source clip not found")
-                if channel_id not in channel_ids_for_clip(session, clip_id):
-                    raise EditorialConflict("Selected source clip is not available to this channel")
+                validate_source_clip_binding(session, channel_id, url, clip_id)
             else:
                 parsed = urlsplit(url)
                 if (

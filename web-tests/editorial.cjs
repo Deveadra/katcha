@@ -6,6 +6,8 @@ const path = require("node:path");
 const server = spawn("python3", ["-m", "http.server", "8776", "--bind", "127.0.0.1", "--directory", path.resolve(__dirname, "../src/katcha/web")], { stdio: "ignore" });
 const calls = [];
 let project = null, run = null, revision = null, acquisitionRun = null;
+const managedClipId = "11111111-1111-4111-8111-111111111111";
+const managedSourceUrl = "https://www.youtube.com/watch?v=fixture";
 let loseCreateResponse = true, loseSaveResponse = true;
 let review = {status: "unreviewed", sequence: 0, can_approve: true, reviews: []};
 let loseReviewResponse = true;
@@ -38,6 +40,15 @@ const draft = {
             calls.push({ query: url.search, path: url.pathname, method: request.method(), body, auth: request.headers().authorization });
             const send = (value, status = 200) => route.fulfill({ status, contentType: "application/json", body: JSON.stringify(value) });
             if (url.pathname === "/v1/channels") return send([{ id: "one", status: "active", profile_metadata: { name: "FORESCENE" } }, { id: "two", status: "active", profile_metadata: { name: "Other channel" } }]);
+            if (url.pathname === "/v1/clips/library") return send({
+                items: [{id: managedClipId, title: "Official trailer", creator: "Marvel Entertainment", platform: "youtube", duration_seconds: 90, status: "scored", lifecycle_state: "hot"}],
+                total: 1, offset: 0, limit: 20,
+            });
+            if (url.pathname === `/v1/clips/${managedClipId}/sources`) return send([{
+                id: "source-item", source_url: managedSourceUrl, canonical_url: managedSourceUrl,
+                platform: "youtube", status: "ready", title: "Official trailer",
+                creator: "Marvel Entertainment", discovered_at: "2026-10-01T12:00:00Z",
+            }]);
             if (url.pathname.includes("/editorial-projects")) {
                 if (url.pathname.includes("/two/")) return send([]);
                 if (url.pathname.endsWith("/editorial-projects")) {
@@ -148,10 +159,16 @@ const draft = {
         await page.locator('[data-production-tab="editorial"]').click();
         await page.getByText(/No editorial projects yet/).waitFor();
         await page.locator("#editorial-prompt").fill("Investigate the trailer clues");
-        await page.locator("#editorial-urls").fill("https://www.youtube.com/watch?v=fixture");
+        await page.getByText("Use existing Katcha clip", {exact: true}).click();
+        await page.getByText("Official trailer", {exact: true}).waitFor();
+        await page.getByRole("button", {name: "Use clip", exact: true}).click();
+        await page.getByRole("button", {name: "Use URL instead", exact: true}).waitFor();
+        assert.equal(await page.locator("#editorial-urls").inputValue(), managedSourceUrl);
+        assert.match(await page.locator("#editorial-selected-clips").innerText(), /Marvel Entertainment/);
         await page.getByRole("button", { name: "Create project", exact: true }).click();
         await page.getByText(/Connection interrupted/).waitFor();
         assert.equal(await page.locator("#editorial-prompt").inputValue(), "Investigate the trailer clues");
+        assert.match(await page.locator("#editorial-selected-clips").innerText(), /Official trailer/);
         await page.getByRole("button", { name: "Create project", exact: true }).click();
         await page.locator("#editorial-detail").waitFor({ state: "visible" });
         assert.deepEqual(
@@ -174,6 +191,8 @@ const draft = {
         const creates = calls.filter((call) => call.method === "POST" && call.path.endsWith("/editorial-projects"));
         assert.equal(creates.length, 2);
         assert.equal(creates[0].body.idempotency_key, creates[1].body.idempotency_key);
+        assert.deepEqual(creates[1].body.brief.source_clip_bindings, {[managedSourceUrl]: managedClipId});
+        assert.match(await page.locator("#editorial-source-bindings").innerText(), /Managed clip · youtube.com/);
         await page.getByRole("button", { name: "Research and draft script", exact: true }).click();
         await page.getByText(/Provider quota rejected/).waitFor();
         assert.equal(calls.find((call) => call.method === "POST" && call.path.endsWith("/runs")).body.target, "script");
