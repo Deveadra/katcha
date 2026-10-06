@@ -140,6 +140,12 @@ ResourceKind = Literal[
 class CommandResourceRef(BaseModel):
     kind: ResourceKind
     id: uuid.UUID
+    selector: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=80,
+        pattern=r"^[A-Za-z0-9_-]+$",
+    )
 
 
 class CommandRequest(BaseModel):
@@ -951,7 +957,10 @@ async def command(http_request: Request, request: CommandRequest) -> CommandResp
                     continue
             resource_inherited_from_thread = bool(effective_resource_refs)
 
-    resource_pairs = [(item.kind, item.id) for item in effective_resource_refs]
+    resource_pairs = [
+        (item.kind, item.id, item.selector)
+        for item in effective_resource_refs
+    ]
     try:
         resource_evidence = resolve_command_resources(
             request.channel_profile_id,
@@ -1218,7 +1227,11 @@ async def command(http_request: Request, request: CommandRequest) -> CommandResp
                         else None
                     ),
                     "resource_refs": [
-                        {"kind": item.kind, "id": str(item.id)}
+                        {
+                            "kind": item.kind,
+                            "id": str(item.id),
+                            **({"selector": item.selector} if item.selector else {}),
+                        }
                         for item in effective_resource_refs
                     ],
                     "requested_edit_blueprint_key": blueprint_key,
