@@ -330,6 +330,78 @@ def test_storyboard_workspace_autosave_history_and_undo(saved):
         ]
 
 
+def test_confirmed_ai_storyboard_edit_uses_history_and_rejects_stale_version(saved):
+    from katcha.editorial.storyboard_schemas import StoryboardWorkspaceBeat
+    from katcha.services.editorial_storyboards import apply_storyboard_beat_edit
+
+    client, channel, _ = saved
+    project = client.post(root(channel), json=brief("ai-storyboard-apply")).json()
+    revision_url = f"{root(channel)}/{project['id']}/revisions"
+    assert client.post(
+        revision_url,
+        json={
+            "expected_revision": 0,
+            "idempotency_key": "script-ai-1",
+            "draft": draft(),
+        },
+    ).status_code == 201
+
+    workspace_url = f"{root(channel)}/{project['id']}/storyboard"
+    first = client.post(
+        workspace_url,
+        json={
+            "script_revision": 1,
+            "expected_version": 0,
+            "idempotency_key": "board-ai-1",
+            "workspace": storyboard_workspace(),
+        },
+    )
+    assert first.status_code == 201, first.text
+    assert first.json()["version"] == 1
+
+    applied = apply_storyboard_beat_edit(
+        channel,
+        uuid.UUID(project["id"]),
+        script_revision=1,
+        expected_version=1,
+        beat=StoryboardWorkspaceBeat(
+            beat_id="beat-1",
+            layout="quote",
+            quote_source_id="source-1",
+        ),
+        asset_run_id=None,
+        idempotency_key="goal-step:ai-edit-fixture",
+        actor="control-principal:editor",
+    )
+    assert applied.version == 2
+    assert applied.parent_version == 1
+    assert applied.origin == "ai_apply"
+    assert applied.workspace["beats"][0]["layout"] == "quote"
+    assert applied.workspace["beats"][0]["quote_source_id"] == "source-1"
+
+    with pytest.raises(EditorialConflict, match="Storyboard changed"):
+        apply_storyboard_beat_edit(
+            channel,
+            uuid.UUID(project["id"]),
+            script_revision=1,
+            expected_version=1,
+            beat=StoryboardWorkspaceBeat(
+                beat_id="beat-1",
+                layout="unassigned",
+            ),
+            asset_run_id=None,
+            idempotency_key="goal-step:stale-ai-edit-fixture",
+            actor="control-principal:editor",
+        )
+
+    history = client.get(
+        f"{workspace_url}/history",
+        params={"script_revision": 1},
+    ).json()
+    assert [row["version"] for row in history] == [2, 1]
+    assert history[0]["origin"] == "ai_apply"
+
+
 def test_storyboard_workspace_rejects_stale_script_and_unknown_evidence(saved):
     client, channel, _ = saved
     project = client.post(root(channel), json=brief("storyboard-stale")).json()
