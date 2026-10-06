@@ -17,15 +17,30 @@ from katcha.editorial.project_schemas import (
     EditorialRevisionResponse,
     SaveEditorialDraft,
 )
+from katcha.editorial.storyboard_schemas import (
+    SaveStoryboardWorkspace,
+    StoryboardWorkspaceResponse,
+    UndoStoryboardWorkspace,
+)
 from katcha.editorial.visual_compiler import compile_project_visuals
 from katcha.editorial.visual_schemas import EditorialRenderManifest, StoryboardPreflightRequest
-from katcha.editorial_models import EditorialProject, EditorialRevision
+from katcha.editorial_models import (
+    EditorialProject,
+    EditorialRevision,
+    EditorialStoryboardRevision,
+)
 from katcha.services.editorial_projects import (
     EditorialConflict,
     EditorialNotFound,
     create_project,
     get_project,
     save_draft,
+)
+from katcha.services.editorial_storyboards import (
+    get_latest_storyboard,
+    list_storyboard_history,
+    save_storyboard,
+    undo_storyboard,
 )
 
 router = APIRouter(
@@ -262,6 +277,21 @@ def _revision(row: EditorialRevision) -> EditorialRevisionResponse:
     )
 
 
+def _storyboard(
+    row: EditorialStoryboardRevision,
+) -> StoryboardWorkspaceResponse:
+    return StoryboardWorkspaceResponse(
+        script_revision=row.script_revision,
+        version=row.version,
+        parent_version=row.parent_version,
+        digest=row.digest,
+        workspace=row.workspace,
+        origin=row.origin,
+        actor=row.actor,
+        created_at=row.created_at,
+    )
+
+
 def _error(exc: ValueError) -> HTTPException:
     if isinstance(exc, EditorialNotFound):
         return HTTPException(404, str(exc))
@@ -363,6 +393,106 @@ def revision_detail(
         if row is None:
             raise HTTPException(404, "Script revision not found in this project")
         return _revision(row)
+
+
+@router.get(
+    "/{project_id}/storyboard",
+    response_model=StoryboardWorkspaceResponse | None,
+)
+def storyboard_workspace(
+    channel_profile_id: uuid.UUID,
+    project_id: uuid.UUID,
+    request: Request,
+    script_revision: int | None = Query(default=None, ge=1),
+) -> StoryboardWorkspaceResponse | None:
+    _authorize(request, channel_profile_id)
+    try:
+        row = get_latest_storyboard(
+            channel_profile_id,
+            project_id,
+            script_revision=script_revision,
+        )
+        return _storyboard(row) if row is not None else None
+    except ValueError as exc:
+        raise _error(exc) from exc
+
+
+@router.get(
+    "/{project_id}/storyboard/history",
+    response_model=list[StoryboardWorkspaceResponse],
+)
+def storyboard_history(
+    channel_profile_id: uuid.UUID,
+    project_id: uuid.UUID,
+    request: Request,
+    script_revision: int = Query(ge=1),
+    offset: int = Query(0, ge=0, le=10000),
+    limit: int = Query(20, ge=1, le=100),
+) -> list[StoryboardWorkspaceResponse]:
+    _authorize(request, channel_profile_id)
+    try:
+        return [
+            _storyboard(row)
+            for row in list_storyboard_history(
+                channel_profile_id,
+                project_id,
+                script_revision=script_revision,
+                offset=offset,
+                limit=limit,
+            )
+        ]
+    except ValueError as exc:
+        raise _error(exc) from exc
+
+
+@router.post(
+    "/{project_id}/storyboard",
+    response_model=StoryboardWorkspaceResponse,
+    status_code=201,
+)
+def save_storyboard_workspace(
+    channel_profile_id: uuid.UUID,
+    project_id: uuid.UUID,
+    body: SaveStoryboardWorkspace,
+    request: Request,
+) -> StoryboardWorkspaceResponse:
+    _authorize(request, channel_profile_id, write=True)
+    try:
+        return _storyboard(
+            save_storyboard(
+                channel_profile_id,
+                project_id,
+                body,
+                actor=control_actor(request),
+            )
+        )
+    except ValueError as exc:
+        raise _error(exc) from exc
+
+
+@router.post(
+    "/{project_id}/storyboard/undo",
+    response_model=StoryboardWorkspaceResponse,
+    status_code=201,
+)
+def undo_storyboard_workspace(
+    channel_profile_id: uuid.UUID,
+    project_id: uuid.UUID,
+    body: UndoStoryboardWorkspace,
+    request: Request,
+) -> StoryboardWorkspaceResponse:
+    _authorize(request, channel_profile_id, write=True)
+    try:
+        return _storyboard(
+            undo_storyboard(
+                channel_profile_id,
+                project_id,
+                body,
+                actor=control_actor(request),
+            )
+        )
+    except ValueError as exc:
+        raise _error(exc) from exc
 
 
 @router.post("/{project_id}/storyboard/preflight")
