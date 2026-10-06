@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import uuid
 from datetime import datetime
 from typing import Annotated, Literal, Self
@@ -21,16 +22,46 @@ Identity = Annotated[
     str, StringConstraints(strip_whitespace=True, pattern=r"^[A-Za-z0-9_-]{1,80}$")
 ]
 RequestKey = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=200)]
+ScriptSeedText = Annotated[str, StringConstraints(min_length=1, max_length=120_000)]
+Sha256 = Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{64}$")]
+SeedFilename = Annotated[
+    str,
+    StringConstraints(strip_whitespace=True, min_length=1, max_length=255),
+]
 
 
 class Contract(BaseModel):
     model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
 
 
+class EditorialScriptSeed(Contract):
+    text: ScriptSeedText
+    origin: Literal["operator_paste", "operator_file"]
+    content_sha256: Sha256
+    filename: SeedFilename | None = None
+    media_type: Literal["text/plain", "text/markdown"] = "text/plain"
+    file_sha256: Sha256 | None = None
+
+    @model_validator(mode="after")
+    def valid_provenance(self) -> Self:
+        expected = hashlib.sha256(self.text.encode("utf-8")).hexdigest()
+        if self.content_sha256 != expected:
+            raise ValueError("script seed content hash does not match its text")
+        if self.origin == "operator_file":
+            if not self.filename or not self.file_sha256:
+                raise ValueError("uploaded script seeds require filename and file hash")
+            if "/" in self.filename or "\\" in self.filename or "\x00" in self.filename:
+                raise ValueError("script seed filename must be a plain file name")
+        elif self.filename is not None or self.file_sha256 is not None:
+            raise ValueError("pasted script seeds cannot claim file provenance")
+        return self
+
+
 class EditorialBrief(Contract):
     prompt: Text
     source_urls: list[HttpUrl] = Field(min_length=1, max_length=20)
     source_clip_bindings: dict[str, uuid.UUID] = Field(default_factory=dict, max_length=20)
+    script_seed: EditorialScriptSeed | None = None
     target_duration_seconds: int = Field(default=420, ge=15, le=3600, strict=True)
 
     @model_validator(mode="after")
