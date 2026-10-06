@@ -9,7 +9,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
-from fastapi import Depends, FastAPI, HTTPException, Query, Request, status
+from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response, status
 from fastapi.responses import RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import select, text
@@ -93,6 +93,11 @@ from katcha.domain import (
     SourceStatus,
 )
 from katcha.integrations.storage import ObjectStore
+from katcha.services.media_playback import (
+    MEDIA_PLAYBACK_COOKIE,
+    MEDIA_PLAYBACK_TTL_SECONDS,
+    issue_media_playback_grant,
+)
 from katcha.integrations.youtube.oauth import (
     YouTubeOAuthError,
     begin_youtube_oauth,
@@ -1104,6 +1109,57 @@ def list_sources(
         if source_status:
             stmt = stmt.where(SourceItem.status == source_status)
         return list(session.scalars(stmt))
+
+
+@app.post("/v1/clips/{clip_id}/media-session")
+def create_clip_media_session(
+    clip_id: uuid.UUID,
+    channel_profile_id: uuid.UUID,
+    request: Request,
+    response: Response,
+) -> dict[str, object]:
+    with session_scope() as session:
+        clip = session.get(Clip, clip_id)
+        if (
+            clip is None
+            or channel_profile_id not in channel_ids_for_clip(session, clip_id)
+        ):
+            raise HTTPException(status_code=404, detail="clip not found for this channel")
+        lifecycle = session.get(ClipLifecycle, clip_id)
+        if lifecycle is not None and lifecycle.lifecycle_state == "purged":
+            raise HTTPException(
+                status_code=410,
+                detail="clip media was permanently purged; metadata is still retained",
+            )
+        storage_key = (
+            lifecycle.archive_key
+            if lifecycle is not None
+            and lifecycle.lifecycle_state == "archived"
+            and lifecycle.archive_key
+            else clip.storage_key
+        )
+
+    store = ObjectStore()
+    if not store.exists(storage_key):
+        raise HTTPException(status_code=404, detail="stored clip media is missing")
+    token, grant = issue_media_playback_grant(clip_id, channel_profile_id)
+    response.set_cookie(
+        MEDIA_PLAYBACK_COOKIE,
+        token,
+        max_age=MEDIA_PLAYBACK_TTL_SECONDS,
+        httponly=True,
+        secure=request.url.scheme == "https",
+        samesite="strict",
+        path=f"/v1/clips/{clip_id}/media",
+    )
+    response.headers["Cache-Control"] = "no-store"
+    return {
+        "media_url": (
+            f"/v1/clips/{clip_id}/media"
+            f"?channel_profile_id={channel_profile_id}"
+        ),
+        "expires_at": grant.expires_at,
+    }
 
 
 def _clip_media_range(value: str, size: int) -> tuple[int, int]:
