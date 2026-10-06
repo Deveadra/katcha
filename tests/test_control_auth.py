@@ -325,7 +325,13 @@ def test_named_principal_ai_command_and_write_scopes_are_distinct() -> None:
     _require_named_principal_route_access(command_request)
 
 
-@pytest.mark.parametrize("suffix", ["source-monitor", "contact-sheet"])
+@pytest.mark.parametrize(
+    "suffix",
+    [
+        "assets/candidate/source-monitor", "assets/candidate/contact-sheet",
+        "frames/0", "frames/0/image",
+    ],
+)
 def test_named_principal_storyboard_source_monitor_uses_ai_read_scope(
     suffix: str,
 ) -> None:
@@ -334,7 +340,7 @@ def test_named_principal_storyboard_source_monitor_uses_ai_read_scope(
     run_id = uuid.uuid4()
     path = (
         f"/v1/channels/{channel_id}/editorial-projects/{project_id}/runs/{run_id}/"
-        f"assets/candidate/{suffix}"
+        f"{suffix}"
     )
     request = _request(
         path,
