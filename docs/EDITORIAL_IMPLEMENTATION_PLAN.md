@@ -938,3 +938,30 @@ Validation: all **177 editorial tests passed**, including 42 direction cases,
 v1/v2 receipt recovery, v3 footage-citation replay, invalid references, playback
 speed and freeze checks. Ruff and diff checks passed. Tests are synthetic; remote
 CI and live visual-quality acceptance remain separate gates.
+
+### E13c frame citation review and preserved render handoff (2026-10-06)
+
+PR #296 merged at `0584578`; its CI passed. This follow-up joins three slices:
+
+- Current visual plans expose each cited source time, interpreted observation,
+  source link and sampling limitations in keyboard-accessible disclosures.
+- Directed previews carry an optional `direction_run_id`. The server binds it to
+  a completed plan in the same channel/project/revision, checks the exact storyboard
+  and acquisition identity, and snapshots its citations into the render run.
+  Rendering, preview access and approval recheck the saved binding. Changed receipts
+  block reuse instead of silently describing a different plan as reviewed.
+- Work history displays saved frame citations separately from diagnostic JSON.
+  Native AI tools require an observed direction identity for the same handoff.
+
+Manual renders and old requests remain supported without claiming automatic frame
+citations. No renderer-manifest format or historical manifest hash changes. This
+adds source-time inspection, not an embedded sampled-frame player, semantic proof,
+region annotations or continuous-motion tracking. Automatic still acquisition,
+branding, publication handoff and live acceptance remain pending.
+
+Validation: **220 editorial and command-goal tests passed** after integration with
+merged script-import PR #298 (`6d0fdce`). Ruff and diff checks passed. The synthetic
+editorial browser journey passed current/historical citation display, keyboard disclosure, escaped
+observation text, preserved manual edits and 390px layout. A damaged cached Chromium
+binary was re-extracted for testing; no runtime dependency change was needed.
+No live provider calls, paid work or generated-video publication were performed.

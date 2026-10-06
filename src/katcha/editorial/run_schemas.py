@@ -19,6 +19,7 @@ class StartEditorialRun(Contract):
     confirm_narration: bool = False
     max_narration_estimate_usd: float = Field(default=0.5, gt=0, le=25, allow_inf_nan=False)
     asset_run_id: uuid.UUID | None = None
+    direction_run_id: uuid.UUID | None = None
     storyboard: StoryboardPlan | None = None
     direction: DirectionOptions | None = None
     scout_run_id: uuid.UUID | None = None
@@ -33,6 +34,8 @@ class StartEditorialRun(Contract):
 
     @model_validator(mode="after")
     def valid_asset_selection(self) -> Self:
+        if self.direction_run_id is not None and self.target != "render":
+            raise ValueError("A saved visual plan may only be selected for rendering")
         if self.target == "narration" and not self.confirm_narration:
             raise ValueError("Confirm use of the configured channel voice and budget")
         if self.target != "narration" and self.confirm_narration:

@@ -92,8 +92,7 @@ def start_run(
         options = {
             **request_options,
             "clip_bindings": {
-                source_url: str(clip_id)
-                for source_url, clip_id in effective_bindings.items()
+                source_url: str(clip_id) for source_url, clip_id in effective_bindings.items()
             },
         }
         digest = _digest(options)
@@ -155,6 +154,14 @@ def start_run(
                 raise EditorialConflict(
                     "Select completed asset acquisition for this script revision"
                 )
+        if request.target == "render" and request.direction_run_id is not None:
+            from katcha.editorial.direction_receipts import resolve_direction_receipt
+
+            artifacts.update(
+                resolve_direction_receipt(
+                    session, channel_id, project_id, project.revision, request
+                )
+            )
         if request.target == "narration":
             from katcha.editorial.narration import voice_enabled
 
@@ -164,9 +171,8 @@ def start_run(
                 )
         urls = (
             project.brief["source_urls"]
-            if request.target not in {
-                "assets", "acquire_assets", "render", "narration", "direction"
-            }
+            if request.target
+            not in {"assets", "acquire_assets", "render", "narration", "direction"}
             else []
         )
         if request.target == "acquire_assets":
