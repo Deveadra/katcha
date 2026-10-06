@@ -75,6 +75,7 @@ class CommandPlan(BaseModel):
     requested_actions: list[Literal[
         "refresh_channel_intelligence", "create_short_production",
         "create_ranked_short_episode", "recover_production_render", "start_source_scout",
+        "editorial_storyboard_edit",
     ]] = Field(default_factory=list, max_length=5)
     execution: Literal["propose", "run"] = "propose"
     recurring: bool = False
@@ -156,9 +157,12 @@ def _planner_prompt(
         "Registered actions: start_source_scout (search/discover/prepare media); "
         "refresh_channel_intelligence (refresh learning); create_short_production "
         "(one grounded clip); create_ranked_short_episode (grounded selected clips); "
-        "recover_production_render (grounded failed render). These actions create "
-        "server-validated proposals which can run when authorized. Publishing, deletion, "
-        "and arbitrary settings changes are not registered actions.\n"
+        "recover_production_render (grounded failed render). "
+        "editorial_storyboard_edit is reserved for Katcha's durable goal planner, which binds "
+        "an exact project + script revision + Storyboard version + beat; do not select it in "
+        "this one-shot planner because this schema does not carry frozen edit arguments. "
+        "These actions create server-validated proposals which can run when authorized. "
+        "Publishing, deletion, and arbitrary settings changes are not registered actions.\n"
         "For source scouting, recurring defaults to false: an ordinary search is "
         "one bounded run, not an ongoing watch. Set recurring=true only for an "
         "explicit request for continuous autonomous web scouting. Configured-source "
