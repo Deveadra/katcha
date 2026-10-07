@@ -559,6 +559,44 @@ const draft = {
         await page.getByText(/Preview loaded/).waitFor();
         assert.equal(await page.locator('#editorial-program-monitor-video').isVisible(), true);
         assert.match(await page.locator('#editorial-program-monitor-meta').innerText(), /Loaded · revision 3/);
+        await page.evaluate(() => {
+            const video = document.querySelector('#editorial-program-monitor-video');
+            let current = 2;
+            Object.defineProperty(video, 'duration', {
+                configurable: true,
+                get: () => 12,
+            });
+            Object.defineProperty(video, 'currentTime', {
+                configurable: true,
+                get: () => current,
+                set: value => { current = Number(value); },
+            });
+            video.dispatchEvent(new Event('loadedmetadata'));
+        });
+        assert.equal(
+            await page.locator('#editorial-program-monitor-timecode').innerText(),
+            '00:02.000 / 00:12.000',
+        );
+        await page.locator('[data-program-step="0.1"]').click();
+        assert.equal(
+            await page.locator('#editorial-program-monitor-timecode').innerText(),
+            '00:02.100 / 00:12.000',
+        );
+        await page.locator('#editorial-program-scrub').fill('4.2');
+        assert.equal(
+            await page.locator('#editorial-program-monitor-timecode').innerText(),
+            '00:04.200 / 00:12.000',
+        );
+        await page.getByRole('button', {name: 'Go to selected beat', exact: true}).click();
+        assert.equal(
+            await page.locator('#editorial-program-monitor-timecode').innerText(),
+            '00:00.000 / 00:12.000',
+        );
+        await page.getByText(/planned beat start 00:00.000/i).waitFor();
+        assert.match(
+            await page.locator('#editorial-program-monitor-status').innerText(),
+            /Program time is rendered output time/i,
+        );
         await page.locator('[data-editorial-stage="preview"]').click();
         assert.equal(await page.locator('#editorial-preview').isVisible(), true);
         await page.locator('#editorial-review-note').fill('Evidence and timing checked.');
