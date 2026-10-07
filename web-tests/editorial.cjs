@@ -12,7 +12,11 @@ const uploadedClipId = "22222222-2222-4222-8222-222222222222";
 const uploadedSourceUrl = "https://upload.katcha.invalid/33333333-3333-4333-8333-333333333333";
 let loseSourceMediaResponse = true;
 let loseCreateResponse = true, loseSaveResponse = true;
-let review = {status: "unreviewed", sequence: 0, can_approve: true, reviews: []};
+let publication = null;
+let review = {
+    status: "unreviewed", sequence: 0, can_approve: true, reviews: [],
+    publication_available: false, publication: null,
+};
 let loseReviewResponse = true;
 let recordings = [];
 let stillImages = [], loseImageResponse = true;
@@ -281,9 +285,34 @@ const draft = {
                     }],
                 });
                 if (url.pathname.endsWith("/preview")) return route.fulfill({status: 200, contentType: "video/mp4", body: "synthetic-media-transport-only"});
+                if (url.pathname.endsWith("/publication")) {
+                    publication = publication || {
+                        id: "publication-1", editorial_run_id: "render",
+                        production_id: null, compilation_id: null, short_episode_id: null,
+                        youtube_connection_id: "youtube-one", status: "queued",
+                        stage: "metadata_hold", title: body.title,
+                        description: body.description || "", tags: [], category_id: "22",
+                        privacy_status: "private", publish_at: null,
+                        notify_subscribers: false, made_for_kids: false,
+                        contains_synthetic_media: false, treatment_metadata: {},
+                        youtube_video_id: null, upload_offset: 0, upload_size: null,
+                        processing_status: null, failure_reason: null, rejection_reason: null,
+                        raw_status: {source_kind: "editorial_render"}, published_at: null,
+                        error: null, workflow_id: "workflow", workflow_attempt: 1,
+                        analytics_workflow_id: "analytics", created_at: "2026-10-03",
+                        updated_at: "2026-10-03",
+                    };
+                    review = {...review, publication};
+                    return send(publication, 201);
+                }
                 if (url.pathname.endsWith("/review")) {
                     if (!body) return send(review);
-                    review = {status: body.decision, sequence: 1, can_approve: true, reviews: [{decision: body.decision, actor: "editor", note: body.note, created_at: "2026-10-03"}]};
+                    review = {
+                        status: body.decision, sequence: 1, can_approve: true,
+                        publication_available: body.decision === "approve",
+                        publication,
+                        reviews: [{decision: body.decision, actor: "editor", note: body.note, created_at: "2026-10-03"}],
+                    };
                     if (loseReviewResponse) { loseReviewResponse = false; return send({detail: "Review response lost. Retry to recover your decision."}, 503); }
                     return send(review.reviews[0], 201);
                 }
@@ -710,6 +739,26 @@ const draft = {
         const reviewCalls = calls.filter(call => call.path.endsWith('/review') && call.body);
         assert.equal(reviewCalls.length, 2);
         assert.deepEqual(reviewCalls[0].body, reviewCalls[1].body);
+        await page.locator("#editorial-publication").waitFor({state: "visible"});
+        await page.locator("#editorial-publication-title").fill("Forescene synthetic package");
+        await page.locator("#editorial-publication-description").fill("Grounded packaging draft");
+        await page.locator("#editorial-stage-publication").click();
+        await page.getByText(/Publication staged/).waitFor();
+        const publicationCalls = calls.filter(call => call.path.endsWith("/publication") && call.body);
+        assert.equal(publicationCalls.length, 1);
+        assert.deepEqual(publicationCalls[0].body, {
+            title: "Forescene synthetic package",
+            description: "Grounded packaging draft",
+        });
+        assert.equal(await page.locator("#editorial-open-publication").isVisible(), true);
+        assert.match(
+            await page.locator("#editorial-open-publication").getAttribute("href"),
+            /\/channels\?channel=one&publication=publication-1#content$/,
+        );
+        assert.match(
+            await page.locator("#editorial-publication-status").innerText(),
+            /Finish SEO, thumbnail, visibility and schedule review/i,
+        );
         await page.locator('[data-editorial-stage="storyboard"]').click();
         await page.locator('#editorial-presentation').selectOption('narrated');
         await page.locator('[data-narration-file]').setInputFiles({name: 'recording.wav', mimeType: 'audio/wav', buffer: Buffer.from('synthetic transport only')});
