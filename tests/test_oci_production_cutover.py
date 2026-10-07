@@ -189,3 +189,180 @@ def test_snapshot_packaging_fails_on_checksum_mismatch(tmp_path: Path) -> None:
 
     with pytest.raises(cutover.CutoverError, match="checksum mismatch"):
         cutover.package_snapshot(snapshot, tmp_path / "cutover.tar.gz")
+
+
+def _activation_args(tmp_path: Path, *, apply: bool) -> object:
+    local_env = tmp_path / ".env"
+    local_env.write_text(
+        "\n".join(
+            [
+                "KATCHA_RECOVERY_ADMIN_TOKEN=admin-token",
+                "KATCHA_RECOVERY_CANDIDATE_TOKEN=candidate-token",
+                "KATCHA_FENCE_TOKEN=fence-token",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    return type(
+        "Args",
+        (),
+        {
+            "local_env": str(local_env),
+            "recovery_url": "https://recovery.example",
+            "health_url": "https://app.example/v1/health/ready",
+            "deployment_id": "oci-a1-primary-001",
+            "expected_active_epoch": 0,
+            "release_sha": "a" * 40,
+            "repo_root": str(tmp_path),
+            "bastion_base": str(tmp_path / "bastion"),
+            "ssh_key": str(tmp_path / "target-key"),
+            "port": 22022,
+            "user": "ubuntu",
+            "apply": apply,
+        },
+    )()
+
+
+def test_activation_is_inspect_only_without_apply(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    args = _activation_args(tmp_path, apply=False)
+    remote_scripts: list[str] = []
+
+    monkeypatch.setattr(cutover, "assert_local_mutation_freeze", lambda _root: None)
+    monkeypatch.setattr(cutover.AdminPath, "assert_ready", lambda _self: None)
+
+    def run_script(self, script, *, sudo, args=(), check=True):
+        del self, sudo, args, check
+        remote_scripts.append(script)
+        return cutover.subprocess.CompletedProcess(args=[], returncode=0)
+
+    monkeypatch.setattr(cutover.AdminPath, "run_script", run_script)
+
+    def request_json(method, url, token, payload=None, timeout=15):
+        del token, payload, timeout
+        assert method == "GET"
+        assert url.endswith("/v1/authority/status")
+        return {"active": None, "pending": None}
+
+    monkeypatch.setattr(cutover, "request_json", request_json)
+
+    cutover.activate(args)
+
+    assert remote_scripts == [cutover.REMOTE_INSPECT]
+
+
+def test_precommit_failure_stops_candidate_and_aborts_pending_epoch(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    args = _activation_args(tmp_path, apply=True)
+    remote_scripts: list[str] = []
+    requests: list[tuple[str, str]] = []
+
+    monkeypatch.setattr(cutover, "assert_local_mutation_freeze", lambda _root: None)
+    monkeypatch.setattr(cutover.AdminPath, "assert_ready", lambda _self: None)
+
+    def run_script(self, script, *, sudo, args=(), check=True):
+        del self, sudo, args, check
+        remote_scripts.append(script)
+        if script == cutover.REMOTE_START:
+            raise cutover.subprocess.CalledProcessError(30, "remote-start")
+        return cutover.subprocess.CompletedProcess(args=[], returncode=0)
+
+    monkeypatch.setattr(cutover.AdminPath, "run_script", run_script)
+
+    def request_json(method, url, token, payload=None, timeout=15):
+        del token, timeout
+        requests.append((method, url))
+        if method == "GET":
+            return {"active": None, "pending": None}
+        if url.endswith("/v1/authority/prepare"):
+            return {
+                "pending": {
+                    "deployment_id": "oci-a1-primary-001",
+                    "epoch": 1,
+                }
+            }
+        if url.endswith("/v1/authority/abort"):
+            assert payload == {
+                "deployment_id": "oci-a1-primary-001",
+                "deployment_epoch": 1,
+            }
+            return {"aborted": True}
+        raise AssertionError(f"unexpected coordinator request: {method} {url}")
+
+    monkeypatch.setattr(cutover, "request_json", request_json)
+
+    with pytest.raises(cutover.subprocess.CalledProcessError):
+        cutover.activate(args)
+
+    assert cutover.REMOTE_STOP in remote_scripts
+    assert ("POST", "https://recovery.example/v1/authority/abort") in requests
+
+
+def test_uncertain_commit_reconciles_active_leader_without_stopping_candidate(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    args = _activation_args(tmp_path, apply=True)
+    remote_scripts: list[str] = []
+    fence_results = iter(
+        [
+            {"authorized": False, "active_epoch": 0},
+            {"authorized": True, "active_epoch": 1},
+        ]
+    )
+
+    monkeypatch.setattr(cutover, "assert_local_mutation_freeze", lambda _root: None)
+    monkeypatch.setattr(cutover.AdminPath, "assert_ready", lambda _self: None)
+
+    def run_script(self, script, *, sudo, args=(), check=True):
+        del self, sudo, args, check
+        remote_scripts.append(script)
+        return cutover.subprocess.CompletedProcess(args=[], returncode=0)
+
+    monkeypatch.setattr(cutover.AdminPath, "run_script", run_script)
+    monkeypatch.setattr(cutover, "wait_public_health", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        cutover,
+        "fence_assert",
+        lambda *_args, **_kwargs: next(fence_results),
+    )
+
+    status_reads = 0
+
+    def request_json(method, url, token, payload=None, timeout=15):
+        nonlocal status_reads
+        del token, payload, timeout
+        if method == "GET" and url.endswith("/v1/authority/status"):
+            status_reads += 1
+            if status_reads == 1:
+                return {"active": None, "pending": None}
+            return {
+                "active": {
+                    "deployment_id": "oci-a1-primary-001",
+                    "epoch": 1,
+                }
+            }
+        if url.endswith("/v1/authority/prepare"):
+            return {
+                "pending": {
+                    "deployment_id": "oci-a1-primary-001",
+                    "epoch": 1,
+                }
+            }
+        if url.endswith("/v1/authority/candidate-ready"):
+            return {"ready": True}
+        if url.endswith("/v1/authority/commit"):
+            raise cutover.CutoverError("simulated lost commit response")
+        raise AssertionError(f"unexpected coordinator request: {method} {url}")
+
+    monkeypatch.setattr(cutover, "request_json", request_json)
+
+    cutover.activate(args)
+
+    assert cutover.REMOTE_STOP not in remote_scripts
+    assert status_reads == 2
