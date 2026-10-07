@@ -138,6 +138,34 @@ def _validate_source_url(value: str) -> str:
     return raw
 
 
+def _require_source_authorization(confirmed: bool) -> None:
+    if not confirmed:
+        raise RuntimeError(
+            "Refusing live source acquisition without --confirm-source-authorized. "
+            "Use only media you are authorized to process for this acceptance."
+        )
+
+
+def _review_approval_requested(
+    current_render_id: str,
+    requested_render_id: str | None,
+    *,
+    preview_inspected: bool,
+) -> bool:
+    if not requested_render_id:
+        return False
+    if requested_render_id != current_render_id:
+        raise RuntimeError(
+            "--approve-render-id does not match the current exact reviewed render "
+            f"({current_render_id}); refusing stale approval"
+        )
+    if not preview_inspected:
+        raise RuntimeError(
+            "--approve-render-id also requires --confirm-preview-inspected after human review"
+        )
+    return True
+
+
 def _project_base(channel_id: str, project_id: str) -> str:
     return f"/v1/channels/{channel_id}/editorial-projects/{project_id}"
 
@@ -471,11 +499,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     else:
         if not args.source_url:
             raise RuntimeError("--source-url is required when creating a live acceptance project")
-        if not args.confirm_source_authorized:
-            raise RuntimeError(
-                "Refusing live source acquisition without --confirm-source-authorized. "
-                "Use only media you are authorized to process for this acceptance."
-            )
+        _require_source_authorization(args.confirm_source_authorized)
         source_url = _validate_source_url(args.source_url)
         run_key = args.run_key or datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
         brief: dict[str, Any] = {
@@ -719,7 +743,12 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         "elapsed_seconds": round(time.monotonic() - started_at, 3),
     }
 
-    if not args.approve_render_id:
+    approval_requested = _review_approval_requested(
+        render_id,
+        args.approve_render_id,
+        preview_inspected=args.confirm_preview_inspected,
+    )
+    if not approval_requested:
         summary.update(
             status="render_review_required",
             review_status=review.get("status"),
@@ -731,15 +760,6 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         )
         return summary
 
-    if args.approve_render_id != render_id:
-        raise RuntimeError(
-            "--approve-render-id does not match the current exact reviewed render "
-            f"({render_id}); refusing stale approval"
-        )
-    if not args.confirm_preview_inspected:
-        raise RuntimeError(
-            "--approve-render-id also requires --confirm-preview-inspected after human review"
-        )
     approved = client.post(
         f"{base}/runs/{render_id}/review",
         {
