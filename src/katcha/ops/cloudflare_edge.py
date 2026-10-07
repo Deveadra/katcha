@@ -12,7 +12,7 @@ class CloudflareEdgeError(RuntimeError):
     pass
 
 
-Phase = Literal["http_config_settings", "http_request_firewall_custom", "http_ratelimit"]
+Phase = Literal[\n    "http_config_settings",\n    "http_request_firewall_custom",\n    "http_ratelimit",\n]
 
 _CONFIG_PHASE: Phase = "http_config_settings"
 _CUSTOM_PHASE: Phase = "http_request_firewall_custom"
