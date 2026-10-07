@@ -104,7 +104,10 @@ def test_target_env_requires_expected_production_r2_bucket(tmp_path: Path) -> No
         encoding="utf-8",
     )
 
-    with pytest.raises(media.MediaCutoverError, match="unexpected production media bucket"):
+    with pytest.raises(
+        media.MediaCutoverError,
+        match="unexpected production media bucket",
+    ):
         media.target_from_env(env)
 
 
