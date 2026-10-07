@@ -357,11 +357,21 @@ class DirectionOptions(Contract):
         return self
 
 
+class DirectedMediaUse(Contract):
+    """Frozen provider-facing v1 media schema; editor-only controls stay outside AI receipts."""
+
+    candidate_id: Identity
+    start_seconds: float = Field(default=0, ge=0)
+    playback_rate: float = Field(default=1, ge=0.25, le=2)
+    freeze: bool = False
+    push_in: float = Field(default=1, ge=1, le=1.15)
+
+
 class DirectedBeat(Contract):
     # Preserve the version-1 provider schema so existing saved responses remain recoverable.
     beat_id: Identity
     layout: Literal["single", "comparison", "quote"]
-    media: list[VisualMediaUse] = Field(default_factory=list, max_length=2)
+    media: list[DirectedMediaUse] = Field(default_factory=list, max_length=2)
     quote_source_id: Identity | None = None
     overlays: list[VisualOverlay] = Field(default_factory=list, max_length=8)
     rationale: str = Field(min_length=1, max_length=1000)
