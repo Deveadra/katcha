@@ -65,6 +65,9 @@ def source_monitor(
         frame_count = len(features.keyframe_keys)
         duration = float(clip.duration_seconds or 0)
         contact_sheet_key = features.contact_sheet_key
+        storage_key = clip.storage_key
+        extension = (clip.extension or "mp4").lstrip(".")
+        size_bytes = int(clip.size_bytes or 0)
 
     selection = next(
         (
@@ -84,6 +87,10 @@ def source_monitor(
         "frame_count": frame_count,
         "sample_times": sample_timestamps(duration, frame_count),
         "contact_sheet_key": contact_sheet_key,
+        "storage_key": storage_key,
+        "extension": extension,
+        "size_bytes": size_bytes,
+        "source_media_available": True,
         "coverage": "sampled_frames",
         "limitation": (
             "These frames are samples, not continuous playback. Verify exact motion and timing "
