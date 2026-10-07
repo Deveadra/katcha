@@ -13,7 +13,11 @@ from katcha.acquisition_models import DiscoveryCandidate, RightsAssessment
 from katcha.editorial.project_schemas import EditorialDraft
 from katcha.editorial.run_schemas import StartEditorialRun
 from katcha.editorial.visual_compiler import compile_project_visuals, compile_visuals
-from katcha.editorial.visual_schemas import RenderMedia, StoryboardPlan
+from katcha.editorial.visual_schemas import (
+    EditorialRenderManifest,
+    RenderMedia,
+    StoryboardPlan,
+)
 from katcha.models import Clip, SourceItem
 from katcha.services.editorial_projects import EditorialConflict
 from katcha.services.editorial_runs import checkpoint, start_run
@@ -99,6 +103,12 @@ def test_professional_beat_controls_compile_only_into_v5():
     assert scene.transition == "fade"
     assert scene.transition_frames == 6
     assert scene.duration_frames == 240
+
+
+    downgraded = manifest.model_dump(mode="json")
+    downgraded["version"] = "editorial-render-v1"
+    with pytest.raises(ValidationError, match="Professional beat controls"):
+        EditorialRenderManifest.model_validate(downgraded)
 
 
 @pytest.mark.parametrize(
