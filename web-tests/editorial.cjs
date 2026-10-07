@@ -743,7 +743,7 @@ const draft = {
         await page.locator("#editorial-publication-title").fill("Forescene synthetic package");
         await page.locator("#editorial-publication-description").fill("Grounded packaging draft");
         await page.locator("#editorial-stage-publication").click();
-        await page.getByText(/Publication staged/).waitFor();
+        await page.locator("#editorial-feedback").filter({hasText: /Publication staged/}).waitFor();
         const publicationCalls = calls.filter(call => call.path.endsWith("/publication") && call.body);
         assert.equal(publicationCalls.length, 1);
         assert.deepEqual(publicationCalls[0].body, {
