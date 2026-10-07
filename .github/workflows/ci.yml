@@ -68,7 +68,14 @@ jobs:
             const outputs = {
               python:
                 ciChanged ||
-                prefix("src/", "tests/", "alembic/", "scripts/") ||
+                prefix(
+                  "src/",
+                  "tests/",
+                  "alembic/",
+                  "scripts/",
+                  "deploy/scripts/",
+                  "deploy/cloud-init/"
+                ) ||
                 exact(
                   "alembic.ini",
                   "pyproject.toml",
@@ -278,6 +285,19 @@ jobs:
           bash scripts/test_aws_remotion_deploy.sh
           bash scripts/test_aws_render_staging.sh
           bash scripts/test_aws_tf_state_bootstrap.sh
+
+      - name: Validate OCI production operator tooling
+        run: |
+          bash -n scripts/bootstrap-acquired-oci-host.sh
+          bash -n deploy/scripts/production-supervisor.sh
+          ruff check \
+            scripts/oci_production_cutover.py \
+            scripts/verify_media_cutover.py
+          python -m py_compile \
+            scripts/oci_production_cutover.py \
+            scripts/verify_media_cutover.py
+          python scripts/oci_production_cutover.py --help >/dev/null
+          python scripts/verify_media_cutover.py --help >/dev/null
 
       - name: Validate Compose
         env:

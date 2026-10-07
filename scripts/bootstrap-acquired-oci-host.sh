@@ -568,11 +568,16 @@ for attempt in $(seq 1 24); do
     tunnel_pid=$!
 
     sleep 2
-    if kill -0 "$tunnel_pid" >/dev/null 2>&1; then
+    if kill -0 "$tunnel_pid" >/dev/null 2>&1 \
+        && python3 -c 'import socket,sys; sock=socket.create_connection(("127.0.0.1", int(sys.argv[1])), 2); sock.close()' "$LOCAL_PORT" >/dev/null 2>&1
+    then
         tunnel_ready=true
         break
     fi
 
+    if kill -0 "$tunnel_pid" >/dev/null 2>&1; then
+        kill "$tunnel_pid" >/dev/null 2>&1 || true
+    fi
     wait "$tunnel_pid" >/dev/null 2>&1 || true
     tunnel_pid=""
 

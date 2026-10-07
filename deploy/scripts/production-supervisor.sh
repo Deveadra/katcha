@@ -26,6 +26,42 @@ if [[ ! -r /etc/katcha/aws/config ]]; then
   exit 22
 fi
 
+renderer_uid=10001
+for directory in /etc/katcha/aws /etc/katcha/aws/runtime; do
+  if [[ ! -d "$directory" || -L "$directory" ]]; then
+    echo "Hosted AWS credential directory is missing or unsafe: $directory" >&2
+    exit 22
+  fi
+  if [[ "$(stat -c '%u:%a' "$directory")" != "$renderer_uid:700" ]]; then
+    echo "Hosted AWS credential directory has unsafe ownership/mode: $directory" >&2
+    exit 22
+  fi
+done
+
+for file in \
+  /etc/katcha/aws/config \
+  /etc/katcha/aws/runtime/client.pem \
+  /etc/katcha/aws/runtime/client-key.pem; do
+  if [[ ! -f "$file" || -L "$file" ]]; then
+    echo "Hosted AWS credential file is missing or unsafe: $file" >&2
+    exit 22
+  fi
+  if [[ "$(stat -c '%u:%a' "$file")" != "$renderer_uid:600" ]]; then
+    echo "Hosted AWS credential file has unsafe ownership/mode: $file" >&2
+    exit 22
+  fi
+done
+
+helper=/etc/katcha/aws/aws_signing_helper
+if [[ ! -f "$helper" || -L "$helper" ]]; then
+  echo "Hosted AWS signing helper is missing or unsafe." >&2
+  exit 22
+fi
+if [[ "$(stat -c '%u:%a' "$helper")" != "$renderer_uid:755" ]]; then
+  echo "Hosted AWS signing helper has unsafe ownership/mode." >&2
+  exit 22
+fi
+
 PYTHONPATH="${ROOT}/src${PYTHONPATH:+:${PYTHONPATH}}" \
   python3 scripts/validate_production_runtime.py --env-file "${ENV_FILE}"
 
