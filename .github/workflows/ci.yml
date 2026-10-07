@@ -290,8 +290,11 @@ jobs:
         run: |
           bash -n scripts/bootstrap-acquired-oci-host.sh
           bash -n deploy/scripts/production-supervisor.sh
-          python -m py_compile scripts/oci_production_cutover.py
+          python -m py_compile \
+            scripts/oci_production_cutover.py \
+            scripts/verify_media_cutover.py
           python scripts/oci_production_cutover.py --help >/dev/null
+          python scripts/verify_media_cutover.py --help >/dev/null
 
       - name: Validate Compose
         env:
