@@ -47,7 +47,14 @@ const Scene = ({scene, assets, images}) => {
       const video = <OffthreadVideo src={asset.url} startFrom={Math.floor(use.start_seconds * 30)} playbackRate={use.playback_rate} muted style={{width: '100%', height: '100%'}} />;
       return <div key={index} style={{position: 'absolute', left: 48 + index * boxWidth, top: 96, width: boxWidth, height: boxHeight, overflow: 'hidden'}}>
         <div style={{position: 'absolute', ...geometry.viewport, overflow: 'hidden'}}>
-          <div style={{position: 'absolute', ...geometry.content, transform: `scale(${zoom})`}}>
+          <div style={{
+            position: 'absolute',
+            ...geometry.content,
+            transform: `scale(${zoom})`,
+            transformOrigin: use.crop
+              ? `${(use.crop.x + use.crop.width / 2) * 100}% ${(use.crop.y + use.crop.height / 2) * 100}%`
+              : '50% 50%',
+          }}>
             {use.freeze ? <Freeze frame={0}>{video}</Freeze> : video}
             {scene.overlays.filter(item => item.media_index === index).map((overlay, i) => <Annotation key={i} overlay={overlay} />)}
           </div>
