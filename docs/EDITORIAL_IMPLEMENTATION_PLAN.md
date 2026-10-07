@@ -1135,3 +1135,58 @@ stale-script rejection, footage beat/claim lineage, image/narration beat ownersh
 retained unavailable intent, browser autosave/hydration/Undo, responsive replacement
 state, and Storyboard-aware typed AI context. Remote CI/launcher/browser gates remain
 required before merge.
+
+
+### E19 confirmed AI Storyboard edit proposals (2026-10-06)
+
+Merged as PR #317 and integrated with main through `ae30b525`. Katcha AI can now
+propose one visual edit for an exact project + script revision + Storyboard workspace
+version + beat. The proposal uses the same durable Storyboard contract as manual edits
+rather than a chat-only mutation path.
+
+The operator receives explicit **Apply edit / Modify / Reject** controls. Apply rechecks
+the frozen workspace version and writes a normal immutable Storyboard revision with
+`origin=ai_apply`; existing Storyboard history remains the Undo authority. Modify first
+rejects the obsolete frozen proposal before returning the operator to the prompt. Reject
+is audited and closes a goal that was waiting for that exact confirmation, preventing
+orphaned durable work.
+
+Proposal grounding requires server-observed project/run/image identities plus observed
+opaque footage/evidence identities. Stale script/workspace versions fail closed.
+Applying an edit still does not render, acquire media, establish rights, approve a
+preview or publish.
+
+Final remote validation passed Python, browser/explorer, PR Gate and Application
+launcher on head `1a53cb7f` before merge.
+
+
+### E20 Source/Program precision time navigation (2026-10-06, draft)
+
+The next professional-editor boundary makes the existing Source and Program monitors
+usable for actual trim decisions instead of only inspection. Source time and Program
+time remain explicitly distinct.
+
+For acquired footage, the Source Monitor retains its sampled contact-sheet evidence and
+adds continuous private playback, precise `MM:SS.mmm` time, scrubbing, ±0.1 second
+fine steps, clickable sampled-frame timestamps and **Set beat start**. Set beat start
+writes the same durable `start_seconds` field used by manual Storyboard editing, AI
+proposals, preflight, render and Undo; it does not create a second trim state.
+
+Private source playback does not place the control-plane bearer token in a URL or fetch
+the entire source into browser memory. An authenticated request creates a 15-minute
+HttpOnly, SameSite, path-scoped media capability. Native video then retains HTTP range
+requests. Each media request verifies the capability and re-runs current acquired-media
+rights/hash/storage validation before streaming the exact managed object. Production
+ticket issuance fails closed without Katcha's configured credential-encryption key;
+development tickets are process-ephemeral.
+
+Program Monitor adds the same precise scrub/fine-step transport and a **Go to selected
+beat** command. Until the render manifest exposes an exact beat-to-program mapping to
+this UI, that jump is explicitly the saved script's *planned* beat start and must be
+verified against the rendered preview before approval. Source FPS is not persisted, so
+this slice deliberately does not pretend ±1-frame stepping is accurate.
+
+Validation covers scoped ticket expiry/mismatch, hidden storage identity, authenticated
+session issuance, private source streaming, sampled-time navigation, durable in-point
+updates, Program time navigation and responsive browser behavior. Remote CI/launcher
+gates remain required before merge.
