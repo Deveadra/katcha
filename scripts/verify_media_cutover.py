@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Inspect or copy the frozen local MinIO media bucket into production R2.
 
-Default mode is read-only. --apply copies only missing or size-mismatched source
-objects and never deletes target objects.
+Default mode is read-only. Same-size objects are SHA-256 compared. --apply copies
+only objects that fail the comparison and never deletes target objects.
 """
 
 from __future__ import annotations
