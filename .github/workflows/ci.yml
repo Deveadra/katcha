@@ -279,6 +279,12 @@ jobs:
           bash scripts/test_aws_render_staging.sh
           bash scripts/test_aws_tf_state_bootstrap.sh
 
+      - name: Validate OCI production operator tooling
+        run: |
+          bash -n scripts/bootstrap-acquired-oci-host.sh
+          python -m py_compile scripts/oci_production_cutover.py
+          python scripts/oci_production_cutover.py --help >/dev/null
+
       - name: Validate Compose
         env:
           KATCHA_ENV_FILE: .env.example
