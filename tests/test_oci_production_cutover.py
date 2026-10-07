@@ -313,10 +313,70 @@ def test_activation_is_inspect_only_without_apply(
         return {"active": None, "pending": None}
 
     monkeypatch.setattr(cutover, "request_json", request_json)
+    fence_probes: list[tuple[str, int]] = []
+
+    def fence_probe(_url, _token, deployment, epoch):
+        fence_probes.append((deployment, epoch))
+        return {"authorized": False, "active_epoch": 0}
+
+    monkeypatch.setattr(cutover, "fence_assert", fence_probe)
 
     cutover.activate(args)
 
     assert remote_scripts == [cutover.REMOTE_INSPECT]
+    assert fence_probes == [("oci-a1-primary-001", 1)]
+
+
+def test_fence_unauthorized_blocks_inspect_before_runtime_or_epoch_prepare(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    args = _activation_args(tmp_path, apply=True)
+    remote_scripts: list[str] = []
+    requests: list[str] = []
+
+    monkeypatch.setattr(cutover, "assert_local_mutation_freeze", lambda _root: None)
+    monkeypatch.setattr(cutover.AdminPath, "assert_ready", lambda _self: None)
+
+    def run_script(self, script, *, sudo, args=(), check=True):
+        del self, sudo, args, check
+        remote_scripts.append(script)
+        return cutover.subprocess.CompletedProcess(args=[], returncode=0)
+
+    monkeypatch.setattr(cutover.AdminPath, "run_script", run_script)
+
+    def request_json(method, url, token, payload=None, timeout=15):
+        del token, payload, timeout
+        requests.append(f"{method} {url}")
+        if method == "GET" and url.endswith("/v1/authority/status"):
+            return {"active": None, "pending": None}
+        raise AssertionError("fence preflight should block subsequent requests")
+
+    monkeypatch.setattr(cutover, "request_json", request_json)
+
+    def rejected_fence(*_args, **_kwargs):
+        raise cutover.CutoverError("simulated HTTP 401")
+
+    monkeypatch.setattr(cutover, "fence_assert", rejected_fence)
+
+    with pytest.raises(cutover.CutoverError, match="fence credential preflight failed"):
+        cutover.activate(args)
+
+    assert remote_scripts == [cutover.REMOTE_INSPECT]
+    assert requests == ["GET https://recovery.example/v1/authority/status"]
+
+
+def test_remote_inspect_authenticates_hosted_fence_before_reporting_ready() -> None:
+    script = cutover.REMOTE_INSPECT
+
+    assert "KATCHA_LEADERSHIP_FENCE_URL" in script
+    assert "KATCHA_LEADERSHIP_FENCE_TOKEN" in script
+    assert "preflight.auth-only" in script
+    assert "HOST_FENCE_CREDENTIAL_OK" in script
+    assert script.index("HOST_FENCE_CREDENTIAL_OK") < script.index(
+        "HOST_CUTOVER_STATE_READY"
+    )
+    assert "print(token)" not in script
 
 
 def test_precommit_rollback_leaves_only_postgres_for_safe_retry() -> None:
@@ -370,6 +430,11 @@ def test_precommit_failure_stops_candidate_and_aborts_pending_epoch(
         raise AssertionError(f"unexpected coordinator request: {method} {url}")
 
     monkeypatch.setattr(cutover, "request_json", request_json)
+    monkeypatch.setattr(
+        cutover,
+        "fence_assert",
+        lambda *_args, **_kwargs: {"authorized": False, "active_epoch": 0},
+    )
 
     with pytest.raises(cutover.subprocess.CalledProcessError):
         cutover.activate(args)
@@ -386,6 +451,7 @@ def test_uncertain_commit_reconciles_active_leader_without_stopping_candidate(
     remote_scripts: list[str] = []
     fence_results = iter(
         [
+            {"authorized": False, "active_epoch": 0},
             {"authorized": False, "active_epoch": 0},
             {"authorized": True, "active_epoch": 1},
         ]
