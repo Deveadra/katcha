@@ -401,6 +401,23 @@ def test_editorial_publication_cost_uses_audited_project_and_run_usage(
 
         assert packaging_intelligence._publication_cost(session, publication) == Decimal("2.00")
 
+        publication.treatment_metadata = {
+            "source_cost_usd_at_registration": "2.00",
+        }
+        session.add(
+            UsageEvent(
+                task="editorial",
+                provider="openai",
+                model="future-revision",
+                cost_usd=Decimal("7.00"),
+                reference_type="editorial_run",
+                reference_id=str(run.id),
+            )
+        )
+        session.flush()
+
+        assert packaging_intelligence._publication_cost(session, publication) == Decimal("2.00")
+
 
 def test_packaging_intelligence_routes_are_mounted() -> None:
     paths = set(app.openapi()["paths"])
