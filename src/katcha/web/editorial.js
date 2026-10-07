@@ -549,8 +549,14 @@ window.KatchaEditorial = (() => {
             api(base), api(`${base}/revisions?limit=1`), api(`${base}/runs?limit=100`),
         ]);
         const run = runs[0] ? await api(`${base}/runs/${encodeURIComponent(runs[0].editorial_run_id)}`) : null;
-        const review = run?.target === "render" && run.status === "completed"
-            ? await api(`${base}/runs/${encodeURIComponent(run.editorial_run_id)}/review`).catch(error => ({error: error.message})) : null;
+        const [review, performance] = run?.target === "render" && run.status === "completed"
+            ? await Promise.all([
+                api(`${base}/runs/${encodeURIComponent(run.editorial_run_id)}/review`)
+                    .catch(error => ({error: error.message})),
+                api(`${base}/runs/${encodeURIComponent(run.editorial_run_id)}/performance`)
+                    .catch(error => ({error: error.message})),
+            ])
+            : [null, null];
         const [narration, images, storyboardWorkspace] = project.revision > 0
             ? await Promise.all([
                 api(`${base}/narration?revision=${project.revision}`).catch(error => ({error: error.message, recordings: []})),
@@ -566,7 +572,7 @@ window.KatchaEditorial = (() => {
         state.directionRun = run?.target === "direction" && run.status !== "completed" ? null : directionRun;
         if (state.project?.id !== id || state.run?.editorial_run_id !== run?.editorial_run_id) clearPreview();
         window.KatchaEditorialHistory.context(channel, id);
-        state.assetRun = assetRun; state.review = review; state.narration = narration; state.images = images;
+        state.assetRun = assetRun; state.review = review; state.performance = performance; state.narration = narration; state.images = images;
         const pending = read(storageKey(`pending.${id}`), null);
         state.project = project; state.revision = revisions[0] || null; state.run = run;
         state.stale = Boolean(pending && pending.revision < project.revision);
