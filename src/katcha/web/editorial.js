@@ -157,7 +157,7 @@ window.KatchaEditorial = (() => {
         if (state.sourceMonitorKey === key && state.sourceMonitorUrl) {
             el("editorial-source-monitor").hidden = false;
             const currentStart = Number(
-                row.querySelector("[data-footage-start]")?.value || 0,
+                row.querySelector('[data-footage="start"]')?.value || 0,
             );
             seekSourceMonitor(currentStart);
             return;
@@ -188,7 +188,7 @@ window.KatchaEditorial = (() => {
             state.sourceMonitorMetadata = metadata;
             state.sourceMediaLoaded = false;
             const currentStart = Number(
-                row.querySelector("[data-footage-start]")?.value || 0,
+                row.querySelector('[data-footage="start"]')?.value || 0,
             );
             updateSourceTransport(currentStart);
             el("editorial-source-monitor-title").textContent = metadata.title;
@@ -681,7 +681,7 @@ window.KatchaEditorial = (() => {
     function boardStorage() { return storageKey(`board.${state.project.id}.${state.project.revision}.${state.assetRun?.editorial_run_id || "none"}`); }
 //     function saveStoryboard() {
 //         const rows = [...el("editorial-storyboard").querySelectorAll("[data-board-beat]")].map(row => ({
-//             choice: row.querySelector("select").value, start: row.querySelector("[data-footage-start]").value,
+//             choice: row.querySelector("select").value, start: row.querySelector('[data-footage="start"]').value,
 //             freeze: row.querySelector("input[type=checkbox]").checked,
     function rawStoryboardRows() {
         return [...el("editorial-storyboard").querySelectorAll("[data-board-beat]")].map(row => ({
@@ -905,7 +905,7 @@ window.KatchaEditorial = (() => {
                 };
             }
             if (kind === "media") {
-                const start = Number(row.querySelector("[data-footage-start]").value);
+                const start = Number(row.querySelector('[data-footage="start"]').value);
                 if (!Number.isFinite(start) || start < 0) {
                     throw new Error("Enter a valid footage start time.");
                 }
@@ -1419,7 +1419,7 @@ window.KatchaEditorial = (() => {
                     + "Choose current distinct images before rendering.",
                 );
             }
-//             return kind === "quote" ? {beat_id: row.dataset.boardBeat, layout: "quote", quote_source_id: id, media: []} : {beat_id: row.dataset.boardBeat, layout: "single", media: [{candidate_id: id, start_seconds: Number(row.querySelector("[data-footage-start]").value), freeze: row.querySelector("input[type=checkbox]").checked}]};
+//             return kind === "quote" ? {beat_id: row.dataset.boardBeat, layout: "quote", quote_source_id: id, media: []} : {beat_id: row.dataset.boardBeat, layout: "single", media: [{candidate_id: id, start_seconds: Number(row.querySelector('[data-footage="start"]').value), freeze: row.querySelector("input[type=checkbox]").checked}]};
 //         });
 //         const mode = el("editorial-presentation").value;
 //         const narration_ids = Object.fromEntries([...el("editorial-narration").querySelectorAll("[data-narration-select]")].map(input => [input.dataset.narrationSelect, input.value]));
@@ -1818,7 +1818,7 @@ window.KatchaEditorial = (() => {
             showFootageControls();
             refreshTimelineStatus();
             scheduleStoryboardWorkspaceSave();
-            if (event?.target.matches("[data-footage-start]")) {
+            if (event?.target.matches('[data-footage="start"]')) {
                 seekSourceMonitor(Number(event.target.value));
             }
             if (event?.type === "change" && event.target.matches("[data-primary-visual]")) {
