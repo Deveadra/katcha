@@ -96,7 +96,8 @@ TOOLS = {
             "editorial_publication_performance",
             "Read measured YouTube outcomes for one exact Editorial render publication, including "
             "analytics window, reach/CTR attribution, midpoint retention, packaging variant, "
-            "audited source cost, revenue and contribution margin. Missing provider data stays null.",
+            "audited source cost, revenue and contribution margin. "
+            "Missing provider data stays null.",
             "ai:read",
             "GET",
             "/v1/channels/{channel_profile_id}/editorial-projects/{project_id}"
