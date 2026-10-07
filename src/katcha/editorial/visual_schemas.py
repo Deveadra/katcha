@@ -6,6 +6,7 @@ from uuid import UUID
 from pydantic import Field, model_serializer, model_validator
 
 from katcha.editorial.project_schemas import Contract, Identity, Text
+from katcha.rendering.manifest import ShortBrandSpec
 
 
 class Region(Contract):
@@ -213,6 +214,7 @@ class EditorialRenderManifest(Contract):
         "editorial-render-v3",
         "editorial-render-v4",
         "editorial-render-v5",
+        "editorial-render-v6",
     ] = "editorial-render-v1"
     project_id: str
     revision: int = Field(gt=0, strict=True)
@@ -228,6 +230,7 @@ class EditorialRenderManifest(Contract):
     output_duration_seconds: float = Field(gt=0, le=3600)
     output_key: str
     requires_editorial_review: Literal[True] = True
+    brand: ShortBrandSpec | None = None
 
     @model_serializer(mode="wrap")
     def preserve_v1(self, handler):
@@ -238,8 +241,11 @@ class EditorialRenderManifest(Contract):
             "editorial-render-v3",
             "editorial-render-v4",
             "editorial-render-v5",
+            "editorial-render-v6",
         }:
             value.pop("images", None)
+        if self.brand is None:
+            value.pop("brand", None)
         return value
 
     @model_validator(mode="after")
@@ -249,6 +255,7 @@ class EditorialRenderManifest(Contract):
             "editorial-render-v3",
             "editorial-render-v4",
             "editorial-render-v5",
+            "editorial-render-v6",
         } and narrated != (self.version == "editorial-render-v2"):
             raise ValueError("Narrated rendering requires a narration-capable manifest")
         if not narrated and self.narration:
@@ -267,13 +274,17 @@ class EditorialRenderManifest(Contract):
             for scene in self.timeline
             for identity in ([scene.image_id] if scene.image_id else scene.image_ids)
         }
-        if self.version not in {"editorial-render-v4", "editorial-render-v5"} and any(
+        if self.version not in {
+            "editorial-render-v4",
+            "editorial-render-v5",
+            "editorial-render-v6",
+        } and any(
             scene.layout == "image_comparison"
             or (scene.layout == "image" and scene.overlays)
             for scene in self.timeline
         ):
             raise ValueError(
-                "Image comparisons and annotations require manifest version 4 or 5"
+                "Image comparisons and annotations require manifest version 4, 5 or 6"
             )
         if len(images) != len(self.images) or set(images) != selected_images:
             raise ValueError("Image manifests must cover exactly the selected images")
@@ -284,6 +295,7 @@ class EditorialRenderManifest(Contract):
                 "editorial-render-v3",
                 "editorial-render-v4",
                 "editorial-render-v5",
+                "editorial-render-v6",
             }
             and images
         ):
@@ -300,8 +312,22 @@ class EditorialRenderManifest(Contract):
             or any(use.crop is not None for use in scene.media)
             for scene in self.timeline
         )
-        if advanced_edits and self.version != "editorial-render-v5":
-            raise ValueError("Professional beat controls require manifest version 5")
+        if advanced_edits and self.version not in {"editorial-render-v5", "editorial-render-v6"}:
+            raise ValueError("Professional beat controls require manifest version 5 or 6")
+        if self.version == "editorial-render-v6":
+            if self.brand is None:
+                raise ValueError("Branded editorial rendering requires a frozen channel brand")
+            logo = self.brand.logo
+            if logo.enabled:
+                key = str(logo.storage_key or "")
+                if (
+                    ":" in key
+                    or key.startswith("/")
+                    or any(part in {".", ".."} for part in key.split("/"))
+                ):
+                    raise ValueError("Editorial brand logo must use a managed object key")
+        elif self.brand is not None:
+            raise ValueError("Frozen channel branding requires manifest version 6")
         media = {item.candidate_id: item for item in self.media}
         if len(media) != len(self.media):
             raise ValueError("Render media identities must be unique")
