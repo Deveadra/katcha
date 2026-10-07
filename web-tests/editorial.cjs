@@ -498,12 +498,12 @@ const draft = {
         await page.locator('[data-source-frame-step="1"]').click();
         assert.equal(
             await page.locator('#editorial-source-monitor-timecode').innerText(),
-            '00:05.140 / 00:10.000',
+            '00:05.120 / 00:10.000',
         );
         await page.getByRole('button', {name: 'Set beat start', exact: true}).click();
         assert.equal(
             await page.locator('#editorial-storyboard [data-footage-start]').inputValue(),
-            '5.14',
+            '5.12',
         );
         await page.getByRole('button', {name: 'Load source video', exact: true}).click();
         await page.locator('#editorial-source-monitor-video').waitFor({state: 'visible'});
