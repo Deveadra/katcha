@@ -575,9 +575,67 @@ PYTHONPATH=/opt/katcha/src \
 Do not start cloud automation while the local production workers are still
 allowed to mutate production.
 
+### Initial media handoff
+
+The PostgreSQL cutover does not by itself move objects that still exist only in
+the local MinIO bucket. Before leadership is initialized, compare the frozen
+local media bucket with the production R2 media bucket:
+
+```bash
+cd ~/src/katcha
+python scripts/verify_media_cutover.py
+```
+
+The default invocation is read-only. It verifies that the target is the expected
+`katcha-media-prod` Cloudflare R2 bucket and reports the exact number/bytes of
+objects that are absent or size-mismatched. It never treats target-only objects
+as a reason to delete anything.
+
+If the plan reports objects to copy, keep all local mutating workers stopped and
+run:
+
+```bash
+python scripts/verify_media_cutover.py --apply
+python scripts/verify_media_cutover.py
+```
+
+The apply mode copies only missing or size-mismatched objects, verifies each
+copied object's size, and performs a complete second comparison before reporting
+success. Keep the local MinIO data intact as part of the pre-cutover rollback
+source.
+
 ## Phase 8 — initialize leadership
 
 Initial coordinator state starts with active epoch 0.
+
+For the first live cutover, prefer the checked-in fail-closed operator wrapper.
+It keeps recovery-admin credentials on the operator workstation, requires a
+usable Bastion TCP+SSH path, verifies that only the restored PostgreSQL candidate
+is running, pins the host and environment to an explicit release SHA, runs both
+production validators, proves local/public/durable/fence readiness, reports
+candidate readiness, and reconciles an uncertain commit response before taking
+any destructive action.
+
+Run the inspect-only pass first:
+
+```bash
+cd ~/src/katcha
+git pull --ff-only origin main
+RELEASE_SHA="$(git rev-parse HEAD)"
+python scripts/oci_production_cutover.py activate-primary \
+  --release-sha "$RELEASE_SHA"
+```
+
+Only after that passes, apply the same exact release:
+
+```bash
+python scripts/oci_production_cutover.py activate-primary \
+  --release-sha "$RELEASE_SHA" \
+  --apply
+```
+
+The lower-level coordinator protocol remains documented below for recovery and
+manual diagnosis.
 
 Prepare the first deployment:
 
