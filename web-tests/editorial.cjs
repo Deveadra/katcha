@@ -475,11 +475,13 @@ const draft = {
         assert.match(await page.locator('[data-footage-out]').innerText(), /7\.50s/);
         await page.locator('[data-footage="freeze"]').check();
         assert.match(await page.locator('[data-footage-out]').innerText(), /Held at 1\.50s/);
+        await page.getByText('Crop source frame', {exact: true}).click();
         await page.locator('[data-crop-enabled]').check();
         await page.locator('[data-crop="x"]').fill('10');
         await page.locator('[data-crop="y"]').fill('15');
         await page.locator('[data-crop="width"]').fill('70');
         await page.locator('[data-crop="height"]').fill('70');
+        await page.getByText('Caption & transition', {exact: true}).click();
         await page.locator('[data-caption-position]').selectOption('center');
         await page.locator('[data-caption-scale]').fill('1.15');
         await page.locator('[data-caption-background]').check();
