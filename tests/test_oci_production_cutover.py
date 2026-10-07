@@ -55,19 +55,39 @@ def test_admin_path_requires_a_listening_local_forward(
     assert called is False
 
 
+def _mock_local_docker(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    services: str,
+) -> None:
+    def run(argv, **_kwargs):
+        if argv[:5] == ["docker", "compose", "ps", "-q", "postgres"]:
+            stdout = "postgres-cid\n"
+        elif argv[:3] == ["docker", "inspect", "--format"]:
+            stdout = "katcha\n"
+        elif argv[:2] == ["docker", "ps"]:
+            assert "label=com.docker.compose.project=katcha" in argv
+            stdout = services
+        else:
+            raise AssertionError(f"unexpected Docker command: {argv}")
+        return cutover.subprocess.CompletedProcess(
+            args=argv,
+            returncode=0,
+            stdout=stdout,
+            stderr="",
+        )
+
+    monkeypatch.setattr(cutover.subprocess, "run", run)
+
+
 def test_local_mutation_freeze_allows_only_postgres_and_minio(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    def compose_ps(*_args, **_kwargs):
-        return cutover.subprocess.CompletedProcess(
-            args=[],
-            returncode=0,
-            stdout="postgres\nminio\n",
-            stderr="",
-        )
-
-    monkeypatch.setattr(cutover.subprocess, "run", compose_ps)
+    _mock_local_docker(
+        monkeypatch,
+        services="postgres\nminio\n",
+    )
 
     cutover.assert_local_mutation_freeze(tmp_path)
 
@@ -76,17 +96,30 @@ def test_local_mutation_freeze_rejects_running_worker(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    def compose_ps(*_args, **_kwargs):
+    _mock_local_docker(
+        monkeypatch,
+        services="postgres\nproduction-worker\n",
+    )
+
+    with pytest.raises(cutover.CutoverError, match="production-worker"):
+        cutover.assert_local_mutation_freeze(tmp_path)
+
+
+def test_local_mutation_freeze_requires_the_rollback_postgres(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def no_postgres(argv, **_kwargs):
         return cutover.subprocess.CompletedProcess(
-            args=[],
+            args=argv,
             returncode=0,
-            stdout="postgres\nproduction-worker\n",
+            stdout="",
             stderr="",
         )
 
-    monkeypatch.setattr(cutover.subprocess, "run", compose_ps)
+    monkeypatch.setattr(cutover.subprocess, "run", no_postgres)
 
-    with pytest.raises(cutover.CutoverError, match="production-worker"):
+    with pytest.raises(cutover.CutoverError, match="exactly one"):
         cutover.assert_local_mutation_freeze(tmp_path)
 
 
