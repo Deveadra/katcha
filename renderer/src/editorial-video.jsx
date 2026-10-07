@@ -20,11 +20,12 @@ const Scene = ({scene, assets, images}) => {
   const captionScale = scene.caption_scale || 1;
   const captionPosition = scene.caption_position || 'bottom';
   const transitionFrames = Math.min(scene.transition_frames || 8, Math.max(1, Math.floor(scene.duration_frames / 2)));
+  const transitionDenominator = Math.max(1, transitionFrames - 1);
   const transitionOpacity = scene.transition === 'fade'
     ? Math.max(
-        frame < transitionFrames ? 1 - frame / transitionFrames : 0,
+        frame < transitionFrames ? 1 - frame / transitionDenominator : 0,
         frame >= scene.duration_frames - transitionFrames
-          ? (frame - (scene.duration_frames - transitionFrames)) / transitionFrames
+          ? (frame - (scene.duration_frames - transitionFrames)) / transitionDenominator
           : 0,
       )
     : 0;
