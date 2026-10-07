@@ -29,6 +29,7 @@ let failHistoryPage = true, failHistoryPreview = true, delayedHistory = null;
 let historyRequestStarted;
 const historyStarted = new Promise(resolve => { historyRequestStarted = resolve; });
 const historyRows = Array.from({length: 23}, (_, index) => ({editorial_run_id: `past-${index}`, target: index ? 'script' : 'render', input_revision: 1, attempt: 1, status: index ? 'blocked' : 'completed', stage: index ? 'researching' : 'render_ready_for_review', created_at: '2026-10-01T12:00:00Z', error: index ? 'Saved provider failure' : null, artifacts: {saved_revision: 1, ...(index === 0 ? {direction_shot_evidence: frameReceipt} : {})}}));
+const sourceVideoFixture = Buffer.from("GkXfo59ChoEBQveBAULygQRC84EIQoKEd2VibUKHgQJChYECGFOAZwEAAAAAAAL7EU2bdLpNu4tTq4QVSalmU6yBoU27i1OrhBZUrmtTrIHWTbuMU6uEElTDZ1OsggEjTbuMU6uEHFO7a1OsggLl7AEAAAAAAABZAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAVSalmsCrXsYMPQkBNgIxMYXZmNjEuNy4xMDNXQYxMYXZmNjEuNy4xMDNEiYhAgEAAAAAAABZUrmvIrgEAAAAAAAA/14EBc8WI3/nui49P0KScgQAitZyDdW5kiIEAhoVWX1ZQOIOBASPjg4QCYloA4JCwgRC6gRCagQJVsIRVuYEBElTDZ/tzc59jwIBnyJlFo4dFTkNPREVSRIeMTGF2ZjYxLjcuMTAzc3PWY8CLY8WI3/nui49P0KRnyKFFo4dFTkNPREVSRIeUTGF2YzYxLjE5LjEwMSBsaWJ2cHhnyKFFo4hEVVJBVElPTkSHkzAwOjAwOjAwLjUyMDAwMDAwMAAfQ7Z1QTzngQCjo4EAAIAQAgCdASoQABAAAEcIhYWIhYSIAgIADA1gAP7/q1CAo5WBACgAsQEAARAQABgAGFgv9AAIAACjlYEAUACxAQABEBAAGAAYWC/0AAgAAKOVgQB4ALEBAAEQEAAYABhYL/QACAAAo5WBAKAAsQEAARAQABgAGFgv9AAIAACjlYEAyACxAQABEBAAGAAYWC/0AAgAAKOVgQDwALEBAAEQEAAYABhYL/QACAAAo5WBARgAsQEAARAQFGAAYWC/0AAgAACjlYEBQACxAQABEBAAGAAYWC/0AAgAAKOVgQFoALEBAAEQEAAYABhYL/QACAAAo5WBAZAAsQEAARAQABgAGFgv9AAIAACjlYEBuACxAQABEBAAGAAYWC/0AAgAAKOVgQHgALEBAAEQEAAYABhYL/QACAAAHFO7a5G7j7OBALeK94EB8YIBo/CBAw==", "base64");
 const draft = {
     version: "editorial-draft-v1", observations: [],
     sources: [{ id: "source", title: "Interview", url: "https://example.com/interview", category: "interview", excerpt: "A synthetic quoted clue." }],
@@ -121,8 +122,8 @@ const draft = {
             if (url.pathname.endsWith("/runs/acquire/assets/candidate/source-media")) {
                 return route.fulfill({
                     status: 200,
-                    contentType: "video/mp4",
-                    body: Buffer.from("synthetic source transport only"),
+                    contentType: "video/webm",
+                    body: sourceVideoFixture,
                 });
             }
             if (url.pathname.endsWith("/runs/acquire/assets/candidate/contact-sheet")) {

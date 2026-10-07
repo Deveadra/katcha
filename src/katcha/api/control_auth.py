@@ -27,6 +27,15 @@ _PUBLIC_PATHS = {
     "/v1/integrations/youtube/oauth/callback",
     "/auth/callback",
 }
+_EDITORIAL_SOURCE_MEDIA_PATH = re.compile(
+    r"/v1/channels/[^/]+/editorial-projects/[^/]+/runs/[^/]+/assets/[^/]+/source-media$"
+)
+
+
+def _uses_editorial_media_ticket(request: Request) -> bool:
+    return request.method.upper() == "GET" and bool(
+        _EDITORIAL_SOURCE_MEDIA_PATH.fullmatch(request.url.path)
+    )
 
 
 def _token_actor(token: str) -> str:
@@ -289,6 +298,16 @@ def _require_named_principal_route_access(request: Request) -> None:
         )
         return
 
+    if method == "POST" and re.fullmatch(
+        r"/v1/channels/[^/]+/editorial-projects/[^/]+/runs/[^/]+/assets/[^/]+/"
+        r"source-media-session",
+        path,
+    ):
+        # This only mints a short-lived, exact-path read capability. The media
+        # route revalidates the signed scope and current source clearance.
+        require_control_scope(request, "ai:read")
+        return
+
     if method == "GET" and re.fullmatch(
         r"/v1/channels/[^/]+/editorial-projects/[^/]+/runs/[^/]+/assets/[^/]+/"
         r"(?:source-monitor|contact-sheet)",
@@ -374,7 +393,11 @@ def require_control_token(
     request: Request,
     credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(_bearer)],
 ) -> None:
-    if not request.url.path.startswith("/v1/") or request.url.path in _PUBLIC_PATHS:
+    if (
+        not request.url.path.startswith("/v1/")
+        or request.url.path in _PUBLIC_PATHS
+        or _uses_editorial_media_ticket(request)
+    ):
         return
 
     _authenticate(request, credentials, get_settings())
