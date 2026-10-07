@@ -532,8 +532,16 @@ const draft = {
         await page.locator('[data-footage="start"]').fill('2.0');
         await page.getByText(new RegExp(`Saved workspace · v${previousVersion + 1}`)).waitFor();
         assert.equal(await page.locator('#editorial-storyboard-undo').isDisabled(), false);
+        const undoResponse = page.waitForResponse(response =>
+            response.request().method() === 'POST'
+            && response.url().endsWith('/storyboard/undo')
+        );
         await page.getByRole('button', {name: 'Undo last edit', exact: true}).click();
-        await page.getByText(/Storyboard restored/).waitFor();
+        assert.equal((await undoResponse).status(), 201);
+        await page.locator('[data-footage="start"]').waitFor();
+        await page.waitForFunction(() =>
+            document.querySelector('[data-footage="start"]')?.value === '1.5'
+        );
         assert.equal(await page.locator('[data-footage="start"]').inputValue(), '1.5');
         assert.equal(await page.locator('[data-caption-position]').inputValue(), 'center');
         assert.equal(await page.locator('[data-transition]').inputValue(), 'fade');
