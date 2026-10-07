@@ -26,9 +26,11 @@ assert.deepEqual(EDITORIAL_MANIFEST_VERSIONS, [
   'editorial-render-v3',
   'editorial-render-v4',
   'editorial-render-v5',
+  'editorial-render-v6',
 ]);
 assert.equal(isEditorialManifestVersion('editorial-render-v5'), true);
-assert.equal(isEditorialManifestVersion('editorial-render-v6'), false);
+assert.equal(isEditorialManifestVersion('editorial-render-v6'), true);
+assert.equal(isEditorialManifestVersion('editorial-render-v7'), false);
 for (const mutate of [
   m => {m.media[0].url = 'https://example.com/unchecked.mp4';},
   m => {m.media[0].storage_key = '../private';},
@@ -84,6 +86,62 @@ for (const mutate of [
   assert.throws(() => validateEditorialManifest(value), /invalid editorial manifest/);
 }
 console.log('Professional crop, caption and transition manifest checks passed');
+const branded = structuredClone(professional);
+branded.version = 'editorial-render-v6';
+branded.brand = {
+  brand_key: 'forescene',
+  version: 4,
+  theme_key: 'cinema_v1',
+  palette: {
+    ink: '#111216',
+    paper: '#F7F7F4',
+    signal_blue: '#6B7CFF',
+    hot_peach: '#FF7657',
+    volt: '#D9FF57',
+  },
+  captions: {
+    treatment_key: 'impact_clean_v1',
+    font_family: 'Arial, Helvetica, sans-serif',
+    font_size_px: 66,
+    font_weight: 900,
+    max_visual_lines: 2,
+    bottom_safe_zone_px: 250,
+  },
+  motion: {
+    treatment_key: 'restrained_punch_v1',
+    max_punch_scale: 1.08,
+    freeze_frame_max_frames: 8,
+    random_motion_enabled: false,
+  },
+  end_card: {
+    treatment_key: 'verdict_v1',
+    accent_role: 'signal_blue',
+    max_question_lines: 3,
+    label: 'FORESCENE',
+  },
+  logo: {
+    enabled: true,
+    storage_key: 'brands/channel/logos/approved.png',
+    x_percent: 90,
+    y_percent: 8,
+    width_percent: 10,
+    opacity: 0.55,
+  },
+};
+validateEditorialManifest(branded);
+for (const mutate of [
+  m => {m.version = 'editorial-render-v5';},
+  m => {m.brand.logo.url = 'https://untrusted.example/logo.png';},
+  m => {m.brand.logo.storage_key = '../logo.png';},
+  m => {m.brand.palette.ink = 'javascript:red';},
+  m => {delete m.brand;},
+]) {
+  const value = structuredClone(branded); mutate(value);
+  assert.throws(() => validateEditorialManifest(value), /invalid editorial manifest/);
+}
+console.log('Frozen Editorial channel branding contract checks passed');
+
+
 
 
 const narrated = structuredClone(fixture);
