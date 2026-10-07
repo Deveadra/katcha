@@ -444,6 +444,21 @@ def _editorial_project_evidence(
                             "overlays": list(
                                 storyboard_beat.get("overlays") or []
                             )[:8],
+                            "caption_position": storyboard_beat.get(
+                                "caption_position", "bottom"
+                            ),
+                            "caption_scale": storyboard_beat.get(
+                                "caption_scale", 1
+                            ),
+                            "caption_background": bool(
+                                storyboard_beat.get("caption_background")
+                            ),
+                            "transition": storyboard_beat.get(
+                                "transition", "cut"
+                            ),
+                            "transition_frames": storyboard_beat.get(
+                                "transition_frames", 8
+                            ),
                         },
                     }
                     if latest_storyboard is not None

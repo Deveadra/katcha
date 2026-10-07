@@ -1213,6 +1213,59 @@ body[data-katcha-page="production"] .editorial-beat-inspector .editorial-beat-ed
     line-height: 1.5;
 }
 
+.editorial-edit-section {
+    display: grid;
+    gap: 9px;
+    padding: 10px;
+    border: 1px solid var(--ae-line);
+    border-radius: 10px;
+    background: rgba(255, 255, 255, 0.018);
+}
+
+.editorial-edit-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 9px;
+}
+
+.editorial-derived {
+    display: grid;
+    align-content: center;
+    gap: 3px;
+    min-height: 48px;
+    padding: 7px 9px;
+    border: 1px solid var(--ae-line);
+    border-radius: 8px;
+    background: rgba(0, 0, 0, 0.12);
+}
+
+.editorial-derived span {
+    color: var(--ae-text-tertiary);
+    font-size: 7px;
+    text-transform: uppercase;
+    letter-spacing: .06em;
+}
+
+.editorial-derived strong {
+    color: var(--ae-text-secondary);
+    font-size: 9px;
+    font-variant-numeric: tabular-nums;
+}
+
+.editorial-fine-controls {
+    margin-top: 1px;
+}
+
+.editorial-fine-controls[open] > summary {
+    margin-bottom: 9px;
+}
+
+@media (max-width: 720px) {
+    .editorial-edit-grid {
+        grid-template-columns: 1fr;
+    }
+}
+
 #editorial-narration {
     display: grid;
     gap: 8px;

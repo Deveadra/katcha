@@ -36,6 +36,47 @@ try {
   for (const [seconds, name] of [[3, 'comparison'], [5, 'quote']]) {
     execFileSync('ffmpeg', ['-y', '-ss', String(seconds), '-i', output, '-frames:v', '1', path.resolve(`test-results/editorial-${name}.png`)], {stdio: 'ignore'});
   }
+  const professional = structuredClone(fixture);
+  professional.version = 'editorial-render-v5';
+  professional.timeline[0].media[0].crop = {x: .2, y: .15, width: .6, height: .7};
+  professional.timeline[0].media[0].playback_rate = .75;
+  professional.timeline[0].media[0].push_in = 1.08;
+  Object.assign(professional.timeline[0], {
+    caption_position: 'center',
+    caption_scale: 1.15,
+    caption_background: true,
+    transition: 'fade',
+    transition_frames: 6,
+  });
+  validateEditorialManifest(professional);
+  professional.media[0].url = '/public/test.mp4';
+  const professionalOutput = path.resolve('test-results/editorial-professional-controls.mp4');
+  const professionalComposition = await selectComposition({
+    serveUrl,
+    id: 'Editorial',
+    inputProps: professional,
+    ...options,
+  });
+  await renderMedia({
+    serveUrl,
+    composition: professionalComposition,
+    inputProps: professional,
+    codec: 'h264',
+    outputLocation: professionalOutput,
+    concurrency: 1,
+    ...options,
+  });
+  const professionalProbe = JSON.parse(execFileSync(
+    'ffprobe',
+    ['-v', 'error', '-show_streams', '-of', 'json', professionalOutput],
+  ));
+  if (Number(professionalProbe.streams.find(s => s.codec_type === 'video').nb_frames) !== 60) {
+    throw new Error('Professional edit-control render verification failed');
+  }
+  execFileSync('ffmpeg', [
+    '-y', '-ss', '1', '-i', professionalOutput, '-frames:v', '1',
+    path.resolve('test-results/editorial-professional-controls.png'),
+  ], {stdio: 'ignore'});
   const narrated = structuredClone(props);
   narrated.version = 'editorial-render-v2'; narrated.presentation_mode = 'narrated';
   const sha = createHash('sha256').update(await fs.readFile(path.join(publicDir, 'narration.wav'))).digest('hex');
@@ -83,5 +124,6 @@ try {
   console.log('Verified image comparison: landscape/portrait, source regions, narration and credits');
   console.log('Verified still-image render: 60 frames with narration and illustration credit');
   console.log('Verified narrated render: 180 frames with real synthetic PCM audio');
+  console.log('Verified professional edit controls: crop, speed, push-in, centered caption background and fade');
   console.log('Verified synthetic editorial render: 1920x1080, 180 frames, silent; single, comparison, freeze and quote scenes');
 } finally { await fs.rm(temp, {recursive: true, force: true}); }

@@ -27,6 +27,14 @@ class VisualMediaUse(Contract):
     playback_rate: float = Field(default=1, ge=0.25, le=2)
     freeze: bool = False
     push_in: float = Field(default=1, ge=1, le=1.15)
+    crop: Region | None = None
+
+    @model_serializer(mode="wrap")
+    def preserve_existing_media_use(self, handler):
+        value = handler(self)
+        if self.crop is None:
+            value.pop("crop", None)
+        return value
 
 
 class VisualOverlay(Contract):
@@ -45,6 +53,11 @@ class VisualBeat(Contract):
     image_ids: list[UUID] = Field(default_factory=list, max_length=2)
     image_push_in: float = Field(default=1, ge=1, le=1.15)
     overlays: list[VisualOverlay] = Field(default_factory=list, max_length=8)
+    caption_position: Literal["bottom", "center"] = "bottom"
+    caption_scale: float = Field(default=1, ge=0.75, le=1.35)
+    caption_background: bool = False
+    transition: Literal["cut", "fade"] = "cut"
+    transition_frames: int = Field(default=8, ge=3, le=15, strict=True)
 
     @model_validator(mode="after")
     def coherent_layout(self) -> Self:
@@ -81,6 +94,15 @@ class VisualBeat(Contract):
         if self.layout not in {"image", "image_comparison"}:
             value.pop("image_id", None)
             value.pop("image_push_in", None)
+        if self.caption_position == "bottom":
+            value.pop("caption_position", None)
+        if self.caption_scale == 1:
+            value.pop("caption_scale", None)
+        if not self.caption_background:
+            value.pop("caption_background", None)
+        if self.transition == "cut":
+            value.pop("transition", None)
+            value.pop("transition_frames", None)
         return value
 
 
@@ -186,7 +208,11 @@ class EditorialScene(VisualBeat):
 
 class EditorialRenderManifest(Contract):
     version: Literal[
-        "editorial-render-v1", "editorial-render-v2", "editorial-render-v3", "editorial-render-v4"
+        "editorial-render-v1",
+        "editorial-render-v2",
+        "editorial-render-v3",
+        "editorial-render-v4",
+        "editorial-render-v5",
     ] = "editorial-render-v1"
     project_id: str
     revision: int = Field(gt=0, strict=True)
@@ -208,17 +234,23 @@ class EditorialRenderManifest(Contract):
         value = handler(self)
         if self.version == "editorial-render-v1":
             value.pop("narration", None)
-        if self.version not in {"editorial-render-v3", "editorial-render-v4"}:
+        if self.version not in {
+            "editorial-render-v3",
+            "editorial-render-v4",
+            "editorial-render-v5",
+        }:
             value.pop("images", None)
         return value
 
     @model_validator(mode="after")
     def valid_timeline(self) -> Self:
         narrated = self.presentation_mode == "narrated"
-        if self.version not in {"editorial-render-v3", "editorial-render-v4"} and narrated != (
-            self.version == "editorial-render-v2"
-        ):
-            raise ValueError("Narrated rendering requires manifest version 2")
+        if self.version not in {
+            "editorial-render-v3",
+            "editorial-render-v4",
+            "editorial-render-v5",
+        } and narrated != (self.version == "editorial-render-v2"):
+            raise ValueError("Narrated rendering requires a narration-capable manifest")
         if not narrated and self.narration:
             raise ValueError("Silent rendering cannot contain narration")
         if narrated and [item.beat_id for item in self.narration] != [
@@ -235,23 +267,41 @@ class EditorialRenderManifest(Contract):
             for scene in self.timeline
             for identity in ([scene.image_id] if scene.image_id else scene.image_ids)
         }
-        if self.version != "editorial-render-v4" and any(
-            scene.layout == "image_comparison" or (scene.layout == "image" and scene.overlays)
+        if self.version not in {"editorial-render-v4", "editorial-render-v5"} and any(
+            scene.layout == "image_comparison"
+            or (scene.layout == "image" and scene.overlays)
             for scene in self.timeline
         ):
-            raise ValueError("Image comparisons and annotations require manifest version 4")
-        if (
-            len(images) != len(self.images)
-            or set(images) != selected_images
-            or bool(images) != (self.version in {"editorial-render-v3", "editorial-render-v4"})
-        ):
             raise ValueError(
-                "Image manifests must cover exactly the selected images in version 3 or 4"
+                "Image comparisons and annotations require manifest version 4 or 5"
             )
+        if len(images) != len(self.images) or set(images) != selected_images:
+            raise ValueError("Image manifests must cover exactly the selected images")
+        if self.version in {"editorial-render-v3", "editorial-render-v4"} and not images:
+            raise ValueError("Manifest version 3 or 4 requires selected images")
+        if (
+            self.version not in {
+                "editorial-render-v3",
+                "editorial-render-v4",
+                "editorial-render-v5",
+            }
+            and images
+        ):
+            raise ValueError("This manifest version does not support images")
         for scene in self.timeline:
             for identity in [scene.image_id] if scene.image_id else scene.image_ids:
                 if images[identity].beat_id != scene.beat_id:
                     raise ValueError("Image must belong to its saved script beat")
+        advanced_edits = any(
+            scene.caption_position != "bottom"
+            or scene.caption_scale != 1
+            or scene.caption_background
+            or scene.transition != "cut"
+            or any(use.crop is not None for use in scene.media)
+            for scene in self.timeline
+        )
+        if advanced_edits and self.version != "editorial-render-v5":
+            raise ValueError("Professional beat controls require manifest version 5")
         media = {item.candidate_id: item for item in self.media}
         if len(media) != len(self.media):
             raise ValueError("Render media identities must be unique")
@@ -307,11 +357,19 @@ class DirectionOptions(Contract):
         return self
 
 
+class DirectedMediaUse(Contract):
+    candidate_id: Identity
+    start_seconds: float = Field(default=0, ge=0)
+    playback_rate: float = Field(default=1, ge=0.25, le=2)
+    freeze: bool = False
+    push_in: float = Field(default=1, ge=1, le=1.15)
+
+
 class DirectedBeat(Contract):
     # Preserve the version-1 provider schema so existing saved responses remain recoverable.
     beat_id: Identity
     layout: Literal["single", "comparison", "quote"]
-    media: list[VisualMediaUse] = Field(default_factory=list, max_length=2)
+    media: list[DirectedMediaUse] = Field(default_factory=list, max_length=2)
     quote_source_id: Identity | None = None
     overlays: list[VisualOverlay] = Field(default_factory=list, max_length=8)
     rationale: str = Field(min_length=1, max_length=1000)
@@ -329,6 +387,30 @@ class DirectedBeat(Contract):
 
 class DirectionResult(Contract):
     beats: list[DirectedBeat] = Field(min_length=1, max_length=100)
+
+    @classmethod
+    def model_json_schema(cls, *args, **kwargs):
+        """Keep the persisted/provider v1 schema byte-compatible after editor model growth."""
+        schema = super().model_json_schema(*args, **kwargs)
+        definitions = schema.get("$defs", {})
+        provider_media = definitions.pop("DirectedMediaUse", None)
+        if provider_media is not None:
+            provider_media["title"] = "VisualMediaUse"
+            definitions["VisualMediaUse"] = provider_media
+
+        def restore_ref(value):
+            if isinstance(value, dict):
+                return {key: restore_ref(item) for key, item in value.items()}
+            if isinstance(value, list):
+                return [restore_ref(item) for item in value]
+            if isinstance(value, str):
+                return value.replace(
+                    "#/$defs/DirectedMediaUse",
+                    "#/$defs/VisualMediaUse",
+                )
+            return value
+
+        return restore_ref(schema)
 
 
 class ShotEvidenceReference(Contract):

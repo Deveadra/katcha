@@ -1075,7 +1075,7 @@ its image fixture is synthetic. Renderer contracts, lint and diff checks passed.
 No live provider calls or live visual-quality acceptance were performed.
 
 
-### E17 beat-native monitor workspace and typed AI selection (2026-10-06, draft)
+### E17 beat-native monitor workspace and typed AI selection (2026-10-06, merged)
 
 Storyboard now completes the first professional-editor workspace boundary around the
 saved script beat. The existing beat rail remains the story/timing spine. Acquired
@@ -1097,12 +1097,12 @@ surfaces; it does **not** yet let Katcha apply storyboard mutations directly. Th
 boundary is a durable edit-proposal contract with Apply / Modify / Reject / Undo over
 the same storyboard/revision state, followed by finer program/source time navigation.
 
-Validation coverage is added for selected-beat resource resolution, request/deep-link
-serialization, Context Inspector state and Program Monitor loading. Remote CI and full
-browser/launcher gates remain required before merge.
+Validation covered selected-beat resource resolution, request/deep-link serialization,
+Context Inspector state and Program Monitor loading. Python, browser and launcher gates
+passed before merge in #315.
 
 
-### E18 durable beat-native Storyboard workspace (2026-10-06, draft)
+### E18 durable beat-native Storyboard workspace (2026-10-06, merged)
 
 Editorial Storyboard editing state is moving out of browser-session-only storage into
 an immutable, script-revision-bound workspace history. The workspace deliberately

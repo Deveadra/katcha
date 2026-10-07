@@ -115,6 +115,15 @@ def compile_visuals(
         for beat in plan.beats
     ):
         value["version"] = "editorial-render-v4"
+    if any(
+        beat.caption_position != "bottom"
+        or beat.caption_scale != 1
+        or beat.caption_background
+        or beat.transition != "cut"
+        or any(use.crop is not None for use in beat.media)
+        for beat in plan.beats
+    ):
+        value["version"] = "editorial-render-v5"
     digest = _digest(
         {
             **value,
