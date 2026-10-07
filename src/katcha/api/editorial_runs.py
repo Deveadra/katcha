@@ -19,6 +19,7 @@ from katcha.editorial.run_schemas import (
 from katcha.editorial_models import EditorialRun
 from katcha.orchestration.client import get_temporal_client
 from katcha.orchestration.editorial_dispatch import dispatch_editorial_run
+from katcha.services.editorial_performance import editorial_publication_performance
 from katcha.services.editorial_projects import get_project
 from katcha.services.editorial_reviews import review_render, review_status
 from katcha.services.editorial_runs import control_run, get_run, start_run, workflow_id
@@ -60,6 +61,24 @@ def create_editorial_publication(
             notify_subscribers=body.notify_subscribers,
             made_for_kids=body.made_for_kids,
             contains_synthetic_media=body.contains_synthetic_media,
+        )
+    except ValueError as exc:
+        raise _error(exc) from exc
+
+
+@router.get("/{editorial_run_id}/performance")
+def editorial_performance(
+    channel_profile_id: uuid.UUID,
+    project_id: uuid.UUID,
+    editorial_run_id: uuid.UUID,
+    request: Request,
+):
+    _authorize(request, channel_profile_id)
+    try:
+        return editorial_publication_performance(
+            channel_profile_id,
+            project_id,
+            editorial_run_id,
         )
     except ValueError as exc:
         raise _error(exc) from exc
