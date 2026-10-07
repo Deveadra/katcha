@@ -691,6 +691,10 @@ def test_storyboard_source_monitor_metadata_hides_storage_key(saved, monkeypatch
             "frame_count": 3,
             "sample_times": [0.25, 5.0, 9.75],
             "contact_sheet_key": "analysis/private/contact-sheet.jpg",
+            "storage_key": "raw/private-source.mp4",
+            "extension": "mp4",
+            "size_bytes": 12345,
+            "source_media_available": True,
             "coverage": "sampled_frames",
             "limitation": "Sampled frames only.",
         },
@@ -703,7 +707,73 @@ def test_storyboard_source_monitor_metadata_hides_storage_key(saved, monkeypatch
     assert response.status_code == 200, response.text
     assert response.json()["candidate_id"] == "candidate"
     assert response.json()["sample_times"] == [0.25, 5.0, 9.75]
+    assert response.json()["source_media_available"] is True
+    assert response.json()["size_bytes"] == 12345
     assert "contact_sheet_key" not in response.json()
+    assert "storage_key" not in response.json()
+
+
+def test_storyboard_source_media_session_is_scoped_and_private(saved, monkeypatch):
+    from fastapi.responses import JSONResponse
+
+    client, channel, _ = saved
+    project_id = uuid.uuid4()
+    run_id = uuid.uuid4()
+    calls = []
+
+    monkeypatch.setattr(
+        "katcha.editorial.source_monitor.source_monitor",
+        lambda *args: {
+            "candidate_id": "candidate",
+            "title": "Supporting interview",
+            "source_url": "https://example.com/source",
+            "clip_id": str(uuid.uuid4()),
+            "sha256": "a" * 64,
+            "duration_seconds": 10,
+            "frame_count": 3,
+            "sample_times": [0.25, 5.0, 9.75],
+            "contact_sheet_key": "analysis/private/contact-sheet.jpg",
+            "storage_key": "raw/private-source.mp4",
+            "extension": "mp4",
+            "size_bytes": 12345,
+            "source_media_available": True,
+            "coverage": "sampled_frames",
+            "limitation": "Sampled frames only.",
+        },
+    )
+
+    def stream(request, key, filename):
+        calls.append((key, filename, request.headers.get("range")))
+        return JSONResponse({"streamed": key, "filename": filename})
+
+    monkeypatch.setattr("katcha.api.studio._stream_object", stream)
+    base = (
+        f"{root(channel)}/{project_id}/runs/{run_id}/assets/candidate"
+    )
+    session = client.post(f"{base}/source-media-session")
+    assert session.status_code == 200, session.text
+    assert session.json()["expires_in_seconds"] == 900
+    assert session.json()["media_url"] == f"{base}/source-media"
+    cookie = session.headers["set-cookie"]
+    assert "HttpOnly" in cookie
+    assert "SameSite=strict" in cookie
+    assert f"Path={base}/source-media" in cookie
+    assert "Cache-Control" not in session.headers or session.headers["Cache-Control"] != "public"
+
+    media = client.get(
+        session.json()["media_url"],
+        headers={"Range": "bytes=0-9"},
+    )
+    assert media.status_code == 200, media.text
+    assert media.json()["streamed"] == "raw/private-source.mp4"
+    assert calls == [
+        ("raw/private-source.mp4", media.json()["filename"], "bytes=0-9")
+    ]
+
+    wrong = client.get(
+        f"{root(channel)}/{project_id}/runs/{run_id}/assets/other/source-media"
+    )
+    assert wrong.status_code == 403
 
 
 def test_source_upload_api_streams_to_temp_and_cleans_up(saved, monkeypatch):
