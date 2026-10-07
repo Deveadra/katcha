@@ -324,10 +324,12 @@ def _require_named_principal_route_access(request: Request) -> None:
         return
 
     if method == "GET" and re.fullmatch(
-        r"/v1/channels/[^/]+/editorial-projects/[^/]+/runs/[^/]+/preview", path
+        r"/v1/channels/[^/]+/editorial-projects/[^/]+/runs/[^/]+/(?:preview|program-map)",
+        path,
     ):
-        # Binary playback shares editorial read scope; the router checks channel,
-        # project, frozen revision and current clearance before streaming.
+        # Preview playback and its exact rendered-time map share Editorial read
+        # scope; each router endpoint still checks channel, frozen revision and
+        # current clearance before exposing review material.
         require_control_scope(request, "ai:read")
         return
 

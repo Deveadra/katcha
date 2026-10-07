@@ -101,6 +101,8 @@ const draft = {
                     sample_times: [0.25, 5, 9.75],
                     size_bytes: 12345,
                     source_media_available: true,
+                    source_fps: 25,
+                    frame_step_available: true,
                     coverage: "sampled_frames",
                     limitation: "These frames are samples, not continuous playback. Verify exact motion and timing in the rendered preview before approval.",
                 });
@@ -264,6 +266,20 @@ const draft = {
                     if (loseUploadResponse) { loseUploadResponse = false; return send({detail: 'Upload response lost. Retry the same recording.'}, 503); }
                     return send(recordings[0], 201);
                 }
+                if (url.pathname.endsWith("/program-map")) return send({
+                    revision: 3,
+                    manifest_version: "editorial-render-v5",
+                    fps: 30,
+                    output_duration_seconds: 12,
+                    beats: [{
+                        beat_id: "beat",
+                        start_frame: 45,
+                        duration_frames: 60,
+                        end_frame: 105,
+                        start_seconds: 1.5,
+                        end_seconds: 3.5,
+                    }],
+                });
                 if (url.pathname.endsWith("/preview")) return route.fulfill({status: 200, contentType: "video/mp4", body: "synthetic-media-transport-only"});
                 if (url.pathname.endsWith("/review")) {
                     if (!body) return send(review);
@@ -478,10 +494,16 @@ const draft = {
             await page.locator('#editorial-source-monitor-timecode').innerText(),
             '00:05.100 / 00:10.000',
         );
+        assert.equal(await page.locator('[data-source-frame-step="1"]').isVisible(), true);
+        await page.locator('[data-source-frame-step="1"]').click();
+        assert.equal(
+            await page.locator('#editorial-source-monitor-timecode').innerText(),
+            '00:05.120 / 00:10.000',
+        );
         await page.getByRole('button', {name: 'Set beat start', exact: true}).click();
         assert.equal(
-            await page.locator('#editorial-storyboard [data-footage-start]').inputValue(),
-            '5.1',
+            await page.locator('#editorial-storyboard [data-footage="start"]').inputValue(),
+            '5.12',
         );
         await page.getByRole('button', {name: 'Load source video', exact: true}).click();
         await page.locator('#editorial-source-monitor-video').waitFor({state: 'visible'});
@@ -653,6 +675,11 @@ const draft = {
             await page.locator('#editorial-program-monitor-timecode').innerText(),
             '00:02.100 / 00:12.000',
         );
+        await page.locator('[data-program-frame-step="1"]').click();
+        assert.equal(
+            await page.locator('#editorial-program-monitor-timecode').innerText(),
+            '00:02.133 / 00:12.000',
+        );
         await page.locator('#editorial-program-scrub').fill('4.2');
         assert.equal(
             await page.locator('#editorial-program-monitor-timecode').innerText(),
@@ -661,12 +688,16 @@ const draft = {
         await page.getByRole('button', {name: 'Go to selected beat', exact: true}).click();
         assert.equal(
             await page.locator('#editorial-program-monitor-timecode').innerText(),
-            '00:00.000 / 00:12.000',
+            '00:01.500 / 00:12.000',
         );
-        await page.getByText(/planned beat start 00:00.000/i).waitFor();
+        await page.getByText(/rendered beat start 00:01.500 · frame 45/i).waitFor();
         assert.match(
             await page.locator('#editorial-program-monitor-status').innerText(),
-            /Program time is rendered output time/i,
+            /verified frozen render manifest/i,
+        );
+        assert.equal(
+            calls.some(call => call.path.endsWith('/runs/render/program-map')),
+            true,
         );
         await page.locator('[data-editorial-stage="preview"]').click();
         assert.equal(await page.locator('#editorial-preview').isVisible(), true);
