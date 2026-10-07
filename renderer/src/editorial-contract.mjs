@@ -112,6 +112,14 @@ export const validateEditorialManifest = (manifest) => {
     check(captionCursor === scene.duration_frames, 'caption end');
     cursor += scene.duration_frames;
   }
+  const advancedEdits = manifest.timeline.some(scene =>
+    scene.caption_position != null
+      || scene.caption_scale != null
+      || scene.caption_background === true
+      || scene.transition != null
+      || scene.media.some(use => use.crop != null)
+  );
+  check(!advancedEdits || manifest.version === 'editorial-render-v5', 'professional edit version');
   check(usedImages.size === images.size, 'image coverage');
   check(!narrated || (narration.size === beats.size && manifest.narration.every((audio, index) => audio.beat_id === manifest.timeline[index]?.beat_id)), 'narration coverage');
   check(cursor <= 108000 && Math.abs(cursor / 30 - manifest.output_duration_seconds) < 1e-6, 'duration');
