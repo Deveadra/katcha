@@ -644,6 +644,59 @@ window.KatchaEditorial = (() => {
         updateStoryboardUndo();
     }
     function reviewNoteKey() { return storageKey(`review-note.${state.run?.editorial_run_id}`); }
+    function money(value) {
+        if (value == null || value === "") return "—";
+        const number = Number(value);
+        return Number.isFinite(number) ? \`$\${number.toFixed(2)}\` : "—";
+    }
+    function percentage(value) {
+        if (value == null || value === "") return "—";
+        const number = Number(value);
+        return Number.isFinite(number) ? \`\${(number * 100).toFixed(1)}%\` : "—";
+    }
+    function renderPerformanceOutcome() {
+        const panel = el("editorial-performance");
+        const result = state.performance;
+        panel.hidden = !result || result.measurement_state === "not_staged";
+        if (panel.hidden) return;
+        const stateLabel = el("editorial-performance-state");
+        const metrics = el("editorial-performance-metrics");
+        const note = el("editorial-performance-note");
+        if (result.error) {
+            stateLabel.textContent = "UNAVAILABLE";
+            metrics.innerHTML = "";
+            note.textContent = \`Performance could not be read: \${result.error}\`;
+            return;
+        }
+        stateLabel.textContent = String(result.measurement_state || "waiting")
+            .replaceAll("_", " ").toUpperCase();
+        if (result.measurement_state === "not_uploaded") {
+            metrics.innerHTML = "";
+            note.textContent = "Publication is staged but upload has not started. Measured YouTube results will appear here after release.";
+            return;
+        }
+        if (result.measurement_state === "awaiting_analytics") {
+            metrics.innerHTML = "";
+            note.textContent = "The video is on YouTube, but measured analytics have not arrived yet. Missing data is not treated as poor performance.";
+            return;
+        }
+        const analytics = result.analytics || {};
+        const reach = result.reach || {};
+        const retention = result.retention_50 || {};
+        const economics = result.economics || {};
+        const variant = result.packaging_variant;
+        metrics.innerHTML = [
+            \`<span><strong>\${esc(analytics.views ?? "—")}</strong> views</span>\`,
+            \`<span><strong>\${esc(percentage(reach.ctr))}</strong> CTR</span>\`,
+            \`<span><strong>\${esc(percentage(retention.audience_watch_ratio))}</strong> at 50%</span>\`,
+            \`<span><strong>\${esc(money(economics.estimated_revenue_usd))}</strong> revenue</span>\`,
+            \`<span><strong>\${esc(money(economics.contribution_margin_usd))}</strong> margin</span>\`,
+        ].join("");
+        note.textContent = variant
+            ? \`Latest attributed package: \${variant.variant_key} v\${variant.version} · \${variant.title}\`
+            : "No exact packaging variant is attributed to the latest reach observation yet.";
+    }
+
     function renderPublicationHandoff() {
         const panel = el("editorial-publication");
         const review = state.review;
@@ -663,6 +716,7 @@ window.KatchaEditorial = (() => {
             status.textContent = publication.youtube_video_id
                 ? "This approved cut is already in the publication pipeline. Open Channel Studio for current release state."
                 : "Publication staged. Finish SEO, thumbnail, visibility and schedule review before starting upload.";
+            renderPerformanceOutcome();
             return;
         }
         form.hidden = false;
@@ -677,6 +731,7 @@ window.KatchaEditorial = (() => {
             el("editorial-publication-description").value = "";
         }
         el("editorial-stage-publication").disabled = state.busy || !available;
+        renderPerformanceOutcome();
     }
     function renderReview() {
         el("editorial-review").hidden = !state.review;
