@@ -48,6 +48,27 @@ def verified_manifest(
     return manifest
 
 
+def approved_manifest(
+    row: EditorialRun, *, session: Session
+) -> tuple[EditorialRenderManifest, EditorialRenderReview]:
+    """Return the exact currently cleared render and its latest approval receipt."""
+    latest = session.scalar(
+        select(EditorialRenderReview)
+        .where(EditorialRenderReview.run_id == row.id)
+        .order_by(EditorialRenderReview.sequence.desc())
+        .limit(1)
+    )
+    if latest is None or latest.decision != "approve":
+        raise EditorialConflict("Editorial render needs a current operator approval before publication")
+    manifest = verified_manifest(row, session=session)
+    if (
+        latest.manifest_digest != _digest(row.artifacts["render_manifest"])
+        or latest.result_digest != _digest(row.artifacts["render_result"])
+    ):
+        raise EditorialConflict("Editorial approval no longer matches the current render receipt")
+    return manifest, latest
+
+
 def _response(review: EditorialRenderReview) -> dict:
     return {
         "id": str(review.id),
@@ -162,9 +183,17 @@ def review_status(channel_id: uuid.UUID, project_id: uuid.UUID, run_id: uuid.UUI
             blocker = str(exc)
             if status == "approve":
                 status = "invalidated"
+        publication_available = False
+        if blocker is None and latest is not None and latest.decision == "approve":
+            try:
+                approved_manifest(row, session=session)
+                publication_available = True
+            except ValueError as exc:
+                blocker = str(exc)
+                status = "invalidated"
         return {
             "status": status, "sequence": latest.sequence if latest else 0,
             "can_approve": can_approve, "blocker": blocker,
             "reviews": [_response(review) for review in reviews],
-            "publication_available": False,
+            "publication_available": publication_available,
         }
