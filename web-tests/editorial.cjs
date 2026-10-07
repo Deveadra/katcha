@@ -455,38 +455,96 @@ const draft = {
         await page.locator('#editorial-source-monitor').screenshot({
             path: path.resolve(__dirname, 'test-results/editorial-source-monitor-desktop.png'),
         });
-        await page.locator('#editorial-storyboard input[type=number]:not([data-region])').fill('1.5');
-        await page.locator('#editorial-storyboard input[type=checkbox]').check();
+        const professionalWorkspaceSaved = page.waitForResponse(response => {
+            const request = response.request();
+            if (request.method() !== 'POST') return false;
+            if (!new URL(response.url()).pathname.endsWith('/storyboard')) return false;
+            try {
+                const beat = request.postDataJSON()?.workspace?.beats?.[0];
+                return beat?.layout === 'single'
+                    && beat?.media?.[0]?.crop?.x === 0.1
+                    && beat?.caption_position === 'center'
+                    && beat?.transition === 'fade';
+            } catch {
+                return false;
+            }
+        });
+        await page.locator('[data-footage="start"]').fill('1.5');
+        await page.locator('[data-footage="rate"]').fill('0.75');
+        await page.locator('[data-footage="push"]').fill('1.08');
+        assert.match(await page.locator('[data-footage-out]').innerText(), /7\.50s/);
+        await page.locator('[data-footage="freeze"]').check();
+        assert.match(await page.locator('[data-footage-out]').innerText(), /Held at 1\.50s/);
+        await page.getByText('Crop source frame', {exact: true}).click();
+        await page.locator('[data-crop-enabled]').check();
+        await page.locator('[data-crop="x"]').fill('10');
+        await page.locator('[data-crop="y"]').fill('15');
+        await page.locator('[data-crop="width"]').fill('70');
+        await page.locator('[data-crop="height"]').fill('70');
+        await page.getByText('Caption & transition', {exact: true}).click();
+        await page.locator('[data-caption-position]').selectOption('center');
+        await page.locator('[data-caption-scale]').fill('1.15');
+        await page.locator('[data-caption-background]').check();
+        await page.locator('[data-transition]').selectOption('fade');
+        await page.locator('[data-transition-frames]').fill('6');
+        await professionalWorkspaceSaved;
         await page.getByText(/Saved workspace · v\d+/).waitFor();
         const firstSavedWorkspace = calls.filter(
             call => call.method === 'POST' && call.path.endsWith('/storyboard'),
         ).at(-1);
+        const savedBeat = firstSavedWorkspace.body.workspace.beats[0];
         assert.equal(firstSavedWorkspace.body.script_revision, 3);
         assert.equal(firstSavedWorkspace.body.workspace.asset_run_id, 'acquire');
-        assert.equal(firstSavedWorkspace.body.workspace.beats[0].beat_id, 'beat');
-        assert.equal(firstSavedWorkspace.body.workspace.beats[0].layout, 'single');
-        assert.equal(firstSavedWorkspace.body.workspace.beats[0].media[0].candidate_id, 'candidate');
-        assert.equal(firstSavedWorkspace.body.workspace.beats[0].media[0].start_seconds, 1.5);
-        assert.equal(firstSavedWorkspace.body.workspace.beats[0].media[0].freeze, true);
+        assert.equal(savedBeat.beat_id, 'beat');
+        assert.equal(savedBeat.layout, 'single');
+        assert.equal(savedBeat.media[0].candidate_id, 'candidate');
+        assert.equal(savedBeat.media[0].start_seconds, 1.5);
+        assert.equal(savedBeat.media[0].playback_rate, 0.75);
+        assert.equal(savedBeat.media[0].push_in, 1.08);
+        assert.equal(savedBeat.media[0].freeze, true);
+        assert.deepEqual(savedBeat.media[0].crop, {
+            x: 0.1, y: 0.15, width: 0.7, height: 0.7,
+        });
+        assert.equal(savedBeat.caption_position, 'center');
+        assert.equal(savedBeat.caption_scale, 1.15);
+        assert.equal(savedBeat.caption_background, true);
+        assert.equal(savedBeat.transition, 'fade');
+        assert.equal(savedBeat.transition_frames, 6);
         assert.match(await page.locator("#editorial-timeline-summary").innerText(), /1\/1 visuals assigned/);
         assert.equal(await page.locator("[data-timeline-status]").innerText(), "Footage");
         assert.equal(await page.locator("[data-timeline-beat]").evaluate(node => node.classList.contains("is-ready")), true);
         await page.locator('#editorial-refresh').click();
         assert.equal(await page.locator('[data-editorial-stage="storyboard"]').getAttribute("aria-selected"), "true");
         assert.equal(await page.locator("[data-timeline-beat]").getAttribute("aria-selected"), "true");
-        assert.equal(await page.locator('#editorial-storyboard input[type=number]:not([data-region])').inputValue(), '1.5');
+        assert.equal(await page.locator('[data-footage="start"]').inputValue(), '1.5');
+        assert.equal(await page.locator('[data-footage="rate"]').inputValue(), '0.75');
+        assert.equal(await page.locator('[data-footage="push"]').inputValue(), '1.08');
+        assert.equal(await page.locator('[data-crop-enabled]').isChecked(), true);
+        assert.equal(await page.locator('[data-crop="x"]').inputValue(), '10');
+        assert.equal(await page.locator('[data-caption-position]').inputValue(), 'center');
+        assert.equal(await page.locator('[data-caption-scale]').inputValue(), '1.15');
+        assert.equal(await page.locator('[data-caption-background]').isChecked(), true);
+        assert.equal(await page.locator('[data-transition]').inputValue(), 'fade');
+        assert.equal(await page.locator('[data-transition-frames]').inputValue(), '6');
         await page.locator('#editorial-source-monitor').waitFor({state: 'visible'});
         assert.equal(await page.locator('#editorial-source-monitor-title').innerText(), 'Supporting interview');
-        await page.locator('#editorial-storyboard input[type=number]:not([data-region])').fill('2.0');
         const previousVersion = storyboardWorkspace.version;
+        await page.locator('[data-footage="start"]').fill('2.0');
         await page.getByText(new RegExp(`Saved workspace · v${previousVersion + 1}`)).waitFor();
         assert.equal(await page.locator('#editorial-storyboard-undo').isDisabled(), false);
-        await page.getByRole('button', {name: 'Undo last edit', exact: true}).click();
-        await page.getByText(/Storyboard restored/).waitFor();
-        assert.equal(
-            await page.locator('#editorial-storyboard input[type=number]:not([data-region])').inputValue(),
-            '1.5',
+        const undoResponse = page.waitForResponse(response =>
+            response.request().method() === 'POST'
+            && response.url().endsWith('/storyboard/undo')
         );
+        await page.getByRole('button', {name: 'Undo last edit', exact: true}).click();
+        assert.equal((await undoResponse).status(), 201);
+        await page.locator('[data-footage="start"]').waitFor();
+        await page.waitForFunction(() =>
+            document.querySelector('[data-footage="start"]')?.value === '1.5'
+        );
+        assert.equal(await page.locator('[data-footage="start"]').inputValue(), '1.5');
+        assert.equal(await page.locator('[data-caption-position]').inputValue(), 'center');
+        assert.equal(await page.locator('[data-transition]').inputValue(), 'fade');
         assert.equal(storyboardWorkspace.origin, 'undo');
         await page.locator('[data-editorial-stage="assets"]').click();
         await page.getByText(/Managed media available/).waitFor();
@@ -497,8 +555,19 @@ const draft = {
         const rendering = calls.find(call => call.body?.target === 'render');
         assert.equal(rendering.body.asset_run_id, 'acquire');
         assert.equal(rendering.body.storyboard.presentation_mode, 'captioned_silent');
-        assert.equal(rendering.body.storyboard.beats[0].media[0].start_seconds, 1.5);
-        assert.equal(rendering.body.storyboard.beats[0].media[0].freeze, true);
+        const renderedBeat = rendering.body.storyboard.beats[0];
+        assert.equal(renderedBeat.media[0].start_seconds, 1.5);
+        assert.equal(renderedBeat.media[0].playback_rate, 0.75);
+        assert.equal(renderedBeat.media[0].push_in, 1.08);
+        assert.equal(renderedBeat.media[0].freeze, true);
+        assert.deepEqual(renderedBeat.media[0].crop, {
+            x: 0.1, y: 0.15, width: 0.7, height: 0.7,
+        });
+        assert.equal(renderedBeat.caption_position, 'center');
+        assert.equal(renderedBeat.caption_scale, 1.15);
+        assert.equal(renderedBeat.caption_background, true);
+        assert.equal(renderedBeat.transition, 'fade');
+        assert.equal(renderedBeat.transition_frames, 6);
         assert(calls.find(call => call.path.endsWith('/storyboard/preflight')));
         assert.equal(await page.locator('#editorial-approve').isDisabled(), true);
         await page.locator('[data-editorial-stage="storyboard"]').click();
@@ -579,7 +648,7 @@ const draft = {
         await page.locator('#editorial-auto-regions').check();
         await page.locator('#editorial-direct').click();
         await page.getByText(/Visual plan response lost/).waitFor();
-        assert.equal(await page.locator('#editorial-storyboard input[type=number]:not([data-region])').inputValue(), '1.5');
+        assert.equal(await page.locator('[data-footage="start"]').inputValue(), '1.5');
         await page.locator('#editorial-direct').click();
         await page.locator('#editorial-direction').filter({hasText: 'Hold attention on the linked interview'}).waitFor();
         const directions = calls.filter(call => call.body?.target === 'direction');
@@ -614,7 +683,7 @@ const draft = {
         await page.keyboard.press('Escape');
         assert.equal(await page.locator('#editorial-frame-dialog').isVisible(), false);
         assert.equal(await page.locator('#editorial-frame-canvas img').count(), 0);
-        assert.equal(await page.locator('#editorial-storyboard input[type=number]:not([data-region])').inputValue(), '1.5');
+        assert.equal(await page.locator('[data-footage="start"]').inputValue(), '1.5');
         assert.equal(calls.filter(call => call.method === 'POST').length, writesBeforeInspect);
         let releaseFrame, frameRequested;
         const frameStarted = new Promise(resolve => { frameRequested = resolve; });
@@ -698,13 +767,13 @@ const draft = {
         assert.equal(imageRender.storyboard.beats[0].layout, 'image');
         await page.locator('[data-editorial-stage="storyboard"]').click();
         await page.locator('[data-image-compare]').selectOption('second-image');
-        await page.locator('#editorial-storyboard summary').click();
+        await page.getByText('Mark a source region', {exact: true}).click();
         await page.locator('[data-region="kind"]').selectOption('circle');
         await page.locator('[data-region="target"]').selectOption('1');
         await page.locator('[data-region="x"]').fill('90');
         await page.locator('[data-editorial-stage="preview"]').click();
         await page.getByRole('button', {name: 'Create narrated preview', exact: true}).click();
-        await page.getByText(/Keep the annotation within the original image/).waitFor();
+        await page.locator('#editorial-feedback').filter({hasText: /Keep the annotation within the original source/}).waitFor();
         await page.locator('[data-editorial-stage="storyboard"]').click();
         await page.locator('[data-region="x"]').fill('10');
         await page.locator('[data-region="label"]').fill('Compare the symbol');

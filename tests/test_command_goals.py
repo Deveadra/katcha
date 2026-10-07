@@ -550,8 +550,21 @@ def test_storyboard_edit_proposal_freezes_observed_workspace_identity(
                     {
                         "candidate_id": "candidate-1",
                         "start_seconds": 2.5,
+                        "playback_rate": 0.75,
+                        "push_in": 1.08,
+                        "crop": {
+                            "x": 0.1,
+                            "y": 0.15,
+                            "width": 0.7,
+                            "height": 0.7,
+                        },
                     }
                 ],
+                "caption_position": "center",
+                "caption_scale": 1.15,
+                "caption_background": True,
+                "transition": "fade",
+                "transition_frames": 6,
             },
             "rationale": "Use the closer acquired shot for the named clue.",
         },
@@ -562,6 +575,12 @@ def test_storyboard_edit_proposal_freezes_observed_workspace_identity(
     assert spec.payload["expected_workspace_version"] == 4
     assert spec.payload["beat"]["beat_id"] == "beat-1"
     assert spec.payload["beat"]["media"][0]["candidate_id"] == "candidate-1"
+    assert spec.payload["beat"]["media"][0]["crop"]["x"] == 0.1
+    assert spec.payload["beat"]["caption_position"] == "center"
+    assert spec.payload["beat"]["caption_scale"] == 1.15
+    assert spec.payload["beat"]["caption_background"] is True
+    assert spec.payload["beat"]["transition"] == "fade"
+    assert spec.payload["beat"]["transition_frames"] == 6
 
     with pytest.raises(ValueError, match="observed project, run and image"):
         action_spec(

@@ -68,7 +68,8 @@ TOOLS = {
             "propose_editorial_storyboard_edit",
             "Propose one visual edit for one saved Storyboard beat against an exact workspace "
             "version. Supports the current visual contract: unassigned, footage, quote, image, "
-            "image comparison and overlays. It never changes narration/script text, renders, "
+            "image comparison, source crop/rate/push-in, overlays, caption treatment and "
+            "cut/fade transitions. It never changes narration/script text, renders, "
             "acquires media or publishes. Operator confirmation is required before the edit is "
             "saved, and stale workspace versions fail closed.",
             "production:create",

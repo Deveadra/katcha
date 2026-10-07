@@ -6,9 +6,9 @@ const text = (value, max) => typeof value === 'string' && value.length > 0 && va
 const key = (value) => text(value, 1000) && !/[:\\\x00-\x1f]/.test(value) && !value.startsWith('/') && !value.split('/').some(part => part === '..' || part === '.');
 
 export const validateEditorialManifest = (manifest) => {
-  check(['editorial-render-v1', 'editorial-render-v2', 'editorial-render-v3', 'editorial-render-v4'].includes(manifest?.version), 'version');
+  check(['editorial-render-v1', 'editorial-render-v2', 'editorial-render-v3', 'editorial-render-v4', 'editorial-render-v5'].includes(manifest?.version), 'version');
   const narrated = manifest.presentation_mode === 'narrated';
-  check(['editorial-render-v3', 'editorial-render-v4'].includes(manifest.version) || narrated === (manifest.version === 'editorial-render-v2'), 'version presentation');
+  check(['editorial-render-v3', 'editorial-render-v4', 'editorial-render-v5'].includes(manifest.version) || narrated === (manifest.version === 'editorial-render-v2'), 'version presentation');
   check(manifest.presentation_mode === (narrated ? 'narrated' : 'captioned_silent') && manifest.requires_editorial_review === true, 'presentation and review');
   check(narrated ? Array.isArray(manifest.narration) && manifest.narration.length > 0 && manifest.narration.length <= 100 : !manifest.narration?.length, 'narration mode');
   const narration = new Map();
@@ -33,7 +33,16 @@ export const validateEditorialManifest = (manifest) => {
     assets.set(asset.candidate_id, asset);
   }
   const images = new Map();
-  check(['editorial-render-v3', 'editorial-render-v4'].includes(manifest.version) ? Array.isArray(manifest.images) && manifest.images.length > 0 && manifest.images.length <= 100 : !manifest.images?.length, 'image version');
+  const imageVersion = ['editorial-render-v3', 'editorial-render-v4'].includes(manifest.version);
+  const flexibleImageVersion = manifest.version === 'editorial-render-v5';
+  check(
+    imageVersion
+      ? Array.isArray(manifest.images) && manifest.images.length > 0 && manifest.images.length <= 100
+      : flexibleImageVersion
+        ? manifest.images == null || (Array.isArray(manifest.images) && manifest.images.length <= 100)
+        : !manifest.images?.length,
+    'image version',
+  );
   for (const image of manifest.images || []) {
     check(text(image.image_id, 100) && !images.has(image.image_id) && text(image.beat_id, 120), 'image identity');
     check(/^[a-f0-9]{64}$/.test(image.sha256) && key(image.storage_key) && image.storage_key === `editorial/${manifest.project_id}/images/${image.image_id}/${image.sha256}.png` && !('url' in image), 'managed image');
@@ -59,7 +68,7 @@ export const validateEditorialManifest = (manifest) => {
     const imageLayout = ['image', 'image_comparison'].includes(scene.layout);
     const imageIds = scene.layout === 'image' ? [scene.image_id] : (scene.image_ids || []);
     if (scene.layout === 'image_comparison') {
-      check(manifest.version === 'editorial-render-v4' && Array.isArray(scene.image_ids) && imageIds.length === 2 && new Set(imageIds).size === 2 && !scene.image_id, 'image comparison');
+      check(['editorial-render-v4', 'editorial-render-v5'].includes(manifest.version) && Array.isArray(scene.image_ids) && imageIds.length === 2 && new Set(imageIds).size === 2 && !scene.image_id, 'image comparison');
     } else check(!scene.image_ids?.length, 'unexpected image comparison');
     if (imageLayout) {
       check(number(scene.image_push_in, 1, 1.15), 'image motion');
@@ -73,10 +82,14 @@ export const validateEditorialManifest = (manifest) => {
       const asset = assets.get(use.candidate_id);
       check(asset && number(use.start_seconds, 0, asset.duration_seconds) && use.start_seconds < asset.duration_seconds, 'source start');
       check(number(use.playback_rate, 0.25, 2) && typeof use.freeze === 'boolean' && number(use.push_in, 1, 1.15), 'playback');
+      if (use.crop != null) {
+        const crop = use.crop;
+        check(crop && number(crop.x, 0, 1) && number(crop.y, 0, 1) && number(crop.width, Number.MIN_VALUE, 1) && number(crop.height, Number.MIN_VALUE, 1) && crop.x + crop.width <= 1 && crop.y + crop.height <= 1, 'crop region');
+      }
       check(use.start_seconds + (use.freeze ? 0 : scene.duration_frames / 30 * use.playback_rate) <= asset.duration_seconds + 1e-6, 'source end');
     }
     check(Array.isArray(scene.overlays) && scene.overlays.length <= 8, 'annotations');
-    if (imageLayout && scene.overlays.length) check(manifest.version === 'editorial-render-v4', 'image annotation version');
+    if (imageLayout && scene.overlays.length) check(['editorial-render-v4', 'editorial-render-v5'].includes(manifest.version), 'image annotation version');
     for (const overlay of scene.overlays) {
       check(['circle', 'arrow', 'highlight'].includes(overlay.kind) && integer(overlay.media_index, 0, (imageLayout ? imageIds.length : scene.media.length) - 1), 'annotation target');
       const r = overlay.region;
@@ -84,6 +97,12 @@ export const validateEditorialManifest = (manifest) => {
       check(overlay.label == null || text(overlay.label, 100), 'annotation label');
     }
     check(scene.uncertainty_disclosure == null || text(scene.uncertainty_disclosure, 180), 'disclosure');
+    check(scene.caption_position == null || ['bottom', 'center'].includes(scene.caption_position), 'caption position');
+    check(scene.caption_scale == null || number(scene.caption_scale, 0.75, 1.35), 'caption scale');
+    check(scene.caption_background == null || typeof scene.caption_background === 'boolean', 'caption background');
+    check(scene.transition == null || ['cut', 'fade'].includes(scene.transition), 'transition');
+    if (scene.transition === 'fade') check(integer(scene.transition_frames, 3, 15), 'transition frames');
+    else check(scene.transition_frames == null, 'cut transition frames');
     check(Array.isArray(scene.captions) && scene.captions.length > 0 && scene.captions.length <= 100, 'captions');
     let captionCursor = 0;
     for (const caption of scene.captions) {
@@ -93,6 +112,14 @@ export const validateEditorialManifest = (manifest) => {
     check(captionCursor === scene.duration_frames, 'caption end');
     cursor += scene.duration_frames;
   }
+  const advancedEdits = manifest.timeline.some(scene =>
+    scene.caption_position != null
+      || scene.caption_scale != null
+      || scene.caption_background === true
+      || scene.transition != null
+      || scene.media.some(use => use.crop != null)
+  );
+  check(!advancedEdits || manifest.version === 'editorial-render-v5', 'professional edit version');
   check(usedImages.size === images.size, 'image coverage');
   check(!narrated || (narration.size === beats.size && manifest.narration.every((audio, index) => audio.beat_id === manifest.timeline[index]?.beat_id)), 'narration coverage');
   check(cursor <= 108000 && Math.abs(cursor / 30 - manifest.output_duration_seconds) < 1e-6, 'duration');
@@ -103,4 +130,32 @@ export const validateEditorialManifest = (manifest) => {
 export const containRect = (width, height, boxWidth, boxHeight) => {
   const scale = Math.min(boxWidth / width, boxHeight / height);
   return {width: width * scale, height: height * scale, left: (boxWidth - width * scale) / 2, top: (boxHeight - height * scale) / 2};
+};
+
+
+export const sourceViewport = (width, height, boxWidth, boxHeight, crop = null) => {
+  if (!crop) {
+    return {
+      viewport: containRect(width, height, boxWidth, boxHeight),
+      content: {left: 0, top: 0, width: '100%', height: '100%'},
+    };
+  }
+  const cropWidth = width * crop.width;
+  const cropHeight = height * crop.height;
+  const scale = Math.min(boxWidth / cropWidth, boxHeight / cropHeight);
+  const viewport = {
+    width: cropWidth * scale,
+    height: cropHeight * scale,
+    left: (boxWidth - cropWidth * scale) / 2,
+    top: (boxHeight - cropHeight * scale) / 2,
+  };
+  return {
+    viewport,
+    content: {
+      left: -width * crop.x * scale,
+      top: -height * crop.y * scale,
+      width: width * scale,
+      height: height * scale,
+    },
+  };
 };

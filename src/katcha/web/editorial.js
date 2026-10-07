@@ -552,14 +552,37 @@ window.KatchaEditorial = (() => {
         }).join("");
     }
     function boardStorage() { return storageKey(`board.${state.project.id}.${state.project.revision}.${state.assetRun?.editorial_run_id || "none"}`); }
-    function saveStoryboard() {
-        const rows = [...el("editorial-storyboard").querySelectorAll("[data-board-beat]")].map(row => ({
-            choice: row.querySelector("select").value, start: row.querySelector("input[type=number]").value,
-            freeze: row.querySelector("input[type=checkbox]").checked,
+    function rawStoryboardRows() {
+        return [...el("editorial-storyboard").querySelectorAll("[data-board-beat]")].map(row => ({
+            choice: row.querySelector("[data-primary-visual]").value,
+            start: row.querySelector('[data-footage="start"]').value,
+            rate: row.querySelector('[data-footage="rate"]').value,
+            push: row.querySelector('[data-footage="push"]').value,
+            freeze: row.querySelector('[data-footage="freeze"]').checked,
+            cropEnabled: row.querySelector("[data-crop-enabled]").checked,
+            crop: Object.fromEntries(
+                [...row.querySelectorAll("[data-crop]")].map(input => [
+                    input.dataset.crop,
+                    input.value,
+                ]),
+            ),
+            imagePush: row.querySelector("[data-image-push]").value,
             compare: row.querySelector("[data-image-compare]").value,
-            annotation: Object.fromEntries([...row.querySelectorAll("[data-region]")].map(input => [input.dataset.region, input.value])),
+            annotation: Object.fromEntries(
+                [...row.querySelectorAll("[data-region]")].map(input => [
+                    input.dataset.region,
+                    input.value,
+                ]),
+            ),
+            captionPosition: row.querySelector("[data-caption-position]").value,
+            captionScale: row.querySelector("[data-caption-scale]").value,
+            captionBackground: row.querySelector("[data-caption-background]").checked,
+            transition: row.querySelector("[data-transition]").value,
+            transitionFrames: row.querySelector("[data-transition-frames]").value,
         }));
-        remember(boardStorage(), rows);
+    }
+    function saveStoryboard() {
+        remember(boardStorage(), rawStoryboardRows());
     }
     function workspaceSavedRows(workspace) {
         return (workspace?.beats || []).map(beat => {
@@ -575,11 +598,22 @@ window.KatchaEditorial = (() => {
                 choice = `image:${beat.image_ids[0]}`;
                 compare = beat.image_ids[1];
             }
+            const media = beat.media?.[0] || {};
             const overlay = beat.overlays?.[0];
             return {
                 choice,
-                start: String(beat.media?.[0]?.start_seconds ?? 0),
-                freeze: Boolean(beat.media?.[0]?.freeze),
+                start: String(media.start_seconds ?? 0),
+                rate: String(media.playback_rate ?? 1),
+                push: String(media.push_in ?? 1),
+                freeze: Boolean(media.freeze),
+                cropEnabled: Boolean(media.crop),
+                crop: media.crop ? {
+                    x: String(Number(media.crop.x) * 100),
+                    y: String(Number(media.crop.y) * 100),
+                    width: String(Number(media.crop.width) * 100),
+                    height: String(Number(media.crop.height) * 100),
+                } : {},
+                imagePush: String(beat.image_push_in ?? 1),
                 compare,
                 annotation: overlay ? {
                     kind: overlay.kind,
@@ -590,6 +624,11 @@ window.KatchaEditorial = (() => {
                     height: String(Number(overlay.region.height) * 100),
                     label: overlay.label || "",
                 } : {},
+                captionPosition: beat.caption_position || "bottom",
+                captionScale: String(beat.caption_scale ?? 1),
+                captionBackground: Boolean(beat.caption_background),
+                transition: beat.transition || "cut",
+                transitionFrames: String(beat.transition_frames ?? 8),
             };
         });
     }
@@ -606,12 +645,124 @@ window.KatchaEditorial = (() => {
             ),
         });
     }
+    function boundedNumber(row, selector, label, min, max) {
+        const value = Number(row.querySelector(selector).value);
+        if (!Number.isFinite(value) || value < min || value > max) {
+            throw new Error(`${label} must be between ${min} and ${max}.`);
+        }
+        return value;
+    }
+    function regionFromControls(row, attribute, label) {
+        const values = Object.fromEntries(
+            ["x", "y", "width", "height"].map(key => {
+                const input = row.querySelector(`[${attribute}="${key}"]`);
+                return [key, Number(input?.value) / 100];
+            }),
+        );
+        if (
+            ["x", "y", "width", "height"].some(key => !Number.isFinite(values[key]))
+            || values.x < 0
+            || values.y < 0
+            || values.width <= 0
+            || values.height <= 0
+            || values.x + values.width > 1
+            || values.y + values.height > 1
+        ) {
+            throw new Error(`Keep the ${label} within the original source (0–100%).`);
+        }
+        return values;
+    }
+    function beatTreatment(row) {
+        const captionScale = boundedNumber(
+            row,
+            "[data-caption-scale]",
+            "Caption scale",
+            0.75,
+            1.35,
+        );
+        const transition = row.querySelector("[data-transition]").value;
+        const transitionFrames = transition === "fade"
+            ? boundedNumber(
+                row,
+                "[data-transition-frames]",
+                "Fade length",
+                3,
+                15,
+            )
+            : 8;
+        if (transition === "fade" && !Number.isInteger(transitionFrames)) {
+            throw new Error("Fade length must use whole frames.");
+        }
+        return {
+            caption_position: row.querySelector("[data-caption-position]").value,
+            caption_scale: captionScale,
+            caption_background: row.querySelector("[data-caption-background]").checked,
+            transition,
+            transition_frames: transitionFrames,
+        };
+    }
+    function footageUse(row, candidateId) {
+        const start = boundedNumber(
+            row,
+            '[data-footage="start"]',
+            "Footage start",
+            0,
+            Number.MAX_SAFE_INTEGER,
+        );
+        const playbackRate = boundedNumber(
+            row,
+            '[data-footage="rate"]',
+            "Playback speed",
+            0.25,
+            2,
+        );
+        const pushIn = boundedNumber(
+            row,
+            '[data-footage="push"]',
+            "Push-in",
+            1,
+            1.15,
+        );
+        const crop = row.querySelector("[data-crop-enabled]").checked
+            ? regionFromControls(row, "data-crop", "crop")
+            : null;
+        return {
+            candidate_id: candidateId,
+            start_seconds: start,
+            playback_rate: playbackRate,
+            freeze: row.querySelector('[data-footage="freeze"]').checked,
+            push_in: pushIn,
+            ...(crop ? {crop} : {}),
+        };
+    }
+    function imageOverlay(row, compare) {
+        const kind = row.querySelector('[data-region="kind"]').value;
+        if (!kind) return [];
+        const region = regionFromControls(row, "data-region", "annotation");
+        const target = row.querySelector('[data-region="target"]').value;
+        if (target === "1" && !compare) {
+            throw new Error("Choose a second image before marking it.");
+        }
+        return [{
+            kind,
+            media_index: Number(target),
+            region,
+            label: row.querySelector('[data-region="label"]').value.trim() || null,
+        }];
+    }
     function storyboardWorkspaceDraft() {
         const rows = [...el("editorial-storyboard").querySelectorAll("[data-board-beat]")];
         if (!rows.length) return null;
         const beats = rows.map(row => {
+            const treatment = beatTreatment(row);
             const value = row.querySelector("[data-primary-visual]").value;
-            if (!value) return {beat_id: row.dataset.boardBeat, layout: "unassigned"};
+            if (!value) {
+                return {
+                    beat_id: row.dataset.boardBeat,
+                    layout: "unassigned",
+                    ...treatment,
+                };
+            }
             const [kind, ...parts] = value.split(":");
             const id = parts.join(":");
             if (kind === "quote") {
@@ -619,65 +770,32 @@ window.KatchaEditorial = (() => {
                     beat_id: row.dataset.boardBeat,
                     layout: "quote",
                     quote_source_id: id,
+                    ...treatment,
                 };
             }
             if (kind === "media") {
-                const start = Number(row.querySelector("input[type=number]").value);
-                if (!Number.isFinite(start) || start < 0) {
-                    throw new Error("Enter a valid footage start time.");
-                }
                 return {
                     beat_id: row.dataset.boardBeat,
                     layout: "single",
-                    media: [{
-                        candidate_id: id,
-                        start_seconds: start,
-                        freeze: row.querySelector("input[type=checkbox]").checked,
-                    }],
+                    media: [footageUse(row, id)],
+                    ...treatment,
                 };
             }
             if (kind !== "image") throw new Error("Choose a supported visual.");
             const compare = row.querySelector("[data-image-compare]").value;
-            const annotation = Object.fromEntries(
-                [...row.querySelectorAll("[data-region]")].map(input => [
-                    input.dataset.region,
-                    input.value,
-                ]),
-            );
-            const overlays = [];
-            if (annotation.kind) {
-                const region = Object.fromEntries(
-                    ["x", "y", "width", "height"].map(key => [
-                        key,
-                        Number(annotation[key]) / 100,
-                    ]),
-                );
-                if (
-                    Object.values(region).some(value => !Number.isFinite(value))
-                    || region.x < 0
-                    || region.y < 0
-                    || region.width <= 0
-                    || region.height <= 0
-                    || region.x + region.width > 1
-                    || region.y + region.height > 1
-                ) {
-                    throw new Error("Keep the annotation within the original image.");
-                }
-                if (annotation.target === "1" && !compare) {
-                    throw new Error("Choose a second image before marking it.");
-                }
-                overlays.push({
-                    kind: annotation.kind,
-                    media_index: Number(annotation.target),
-                    region,
-                    label: annotation.label.trim() || null,
-                });
-            }
             return {
                 beat_id: row.dataset.boardBeat,
                 layout: compare ? "image_comparison" : "image",
                 ...(compare ? {image_ids: [id, compare]} : {image_id: id}),
-                overlays,
+                image_push_in: boundedNumber(
+                    row,
+                    "[data-image-push]",
+                    "Image push-in",
+                    1,
+                    1.15,
+                ),
+                overlays: imageOverlay(row, compare),
+                ...treatment,
             };
         });
         const mode = el("editorial-presentation").value;
@@ -824,6 +942,28 @@ window.KatchaEditorial = (() => {
         state.storyboardSaveTimer = setTimeout(
             () => void flushStoryboardWorkspace(),
             700,
+        );
+    }
+    async function ensureStoryboardWorkspaceSaved() {
+        clearTimeout(state.storyboardSaveTimer);
+        state.storyboardSaveTimer = null;
+        if (!state.storyboardWorkspace && state.revision) {
+            state.storyboardDirty = true;
+        }
+        // Explicit render actions must surface local editor validation in the
+        // visible action feedback, even when the Storyboard panel is hidden.
+        if (state.storyboardDirty) storyboardWorkspaceDraft();
+        for (let attempt = 0; attempt < 2; attempt += 1) {
+            if (state.storyboardDirty && !state.storyboardSaving) {
+                await flushStoryboardWorkspace();
+            }
+            for (let tick = 0; tick < 100 && state.storyboardSaving; tick += 1) {
+                await new Promise(resolve => setTimeout(resolve, 50));
+            }
+            if (!state.storyboardSaving && !state.storyboardDirty) return;
+        }
+        throw new Error(
+            "Storyboard changes are not durably saved yet. Check the workspace status and retry.",
         );
     }
     async function undoStoryboardWorkspace() {
@@ -975,13 +1115,29 @@ window.KatchaEditorial = (() => {
             void loadSourceMonitor();
         }
     }
+    function updateSourceOut(row) {
+        const output = row.querySelector("[data-footage-out]");
+        if (!output) return;
+        const start = Number(row.querySelector('[data-footage="start"]')?.value || 0);
+        const rate = Number(row.querySelector('[data-footage="rate"]')?.value || 1);
+        const duration = Number(row.dataset.beatDuration || 0);
+        const frozen = row.querySelector('[data-footage="freeze"]')?.checked;
+        output.textContent = frozen
+            ? `Held at ${start.toFixed(2)}s`
+            : `Source out ≈ ${(start + duration * rate).toFixed(2)}s`;
+    }
     function showFootageControls() {
         el("editorial-storyboard").querySelectorAll("[data-board-beat]").forEach(row => {
-            const footage = row.querySelector("select").value.startsWith("media:");
-            row.querySelectorAll("input:not([data-region])").forEach(input => { input.closest("label").hidden = !footage; });
-            const image = row.querySelector("select").value.startsWith("image:");
+            const choice = row.querySelector("[data-primary-visual]").value;
+            const footage = choice.startsWith("media:");
+            row.querySelector("[data-footage-tools]").hidden = !footage;
+            row.querySelector("[data-crop-fields]").hidden = !row.querySelector("[data-crop-enabled]").checked;
+            const image = choice.startsWith("image:");
             row.querySelector("[data-image-tools]").hidden = !image;
             row.querySelector("[data-region-fields]").hidden = !row.querySelector('[data-region="kind"]').value;
+            row.querySelector("[data-transition-frame-control]").hidden =
+                row.querySelector("[data-transition]").value !== "fade";
+            updateSourceOut(row);
         });
     }
     function renderStoryboard() {
@@ -1023,13 +1179,42 @@ window.KatchaEditorial = (() => {
                     unavailable: true,
                 });
             }
-            return `<fieldset id="board-panel-${esc(beat.id)}" class="editorial-beat editorial-beat-editor" role="tabpanel" data-board-beat="${esc(beat.id)}"><legend><span>Beat ${index + 1} · ${esc(beat.role)}</span><small>${timelineClock(beat.planned_duration_seconds)} planned</small></legend><p class="editorial-beat-intent">${esc(beat.visual_intent)}</p><label>Visual<select data-primary-visual>${'<option value="">Choose a visual</option>'}${options.map(item => `<option value="${esc(item.value)}" ${item.unavailable ? 'data-unavailable="true"' : ""} ${savedChoice === item.value ? "selected" : ""}>${esc(item.label)}</option>`).join("")}</select></label><label>Footage start (seconds)<input type="number" min="0" step="0.1" value="${esc(saved[index]?.start || "0")}"></label><label class="check-row"><input type="checkbox" ${saved[index]?.freeze ? "checked" : ""}> Hold this frame</label>
-                <div data-image-tools hidden><label>Compare with another image<select data-image-compare><option value="">Single image</option>${saved[index]?.compare && !(state.images?.images || []).some(item => item.id === saved[index].compare && item.status === "active" && item.beat_id === beat.id) ? `<option value="${esc(saved[index].compare)}" selected>Unavailable image · choose a replacement</option>` : ""}${(state.images?.images || []).filter(item => item.status === "active" && item.beat_id === beat.id).map(item => `<option value="${esc(item.id)}" ${saved[index]?.compare === item.id ? "selected" : ""}>${esc(item.title)}</option>`).join("")}</select></label>
-                <details class="ae-help"><summary>Mark a source region</summary><p>Manual placement on the original image. Percentages follow the image through resizing and push-in. Check the preview before approval.</p>
-                <label>Annotation<select data-region="kind">${[["", "None"], ["circle", "Circle"], ["arrow", "Arrow"], ["highlight", "Highlight"]].map(([value, label]) => `<option value="${value}" ${saved[index]?.annotation?.kind === value ? "selected" : ""}>${label}</option>`).join("")}</select></label>
-                <div data-region-fields><label>Image to mark<select data-region="target"><option value="0">First image</option><option value="1" ${saved[index]?.annotation?.target === "1" ? "selected" : ""}>Second image</option></select></label>
-                ${[["x", "Left", 25], ["y", "Top", 25], ["width", "Width", 50], ["height", "Height", 50]].map(([key, label, fallback]) => `<label>${label} (%)<input data-region="${key}" type="number" min="${key === "width" || key === "height" ? 0.1 : 0}" max="100" step="0.1" value="${esc(saved[index]?.annotation?.[key] ?? fallback)}"></label>`).join("")}
-                <label>Optional label<input data-region="label" maxlength="100" value="${esc(saved[index]?.annotation?.label || "")}"></label></div></details></div></fieldset>`;
+            return `<fieldset id="board-panel-${esc(beat.id)}" class="editorial-beat editorial-beat-editor" role="tabpanel" data-board-beat="${esc(beat.id)}" data-beat-duration="${esc(beat.planned_duration_seconds)}"><legend><span>Beat ${index + 1} · ${esc(beat.role)}</span><small>${timelineClock(beat.planned_duration_seconds)} planned</small></legend><p class="editorial-beat-intent">${esc(beat.visual_intent)}</p>
+                <label>Visual<select data-primary-visual>${'<option value="">Choose a visual</option>'}${options.map(item => `<option value="${esc(item.value)}" ${item.unavailable ? 'data-unavailable="true"' : ""} ${savedChoice === item.value ? "selected" : ""}>${esc(item.label)}</option>`).join("")}</select></label>
+                <div class="editorial-edit-section" data-footage-tools hidden>
+                    <div class="editorial-edit-grid">
+                        <label>Source in (seconds)<input data-footage="start" type="number" min="0" step="0.1" value="${esc(saved[index]?.start ?? "0")}"></label>
+                        <label>Playback speed<input data-footage="rate" type="number" min="0.25" max="2" step="0.05" value="${esc(saved[index]?.rate ?? "1")}"></label>
+                        <label>Push-in<input data-footage="push" type="number" min="1" max="1.15" step="0.01" value="${esc(saved[index]?.push ?? "1")}"></label>
+                        <div class="editorial-derived"><span>Source window</span><strong data-footage-out></strong></div>
+                    </div>
+                    <label class="check-row"><input data-footage="freeze" type="checkbox" ${saved[index]?.freeze ? "checked" : ""}> Hold this source frame</label>
+                    <details class="ae-help"><summary>Crop source frame</summary>
+                        <label class="check-row"><input data-crop-enabled type="checkbox" ${saved[index]?.cropEnabled ? "checked" : ""}> Use a source-coordinate crop</label>
+                        <div class="editorial-edit-grid" data-crop-fields>
+                            ${[["x", "Left", 0], ["y", "Top", 0], ["width", "Width", 100], ["height", "Height", 100]].map(([key, label, fallback]) => `<label>${label} (%)<input data-crop="${key}" type="number" min="${key === "width" || key === "height" ? 0.1 : 0}" max="100" step="0.1" value="${esc(saved[index]?.crop?.[key] ?? fallback)}"></label>`).join("")}
+                        </div>
+                    </details>
+                </div>
+                <div data-image-tools hidden>
+                    <div class="editorial-edit-grid"><label>Image push-in<input data-image-push type="number" min="1" max="1.15" step="0.01" value="${esc(saved[index]?.imagePush ?? "1")}"></label>
+                    <label>Compare with another image<select data-image-compare><option value="">Single image</option>${saved[index]?.compare && !(state.images?.images || []).some(item => item.id === saved[index].compare && item.status === "active" && item.beat_id === beat.id) ? `<option value="${esc(saved[index].compare)}" selected>Unavailable image · choose a replacement</option>` : ""}${(state.images?.images || []).filter(item => item.status === "active" && item.beat_id === beat.id).map(item => `<option value="${esc(item.id)}" ${saved[index]?.compare === item.id ? "selected" : ""}>${esc(item.title)}</option>`).join("")}</select></label></div>
+                    <details class="ae-help"><summary>Mark a source region</summary><p>Manual placement on the original image. Percentages follow the image through resizing and push-in. Check the preview before approval.</p>
+                    <label>Annotation<select data-region="kind">${[["", "None"], ["circle", "Circle"], ["arrow", "Arrow"], ["highlight", "Highlight"]].map(([value, label]) => `<option value="${value}" ${saved[index]?.annotation?.kind === value ? "selected" : ""}>${label}</option>`).join("")}</select></label>
+                    <div data-region-fields><label>Image to mark<select data-region="target"><option value="0">First image</option><option value="1" ${saved[index]?.annotation?.target === "1" ? "selected" : ""}>Second image</option></select></label>
+                    <div class="editorial-edit-grid">${[["x", "Left", 25], ["y", "Top", 25], ["width", "Width", 50], ["height", "Height", 50]].map(([key, label, fallback]) => `<label>${label} (%)<input data-region="${key}" type="number" min="${key === "width" || key === "height" ? 0.1 : 0}" max="100" step="0.1" value="${esc(saved[index]?.annotation?.[key] ?? fallback)}"></label>`).join("")}</div>
+                    <label>Optional label<input data-region="label" maxlength="100" value="${esc(saved[index]?.annotation?.label || "")}"></label></div></details>
+                </div>
+                <details class="ae-help editorial-fine-controls"><summary>Caption & transition</summary>
+                    <div class="editorial-edit-grid">
+                        <label>Caption position<select data-caption-position><option value="bottom" ${(saved[index]?.captionPosition || "bottom") === "bottom" ? "selected" : ""}>Bottom</option><option value="center" ${saved[index]?.captionPosition === "center" ? "selected" : ""}>Center</option></select></label>
+                        <label>Caption scale<input data-caption-scale type="number" min="0.75" max="1.35" step="0.05" value="${esc(saved[index]?.captionScale ?? "1")}"></label>
+                        <label>Transition<select data-transition><option value="cut" ${(saved[index]?.transition || "cut") === "cut" ? "selected" : ""}>Hard cut</option><option value="fade" ${saved[index]?.transition === "fade" ? "selected" : ""}>Fade through black</option></select></label>
+                        <label data-transition-frame-control>Fade frames<input data-transition-frames type="number" min="3" max="15" step="1" value="${esc(saved[index]?.transitionFrames ?? "8")}"></label>
+                    </div>
+                    <label class="check-row"><input data-caption-background type="checkbox" ${saved[index]?.captionBackground ? "checked" : ""}> Add caption background for readability</label>
+                </details>
+            </fieldset>`;
         }).join("") || '<p class="empty">Save a script and choose supporting media to prepare a preview.</p>';
         showFootageControls();
         refreshTimelineStatus();
@@ -1064,31 +1249,57 @@ window.KatchaEditorial = (() => {
         return {presentation_mode, narration_ids, ...(el("editorial-auto-regions").checked ? {annotate_regions: true} : {})};
     }
     function storyboardPlan() {
-        const beats = [...el("editorial-storyboard").querySelectorAll("[data-board-beat]")].map(row => {
-            const value = row.querySelector("select").value;
-            if (!value) throw new Error("Choose a visual for each script beat.");
-            const [kind, ...parts] = value.split(":"); const id = parts.join(":");
-            if (kind === "image") {
-                const compare = row.querySelector("[data-image-compare]").value;
-                const available = new Set((state.images?.images || []).filter(item => item.status === "active" && item.beat_id === row.dataset.boardBeat).map(item => item.id));
-                if (!available.has(id) || (compare && !available.has(compare))) throw new Error("An image is no longer available. Choose a replacement before rendering.");
-                if (compare === id) throw new Error("Choose two different images for comparison.");
-                const annotation = Object.fromEntries([...row.querySelectorAll("[data-region]")].map(input => [input.dataset.region, input.value]));
-                const overlays = [];
-                if (annotation.kind) {
-                    const region = Object.fromEntries(["x", "y", "width", "height"].map(key => [key, Number(annotation[key]) / 100]));
-                    if (Object.values(region).some(value => !Number.isFinite(value)) || region.x < 0 || region.y < 0 || region.width <= 0 || region.height <= 0 || region.x + region.width > 1 || region.y + region.height > 1) throw new Error("Keep the annotation within the original image (0–100%).");
-                    if (annotation.target === "1" && !compare) throw new Error("Choose a second image before marking it.");
-                    overlays.push({kind: annotation.kind, media_index: Number(annotation.target), region, label: annotation.label.trim() || null});
-                }
-                return {beat_id: row.dataset.boardBeat, layout: compare ? "image_comparison" : "image", ...(compare ? {image_ids: [id, compare]} : {image_id: id}), media: [], image_push_in: 1, overlays};
+        const workspace = storyboardWorkspaceDraft();
+        if (!workspace) throw new Error("Save a script before preparing a Storyboard.");
+        if (workspace.beats.some(beat => beat.layout === "unassigned")) {
+            throw new Error("Choose a visual for each script beat.");
+        }
+        const availableImages = new Set(
+            (state.images?.images || [])
+                .filter(item => item.status === "active")
+                .map(item => item.id),
+        );
+        for (const beat of workspace.beats) {
+            const imageIds = beat.layout === "image"
+                ? [beat.image_id]
+                : beat.layout === "image_comparison"
+                  ? beat.image_ids
+                  : [];
+            if (
+                imageIds.some(id => !availableImages.has(id))
+                || (
+                    beat.layout === "image_comparison"
+                    && new Set(imageIds).size !== imageIds.length
+                )
+            ) {
+                throw new Error(
+                    "An image is no longer available or the comparison repeats one image. "
+                    + "Choose current distinct images before rendering.",
+                );
             }
-            return kind === "quote" ? {beat_id: row.dataset.boardBeat, layout: "quote", quote_source_id: id, media: []} : {beat_id: row.dataset.boardBeat, layout: "single", media: [{candidate_id: id, start_seconds: Number(row.querySelector("input[type=number]").value), freeze: row.querySelector("input[type=checkbox]").checked}]};
-        });
-        const mode = el("editorial-presentation").value;
-        const narration_ids = Object.fromEntries([...el("editorial-narration").querySelectorAll("[data-narration-select]")].map(input => [input.dataset.narrationSelect, input.value]));
-        if (mode === "narrated" && (beats.some(beat => !narration_ids[beat.beat_id]) || !state.narration?.voice_enabled)) throw new Error("Enable voice and choose a recording for every beat.");
-        return {presentation_mode: mode, beats, ...(mode === "narrated" ? {narration_ids} : {})};
+        }
+        if (
+            workspace.presentation_mode === "narrated"
+            && (
+                workspace.beats.some(
+                    beat => !workspace.narration_ids[beat.beat_id],
+                )
+                || !state.narration?.voice_enabled
+            )
+        ) {
+            throw new Error(
+                "Enable voice and choose a recording for every beat.",
+            );
+        }
+        return {
+            presentation_mode: workspace.presentation_mode,
+            beats: workspace.beats,
+            ...(
+                workspace.presentation_mode === "narrated"
+                    ? {narration_ids: workspace.narration_ids}
+                    : {}
+            ),
+        };
     }
     function renderEvidence() {
         const artifacts = state.run?.artifacts || {};
@@ -1459,13 +1670,15 @@ window.KatchaEditorial = (() => {
             showFootageControls();
             refreshTimelineStatus();
             scheduleStoryboardWorkspaceSave();
-            if (event?.type === "change" && event.target.matches("[data-primary-visual]")) {
-                void loadSourceMonitor();
-            }
         };
         el("editorial-storyboard").addEventListener("input", persistStoryboardChoice);
-        el("editorial-storyboard").addEventListener("change", persistStoryboardChoice);
+        el("editorial-storyboard").addEventListener("change", event => {
+            if (event.target.matches("[data-primary-visual]")) {
+                void loadSourceMonitor();
+            }
+        });
         el("editorial-render").addEventListener("click", () => void guarded(async () => {
+            await ensureStoryboardWorkspaceSaved();
             const channel = state.channel; const project = state.project.id;
             const payload = {target: "render", expected_revision: state.project.revision, asset_run_id: state.assetRun?.editorial_run_id || null, storyboard: storyboardPlan()};
             await api(path(channel, `/${project}/storyboard/preflight`), {method: "POST", body: JSON.stringify({expected_revision: payload.expected_revision, asset_run_id: payload.asset_run_id, plan: payload.storyboard})});

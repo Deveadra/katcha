@@ -312,6 +312,11 @@ def test_editorial_project_context_is_channel_scoped_and_bounded() -> None:
     assert selected["selected_beat"]["visual_intent"] == "Show the exact clue."
     assert selected["selected_beat"]["storyboard"]["workspace_version"] == 3
     assert selected["selected_beat"]["storyboard"]["visual"]["layout"] == "unassigned"
+    assert selected["selected_beat"]["storyboard"]["visual"]["caption_position"] == "bottom"
+    assert selected["selected_beat"]["storyboard"]["visual"]["caption_scale"] == 1
+    assert selected["selected_beat"]["storyboard"]["visual"]["caption_background"] is False
+    assert selected["selected_beat"]["storyboard"]["visual"]["transition"] == "cut"
+    assert selected["selected_beat"]["storyboard"]["visual"]["transition_frames"] == 8
 
     with pytest.raises(ValueError, match="editorial beat not found"):
         resolve_command_resources(

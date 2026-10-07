@@ -31,6 +31,11 @@ class StoryboardWorkspaceBeat(Contract):
     image_ids: list[UUID] = Field(default_factory=list, max_length=2)
     image_push_in: float = Field(default=1, ge=1, le=1.15)
     overlays: list[VisualOverlay] = Field(default_factory=list, max_length=1)
+    caption_position: Literal["bottom", "center"] = "bottom"
+    caption_scale: float = Field(default=1, ge=0.75, le=1.35)
+    caption_background: bool = False
+    transition: Literal["cut", "fade"] = "cut"
+    transition_frames: int = Field(default=8, ge=3, le=15, strict=True)
 
     @model_validator(mode="after")
     def coherent_partial_visual(self) -> Self:
