@@ -21,6 +21,18 @@ for directory in postgres handoff recovery backups-local; do
   fi
 done
 
+runtime_uid=10001
+handoff_directories=(
+  "${DATA_ROOT}/handoff"
+  "${DATA_ROOT}/handoff/incoming"
+  "${DATA_ROOT}/handoff/processed"
+  "${DATA_ROOT}/handoff/failed"
+  "${DATA_ROOT}/handoff/receipts"
+)
+for directory in "${handoff_directories[@]}"; do
+  install -d -o "${runtime_uid}" -g "${runtime_uid}" -m 0750 "${directory}"
+done
+
 if [[ ! -r /etc/katcha/aws/config ]]; then
   echo "Missing readable hosted AWS profile at /etc/katcha/aws/config; refusing to start." >&2
   exit 22

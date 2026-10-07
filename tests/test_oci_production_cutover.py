@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import io
 import tarfile
 from pathlib import Path
 
@@ -189,6 +190,70 @@ def test_snapshot_packaging_fails_on_checksum_mismatch(tmp_path: Path) -> None:
 
     with pytest.raises(cutover.CutoverError, match="checksum mismatch"):
         cutover.package_snapshot(snapshot, tmp_path / "cutover.tar.gz")
+
+
+def test_public_health_uses_cloudflare_compatible_user_agent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    class Response:
+        status = 200
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def read(self):
+            return b'{"ready":true}'
+
+    def urlopen(request, timeout):
+        captured["request"] = request
+        captured["timeout"] = timeout
+        return Response()
+
+    monkeypatch.setattr(cutover.urllib.request, "urlopen", urlopen)
+
+    cutover.wait_public_health(
+        "https://app.katcha.stream/v1/health/ready",
+        attempts=1,
+    )
+
+    request = captured["request"]
+    assert isinstance(request, cutover.urllib.request.Request)
+    assert request.get_header("User-agent") == cutover.PUBLIC_HEALTH_USER_AGENT
+    assert request.get_header("Cache-control") == "no-cache"
+    assert captured["timeout"] == 8
+
+
+def test_public_health_preserves_cloudflare_error_body(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    error = cutover.urllib.error.HTTPError(
+        "https://app.katcha.stream/v1/health/ready",
+        403,
+        "Forbidden",
+        hdrs=None,
+        fp=io.BytesIO(b'{"error_code":1010,"error_name":"browser_signature_banned"}'),
+    )
+
+    monkeypatch.setattr(
+        cutover.urllib.request,
+        "urlopen",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(error),
+    )
+    monkeypatch.setattr(cutover.time, "sleep", lambda _seconds: None)
+
+    with pytest.raises(
+        cutover.CutoverError,
+        match="browser_signature_banned",
+    ):
+        cutover.wait_public_health(
+            "https://app.katcha.stream/v1/health/ready",
+            attempts=1,
+        )
 
 
 def _activation_args(tmp_path: Path, *, apply: bool) -> object:
