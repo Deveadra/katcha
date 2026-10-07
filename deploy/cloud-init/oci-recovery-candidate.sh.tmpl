@@ -159,6 +159,28 @@ case "$SECRET_SOURCE" in
     ;;
 esac
 
+# The production renderer runs as uid/gid 10001 and receives this directory as
+# /home/katcha/.aws:ro. Normalize ownership and permissions after either secret
+# restoration path so recovery cannot produce a healthy-looking host whose
+# renderer silently cannot execute Roles Anywhere credential_process.
+for required_path in \
+  /etc/katcha/aws/config \
+  /etc/katcha/aws/runtime/client.pem \
+  /etc/katcha/aws/runtime/client-key.pem \
+  /etc/katcha/aws/aws_signing_helper; do
+  if [[ ! -f "$required_path" || -L "$required_path" ]]; then
+    log "Hosted AWS bundle is missing or unsafe: $required_path"
+    exit 37
+  fi
+done
+chown -R 10001:10001 /etc/katcha/aws
+find /etc/katcha/aws -type d -exec chmod 0700 {} +
+chmod 0600 \
+  /etc/katcha/aws/config \
+  /etc/katcha/aws/runtime/client.pem \
+  /etc/katcha/aws/runtime/client-key.pem
+chmod 0755 /etc/katcha/aws/aws_signing_helper
+
 sed -i \
   -e '/^KATCHA_RELEASE_SHA=/d' \
   -e '/^KATCHA_DEPLOYMENT_ID=/d' \
