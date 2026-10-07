@@ -273,6 +273,20 @@
                                         <p>Approval records your review of this exact video. Publishing remains a separate controlled handoff.</p>
                                         <details class="ae-help"><summary>Review history</summary><div id="editorial-review-history"></div></details>
                                     </section>
+                                    <section id="editorial-publication" class="editorial-review-panel" hidden aria-label="Publication handoff">
+                                        <div class="editorial-subpanel-head">
+                                            <div><span class="eyebrow">PUBLISH HANDOFF</span><h4>Package the approved cut</h4></div>
+                                            <span id="editorial-publication-state" class="tag">NOT STAGED</span>
+                                        </div>
+                                        <p id="editorial-publication-status">Approve this exact render before preparing metadata and release controls.</p>
+                                        <div id="editorial-publication-form">
+                                            <label>Working YouTube title<input id="editorial-publication-title" maxlength="100" placeholder="Title for packaging review"></label>
+                                            <label>Working description<textarea id="editorial-publication-description" rows="3" maxlength="5000" placeholder="Optional starting description"></textarea></label>
+                                            <button id="editorial-stage-publication" class="button secondary" type="button">Stage for packaging</button>
+                                        </div>
+                                        <a id="editorial-open-publication" class="button secondary" href="#" hidden>Open metadata & release controls</a>
+                                        <p class="editor-note">Staging never starts YouTube upload. Channel Studio remains the controlled checkpoint for SEO options, thumbnail, visibility, schedule and final upload start.</p>
+                                    </section>
                                 </section>
                             </div>
 
