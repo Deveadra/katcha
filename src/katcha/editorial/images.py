@@ -128,6 +128,13 @@ def capture_source_frame(
     )
     if request.frame_index >= int(monitor["frame_count"]):
         raise ValueError("Choose one of the analyzed source frames")
+
+    identity = uuid.uuid5(
+        project_id,
+        "source-frame:"
+        f"{request.revision}:{request.beat_id}:{request.asset_run_id}:"
+        f"{request.candidate_id}:{request.frame_index}",
+    )
     with session_scope() as session:
         _validate_source_frame_request(session, channel_id, project_id, request)
         clip_id = uuid.UUID(str(monitor["clip_id"]))
@@ -135,18 +142,29 @@ def capture_source_frame(
         if features is None or request.frame_index >= len(features.keyframe_keys):
             raise EditorialConflict("Selected source-frame evidence is no longer available")
         source_key = str(features.keyframe_keys[request.frame_index])
+        request_digest = _digest(
+            {
+                "revision": request.revision,
+                "beat_id": request.beat_id,
+                "asset_run_id": str(request.asset_run_id),
+                "candidate_id": request.candidate_id,
+                "frame_index": request.frame_index,
+                "source_key": source_key,
+                "clip_sha256": monitor["sha256"],
+            }
+        )
+        previous = session.get(EditorialImage, identity)
+        if previous is not None:
+            if previous.request_digest != request_digest:
+                raise EditorialConflict(
+                    "Source-frame identity now resolves to different evidence"
+                )
+            _validate_derived_image_clearance(session, previous)
+            return image_response(previous)
 
     raw = ObjectStore().get_bytes(source_key)
     encoded, width, height = normalize_image(raw)
     digest = hashlib.sha256(encoded).hexdigest()
-    identity = uuid.uuid5(
-        project_id,
-        "source-frame:"
-        f"{request.revision}:{request.beat_id}:{request.asset_run_id}:"
-        f"{request.candidate_id}:{request.frame_index}",
-    )
-    output_key = f"editorial/{project_id}/images/{identity}/{digest}.png"
-    ObjectStore().put_bytes(encoded, output_key, content_type="image/png")
 
     # Rights, run lineage and frame evidence can change while bytes are read.
     current = source_monitor(
@@ -162,6 +180,8 @@ def capture_source_frame(
     ):
         raise EditorialConflict("Source-frame evidence changed; retry from the refreshed asset")
     sample_time = float(current["sample_times"][request.frame_index])
+    output_key = f"editorial/{project_id}/images/{identity}/{digest}.png"
+    ObjectStore().put_bytes(encoded, output_key, content_type="image/png")
 
     with session_scope() as session:
         session.execute(
@@ -204,22 +224,12 @@ def capture_source_frame(
         ):
             raise EditorialConflict("Source-frame evidence changed; retry from the refreshed asset")
         previous = session.get(EditorialImage, identity)
-        request_digest = _digest(
-            {
-                "revision": request.revision,
-                "beat_id": request.beat_id,
-                "asset_run_id": str(request.asset_run_id),
-                "candidate_id": request.candidate_id,
-                "frame_index": request.frame_index,
-                "source_key": source_key,
-                "clip_sha256": current["sha256"],
-            }
-        )
         if previous is not None:
             if previous.request_digest != request_digest:
                 raise EditorialConflict(
                     "Source-frame identity now resolves to different evidence"
                 )
+            _validate_derived_image_clearance(session, previous)
             return image_response(previous)
         title = f"{current['title']} · frame {request.frame_index + 1}"
         row = EditorialImage(
@@ -278,7 +288,6 @@ def capture_source_frame(
         session.flush()
         session.refresh(row)
         return image_response(row)
-
 
 def image_response(row: EditorialImage) -> dict:
     return {
