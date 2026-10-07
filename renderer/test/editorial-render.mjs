@@ -121,6 +121,80 @@ try {
   const compareProbe = JSON.parse(execFileSync('ffprobe', ['-v', 'error', '-show_streams', '-of', 'json', compareOutput]));
   if (!compareProbe.streams.some(s => s.codec_type === 'audio') || Number(compareProbe.streams.find(s => s.codec_type === 'video').nb_frames) !== 60) throw new Error('Image comparison render verification failed');
   execFileSync('ffmpeg', ['-y', '-ss', '1', '-i', compareOutput, '-frames:v', '1', path.resolve('test-results/editorial-image-comparison.png')], {stdio: 'ignore'});
+  const branded = structuredClone(fixture);
+  branded.version = 'editorial-render-v6';
+  branded.brand = {
+    brand_key: 'forescene',
+    version: 4,
+    theme_key: 'cinema_v1',
+    palette: {
+      ink: '#111216',
+      paper: '#F7F7F4',
+      signal_blue: '#6B7CFF',
+      hot_peach: '#FF7657',
+      volt: '#D9FF57',
+    },
+    captions: {
+      treatment_key: 'impact_clean_v1',
+      font_family: 'Arial, Helvetica, sans-serif',
+      font_size_px: 66,
+      font_weight: 900,
+      max_visual_lines: 2,
+      bottom_safe_zone_px: 250,
+    },
+    motion: {
+      treatment_key: 'restrained_punch_v1',
+      max_punch_scale: 1.08,
+      freeze_frame_max_frames: 8,
+      random_motion_enabled: false,
+    },
+    end_card: {
+      treatment_key: 'verdict_v1',
+      accent_role: 'signal_blue',
+      max_question_lines: 3,
+      label: 'FORESCENE',
+    },
+    logo: {
+      enabled: true,
+      storage_key: 'brands/channel/logos/approved.png',
+      x_percent: 90,
+      y_percent: 8,
+      width_percent: 10,
+      opacity: 0.55,
+    },
+  };
+  validateEditorialManifest(branded);
+  branded.media[0].url = '/public/test.mp4';
+  branded.brand.logo.url = '/public/still.png';
+  const brandedOutput = path.resolve('test-results/editorial-branded.mp4');
+  const brandedComposition = await selectComposition({
+    serveUrl,
+    id: 'Editorial',
+    inputProps: branded,
+    ...options,
+  });
+  await renderMedia({
+    serveUrl,
+    composition: brandedComposition,
+    inputProps: branded,
+    codec: 'h264',
+    outputLocation: brandedOutput,
+    concurrency: 1,
+    ...options,
+  });
+  const brandedProbe = JSON.parse(execFileSync(
+    'ffprobe',
+    ['-v', 'error', '-show_streams', '-of', 'json', brandedOutput],
+  ));
+  if (Number(brandedProbe.streams.find(s => s.codec_type === 'video').nb_frames) !== 60) {
+    throw new Error('Branded Editorial render verification failed');
+  }
+  execFileSync('ffmpeg', [
+    '-y', '-ss', '1', '-i', brandedOutput, '-frames:v', '1',
+    path.resolve('test-results/editorial-branded.png'),
+  ], {stdio: 'ignore'});
+  console.log('Verified branded Editorial render: active palette, caption identity and managed logo');
+
   console.log('Verified image comparison: landscape/portrait, source regions, narration and credits');
   console.log('Verified still-image render: 60 frames with narration and illustration credit');
   console.log('Verified narrated render: 180 frames with real synthetic PCM audio');
