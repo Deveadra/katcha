@@ -638,7 +638,7 @@ const draft = {
         await page.locator('#editorial-auto-regions').check();
         await page.locator('#editorial-direct').click();
         await page.getByText(/Visual plan response lost/).waitFor();
-        assert.equal(await page.locator('#editorial-storyboard input[type=number]:not([data-region])').inputValue(), '1.5');
+        assert.equal(await page.locator('[data-footage="start"]').inputValue(), '1.5');
         await page.locator('#editorial-direct').click();
         await page.locator('#editorial-direction').filter({hasText: 'Hold attention on the linked interview'}).waitFor();
         const directions = calls.filter(call => call.body?.target === 'direction');
@@ -673,7 +673,7 @@ const draft = {
         await page.keyboard.press('Escape');
         assert.equal(await page.locator('#editorial-frame-dialog').isVisible(), false);
         assert.equal(await page.locator('#editorial-frame-canvas img').count(), 0);
-        assert.equal(await page.locator('#editorial-storyboard input[type=number]:not([data-region])').inputValue(), '1.5');
+        assert.equal(await page.locator('[data-footage="start"]').inputValue(), '1.5');
         assert.equal(calls.filter(call => call.method === 'POST').length, writesBeforeInspect);
         let releaseFrame, frameRequested;
         const frameStarted = new Promise(resolve => { frameRequested = resolve; });
