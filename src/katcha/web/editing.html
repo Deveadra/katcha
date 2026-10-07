@@ -201,8 +201,18 @@
                                             </div>
                                             <div class="editorial-monitor-canvas editorial-source-monitor-canvas">
                                                 <img id="editorial-source-monitor-image" alt="" hidden>
+                                                <video id="editorial-source-monitor-video" controls playsinline preload="metadata" hidden></video>
                                                 <p id="editorial-source-monitor-empty">Choose acquired footage to inspect sampled source frames.</p>
                                             </div>
+                                            <div class="editorial-monitor-transport" aria-label="Source monitor transport">
+                                                <button id="editorial-source-load" class="mini" type="button" hidden>Load source video</button>
+                                                <button id="editorial-source-samples" class="mini" type="button" hidden>Show sampled frames</button>
+                                                <button class="mini" type="button" data-source-step="-0.1" aria-label="Move source time back 0.1 seconds">−0.1s</button>
+                                                <span id="editorial-source-monitor-timecode" class="editorial-monitor-timecode">00:00.000 / 00:00.000</span>
+                                                <button class="mini" type="button" data-source-step="0.1" aria-label="Move source time forward 0.1 seconds">+0.1s</button>
+                                                <button id="editorial-source-set-start" class="mini" type="button">Set beat start</button>
+                                            </div>
+                                            <input id="editorial-source-scrub" class="editorial-monitor-scrub" type="range" min="0" max="0" step="0.01" value="0" aria-label="Source time">
                                             <div id="editorial-source-monitor-times" class="editorial-source-monitor-times"></div>
                                             <p id="editorial-source-monitor-status" class="editorial-source-monitor-status" role="status"></p>
                                         </section>
@@ -215,8 +225,15 @@
                                                 <video id="editorial-program-monitor-video" controls playsinline hidden></video>
                                                 <p id="editorial-program-monitor-empty">Create a preview to inspect the assembled cut against the selected source.</p>
                                             </div>
-                                            <div class="editorial-program-monitor-actions">
+                                            <div class="editorial-monitor-transport" aria-label="Program monitor transport">
                                                 <button id="editorial-program-load" class="mini" type="button" hidden>Load current preview</button>
+                                                <button class="mini" type="button" data-program-step="-0.1" aria-label="Move program time back 0.1 seconds">−0.1s</button>
+                                                <span id="editorial-program-monitor-timecode" class="editorial-monitor-timecode">00:00.000 / 00:00.000</span>
+                                                <button class="mini" type="button" data-program-step="0.1" aria-label="Move program time forward 0.1 seconds">+0.1s</button>
+                                                <button id="editorial-program-go-beat" class="mini" type="button">Go to selected beat</button>
+                                            </div>
+                                            <input id="editorial-program-scrub" class="editorial-monitor-scrub" type="range" min="0" max="0" step="0.01" value="0" aria-label="Program time">
+                                            <div class="editorial-program-monitor-actions">
                                                 <span id="editorial-program-monitor-status" role="status">The program monitor follows the latest completed render.</span>
                                             </div>
                                         </section>
