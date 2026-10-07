@@ -317,15 +317,38 @@ class EditorialRenderManifest(Contract):
         if self.version == "editorial-render-v6":
             if self.brand is None:
                 raise ValueError("Branded editorial rendering requires a frozen channel brand")
-            logo = self.brand.logo
-            if logo.enabled:
-                key = str(logo.storage_key or "")
-                if (
-                    ":" in key
-                    or key.startswith("/")
-                    or any(part in {".", ".."} for part in key.split("/"))
-                ):
-                    raise ValueError("Editorial brand logo must use a managed object key")
+            brand = self.brand
+            bounded_text = [
+                (brand.brand_key, 128),
+                (brand.theme_key, 128),
+                (brand.captions.treatment_key, 128),
+                (brand.captions.font_family, 200),
+                (brand.motion.treatment_key, 128),
+                (brand.end_card.treatment_key, 128),
+            ]
+            if any(not value or len(value) > maximum for value, maximum in bounded_text):
+                raise ValueError("Editorial brand text exceeds the renderer contract")
+            colors = brand.palette.model_dump(mode="json").values()
+            if any(
+                len(value) != 7
+                or not value.startswith("#")
+                or any(char not in "0123456789abcdefABCDEF" for char in value[1:])
+                for value in colors
+            ):
+                raise ValueError("Editorial brand palette requires six-digit hex colors")
+            logo = brand.logo
+            key = logo.storage_key
+            if key is not None and (
+                not key
+                or len(key) > 1000
+                or ":" in key
+                or key.startswith("/")
+                or any(part in {".", ".."} for part in key.split("/"))
+                or any(ord(char) < 32 or char == "\\" for char in key)
+            ):
+                raise ValueError("Editorial brand logo must use a managed object key")
+            if logo.enabled and key is None:
+                raise ValueError("Enabled Editorial brand logo requires a managed object key")
         elif self.brand is not None:
             raise ValueError("Frozen channel branding requires manifest version 6")
         media = {item.candidate_id: item for item in self.media}
