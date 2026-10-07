@@ -417,6 +417,39 @@ def import_image(channel_id, project_id, *, request: ImageUpload, data: bytes, a
         return image_response(row)
 
 
+def _validate_derived_image_clearance(session, row: EditorialImage) -> None:
+    metadata = dict(row.source_metadata or {})
+    if metadata.get("kind") != "source_frame":
+        return
+    from katcha.editorial.assets import inspect_managed_candidate
+
+    try:
+        clip_id = uuid.UUID(str(metadata["clip_id"]))
+        frame_index = int(metadata["frame_index"])
+        source_key = str(metadata["source_key"])
+        source_url = str(metadata["source_url"])
+        clip_sha256 = str(metadata["clip_sha256"])
+    except (KeyError, TypeError, ValueError) as exc:
+        raise EditorialConflict("Derived still has incomplete source lineage") from exc
+    current = inspect_managed_candidate(source_url, row.channel_profile_id, session=session)
+    if (
+        not current["production_eligible"]
+        or current["clip_id"] != str(clip_id)
+        or current["sha256"] != clip_sha256
+    ):
+        raise EditorialConflict(
+            "Derived still source no longer has production-eligible clearance"
+        )
+    features = session.get(ClipFeature, clip_id)
+    if (
+        features is None
+        or frame_index < 0
+        or frame_index >= len(features.keyframe_keys)
+        or str(features.keyframe_keys[frame_index]) != source_key
+    ):
+        raise EditorialConflict("Derived still source-frame evidence changed")
+
+
 def resolve_images(session, channel_id, project_id, revision, plan) -> list[RenderImage]:
     result = []
     for visual in plan.beats:
@@ -428,6 +461,7 @@ def resolve_images(session, channel_id, project_id, revision, plan) -> list[Rend
                 raise EditorialConflict(
                     "Image was removed or belongs to another script beat or revision"
                 )
+            _validate_derived_image_clearance(session, row)
             result.append(
                 RenderImage(
                     image_id=row.id,
