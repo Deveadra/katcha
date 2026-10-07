@@ -496,6 +496,16 @@ REMOTE_STOP = r"""
 set +e
 systemctl stop katcha-backup.timer katcha-restore-test.timer
 systemctl stop katcha.service
+
+# Leave only the durable PostgreSQL candidate running after a pre-commit
+# failure. This preserves the fail-closed rollback (no API, workers, renderer,
+# or Tunnel remain active) while returning the host to the exact state that
+# REMOTE_INSPECT accepts for a safe retry.
+docker compose \
+    --project-name katcha-production \
+    --env-file /etc/katcha/katcha.env \
+    -f /opt/katcha/deploy/docker-compose.production.yml \
+    up -d postgres
 """
 
 
