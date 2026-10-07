@@ -3,6 +3,7 @@
 import hashlib
 import io
 import json
+import uuid
 from unittest.mock import Mock
 
 import pytest
@@ -12,13 +13,15 @@ from test_editorial_projects import root
 from test_editorial_projects import saved as _saved
 
 from katcha import db
+from katcha.acquisition_models import DiscoveryCandidate, RightsAssessment
 from katcha.editorial import images
 from katcha.editorial.run_schemas import StartEditorialRun
 from katcha.editorial.visual_compiler import compile_project_visuals
 from katcha.editorial.visual_schemas import DirectionResult, StoryboardPlan
 from katcha.editorial_models import EditorialImage, EditorialProject
+from katcha.models import Clip, ClipFeature, SourceItem
 from katcha.services.editorial_projects import EditorialConflict, EditorialNotFound
-from katcha.services.editorial_runs import start_run
+from katcha.services.editorial_runs import checkpoint, start_run
 
 saved = _saved
 
@@ -135,6 +138,206 @@ def test_storage_failure_retry_and_script_change_during_upload(still):
         upload(still, idempotency_key="second")
     with db.session_scope() as session:
         assert session.query(EditorialImage).count() == 1
+
+
+def source_frame_fixture(still):
+    channel, project, _, _, store = still
+    source_url = "https://www.youtube.com/watch?v=source-frame"
+    scout = start_run(
+        channel,
+        project,
+        StartEditorialRun(
+            expected_revision=1,
+            idempotency_key="source-frame-scout",
+            target="assets",
+        ),
+        actor="test",
+    )
+    checkpoint(
+        str(scout.id),
+        1,
+        status="completed",
+        stage="asset_candidates_ready",
+        artifacts={
+            "asset_scout": {
+                "requests": [],
+                "candidates": [
+                    {
+                        "id": "asset",
+                        "medium": "video",
+                        "url": source_url,
+                        "title": "Cleared supporting footage",
+                        "beat_id": "beat-1",
+                        "claim_ids": ["claim-1"],
+                    }
+                ],
+            }
+        },
+    )
+    acquired = start_run(
+        channel,
+        project,
+        StartEditorialRun(
+            expected_revision=1,
+            idempotency_key="source-frame-acquire",
+            target="acquire_assets",
+            scout_run_id=scout.id,
+            asset_candidate_ids=["asset"],
+        ),
+        actor="test",
+    )
+
+    clip_id = uuid.uuid4()
+    source_id = uuid.uuid4()
+    candidate_id = uuid.uuid4()
+    clip_sha = "f" * 64
+    prefix = f"analysis/{clip_sha[:2]}/{clip_sha}/"
+    frame_keys = [
+        f"{prefix}frames/frame-001.jpg",
+        f"{prefix}frames/frame-002.jpg",
+        f"{prefix}frames/frame-003.jpg",
+    ]
+    with db.session_scope() as session:
+        session.add(
+            Clip(
+                id=clip_id,
+                sha256=clip_sha,
+                storage_key="raw/source-frame.mp4",
+                duration_seconds=10,
+                width=1920,
+                height=1080,
+            )
+        )
+        session.add(
+            SourceItem(
+                id=source_id,
+                source_url=source_url,
+                canonical_url=source_url,
+                platform="youtube",
+                status="ready",
+                clip_id=clip_id,
+                source_metadata={
+                    "channel_profile_id": str(channel),
+                    "discovery_candidate_id": str(candidate_id),
+                },
+            )
+        )
+        session.add(
+            DiscoveryCandidate(
+                id=candidate_id,
+                source_item_id=source_id,
+                adapter_key="editorial_scout",
+                platform="youtube",
+                source_url=source_url,
+                canonical_url=source_url,
+                candidate_metadata={"channel_profile_id": str(channel)},
+            )
+        )
+        session.add(
+            RightsAssessment(
+                discovery_candidate_id=candidate_id,
+                version=1,
+                production_eligible=True,
+                actor="test",
+            )
+        )
+        session.add(
+            ClipFeature(
+                clip_id=clip_id,
+                contact_sheet_key=f"{prefix}contact-sheet.jpg",
+                keyframe_keys=frame_keys,
+            )
+        )
+    checkpoint(
+        str(acquired.id),
+        1,
+        status="completed",
+        stage="assets_acquired_for_review",
+        artifacts={
+            "acquired_assets": {
+                "asset": {
+                    "candidate_id": "asset",
+                    "clip_id": str(clip_id),
+                    "storage_key": "raw/source-frame.mp4",
+                    "sha256": clip_sha,
+                    "duration_seconds": 10.0,
+                    "width": 1920,
+                    "height": 1080,
+                    "source_url": source_url,
+                    "purpose": "review",
+                    "discovery_candidate_id": str(candidate_id),
+                }
+            },
+            "requires_rights_review": False,
+        },
+    )
+    store.get_bytes.return_value = png((640, 360), color="blue")
+    request = images.SourceFrameCapture(
+        revision=1,
+        beat_id="beat-1",
+        asset_run_id=acquired.id,
+        candidate_id="asset",
+        frame_index=1,
+    )
+    return channel, project, request, candidate_id, frame_keys[1], store
+
+
+def test_cleared_source_frame_is_idempotent_and_rights_bound(still):
+    channel, project, request, candidate_id, frame_key, store = source_frame_fixture(still)
+
+    first = images.capture_source_frame(
+        channel,
+        project,
+        request=request,
+        actor="test",
+    )
+    assert first["illustration"] is False
+    assert first["width"] == 640 and first["height"] == 360
+    assert "frame 2" in first["title"]
+    assert images.capture_source_frame(
+        channel,
+        project,
+        request=request,
+        actor="test",
+    ) == first
+    store.get_bytes.assert_called_once_with(frame_key)
+    store.put_bytes.assert_called_once()
+
+    manifest = compile_project_visuals(channel, project, 1, None, plan(first["id"]))
+    assert manifest.images[0].image_id == first["id"]
+
+    with db.session_scope() as session:
+        row = session.get(EditorialImage, first["id"])
+        assert row.source_metadata["kind"] == "source_frame"
+        assert row.source_metadata["frame_index"] == 1
+        session.add(
+            RightsAssessment(
+                discovery_candidate_id=candidate_id,
+                version=2,
+                production_eligible=False,
+                actor="test",
+            )
+        )
+    with pytest.raises(EditorialConflict, match="no longer has production-eligible clearance"):
+        compile_project_visuals(channel, project, 1, None, plan(first["id"]))
+    with pytest.raises(EditorialConflict, match="current clearance"):
+        images.capture_source_frame(
+            channel,
+            project,
+            request=request,
+            actor="test",
+        )
+
+
+def test_source_frame_capture_api_requires_editor(still):
+    channel, project, request, _, _, _ = source_frame_fixture(still)
+    client = saved[0]
+    url = f"{root(channel)}/{project}/images/source-frame"
+    payload = request.model_dump(mode="json")
+    response = client.post(url, json=payload)
+    assert response.status_code == 201, response.text
+    reader = {"Authorization": "Bearer editorial-reader-token-00001"}
+    assert client.post(url, json=payload, headers=reader).status_code == 403
 
 
 def test_image_only_render_compiles_and_revocation_blocks(still):
