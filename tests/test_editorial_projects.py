@@ -20,7 +20,7 @@ from sqlalchemy.pool import StaticPool
 from katcha import db
 from katcha.api.main import app
 from katcha.config import Settings
-from katcha.editorial import source_uploads
+from katcha.editorial import source_monitor, source_uploads
 from katcha.editorial.project_schemas import (
     CreateEditorialProject,
     EditorialDraft,
@@ -674,6 +674,95 @@ def test_storyboard_migration_roundtrip():
     engine.dispose()
 
 
+def test_source_frame_rate_requires_stable_probe_rate():
+    assert source_monitor._constant_frame_rate(
+        {
+            "streams": [
+                {
+                    "codec_type": "video",
+                    "avg_frame_rate": "30000/1001",
+                    "r_frame_rate": "30000/1001",
+                }
+            ]
+        }
+    ) == 29.97003
+    assert (
+        source_monitor._constant_frame_rate(
+            {
+                "streams": [
+                    {
+                        "codec_type": "video",
+                        "avg_frame_rate": "24000/1001",
+                        "r_frame_rate": "30/1",
+                    }
+                ]
+            }
+        )
+        is None
+    )
+    assert (
+        source_monitor._constant_frame_rate(
+            {"streams": [{"codec_type": "audio"}]}
+        )
+        is None
+    )
+
+
+def test_program_map_uses_verified_render_manifest(saved, monkeypatch):
+    client, channel, _ = saved
+    project_id = uuid.uuid4()
+    run_id = uuid.uuid4()
+    row = SimpleNamespace()
+    manifest = SimpleNamespace(
+        revision=3,
+        version="editorial-render-v5",
+        fps=30,
+        output_duration_seconds=3.5,
+        timeline=[
+            SimpleNamespace(beat_id="beat-1", start_frame=0, duration_frames=45),
+            SimpleNamespace(beat_id="beat-2", start_frame=45, duration_frames=60),
+        ],
+    )
+
+    monkeypatch.setattr("katcha.services.editorial_runs.get_run", lambda *args: row)
+    monkeypatch.setattr(
+        "katcha.services.editorial_reviews.verified_manifest",
+        lambda actual: manifest,
+    )
+
+    response = client.get(
+        f"{root(channel)}/{project_id}/runs/{run_id}/program-map"
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.headers["Cache-Control"] == "no-store"
+    assert response.json() == {
+        "revision": 3,
+        "manifest_version": "editorial-render-v5",
+        "fps": 30,
+        "output_duration_seconds": 3.5,
+        "beats": [
+            {
+                "beat_id": "beat-1",
+                "start_frame": 0,
+                "duration_frames": 45,
+                "end_frame": 45,
+                "start_seconds": 0,
+                "end_seconds": 1.5,
+            },
+            {
+                "beat_id": "beat-2",
+                "start_frame": 45,
+                "duration_frames": 60,
+                "end_frame": 105,
+                "start_seconds": 1.5,
+                "end_seconds": 3.5,
+            },
+        ],
+    }
+    assert "output_key" not in response.json()
+
+
 def test_storyboard_source_monitor_metadata_hides_storage_key(saved, monkeypatch):
     client, channel, _ = saved
     project_id = uuid.uuid4()
@@ -695,6 +784,8 @@ def test_storyboard_source_monitor_metadata_hides_storage_key(saved, monkeypatch
             "extension": "mp4",
             "size_bytes": 12345,
             "source_media_available": True,
+            "source_fps": 29.97003,
+            "frame_step_available": True,
             "coverage": "sampled_frames",
             "limitation": "Sampled frames only.",
         },
@@ -708,6 +799,8 @@ def test_storyboard_source_monitor_metadata_hides_storage_key(saved, monkeypatch
     assert response.json()["candidate_id"] == "candidate"
     assert response.json()["sample_times"] == [0.25, 5.0, 9.75]
     assert response.json()["source_media_available"] is True
+    assert response.json()["source_fps"] == 29.97003
+    assert response.json()["frame_step_available"] is True
     assert response.json()["size_bytes"] == 12345
     assert "contact_sheet_key" not in response.json()
     assert "storage_key" not in response.json()

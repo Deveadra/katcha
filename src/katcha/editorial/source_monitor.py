@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from fractions import Fraction
 
 from katcha.db import session_scope
 from katcha.editorial.assets import inspect_managed_candidate
@@ -10,6 +11,28 @@ from katcha.media.preprocess import sample_timestamps
 from katcha.models import Clip, ClipFeature
 from katcha.services.editorial_projects import EditorialConflict
 from katcha.services.editorial_runs import get_run
+
+
+def _constant_frame_rate(metadata: dict[str, object]) -> float | None:
+    """Return a probe-backed CFR only when average and nominal rates agree."""
+    streams = list(metadata.get("streams") or [])
+    video = next(
+        (row for row in streams if isinstance(row, dict) and row.get("codec_type") == "video"),
+        None,
+    )
+    if video is None:
+        return None
+    try:
+        average = Fraction(str(video.get("avg_frame_rate") or "0"))
+        nominal = Fraction(str(video.get("r_frame_rate") or "0"))
+    except (ValueError, ZeroDivisionError):
+        return None
+    if average <= 0 or nominal <= 0 or average != nominal:
+        return None
+    fps = float(average)
+    if fps < 1 or fps > 240:
+        return None
+    return round(fps, 6)
 
 
 def source_monitor(
@@ -68,6 +91,7 @@ def source_monitor(
         storage_key = clip.storage_key
         extension = (clip.extension or "mp4").lstrip(".")
         size_bytes = int(clip.size_bytes or 0)
+        source_fps = _constant_frame_rate(dict(clip.media_metadata or {}))
 
     selection = next(
         (
@@ -91,6 +115,8 @@ def source_monitor(
         "extension": extension,
         "size_bytes": size_bytes,
         "source_media_available": True,
+        "source_fps": source_fps,
+        "frame_step_available": source_fps is not None,
         "coverage": "sampled_frames",
         "limitation": (
             "These frames are samples, not continuous playback. Verify exact motion and timing "
