@@ -620,7 +620,9 @@ def storyboard_source_media_session(
             "media_url": media_path,
             "expires_in_seconds": SOURCE_MEDIA_TICKET_TTL_SECONDS,
         }
-    except (ValueError, SecretConfigurationError) as exc:
+    except SecretConfigurationError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except ValueError as exc:
         raise _error(exc) from exc
 
 
@@ -637,6 +639,7 @@ def storyboard_source_media(
     from katcha.api.studio import _stream_object
     from katcha.editorial.source_monitor import source_monitor
     from katcha.security.media_tickets import verify_media_ticket
+    from katcha.security.secrets import SecretConfigurationError
 
     scope = _source_media_scope(
         channel_profile_id,
@@ -655,6 +658,8 @@ def storyboard_source_media(
             str(result["storage_key"]),
             f"editorial-source-{result['clip_id']}.{result['extension']}",
         )
+    except SecretConfigurationError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
 
