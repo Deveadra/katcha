@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import {validateEditorialManifest, containRect} from '../src/editorial-contract.mjs';
+import {validateEditorialManifest, containRect, sourceViewport} from '../src/editorial-contract.mjs';
 
 export const fixture = {
   version: 'editorial-render-v1', project_id: 'test-project', revision: 1,
@@ -36,6 +36,40 @@ validateEditorialManifest(frozen);
 assert.deepEqual(containRect(1920, 1080, 912, 744), {width: 912, height: 513, left: 0, top: 115.5});
 assert.deepEqual(containRect(1080, 1920, 912, 744), {width: 418.5, height: 744, left: 246.75, top: 0});
 console.log('Editorial manifest and geometry checks passed');
+const professional = structuredClone(fixture);
+professional.version = 'editorial-render-v5';
+Object.assign(professional.timeline[0], {
+  caption_position: 'center',
+  caption_scale: 1.15,
+  caption_background: true,
+  transition: 'fade',
+  transition_frames: 6,
+});
+professional.timeline[0].media[0].crop = {
+  x: 0.25,
+  y: 0.25,
+  width: 0.5,
+  height: 0.5,
+};
+validateEditorialManifest(professional);
+assert.deepEqual(
+  sourceViewport(1920, 1080, 912, 744, professional.timeline[0].media[0].crop),
+  {
+    viewport: {width: 912, height: 513, left: 0, top: 115.5},
+    content: {left: -456, top: -256.5, width: 1824, height: 1026},
+  },
+);
+for (const mutate of [
+  m => {m.version = 'editorial-render-v4';},
+  m => {m.timeline[0].caption_scale = 2;},
+  m => {m.timeline[0].transition_frames = 2;},
+  m => {m.timeline[0].media[0].crop.width = 0.9;},
+]) {
+  const value = structuredClone(professional); mutate(value);
+  assert.throws(() => validateEditorialManifest(value), /invalid editorial manifest/);
+}
+console.log('Professional crop, caption and transition manifest checks passed');
+
 
 const narrated = structuredClone(fixture);
 narrated.version = 'editorial-render-v2';
