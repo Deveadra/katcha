@@ -1160,7 +1160,7 @@ Final remote validation passed Python, browser/explorer, PR Gate and Application
 launcher on head `1a53cb7f` before merge.
 
 
-### E20 Source/Program precision time navigation (2026-10-06, draft)
+### E20 Source/Program precision time navigation (2026-10-07, merged)
 
 The next professional-editor boundary makes the existing Source and Program monitors
 usable for actual trim decisions instead of only inspection. Source time and Program
@@ -1188,5 +1188,27 @@ this slice deliberately does not pretend ±1-frame stepping is accurate.
 
 Validation covers scoped ticket expiry/mismatch, hidden storage identity, authenticated
 session issuance, private source streaming, sampled-time navigation, durable in-point
-updates, Program time navigation and responsive browser behavior. Remote CI/launcher
-gates remain required before merge.
+updates, Program time navigation and responsive browser behavior. PR #319 merged after
+Python, browser/explorer, launcher, PR-gate and Cloudflare edge-security checks passed.
+
+### E21 verified rendered-time navigation and conservative frame stepping (2026-10-07, in progress)
+
+The next precision boundary removes the remaining planned-time approximation from the
+Program Monitor. A completed preview exposes a no-store beat map derived from the exact
+frozen render manifest only after the same current-clearance and verified-render receipt
+checks used by review playback. Each beat carries its rendered start/duration/end frame
+and seconds. Program **Go to selected beat** uses that map, and ±1-frame transport uses
+the manifest's authoritative render FPS.
+
+Source Monitor frame stepping is intentionally more conservative. Katcha exposes a
+source FPS only when stored ffprobe metadata reports matching positive average and
+nominal video rates within a bounded range. CFR sources can then step ±1 measured
+source frame; VFR, missing or inconsistent probe rates retain precise scrubbing and
+±0.1-second stepping without pretending that a stable frame grid exists.
+
+This does not add a second timeline contract or mutate Storyboard state. Source time,
+rendered Program time and Storyboard source in-points remain separate authorities.
+The following editor work can build trim ranges and richer timeline operations on these
+measured clocks without weakening render/review clearance. Automatic still acquisition,
+approved branding, publication handoff and live authorized source-to-reviewed-video
+acceptance remain separate delivery gaps.

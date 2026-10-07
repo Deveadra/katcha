@@ -718,6 +718,44 @@ def cited_frame_image(
         raise _error(exc) from exc
 
 
+@router.get("/{project_id}/runs/{run_id}/program-map")
+def program_map(
+    channel_profile_id: uuid.UUID, project_id: uuid.UUID, run_id: uuid.UUID, request: Request
+):
+    """Return the exact frozen beat-to-program map for the verified rendered preview."""
+    from fastapi.responses import JSONResponse
+
+    from katcha.services.editorial_reviews import verified_manifest
+    from katcha.services.editorial_runs import get_run
+
+    _authorize(request, channel_profile_id)
+    try:
+        row = get_run(channel_profile_id, project_id, run_id)
+        manifest = verified_manifest(row)
+        return JSONResponse(
+            {
+                "revision": manifest.revision,
+                "manifest_version": manifest.version,
+                "fps": manifest.fps,
+                "output_duration_seconds": manifest.output_duration_seconds,
+                "beats": [
+                    {
+                        "beat_id": scene.beat_id,
+                        "start_frame": scene.start_frame,
+                        "duration_frames": scene.duration_frames,
+                        "end_frame": scene.start_frame + scene.duration_frames,
+                        "start_seconds": scene.start_frame / manifest.fps,
+                        "end_seconds": (scene.start_frame + scene.duration_frames) / manifest.fps,
+                    }
+                    for scene in manifest.timeline
+                ],
+            },
+            headers={"Cache-Control": "no-store"},
+        )
+    except ValueError as exc:
+        raise _error(exc) from exc
+
+
 @router.get("/{project_id}/runs/{run_id}/preview")
 def preview_render(
     channel_profile_id: uuid.UUID, project_id: uuid.UUID, run_id: uuid.UUID, request: Request

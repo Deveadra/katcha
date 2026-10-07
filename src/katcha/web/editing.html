@@ -208,7 +208,9 @@
                                                 <button id="editorial-source-load" class="mini" type="button" hidden>Load source video</button>
                                                 <button id="editorial-source-samples" class="mini" type="button" hidden>Show sampled frames</button>
                                                 <button class="mini" type="button" data-source-step="-0.1" aria-label="Move source time back 0.1 seconds">−0.1s</button>
+                                                <button class="mini" type="button" data-source-frame-step="-1" aria-label="Move source back one measured frame" hidden>−1f</button>
                                                 <span id="editorial-source-monitor-timecode" class="editorial-monitor-timecode">00:00.000 / 00:00.000</span>
+                                                <button class="mini" type="button" data-source-frame-step="1" aria-label="Move source forward one measured frame" hidden>+1f</button>
                                                 <button class="mini" type="button" data-source-step="0.1" aria-label="Move source time forward 0.1 seconds">+0.1s</button>
                                                 <button id="editorial-source-set-start" class="mini" type="button">Set beat start</button>
                                             </div>
@@ -228,7 +230,9 @@
                                             <div class="editorial-monitor-transport" aria-label="Program monitor transport">
                                                 <button id="editorial-program-load" class="mini" type="button" hidden>Load current preview</button>
                                                 <button class="mini" type="button" data-program-step="-0.1" aria-label="Move program time back 0.1 seconds">−0.1s</button>
+                                                <button class="mini" type="button" data-program-frame-step="-1" aria-label="Move program back one rendered frame">−1f</button>
                                                 <span id="editorial-program-monitor-timecode" class="editorial-monitor-timecode">00:00.000 / 00:00.000</span>
+                                                <button class="mini" type="button" data-program-frame-step="1" aria-label="Move program forward one rendered frame">+1f</button>
                                                 <button class="mini" type="button" data-program-step="0.1" aria-label="Move program time forward 0.1 seconds">+0.1s</button>
                                                 <button id="editorial-program-go-beat" class="mini" type="button">Go to selected beat</button>
                                             </div>
