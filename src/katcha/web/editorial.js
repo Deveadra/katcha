@@ -657,7 +657,7 @@ window.KatchaEditorial = (() => {
     function boardStorage() { return storageKey(`board.${state.project.id}.${state.project.revision}.${state.assetRun?.editorial_run_id || "none"}`); }
     function saveStoryboard() {
         const rows = [...el("editorial-storyboard").querySelectorAll("[data-board-beat]")].map(row => ({
-            choice: row.querySelector("select").value, start: row.querySelector("input[type=number]").value,
+            choice: row.querySelector("select").value, start: row.querySelector("[data-footage-start]").value,
             freeze: row.querySelector("input[type=checkbox]").checked,
             compare: row.querySelector("[data-image-compare]").value,
             annotation: Object.fromEntries([...row.querySelectorAll("[data-region]")].map(input => [input.dataset.region, input.value])),
@@ -725,7 +725,7 @@ window.KatchaEditorial = (() => {
                 };
             }
             if (kind === "media") {
-                const start = Number(row.querySelector("input[type=number]").value);
+                const start = Number(row.querySelector("[data-footage-start]").value);
                 if (!Number.isFinite(start) || start < 0) {
                     throw new Error("Enter a valid footage start time.");
                 }
@@ -1126,7 +1126,7 @@ window.KatchaEditorial = (() => {
                     unavailable: true,
                 });
             }
-            return `<fieldset id="board-panel-${esc(beat.id)}" class="editorial-beat editorial-beat-editor" role="tabpanel" data-board-beat="${esc(beat.id)}"><legend><span>Beat ${index + 1} · ${esc(beat.role)}</span><small>${timelineClock(beat.planned_duration_seconds)} planned</small></legend><p class="editorial-beat-intent">${esc(beat.visual_intent)}</p><label>Visual<select data-primary-visual>${'<option value="">Choose a visual</option>'}${options.map(item => `<option value="${esc(item.value)}" ${item.unavailable ? 'data-unavailable="true"' : ""} ${savedChoice === item.value ? "selected" : ""}>${esc(item.label)}</option>`).join("")}</select></label><label>Footage start (seconds)<input type="number" min="0" step="0.1" value="${esc(saved[index]?.start || "0")}"></label><label class="check-row"><input type="checkbox" ${saved[index]?.freeze ? "checked" : ""}> Hold this frame</label>
+            return `<fieldset id="board-panel-${esc(beat.id)}" class="editorial-beat editorial-beat-editor" role="tabpanel" data-board-beat="${esc(beat.id)}"><legend><span>Beat ${index + 1} · ${esc(beat.role)}</span><small>${timelineClock(beat.planned_duration_seconds)} planned</small></legend><p class="editorial-beat-intent">${esc(beat.visual_intent)}</p><label>Visual<select data-primary-visual>${'<option value="">Choose a visual</option>'}${options.map(item => `<option value="${esc(item.value)}" ${item.unavailable ? 'data-unavailable="true"' : ""} ${savedChoice === item.value ? "selected" : ""}>${esc(item.label)}</option>`).join("")}</select></label><label>Footage start (seconds)<input data-footage-start type="number" min="0" step="0.1" value="${esc(saved[index]?.start || "0")}"></label><label class="check-row"><input type="checkbox" ${saved[index]?.freeze ? "checked" : ""}> Hold this frame</label>
                 <div data-image-tools hidden><label>Compare with another image<select data-image-compare><option value="">Single image</option>${saved[index]?.compare && !(state.images?.images || []).some(item => item.id === saved[index].compare && item.status === "active" && item.beat_id === beat.id) ? `<option value="${esc(saved[index].compare)}" selected>Unavailable image · choose a replacement</option>` : ""}${(state.images?.images || []).filter(item => item.status === "active" && item.beat_id === beat.id).map(item => `<option value="${esc(item.id)}" ${saved[index]?.compare === item.id ? "selected" : ""}>${esc(item.title)}</option>`).join("")}</select></label>
                 <details class="ae-help"><summary>Mark a source region</summary><p>Manual placement on the original image. Percentages follow the image through resizing and push-in. Check the preview before approval.</p>
                 <label>Annotation<select data-region="kind">${[["", "None"], ["circle", "Circle"], ["arrow", "Arrow"], ["highlight", "Highlight"]].map(([value, label]) => `<option value="${value}" ${saved[index]?.annotation?.kind === value ? "selected" : ""}>${label}</option>`).join("")}</select></label>
@@ -1186,7 +1186,7 @@ window.KatchaEditorial = (() => {
                 }
                 return {beat_id: row.dataset.boardBeat, layout: compare ? "image_comparison" : "image", ...(compare ? {image_ids: [id, compare]} : {image_id: id}), media: [], image_push_in: 1, overlays};
             }
-            return kind === "quote" ? {beat_id: row.dataset.boardBeat, layout: "quote", quote_source_id: id, media: []} : {beat_id: row.dataset.boardBeat, layout: "single", media: [{candidate_id: id, start_seconds: Number(row.querySelector("input[type=number]").value), freeze: row.querySelector("input[type=checkbox]").checked}]};
+            return kind === "quote" ? {beat_id: row.dataset.boardBeat, layout: "quote", quote_source_id: id, media: []} : {beat_id: row.dataset.boardBeat, layout: "single", media: [{candidate_id: id, start_seconds: Number(row.querySelector("[data-footage-start]").value), freeze: row.querySelector("input[type=checkbox]").checked}]};
         });
         const mode = el("editorial-presentation").value;
         const narration_ids = Object.fromEntries([...el("editorial-narration").querySelectorAll("[data-narration-select]")].map(input => [input.dataset.narrationSelect, input.value]));
@@ -1579,6 +1579,86 @@ window.KatchaEditorial = (() => {
         el("editorial-play").addEventListener("click", () => void guarded(async () => {
             await loadCurrentPreview({advance: true});
         }));
+        el("editorial-source-load").addEventListener("click", () => {
+            void guarded(loadSourceMedia);
+        });
+        el("editorial-source-samples").addEventListener("click", showSourceSamples);
+        el("editorial-source-monitor-times").addEventListener("click", event => {
+            const button = event.target.closest("[data-source-sample]");
+            if (!button) return;
+            seekSourceMonitor(Number(button.dataset.sourceSample));
+        });
+        el("editorial-source-scrub").addEventListener("input", event => {
+            seekSourceMonitor(Number(event.target.value));
+        });
+        document.querySelectorAll("[data-source-step]").forEach(button => {
+            button.addEventListener("click", () => {
+                seekSourceMonitor(
+                    state.sourceMonitorTime + Number(button.dataset.sourceStep),
+                );
+            });
+        });
+        el("editorial-source-set-start").addEventListener("click", () => {
+            const row = [...el("editorial-storyboard").querySelectorAll("[data-board-beat]")]
+                .find(item => !item.hidden);
+            const input = row?.querySelector("[data-footage-start]");
+            if (!input || !row.querySelector("[data-primary-visual]").value.startsWith("media:")) {
+                feedback("Choose footage for the selected beat before setting its source start.", true);
+                return;
+            }
+            input.value = state.sourceMonitorTime.toFixed(3).replace(/0+$/, "").replace(/\.$/, "");
+            input.dispatchEvent(new Event("input", {bubbles: true}));
+            feedback(`Beat source start set to ${preciseClock(state.sourceMonitorTime)}.`);
+        });
+        const sourceVideo = el("editorial-source-monitor-video");
+        sourceVideo.addEventListener("loadedmetadata", () => {
+            sourceVideo.currentTime = clampMediaTime(
+                state.sourceMonitorTime,
+                sourceVideo.duration,
+            );
+            updateSourceTransport(sourceVideo.currentTime);
+        });
+        sourceVideo.addEventListener("timeupdate", () => {
+            if (!state.sourceMediaLoaded) return;
+            updateSourceTransport(sourceVideo.currentTime);
+        });
+
+        const programVideo = el("editorial-program-monitor-video");
+        programVideo.addEventListener("loadedmetadata", updateProgramTransport);
+        programVideo.addEventListener("timeupdate", updateProgramTransport);
+        el("editorial-program-scrub").addEventListener("input", event => {
+            if (!state.previewUrl || !Number.isFinite(programVideo.duration)) return;
+            programVideo.currentTime = clampMediaTime(
+                Number(event.target.value),
+                programVideo.duration,
+            );
+            updateProgramTransport();
+        });
+        document.querySelectorAll("[data-program-step]").forEach(button => {
+            button.addEventListener("click", () => {
+                if (!state.previewUrl || !Number.isFinite(programVideo.duration)) return;
+                programVideo.currentTime = clampMediaTime(
+                    programVideo.currentTime + Number(button.dataset.programStep),
+                    programVideo.duration,
+                );
+                updateProgramTransport();
+            });
+        });
+        el("editorial-program-go-beat").addEventListener("click", () => {
+            if (!state.previewUrl || !Number.isFinite(programVideo.duration)) {
+                feedback("Load the current preview before navigating program time.", true);
+                return;
+            }
+            const planned = clampMediaTime(
+                plannedBeatStartSeconds(),
+                programVideo.duration,
+            );
+            programVideo.currentTime = planned;
+            updateProgramTransport();
+            feedback(
+                `Program monitor moved to planned beat start ${preciseClock(planned)}. Verify final rendered timing before approval.`,
+            );
+        });
         el("editorial-program-load").addEventListener("click", () => void guarded(async () => {
             await loadCurrentPreview();
         }));
