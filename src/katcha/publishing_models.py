@@ -71,13 +71,20 @@ class Publication(Base):
             "youtube_connection_id",
             name="uq_publications_short_episode_youtube_connection",
         ),
+        UniqueConstraint(
+            "editorial_run_id",
+            "youtube_connection_id",
+            name="uq_publications_editorial_run_youtube_connection",
+        ),
         CheckConstraint(
             "(production_id IS NOT NULL AND compilation_id IS NULL "
-            "AND short_episode_id IS NULL) OR "
+            "AND short_episode_id IS NULL AND editorial_run_id IS NULL) OR "
             "(production_id IS NULL AND compilation_id IS NOT NULL "
-            "AND short_episode_id IS NULL) OR "
+            "AND short_episode_id IS NULL AND editorial_run_id IS NULL) OR "
             "(production_id IS NULL AND compilation_id IS NULL "
-            "AND short_episode_id IS NOT NULL)",
+            "AND short_episode_id IS NOT NULL AND editorial_run_id IS NULL) OR "
+            "(production_id IS NULL AND compilation_id IS NULL "
+            "AND short_episode_id IS NULL AND editorial_run_id IS NOT NULL)",
             name="ck_publications_exactly_one_source",
         ),
     )
@@ -91,6 +98,9 @@ class Publication(Base):
     )
     short_episode_id: Mapped[uuid.UUID | None] = mapped_column(
         Uuid(as_uuid=True), ForeignKey("short_episodes.id"), nullable=True, index=True
+    )
+    editorial_run_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("editorial_runs.id"), nullable=True, index=True
     )
     youtube_connection_id: Mapped[uuid.UUID] = mapped_column(
         Uuid(as_uuid=True), ForeignKey("youtube_connections.id"), index=True
