@@ -507,7 +507,7 @@ app.post('/render', async (request, response) => {
           const object = await s3.send(new GetObjectCommand({Bucket: bucket, Key: image.storage_key}));
           await verifyImageBytes(object.Body, image);
           return {...image, url: await renderAssetUrl(image.storage_key)};
-        }))} : {})}
+        }))} : {}), ...(manifest.brand ? {brand: await hydrateBrand(manifest.brand)} : {})}
       : isLongform
       ? await hydrateLongformManifest(manifest)
       : isRankedEpisode
