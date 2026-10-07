@@ -51,7 +51,6 @@ def create_editorial_publication(
         run = get_run(channel_profile_id, project_id, editorial_run_id)
         return register_editorial_publication(
             run.id,
-            youtube_connection_id=body.youtube_connection_id,
             title=body.title,
             description=body.description,
             tags=body.tags,
