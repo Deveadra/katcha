@@ -97,6 +97,83 @@ docker compose \
 ```
 
 
+## Live Editorial Projects source-to-reviewed-render acceptance
+
+Use this only with a source you are explicitly authorized to process. This is the E8
+acceptance for the new Editorial Projects system; it is separate from the synthetic
+RankSnaxx path above and refuses fixture/provider-disabled AI execution.
+
+Start a new acceptance project:
+
+```bash
+python scripts/editorial_live_acceptance.py \
+  --channel-profile-id <CHANNEL_PROFILE_ID> \
+  --source-url 'https://www.youtube.com/watch?v=<AUTHORIZED_SOURCE>' \
+  --confirm-source-authorized \
+  --run-key <STABLE_RUN_KEY>
+```
+
+The first invocation stops after a cited script is saved. Inspect Research and Script in
+Editorial Studio. Continue only after that evidence/script review:
+
+```bash
+python scripts/editorial_live_acceptance.py \
+  --channel-profile-id <CHANNEL_PROFILE_ID> \
+  --project-id <PROJECT_ID> \
+  --continue-after-script-review
+```
+
+The harness then runs claim-directed asset scouting and prints the grounded candidates.
+Review the actual source pages and select useful candidates explicitly:
+
+```bash
+python scripts/editorial_live_acceptance.py \
+  --channel-profile-id <CHANNEL_PROFILE_ID> \
+  --project-id <PROJECT_ID> \
+  --continue-after-script-review \
+  --asset-candidate-id <CANDIDATE_ID> \
+  --asset-candidate-id <OPTIONAL_SECOND_CANDIDATE_ID>
+```
+
+Selection is not a rights decision. The harness may download selected candidates for
+review, then stops if their latest persisted rights assessment is not
+production-eligible. Use the normal Katcha rights-review workflow to record actual
+evidence/authorization; never mark a candidate clear merely to satisfy acceptance.
+Rerun the same command after clearance. Katcha will reuse the exact acquisition request,
+analyze the cleared footage into sampled-frame evidence, run frame-grounded direction,
+and create a verified private Editorial preview.
+
+Optionally save the authenticated preview locally for inspection:
+
+```bash
+  --preview-output ./artifacts/editorial-live-preview.mp4
+```
+
+The harness stops at render review and prints the exact `render_run_id`. After a human
+has inspected that exact preview, approve only that render:
+
+```bash
+python scripts/editorial_live_acceptance.py \
+  --channel-profile-id <CHANNEL_PROFILE_ID> \
+  --project-id <PROJECT_ID> \
+  --continue-after-script-review \
+  --asset-candidate-id <CANDIDATE_ID> \
+  --approve-render-id <EXACT_RENDER_RUN_ID> \
+  --confirm-preview-inspected
+```
+
+A successful result is `reviewed_render_accepted`. The summary includes source/project
+lineage, script evidence counts, selected asset/right receipts, direction/render IDs,
+manifest timing, provider token/billing receipts, elapsed time, and optional preview
+hash. It deliberately does **not** register a publication or start a YouTube upload.
+Publication remains the separate metadata-hold and private-upload workflow documented
+elsewhere.
+
+The harness is resume-safe: deterministic run identities recover the exact prior
+request. A different asset selection produces a different acquisition identity instead
+of silently reusing old work. Blocked or failed provider runs are not automatically
+resubmitted; inspect their durable receipts and explicitly resume them first.
+
 ## Final RankSnaxx Brand v2 real-media visual acceptance
 
 Issue #36 stays open until Brand v2 is reviewed against an actual stored
