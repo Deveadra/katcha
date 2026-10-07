@@ -191,6 +191,7 @@ class EditorialImage(Base):
     title: Mapped[str] = mapped_column(String(200))
     source_reference: Mapped[str] = mapped_column(String(2000))
     use_note: Mapped[str] = mapped_column(String(2000))
+    source_metadata: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     illustration: Mapped[bool] = mapped_column(default=False)
     status: Mapped[str] = mapped_column(String(32), default="active")
     actor: Mapped[str] = mapped_column(String(255))

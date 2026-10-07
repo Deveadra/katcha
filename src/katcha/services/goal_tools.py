@@ -78,6 +78,17 @@ TOOLS = {
             retry_safe=True,
         ),
         GoalTool(
+            "capture_editorial_source_frame",
+            "Create a reversible still from one analyzed frame of already-acquired supporting "
+            "footage. Requires the exact saved script revision and current production-eligible "
+            "rights; rechecks clearance before persistence. Does not download new web media.",
+            "production:create",
+            "POST",
+            "/v1/channels/{channel_profile_id}/editorial-projects/{project_id}"
+            "/images/source-frame",
+            retry_safe=True,
+        ),
+        GoalTool(
             "editorial_images",
             "List permission-attested still images for a saved script revision. "
             "Select a returned image_id in an image layout, or two image_ids in image_comparison. "
