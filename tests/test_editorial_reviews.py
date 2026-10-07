@@ -12,13 +12,18 @@ from alembic.migration import MigrationContext
 from alembic.operations import Operations
 from sqlalchemy import create_engine, inspect, select
 from sqlalchemy.orm import sessionmaker
+from test_editorial_projects import draft as editorial_draft
 from test_editorial_projects import saved as _saved
 from test_editorial_render import setup_render
 
 from katcha import db
 from katcha.editorial import render
 from katcha.editorial.review_schemas import ReviewEditorialRender
-from katcha.editorial_models import EditorialRenderReview, EditorialRun
+from katcha.editorial_models import (
+    EditorialRenderReview,
+    EditorialRevision,
+    EditorialRun,
+)
 from katcha.intelligence_models import ChannelProfile
 from katcha.models import DomainEvent
 from katcha.orchestration import publishing_activities
@@ -88,6 +93,17 @@ def test_approved_editorial_render_stages_publication_and_rechecks_clearance(
     row = completed(saved, monkeypatch)
     with db.session_scope() as session:
         session.get(EditorialRun, row.id).input_revision = 1
+        session.add(
+            EditorialRevision(
+                project_id=row.project_id,
+                revision=1,
+                request_id=uuid.uuid4(),
+                request_digest="a" * 64,
+                digest="b" * 64,
+                draft=editorial_draft(),
+                actor="test",
+            )
+        )
         profile = session.get(ChannelProfile, row.channel_profile_id)
         connection_id = profile.youtube_connection_id
         session.add(
