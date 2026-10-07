@@ -628,6 +628,14 @@ python scripts/oci_production_cutover.py activate-primary \
   --release-sha "$RELEASE_SHA"
 ```
 
+The inspect-only pass must also authenticate the read-only fencing endpoint
+using the effective `KATCHA_FENCE_TOKEN`. A 401 indicates the operator's token
+does not match `FENCE_TOKEN` on the deployed Cloudflare recovery Worker; do not
+run `--apply` until that is repaired. The cutover uses the exported environment
+first, then the local `.env`, then the protected
+`~/.config/katcha/production/recovery-fence-token` file. Never display or
+log the token contents.
+
 Only after that passes, apply the same exact release:
 
 ```bash
