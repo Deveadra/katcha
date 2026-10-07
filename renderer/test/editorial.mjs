@@ -60,7 +60,7 @@ assert.deepEqual(
   },
 );
 for (const mutate of [
-  m => {m.version = 'editorial-render-v4';},
+  m => {m.version = 'editorial-render-v1';},
   m => {m.timeline[0].caption_scale = 2;},
   m => {m.timeline[0].transition_frames = 2;},
   m => {m.timeline[0].media[0].crop.width = 0.9;},
