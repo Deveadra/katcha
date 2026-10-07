@@ -213,7 +213,6 @@ def capture_source_frame(
                 "frame_index": request.frame_index,
                 "source_key": source_key,
                 "clip_sha256": current["sha256"],
-                "rights_assessment_id": clearance["rights_assessment_id"],
             }
         )
         if previous is not None:
@@ -240,6 +239,18 @@ def capture_source_frame(
                 f"Automatically derived at {sample_time:.3f}s from current "
                 "production-eligible supporting footage."
             ),
+            source_metadata={
+                "kind": "source_frame",
+                "asset_run_id": str(request.asset_run_id),
+                "candidate_id": request.candidate_id,
+                "clip_id": str(current["clip_id"]),
+                "clip_sha256": current["sha256"],
+                "frame_index": request.frame_index,
+                "sample_seconds": sample_time,
+                "source_key": source_key,
+                "source_url": str(current["source_url"]),
+                "rights_assessment_id_at_capture": clearance["rights_assessment_id"],
+            },
             illustration=False,
             status="active",
             actor=actor,
@@ -377,6 +388,10 @@ def import_image(channel_id, project_id, *, request: ImageUpload, data: bytes, a
             title=request.title.strip(),
             source_reference=request.source_reference.strip(),
             use_note=request.use_note.strip(),
+            source_metadata={
+                "kind": "operator_upload",
+                "permitted_use_confirmed": True,
+            },
             illustration=request.illustration,
             status="active",
             actor=actor,
