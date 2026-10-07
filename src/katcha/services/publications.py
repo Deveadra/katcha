@@ -170,6 +170,8 @@ def _approved_render_key(
         )
     else:
         source = _source(session, source_kind=source_kind, source_id=source_id)
+        if not isinstance(source, EditorialRun):
+            raise ValueError("editorial publication source has invalid lineage")
         from katcha.services.editorial_reviews import approved_manifest
 
         manifest, _ = approved_manifest(source, session=session)
@@ -180,17 +182,19 @@ def _approved_render_key(
 
 
 def publication_source(publication: Publication) -> tuple[SourceKind, uuid.UUID]:
-    identities = [
+    identities: list[tuple[SourceKind, uuid.UUID | None]] = [
         ("production", publication.production_id),
         ("compilation", publication.compilation_id),
         ("short_episode", publication.short_episode_id),
         ("editorial_render", publication.editorial_run_id),
     ]
-    active = [(kind, identity) for kind, identity in identities if identity is not None]
+    active: list[tuple[SourceKind, uuid.UUID]] = []
+    for kind, identity in identities:
+        if identity is not None:
+            active.append((kind, identity))
     if len(active) != 1:
         raise ValueError("publication source lineage is invalid")
-    kind, identity = active[0]
-    return kind, identity
+    return active[0]
 
 
 def approved_publication_render_key(session: Session, publication: Publication) -> str:
@@ -385,6 +389,12 @@ def _register_source_publication(
             youtube_connection_id=youtube_connection_id,
         )
         if existing is not None:
+            if source_kind == "editorial_render":
+                _approved_render_key(
+                    session,
+                    source_kind=source_kind,
+                    source_id=source_id,
+                )
             session.expunge(existing)
             return existing
 
@@ -726,6 +736,8 @@ def release_publication_for_upload(
             raise ValueError("publication has already entered YouTube upload")
         if publication.status != PublicationStatus.QUEUED.value:
             raise ValueError("only queued publications can be released for upload")
+        if publication.stage == "metadata_hold":
+            approved_publication_render_key(session, publication)
         if publication.stage == "queued":
             session.expunge(publication)
             return publication
