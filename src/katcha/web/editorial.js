@@ -17,6 +17,18 @@ window.KatchaEditorial = (() => {
         const durationValue = Math.max(0, Number(durationSeconds) || 0);
         return Math.max(0, Math.min(Number(value) || 0, durationValue));
     }
+    function stepFrameTime(value, fps, direction) {
+        const time = Math.max(0, Number(value) || 0);
+        const rate = Number(fps) || 0;
+        const delta = Math.sign(Number(direction) || 0);
+        if (!(rate > 0) || !delta) return time;
+        const exactFrame = time * rate;
+        const epsilon = 1e-7;
+        const frame = delta > 0
+            ? Math.floor(exactFrame + epsilon) + 1
+            : Math.ceil(exactFrame - epsilon) - 1;
+        return Math.max(0, frame / rate);
+    }
     function updateSourceTransport(value = state.sourceMonitorTime) {
         const durationSeconds = Number(state.sourceMonitorMetadata?.duration_seconds || 0);
         state.sourceMonitorTime = clampMediaTime(value, durationSeconds);
@@ -1854,9 +1866,11 @@ window.KatchaEditorial = (() => {
             button.addEventListener("click", () => {
                 const fps = Number(state.sourceMonitorMetadata?.source_fps || 0);
                 if (!(fps > 0)) return;
-                seekSourceMonitor(
-                    state.sourceMonitorTime + Number(button.dataset.sourceFrameStep) / fps,
-                );
+                seekSourceMonitor(stepFrameTime(
+                    state.sourceMonitorTime,
+                    fps,
+                    Number(button.dataset.sourceFrameStep),
+                ));
             });
         });
         el("editorial-source-set-start").addEventListener("click", () => {
@@ -1917,7 +1931,11 @@ window.KatchaEditorial = (() => {
                 const fps = Number(state.programMap?.fps || 0);
                 if (!state.previewUrl || !Number.isFinite(programVideo.duration) || !(fps > 0)) return;
                 programVideo.currentTime = clampMediaTime(
-                    programVideo.currentTime + Number(button.dataset.programFrameStep) / fps,
+                    stepFrameTime(
+                        programVideo.currentTime,
+                        fps,
+                        Number(button.dataset.programFrameStep),
+                    ),
                     programVideo.duration,
                 );
                 updateProgramTransport();
