@@ -767,7 +767,7 @@ const draft = {
         assert.equal(imageRender.storyboard.beats[0].layout, 'image');
         await page.locator('[data-editorial-stage="storyboard"]').click();
         await page.locator('[data-image-compare]').selectOption('second-image');
-        await page.locator('#editorial-storyboard summary').click();
+        await page.getByText('Mark a source region', {exact: true}).click();
         await page.locator('[data-region="kind"]').selectOption('circle');
         await page.locator('[data-region="target"]').selectOption('1');
         await page.locator('[data-region="x"]').fill('90');
