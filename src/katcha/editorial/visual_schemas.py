@@ -390,6 +390,29 @@ class DirectedBeat(Contract):
 class DirectionResult(Contract):
     beats: list[DirectedBeat] = Field(min_length=1, max_length=100)
 
+    @classmethod
+    def model_json_schema(cls, *args, **kwargs):
+        """Keep the persisted/provider v1 schema byte-compatible after editor model growth."""
+        schema = super().model_json_schema(*args, **kwargs)
+        definitions = schema.get("$defs", {})
+        provider_media = definitions.pop("DirectedMediaUse", None)
+        if provider_media is not None:
+            definitions["VisualMediaUse"] = provider_media
+
+        def restore_ref(value):
+            if isinstance(value, dict):
+                return {key: restore_ref(item) for key, item in value.items()}
+            if isinstance(value, list):
+                return [restore_ref(item) for item in value]
+            if isinstance(value, str):
+                return value.replace(
+                    "#/$defs/DirectedMediaUse",
+                    "#/$defs/VisualMediaUse",
+                )
+            return value
+
+        return restore_ref(schema)
+
 
 class ShotEvidenceReference(Contract):
     beat_id: Identity
