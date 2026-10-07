@@ -139,6 +139,10 @@ window.KatchaEditorial = (() => {
         const key = [state.channel, state.project.id, state.project.revision, runId, candidateId].join(":");
         if (state.sourceMonitorKey === key && state.sourceMonitorUrl) {
             el("editorial-source-monitor").hidden = false;
+            const currentStart = Number(
+                row.querySelector("[data-footage-start]")?.value || 0,
+            );
+            seekSourceMonitor(currentStart);
             return;
         }
         const epoch = ++state.sourceMonitorEpoch;
@@ -1562,6 +1566,9 @@ window.KatchaEditorial = (() => {
             showFootageControls();
             refreshTimelineStatus();
             scheduleStoryboardWorkspaceSave();
+            if (event?.target.matches("[data-footage-start]")) {
+                seekSourceMonitor(Number(event.target.value));
+            }
             if (event?.type === "change" && event.target.matches("[data-primary-visual]")) {
                 void loadSourceMonitor();
             }
