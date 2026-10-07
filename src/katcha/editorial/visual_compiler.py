@@ -156,10 +156,6 @@ def compile_project_visuals(
     """Server-side resolution: storage keys and rights flags never come from a model/client."""
     with session_scope() if session is None else nullcontext(session) as session:
         ensure_active_profile(session, channel_id)
-        brand_contract, brand_version = brand_for_channel(session, channel_id)
-        brand = ShortBrandSpec.model_validate(dict(brand_contract.visual))
-        if brand.brand_key != brand_contract.brand_key or brand.version != brand_version:
-            raise EditorialConflict("Active channel brand identity is inconsistent; reactivate branding")
         project = session.get(EditorialProject, project_id)
         if project is None or project.channel_profile_id != channel_id:
             raise EditorialNotFound("Editorial project not found in this channel")
@@ -168,6 +164,10 @@ def compile_project_visuals(
                 "Script changed; rebuild the storyboard for its current revision"
             )
         revision = session.get(EditorialRevision, (project_id, expected_revision))
+        brand_contract, brand_version = brand_for_channel(session, channel_id)
+        brand = ShortBrandSpec.model_validate(dict(brand_contract.visual))
+        if brand.brand_key != brand_contract.brand_key or brand.version != brand_version:
+            raise EditorialConflict("Active channel brand identity is inconsistent; reactivate branding")
         run = session.get(EditorialRun, asset_run_id) if asset_run_id else None
         uses_video = any(beat.media for beat in plan.beats)
         if (uses_video or asset_run_id) and (
