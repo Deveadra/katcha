@@ -588,8 +588,10 @@ python scripts/verify_media_cutover.py
 
 The default invocation is read-only. It verifies that the target is the expected
 `katcha-media-prod` Cloudflare R2 bucket and reports the exact number/bytes of
-objects that are absent or size-mismatched. It never treats target-only objects
-as a reason to delete anything.
+objects that are absent, size-mismatched, or content-mismatched. Same-size
+objects are compared by streaming SHA-256 so a silent content mismatch cannot
+pass the cutover check. It never treats target-only objects as a reason to delete
+anything.
 
 If the plan reports objects to copy, keep all local mutating workers stopped and
 run:
@@ -599,10 +601,10 @@ python scripts/verify_media_cutover.py --apply
 python scripts/verify_media_cutover.py
 ```
 
-The apply mode copies only missing or size-mismatched objects, verifies each
-copied object's size, and performs a complete second comparison before reporting
-success. Keep the local MinIO data intact as part of the pre-cutover rollback
-source.
+The apply mode copies only objects that fail the comparison, verifies each
+copied object's size and SHA-256, and performs a complete second comparison
+before reporting success. Keep the local MinIO data intact as part of the
+pre-cutover rollback source.
 
 ## Phase 8 — initialize leadership
 
