@@ -8,6 +8,7 @@ objects and never deletes target objects.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -159,6 +160,21 @@ def list_objects(client, bucket: str) -> list[ObjectRow]:
     return rows
 
 
+def object_sha256(client, bucket: str, key: str) -> str:
+    response = client.get_object(Bucket=bucket, Key=key)
+    body = response["Body"]
+    digest = hashlib.sha256()
+    try:
+        while True:
+            chunk = body.read(8 * 1024 * 1024)
+            if not chunk:
+                break
+            digest.update(chunk)
+    finally:
+        body.close()
+    return digest.hexdigest()
+
+
 def build_plan(
     source_client,
     target_client,
@@ -181,7 +197,13 @@ def build_plan(
             copy_rows.append(row)
             continue
         target_size = int(target_head.get("ContentLength") or 0)
-        if target_size == row.size:
+        if target_size != row.size:
+            copy_rows.append(row)
+            continue
+
+        source_digest = object_sha256(source_client, source.bucket, row.key)
+        target_digest = object_sha256(target_client, target.bucket, row.key)
+        if source_digest == target_digest:
             present += 1
         else:
             copy_rows.append(row)
@@ -236,6 +258,12 @@ def copy_object(
     if int(head.get("ContentLength") or -1) != row.size:
         raise MediaCutoverError(
             f"target size verification failed after copy: {row.key}"
+        )
+    source_digest = object_sha256(source_client, source.bucket, row.key)
+    target_digest = object_sha256(target_client, target.bucket, row.key)
+    if source_digest != target_digest:
+        raise MediaCutoverError(
+            f"target SHA-256 verification failed after copy: {row.key}"
         )
 
 
