@@ -329,7 +329,7 @@ def test_cleared_source_frame_is_idempotent_and_rights_bound(still):
         )
 
 
-def test_source_frame_capture_api_requires_editor(still):
+def test_source_frame_capture_api_requires_editor(still, saved):
     channel, project, request, _, _, _ = source_frame_fixture(still)
     client = saved[0]
     url = f"{root(channel)}/{project}/images/source-frame"
