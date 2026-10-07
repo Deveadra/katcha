@@ -149,6 +149,16 @@ def test_approved_editorial_render_stages_publication_and_rechecks_clearance(
         stored = session.get(Publication, uuid.UUID(publication["id"]))
         with pytest.raises(RuntimeError, match="clearance revoked"):
             publishing_activities._publication_render_key(session, stored)
+        stored.status = "processing"
+        stored.stage = "processing"
+        stored.youtube_video_id = "private-video-id"
+        stored.privacy_status = "public"
+
+    youtube = Mock()
+    monkeypatch.setattr(publishing_activities, "YouTubeClient", youtube)
+    with pytest.raises(RuntimeError, match="clearance revoked"):
+        publishing_activities.finalize_publication_activity(publication["id"])
+    youtube.assert_not_called()
 
 
 @pytest.mark.parametrize("damage", ["rights", "receipt", "duration", "composition"])
