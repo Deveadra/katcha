@@ -19,6 +19,7 @@ from katcha.editorial.visual_schemas import (
     StoryboardPlan,
 )
 from katcha.models import Clip, SourceItem
+from katcha.rendering.manifest import ShortBrandSpec
 from katcha.services.editorial_projects import EditorialConflict
 from katcha.services.editorial_runs import checkpoint, start_run
 
@@ -66,6 +67,59 @@ def test_compiler_is_deterministic_and_preserves_uncertainty_and_frame_coverage(
     assert first.version == "editorial-render-v1"
     assert first.output_key.endswith(".mp4")
     assert first.output_duration_seconds == 8
+
+
+def test_channel_brand_snapshot_compiles_into_v6_and_changes_render_identity():
+    base = ShortBrandSpec.model_validate(
+        {
+            "brand_key": "forescene",
+            "version": 4,
+            "theme_key": "cinema_v1",
+            "palette": {
+                "ink": "#111216",
+                "paper": "#F7F7F4",
+                "signal_blue": "#6B7CFF",
+                "hot_peach": "#FF7657",
+                "volt": "#D9FF57",
+            },
+            "logo": {
+                "enabled": True,
+                "storage_key": "brands/channel/logos/approved.png",
+                "x_percent": 90,
+                "y_percent": 8,
+                "width_percent": 10,
+                "opacity": 0.55,
+            },
+        }
+    )
+    first = compile_visuals(
+        project_id="project",
+        revision=1,
+        draft=EditorialDraft.model_validate(draft()),
+        plan=plan(),
+        media=[media()],
+        brand=base,
+    )
+    changed = compile_visuals(
+        project_id="project",
+        revision=1,
+        draft=EditorialDraft.model_validate(draft()),
+        plan=plan(),
+        media=[media()],
+        brand=base.model_copy(update={"version": 5}),
+    )
+
+    assert first.version == "editorial-render-v6"
+    assert first.brand is not None
+    assert first.brand.brand_key == "forescene"
+    assert first.brand.version == 4
+    assert first.brand.logo.storage_key == "brands/channel/logos/approved.png"
+    assert first.output_key != changed.output_key
+
+    downgraded = first.model_dump(mode="json")
+    downgraded["version"] = "editorial-render-v5"
+    with pytest.raises(ValidationError, match="Frozen channel branding"):
+        EditorialRenderManifest.model_validate(downgraded)
 
 
 def test_professional_beat_controls_compile_only_into_v5():
@@ -255,6 +309,8 @@ def test_project_compiler_checks_current_rights_not_old_scout_flags(saved, monke
     )
     value = compile_project_visuals(scout.channel_profile_id, scout.project_id, 1, run.id, plan())
     assert value.media[0].clip_id == str(clip_id)
+    assert value.version == "editorial-render-v6"
+    assert value.brand is not None
     client = saved[0]
     url = (
         f"/v1/channels/{scout.channel_profile_id}/editorial-projects/"
