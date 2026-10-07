@@ -2,7 +2,7 @@
 window.KatchaEditorial = (() => {
     const el = (id) => document.getElementById(id);
     const esc = (value) => String(value ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
-    const state = { channel: "", epoch: 0, project: null, revision: null, run: null, busy: false, timer: null, editorKey: "", sourceClipBindings: {}, clipResults: [], clipPickerEpoch: 0, clipSearchTimer: null, scriptSeedMeta: null, sourceMonitorKey: "", sourceMonitorUrl: null, sourceMonitorEpoch: 0, sourceMonitorMetadata: null, sourceMonitorTime: 0, sourceMediaLoaded: false, programMap: null, storyboardWorkspace: null, storyboardSaveTimer: null, storyboardSaving: false, storyboardDirty: false, storyboardRetryCount: 0 };
+    const state = { channel: "", epoch: 0, project: null, revision: null, run: null, performance: null, busy: false, timer: null, editorKey: "", sourceClipBindings: {}, clipResults: [], clipPickerEpoch: 0, clipSearchTimer: null, scriptSeedMeta: null, sourceMonitorKey: "", sourceMonitorUrl: null, sourceMonitorEpoch: 0, sourceMonitorMetadata: null, sourceMonitorTime: 0, sourceMediaLoaded: false, programMap: null, storyboardWorkspace: null, storyboardSaveTimer: null, storyboardSaving: false, storyboardDirty: false, storyboardRetryCount: 0 };
     let api, apiBlob;
     function previewReady() {
         return state.run?.stage === "render_ready_for_review" && state.run?.status === "completed";
@@ -514,7 +514,7 @@ window.KatchaEditorial = (() => {
             window.KatchaEditorialHistory.reset();
             clearPreview(); clearSourceMonitor(); state.boardKey = ""; state.assetRun = null; state.imageFormKey = ""; el("editorial-image-file").value = ""; el("editorial-image-confirm").checked = false;
             clearTimeout(state.clipSearchTimer); state.clipPickerEpoch += 1; state.clipResults = []; state.sourceClipBindings = {}; state.scriptSeedMeta = null;
-            state.project = null; state.revision = null; state.run = null; state.editorKey = ""; state.renderKey = "";
+            state.project = null; state.revision = null; state.run = null; state.performance = null; state.editorKey = ""; state.renderKey = "";
             el("editorial-detail").hidden = true;
         }
         restoreBrief();
