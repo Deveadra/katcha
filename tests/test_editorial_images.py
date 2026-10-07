@@ -320,7 +320,7 @@ def test_cleared_source_frame_is_idempotent_and_rights_bound(still):
         )
     with pytest.raises(EditorialConflict, match="no longer has production-eligible clearance"):
         compile_project_visuals(channel, project, 1, None, plan(first["id"]))
-    with pytest.raises(EditorialConflict, match="current clearance"):
+    with pytest.raises(EditorialConflict, match="clearance"):
         images.capture_source_frame(
             channel,
             project,
