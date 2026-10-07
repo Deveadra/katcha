@@ -167,7 +167,8 @@ def test_compilation_uses_measured_samples_and_revocation_invalidates_review(
     recording = upload(project)
     asset_run = assets(project)
     result = compile_recording(project, recording, asset_run)
-    assert result.version == "editorial-render-v2"
+    assert result.version == "editorial-render-v6"
+    assert result.brand is not None
     assert result.timeline[0].duration_frames == 61
     assert sum(c.duration_frames for c in result.timeline[0].captions) == 61
     assert result.output_duration_seconds == 61 / 30
