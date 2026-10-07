@@ -134,7 +134,7 @@ def test_approved_editorial_render_stages_publication_and_rechecks_clearance(
     )
     assert profile_id == row.channel_profile_id
     assert context["source_kind"] == "editorial_render"
-    assert context["editorial_run_id"] if "editorial_run_id" in context else context["source_id"]
+    assert context["source_id"] == str(row.id)
     assert context["render_approval_sequence"] == 1
     assert "This may be a connection." in context["grounding_facts"]
     assert len(context_digest) == 64
