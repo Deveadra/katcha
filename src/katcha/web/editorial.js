@@ -204,14 +204,17 @@ window.KatchaEditorial = (() => {
             video.currentTime = clampMediaTime(state.sourceMonitorTime, video.duration);
         }
     }
-    function showSourceSamples() {
+    function showSourceSamples({
+        status = state.sourceMonitorMetadata?.limitation || "",
+    } = {}) {
         if (!state.sourceMonitorUrl) return;
         const video = el("editorial-source-monitor-video");
         video.pause();
         video.hidden = true;
         el("editorial-source-monitor-image").hidden = false;
         el("editorial-source-samples").hidden = true;
-        el("editorial-source-load").hidden = false;
+        el("editorial-source-load").hidden = !state.sourceMonitorMetadata?.source_media_available;
+        el("editorial-source-monitor-status").textContent = status;
     }
     async function loadSourceMedia() {
         if (!state.sourceMonitorMetadata || !state.project || !state.assetRun) {
@@ -1628,6 +1631,13 @@ window.KatchaEditorial = (() => {
         sourceVideo.addEventListener("timeupdate", () => {
             if (!state.sourceMediaLoaded) return;
             updateSourceTransport(sourceVideo.currentTime);
+        });
+        sourceVideo.addEventListener("error", () => {
+            if (!state.sourceMediaLoaded) return;
+            state.sourceMediaLoaded = false;
+            showSourceSamples({
+                status: "Source playback ended or could not be decoded. Sampled frames remain available; reload source video to refresh the private media session.",
+            });
         });
 
         const programVideo = el("editorial-program-monitor-video");
