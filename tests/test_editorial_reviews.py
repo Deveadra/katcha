@@ -24,6 +24,7 @@ from katcha.models import DomainEvent
 from katcha.orchestration import publishing_activities
 from katcha.publishing_models import Publication, YouTubeConnection
 from katcha.services import editorial_reviews as reviews
+from katcha.services.packaging_generation import compile_packaging_context
 from katcha.services.editorial_projects import EditorialConflict
 
 saved = _saved
@@ -127,6 +128,16 @@ def test_approved_editorial_render_stages_publication_and_rechecks_clearance(
     replay = client.post(url, json=body)
     assert replay.status_code == 201
     assert replay.json()["id"] == publication["id"]
+
+    profile_id, context, context_digest = compile_packaging_context(
+        uuid.UUID(publication["id"])
+    )
+    assert profile_id == row.channel_profile_id
+    assert context["source_kind"] == "editorial_render"
+    assert context["editorial_run_id"] if "editorial_run_id" in context else context["source_id"]
+    assert context["render_approval_sequence"] == 1
+    assert "This may be a connection." in context["grounding_facts"]
+    assert len(context_digest) == 64
 
     reviews.current_manifest.side_effect = EditorialConflict("clearance revoked")
     assert client.post(url, json=body).status_code == 409
