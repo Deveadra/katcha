@@ -38,7 +38,7 @@ if [[ ! -r /etc/katcha/aws/config ]]; then
   exit 22
 fi
 
-renderer_uid="${runtime_uid}"
+renderer_uid=10001
 for directory in /etc/katcha/aws /etc/katcha/aws/runtime; do
   if [[ ! -d "$directory" || -L "$directory" ]]; then
     echo "Hosted AWS credential directory is missing or unsafe: $directory" >&2
