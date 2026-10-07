@@ -773,7 +773,7 @@ const draft = {
         await page.locator('[data-region="x"]').fill('90');
         await page.locator('[data-editorial-stage="preview"]').click();
         await page.getByRole('button', {name: 'Create narrated preview', exact: true}).click();
-        await page.getByText(/Keep the annotation within the original image/).waitFor();
+        await page.getByText(/Keep the annotation within the original source/).waitFor();
         await page.locator('[data-editorial-stage="storyboard"]').click();
         await page.locator('[data-region="x"]').fill('10');
         await page.locator('[data-region="label"]').fill('Compare the symbol');
