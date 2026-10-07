@@ -162,7 +162,7 @@ def capture_source_frame(
             _validate_derived_image_clearance(session, previous)
             return image_response(previous)
 
-    raw = ObjectStore().get_bytes(source_key)
+    raw = ObjectStore().get_bytes(source_key, max_bytes=MAX_IMAGE_BYTES)
     encoded, width, height = normalize_image(raw)
     digest = hashlib.sha256(encoded).hexdigest()
 
