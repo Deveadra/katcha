@@ -348,6 +348,11 @@ class CreatePublicationRequest(BaseModel):
     hold_for_packaging: bool = False
 
 
+class CreateEditorialPublicationRequest(CreatePublicationRequest):
+    # Editorial publication always enters metadata hold before any provider mutation.
+    hold_for_packaging: Literal[True] = True
+
+
 class StartPublicationRequest(BaseModel):
     expected_version: int | None = Field(default=None, ge=0)
     actor: str = Field(default="operator", min_length=1, max_length=128)
