@@ -944,6 +944,25 @@ window.KatchaEditorial = (() => {
             700,
         );
     }
+    async function ensureStoryboardWorkspaceSaved() {
+        clearTimeout(state.storyboardSaveTimer);
+        state.storyboardSaveTimer = null;
+        if (!state.storyboardWorkspace && state.revision) {
+            state.storyboardDirty = true;
+        }
+        for (let attempt = 0; attempt < 2; attempt += 1) {
+            if (state.storyboardDirty && !state.storyboardSaving) {
+                await flushStoryboardWorkspace();
+            }
+            for (let tick = 0; tick < 100 && state.storyboardSaving; tick += 1) {
+                await new Promise(resolve => setTimeout(resolve, 50));
+            }
+            if (!state.storyboardSaving && !state.storyboardDirty) return;
+        }
+        throw new Error(
+            "Storyboard changes are not durably saved yet. Check the workspace status and retry.",
+        );
+    }
     async function undoStoryboardWorkspace() {
         const current = state.storyboardWorkspace;
         const canUndo = current && (
@@ -1655,6 +1674,7 @@ window.KatchaEditorial = (() => {
         el("editorial-storyboard").addEventListener("input", persistStoryboardChoice);
         el("editorial-storyboard").addEventListener("change", persistStoryboardChoice);
         el("editorial-render").addEventListener("click", () => void guarded(async () => {
+            await ensureStoryboardWorkspaceSaved();
             const channel = state.channel; const project = state.project.id;
             const payload = {target: "render", expected_revision: state.project.revision, asset_run_id: state.assetRun?.editorial_run_id || null, storyboard: storyboardPlan()};
             await api(path(channel, `/${project}/storyboard/preflight`), {method: "POST", body: JSON.stringify({expected_revision: payload.expected_revision, asset_run_id: payload.asset_run_id, plan: payload.storyboard})});
