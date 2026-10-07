@@ -59,8 +59,66 @@ def test_compiler_is_deterministic_and_preserves_uncertainty_and_frame_coverage(
     assert sum(c.duration_frames for c in first.timeline[0].captions) == 240
     assert first.timeline[0].uncertainty_disclosure == "Unconfirmed theory"
     assert first.requires_editorial_review is True
+    assert first.version == "editorial-render-v1"
     assert first.output_key.endswith(".mp4")
     assert first.output_duration_seconds == 8
+
+
+def test_professional_beat_controls_compile_only_into_v5():
+    storyboard = plan(
+        media=[
+            {
+                "candidate_id": "asset",
+                "start_seconds": 1,
+                "playback_rate": 0.75,
+                "push_in": 1.08,
+                "crop": {
+                    "x": 0.1,
+                    "y": 0.15,
+                    "width": 0.7,
+                    "height": 0.7,
+                },
+            }
+        ],
+        caption_position="center",
+        caption_scale=1.15,
+        caption_background=True,
+        transition="fade",
+        transition_frames=6,
+    )
+    manifest = compile_plan(storyboard)
+
+    assert manifest.version == "editorial-render-v5"
+    scene = manifest.timeline[0]
+    assert scene.media[0].crop.x == 0.1
+    assert scene.media[0].playback_rate == 0.75
+    assert scene.media[0].push_in == 1.08
+    assert scene.caption_position == "center"
+    assert scene.caption_scale == 1.15
+    assert scene.caption_background is True
+    assert scene.transition == "fade"
+    assert scene.transition_frames == 6
+    assert scene.duration_frames == 240
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {
+            "media": [
+                {
+                    "candidate_id": "asset",
+                    "crop": {"x": 0.8, "y": 0, "width": 0.3, "height": 1},
+                }
+            ]
+        },
+        {"caption_scale": 2},
+        {"transition": "fade", "transition_frames": 2},
+    ],
+)
+def test_professional_beat_controls_reject_invalid_bounds(change):
+    with pytest.raises(ValidationError):
+        plan(**change)
 
 
 def test_freeze_and_playback_have_distinct_source_time_bounds():
