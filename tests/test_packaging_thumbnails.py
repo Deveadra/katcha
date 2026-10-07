@@ -1,9 +1,9 @@
 from __future__ import annotations
 
+import uuid
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
-import uuid
 
 import pytest
 from sqlalchemy import create_engine
@@ -302,9 +302,6 @@ def _setup_editorial_publication(
         session.add(publication)
         session.flush()
         publication_id = publication.id
-        run_id = run.id
-        project_id = project.id
-        profile_id = profile.id
         clip_id = clip.id
 
     if use_image:
