@@ -21,6 +21,7 @@ from katcha.longform_models import Compilation, CompilationAsset
 from katcha.models import DomainEvent
 from katcha.production_models import Production, ProductionAsset, ProductionScript
 from katcha.publishing_models import Publication, YouTubeConnection
+from katcha.services.editorial_costs import editorial_project_usage_cost
 from katcha.short_episode_models import (
     ShortEpisode,
     ShortEpisodeAsset,
@@ -330,6 +331,9 @@ def _editorial_treatment_metadata(
         "brand_key": brand.get("brand_key"),
         "brand_version": brand.get("version"),
         "presentation_mode": manifest.presentation_mode,
+        "source_cost_usd_at_registration": str(
+            editorial_project_usage_cost(session, run.project_id)
+        ),
     }
 
 
