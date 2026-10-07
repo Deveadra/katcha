@@ -25,6 +25,8 @@ from katcha.editorial.visual_schemas import (
 )
 from katcha.editorial_models import EditorialProject, EditorialRevision, EditorialRun
 from katcha.models import Clip
+from katcha.rendering.manifest import ShortBrandSpec
+from katcha.services.channel_brands import brand_for_channel
 from katcha.services.channel_profiles import ensure_active_profile
 from katcha.services.editorial_projects import EditorialConflict, EditorialNotFound, _digest
 
@@ -38,6 +40,7 @@ def compile_visuals(
     media: list[RenderMedia],
     narration: list[RenderNarration] | None = None,
     images: list[RenderImage] | None = None,
+    brand: ShortBrandSpec | None = None,
 ) -> EditorialRenderManifest:
     if [beat.beat_id for beat in plan.beats] != [beat.id for beat in draft.script]:
         raise EditorialConflict("Storyboard must cover each script beat once, in script order")
@@ -124,6 +127,11 @@ def compile_visuals(
         for beat in plan.beats
     ):
         value["version"] = "editorial-render-v5"
+    if brand is not None:
+        value.update(
+            version="editorial-render-v6",
+            brand=brand.model_dump(mode="json"),
+        )
     digest = _digest(
         {
             **value,
@@ -148,6 +156,10 @@ def compile_project_visuals(
     """Server-side resolution: storage keys and rights flags never come from a model/client."""
     with session_scope() if session is None else nullcontext(session) as session:
         ensure_active_profile(session, channel_id)
+        brand_contract, brand_version = brand_for_channel(session, channel_id)
+        brand = ShortBrandSpec.model_validate(dict(brand_contract.visual))
+        if brand.brand_key != brand_contract.brand_key or brand.version != brand_version:
+            raise EditorialConflict("Active channel brand identity is inconsistent; reactivate branding")
         project = session.get(EditorialProject, project_id)
         if project is None or project.channel_profile_id != channel_id:
             raise EditorialNotFound("Editorial project not found in this channel")
@@ -237,4 +249,5 @@ def compile_project_visuals(
         media=resolved,
         narration=narration,
         images=images,
+        brand=brand,
     )
