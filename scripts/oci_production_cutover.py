@@ -257,11 +257,15 @@ def request_json(
     except urllib.error.HTTPError as exc:
         detail = exc.read().decode(errors="replace")
         raise CutoverError(f"{method} {url} failed with HTTP {exc.code}: {detail}") from exc
-    except urllib.error.URLError as exc:
-        raise CutoverError(f"{method} {url} failed: {exc.reason}") from exc
+    except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        reason = getattr(exc, "reason", exc)
+        raise CutoverError(f"{method} {url} failed: {reason}") from exc
     if not raw:
         return {}
-    value = json.loads(raw)
+    try:
+        value = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise CutoverError(f"{method} {url} returned invalid JSON") from exc
     if not isinstance(value, dict):
         raise CutoverError(f"{method} {url} returned unexpected JSON")
     return value
