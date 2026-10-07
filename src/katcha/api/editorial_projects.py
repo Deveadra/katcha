@@ -587,6 +587,7 @@ def storyboard_source_media_session(
 ):
     from katcha.editorial.source_monitor import source_monitor
     from katcha.security.media_tickets import (
+        SOURCE_MEDIA_COOKIE,
         SOURCE_MEDIA_TICKET_TTL_SECONDS,
         issue_media_ticket,
     )
@@ -607,8 +608,9 @@ def storyboard_source_media_session(
             f"/v1/channels/{channel_profile_id}/editorial-projects/{project_id}"
             f"/runs/{run_id}/assets/{encoded_candidate}/source-media"
         )
+        response.headers["Cache-Control"] = "no-store"
         response.set_cookie(
-            "katcha_editorial_source_media",
+            SOURCE_MEDIA_COOKIE,
             token,
             max_age=SOURCE_MEDIA_TICKET_TTL_SECONDS,
             httponly=True,
@@ -638,7 +640,10 @@ def storyboard_source_media(
 ):
     from katcha.api.studio import _stream_object
     from katcha.editorial.source_monitor import source_monitor
-    from katcha.security.media_tickets import verify_media_ticket
+    from katcha.security.media_tickets import (
+        SOURCE_MEDIA_COOKIE,
+        verify_media_ticket,
+    )
     from katcha.security.secrets import SecretConfigurationError
 
     scope = _source_media_scope(
@@ -649,7 +654,7 @@ def storyboard_source_media(
     )
     try:
         verify_media_ticket(
-            request.cookies.get("katcha_editorial_source_media", ""),
+            request.cookies.get(SOURCE_MEDIA_COOKIE, ""),
             scope,
         )
         result = source_monitor(channel_profile_id, project_id, run_id, candidate_id)
