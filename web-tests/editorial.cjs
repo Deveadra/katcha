@@ -13,6 +13,11 @@ const uploadedSourceUrl = "https://upload.katcha.invalid/33333333-3333-4333-8333
 let loseSourceMediaResponse = true;
 let loseCreateResponse = true, loseSaveResponse = true;
 let publication = null;
+let performance = {
+    measurement_state: "not_staged",
+    publication: null, analytics: null, reach: null, retention_50: null,
+    packaging_variant: null, economics: null,
+};
 let review = {
     status: "unreviewed", sequence: 0, can_approve: true, reviews: [],
     publication_available: false, publication: null,
@@ -303,8 +308,16 @@ const draft = {
                         updated_at: "2026-10-03",
                     };
                     review = {...review, publication};
+                    performance = {
+                        measurement_state: "not_uploaded",
+                        publication: {id: publication.id, status: publication.status, stage: publication.stage, youtube_video_id: null},
+                        analytics: null, reach: null, retention_50: null,
+                        packaging_variant: null,
+                        economics: {source_cost_usd: "0.50", estimated_revenue_usd: null, contribution_margin_usd: null},
+                    };
                     return send(publication, 201);
                 }
+                if (url.pathname.endsWith("/performance")) return send(performance);
                 if (url.pathname.endsWith("/review")) {
                     if (!body) return send(review);
                     review = {
@@ -759,6 +772,43 @@ const draft = {
             await page.locator("#editorial-publication-status").innerText(),
             /Finish SEO, thumbnail, visibility and schedule review/i,
         );
+        await page.locator("#editorial-performance").waitFor({state: "visible"});
+        assert.match(
+            await page.locator("#editorial-performance-note").innerText(),
+            /upload has not started/i,
+        );
+        performance = {
+            measurement_state: "measured",
+            publication: {
+                id: publication.id, status: "published", stage: "published",
+                youtube_video_id: "video-1", published_at: "2026-10-03T12:00:00Z",
+            },
+            analytics: {
+                views: 12000, average_view_percentage: "67.5",
+                estimated_revenue_usd: "2.25",
+            },
+            reach: {
+                report_date: "2026-10-07", impressions: 50000, ctr: "0.071",
+                attribution_status: "variant", packaging_variant_id: "variant-1",
+            },
+            retention_50: {audience_watch_ratio: "0.62"},
+            packaging_variant: {
+                id: "variant-1", variant_key: "hook-a", version: 2,
+                title: "Measured title", has_thumbnail: true,
+            },
+            economics: {
+                source_cost_usd: "1.50", estimated_revenue_usd: "2.25",
+                contribution_margin_usd: "0.75",
+            },
+        };
+        await page.locator("#editorial-refresh").click();
+        await page.locator("#editorial-performance-state").filter({hasText: "MEASURED"}).waitFor();
+        assert.match(await page.locator("#editorial-performance-metrics").innerText(), /12,?000|12000/);
+        assert.match(await page.locator("#editorial-performance-metrics").innerText(), /7\.1%/);
+        assert.match(await page.locator("#editorial-performance-metrics").innerText(), /62\.0%/);
+        assert.match(await page.locator("#editorial-performance-metrics").innerText(), /\$2\.25/);
+        assert.match(await page.locator("#editorial-performance-metrics").innerText(), /\$0\.75/);
+        assert.match(await page.locator("#editorial-performance-note").innerText(), /hook-a v2/);
         await page.locator('[data-editorial-stage="storyboard"]').click();
         await page.locator('#editorial-presentation').selectOption('narrated');
         await page.locator('[data-narration-file]').setInputFiles({name: 'recording.wav', mimeType: 'audio/wav', buffer: Buffer.from('synthetic transport only')});
