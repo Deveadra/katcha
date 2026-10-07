@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from sqlalchemy import func, select
 
 from katcha.db import session_scope
+from katcha.editorial_models import EditorialRun
 from katcha.integrations.storage import ObjectStore
 from katcha.models import ClipFeature
 from katcha.packaging_models import PublicationPackagingVariant
@@ -14,6 +15,7 @@ from katcha.publishing_models import Publication
 from katcha.rendering.client import render_thumbnail
 from katcha.rendering.manifest import ShortBrandSpec
 from katcha.rendering.thumbnail_manifest import build_thumbnail_manifest
+from katcha.services.editorial_reviews import approved_manifest
 from katcha.services.packaging import create_packaging_variant
 from katcha.short_episode_models import ShortEpisode, ShortEpisodeItem
 
@@ -87,9 +89,61 @@ def _source_context(
             },
         )
 
+    if publication.editorial_run_id is not None:
+        run = session.get(EditorialRun, publication.editorial_run_id)
+        if run is None:
+            raise ValueError("publication Editorial render lineage is missing")
+        manifest, approval = approved_manifest(run, session=session)
+        if manifest.brand is None:
+            raise ValueError("approved Editorial render has no frozen channel brand")
+        media = {item.candidate_id: item for item in manifest.media}
+        images = {item.image_id: item for item in manifest.images}
+        for scene in manifest.timeline:
+            image_ids = [scene.image_id] if scene.image_id else list(scene.image_ids)
+            if image_ids:
+                image = images.get(image_ids[0])
+                if image is None:
+                    raise ValueError("approved Editorial thumbnail image lineage is incomplete")
+                return (
+                    run.channel_profile_id,
+                    manifest.brand,
+                    image.storage_key,
+                    {
+                        "source_kind": "editorial_render",
+                        "source_id": str(run.id),
+                        "project_id": str(run.project_id),
+                        "revision": run.input_revision,
+                        "approval_sequence": approval.sequence,
+                        "manifest_digest": approval.manifest_digest,
+                        "editorial_image_id": image.image_id,
+                    },
+                )
+            if scene.media:
+                use = scene.media[0]
+                source = media.get(use.candidate_id)
+                if source is None:
+                    raise ValueError("approved Editorial thumbnail footage lineage is incomplete")
+                clip_id = uuid.UUID(source.clip_id)
+                return (
+                    run.channel_profile_id,
+                    manifest.brand,
+                    _middle_keyframe(session.get(ClipFeature, clip_id)),
+                    {
+                        "source_kind": "editorial_render",
+                        "source_id": str(run.id),
+                        "project_id": str(run.project_id),
+                        "revision": run.input_revision,
+                        "approval_sequence": approval.sequence,
+                        "manifest_digest": approval.manifest_digest,
+                        "clip_id": str(clip_id),
+                        "candidate_id": use.candidate_id,
+                    },
+                )
+        raise ValueError("approved Editorial render has no visual source for thumbnail grounding")
+
     raise ValueError(
-        "grounded thumbnail rendering currently supports production "
-        "and short-episode publications"
+        "grounded thumbnail rendering currently supports production, short-episode "
+        "and Editorial-render publications"
     )
 
 
