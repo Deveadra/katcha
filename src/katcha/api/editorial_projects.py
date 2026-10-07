@@ -3,8 +3,9 @@ from __future__ import annotations
 import tempfile
 import uuid
 from pathlib import Path
+from urllib.parse import quote
 
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, HTTPException, Query, Request, Response
 from sqlalchemy import select
 from starlette.concurrency import run_in_threadpool
 
@@ -527,7 +528,8 @@ def storyboard_source_monitor(
     _authorize(request, channel_profile_id)
     try:
         result = source_monitor(channel_profile_id, project_id, run_id, candidate_id)
-        return {key: value for key, value in result.items() if key != "contact_sheet_key"}
+        hidden = {"contact_sheet_key", "storage_key"}
+        return {key: value for key, value in result.items() if key not in hidden}
     except ValueError as exc:
         raise _error(exc) from exc
 
@@ -555,6 +557,106 @@ def storyboard_source_monitor_image(
         )
     except ValueError as exc:
         raise _error(exc) from exc
+
+
+def _source_media_scope(
+    channel_profile_id: uuid.UUID,
+    project_id: uuid.UUID,
+    run_id: uuid.UUID,
+    candidate_id: str,
+) -> dict[str, str]:
+    return {
+        "kind": "editorial_source_media",
+        "channel_profile_id": str(channel_profile_id),
+        "project_id": str(project_id),
+        "run_id": str(run_id),
+        "candidate_id": candidate_id,
+    }
+
+
+@router.post(
+    "/{project_id}/runs/{run_id}/assets/{candidate_id}/source-media-session"
+)
+def storyboard_source_media_session(
+    channel_profile_id: uuid.UUID,
+    project_id: uuid.UUID,
+    run_id: uuid.UUID,
+    candidate_id: str,
+    request: Request,
+    response: Response,
+):
+    from katcha.editorial.source_monitor import source_monitor
+    from katcha.security.media_tickets import (
+        SOURCE_MEDIA_TICKET_TTL_SECONDS,
+        issue_media_ticket,
+    )
+    from katcha.security.secrets import SecretConfigurationError
+
+    _authorize(request, channel_profile_id)
+    try:
+        source_monitor(channel_profile_id, project_id, run_id, candidate_id)
+        scope = _source_media_scope(
+            channel_profile_id,
+            project_id,
+            run_id,
+            candidate_id,
+        )
+        token = issue_media_ticket(scope)
+        encoded_candidate = quote(candidate_id, safe="")
+        media_path = (
+            f"/v1/channels/{channel_profile_id}/editorial-projects/{project_id}"
+            f"/runs/{run_id}/assets/{encoded_candidate}/source-media"
+        )
+        response.set_cookie(
+            "katcha_editorial_source_media",
+            token,
+            max_age=SOURCE_MEDIA_TICKET_TTL_SECONDS,
+            httponly=True,
+            secure=get_settings().env == "production",
+            samesite="strict",
+            path=media_path,
+        )
+        return {
+            "media_url": media_path,
+            "expires_in_seconds": SOURCE_MEDIA_TICKET_TTL_SECONDS,
+        }
+    except (ValueError, SecretConfigurationError) as exc:
+        raise _error(exc) from exc
+
+
+@router.get(
+    "/{project_id}/runs/{run_id}/assets/{candidate_id}/source-media"
+)
+def storyboard_source_media(
+    channel_profile_id: uuid.UUID,
+    project_id: uuid.UUID,
+    run_id: uuid.UUID,
+    candidate_id: str,
+    request: Request,
+):
+    from katcha.api.studio import _stream_object
+    from katcha.editorial.source_monitor import source_monitor
+    from katcha.security.media_tickets import verify_media_ticket
+
+    scope = _source_media_scope(
+        channel_profile_id,
+        project_id,
+        run_id,
+        candidate_id,
+    )
+    try:
+        verify_media_ticket(
+            request.cookies.get("katcha_editorial_source_media", ""),
+            scope,
+        )
+        result = source_monitor(channel_profile_id, project_id, run_id, candidate_id)
+        return _stream_object(
+            request,
+            str(result["storage_key"]),
+            f"editorial-source-{result['clip_id']}.{result['extension']}",
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
 
 
 @router.get("/{project_id}/runs/{run_id}/frames/{shot_index}")
