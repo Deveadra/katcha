@@ -1,5 +1,11 @@
 import assert from 'node:assert/strict';
-import {validateEditorialManifest, containRect, sourceViewport} from '../src/editorial-contract.mjs';
+import {
+  EDITORIAL_MANIFEST_VERSIONS,
+  containRect,
+  isEditorialManifestVersion,
+  sourceViewport,
+  validateEditorialManifest,
+} from '../src/editorial-contract.mjs';
 
 export const fixture = {
   version: 'editorial-render-v1', project_id: 'test-project', revision: 1,
@@ -14,6 +20,15 @@ export const fixture = {
     uncertainty_disclosure: 'Unconfirmed theory', quote_source_id: null, quote_text: null, source_credit: null}],
 };
 assert.equal(validateEditorialManifest(fixture), fixture);
+assert.deepEqual(EDITORIAL_MANIFEST_VERSIONS, [
+  'editorial-render-v1',
+  'editorial-render-v2',
+  'editorial-render-v3',
+  'editorial-render-v4',
+  'editorial-render-v5',
+]);
+assert.equal(isEditorialManifestVersion('editorial-render-v5'), true);
+assert.equal(isEditorialManifestVersion('editorial-render-v6'), false);
 for (const mutate of [
   m => {m.media[0].url = 'https://example.com/unchecked.mp4';},
   m => {m.media[0].storage_key = '../private';},
