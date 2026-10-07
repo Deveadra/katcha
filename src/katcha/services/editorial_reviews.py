@@ -14,6 +14,7 @@ from katcha.editorial.review_schemas import ReviewEditorialRender
 from katcha.editorial.visual_schemas import EditorialRenderManifest
 from katcha.editorial_models import EditorialProject, EditorialRenderReview, EditorialRun
 from katcha.models import DomainEvent
+from katcha.publishing_models import Publication
 from katcha.services.channel_profiles import ensure_active_profile
 from katcha.services.editorial_projects import EditorialConflict, EditorialNotFound, _digest
 from katcha.services.editorial_runs import get_run
@@ -193,9 +194,23 @@ def review_status(channel_id: uuid.UUID, project_id: uuid.UUID, run_id: uuid.UUI
             except ValueError as exc:
                 blocker = str(exc)
                 status = "invalidated"
+        publication = session.scalar(
+            select(Publication).where(Publication.editorial_run_id == run_id)
+        )
         return {
             "status": status, "sequence": latest.sequence if latest else 0,
             "can_approve": can_approve, "blocker": blocker,
             "reviews": [_response(review) for review in reviews],
             "publication_available": publication_available,
+            "publication": (
+                {
+                    "id": str(publication.id),
+                    "status": publication.status,
+                    "stage": publication.stage,
+                    "title": publication.title,
+                    "youtube_video_id": publication.youtube_video_id,
+                }
+                if publication is not None
+                else None
+            ),
         }
