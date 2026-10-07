@@ -397,6 +397,7 @@ class DirectionResult(Contract):
         definitions = schema.get("$defs", {})
         provider_media = definitions.pop("DirectedMediaUse", None)
         if provider_media is not None:
+            provider_media["title"] = "VisualMediaUse"
             definitions["VisualMediaUse"] = provider_media
 
         def restore_ref(value):
