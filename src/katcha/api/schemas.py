@@ -348,9 +348,18 @@ class CreatePublicationRequest(BaseModel):
     hold_for_packaging: bool = False
 
 
-class CreateEditorialPublicationRequest(CreatePublicationRequest):
-    # Editorial publication always enters metadata hold before any provider mutation.
-    hold_for_packaging: Literal[True] = True
+class CreateEditorialPublicationRequest(BaseModel):
+    """Metadata-only Editorial handoff; channel/connection identity is server-derived."""
+
+    title: str = Field(min_length=1, max_length=100)
+    description: str = Field(default="", max_length=5000)
+    tags: list[str] = Field(default_factory=list, max_length=50)
+    category_id: str | None = Field(default=None, max_length=32)
+    privacy_status: Literal["private", "unlisted", "public"] = "private"
+    publish_at: datetime | None = None
+    notify_subscribers: bool = False
+    made_for_kids: bool = False
+    contains_synthetic_media: bool = False
 
 
 class StartPublicationRequest(BaseModel):
