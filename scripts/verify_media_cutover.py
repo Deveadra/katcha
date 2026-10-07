@@ -8,7 +8,6 @@ objects and never deletes target objects.
 from __future__ import annotations
 
 import argparse
-import os
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -124,7 +123,10 @@ def source_from_args(args: argparse.Namespace) -> StoreConfig:
     parsed = urlsplit(endpoint)
     if parsed.scheme not in {"http", "https"}:
         raise MediaCutoverError("source endpoint must use HTTP or HTTPS")
-    if parsed.hostname not in {"127.0.0.1", "localhost"} and not args.allow_remote_source:
+    if (
+        parsed.hostname not in {"127.0.0.1", "localhost"}
+        and not args.allow_remote_source
+    ):
         raise MediaCutoverError(
             "source endpoint must be loopback unless --allow-remote-source is explicit"
         )
@@ -157,7 +159,12 @@ def list_objects(client, bucket: str) -> list[ObjectRow]:
     return rows
 
 
-def build_plan(source_client, target_client, source: StoreConfig, target: StoreConfig) -> CopyPlan:
+def build_plan(
+    source_client,
+    target_client,
+    source: StoreConfig,
+    target: StoreConfig,
+) -> CopyPlan:
     source_rows = list_objects(source_client, source.bucket)
     copy_rows: list[ObjectRow] = []
     present = 0
@@ -186,7 +193,13 @@ def build_plan(source_client, target_client, source: StoreConfig, target: StoreC
     )
 
 
-def copy_object(source_client, target_client, source: StoreConfig, target: StoreConfig, row: ObjectRow) -> None:
+def copy_object(
+    source_client,
+    target_client,
+    source: StoreConfig,
+    target: StoreConfig,
+    row: ObjectRow,
+) -> None:
     response = source_client.get_object(Bucket=source.bucket, Key=row.key)
     body = response["Body"]
     extra: dict[str, str] = {}
@@ -204,17 +217,26 @@ def copy_object(source_client, target_client, source: StoreConfig, target: Store
     if isinstance(metadata, dict) and metadata:
         extra["Metadata"] = metadata
     try:
-        target_client.upload_fileobj(
-            body,
-            target.bucket,
-            row.key,
-            ExtraArgs=extra or None,
-        )
+        if extra:
+            target_client.upload_fileobj(
+                body,
+                target.bucket,
+                row.key,
+                ExtraArgs=extra,
+            )
+        else:
+            target_client.upload_fileobj(
+                body,
+                target.bucket,
+                row.key,
+            )
     finally:
         body.close()
     head = target_client.head_object(Bucket=target.bucket, Key=row.key)
     if int(head.get("ContentLength") or -1) != row.size:
-        raise MediaCutoverError(f"target size verification failed after copy: {row.key}")
+        raise MediaCutoverError(
+            f"target size verification failed after copy: {row.key}"
+        )
 
 
 def human_bytes(value: int) -> str:
