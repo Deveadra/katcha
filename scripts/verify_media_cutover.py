@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -139,6 +140,63 @@ def source_from_args(args: argparse.Namespace) -> StoreConfig:
         region=args.source_region,
         force_path_style=True,
     )
+
+
+def assert_source_frozen(repo_root: Path) -> None:
+    def run(argv: list[str]) -> subprocess.CompletedProcess[str]:
+        result = subprocess.run(
+            argv,
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if result.returncode:
+            detail = result.stderr.strip() or f"exit {result.returncode}"
+            raise MediaCutoverError(
+                f"local Docker inspection failed for {' '.join(argv)}: {detail}"
+            )
+        return result
+
+    minio = run(["docker", "compose", "ps", "-q", "minio"]).stdout.strip()
+    minio_ids = [line.strip() for line in minio.splitlines() if line.strip()]
+    if len(minio_ids) != 1:
+        raise MediaCutoverError(
+            "expected exactly one local Katcha MinIO container for media handoff"
+        )
+
+    project = run(
+        [
+            "docker",
+            "inspect",
+            "--format",
+            '{{ index .Config.Labels "com.docker.compose.project" }}',
+            minio_ids[0],
+        ]
+    ).stdout.strip()
+    if not project:
+        raise MediaCutoverError("local MinIO container has no Compose project label")
+
+    services = run(
+        [
+            "docker",
+            "ps",
+            "--filter",
+            f"label=com.docker.compose.project={project}",
+            "--format",
+            '{{.Label "com.docker.compose.service"}}',
+        ]
+    ).stdout.splitlines()
+    unsafe = sorted(
+        service.strip()
+        for service in services
+        if service.strip() and service.strip() not in {"postgres", "minio"}
+    )
+    if unsafe:
+        raise MediaCutoverError(
+            "local media source is not frozen; running mutating services: "
+            + ", ".join(unsafe)
+        )
 
 
 def list_objects(client, bucket: str) -> list[ObjectRow]:
@@ -296,9 +354,12 @@ def main() -> int:
     parser.add_argument("--source-bucket", default="katcha-media")
     parser.add_argument("--source-region", default="us-east-1")
     parser.add_argument("--allow-remote-source", action="store_true")
+    parser.add_argument("--repo-root", default=".")
     args = parser.parse_args()
 
     try:
+        if args.apply:
+            assert_source_frozen(Path(args.repo_root).resolve())
         source = source_from_args(args)
         target = target_from_env(Path(args.production_env))
         source_client = source.client()
