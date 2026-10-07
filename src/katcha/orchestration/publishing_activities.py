@@ -304,8 +304,8 @@ def refresh_video_status_activity(publication_id: str) -> dict[str, object]:
             raise ValueError(f"publication not found: {publication_id}")
         if not publication.youtube_video_id:
             raise RuntimeError("publication has no YouTube video ID")
-        # Uploads are private until this stage. Recheck the exact source immediately
-        # before any public/unlisted/scheduled visibility mutation.
+        # The uploaded video is still private. Stop processing if the source has
+        # lost approval/clearance instead of advancing toward release.
         _publication_render_key(session, publication)
         video_id = publication.youtube_video_id
         connection_id = publication.youtube_connection_id
@@ -392,6 +392,8 @@ def finalize_publication_activity(publication_id: str) -> dict[str, object]:
             raise ValueError(f"publication not found: {publication_id}")
         if not publication.youtube_video_id:
             raise RuntimeError("publication has no YouTube video ID")
+        # Recheck at the last possible boundary before changing provider visibility.
+        _publication_render_key(session, publication)
         video_id = publication.youtube_video_id
         connection_id = publication.youtube_connection_id
         publish_at = publication.publish_at
