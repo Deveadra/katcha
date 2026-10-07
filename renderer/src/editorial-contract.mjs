@@ -11,15 +11,67 @@ export const EDITORIAL_MANIFEST_VERSIONS = Object.freeze([
   'editorial-render-v3',
   'editorial-render-v4',
   'editorial-render-v5',
+  'editorial-render-v6',
 ]);
 
 export const isEditorialManifestVersion = (value) =>
   EDITORIAL_MANIFEST_VERSIONS.includes(value);
 
+const brandColor = (value) =>
+  typeof value === 'string' && /^#[0-9a-fA-F]{6}$/.test(value);
+
+const validateBrand = (brand) => {
+  check(brand && text(brand.brand_key, 128) && integer(brand.version, 1, Number.MAX_SAFE_INTEGER), 'brand identity');
+  check(text(brand.theme_key, 128), 'brand theme');
+  check(brand.palette && ['ink', 'paper', 'signal_blue', 'hot_peach', 'volt'].every(role => brandColor(brand.palette[role])), 'brand palette');
+  const captions = brand.captions;
+  check(
+    captions
+      && text(captions.treatment_key, 128)
+      && text(captions.font_family, 200)
+      && integer(captions.font_size_px, 32, 120)
+      && integer(captions.font_weight, 400, 1000)
+      && integer(captions.max_visual_lines, 1, 3)
+      && integer(captions.bottom_safe_zone_px, 120, 600),
+    'brand captions',
+  );
+  const motion = brand.motion;
+  check(
+    motion
+      && text(motion.treatment_key, 128)
+      && number(motion.max_punch_scale, 1, 1.2)
+      && integer(motion.freeze_frame_max_frames, 0, 30)
+      && typeof motion.random_motion_enabled === 'boolean',
+    'brand motion',
+  );
+  const endCard = brand.end_card;
+  check(
+    endCard
+      && text(endCard.treatment_key, 128)
+      && ['signal_blue', 'hot_peach', 'volt'].includes(endCard.accent_role)
+      && integer(endCard.max_question_lines, 1, 4)
+      && (endCard.label == null || text(endCard.label, 80)),
+    'brand end card',
+  );
+  const logo = brand.logo;
+  check(
+    logo
+      && typeof logo.enabled === 'boolean'
+      && number(logo.x_percent, 0, 100)
+      && number(logo.y_percent, 0, 100)
+      && number(logo.width_percent, 3, 40)
+      && number(logo.opacity, 0.1, 1)
+      && !('url' in logo),
+    'brand logo',
+  );
+  if (logo.storage_key != null) check(key(logo.storage_key), 'brand logo key');
+  if (logo.enabled) check(text(logo.storage_key, 1000), 'enabled brand logo');
+};
+
 export const validateEditorialManifest = (manifest) => {
   check(isEditorialManifestVersion(manifest?.version), 'version');
   const narrated = manifest.presentation_mode === 'narrated';
-  check(['editorial-render-v3', 'editorial-render-v4', 'editorial-render-v5'].includes(manifest.version) || narrated === (manifest.version === 'editorial-render-v2'), 'version presentation');
+  check(['editorial-render-v3', 'editorial-render-v4', 'editorial-render-v5', 'editorial-render-v6'].includes(manifest.version) || narrated === (manifest.version === 'editorial-render-v2'), 'version presentation');
   check(manifest.presentation_mode === (narrated ? 'narrated' : 'captioned_silent') && manifest.requires_editorial_review === true, 'presentation and review');
   check(narrated ? Array.isArray(manifest.narration) && manifest.narration.length > 0 && manifest.narration.length <= 100 : !manifest.narration?.length, 'narration mode');
   const narration = new Map();
@@ -33,6 +85,8 @@ export const validateEditorialManifest = (manifest) => {
   check(manifest.width === 1920 && manifest.height === 1080 && manifest.fps === 30, 'dimensions');
   check(text(manifest.project_id, 100) && integer(manifest.revision, 1, Number.MAX_SAFE_INTEGER), 'lineage');
   check(/^[a-f0-9]{64}$/.test(manifest.draft_digest), 'draft digest');
+  if (manifest.version === 'editorial-render-v6') validateBrand(manifest.brand);
+  else check(manifest.brand == null, 'brand version');
   check(key(manifest.output_key) && manifest.output_key.startsWith(`editorial/${manifest.project_id}/${manifest.revision}/`) && /\/[a-f0-9]{64}\.mp4$/.test(manifest.output_key), 'output key');
   check(Array.isArray(manifest.media) && manifest.media.length <= 30, 'media');
   const assets = new Map();
@@ -45,7 +99,7 @@ export const validateEditorialManifest = (manifest) => {
   }
   const images = new Map();
   const imageVersion = ['editorial-render-v3', 'editorial-render-v4'].includes(manifest.version);
-  const flexibleImageVersion = manifest.version === 'editorial-render-v5';
+  const flexibleImageVersion = ['editorial-render-v5', 'editorial-render-v6'].includes(manifest.version);
   check(
     imageVersion
       ? Array.isArray(manifest.images) && manifest.images.length > 0 && manifest.images.length <= 100
@@ -79,7 +133,7 @@ export const validateEditorialManifest = (manifest) => {
     const imageLayout = ['image', 'image_comparison'].includes(scene.layout);
     const imageIds = scene.layout === 'image' ? [scene.image_id] : (scene.image_ids || []);
     if (scene.layout === 'image_comparison') {
-      check(['editorial-render-v4', 'editorial-render-v5'].includes(manifest.version) && Array.isArray(scene.image_ids) && imageIds.length === 2 && new Set(imageIds).size === 2 && !scene.image_id, 'image comparison');
+      check(['editorial-render-v4', 'editorial-render-v5', 'editorial-render-v6'].includes(manifest.version) && Array.isArray(scene.image_ids) && imageIds.length === 2 && new Set(imageIds).size === 2 && !scene.image_id, 'image comparison');
     } else check(!scene.image_ids?.length, 'unexpected image comparison');
     if (imageLayout) {
       check(number(scene.image_push_in, 1, 1.15), 'image motion');
@@ -100,7 +154,7 @@ export const validateEditorialManifest = (manifest) => {
       check(use.start_seconds + (use.freeze ? 0 : scene.duration_frames / 30 * use.playback_rate) <= asset.duration_seconds + 1e-6, 'source end');
     }
     check(Array.isArray(scene.overlays) && scene.overlays.length <= 8, 'annotations');
-    if (imageLayout && scene.overlays.length) check(['editorial-render-v4', 'editorial-render-v5'].includes(manifest.version), 'image annotation version');
+    if (imageLayout && scene.overlays.length) check(['editorial-render-v4', 'editorial-render-v5', 'editorial-render-v6'].includes(manifest.version), 'image annotation version');
     for (const overlay of scene.overlays) {
       check(['circle', 'arrow', 'highlight'].includes(overlay.kind) && integer(overlay.media_index, 0, (imageLayout ? imageIds.length : scene.media.length) - 1), 'annotation target');
       const r = overlay.region;
@@ -130,7 +184,7 @@ export const validateEditorialManifest = (manifest) => {
       || scene.transition != null
       || scene.media.some(use => use.crop != null)
   );
-  check(!advancedEdits || manifest.version === 'editorial-render-v5', 'professional edit version');
+  check(!advancedEdits || ['editorial-render-v5', 'editorial-render-v6'].includes(manifest.version), 'professional edit version');
   check(usedImages.size === images.size, 'image coverage');
   check(!narrated || (narration.size === beats.size && manifest.narration.every((audio, index) => audio.beat_id === manifest.timeline[index]?.beat_id)), 'narration coverage');
   check(cursor <= 108000 && Math.abs(cursor / 30 - manifest.output_duration_seconds) < 1e-6, 'duration');
