@@ -129,6 +129,11 @@ def test_approved_editorial_render_stages_publication_and_rechecks_clearance(
     assert replay.json()["id"] == publication["id"]
 
     reviews.current_manifest.side_effect = EditorialConflict("clearance revoked")
+    assert client.post(url, json=body).status_code == 409
+    assert client.post(
+        f"/v1/publications/{publication['id']}/start",
+        json={},
+    ).status_code == 409
     with db.session_scope() as session:
         stored = session.get(Publication, uuid.UUID(publication["id"]))
         with pytest.raises(RuntimeError, match="clearance revoked"):
