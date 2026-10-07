@@ -21,12 +21,17 @@ for directory in postgres handoff recovery backups-local; do
   fi
 done
 
+runtime_uid=10001
+for directory in   "${DATA_ROOT}/handoff"   "${DATA_ROOT}/handoff/incoming"   "${DATA_ROOT}/handoff/processed"   "${DATA_ROOT}/handoff/failed"   "${DATA_ROOT}/handoff/receipts"; do
+  install -d -o "${runtime_uid}" -g "${runtime_uid}" -m 0750 "${directory}"
+done
+
 if [[ ! -r /etc/katcha/aws/config ]]; then
   echo "Missing readable hosted AWS profile at /etc/katcha/aws/config; refusing to start." >&2
   exit 22
 fi
 
-renderer_uid=10001
+renderer_uid="${runtime_uid}"
 for directory in /etc/katcha/aws /etc/katcha/aws/runtime; do
   if [[ ! -d "$directory" || -L "$directory" ]]; then
     echo "Hosted AWS credential directory is missing or unsafe: $directory" >&2
