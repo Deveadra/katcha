@@ -359,11 +359,6 @@ def _setup_editorial_publication(
     with scope() as session:
         publication = session.get(Publication, publication_id)
         session.expunge(publication)
-    publication._test_lineage = {
-        "run_id": run_id,
-        "project_id": project_id,
-        "profile_id": profile_id,
-    }
     return publication, parent
 
 
