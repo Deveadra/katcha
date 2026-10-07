@@ -365,8 +365,11 @@ def main() -> int:
         source_client = source.client()
         target_client = target.client()
 
-        source_client.head_bucket(Bucket=source.bucket)
-        target_client.head_bucket(Bucket=target.bucket)
+        # Use object-list access rather than HeadBucket. Production R2 credentials
+        # are intentionally bucket-scoped Object Read & Write credentials; they
+        # can list/read/write objects without bucket-administration permission.
+        source_client.list_objects_v2(Bucket=source.bucket, MaxKeys=1)
+        target_client.list_objects_v2(Bucket=target.bucket, MaxKeys=1)
 
         plan = build_plan(source_client, target_client, source, target)
         print(
