@@ -366,6 +366,19 @@ def test_fence_unauthorized_blocks_inspect_before_runtime_or_epoch_prepare(
     assert requests == ["GET https://recovery.example/v1/authority/status"]
 
 
+def test_remote_inspect_authenticates_hosted_fence_before_reporting_ready() -> None:
+    script = cutover.REMOTE_INSPECT
+
+    assert "KATCHA_LEADERSHIP_FENCE_URL" in script
+    assert "KATCHA_LEADERSHIP_FENCE_TOKEN" in script
+    assert "preflight.auth-only" in script
+    assert "HOST_FENCE_CREDENTIAL_OK" in script
+    assert script.index("HOST_FENCE_CREDENTIAL_OK") < script.index(
+        "HOST_CUTOVER_STATE_READY"
+    )
+    assert "print(token)" not in script
+
+
 def test_precommit_rollback_leaves_only_postgres_for_safe_retry() -> None:
     script = cutover.REMOTE_STOP
 
