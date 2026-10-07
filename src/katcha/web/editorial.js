@@ -647,12 +647,12 @@ window.KatchaEditorial = (() => {
     function money(value) {
         if (value == null || value === "") return "—";
         const number = Number(value);
-        return Number.isFinite(number) ? \`$\${number.toFixed(2)}\` : "—";
+        return Number.isFinite(number) ? `$${number.toFixed(2)}` : "—";
     }
     function percentage(value) {
         if (value == null || value === "") return "—";
         const number = Number(value);
-        return Number.isFinite(number) ? \`\${(number * 100).toFixed(1)}%\` : "—";
+        return Number.isFinite(number) ? `${(number * 100).toFixed(1)}%` : "—";
     }
     function renderPerformanceOutcome() {
         const panel = el("editorial-performance");
@@ -665,7 +665,7 @@ window.KatchaEditorial = (() => {
         if (result.error) {
             stateLabel.textContent = "UNAVAILABLE";
             metrics.innerHTML = "";
-            note.textContent = \`Performance could not be read: \${result.error}\`;
+            note.textContent = `Performance could not be read: ${result.error}`;
             return;
         }
         stateLabel.textContent = String(result.measurement_state || "waiting")
@@ -686,14 +686,14 @@ window.KatchaEditorial = (() => {
         const economics = result.economics || {};
         const variant = result.packaging_variant;
         metrics.innerHTML = [
-            \`<span><strong>\${esc(analytics.views ?? "—")}</strong> views</span>\`,
-            \`<span><strong>\${esc(percentage(reach.ctr))}</strong> CTR</span>\`,
-            \`<span><strong>\${esc(percentage(retention.audience_watch_ratio))}</strong> at 50%</span>\`,
-            \`<span><strong>\${esc(money(economics.estimated_revenue_usd))}</strong> revenue</span>\`,
-            \`<span><strong>\${esc(money(economics.contribution_margin_usd))}</strong> margin</span>\`,
+            `<span><strong>${esc(analytics.views ?? "—")}</strong> views</span>`,
+            `<span><strong>${esc(percentage(reach.ctr))}</strong> CTR</span>`,
+            `<span><strong>${esc(percentage(retention.audience_watch_ratio))}</strong> at 50%</span>`,
+            `<span><strong>${esc(money(economics.estimated_revenue_usd))}</strong> revenue</span>`,
+            `<span><strong>${esc(money(economics.contribution_margin_usd))}</strong> margin</span>`,
         ].join("");
         note.textContent = variant
-            ? \`Latest attributed package: \${variant.variant_key} v\${variant.version} · \${variant.title}\`
+            ? `Latest attributed package: ${variant.variant_key} v${variant.version} · ${variant.title}`
             : "No exact packaging variant is attributed to the latest reach observation yet.";
     }
 
