@@ -12,7 +12,11 @@ class CloudflareEdgeError(RuntimeError):
     pass
 
 
-Phase = Literal[\n    "http_config_settings",\n    "http_request_firewall_custom",\n    "http_ratelimit",\n]
+Phase = Literal[
+    "http_config_settings",
+    "http_request_firewall_custom",
+    "http_ratelimit",
+]
 
 _CONFIG_PHASE: Phase = "http_config_settings"
 _CUSTOM_PHASE: Phase = "http_request_firewall_custom"
@@ -172,7 +176,6 @@ class CloudflareRulesetsClient:
         )
         assert result is not None
         return result
-
 
 
 def _config_rules(config: CloudflareEdgeConfig) -> list[dict[str, Any]]:
