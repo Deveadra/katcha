@@ -5,8 +5,19 @@ const integer = (value, min, max = 108000) => Number.isInteger(value) && number(
 const text = (value, max) => typeof value === 'string' && value.length > 0 && value.length <= max;
 const key = (value) => text(value, 1000) && !/[:\\\x00-\x1f]/.test(value) && !value.startsWith('/') && !value.split('/').some(part => part === '..' || part === '.');
 
+export const EDITORIAL_MANIFEST_VERSIONS = Object.freeze([
+  'editorial-render-v1',
+  'editorial-render-v2',
+  'editorial-render-v3',
+  'editorial-render-v4',
+  'editorial-render-v5',
+]);
+
+export const isEditorialManifestVersion = (value) =>
+  EDITORIAL_MANIFEST_VERSIONS.includes(value);
+
 export const validateEditorialManifest = (manifest) => {
-  check(['editorial-render-v1', 'editorial-render-v2', 'editorial-render-v3', 'editorial-render-v4', 'editorial-render-v5'].includes(manifest?.version), 'version');
+  check(isEditorialManifestVersion(manifest?.version), 'version');
   const narrated = manifest.presentation_mode === 'narrated';
   check(['editorial-render-v3', 'editorial-render-v4', 'editorial-render-v5'].includes(manifest.version) || narrated === (manifest.version === 'editorial-render-v2'), 'version presentation');
   check(manifest.presentation_mode === (narrated ? 'narrated' : 'captioned_silent') && manifest.requires_editorial_review === true, 'presentation and review');
