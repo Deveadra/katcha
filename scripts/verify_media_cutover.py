@@ -199,6 +199,12 @@ def assert_source_frozen(repo_root: Path) -> None:
         )
 
 
+def assert_object_access(client, bucket: str) -> None:
+    # Object-scoped R2 credentials can list/read/write objects without bucket
+    # administration permission, so do not probe with HeadBucket here.
+    client.list_objects_v2(Bucket=bucket, MaxKeys=1)
+
+
 def list_objects(client, bucket: str) -> list[ObjectRow]:
     rows: list[ObjectRow] = []
     paginator = client.get_paginator("list_objects_v2")
@@ -365,11 +371,8 @@ def main() -> int:
         source_client = source.client()
         target_client = target.client()
 
-        # Use object-list access rather than HeadBucket. Production R2 credentials
-        # are intentionally bucket-scoped Object Read & Write credentials; they
-        # can list/read/write objects without bucket-administration permission.
-        source_client.list_objects_v2(Bucket=source.bucket, MaxKeys=1)
-        target_client.list_objects_v2(Bucket=target.bucket, MaxKeys=1)
+        assert_object_access(source_client, source.bucket)
+        assert_object_access(target_client, target.bucket)
 
         plan = build_plan(source_client, target_client, source, target)
         print(
