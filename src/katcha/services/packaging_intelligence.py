@@ -21,7 +21,7 @@ from katcha.integrations.youtube.analytics import (
 from katcha.integrations.youtube.oauth import MONETARY_SCOPE
 from katcha.intelligence_models import ChannelProfile
 from katcha.longform_models import Compilation
-from katcha.models import DomainEvent, UsageEvent
+from katcha.models import DomainEvent
 from katcha.packaging_intelligence_models import (
     PackagingIntelligenceSnapshot,
     PackagingVariantPerformanceWindow,
@@ -34,6 +34,7 @@ from katcha.publishing_models import (
     YouTubeConnection,
 )
 from katcha.reach_models import PublicationReachObservation
+from katcha.services.editorial_costs import editorial_project_usage_cost
 from katcha.short_episode_models import ShortEpisode
 
 _DEFAULT_MATURITY_DAYS = 7
@@ -113,28 +114,6 @@ def _compilation_cost(session: object, source: Compilation) -> Decimal:
     return total
 
 
-def _editorial_cost(session: object, source: EditorialRun) -> Decimal:
-    run_ids = [
-        str(value)
-        for value in session.scalars(
-            select(EditorialRun.id).where(EditorialRun.project_id == source.project_id)
-        )
-    ]
-    project_cost = session.scalar(
-        select(func.coalesce(func.sum(UsageEvent.cost_usd), 0)).where(
-            UsageEvent.reference_type == "editorial_project",
-            UsageEvent.reference_id == str(source.project_id),
-        )
-    )
-    run_cost = session.scalar(
-        select(func.coalesce(func.sum(UsageEvent.cost_usd), 0)).where(
-            UsageEvent.reference_type == "editorial_run",
-            UsageEvent.reference_id.in_(run_ids),
-        )
-    )
-    return Decimal(str(project_cost or 0)) + Decimal(str(run_cost or 0))
-
-
 def _publication_cost(session: object, publication: Publication) -> Decimal:
     if publication.production_id is not None:
         source = session.get(Production, publication.production_id)
@@ -146,8 +125,20 @@ def _publication_cost(session: object, publication: Publication) -> Decimal:
         source = session.get(Compilation, publication.compilation_id)
         return _compilation_cost(session, source) if source is not None else Decimal("0")
     if publication.editorial_run_id is not None:
+        frozen = (publication.treatment_metadata or {}).get(
+            "source_cost_usd_at_registration"
+        )
+        if frozen is not None:
+            value = _decimal(frozen)
+            if value is None or value < 0:
+                raise ValueError("Editorial publication has an invalid frozen source cost")
+            return value
         source = session.get(EditorialRun, publication.editorial_run_id)
-        return _editorial_cost(session, source) if source is not None else Decimal("0")
+        return (
+            editorial_project_usage_cost(session, source.project_id)
+            if source is not None
+            else Decimal("0")
+        )
     return Decimal("0")
 
 
