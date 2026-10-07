@@ -2,8 +2,8 @@
 
 import importlib.util
 import uuid
-from datetime import UTC, datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor
+from datetime import UTC, datetime, timedelta
 from threading import Barrier
 from unittest.mock import Mock
 
@@ -24,8 +24,8 @@ from katcha.models import DomainEvent
 from katcha.orchestration import publishing_activities
 from katcha.publishing_models import Publication, YouTubeConnection
 from katcha.services import editorial_reviews as reviews
-from katcha.services.packaging_generation import compile_packaging_context
 from katcha.services.editorial_projects import EditorialConflict
+from katcha.services.packaging_generation import compile_packaging_context
 
 saved = _saved
 
