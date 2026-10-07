@@ -1,0 +1,215 @@
+from __future__ import annotations
+
+import io
+from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
+from botocore.exceptions import ClientError
+
+from scripts import verify_media_cutover as media
+
+
+class FakePaginator:
+    def __init__(self, rows: list[dict[str, object]]) -> None:
+        self.rows = rows
+
+    def paginate(self, **_kwargs):
+        yield {"Contents": self.rows}
+
+
+class FakeClient:
+    def __init__(
+        self,
+        *,
+        listed: list[dict[str, object]] | None = None,
+        heads: dict[str, int] | None = None,
+        bodies: dict[str, bytes] | None = None,
+    ) -> None:
+        self.listed = listed or []
+        self.heads = heads or {}
+        self.bodies = bodies or {}
+
+    def get_paginator(self, name: str):
+        assert name == "list_objects_v2"
+        return FakePaginator(self.listed)
+
+    def head_object(self, *, Bucket: str, Key: str):
+        del Bucket
+        if Key not in self.heads:
+            raise ClientError(
+                {
+                    "Error": {"Code": "404", "Message": "missing"},
+                    "ResponseMetadata": {"HTTPStatusCode": 404},
+                },
+                "HeadObject",
+            )
+        return {"ContentLength": self.heads[Key]}
+
+    def get_object(self, *, Bucket: str, Key: str):
+        del Bucket
+        if Key not in self.bodies:
+            raise AssertionError(f"missing fake body for {Key}")
+        return {"Body": io.BytesIO(self.bodies[Key])}
+
+
+def _store(bucket: str) -> media.StoreConfig:
+    return media.StoreConfig(
+        endpoint_url="https://example.invalid",
+        access_key="access",
+        secret_key="secret",
+        bucket=bucket,
+        region="auto",
+        force_path_style=False,
+    )
+
+
+def test_build_plan_copies_only_missing_or_size_mismatched_objects() -> None:
+    source = FakeClient(
+        listed=[
+            {"Key": "raw/a.mp4", "Size": 10, "ETag": '"a"'},
+            {"Key": "raw/b.mp4", "Size": 20, "ETag": '"b"'},
+            {"Key": "raw/c.mp4", "Size": 30, "ETag": '"c"'},
+        ],
+        bodies={"raw/a.mp4": b"a" * 10},
+    )
+    target = FakeClient(
+        heads={
+            "raw/a.mp4": 10,
+            "raw/b.mp4": 999,
+        },
+        bodies={"raw/a.mp4": b"a" * 10},
+    )
+
+    plan = media.build_plan(
+        source,
+        target,
+        _store("katcha-media"),
+        _store("katcha-media-prod"),
+    )
+
+    assert plan.total_source_objects == 3
+    assert plan.total_source_bytes == 60
+    assert plan.already_present_objects == 1
+    assert [row.key for row in plan.copy_objects] == [
+        "raw/b.mp4",
+        "raw/c.mp4",
+    ]
+    assert plan.copy_bytes == 50
+
+
+def test_build_plan_copies_same_size_content_mismatch() -> None:
+    source = FakeClient(
+        listed=[
+            {"Key": "raw/a.mp4", "Size": 10, "ETag": '"source"'},
+        ],
+        bodies={"raw/a.mp4": b"a" * 10},
+    )
+    target = FakeClient(
+        heads={"raw/a.mp4": 10},
+        bodies={"raw/a.mp4": b"b" * 10},
+    )
+
+    plan = media.build_plan(
+        source,
+        target,
+        _store("katcha-media"),
+        _store("katcha-media-prod"),
+    )
+
+    assert plan.already_present_objects == 0
+    assert [row.key for row in plan.copy_objects] == ["raw/a.mp4"]
+
+
+def _mock_media_source_docker(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    services: str,
+) -> None:
+    def run(argv, **_kwargs):
+        if argv[:5] == ["docker", "compose", "ps", "-q", "minio"]:
+            stdout = "minio-cid\n"
+        elif argv[:3] == ["docker", "inspect", "--format"]:
+            stdout = "katcha\n"
+        elif argv[:2] == ["docker", "ps"]:
+            assert "label=com.docker.compose.project=katcha" in argv
+            stdout = services
+        else:
+            raise AssertionError(f"unexpected Docker command: {argv}")
+        return media.subprocess.CompletedProcess(
+            args=argv,
+            returncode=0,
+            stdout=stdout,
+            stderr="",
+        )
+
+    monkeypatch.setattr(media.subprocess, "run", run)
+
+
+def test_media_apply_freeze_allows_only_postgres_and_minio(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _mock_media_source_docker(
+        monkeypatch,
+        services="postgres\nminio\n",
+    )
+
+    media.assert_source_frozen(tmp_path)
+
+
+def test_media_apply_freeze_rejects_running_worker(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _mock_media_source_docker(
+        monkeypatch,
+        services="postgres\nworker\nminio\n",
+    )
+
+    with pytest.raises(media.MediaCutoverError, match="worker"):
+        media.assert_source_frozen(tmp_path)
+
+
+def test_target_env_requires_expected_production_r2_bucket(tmp_path: Path) -> None:
+    env = tmp_path / "katcha.env"
+    env.write_text(
+        "\n".join(
+            [
+                "KATCHA_S3_ENDPOINT_URL=https://abc.r2.cloudflarestorage.com",
+                "KATCHA_S3_ACCESS_KEY=access",
+                "KATCHA_S3_SECRET_KEY=secret",
+                "KATCHA_S3_BUCKET=wrong-bucket",
+                "KATCHA_S3_REGION=auto",
+                "KATCHA_S3_FORCE_PATH_STYLE=false",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(
+        media.MediaCutoverError,
+        match="unexpected production media bucket",
+    ):
+        media.target_from_env(env)
+
+
+def test_source_defaults_fail_closed_for_non_loopback_endpoint() -> None:
+    args = SimpleNamespace(
+        source_endpoint="http://192.0.2.50:9000",
+        source_access_key="katcha",
+        source_secret_key="secret",
+        source_bucket="katcha-media",
+        source_region="us-east-1",
+        allow_remote_source=False,
+    )
+
+    with pytest.raises(media.MediaCutoverError, match="must be loopback"):
+        media.source_from_args(args)
+
+
+def test_human_bytes_is_stable() -> None:
+    assert media.human_bytes(0) == "0.0 B"
+    assert media.human_bytes(1024) == "1.0 KiB"
+    assert media.human_bytes(1024 * 1024) == "1.0 MiB"
