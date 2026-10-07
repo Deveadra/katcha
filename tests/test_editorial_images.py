@@ -142,7 +142,8 @@ def test_image_only_render_compiles_and_revocation_blocks(still):
     first = upload(still)
     storyboard = plan(first["id"])
     manifest = compile_project_visuals(channel, project, 1, None, storyboard)
-    assert manifest.version == "editorial-render-v3"
+    assert manifest.version == "editorial-render-v6"
+    assert manifest.brand is not None
     assert manifest.images[0].illustration is True
     assert manifest.output_duration_seconds == 8
     assert compile_project_visuals(channel, project, 1, None, storyboard) == manifest
@@ -268,7 +269,8 @@ def test_narrated_image_render_and_approval_revocation(still, monkeypatch):
     )
     assert render_project(str(run.id), 1)["status"] == "completed"
     manifest = compile_project_visuals(channel, project, 1, None, storyboard)
-    assert manifest.version == "editorial-render-v3"
+    assert manifest.version == "editorial-render-v6"
+    assert manifest.brand is not None
     assert manifest.output_duration_seconds == 61 / 30
     review_render(
         channel,
@@ -313,7 +315,8 @@ def test_comparison_annotations_compile_both_receipts_and_revoke(still):
         ],
     )
     result = compile_project_visuals(channel, project, 1, None, storyboard)
-    assert result.version == "editorial-render-v4"
+    assert result.version == "editorial-render-v6"
+    assert result.brand is not None
     assert [image.image_id for image in result.images] == [first["id"], second["id"]]
     assert EditorialRenderManifest.model_validate_json(result.model_dump_json()) == result
     assert result.timeline[0].overlays[0].media_index == 1
@@ -346,11 +349,12 @@ def test_single_image_annotation_versions_without_changing_old_serialization(sti
     annotated = compile_project_visuals(
         channel, project, 1, None, StoryboardPlan.model_validate(data)
     )
-    assert annotated.version == "editorial-render-v4"
+    assert annotated.version == "editorial-render-v6"
+    legacy = annotated.model_dump()
+    legacy.pop("brand", None)
+    legacy["version"] = "editorial-render-v3"
     with pytest.raises(ValidationError, match="version 4"):
-        EditorialRenderManifest.model_validate(
-            {**annotated.model_dump(), "version": "editorial-render-v3"}
-        )
+        EditorialRenderManifest.model_validate(legacy)
     assert compile_project_visuals(channel, project, 1, None, storyboard) == original
 
 
