@@ -39,7 +39,7 @@ export const validateEditorialManifest = (manifest) => {
     imageVersion
       ? Array.isArray(manifest.images) && manifest.images.length > 0 && manifest.images.length <= 100
       : flexibleImageVersion
-        ? Array.isArray(manifest.images) && manifest.images.length <= 100
+        ? manifest.images == null || (Array.isArray(manifest.images) && manifest.images.length <= 100)
         : !manifest.images?.length,
     'image version',
   );
