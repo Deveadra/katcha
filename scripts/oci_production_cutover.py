@@ -23,6 +23,9 @@ class CutoverError(RuntimeError):
     pass
 
 
+PUBLIC_HEALTH_USER_AGENT = "Mozilla/5.0 (Katcha Health Check)"
+
+
 def read_env(path: Path) -> dict[str, str]:
     values: dict[str, str] = {}
     if not path.exists():
@@ -315,13 +318,27 @@ def wait_public_health(url: str, attempts: int = 60) -> None:
             request = urllib.request.Request(
                 url,
                 method="GET",
-                headers={"Accept": "application/json"},
+                headers={
+                    "Accept": "application/json",
+                    # Cloudflare may reject Python urllib's default client
+                    # signature before the request ever reaches the Tunnel.
+                    # Use the same explicit browser-compatible signature as the
+                    # operator health probe while keeping the endpoint itself
+                    # unauthenticated.
+                    "User-Agent": PUBLIC_HEALTH_USER_AGENT,
+                    "Cache-Control": "no-cache",
+                },
             )
             with urllib.request.urlopen(request, timeout=8) as response:
                 if 200 <= response.status < 300:
                     response.read()
                     return
                 last = f"HTTP {response.status}"
+        except urllib.error.HTTPError as exc:
+            detail = exc.read(4096).decode(errors="replace").strip()
+            last = f"HTTP {exc.code}"
+            if detail:
+                last += f": {detail}"
         except (urllib.error.URLError, TimeoutError, OSError) as exc:
             last = str(exc)
         time.sleep(2)
