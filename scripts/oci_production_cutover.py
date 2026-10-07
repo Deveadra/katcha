@@ -39,7 +39,11 @@ def read_env(path: Path) -> dict[str, str]:
     return values
 
 
-def required_value(name: str, local_env: dict[str, str], fallback_file: Path | None = None) -> str:
+def required_value(
+    name: str,
+    local_env: dict[str, str],
+    fallback_file: Path | None = None,
+) -> str:
     value = os.environ.get(name, "").strip() or local_env.get(name, "").strip()
     if not value and fallback_file and fallback_file.is_file():
         value = fallback_file.read_text(encoding="utf-8").strip()
@@ -157,7 +161,11 @@ def package_snapshot(snapshot_dir: Path, archive: Path) -> None:
             raise CutoverError(f"invalid databases.tsv row: {raw!r}")
         filename = parts[0]
         candidate = Path(filename)
-        if candidate.is_absolute() or candidate.name != filename or not filename.endswith(".dump"):
+        if (
+            candidate.is_absolute()
+            or candidate.name != filename
+            or not filename.endswith(".dump")
+        ):
             raise CutoverError(f"unsafe dump filename: {filename!r}")
         databases.append(filename)
     if not databases:
@@ -230,7 +238,11 @@ def wait_public_health(url: str, attempts: int = 60) -> None:
     last = "not attempted"
     for _ in range(attempts):
         try:
-            request = urllib.request.Request(url, method="GET", headers={"Accept": "application/json"})
+            request = urllib.request.Request(
+                url,
+                method="GET",
+                headers={"Accept": "application/json"},
+            )
             with urllib.request.urlopen(request, timeout=8) as response:
                 if 200 <= response.status < 300:
                     response.read()
