@@ -154,7 +154,14 @@ terraform -chdir=infra/cloudflare-edge apply
 
 Supply `cloudflare_api_token` securely rather than committing it.
 
-Then apply the Katcha-owned WAF/rate-limit rules:
+The separate `CLOUDFLARE_API_TOKEN` used by `katcha.ops.cloudflare_edge`
+must have the zone permissions needed by every managed phase. In addition to
+the existing Zone WAF write access for custom/rate-limit rules, the health-probe
+configuration rule requires **Config Settings Write** so Katcha can disable
+Browser Integrity Check only for the exact public health paths. Do not disable
+Browser Integrity Check globally.
+
+Then apply the Katcha-owned WAF/rate-limit/configuration rules:
 
 ```bash
 export CLOUDFLARE_ZONE_ID='<zone-id>'
