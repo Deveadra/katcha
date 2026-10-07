@@ -13,12 +13,7 @@ from temporalio.exceptions import ApplicationError
 
 from katcha.config import get_settings
 from katcha.db import session_scope
-from katcha.domain import (
-    CompilationStatus,
-    ProductionStatus,
-    PublicationStatus,
-    YouTubeConnectionStatus,
-)
+from katcha.domain import PublicationStatus, YouTubeConnectionStatus
 from katcha.integrations.storage import ObjectStore
 from katcha.integrations.youtube.analytics import (
     YouTubeAnalyticsError,
@@ -32,9 +27,7 @@ from katcha.integrations.youtube.client import (
     read_chunk,
 )
 from katcha.integrations.youtube.oauth import MONETARY_SCOPE
-from katcha.longform_models import Compilation, CompilationAsset
 from katcha.models import DomainEvent
-from katcha.production_models import Production, ProductionAsset
 from katcha.publishing_models import (
     Publication,
     PublicationAnalyticsSnapshot,
@@ -42,69 +35,15 @@ from katcha.publishing_models import (
     YouTubeConnection,
 )
 from katcha.security.secrets import decrypt_secret, encrypt_secret
-from katcha.short_episode_models import ShortEpisode, ShortEpisodeAsset
+from katcha.services.publications import approved_publication_render_key
 
 
 def _publication_render_key(session: Session, publication: Publication) -> str:
-    if (
-        publication.production_id is not None
-        and publication.compilation_id is None
-        and publication.short_episode_id is None
-    ):
-        production = session.get(Production, publication.production_id)
-        if production is None or production.status != ProductionStatus.APPROVED.value:
-            raise RuntimeError("publication production is no longer approved")
-        asset = session.scalar(
-            select(ProductionAsset).where(
-                ProductionAsset.production_id == publication.production_id,
-                ProductionAsset.kind == "render",
-                ProductionAsset.generation == 1,
-            )
-        )
-        if asset is None:
-            raise RuntimeError("publication production has no render asset")
-        return asset.storage_key
-
-    if (
-        publication.compilation_id is not None
-        and publication.production_id is None
-        and publication.short_episode_id is None
-    ):
-        compilation = session.get(Compilation, publication.compilation_id)
-        if compilation is None or compilation.status != CompilationStatus.APPROVED.value:
-            raise RuntimeError("publication compilation is no longer approved")
-        asset = session.scalar(
-            select(CompilationAsset).where(
-                CompilationAsset.compilation_id == publication.compilation_id,
-                CompilationAsset.kind == "render",
-                CompilationAsset.generation == 1,
-            )
-        )
-        if asset is None:
-            raise RuntimeError("publication compilation has no render asset")
-        return asset.storage_key
-
-    if (
-        publication.short_episode_id is not None
-        and publication.production_id is None
-        and publication.compilation_id is None
-    ):
-        episode = session.get(ShortEpisode, publication.short_episode_id)
-        if episode is None or episode.status != "approved" or episode.stage != "render_approved":
-            raise RuntimeError("publication short episode render is no longer approved")
-        asset = session.scalar(
-            select(ShortEpisodeAsset).where(
-                ShortEpisodeAsset.short_episode_id == publication.short_episode_id,
-                ShortEpisodeAsset.kind == "render",
-                ShortEpisodeAsset.generation == 1,
-            )
-        )
-        if asset is None:
-            raise RuntimeError("publication short episode has no render asset")
-        return asset.storage_key
-
-    raise RuntimeError("publication must reference exactly one approved source")
-
+    """Revalidate source approval/clearance at every provider-facing upload stage."""
+    try:
+        return approved_publication_render_key(session, publication)
+    except ValueError as exc:
+        raise RuntimeError(str(exc)) from exc
 
 def _as_int(value: object) -> int | None:
     if value is None or value == "":
