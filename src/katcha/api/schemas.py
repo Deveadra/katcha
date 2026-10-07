@@ -367,6 +367,7 @@ class PublicationResponse(BaseModel):
     production_id: UUID | None
     compilation_id: UUID | None
     short_episode_id: UUID | None
+    editorial_run_id: UUID | None
     youtube_connection_id: UUID
     workflow_id: str
     workflow_attempt: int
