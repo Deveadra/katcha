@@ -1,5 +1,5 @@
 import {createHash} from 'node:crypto';
-import {validateEditorialManifest} from './editorial-contract.mjs';
+import {isEditorialManifestVersion, validateEditorialManifest} from './editorial-contract.mjs';
 import {verifyNarrationBytes, verifyImageBytes} from './editorial-media.mjs';
 import fs from 'node:fs';
 import {execFile} from 'node:child_process';
@@ -419,7 +419,7 @@ const activeEditorialOutputs = new Set();
 
 app.post('/render', async (request, response) => {
   const manifest = request.body;
-  const isEditorial = ['editorial-render-v1', 'editorial-render-v2', 'editorial-render-v3', 'editorial-render-v4'].includes(manifest?.version);
+  const isEditorial = isEditorialManifestVersion(manifest?.version);
   let editorialDigest;
   if (isEditorial) {
     try {
@@ -501,7 +501,7 @@ app.post('/render', async (request, response) => {
           const object = await s3.send(new GetObjectCommand({Bucket: bucket, Key: audio.storage_key}));
           await verifyNarrationBytes(object.Body, audio.sha256);
           return {...audio, url: await renderAssetUrl(audio.storage_key)};
-        }))} : {}), ...(['editorial-render-v3', 'editorial-render-v4'].includes(manifest.version) ? {images: await Promise.all(manifest.images.map(async image => {
+        }))} : {}), ...(Array.isArray(manifest.images) && manifest.images.length ? {images: await Promise.all(manifest.images.map(async image => {
           const stored = await headObject(image.storage_key);
           if (!(Number(stored.ContentLength) > 0) || Number(stored.ContentLength) > 16 * 1024 * 1024) throw new Error('Missing or oversized editorial image');
           const object = await s3.send(new GetObjectCommand({Bucket: bucket, Key: image.storage_key}));
