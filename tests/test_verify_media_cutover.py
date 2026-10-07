@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import io
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -23,9 +24,11 @@ class FakeClient:
         *,
         listed: list[dict[str, object]] | None = None,
         heads: dict[str, int] | None = None,
+        bodies: dict[str, bytes] | None = None,
     ) -> None:
         self.listed = listed or []
         self.heads = heads or {}
+        self.bodies = bodies or {}
 
     def get_paginator(self, name: str):
         assert name == "list_objects_v2"
@@ -42,6 +45,12 @@ class FakeClient:
                 "HeadObject",
             )
         return {"ContentLength": self.heads[Key]}
+
+    def get_object(self, *, Bucket: str, Key: str):
+        del Bucket
+        if Key not in self.bodies:
+            raise AssertionError(f"missing fake body for {Key}")
+        return {"Body": io.BytesIO(self.bodies[Key])}
 
 
 def _store(bucket: str) -> media.StoreConfig:
@@ -61,13 +70,15 @@ def test_build_plan_copies_only_missing_or_size_mismatched_objects() -> None:
             {"Key": "raw/a.mp4", "Size": 10, "ETag": '"a"'},
             {"Key": "raw/b.mp4", "Size": 20, "ETag": '"b"'},
             {"Key": "raw/c.mp4", "Size": 30, "ETag": '"c"'},
-        ]
+        ],
+        bodies={"raw/a.mp4": b"a" * 10},
     )
     target = FakeClient(
         heads={
             "raw/a.mp4": 10,
             "raw/b.mp4": 999,
-        }
+        },
+        bodies={"raw/a.mp4": b"a" * 10},
     )
 
     plan = media.build_plan(
@@ -85,6 +96,29 @@ def test_build_plan_copies_only_missing_or_size_mismatched_objects() -> None:
         "raw/c.mp4",
     ]
     assert plan.copy_bytes == 50
+
+
+def test_build_plan_copies_same_size_content_mismatch() -> None:
+    source = FakeClient(
+        listed=[
+            {"Key": "raw/a.mp4", "Size": 10, "ETag": '"source"'},
+        ],
+        bodies={"raw/a.mp4": b"a" * 10},
+    )
+    target = FakeClient(
+        heads={"raw/a.mp4": 10},
+        bodies={"raw/a.mp4": b"b" * 10},
+    )
+
+    plan = media.build_plan(
+        source,
+        target,
+        _store("katcha-media"),
+        _store("katcha-media-prod"),
+    )
+
+    assert plan.already_present_objects == 0
+    assert [row.key for row in plan.copy_objects] == ["raw/a.mp4"]
 
 
 def test_target_env_requires_expected_production_r2_bucket(tmp_path: Path) -> None:
