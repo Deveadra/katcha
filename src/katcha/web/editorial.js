@@ -2,10 +2,47 @@
 window.KatchaEditorial = (() => {
     const el = (id) => document.getElementById(id);
     const esc = (value) => String(value ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
-    const state = { channel: "", epoch: 0, project: null, revision: null, run: null, busy: false, timer: null, editorKey: "", sourceClipBindings: {}, clipResults: [], clipPickerEpoch: 0, clipSearchTimer: null, scriptSeedMeta: null, sourceMonitorKey: "", sourceMonitorUrl: null, sourceMonitorEpoch: 0, storyboardWorkspace: null, storyboardSaveTimer: null, storyboardSaving: false, storyboardDirty: false, storyboardRetryCount: 0 };
+    const state = { channel: "", epoch: 0, project: null, revision: null, run: null, busy: false, timer: null, editorKey: "", sourceClipBindings: {}, clipResults: [], clipPickerEpoch: 0, clipSearchTimer: null, scriptSeedMeta: null, sourceMonitorKey: "", sourceMonitorUrl: null, sourceMonitorEpoch: 0, sourceMonitorMetadata: null, sourceMonitorTime: 0, sourceMediaLoaded: false, storyboardWorkspace: null, storyboardSaveTimer: null, storyboardSaving: false, storyboardDirty: false, storyboardRetryCount: 0 };
     let api, apiBlob;
     function previewReady() {
         return state.run?.stage === "render_ready_for_review" && state.run?.status === "completed";
+    }
+    function preciseClock(seconds) {
+        const value = Math.max(0, Number(seconds) || 0);
+        const minutes = Math.floor(value / 60);
+        const remainder = value - minutes * 60;
+        return `${String(minutes).padStart(2, "0")}:${remainder.toFixed(3).padStart(6, "0")}`;
+    }
+    function clampMediaTime(value, durationSeconds) {
+        const durationValue = Math.max(0, Number(durationSeconds) || 0);
+        return Math.max(0, Math.min(Number(value) || 0, durationValue));
+    }
+    function updateSourceTransport(value = state.sourceMonitorTime) {
+        const durationSeconds = Number(state.sourceMonitorMetadata?.duration_seconds || 0);
+        state.sourceMonitorTime = clampMediaTime(value, durationSeconds);
+        el("editorial-source-scrub").max = String(durationSeconds);
+        el("editorial-source-scrub").value = String(state.sourceMonitorTime);
+        el("editorial-source-monitor-timecode").textContent =
+            `${preciseClock(state.sourceMonitorTime)} / ${preciseClock(durationSeconds)}`;
+    }
+    function updateProgramTransport() {
+        const video = el("editorial-program-monitor-video");
+        const durationSeconds = Number.isFinite(video.duration) ? video.duration : 0;
+        const current = clampMediaTime(video.currentTime, durationSeconds);
+        el("editorial-program-scrub").max = String(durationSeconds);
+        el("editorial-program-scrub").value = String(current);
+        el("editorial-program-monitor-timecode").textContent =
+            `${preciseClock(current)} / ${preciseClock(durationSeconds)}`;
+    }
+    function plannedBeatStartSeconds() {
+        const selected = selectedTimelineBeat();
+        if (!selected) return 0;
+        let elapsed = 0;
+        for (const beat of state.revision?.draft.script || []) {
+            if (beat.id === selected.id) break;
+            elapsed += Number(beat.planned_duration_seconds || 0);
+        }
+        return elapsed;
     }
     function syncProgramMonitor() {
         const ready = previewReady();
@@ -20,13 +57,15 @@ window.KatchaEditorial = (() => {
             video.hidden = false;
             empty.hidden = true;
             meta.textContent = `Loaded · revision ${state.run?.input_revision ?? state.project?.revision ?? "?"}`;
-            status.textContent = "Current private preview is loaded. Use this monitor to compare the assembled cut with the selected source.";
+            status.textContent = "Current private preview is loaded. Program time is rendered output time; beat jump uses the saved script's planned start.";
+            updateProgramTransport();
             return;
         }
         video.pause();
         video.removeAttribute("src");
         video.load();
         video.hidden = true;
+        updateProgramTransport();
         empty.hidden = false;
         if (ready) {
             empty.textContent = "A completed private preview is ready. Load it here without leaving the storyboard.";
@@ -66,6 +105,17 @@ window.KatchaEditorial = (() => {
         state.sourceMonitorKey = "";
         if (state.sourceMonitorUrl) URL.revokeObjectURL(state.sourceMonitorUrl);
         state.sourceMonitorUrl = null;
+        state.sourceMonitorMetadata = null;
+        state.sourceMonitorTime = 0;
+        state.sourceMediaLoaded = false;
+        const sourceVideo = el("editorial-source-monitor-video");
+        sourceVideo.pause();
+        sourceVideo.removeAttribute("src");
+        sourceVideo.load();
+        sourceVideo.hidden = true;
+        el("editorial-source-load").hidden = true;
+        el("editorial-source-samples").hidden = true;
+        updateSourceTransport(0);
         el("editorial-source-monitor").hidden = true;
         el("editorial-source-monitor-image").hidden = true;
         el("editorial-source-monitor-image").removeAttribute("src");
@@ -114,16 +164,24 @@ window.KatchaEditorial = (() => {
             const objectUrl = URL.createObjectURL(imageBlob);
             if (state.sourceMonitorUrl) URL.revokeObjectURL(state.sourceMonitorUrl);
             state.sourceMonitorUrl = objectUrl;
+            state.sourceMonitorMetadata = metadata;
+            state.sourceMediaLoaded = false;
+            const currentStart = Number(
+                row.querySelector("[data-footage-start]")?.value || 0,
+            );
+            updateSourceTransport(currentStart);
             el("editorial-source-monitor-title").textContent = metadata.title;
             el("editorial-source-monitor-meta").textContent =
                 `${duration(metadata.duration_seconds)} · ${metadata.frame_count} sampled frame${metadata.frame_count === 1 ? "" : "s"}`;
+            el("editorial-source-load").hidden = !metadata.source_media_available;
+            el("editorial-source-samples").hidden = true;
             el("editorial-source-monitor-image").src = objectUrl;
             el("editorial-source-monitor-image").alt =
                 `Sampled source frames for ${metadata.title}`;
             el("editorial-source-monitor-image").hidden = false;
             el("editorial-source-monitor-empty").hidden = true;
             el("editorial-source-monitor-times").innerHTML = metadata.sample_times
-                .map((seconds, index) => `<span>F${index + 1} · ${timelineClock(seconds)}</span>`)
+                .map((seconds, index) => `<button type="button" data-source-sample="${esc(seconds)}">F${index + 1} · ${preciseClock(seconds)}</button>`)
                 .join("");
             el("editorial-source-monitor-status").textContent = metadata.limitation;
         } catch (error) {
@@ -133,6 +191,51 @@ window.KatchaEditorial = (() => {
             el("editorial-source-monitor-empty").textContent = "Sampled frames unavailable.";
             el("editorial-source-monitor-status").textContent = error.message;
         }
+    }
+    function seekSourceMonitor(value) {
+        if (!state.sourceMonitorMetadata) return;
+        updateSourceTransport(value);
+        const video = el("editorial-source-monitor-video");
+        if (state.sourceMediaLoaded && Number.isFinite(video.duration)) {
+            video.currentTime = clampMediaTime(state.sourceMonitorTime, video.duration);
+        }
+    }
+    function showSourceSamples() {
+        if (!state.sourceMonitorUrl) return;
+        const video = el("editorial-source-monitor-video");
+        video.pause();
+        video.hidden = true;
+        el("editorial-source-monitor-image").hidden = false;
+        el("editorial-source-samples").hidden = true;
+        el("editorial-source-load").hidden = false;
+    }
+    async function loadSourceMedia() {
+        if (!state.sourceMonitorMetadata || !state.project || !state.assetRun) {
+            throw new Error("Choose acquired footage before loading source playback.");
+        }
+        const row = [...el("editorial-storyboard").querySelectorAll("[data-board-beat]")]
+            .find(item => !item.hidden);
+        const value = row?.querySelector("[data-primary-visual]")?.value || "";
+        if (!value.startsWith("media:")) {
+            throw new Error("Choose acquired footage before loading source playback.");
+        }
+        const candidateId = value.slice("media:".length);
+        const base = path(
+            state.channel,
+            `/${encodeURIComponent(state.project.id)}/runs/${encodeURIComponent(state.assetRun.editorial_run_id)}/assets/${encodeURIComponent(candidateId)}`,
+        );
+        const session = await api(`${base}/source-media-session`, {method: "POST"});
+        const video = el("editorial-source-monitor-video");
+        video.src = session.media_url;
+        video.hidden = false;
+        el("editorial-source-monitor-image").hidden = true;
+        el("editorial-source-monitor-empty").hidden = true;
+        el("editorial-source-load").hidden = true;
+        el("editorial-source-samples").hidden = false;
+        state.sourceMediaLoaded = true;
+        video.load();
+        el("editorial-source-monitor-status").textContent =
+            "Private source playback loaded. Use Set beat start to save the current source in-point.";
     }
     const path = (channel, suffix = "") => `/v1/channels/${encodeURIComponent(channel)}/editorial-projects${suffix}`;
     const storageKey = (name) => `katcha.editorial.${state.channel}.${name}`;
