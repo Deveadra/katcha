@@ -1667,12 +1667,13 @@ window.KatchaEditorial = (() => {
             showFootageControls();
             refreshTimelineStatus();
             scheduleStoryboardWorkspaceSave();
-            if (event?.type === "change" && event.target.matches("[data-primary-visual]")) {
-                void loadSourceMonitor();
-            }
         };
         el("editorial-storyboard").addEventListener("input", persistStoryboardChoice);
-        el("editorial-storyboard").addEventListener("change", persistStoryboardChoice);
+        el("editorial-storyboard").addEventListener("change", event => {
+            if (event.target.matches("[data-primary-visual]")) {
+                void loadSourceMonitor();
+            }
+        });
         el("editorial-render").addEventListener("click", () => void guarded(async () => {
             await ensureStoryboardWorkspaceSaved();
             const channel = state.channel; const project = state.project.id;

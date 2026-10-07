@@ -358,8 +358,6 @@ class DirectionOptions(Contract):
 
 
 class DirectedMediaUse(Contract):
-    """Frozen provider-facing v1 media schema; editor-only controls stay outside AI receipts."""
-
     candidate_id: Identity
     start_seconds: float = Field(default=0, ge=0)
     playback_rate: float = Field(default=1, ge=0.25, le=2)
