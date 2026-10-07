@@ -1876,7 +1876,7 @@ window.KatchaEditorial = (() => {
         el("editorial-source-set-start").addEventListener("click", () => {
             const row = [...el("editorial-storyboard").querySelectorAll("[data-board-beat]")]
                 .find(item => !item.hidden);
-            const input = row?.querySelector("[data-footage-start]");
+            const input = row?.querySelector('[data-footage="start"]');
             if (!input || !row.querySelector("[data-primary-visual]").value.startsWith("media:")) {
                 feedback("Choose footage for the selected beat before setting its source start.", true);
                 return;
