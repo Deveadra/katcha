@@ -138,6 +138,7 @@ def test_approved_editorial_render_stages_publication_and_rechecks_clearance(
     assert publication["stage"] == "metadata_hold"
     assert publication["raw_status"]["source_kind"] == "editorial_render"
     assert publication["treatment_metadata"]["render_approval_sequence"] == 1
+    assert publication["treatment_metadata"]["source_cost_usd_at_registration"] == "0"
 
     replay = client.post(url, json=body)
     assert replay.status_code == 201
