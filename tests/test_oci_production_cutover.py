@@ -319,6 +319,16 @@ def test_activation_is_inspect_only_without_apply(
     assert remote_scripts == [cutover.REMOTE_INSPECT]
 
 
+def test_precommit_rollback_leaves_only_postgres_for_safe_retry() -> None:
+    script = cutover.REMOTE_STOP
+
+    assert "systemctl stop katcha.service" in script
+    assert "up -d postgres" in script
+    assert "up -d api" not in script
+    assert "up -d worker" not in script
+    assert "up -d cloudflared" not in script
+
+
 def test_precommit_failure_stops_candidate_and_aborts_pending_epoch(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
