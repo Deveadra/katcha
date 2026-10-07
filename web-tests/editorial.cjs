@@ -105,14 +105,15 @@ const draft = {
                 });
             }
             if (url.pathname.endsWith("/runs/acquire/assets/candidate/source-media-session")) {
+                const mediaUrl = url.pathname.replace(/\/source-media-session$/, "/source-media");
                 return route.fulfill({
                     status: 200,
                     contentType: "application/json",
                     headers: {
-                        "set-cookie": "katcha_editorial_source_media=fixture; HttpOnly; SameSite=Strict; Path=/v1/channels/channel/editorial-projects/project/runs/acquire/assets/candidate/source-media",
+                        "set-cookie": `katcha_editorial_source_media=fixture; HttpOnly; SameSite=Strict; Path=${mediaUrl}`,
                     },
                     body: JSON.stringify({
-                        media_url: "/v1/channels/channel/editorial-projects/project/runs/acquire/assets/candidate/source-media",
+                        media_url: mediaUrl,
                         expires_in_seconds: 900,
                     }),
                 });
