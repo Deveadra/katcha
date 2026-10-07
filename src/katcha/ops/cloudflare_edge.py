@@ -12,14 +12,16 @@ class CloudflareEdgeError(RuntimeError):
     pass
 
 
-Phase = Literal["http_request_firewall_custom", "http_ratelimit"]
+Phase = Literal["http_config_settings", "http_request_firewall_custom", "http_ratelimit"]
 
+_CONFIG_PHASE: Phase = "http_config_settings"
 _CUSTOM_PHASE: Phase = "http_request_firewall_custom"
 _RATE_PHASE: Phase = "http_ratelimit"
 
 _METHOD_RULE_REF = "katcha_public_method_guard"
 _PROBE_RULE_REF = "katcha_sensitive_probe_block"
 _RATE_RULE_REF = "katcha_public_endpoint_rate_limit"
+_HEALTH_BIC_RULE_REF = "katcha_public_health_disable_bic"
 
 
 @dataclass(frozen=True, slots=True)
@@ -172,6 +174,27 @@ class CloudflareRulesetsClient:
         return result
 
 
+
+def _config_rules(config: CloudflareEdgeConfig) -> list[dict[str, Any]]:
+    host = config.hostname
+    public_health = (
+        '(http.request.uri.path eq "/v1/health/live" '
+        'or http.request.uri.path eq "/v1/health/ready")'
+    )
+    return [
+        {
+            "ref": _HEALTH_BIC_RULE_REF,
+            "description": (
+                "Katcha: disable Browser Integrity Check only for public health probes"
+            ),
+            "expression": f'(http.host eq "{host}" and {public_health})',
+            "action": "set_config",
+            "action_parameters": {"bic": False},
+            "enabled": True,
+        }
+    ]
+
+
 def _custom_rules(config: CloudflareEdgeConfig) -> list[dict[str, Any]]:
     host = config.hostname
     public_health = (
@@ -244,6 +267,7 @@ def desired_rules(
     config: CloudflareEdgeConfig,
 ) -> dict[Phase, list[dict[str, Any]]]:
     return {
+        _CONFIG_PHASE: _config_rules(config),
         _CUSTOM_PHASE: _custom_rules(config),
         _RATE_PHASE: [_rate_rule(config)],
     }
@@ -268,6 +292,7 @@ def _comparable(rule: dict[str, Any]) -> dict[str, Any]:
         "action",
         "enabled",
         "ratelimit",
+        "action_parameters",
     )
     return {
         key: rule.get(key)
