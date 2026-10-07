@@ -1075,7 +1075,7 @@ its image fixture is synthetic. Renderer contracts, lint and diff checks passed.
 No live provider calls or live visual-quality acceptance were performed.
 
 
-### E17 beat-native monitor workspace and typed AI selection (2026-10-06, draft)
+### E17 beat-native monitor workspace and typed AI selection (2026-10-06, merged)
 
 Storyboard now completes the first professional-editor workspace boundary around the
 saved script beat. The existing beat rail remains the story/timing spine. Acquired
@@ -1097,12 +1097,12 @@ surfaces; it does **not** yet let Katcha apply storyboard mutations directly. Th
 boundary is a durable edit-proposal contract with Apply / Modify / Reject / Undo over
 the same storyboard/revision state, followed by finer program/source time navigation.
 
-Validation coverage is added for selected-beat resource resolution, request/deep-link
-serialization, Context Inspector state and Program Monitor loading. Remote CI and full
-browser/launcher gates remain required before merge.
+Validation covered selected-beat resource resolution, request/deep-link serialization,
+Context Inspector state and Program Monitor loading. Python, browser and launcher gates
+passed before merge in #315.
 
 
-### E18 durable beat-native Storyboard workspace (2026-10-06, draft)
+### E18 durable beat-native Storyboard workspace (2026-10-06, merged)
 
 Editorial Storyboard editing state is moving out of browser-session-only storage into
 an immutable, script-revision-bound workspace history. The workspace deliberately
@@ -1130,8 +1130,67 @@ authoritative AI selector. This is the prerequisite for the next boundary: durab
 edit proposals with Apply / Modify / Reject over an exact workspace version, with
 operator and AI changes converging on the same version/history/Undo contract.
 
-Validation coverage includes migration round-trip, replay and concurrency guards,
-stale-script rejection, footage beat/claim lineage, image/narration beat ownership,
-retained unavailable intent, browser autosave/hydration/Undo, responsive replacement
-state, and Storyboard-aware typed AI context. Remote CI/launcher/browser gates remain
-required before merge.
+Validation covered migration round-trip, replay and concurrency guards, stale-script
+rejection, footage beat/claim lineage, image/narration beat ownership, retained
+unavailable intent, browser autosave/hydration/Undo, responsive replacement state and
+Storyboard-aware typed AI context. Python, browser and launcher gates passed before
+merge in #316.
+
+
+### E19 confirmed AI Storyboard edit proposals (2026-10-06, merged)
+
+Katcha AI can now turn exact selected-beat context into a frozen, operator-reviewable
+Storyboard mutation. A proposal binds project, script revision, Storyboard workspace
+version and beat before any edit can be applied. Confirmed edits write through the same
+durable Storyboard history as manual changes with origin `ai_apply`; they do not create
+a second edit-state system.
+
+The Command Center exposes **Apply edit / Modify / Reject**. Modify rejects the old
+frozen proposal before returning the operator to the prompt, so obsolete edits cannot
+be applied later. Reject is audited and also terminalizes the durable goal waiting on
+that confirmation. Synchronous Storyboard edits report settled activity immediately;
+Undo remains the Storyboard history operation in Editorial Studio.
+
+Proposal creation accepts only observed project/run/image identities plus observed
+opaque Editorial footage/evidence identities. Exact beat selectors and script revisions
+are preserved through durable goal receipts. Stale script/workspace versions fail
+closed at Apply. The first supported mutation is one beat's visual/edit object; it does
+not change narration text, render, acquire media, grant rights or publish.
+
+Validation covered proposal rejection/audit, durable-goal closure, exact-version Apply,
+observed identity freezing, selected-beat durable context and browser Apply/Modify/
+Reject behavior. Python, browser, launcher and PR Gate passed before merge in #317.
+
+
+### E20 professional beat edit controls and render v5 (2026-10-07, draft)
+
+The Storyboard beat is becoming the real non-linear editing unit. Manual editing and AI
+proposals now share one richer durable beat contract instead of translating through a
+separate render form.
+
+Acquired footage exposes source in-point, playback speed, freeze-frame, push-in and a
+normalized source crop. Stills expose image push-in alongside existing comparison and
+source-region annotation controls. Every beat can choose caption position/scale,
+optional caption background, and either a hard cut or a bounded visual fade-through-
+black. The inspector keeps these controls compact while the beat rail remains the
+timeline/navigation spine.
+
+Autosave, refresh hydration, Undo and strict render preflight all parse the same beat
+edit object. Manual preview creation first confirms the current Storyboard is durably
+saved, preventing a transient DOM edit from being rendered without a matching workspace
+version. Typed selected-beat AI context includes the current treatment fields, and the
+confirmed AI Storyboard proposal contract accepts the same richer beat object.
+
+Advanced crop/caption/transition behavior is fenced behind
+`editorial-render-v5`. Existing default Storyboards preserve prior manifest versions
+and output behavior. The renderer clips footage using source-coordinate crop geometry,
+keeps source annotations aligned, anchors push-in motion to the crop center, renders
+caption treatment, and applies a bounded visual fade at beat boundaries. This slice
+does **not** claim overlapping crossfades, audio fades, or a new overlapping timeline
+model.
+
+Validation covers v5 compiler selection and downgrade rejection, crop/caption/fade
+bounds, renderer version fencing, source viewport geometry, a real synthetic Remotion
+render using the professional controls, browser autosave → refresh → Undo → render
+preservation, typed AI context and AI proposal serialization. Remote Python, browser,
+renderer, launcher, runtime-image and PR gates are required before merge.
