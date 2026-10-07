@@ -681,13 +681,18 @@ window.KatchaEditorial = (() => {
             1.35,
         );
         const transition = row.querySelector("[data-transition]").value;
-        const transitionFrames = boundedNumber(
-            row,
-            "[data-transition-frames]",
-            "Fade length",
-            3,
-            15,
-        );
+        const transitionFrames = transition === "fade"
+            ? boundedNumber(
+                row,
+                "[data-transition-frames]",
+                "Fade length",
+                3,
+                15,
+            )
+            : 8;
+        if (transition === "fade" && !Number.isInteger(transitionFrames)) {
+            throw new Error("Fade length must use whole frames.");
+        }
         return {
             caption_position: row.querySelector("[data-caption-position]").value,
             caption_scale: captionScale,
