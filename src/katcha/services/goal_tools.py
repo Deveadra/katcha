@@ -93,6 +93,16 @@ TOOLS = {
             "/v1/channels/{channel_profile_id}/editorial-projects/{project_id}/narration",
         ),
         GoalTool(
+            "editorial_publication_performance",
+            "Read measured YouTube outcomes for one exact Editorial render publication, including "
+            "analytics window, reach/CTR attribution, midpoint retention, packaging variant, "
+            "audited source cost, revenue and contribution margin. Missing provider data stays null.",
+            "ai:read",
+            "GET",
+            "/v1/channels/{channel_profile_id}/editorial-projects/{project_id}"
+            "/runs/{editorial_run_id}/performance",
+        ),
+        GoalTool(
             "editorial_render_review", "Read current render approval and any invalidation reason",
             "ai:read", "GET",
             "/v1/channels/{channel_profile_id}/editorial-projects/{project_id}"
