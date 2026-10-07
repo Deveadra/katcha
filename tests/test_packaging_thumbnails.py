@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import uuid
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 
 import pytest
 from sqlalchemy import create_engine
@@ -10,6 +12,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from katcha.api.main import app
 from katcha.branding import channel_01_brand_v1
 from katcha.db import Base
+from katcha.editorial_models import EditorialProject, EditorialRun
 from katcha.intelligence_models import ChannelProfile
 from katcha.models import Clip, ClipFeature
 from katcha.packaging_models import PublicationPackagingVariant
@@ -218,6 +221,184 @@ def test_thumbnail_build_creates_one_immutable_derived_version(
         first.thumbnail_variant.variant_metadata["thumbnail_source_key"]
         == "analysis/a/frame-002.jpg"
     )
+
+
+def _setup_editorial_publication(
+    scope,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    use_image: bool,
+) -> tuple[Publication, PublicationPackagingVariant]:
+    brand = ShortBrandSpec()
+    with scope() as session:
+        connection = YouTubeConnection(
+            channel_id="editorial-thumbnail-channel",
+            channel_title="Editorial Thumbnail Channel",
+            status="active",
+            scopes=["youtube"],
+            encrypted_access_token="encrypted",
+            encrypted_refresh_token="encrypted",
+            token_expires_at=datetime.now(UTC) + timedelta(hours=1),
+        )
+        session.add(connection)
+        session.flush()
+        profile = ChannelProfile(
+            youtube_connection_id=connection.id,
+            timezone="UTC",
+        )
+        session.add(profile)
+        session.flush()
+        clip = Clip(
+            sha256="b" * 64,
+            storage_key="raw/editorial-source.mp4",
+            duration_seconds=10,
+            width=1920,
+            height=1080,
+        )
+        session.add(clip)
+        session.flush()
+        session.add(
+            ClipFeature(
+                clip_id=clip.id,
+                keyframe_keys=[
+                    "analysis/editorial/frame-001.jpg",
+                    "analysis/editorial/frame-002.jpg",
+                    "analysis/editorial/frame-003.jpg",
+                ],
+            )
+        )
+        project = EditorialProject(
+            id=uuid.uuid4(),
+            channel_profile_id=profile.id,
+            input_digest="c" * 64,
+            brief={"prompt": "Synthetic editorial thumbnail test"},
+            revision=1,
+        )
+        session.add(project)
+        session.flush()
+        run = EditorialRun(
+            id=uuid.uuid4(),
+            project_id=project.id,
+            channel_profile_id=profile.id,
+            input_digest="d" * 64,
+            input_revision=1,
+            options={"target": "render"},
+            attempt=1,
+            status="completed",
+            stage="render_ready_for_review",
+            artifacts={},
+            actor="test",
+        )
+        session.add(run)
+        session.flush()
+        publication = Publication(
+            editorial_run_id=run.id,
+            youtube_connection_id=connection.id,
+            workflow_id="editorial-thumbnail-publication",
+            analytics_workflow_id="editorial-thumbnail-analytics",
+            title="Original editorial title",
+            description="Original editorial description",
+        )
+        session.add(publication)
+        session.flush()
+        publication_id = publication.id
+        clip_id = clip.id
+
+    if use_image:
+        images = [
+            SimpleNamespace(
+                image_id="still-1",
+                storage_key="editorial/images/owned.png",
+            )
+        ]
+        media = []
+        scene = SimpleNamespace(image_id="still-1", image_ids=[], media=[])
+    else:
+        images = []
+        media = [SimpleNamespace(candidate_id="candidate", clip_id=str(clip_id))]
+        scene = SimpleNamespace(
+            image_id=None,
+            image_ids=[],
+            media=[SimpleNamespace(candidate_id="candidate")],
+        )
+    manifest = SimpleNamespace(
+        brand=brand,
+        media=media,
+        images=images,
+        timeline=[scene],
+    )
+    approval = SimpleNamespace(sequence=2, manifest_digest="e" * 64)
+    monkeypatch.setattr(
+        packaging_thumbnails,
+        "approved_manifest",
+        lambda run, session: (manifest, approval),
+    )
+
+    parent = create_packaging_variant(
+        publication_id,
+        variant_key="editorial-candidate",
+        version=1,
+        title="Editorial grounded title",
+        description="Editorial grounded description",
+        created_by="katcha-ai",
+        metadata={
+            "thumbnail_brief": {
+                "concept": "Use a real approved source visual",
+                "focal_subject": "Visible source subject",
+                "composition": "Tight crop",
+                "on_image_text": "LOOK CLOSER",
+                "emotion": "curiosity",
+                "avoid": [],
+            }
+        },
+        store=FakeStore(),
+    )
+    with scope() as session:
+        publication = session.get(Publication, publication_id)
+        session.expunge(publication)
+    return publication, parent
+
+
+@pytest.mark.parametrize(
+    ("use_image", "expected_source"),
+    [
+        (False, "analysis/editorial/frame-002.jpg"),
+        (True, "editorial/images/owned.png"),
+    ],
+)
+def test_editorial_thumbnail_uses_approved_manifest_source(
+    thumbnail_scope,
+    monkeypatch: pytest.MonkeyPatch,
+    use_image: bool,
+    expected_source: str,
+) -> None:
+    publication, parent = _setup_editorial_publication(
+        thumbnail_scope,
+        monkeypatch,
+        use_image=use_image,
+    )
+
+    def fake_render(manifest):
+        assert manifest.source.storage_key == expected_source
+        return ThumbnailRenderResult(
+            output_key=manifest.output_key,
+            width=1280,
+            height=720,
+            metadata={"verified": True},
+        )
+
+    monkeypatch.setattr(packaging_thumbnails, "render_thumbnail", fake_render)
+    result = packaging_thumbnails.build_packaging_thumbnail(
+        publication.id,
+        parent_variant_id=parent.id,
+        store=FakeStore(),
+    )
+
+    metadata = result.thumbnail_variant.variant_metadata["thumbnail_source"]
+    assert metadata["source_kind"] == "editorial_render"
+    assert metadata["source_id"] == str(publication.editorial_run_id)
+    assert metadata["approval_sequence"] == 2
+    assert result.thumbnail_variant.variant_metadata["thumbnail_source_key"] == expected_source
 
 
 def test_thumbnail_route_is_mounted() -> None:

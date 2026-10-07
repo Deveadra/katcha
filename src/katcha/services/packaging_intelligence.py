@@ -11,6 +11,7 @@ from zoneinfo import ZoneInfo
 from sqlalchemy import func, select
 
 from katcha.db import session_scope
+from katcha.editorial_models import EditorialRun
 from katcha.integrations.youtube.analytics import (
     YouTubeAnalyticsError,
     basic_video_metrics,
@@ -33,6 +34,7 @@ from katcha.publishing_models import (
     YouTubeConnection,
 )
 from katcha.reach_models import PublicationReachObservation
+from katcha.services.editorial_costs import editorial_project_usage_cost
 from katcha.short_episode_models import ShortEpisode
 
 _DEFAULT_MATURITY_DAYS = 7
@@ -122,6 +124,21 @@ def _publication_cost(session: object, publication: Publication) -> Decimal:
     if publication.compilation_id is not None:
         source = session.get(Compilation, publication.compilation_id)
         return _compilation_cost(session, source) if source is not None else Decimal("0")
+    if publication.editorial_run_id is not None:
+        frozen = (publication.treatment_metadata or {}).get(
+            "source_cost_usd_at_registration"
+        )
+        if frozen is not None:
+            value = _decimal(frozen)
+            if value is None or value < 0:
+                raise ValueError("Editorial publication has an invalid frozen source cost")
+            return value
+        source = session.get(EditorialRun, publication.editorial_run_id)
+        return (
+            editorial_project_usage_cost(session, source.project_id)
+            if source is not None
+            else Decimal("0")
+        )
     return Decimal("0")
 
 
