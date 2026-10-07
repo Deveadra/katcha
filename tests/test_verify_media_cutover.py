@@ -34,6 +34,11 @@ class FakeClient:
         assert name == "list_objects_v2"
         return FakePaginator(self.listed)
 
+    def list_objects_v2(self, *, Bucket: str, MaxKeys: int):
+        assert Bucket
+        assert MaxKeys == 1
+        return {"Contents": self.listed[:1]}
+
     def head_object(self, *, Bucket: str, Key: str):
         del Bucket
         if Key not in self.heads:
@@ -62,6 +67,14 @@ def _store(bucket: str) -> media.StoreConfig:
         region="auto",
         force_path_style=False,
     )
+
+
+def test_object_access_probe_uses_list_not_bucket_admin_operation() -> None:
+    client = FakeClient(
+        listed=[{"Key": "raw/a.mp4", "Size": 10, "ETag": '"a"'}],
+    )
+
+    media.assert_object_access(client, "katcha-media-prod")
 
 
 def test_build_plan_copies_only_missing_or_size_mismatched_objects() -> None:
