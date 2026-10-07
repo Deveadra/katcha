@@ -110,14 +110,12 @@ def test_approved_editorial_render_stages_publication_and_rechecks_clearance(
         f"/v1/channels/{row.channel_profile_id}/editorial-projects/{row.project_id}"
         f"/runs/{row.id}/publication"
     )
-    body = {
-        "youtube_connection_id": str(connection_id),
-        "title": "Exact approved editorial render",
-    }
+    body = {"title": "Exact approved editorial render"}
     response = client.post(url, json=body)
     assert response.status_code == 201, response.text
     publication = response.json()
     assert publication["editorial_run_id"] == str(row.id)
+    assert publication["youtube_connection_id"] == str(connection_id)
     assert publication["production_id"] is None
     assert publication["compilation_id"] is None
     assert publication["short_episode_id"] is None
