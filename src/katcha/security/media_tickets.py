@@ -10,6 +10,7 @@ from katcha.config import Settings, get_settings
 from katcha.security.secrets import SecretConfigurationError
 
 _EPHEMERAL_DEVELOPMENT_KEY = Fernet.generate_key()
+SOURCE_MEDIA_COOKIE = "katcha_editorial_source_media"
 SOURCE_MEDIA_TICKET_TTL_SECONDS = 15 * 60
 
 
@@ -56,10 +57,7 @@ def verify_media_ticket(
     if not token:
         raise ValueError("private media ticket is missing")
     try:
-        raw = _cipher(settings).decrypt(
-            token.encode("ascii"),
-            ttl=SOURCE_MEDIA_TICKET_TTL_SECONDS,
-        )
+        raw = _cipher(settings).decrypt(token.encode("ascii"))
         payload = json.loads(raw)
     except (InvalidToken, UnicodeEncodeError, json.JSONDecodeError) as exc:
         raise ValueError("private media ticket is invalid or expired") from exc
