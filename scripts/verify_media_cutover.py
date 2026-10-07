@@ -17,7 +17,7 @@ from urllib.parse import urlsplit
 
 import boto3
 from botocore.config import Config
-from botocore.exceptions import ClientError
+from botocore.exceptions import BotoCoreError, ClientError
 
 
 class MediaCutoverError(RuntimeError):
@@ -199,6 +199,12 @@ def assert_source_frozen(repo_root: Path) -> None:
         )
 
 
+def assert_object_access(client, bucket: str) -> None:
+    # Object-scoped R2 credentials can list/read/write objects without bucket
+    # administration permission, so do not probe with HeadBucket here.
+    client.list_objects_v2(Bucket=bucket, MaxKeys=1)
+
+
 def list_objects(client, bucket: str) -> list[ObjectRow]:
     rows: list[ObjectRow] = []
     paginator = client.get_paginator("list_objects_v2")
@@ -365,8 +371,8 @@ def main() -> int:
         source_client = source.client()
         target_client = target.client()
 
-        source_client.head_bucket(Bucket=source.bucket)
-        target_client.head_bucket(Bucket=target.bucket)
+        assert_object_access(source_client, source.bucket)
+        assert_object_access(target_client, target.bucket)
 
         plan = build_plan(source_client, target_client, source, target)
         print(
@@ -401,7 +407,7 @@ def main() -> int:
             f"copied_bytes={human_bytes(copied_bytes)} "
             f"verified_source_objects={final_plan.total_source_objects}"
         )
-    except (MediaCutoverError, ClientError, OSError) as exc:
+    except (MediaCutoverError, BotoCoreError, ClientError, OSError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1
     return 0
