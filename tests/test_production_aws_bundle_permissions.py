@@ -1,7 +1,8 @@
 from pathlib import Path
 
 
-def test_production_supervisor_requires_renderer_readable_roles_anywhere_bundle() -> None:
+def test_production_supervisor_requires_renderer_readable_roles_anywhere_bundle(
+) -> None:
     script = Path("deploy/scripts/production-supervisor.sh").read_text(encoding="utf-8")
 
     assert "renderer_uid=10001" in script
