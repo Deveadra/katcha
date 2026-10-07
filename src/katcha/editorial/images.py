@@ -13,8 +13,8 @@ from sqlalchemy import select, update
 
 from katcha.db import session_scope
 from katcha.editorial.narration import _project
-from katcha.editorial.source_monitor import source_monitor
 from katcha.editorial.project_schemas import Contract, EditorialDraft, Identity, RequestKey
+from katcha.editorial.source_monitor import source_monitor
 from katcha.editorial.visual_schemas import RenderImage
 from katcha.editorial_models import (
     EditorialImage,
