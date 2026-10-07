@@ -950,6 +950,9 @@ window.KatchaEditorial = (() => {
         if (!state.storyboardWorkspace && state.revision) {
             state.storyboardDirty = true;
         }
+        // Explicit render actions must surface local editor validation in the
+        // visible action feedback, even when the Storyboard panel is hidden.
+        if (state.storyboardDirty) storyboardWorkspaceDraft();
         for (let attempt = 0; attempt < 2; attempt += 1) {
             if (state.storyboardDirty && !state.storyboardSaving) {
                 await flushStoryboardWorkspace();
