@@ -121,6 +121,56 @@ def test_build_plan_copies_same_size_content_mismatch() -> None:
     assert [row.key for row in plan.copy_objects] == ["raw/a.mp4"]
 
 
+def _mock_media_source_docker(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    services: str,
+) -> None:
+    def run(argv, **_kwargs):
+        if argv[:5] == ["docker", "compose", "ps", "-q", "minio"]:
+            stdout = "minio-cid\n"
+        elif argv[:3] == ["docker", "inspect", "--format"]:
+            stdout = "katcha\n"
+        elif argv[:2] == ["docker", "ps"]:
+            assert "label=com.docker.compose.project=katcha" in argv
+            stdout = services
+        else:
+            raise AssertionError(f"unexpected Docker command: {argv}")
+        return media.subprocess.CompletedProcess(
+            args=argv,
+            returncode=0,
+            stdout=stdout,
+            stderr="",
+        )
+
+    monkeypatch.setattr(media.subprocess, "run", run)
+
+
+def test_media_apply_freeze_allows_only_postgres_and_minio(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _mock_media_source_docker(
+        monkeypatch,
+        services="postgres\nminio\n",
+    )
+
+    media.assert_source_frozen(tmp_path)
+
+
+def test_media_apply_freeze_rejects_running_worker(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _mock_media_source_docker(
+        monkeypatch,
+        services="postgres\nworker\nminio\n",
+    )
+
+    with pytest.raises(media.MediaCutoverError, match="worker"):
+        media.assert_source_frozen(tmp_path)
+
+
 def test_target_env_requires_expected_production_r2_bucket(tmp_path: Path) -> None:
     env = tmp_path / "katcha.env"
     env.write_text(
