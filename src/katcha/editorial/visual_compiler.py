@@ -167,7 +167,9 @@ def compile_project_visuals(
         brand_contract, brand_version = brand_for_channel(session, channel_id)
         brand = ShortBrandSpec.model_validate(dict(brand_contract.visual))
         if brand.brand_key != brand_contract.brand_key or brand.version != brand_version:
-            raise EditorialConflict("Active channel brand identity is inconsistent; reactivate branding")
+            raise EditorialConflict(
+                "Active channel brand identity is inconsistent; reactivate branding"
+            )
         run = session.get(EditorialRun, asset_run_id) if asset_run_id else None
         uses_video = any(beat.media for beat in plan.beats)
         if (uses_video or asset_run_id) and (
