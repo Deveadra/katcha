@@ -9,6 +9,7 @@ import json
 import os
 import sys
 import time
+import uuid
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -219,33 +220,43 @@ def _start_run(
     max_model_tokens: int,
     extra: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    existing = _latest_run(client, base, target=target, revision=revision)
+    idempotency_key = _key(target, *key_parts)
+    project_id = uuid.UUID(str(key_parts[0]))
+    run_id = str(uuid.uuid5(project_id, f"editorial-run:{idempotency_key}"))
+    try:
+        existing = client.get(f"{base}/runs/{run_id}")
+    except RuntimeError as exc:
+        if "HTTP 404" not in str(exc):
+            raise
+        existing = None
     if existing is not None:
+        if not isinstance(existing, dict):
+            raise RuntimeError("Editorial run detail returned a non-object response")
         status = str(existing.get("status") or "")
         if status == "completed":
-            print(f"reusing completed {target} run {existing['editorial_run_id']}")
-            return existing
+            print(f"reusing completed {target} run {run_id}")
+            return dict(existing)
         if status in {"queued", "running"}:
             return _wait_run(
                 client,
                 str(existing["channel_profile_id"]),
                 str(existing["project_id"]),
-                str(existing["editorial_run_id"]),
+                run_id,
                 timeout_seconds=timeout_seconds,
             )
         raise RuntimeError(
-            f"latest {target} run {existing['editorial_run_id']} is {status}; "
-            "inspect its saved receipts and resume it explicitly before acceptance continues"
+            f"exact {target} run {run_id} is {status}; inspect its saved receipts and "
+            "resume it explicitly before acceptance continues"
         )
 
     payload: dict[str, Any] = {
-        "idempotency_key": _key(target, *key_parts),
+        "idempotency_key": idempotency_key,
         "expected_revision": revision,
         "target": target,
         "max_queries": max_queries,
         "max_model_calls": max_model_calls,
         "max_model_tokens": max_model_tokens,
-        "max_elapsed_seconds": min(timeout_seconds, 7200),
+        "max_elapsed_seconds": min(max(timeout_seconds, 60), 7200),
     }
     payload.update(extra or {})
     started = client.post(f"{base}/runs", payload)
