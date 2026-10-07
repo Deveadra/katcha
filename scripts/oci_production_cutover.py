@@ -371,6 +371,64 @@ for db in katcha temporal temporal_visibility; do
     )"
     [[ "$tables" =~ ^[0-9]+$ && "$tables" -gt 0 ]]
 done
+
+# Verify the token actually consumed by OCI application containers, not just
+# the operator's separate KATCHA_FENCE_TOKEN. The endpoint asserts authority
+# without mutating coordinator state.
+python3 - <<'PY'
+import json
+import sys
+import urllib.error
+import urllib.request
+from pathlib import Path
+
+values = {}
+for raw in Path("/etc/katcha/katcha.env").read_text(encoding="utf-8").splitlines():
+    line = raw.strip()
+    if not line or line.startswith("#") or "=" not in line:
+        continue
+    key, value = line.split("=", 1)
+    value = value.strip()
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
+        value = value[1:-1]
+    values[key.strip()] = value
+
+endpoint = values.get("KATCHA_LEADERSHIP_FENCE_URL", "").strip()
+token = values.get("KATCHA_LEADERSHIP_FENCE_TOKEN", "").strip()
+deployment = values.get("KATCHA_DEPLOYMENT_ID", "").strip()
+if not endpoint.startswith("https://") or not token or not deployment:
+    sys.exit("HOST_FENCE_PREFLIGHT_ERROR: incomplete runtime fencing configuration")
+
+request = urllib.request.Request(
+    endpoint,
+    method="POST",
+    data=json.dumps({
+        "deployment_id": deployment,
+        "deployment_epoch": 1,
+        "operation": "preflight.auth-only",
+    }).encode("utf-8"),
+    headers={
+        "Authorization": "Bearer " + token,
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+    },
+)
+try:
+    with urllib.request.urlopen(request, timeout=12) as response:
+        body = json.load(response)
+        if response.status != 200 or not isinstance(body, dict):
+            raise ValueError("unexpected coordinator response")
+        if not isinstance(body.get("authorized"), bool):
+            raise ValueError("missing authorized result")
+        if not isinstance(body.get("active_epoch"), int):
+            raise ValueError("missing active epoch")
+except urllib.error.HTTPError as exc:
+    sys.exit(f"HOST_FENCE_PREFLIGHT_ERROR: coordinator rejected runtime token (HTTP {exc.code})")
+except (urllib.error.URLError, TimeoutError, OSError, ValueError) as exc:
+    sys.exit(f"HOST_FENCE_PREFLIGHT_ERROR: runtime fence probe failed ({type(exc).__name__})")
+print("HOST_FENCE_CREDENTIAL_OK")
+PY
+
 echo HOST_CUTOVER_STATE_READY
 """
 
