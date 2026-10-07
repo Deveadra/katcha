@@ -144,16 +144,13 @@ class AdminPath:
         )
 
 
-def assert_local_mutation_freeze(repo_root: Path) -> None:
+def _run_local_docker(
+    argv: list[str],
+    *,
+    repo_root: Path,
+) -> subprocess.CompletedProcess[str]:
     result = subprocess.run(
-        [
-            "docker",
-            "compose",
-            "ps",
-            "--status",
-            "running",
-            "--services",
-        ],
+        argv,
         cwd=repo_root,
         capture_output=True,
         text=True,
@@ -161,12 +158,52 @@ def assert_local_mutation_freeze(repo_root: Path) -> None:
     )
     if result.returncode:
         detail = result.stderr.strip() or f"exit {result.returncode}"
-        raise CutoverError(f"could not inspect local Katcha services: {detail}")
+        raise CutoverError(
+            f"local Docker inspection failed for {' '.join(argv)}: {detail}"
+        )
+    return result
 
+
+def assert_local_mutation_freeze(repo_root: Path) -> None:
+    postgres = _run_local_docker(
+        ["docker", "compose", "ps", "-q", "postgres"],
+        repo_root=repo_root,
+    ).stdout.strip()
+    postgres_ids = [line.strip() for line in postgres.splitlines() if line.strip()]
+    if len(postgres_ids) != 1:
+        raise CutoverError(
+            "expected exactly one local Katcha PostgreSQL container while "
+            "verifying the rollback source"
+        )
+
+    project = _run_local_docker(
+        [
+            "docker",
+            "inspect",
+            "--format",
+            '{{ index .Config.Labels "com.docker.compose.project" }}',
+            postgres_ids[0],
+        ],
+        repo_root=repo_root,
+    ).stdout.strip()
+    if not project:
+        raise CutoverError("local PostgreSQL container has no Compose project label")
+
+    services = _run_local_docker(
+        [
+            "docker",
+            "ps",
+            "--filter",
+            f"label=com.docker.compose.project={project}",
+            "--format",
+            '{{.Label "com.docker.compose.service"}}',
+        ],
+        repo_root=repo_root,
+    )
     allowed = {"postgres", "minio"}
     running = {
         line.strip()
-        for line in result.stdout.splitlines()
+        for line in services.stdout.splitlines()
         if line.strip()
     }
     unsafe = sorted(running - allowed)
