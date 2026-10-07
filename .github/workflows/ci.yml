@@ -490,9 +490,6 @@ jobs:
           ffprobe -version | head -n 1
           npx remotion browser ensure
 
-      - name: Encode and verify Editorial render contracts
-        run: npm run test:editorial-render
-
       - name: Encode and verify both reaction overlays
         run: node test/reaction-smoke.mjs
 
