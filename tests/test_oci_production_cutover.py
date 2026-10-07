@@ -55,6 +55,41 @@ def test_admin_path_requires_a_listening_local_forward(
     assert called is False
 
 
+def test_local_mutation_freeze_allows_only_postgres_and_minio(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def compose_ps(*_args, **_kwargs):
+        return cutover.subprocess.CompletedProcess(
+            args=[],
+            returncode=0,
+            stdout="postgres\nminio\n",
+            stderr="",
+        )
+
+    monkeypatch.setattr(cutover.subprocess, "run", compose_ps)
+
+    cutover.assert_local_mutation_freeze(tmp_path)
+
+
+def test_local_mutation_freeze_rejects_running_worker(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def compose_ps(*_args, **_kwargs):
+        return cutover.subprocess.CompletedProcess(
+            args=[],
+            returncode=0,
+            stdout="postgres\nproduction-worker\n",
+            stderr="",
+        )
+
+    monkeypatch.setattr(cutover.subprocess, "run", compose_ps)
+
+    with pytest.raises(cutover.CutoverError, match="production-worker"):
+        cutover.assert_local_mutation_freeze(tmp_path)
+
+
 def _write_snapshot(root: Path) -> tuple[str, bytes]:
     root.mkdir()
     filename = "db-example.dump"
