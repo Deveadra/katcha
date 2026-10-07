@@ -102,13 +102,17 @@ def validate(values: dict[str, str]) -> list[str]:
     if values.get("KATCHA_S3_FORCE_PATH_STYLE", "").casefold() != "false":
         errors.append("KATCHA_S3_FORCE_PATH_STYLE must be false for the hosted R2 profile")
 
-    for key in (
-        "KATCHA_S3_ACCESS_KEY",
-        "KATCHA_S3_SECRET_KEY",
-        "KATCHA_S3_BUCKET",
-        "KATCHA_CREDENTIAL_ENCRYPTION_KEY",
-    ):
-        require(values, key, errors)
+    s3_access_key = require(values, "KATCHA_S3_ACCESS_KEY", errors)
+    s3_secret_key = require(values, "KATCHA_S3_SECRET_KEY", errors)
+    s3_bucket = require(values, "KATCHA_S3_BUCKET", errors)
+    require(values, "KATCHA_CREDENTIAL_ENCRYPTION_KEY", errors)
+
+    if s3_access_key and not is_placeholder(s3_access_key) and len(s3_access_key) != 32:
+        errors.append("KATCHA_S3_ACCESS_KEY must be a 32-character Cloudflare R2 access key")
+    if s3_secret_key and not is_placeholder(s3_secret_key) and len(s3_secret_key) != 64:
+        errors.append("KATCHA_S3_SECRET_KEY must be a 64-character Cloudflare R2 secret key")
+    if s3_bucket and s3_bucket != "katcha-media-prod":
+        errors.append("KATCHA_S3_BUCKET must be katcha-media-prod in hosted production")
 
     encryption_key = values.get("KATCHA_CREDENTIAL_ENCRYPTION_KEY", "")
     if not is_placeholder(encryption_key) and len(encryption_key) < 32:
