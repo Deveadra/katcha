@@ -11,7 +11,9 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from katcha.api.main import app
 from katcha.db import Base
+from katcha.editorial_models import EditorialProject, EditorialRun
 from katcha.intelligence_models import ChannelProfile
+from katcha.models import UsageEvent
 from katcha.packaging_models import PublicationPackagingVariant
 from katcha.publishing_models import Publication, YouTubeConnection
 from katcha.reach_models import PublicationReachObservation
@@ -291,6 +293,113 @@ def test_exact_variant_window_is_measured_once_and_reused(
     assert metric["ctr"] == pytest.approx(0.06)
     assert metric["average_view_percentage"] == pytest.approx(68.5)
     assert metric["retention_50"] == pytest.approx(0.61)
+
+
+def test_editorial_publication_cost_uses_audited_project_and_run_usage(
+    intelligence_scope,
+) -> None:
+    with intelligence_scope() as session:
+        connection = YouTubeConnection(
+            channel_id="editorial-roi-channel",
+            channel_title="Editorial ROI Channel",
+            status="active",
+            scopes=["youtube"],
+            encrypted_access_token="encrypted",
+            encrypted_refresh_token="encrypted",
+            token_expires_at=datetime.now(UTC) + timedelta(hours=1),
+        )
+        session.add(connection)
+        session.flush()
+        profile = ChannelProfile(
+            youtube_connection_id=connection.id,
+            timezone="UTC",
+        )
+        session.add(profile)
+        session.flush()
+        project = EditorialProject(
+            id=uuid.uuid4(),
+            channel_profile_id=profile.id,
+            input_digest="a" * 64,
+            brief={"prompt": "Editorial ROI fixture"},
+            revision=1,
+        )
+        session.add(project)
+        session.flush()
+        run = EditorialRun(
+            id=uuid.uuid4(),
+            project_id=project.id,
+            channel_profile_id=profile.id,
+            input_digest="b" * 64,
+            input_revision=1,
+            options={"target": "render"},
+            attempt=1,
+            status="completed",
+            stage="render_ready_for_review",
+            artifacts={},
+            actor="test",
+        )
+        sibling = EditorialRun(
+            id=uuid.uuid4(),
+            project_id=project.id,
+            channel_profile_id=profile.id,
+            input_digest="c" * 64,
+            input_revision=1,
+            options={"target": "script"},
+            attempt=1,
+            status="completed",
+            stage="script_ready",
+            artifacts={},
+            actor="test",
+        )
+        session.add_all([run, sibling])
+        session.flush()
+        publication = Publication(
+            editorial_run_id=run.id,
+            youtube_connection_id=connection.id,
+            workflow_id="editorial-roi-publish",
+            analytics_workflow_id="editorial-roi-analytics",
+            title="Editorial ROI",
+        )
+        session.add(publication)
+        session.add_all(
+            [
+                UsageEvent(
+                    task="tts",
+                    provider="elevenlabs",
+                    model="voice",
+                    cost_usd=Decimal("1.25"),
+                    reference_type="editorial_project",
+                    reference_id=str(project.id),
+                ),
+                UsageEvent(
+                    task="editorial",
+                    provider="openai",
+                    model="editor",
+                    cost_usd=Decimal("0.50"),
+                    reference_type="editorial_run",
+                    reference_id=str(run.id),
+                ),
+                UsageEvent(
+                    task="editorial",
+                    provider="gemini",
+                    model="critic",
+                    cost_usd=Decimal("0.25"),
+                    reference_type="editorial_run",
+                    reference_id=str(sibling.id),
+                ),
+                UsageEvent(
+                    task="editorial",
+                    provider="openai",
+                    model="unrelated",
+                    cost_usd=Decimal("9.00"),
+                    reference_type="editorial_run",
+                    reference_id=str(uuid.uuid4()),
+                ),
+            ]
+        )
+        session.flush()
+
+        assert packaging_intelligence._publication_cost(session, publication) == Decimal("2.00")
 
 
 def test_packaging_intelligence_routes_are_mounted() -> None:
