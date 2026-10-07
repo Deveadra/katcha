@@ -346,10 +346,11 @@ if [[ -n "$unsafe" ]]; then
 fi
 cid="$(compose ps -q postgres)"
 test -n "$cid"
+sql="SELECT count(*) FROM pg_catalog.pg_tables "
+sql+="WHERE schemaname NOT IN ('pg_catalog','information_schema');"
 for db in katcha temporal temporal_visibility; do
     tables="$(
-        docker exec "$cid" psql -U katcha -d "$db" -At \
-            -c "SELECT count(*) FROM pg_catalog.pg_tables WHERE schemaname NOT IN ('pg_catalog','information_schema');"
+        docker exec "$cid" psql -U katcha -d "$db" -At -c "$sql"
     )"
     [[ "$tables" =~ ^[0-9]+$ && "$tables" -gt 0 ]]
 done
@@ -457,10 +458,11 @@ cid="$(
         ps -q postgres
 )"
 test -n "$cid"
+sql="SELECT count(*) FROM pg_catalog.pg_tables "
+sql+="WHERE schemaname NOT IN ('pg_catalog','information_schema');"
 for db in katcha temporal temporal_visibility; do
     tables="$(
-        docker exec "$cid" psql -U katcha -d "$db" -At \
-            -c "SELECT count(*) FROM pg_catalog.pg_tables WHERE schemaname NOT IN ('pg_catalog','information_schema');"
+        docker exec "$cid" psql -U katcha -d "$db" -At -c "$sql"
     )"
     [[ "$tables" =~ ^[0-9]+$ && "$tables" -gt 0 ]]
 done
