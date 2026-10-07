@@ -144,6 +144,39 @@ class AdminPath:
         )
 
 
+def assert_local_mutation_freeze(repo_root: Path) -> None:
+    result = subprocess.run(
+        [
+            "docker",
+            "compose",
+            "ps",
+            "--status",
+            "running",
+            "--services",
+        ],
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode:
+        detail = result.stderr.strip() or f"exit {result.returncode}"
+        raise CutoverError(f"could not inspect local Katcha services: {detail}")
+
+    allowed = {"postgres", "minio"}
+    running = {
+        line.strip()
+        for line in result.stdout.splitlines()
+        if line.strip()
+    }
+    unsafe = sorted(running - allowed)
+    if unsafe:
+        raise CutoverError(
+            "local Katcha mutation freeze is not intact; running services: "
+            + ", ".join(unsafe)
+        )
+
+
 def package_snapshot(snapshot_dir: Path, archive: Path) -> None:
     mapping = snapshot_dir / "databases.tsv"
     sums = snapshot_dir / "SHA256SUMS"
@@ -440,6 +473,8 @@ def activate(args: argparse.Namespace) -> None:
         / "recovery-fence-token",
     )
 
+    assert_local_mutation_freeze(Path(args.repo_root).resolve())
+
     admin = AdminPath(
         base=Path(args.bastion_base),
         key=Path(args.ssh_key),
@@ -642,6 +677,7 @@ def parser() -> argparse.ArgumentParser:
     activate_parser = sub.add_parser("activate-primary")
     activate_parser.add_argument("--apply", action="store_true")
     activate_parser.add_argument("--local-env", default=".env")
+    activate_parser.add_argument("--repo-root", default=".")
     activate_parser.add_argument("--recovery-url")
     activate_parser.add_argument(
         "--health-url",
