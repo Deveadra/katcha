@@ -300,7 +300,7 @@ def test_cleared_source_frame_is_idempotent_and_rights_bound(still):
         request=request,
         actor="test",
     ) == first
-    store.get_bytes.assert_called_once_with(frame_key)
+    store.get_bytes.assert_called_once_with(frame_key, max_bytes=images.MAX_IMAGE_BYTES)
     store.put_bytes.assert_called_once()
 
     manifest = compile_project_visuals(channel, project, 1, None, plan(first["id"]))
