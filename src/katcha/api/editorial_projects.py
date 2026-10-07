@@ -12,6 +12,7 @@ from starlette.concurrency import run_in_threadpool
 from katcha.api.control_auth import control_actor, require_control_channel, require_control_scope
 from katcha.config import get_settings
 from katcha.db import session_scope
+from katcha.editorial.images import SourceFrameCapture
 from katcha.editorial.project_schemas import (
     CreateEditorialProject,
     EditorialProjectResponse,
@@ -164,6 +165,27 @@ async def image_upload(
             project_id,
             request=metadata,
             data=bytes(data),
+            actor=control_actor(request),
+        )
+    except ValueError as exc:
+        raise _error(exc) from exc
+
+
+@router.post("/{project_id}/images/source-frame", status_code=201)
+def image_source_frame(
+    channel_profile_id: uuid.UUID,
+    project_id: uuid.UUID,
+    body: SourceFrameCapture,
+    request: Request,
+):
+    from katcha.editorial.images import capture_source_frame
+
+    _authorize(request, channel_profile_id, write=True)
+    try:
+        return capture_source_frame(
+            channel_profile_id,
+            project_id,
+            request=body,
             actor=control_actor(request),
         )
     except ValueError as exc:
