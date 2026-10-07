@@ -268,9 +268,16 @@ REMOTE_PREPARE = r"""
 set -euo pipefail
 epoch="$1"
 deployment="$2"
+release="$3"
 [[ "$epoch" =~ ^[1-9][0-9]*$ ]]
 [[ "$deployment" =~ ^[A-Za-z0-9._:-]+$ ]]
-python3 - /etc/katcha/katcha.env "$epoch" "$deployment" <<'PY'
+[[ "$release" =~ ^[0-9a-f]{40}$ ]]
+
+test -z "$(git -C /opt/katcha status --porcelain)"
+git -C /opt/katcha fetch --force origin "$release"
+git -C /opt/katcha checkout --detach "$release"
+
+python3 - /etc/katcha/katcha.env "$epoch" "$deployment" "$release" <<'PY'
 from pathlib import Path
 import os
 import sys
@@ -278,6 +285,7 @@ path = Path(sys.argv[1])
 values = {
     "KATCHA_DEPLOYMENT_EPOCH": sys.argv[2],
     "KATCHA_DEPLOYMENT_ID": sys.argv[3],
+    "KATCHA_RELEASE_SHA": sys.argv[4],
 }
 out = []
 seen = set()
@@ -406,7 +414,15 @@ def activate(args: argparse.Namespace) -> None:
     ):
         raise CutoverError("another deployment is already pending")
 
-    print(f"INITIAL_PRIMARY_PREFLIGHT_OK active_epoch={active_epoch}")
+    if len(args.release_sha) != 40 or any(
+        char not in "0123456789abcdef" for char in args.release_sha
+    ):
+        raise CutoverError("release SHA must be an exact lower-case 40-character Git SHA")
+
+    print(
+        "INITIAL_PRIMARY_PREFLIGHT_OK "
+        f"active_epoch={active_epoch} release={args.release_sha}"
+    )
     if not args.apply:
         print("INSPECT_ONLY no authority or host state changed")
         return
@@ -433,7 +449,7 @@ def activate(args: argparse.Namespace) -> None:
         admin.run_script(
             REMOTE_PREPARE,
             sudo=True,
-            args=(str(epoch), args.deployment_id),
+            args=(str(epoch), args.deployment_id, args.release_sha),
         )
         admin.run_script(REMOTE_START, sudo=True)
         admin.run_script(REMOTE_DURABLE, sudo=True)
@@ -534,6 +550,7 @@ def parser() -> argparse.ArgumentParser:
     activate_parser.add_argument("--health-url", default="https://app.katcha.stream/v1/health/ready")
     activate_parser.add_argument("--deployment-id", default="oci-a1-primary-001")
     activate_parser.add_argument("--expected-active-epoch", type=int, default=0)
+    activate_parser.add_argument("--release-sha", required=True)
     activate_parser.add_argument(
         "--bastion-base",
         default=str(Path.home() / ".config/katcha/production/bastion"),
