@@ -758,7 +758,7 @@ def test_storyboard_source_media_session_is_scoped_and_private(saved, monkeypatc
     assert "HttpOnly" in cookie
     assert "SameSite=strict" in cookie
     assert f"Path={base}/source-media" in cookie
-    assert "Cache-Control" not in session.headers or session.headers["Cache-Control"] != "public"
+    assert session.headers["Cache-Control"] == "no-store"
 
     media = client.get(
         session.json()["media_url"],
