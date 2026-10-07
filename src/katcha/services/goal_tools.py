@@ -107,6 +107,29 @@ TOOLS = {
             "/runs/{editorial_run_id}/review", confirm=True, retry_safe=True,
         ),
         GoalTool(
+            "stage_editorial_publication",
+            "Create a metadata-held publication for this exact approved Editorial render. "
+            "Rechecks current script, media, rights, brand and render receipt; does not start "
+            "YouTube upload. Operator confirmation required.",
+            "production:create",
+            "POST",
+            "/v1/channels/{channel_profile_id}/editorial-projects/{project_id}"
+            "/runs/{editorial_run_id}/publication",
+            confirm=True,
+            retry_safe=True,
+        ),
+        GoalTool(
+            "start_publication_upload",
+            "Release a metadata-held publication into the resumable YouTube upload workflow. "
+            "Source approval and clearance are checked again before provider mutation. "
+            "Operator confirmation required.",
+            "production:create",
+            "POST",
+            "/v1/publications/{publication_id}/start",
+            confirm=True,
+            retry_safe=True,
+        ),
+        GoalTool(
             "preflight_editorial_storyboard",
             "Validate an explicit captioned or narrated storyboard against the current script and "
             "acquired media, source timing, evidence references and current rights. "

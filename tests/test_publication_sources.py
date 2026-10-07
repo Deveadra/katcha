@@ -7,6 +7,8 @@ def test_publication_requires_exactly_one_source_contract() -> None:
     table = Publication.__table__
     assert table.c.production_id.nullable is True
     assert table.c.compilation_id.nullable is True
+    assert table.c.short_episode_id.nullable is True
+    assert table.c.editorial_run_id.nullable is True
 
     checks = {
         constraint.name
@@ -26,3 +28,5 @@ def test_publication_has_unique_source_channel_constraints() -> None:
 
     assert ("production_id", "youtube_connection_id") in unique_columns
     assert ("compilation_id", "youtube_connection_id") in unique_columns
+    assert ("short_episode_id", "youtube_connection_id") in unique_columns
+    assert ("editorial_run_id", "youtube_connection_id") in unique_columns

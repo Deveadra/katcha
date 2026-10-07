@@ -348,6 +348,20 @@ class CreatePublicationRequest(BaseModel):
     hold_for_packaging: bool = False
 
 
+class CreateEditorialPublicationRequest(BaseModel):
+    """Metadata-only Editorial handoff; channel/connection identity is server-derived."""
+
+    title: str = Field(min_length=1, max_length=100)
+    description: str = Field(default="", max_length=5000)
+    tags: list[str] = Field(default_factory=list, max_length=50)
+    category_id: str | None = Field(default=None, max_length=32)
+    privacy_status: Literal["private", "unlisted", "public"] = "private"
+    publish_at: datetime | None = None
+    notify_subscribers: bool = False
+    made_for_kids: bool = False
+    contains_synthetic_media: bool = False
+
+
 class StartPublicationRequest(BaseModel):
     expected_version: int | None = Field(default=None, ge=0)
     actor: str = Field(default="operator", min_length=1, max_length=128)
@@ -367,6 +381,7 @@ class PublicationResponse(BaseModel):
     production_id: UUID | None
     compilation_id: UUID | None
     short_episode_id: UUID | None
+    editorial_run_id: UUID | None
     youtube_connection_id: UUID
     workflow_id: str
     workflow_attempt: int

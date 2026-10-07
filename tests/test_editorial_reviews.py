@@ -3,6 +3,7 @@
 import importlib.util
 import uuid
 from concurrent.futures import ThreadPoolExecutor
+from datetime import UTC, datetime, timedelta
 from threading import Barrier
 from unittest.mock import Mock
 
@@ -11,16 +12,25 @@ from alembic.migration import MigrationContext
 from alembic.operations import Operations
 from sqlalchemy import create_engine, inspect, select
 from sqlalchemy.orm import sessionmaker
+from test_editorial_projects import draft as editorial_draft
 from test_editorial_projects import saved as _saved
 from test_editorial_render import setup_render
 
 from katcha import db
 from katcha.editorial import render
 from katcha.editorial.review_schemas import ReviewEditorialRender
-from katcha.editorial_models import EditorialRenderReview, EditorialRun
+from katcha.editorial_models import (
+    EditorialRenderReview,
+    EditorialRevision,
+    EditorialRun,
+)
+from katcha.intelligence_models import ChannelProfile
 from katcha.models import DomainEvent
+from katcha.orchestration import publishing_activities
+from katcha.publishing_models import Publication, YouTubeConnection
 from katcha.services import editorial_reviews as reviews
 from katcha.services.editorial_projects import EditorialConflict
+from katcha.services.packaging_generation import compile_packaging_context
 
 saved = _saved
 
@@ -62,7 +72,7 @@ def test_review_replay_reversal_and_history(saved, monkeypatch):
     first = save(row, note="Evidence and timing checked")
     assert save(row, note="Evidence and timing checked") == first
     assert status(row)["status"] == "approve"
-    assert status(row)["publication_available"] is False
+    assert status(row)["publication_available"] is True
     with pytest.raises(EditorialConflict, match="identity"):
         save(row, decision="request_changes")
     with pytest.raises(EditorialConflict, match="Another review"):
@@ -75,6 +85,94 @@ def test_review_replay_reversal_and_history(saved, monkeypatch):
             DomainEvent.event_type == "editorial.render_reviewed"
         )))
         assert len(events) == 2
+
+
+def test_approved_editorial_render_stages_publication_and_rechecks_clearance(
+    saved, monkeypatch
+):
+    row = completed(saved, monkeypatch)
+    with db.session_scope() as session:
+        session.get(EditorialRun, row.id).input_revision = 1
+        session.add(
+            EditorialRevision(
+                project_id=row.project_id,
+                revision=1,
+                request_id=uuid.uuid4(),
+                request_digest="a" * 64,
+                digest="b" * 64,
+                draft=editorial_draft(),
+                actor="test",
+            )
+        )
+        profile = session.get(ChannelProfile, row.channel_profile_id)
+        connection_id = profile.youtube_connection_id
+        session.add(
+            YouTubeConnection(
+                id=connection_id,
+                channel_id="UC" + "e" * 22,
+                channel_title="Editorial Test",
+                status="active",
+                scopes=["https://www.googleapis.com/auth/youtube"],
+                encrypted_access_token="encrypted",
+                encrypted_refresh_token="encrypted",
+                token_expires_at=datetime.now(UTC) + timedelta(hours=1),
+            )
+        )
+    save(row, note="Approved for packaging")
+    monkeypatch.setattr("katcha.api.main._require_youtube_execution", lambda: None)
+
+    client = saved[0]
+    url = (
+        f"/v1/channels/{row.channel_profile_id}/editorial-projects/{row.project_id}"
+        f"/runs/{row.id}/publication"
+    )
+    body = {"title": "Exact approved editorial render"}
+    response = client.post(url, json=body)
+    assert response.status_code == 201, response.text
+    publication = response.json()
+    assert publication["editorial_run_id"] == str(row.id)
+    assert publication["youtube_connection_id"] == str(connection_id)
+    assert publication["production_id"] is None
+    assert publication["compilation_id"] is None
+    assert publication["short_episode_id"] is None
+    assert publication["stage"] == "metadata_hold"
+    assert publication["raw_status"]["source_kind"] == "editorial_render"
+    assert publication["treatment_metadata"]["render_approval_sequence"] == 1
+
+    replay = client.post(url, json=body)
+    assert replay.status_code == 201
+    assert replay.json()["id"] == publication["id"]
+
+    profile_id, context, context_digest = compile_packaging_context(
+        uuid.UUID(publication["id"])
+    )
+    assert profile_id == row.channel_profile_id
+    assert context["source_kind"] == "editorial_render"
+    assert context["source_id"] == str(row.id)
+    assert context["render_approval_sequence"] == 1
+    assert "This may be a connection." in context["grounding_facts"]
+    assert len(context_digest) == 64
+
+    reviews.current_manifest.side_effect = EditorialConflict("clearance revoked")
+    assert client.post(url, json=body).status_code == 409
+    assert client.post(
+        f"/v1/publications/{publication['id']}/start",
+        json={},
+    ).status_code == 409
+    with db.session_scope() as session:
+        stored = session.get(Publication, uuid.UUID(publication["id"]))
+        with pytest.raises(RuntimeError, match="clearance revoked"):
+            publishing_activities._publication_render_key(session, stored)
+        stored.status = "processing"
+        stored.stage = "processing"
+        stored.youtube_video_id = "private-video-id"
+        stored.privacy_status = "public"
+
+    youtube = Mock()
+    monkeypatch.setattr(publishing_activities, "YouTubeClient", youtube)
+    with pytest.raises(RuntimeError, match="clearance revoked"):
+        publishing_activities.finalize_publication_activity(publication["id"])
+    youtube.assert_not_called()
 
 
 @pytest.mark.parametrize("damage", ["rights", "receipt", "duration", "composition"])

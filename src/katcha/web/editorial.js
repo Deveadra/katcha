@@ -638,15 +638,53 @@ window.KatchaEditorial = (() => {
         updateStoryboardUndo();
     }
     function reviewNoteKey() { return storageKey(`review-note.${state.run?.editorial_run_id}`); }
+    function renderPublicationHandoff() {
+        const panel = el("editorial-publication");
+        const review = state.review;
+        const publication = review?.publication || null;
+        const available = Boolean(review?.publication_available);
+        panel.hidden = !review || (!available && !publication);
+        if (panel.hidden) return;
+        const form = el("editorial-publication-form");
+        const openLink = el("editorial-open-publication");
+        const stateLabel = el("editorial-publication-state");
+        const status = el("editorial-publication-status");
+        if (publication) {
+            form.hidden = true;
+            openLink.hidden = false;
+            openLink.href = `/channels?channel=${encodeURIComponent(state.channel)}&publication=${encodeURIComponent(publication.id)}#content`;
+            stateLabel.textContent = String(publication.stage || publication.status || "STAGED").replaceAll("_", " ").toUpperCase();
+            status.textContent = publication.youtube_video_id
+                ? "This approved cut is already in the publication pipeline. Open Channel Studio for current release state."
+                : "Publication staged. Finish SEO, thumbnail, visibility and schedule review before starting upload.";
+            return;
+        }
+        form.hidden = false;
+        openLink.hidden = true;
+        stateLabel.textContent = "READY";
+        status.textContent = "Stage this exact approved render into metadata hold. This does not start YouTube upload.";
+        const run = state.run?.editorial_run_id || "";
+        if (el("editorial-publication-title").dataset.run !== run) {
+            el("editorial-publication-title").dataset.run = run;
+            el("editorial-publication-title").value =
+                String(state.project?.brief?.prompt || "Editorial video").trim().slice(0, 100);
+            el("editorial-publication-description").value = "";
+        }
+        el("editorial-stage-publication").disabled = state.busy || !available;
+    }
     function renderReview() {
         el("editorial-review").hidden = !state.review;
-        if (!state.review) return;
+        if (!state.review) {
+            renderPublicationHandoff();
+            return;
+        }
         const labels = {unreviewed: "Awaiting your review. Load the private preview before approving.", approve: "Review approved for this rendered revision.", request_changes: "Changes requested. Update the script or storyboard and create a new preview.", invalidated: "Previous approval is no longer valid."};
         el("editorial-review-status").textContent = state.review.error
             ? `Review status unavailable: ${state.review.error}. Refresh projects to retry.`
             : `${labels[state.review.status] || "Review required."} ${state.review.blocker || ""}`;
         el("editorial-review-note").value = read(reviewNoteKey(), "");
         el("editorial-review-history").innerHTML = (state.review.reviews || []).map(review => `<article class="item"><div><p>${esc(review.decision === "approve" ? "Approved" : "Changes requested")} · ${esc(review.actor)} · ${esc(review.created_at)}</p><p>${esc(review.note)}</p></div></article>`).join("") || "No saved reviews.";
+        renderPublicationHandoff();
     }
     function narrationKey() { return storageKey(`narration.${state.project.id}.${state.project.revision}`); }
     function saveNarrationChoices() {
@@ -1782,6 +1820,29 @@ window.KatchaEditorial = (() => {
             });
         });
         el("editorial-review-note").addEventListener("input", () => remember(reviewNoteKey(), el("editorial-review-note").value));
+        el("editorial-stage-publication").addEventListener("click", () => void guarded(async () => {
+            if (!state.review?.publication_available) {
+                throw new Error("Approve the current render before staging publication.");
+            }
+            const title = el("editorial-publication-title").value.trim();
+            if (!title) throw new Error("Add a working YouTube title before staging.");
+            const channel = state.channel;
+            const project = state.project.id;
+            const run = state.run.editorial_run_id;
+            const payload = {
+                title,
+                description: el("editorial-publication-description").value.trim(),
+            };
+            await api(path(channel, `/${project}/runs/${run}/publication`), {
+                method: "POST",
+                body: JSON.stringify(payload),
+            });
+            if (channel === state.channel) {
+                await open(project, {focus: false});
+                advanceStage("preview");
+                feedback("Publication staged. Open metadata & release controls to finish packaging before upload.");
+            }
+        }));
         for (const [id, decision] of [["editorial-approve", "approve"], ["editorial-request-changes", "request_changes"]]) {
             el(id).addEventListener("click", () => void guarded(async () => {
                 const channel = state.channel; const project = state.project.id; const run = state.run.editorial_run_id;

@@ -27,6 +27,8 @@ from katcha.ai.subscription import generate_subscription_json, subscription_conn
 from katcha.config import Settings, get_settings
 from katcha.db import session_scope
 from katcha.domain import AITask
+from katcha.editorial.project_schemas import EditorialDraft
+from katcha.editorial_models import EditorialRevision, EditorialRun
 from katcha.intelligence_models import ChannelProfile
 from katcha.packaging_models import (
     PackagingCandidateGeneration,
@@ -34,6 +36,7 @@ from katcha.packaging_models import (
 )
 from katcha.production_models import Production, ProductionScript
 from katcha.publishing_models import Publication
+from katcha.services.editorial_reviews import approved_manifest
 from katcha.services.packaging import create_packaging_variant
 from katcha.services.packaging_intelligence import latest_packaging_intelligence
 from katcha.short_episode_models import ShortEpisode, ShortEpisodeItem, ShortEpisodeScript
@@ -194,9 +197,81 @@ def _source_lineage(
         context["items"] = item_summaries
         return episode.channel_profile_id, context, facts
 
+    if publication.editorial_run_id is not None:
+        run = session.get(EditorialRun, publication.editorial_run_id)
+        if run is None:
+            raise ValueError("publication Editorial render lineage is missing")
+        revision = session.get(EditorialRevision, (run.project_id, run.input_revision))
+        if revision is None:
+            raise ValueError("publication Editorial script revision is missing")
+        manifest, approval = approved_manifest(run, session=session)
+        draft = EditorialDraft.model_validate(revision.draft)
+        brand = manifest.brand.model_dump(mode="json") if manifest.brand is not None else {}
+        context.update(
+            {
+                "source_kind": "editorial_render",
+                "source_id": str(run.id),
+                "editorial_project_id": str(run.project_id),
+                "editorial_revision": run.input_revision,
+                "render_manifest_version": manifest.version,
+                "render_approval_sequence": approval.sequence,
+                "render_manifest_digest": approval.manifest_digest,
+                "brand_key": brand.get("brand_key"),
+                "brand_version": brand.get("version"),
+                "brand_snapshot": {"visual": brand} if brand else {},
+                "presentation_mode": manifest.presentation_mode,
+                "script_beats": [
+                    {
+                        "id": beat.id,
+                        "role": beat.role,
+                        "narration": beat.narration,
+                        "claim_ids": list(beat.claim_ids),
+                        "uncertainty_disclosure": beat.uncertainty_disclosure,
+                    }
+                    for beat in draft.script
+                ],
+                "claims": [
+                    {
+                        "id": claim.id,
+                        "text": claim.text,
+                        "classification": claim.classification,
+                        "confidence": claim.confidence,
+                        "source_ids": list(claim.source_ids),
+                    }
+                    for claim in draft.claims
+                ],
+                "sources": [
+                    {
+                        "id": source.id,
+                        "title": source.title,
+                        "category": source.category,
+                        "excerpt": source.excerpt,
+                        "locator": source.locator,
+                    }
+                    for source in draft.sources
+                ],
+            }
+        )
+        for beat in draft.script:
+            narration = beat.narration.strip()
+            if narration:
+                facts.append(narration)
+        for claim in draft.claims:
+            qualifier = (
+                "Theory (unconfirmed)"
+                if claim.classification == "theory"
+                else claim.classification.replace("_", " ").title()
+            )
+            facts.append(f"{qualifier}: {claim.text.strip()}")
+        for source in draft.sources:
+            excerpt = source.excerpt.strip()
+            if excerpt:
+                facts.append(f"Source excerpt: {excerpt}")
+        return run.channel_profile_id, context, facts
+
     raise ValueError(
-        "automated packaging generation currently supports "
-        "production and short-episode publications"
+        "automated packaging generation currently supports production, short-episode "
+        "and Editorial-render publications"
     )
 
 

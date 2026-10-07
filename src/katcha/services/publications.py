@@ -15,6 +15,7 @@ from katcha.domain import (
     PublicationStatus,
     YouTubeConnectionStatus,
 )
+from katcha.editorial_models import EditorialRun
 from katcha.intelligence_models import ChannelProfile
 from katcha.longform_models import Compilation, CompilationAsset
 from katcha.models import DomainEvent
@@ -28,7 +29,7 @@ from katcha.short_episode_models import (
 )
 
 VALID_PRIVACY_STATUSES = {"private", "unlisted", "public"}
-SourceKind = Literal["production", "compilation", "short_episode"]
+SourceKind = Literal["production", "compilation", "short_episode", "editorial_render"]
 
 
 def _clean_tags(tags: list[str]) -> list[str]:
@@ -93,13 +94,15 @@ def _source(
     *,
     source_kind: SourceKind,
     source_id: uuid.UUID,
-) -> Production | Compilation | ShortEpisode:
+) -> Production | Compilation | ShortEpisode | EditorialRun:
     if source_kind == "production":
         source = session.get(Production, source_id)
     elif source_kind == "compilation":
         source = session.get(Compilation, source_id)
-    else:
+    elif source_kind == "short_episode":
         source = session.get(ShortEpisode, source_id)
+    else:
+        source = session.get(EditorialRun, source_id)
     if source is None:
         raise ValueError(f"{source_kind.replace('_', ' ')} not found: {source_id}")
     return source
@@ -154,7 +157,7 @@ def _approved_render_key(
                 CompilationAsset.generation == 1,
             )
         )
-    else:
+    elif source_kind == "short_episode":
         source = _source(session, source_kind=source_kind, source_id=source_id)
         if source.status != "approved" or source.stage != "render_approved":
             raise ValueError("short episode render must be approved before publication")
@@ -165,9 +168,42 @@ def _approved_render_key(
                 ShortEpisodeAsset.generation == 1,
             )
         )
+    else:
+        source = _source(session, source_kind=source_kind, source_id=source_id)
+        if not isinstance(source, EditorialRun):
+            raise ValueError("editorial publication source has invalid lineage")
+        from katcha.services.editorial_reviews import approved_manifest
+
+        manifest, _ = approved_manifest(source, session=session)
+        return manifest.output_key
     if render is None:
         raise ValueError(f"approved {source_kind.replace('_', ' ')} has no rendered video asset")
     return render.storage_key
+
+
+def publication_source(publication: Publication) -> tuple[SourceKind, uuid.UUID]:
+    identities: list[tuple[SourceKind, uuid.UUID | None]] = [
+        ("production", publication.production_id),
+        ("compilation", publication.compilation_id),
+        ("short_episode", publication.short_episode_id),
+        ("editorial_render", publication.editorial_run_id),
+    ]
+    active: list[tuple[SourceKind, uuid.UUID]] = []
+    for kind, identity in identities:
+        if identity is not None:
+            active.append((kind, identity))
+    if len(active) != 1:
+        raise ValueError("publication source lineage is invalid")
+    return active[0]
+
+
+def approved_publication_render_key(session: Session, publication: Publication) -> str:
+    source_kind, source_id = publication_source(publication)
+    return _approved_render_key(
+        session,
+        source_kind=source_kind,
+        source_id=source_id,
+    )
 
 
 def _blueprint_lineage(
@@ -273,6 +309,30 @@ def _short_episode_treatment_metadata(
     }
 
 
+def _editorial_treatment_metadata(
+    session: Session,
+    run: EditorialRun,
+) -> dict[str, object]:
+    from katcha.services.editorial_reviews import approved_manifest
+
+    manifest, approval = approved_manifest(run, session=session)
+    brand = manifest.brand.model_dump(mode="json") if manifest.brand is not None else {}
+    return {
+        "source_kind": "editorial_render",
+        "source_scope": "editorial_project",
+        "editorial_project_id": str(run.project_id),
+        "editorial_run_id": str(run.id),
+        "editorial_revision": run.input_revision,
+        "render_manifest_version": manifest.version,
+        "render_manifest_digest": approval.manifest_digest,
+        "render_result_digest": approval.result_digest,
+        "render_approval_sequence": approval.sequence,
+        "brand_key": brand.get("brand_key"),
+        "brand_version": brand.get("version"),
+        "presentation_mode": manifest.presentation_mode,
+    }
+
+
 def _existing_publication(
     session: Session,
     *,
@@ -284,8 +344,10 @@ def _existing_publication(
         source_column = Publication.production_id
     elif source_kind == "compilation":
         source_column = Publication.compilation_id
-    else:
+    elif source_kind == "short_episode":
         source_column = Publication.short_episode_id
+    else:
+        source_column = Publication.editorial_run_id
     return session.scalar(
         select(Publication).where(
             source_column == source_id,
@@ -327,6 +389,12 @@ def _register_source_publication(
             youtube_connection_id=youtube_connection_id,
         )
         if existing is not None:
+            if source_kind == "editorial_render":
+                _approved_render_key(
+                    session,
+                    source_kind=source_kind,
+                    source_id=source_id,
+                )
             session.expunge(existing)
             return existing
 
@@ -357,6 +425,11 @@ def _register_source_publication(
             if episode is None:
                 raise ValueError(f"short episode not found: {source_id}")
             treatment_metadata = _short_episode_treatment_metadata(session, episode)
+        elif source_kind == "editorial_render":
+            run = session.get(EditorialRun, source_id)
+            if run is None:
+                raise ValueError(f"editorial render not found: {source_id}")
+            treatment_metadata = _editorial_treatment_metadata(session, run)
 
         publication_id = uuid.uuid4()
         workflow_id = f"yt-publish-{publication_id}-a1"
@@ -366,6 +439,7 @@ def _register_source_publication(
             production_id=source_id if source_kind == "production" else None,
             compilation_id=source_id if source_kind == "compilation" else None,
             short_episode_id=source_id if source_kind == "short_episode" else None,
+            editorial_run_id=source_id if source_kind == "editorial_render" else None,
             youtube_connection_id=youtube_connection_id,
             workflow_id=workflow_id,
             workflow_attempt=1,
@@ -406,6 +480,9 @@ def _register_source_publication(
                     "compilation_id": str(source_id) if source_kind == "compilation" else None,
                     "short_episode_id": (
                         str(source_id) if source_kind == "short_episode" else None
+                    ),
+                    "editorial_run_id": (
+                        str(source_id) if source_kind == "editorial_render" else None
                     ),
                     "channel_profile_id": (
                         str(channel_profile_id) if channel_profile_id else None
@@ -520,6 +597,47 @@ def register_short_episode_publication(
     )
 
 
+def register_editorial_publication(
+    editorial_run_id: uuid.UUID,
+    *,
+    title: str,
+    description: str = "",
+    tags: list[str] | None = None,
+    category_id: str | None = None,
+    privacy_status: str = "private",
+    publish_at: datetime | None = None,
+    notify_subscribers: bool = False,
+    made_for_kids: bool = False,
+    contains_synthetic_media: bool = False,
+) -> Publication:
+    """Register an approved Editorial render in metadata hold before provider upload."""
+    with session_scope() as session:
+        run = session.get(EditorialRun, editorial_run_id)
+        if run is None:
+            raise ValueError(f"editorial render not found: {editorial_run_id}")
+        profile = session.get(ChannelProfile, run.channel_profile_id)
+        if profile is None:
+            raise ValueError("Editorial render references a missing channel profile")
+        youtube_connection_id = profile.youtube_connection_id
+        if youtube_connection_id is None:
+            raise ValueError("Connect this channel to YouTube before staging publication")
+    return _register_source_publication(
+        source_kind="editorial_render",
+        source_id=editorial_run_id,
+        youtube_connection_id=youtube_connection_id,
+        title=title,
+        description=description,
+        tags=tags,
+        category_id=category_id,
+        privacy_status=privacy_status,
+        publish_at=publish_at,
+        notify_subscribers=notify_subscribers,
+        made_for_kids=made_for_kids,
+        contains_synthetic_media=contains_synthetic_media,
+        hold_for_packaging=True,
+    )
+
+
 def update_publication_plan(
     publication_id: uuid.UUID,
     *,
@@ -627,6 +745,8 @@ def release_publication_for_upload(
             raise ValueError("publication has already entered YouTube upload")
         if publication.status != PublicationStatus.QUEUED.value:
             raise ValueError("only queued publications can be released for upload")
+        if publication.stage == "metadata_hold":
+            approved_publication_render_key(session, publication)
         if publication.stage == "queued":
             session.expunge(publication)
             return publication
@@ -674,32 +794,8 @@ def retry_publication(
         if connection is None or connection.status != YouTubeConnectionStatus.ACTIVE.value:
             raise ValueError("YouTube connection must be active before retrying")
 
-        source_kind: SourceKind
-        source_id: uuid.UUID
-        if (
-            publication.production_id is not None
-            and publication.compilation_id is None
-            and publication.short_episode_id is None
-        ):
-            source_kind = "production"
-            source_id = publication.production_id
-        elif (
-            publication.compilation_id is not None
-            and publication.production_id is None
-            and publication.short_episode_id is None
-        ):
-            source_kind = "compilation"
-            source_id = publication.compilation_id
-        elif (
-            publication.short_episode_id is not None
-            and publication.production_id is None
-            and publication.compilation_id is None
-        ):
-            source_kind = "short_episode"
-            source_id = publication.short_episode_id
-        else:
-            raise ValueError("publication source lineage is invalid")
-        _approved_render_key(session, source_kind=source_kind, source_id=source_id)
+        source_kind, source_id = publication_source(publication)
+        approved_publication_render_key(session, publication)
         channel_profile_id = _enforce_channel_scope(
             session,
             source_kind=source_kind,

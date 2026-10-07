@@ -8,6 +8,7 @@ from sqlalchemy import and_, or_, select
 
 from katcha.api.control_auth import control_actor
 from katcha.api.editorial_projects import _authorize, _error
+from katcha.api.schemas import CreateEditorialPublicationRequest, PublicationResponse
 from katcha.db import session_scope
 from katcha.editorial.review_schemas import ReviewEditorialRender
 from katcha.editorial.run_schemas import (
@@ -21,11 +22,47 @@ from katcha.orchestration.editorial_dispatch import dispatch_editorial_run
 from katcha.services.editorial_projects import get_project
 from katcha.services.editorial_reviews import review_render, review_status
 from katcha.services.editorial_runs import control_run, get_run, start_run, workflow_id
+from katcha.services.publications import register_editorial_publication
 
 router = APIRouter(
     prefix="/v1/channels/{channel_profile_id}/editorial-projects/{project_id}/runs",
     tags=["editorial-projects"],
 )
+
+
+@router.post(
+    "/{editorial_run_id}/publication",
+    response_model=PublicationResponse,
+    status_code=201,
+)
+def create_editorial_publication(
+    channel_profile_id: uuid.UUID,
+    project_id: uuid.UUID,
+    editorial_run_id: uuid.UUID,
+    body: CreateEditorialPublicationRequest,
+    request: Request,
+):
+    """Stage one exact approved Editorial render for packaging before YouTube upload."""
+    _authorize(request, channel_profile_id, write=True)
+    from katcha.api.main import _require_youtube_execution
+
+    _require_youtube_execution()
+    try:
+        run = get_run(channel_profile_id, project_id, editorial_run_id)
+        return register_editorial_publication(
+            run.id,
+            title=body.title,
+            description=body.description,
+            tags=body.tags,
+            category_id=body.category_id,
+            privacy_status=body.privacy_status,
+            publish_at=body.publish_at,
+            notify_subscribers=body.notify_subscribers,
+            made_for_kids=body.made_for_kids,
+            contains_synthetic_media=body.contains_synthetic_media,
+        )
+    except ValueError as exc:
+        raise _error(exc) from exc
 
 
 @router.post("/{editorial_run_id}/narration-billing", status_code=201)
