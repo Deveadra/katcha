@@ -528,8 +528,8 @@ const draft = {
         assert.equal(await page.locator('[data-transition-frames]').inputValue(), '6');
         await page.locator('#editorial-source-monitor').waitFor({state: 'visible'});
         assert.equal(await page.locator('#editorial-source-monitor-title').innerText(), 'Supporting interview');
-        await page.locator('[data-footage="start"]').fill('2.0');
         const previousVersion = storyboardWorkspace.version;
+        await page.locator('[data-footage="start"]').fill('2.0');
         await page.getByText(new RegExp(`Saved workspace · v${previousVersion + 1}`)).waitFor();
         assert.equal(await page.locator('#editorial-storyboard-undo').isDisabled(), false);
         await page.getByRole('button', {name: 'Undo last edit', exact: true}).click();
