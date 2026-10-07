@@ -290,6 +290,9 @@ jobs:
         run: |
           bash -n scripts/bootstrap-acquired-oci-host.sh
           bash -n deploy/scripts/production-supervisor.sh
+          ruff check \
+            scripts/oci_production_cutover.py \
+            scripts/verify_media_cutover.py
           python -m py_compile \
             scripts/oci_production_cutover.py \
             scripts/verify_media_cutover.py
