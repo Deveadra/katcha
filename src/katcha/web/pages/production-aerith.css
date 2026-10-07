@@ -929,9 +929,11 @@ body[data-katcha-page="production"] .editorial-stage-panel .editorial-beat {
     background-size: 24px 24px;
 }
 
-#editorial-source-monitor-image {
+#editorial-source-monitor-image,
+#editorial-source-monitor-video {
     width: 100%;
     height: 100%;
+    background: #000;
     object-fit: contain;
 }
 
@@ -954,15 +956,24 @@ body[data-katcha-page="production"] .editorial-stage-panel .editorial-beat {
     background: var(--ae-surface-raised);
 }
 
-.editorial-source-monitor-times span {
+.editorial-source-monitor-times button {
     flex: 0 0 auto;
     min-height: 22px;
     padding: 4px 7px;
     border: 1px solid var(--ae-line);
     border-radius: 999px;
+    background: var(--ae-surface);
     color: var(--ae-text-secondary);
+    font: inherit;
     font-size: 7px;
     font-variant-numeric: tabular-nums;
+    cursor: pointer;
+}
+
+.editorial-source-monitor-times button:hover,
+.editorial-source-monitor-times button:focus-visible {
+    border-color: var(--ae-accent);
+    color: var(--ae-text);
 }
 
 .editorial-source-monitor-status {
@@ -1047,6 +1058,33 @@ body[data-katcha-page="production"] .editorial-stage-panel .editorial-beat {
     font-size: 9px;
     line-height: 1.5;
     text-align: center;
+}
+
+.editorial-monitor-transport {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-height: 40px;
+    padding: 7px 10px;
+    border-top: 1px solid var(--ae-line);
+    background: var(--ae-surface-raised);
+}
+
+.editorial-monitor-timecode {
+    min-width: 112px;
+    margin-inline: auto;
+    color: var(--ae-text-secondary);
+    font-size: 8px;
+    font-variant-numeric: tabular-nums;
+    text-align: center;
+}
+
+.editorial-monitor-scrub {
+    display: block;
+    width: calc(100% - 20px);
+    height: 22px;
+    margin: 0 10px 7px;
+    accent-color: var(--ae-accent);
 }
 
 .editorial-program-monitor-actions {
@@ -1385,6 +1423,7 @@ body[data-katcha-page="production"] .editorial-beat-inspector .editorial-beat-ed
     }
 
     .editorial-program-monitor-actions,
+    .editorial-monitor-transport,
     .editorial-storyboard-sync {
         align-items: stretch;
         flex-direction: column;

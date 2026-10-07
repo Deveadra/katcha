@@ -376,6 +376,54 @@ def test_named_principal_storyboard_source_monitor_uses_ai_read_scope(
     assert "ai:read" in str(exc.value.detail)
 
 
+def test_named_principal_editorial_source_media_session_uses_ai_read_scope() -> None:
+    channel_id = uuid.uuid4()
+    project_id = uuid.uuid4()
+    run_id = uuid.uuid4()
+    path = (
+        f"/v1/channels/{channel_id}/editorial-projects/{project_id}/runs/{run_id}/"
+        "assets/candidate/source-media-session"
+    )
+    request = _request(
+        path,
+        method="POST",
+        path_params={"channel_profile_id": str(channel_id)},
+    )
+    _authenticate(
+        request,
+        _credentials("aerith-fixture-token-000001"),
+        _settings(channel_id=channel_id, scopes=["ai:read"]),
+    )
+    _require_named_principal_route_access(request)
+
+    denied = _request(
+        path,
+        method="POST",
+        path_params={"channel_profile_id": str(channel_id)},
+    )
+    _authenticate(
+        denied,
+        _credentials("aerith-fixture-token-000001"),
+        _settings(channel_id=channel_id, scopes=["channels:read"]),
+    )
+    with pytest.raises(HTTPException) as exc:
+        _require_named_principal_route_access(denied)
+    assert exc.value.status_code == 403
+    assert "ai:read" in str(exc.value.detail)
+
+
+def test_editorial_source_media_uses_scoped_cookie_instead_of_bearer(monkeypatch) -> None:
+    request = _request(
+        "/v1/channels/channel/editorial-projects/project/runs/run/assets/candidate/source-media"
+    )
+    monkeypatch.setattr(
+        "katcha.api.control_auth.get_settings",
+        lambda: _settings(scopes=[]),
+    )
+
+    require_control_token(request, None)
+
+
 def test_named_principal_editorial_source_upload_uses_production_scope() -> None:
     channel_id = uuid.uuid4()
     request = _request(

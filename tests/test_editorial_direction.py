@@ -307,6 +307,8 @@ def install_media(row):
                 id=clip_id,
                 sha256="a" * 64,
                 storage_key="raw/asset.mp4",
+                extension="mp4",
+                size_bytes=12_345,
                 duration_seconds=10,
                 width=1920,
                 height=1080,
@@ -456,6 +458,10 @@ def test_storyboard_source_monitor_revalidates_acquired_frame_evidence(directing
     assert result["sample_times"] == [0.25, 5.0, 9.75]
     assert result["coverage"] == "sampled_frames"
     assert result["contact_sheet_key"] == (f"analysis/aa/{'a' * 64}/contact-sheet.jpg")
+    assert result["storage_key"] == "raw/asset.mp4"
+    assert result["extension"] == "mp4"
+    assert result["size_bytes"] == 12_345
+    assert result["source_media_available"] is True
 
 
 def test_storyboard_source_monitor_rejects_untrusted_frame_storage(directing):

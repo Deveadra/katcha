@@ -29,6 +29,7 @@ let failHistoryPage = true, failHistoryPreview = true, delayedHistory = null;
 let historyRequestStarted;
 const historyStarted = new Promise(resolve => { historyRequestStarted = resolve; });
 const historyRows = Array.from({length: 23}, (_, index) => ({editorial_run_id: `past-${index}`, target: index ? 'script' : 'render', input_revision: 1, attempt: 1, status: index ? 'blocked' : 'completed', stage: index ? 'researching' : 'render_ready_for_review', created_at: '2026-10-01T12:00:00Z', error: index ? 'Saved provider failure' : null, artifacts: {saved_revision: 1, ...(index === 0 ? {direction_shot_evidence: frameReceipt} : {})}}));
+const sourceVideoFixture = Buffer.from("GkXfo59ChoEBQveBAULygQRC84EIQoKEd2VibUKHgQJChYECGFOAZwEAAAAAAAL7EU2bdLpNu4tTq4QVSalmU6yBoU27i1OrhBZUrmtTrIHWTbuMU6uEElTDZ1OsggEjTbuMU6uEHFO7a1OsggLl7AEAAAAAAABZAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAVSalmsCrXsYMPQkBNgIxMYXZmNjEuNy4xMDNXQYxMYXZmNjEuNy4xMDNEiYhAgEAAAAAAABZUrmvIrgEAAAAAAAA/14EBc8WI3/nui49P0KScgQAitZyDdW5kiIEAhoVWX1ZQOIOBASPjg4QCYloA4JCwgRC6gRCagQJVsIRVuYEBElTDZ/tzc59jwIBnyJlFo4dFTkNPREVSRIeMTGF2ZjYxLjcuMTAzc3PWY8CLY8WI3/nui49P0KRnyKFFo4dFTkNPREVSRIeUTGF2YzYxLjE5LjEwMSBsaWJ2cHhnyKFFo4hEVVJBVElPTkSHkzAwOjAwOjAwLjUyMDAwMDAwMAAfQ7Z1QTzngQCjo4EAAIAQAgCdASoQABAAAEcIhYWIhYSIAgIADA1gAP7/q1CAo5WBACgAsQEAARAQABgAGFgv9AAIAACjlYEAUACxAQABEBAAGAAYWC/0AAgAAKOVgQB4ALEBAAEQEAAYABhYL/QACAAAo5WBAKAAsQEAARAQABgAGFgv9AAIAACjlYEAyACxAQABEBAAGAAYWC/0AAgAAKOVgQDwALEBAAEQEAAYABhYL/QACAAAo5WBARgAsQEAARAQFGAAYWC/0AAgAACjlYEBQACxAQABEBAAGAAYWC/0AAgAAKOVgQFoALEBAAEQEAAYABhYL/QACAAAo5WBAZAAsQEAARAQABgAGFgv9AAIAACjlYEBuACxAQABEBAAGAAYWC/0AAgAAKOVgQHgALEBAAEQEAAYABhYL/QACAAAHFO7a5G7j7OBALeK94EB8YIBo/CBAw==", "base64");
 const draft = {
     version: "editorial-draft-v1", observations: [],
     sources: [{ id: "source", title: "Interview", url: "https://example.com/interview", category: "interview", excerpt: "A synthetic quoted clue." }],
@@ -98,8 +99,31 @@ const draft = {
                     duration_seconds: 10,
                     frame_count: 3,
                     sample_times: [0.25, 5, 9.75],
+                    size_bytes: 12345,
+                    source_media_available: true,
                     coverage: "sampled_frames",
                     limitation: "These frames are samples, not continuous playback. Verify exact motion and timing in the rendered preview before approval.",
+                });
+            }
+            if (url.pathname.endsWith("/runs/acquire/assets/candidate/source-media-session")) {
+                const mediaUrl = url.pathname.replace(/\/source-media-session$/, "/source-media");
+                return route.fulfill({
+                    status: 200,
+                    contentType: "application/json",
+                    headers: {
+                        "set-cookie": `katcha_editorial_source_media=fixture; HttpOnly; SameSite=Strict; Path=${mediaUrl}`,
+                    },
+                    body: JSON.stringify({
+                        media_url: mediaUrl,
+                        expires_in_seconds: 900,
+                    }),
+                });
+            }
+            if (url.pathname.endsWith("/runs/acquire/assets/candidate/source-media")) {
+                return route.fulfill({
+                    status: 200,
+                    contentType: "video/webm",
+                    body: sourceVideoFixture,
                 });
             }
             if (url.pathname.endsWith("/runs/acquire/assets/candidate/contact-sheet")) {
@@ -437,9 +461,40 @@ const draft = {
         assert.equal(await page.locator('#editorial-source-monitor-title').innerText(), 'Supporting interview');
         assert.match(await page.locator('#editorial-source-monitor-meta').innerText(), /10s · 3 sampled frames/);
         assert.deepEqual(
-            await page.locator('#editorial-source-monitor-times span').allTextContents(),
-            ['F1 · 0:00', 'F2 · 0:05', 'F3 · 0:10'],
+            await page.locator('#editorial-source-monitor-times button').allTextContents(),
+            ['F1 · 00:00.250', 'F2 · 00:05.000', 'F3 · 00:09.750'],
         );
+        assert.equal(
+            await page.locator('#editorial-source-monitor-timecode').innerText(),
+            '00:00.000 / 00:10.000',
+        );
+        await page.locator('[data-source-sample="5"]').click();
+        assert.equal(
+            await page.locator('#editorial-source-monitor-timecode').innerText(),
+            '00:05.000 / 00:10.000',
+        );
+        await page.locator('[data-source-step="0.1"]').click();
+        assert.equal(
+            await page.locator('#editorial-source-monitor-timecode').innerText(),
+            '00:05.100 / 00:10.000',
+        );
+        await page.getByRole('button', {name: 'Set beat start', exact: true}).click();
+        assert.equal(
+            await page.locator('#editorial-storyboard [data-footage-start]').inputValue(),
+            '5.1',
+        );
+        await page.getByRole('button', {name: 'Load source video', exact: true}).click();
+        await page.locator('#editorial-source-monitor-video').waitFor({state: 'visible'});
+        assert.equal(
+            calls.some(call => call.path.endsWith('/runs/acquire/assets/candidate/source-media-session')),
+            true,
+        );
+        assert.equal(
+            calls.some(call => call.path.endsWith('/runs/acquire/assets/candidate/source-media')),
+            true,
+        );
+        await page.getByRole('button', {name: 'Show sampled frames', exact: true}).click();
+        assert.equal(await page.locator('#editorial-source-monitor-image').isVisible(), true);
         assert.match(
             await page.locator('#editorial-source-monitor-status').innerText(),
             /samples, not continuous playback/,
@@ -575,6 +630,44 @@ const draft = {
         await page.getByText(/Preview loaded/).waitFor();
         assert.equal(await page.locator('#editorial-program-monitor-video').isVisible(), true);
         assert.match(await page.locator('#editorial-program-monitor-meta').innerText(), /Loaded · revision 3/);
+        await page.evaluate(() => {
+            const video = document.querySelector('#editorial-program-monitor-video');
+            let current = 2;
+            Object.defineProperty(video, 'duration', {
+                configurable: true,
+                get: () => 12,
+            });
+            Object.defineProperty(video, 'currentTime', {
+                configurable: true,
+                get: () => current,
+                set: value => { current = Number(value); },
+            });
+            video.dispatchEvent(new Event('loadedmetadata'));
+        });
+        assert.equal(
+            await page.locator('#editorial-program-monitor-timecode').innerText(),
+            '00:02.000 / 00:12.000',
+        );
+        await page.locator('[data-program-step="0.1"]').click();
+        assert.equal(
+            await page.locator('#editorial-program-monitor-timecode').innerText(),
+            '00:02.100 / 00:12.000',
+        );
+        await page.locator('#editorial-program-scrub').fill('4.2');
+        assert.equal(
+            await page.locator('#editorial-program-monitor-timecode').innerText(),
+            '00:04.200 / 00:12.000',
+        );
+        await page.getByRole('button', {name: 'Go to selected beat', exact: true}).click();
+        assert.equal(
+            await page.locator('#editorial-program-monitor-timecode').innerText(),
+            '00:00.000 / 00:12.000',
+        );
+        await page.getByText(/planned beat start 00:00.000/i).waitFor();
+        assert.match(
+            await page.locator('#editorial-program-monitor-status').innerText(),
+            /Program time is rendered output time/i,
+        );
         await page.locator('[data-editorial-stage="preview"]').click();
         assert.equal(await page.locator('#editorial-preview').isVisible(), true);
         await page.locator('#editorial-review-note').fill('Evidence and timing checked.');
@@ -879,7 +972,17 @@ const draft = {
         await page.locator("#channel").selectOption("one");
         await page.getByRole("button", { name: "Open project", exact: true }).waitFor();
         assert.equal(await page.locator("#editorial-prompt").inputValue(), "Investigate the trailer clues");
-        assert(calls.filter((call) => call.path.includes("editorial-projects")).every((call) => call.auth === "Bearer fixture-token"));
+        assert(
+            calls
+                .filter(
+                    call => call.path.includes("editorial-projects")
+                        && !call.path.endsWith("/source-media"),
+                )
+                .every(call => call.auth === "Bearer fixture-token"),
+        );
+        const nativeSourceReads = calls.filter(call => call.path.endsWith("/source-media"));
+        assert(nativeSourceReads.length >= 1);
+        assert(nativeSourceReads.every(call => !call.auth));
         assert.deepEqual(errors, []);
         console.log("Editorial project recovery, evidence, script editing, channel isolation and 390px checks passed.");
     } finally { await browser.close(); server.kill(); }

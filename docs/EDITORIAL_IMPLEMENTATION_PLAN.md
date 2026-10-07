@@ -1130,67 +1130,63 @@ authoritative AI selector. This is the prerequisite for the next boundary: durab
 edit proposals with Apply / Modify / Reject over an exact workspace version, with
 operator and AI changes converging on the same version/history/Undo contract.
 
-Validation covered migration round-trip, replay and concurrency guards, stale-script
-rejection, footage beat/claim lineage, image/narration beat ownership, retained
-unavailable intent, browser autosave/hydration/Undo, responsive replacement state and
-Storyboard-aware typed AI context. Python, browser and launcher gates passed before
-merge in #316.
+Validation coverage includes migration round-trip, replay and concurrency guards,
+stale-script rejection, footage beat/claim lineage, image/narration beat ownership,
+retained unavailable intent, browser autosave/hydration/Undo, responsive replacement
+state, and Storyboard-aware typed AI context. Remote CI/launcher/browser gates remain
+required before merge.
 
 
-### E19 confirmed AI Storyboard edit proposals (2026-10-06, merged)
+### E19 confirmed AI Storyboard edit proposals (2026-10-06)
 
-Katcha AI can now turn exact selected-beat context into a frozen, operator-reviewable
-Storyboard mutation. A proposal binds project, script revision, Storyboard workspace
-version and beat before any edit can be applied. Confirmed edits write through the same
-durable Storyboard history as manual changes with origin `ai_apply`; they do not create
-a second edit-state system.
+Merged as PR #317 and integrated with main through `ae30b525`. Katcha AI can now
+propose one visual edit for an exact project + script revision + Storyboard workspace
+version + beat. The proposal uses the same durable Storyboard contract as manual edits
+rather than a chat-only mutation path.
 
-The Command Center exposes **Apply edit / Modify / Reject**. Modify rejects the old
-frozen proposal before returning the operator to the prompt, so obsolete edits cannot
-be applied later. Reject is audited and also terminalizes the durable goal waiting on
-that confirmation. Synchronous Storyboard edits report settled activity immediately;
-Undo remains the Storyboard history operation in Editorial Studio.
+The operator receives explicit **Apply edit / Modify / Reject** controls. Apply rechecks
+the frozen workspace version and writes a normal immutable Storyboard revision with
+`origin=ai_apply`; existing Storyboard history remains the Undo authority. Modify first
+rejects the obsolete frozen proposal before returning the operator to the prompt. Reject
+is audited and closes a goal that was waiting for that exact confirmation, preventing
+orphaned durable work.
 
-Proposal creation accepts only observed project/run/image identities plus observed
-opaque Editorial footage/evidence identities. Exact beat selectors and script revisions
-are preserved through durable goal receipts. Stale script/workspace versions fail
-closed at Apply. The first supported mutation is one beat's visual/edit object; it does
-not change narration text, render, acquire media, grant rights or publish.
+Proposal grounding requires server-observed project/run/image identities plus observed
+opaque footage/evidence identities. Stale script/workspace versions fail closed.
+Applying an edit still does not render, acquire media, establish rights, approve a
+preview or publish.
 
-Validation covered proposal rejection/audit, durable-goal closure, exact-version Apply,
-observed identity freezing, selected-beat durable context and browser Apply/Modify/
-Reject behavior. Python, browser, launcher and PR Gate passed before merge in #317.
+Final remote validation passed Python, browser/explorer, PR Gate and Application
+launcher on head `1a53cb7f` before merge.
 
 
-### E20 professional beat edit controls and render v5 (2026-10-07, draft)
+### E20 Source/Program precision time navigation (2026-10-06, draft)
 
-The Storyboard beat is becoming the real non-linear editing unit. Manual editing and AI
-proposals now share one richer durable beat contract instead of translating through a
-separate render form.
+The next professional-editor boundary makes the existing Source and Program monitors
+usable for actual trim decisions instead of only inspection. Source time and Program
+time remain explicitly distinct.
 
-Acquired footage exposes source in-point, playback speed, freeze-frame, push-in and a
-normalized source crop. Stills expose image push-in alongside existing comparison and
-source-region annotation controls. Every beat can choose caption position/scale,
-optional caption background, and either a hard cut or a bounded visual fade-through-
-black. The inspector keeps these controls compact while the beat rail remains the
-timeline/navigation spine.
+For acquired footage, the Source Monitor retains its sampled contact-sheet evidence and
+adds continuous private playback, precise `MM:SS.mmm` time, scrubbing, ±0.1 second
+fine steps, clickable sampled-frame timestamps and **Set beat start**. Set beat start
+writes the same durable `start_seconds` field used by manual Storyboard editing, AI
+proposals, preflight, render and Undo; it does not create a second trim state.
 
-Autosave, refresh hydration, Undo and strict render preflight all parse the same beat
-edit object. Manual preview creation first confirms the current Storyboard is durably
-saved, preventing a transient DOM edit from being rendered without a matching workspace
-version. Typed selected-beat AI context includes the current treatment fields, and the
-confirmed AI Storyboard proposal contract accepts the same richer beat object.
+Private source playback does not place the control-plane bearer token in a URL or fetch
+the entire source into browser memory. An authenticated request creates a 15-minute
+HttpOnly, SameSite, path-scoped media capability. Native video then retains HTTP range
+requests. Each media request verifies the capability and re-runs current acquired-media
+rights/hash/storage validation before streaming the exact managed object. Production
+ticket issuance fails closed without Katcha's configured credential-encryption key;
+development tickets are process-ephemeral.
 
-Advanced crop/caption/transition behavior is fenced behind
-`editorial-render-v5`. Existing default Storyboards preserve prior manifest versions
-and output behavior. The renderer clips footage using source-coordinate crop geometry,
-keeps source annotations aligned, anchors push-in motion to the crop center, renders
-caption treatment, and applies a bounded visual fade at beat boundaries. This slice
-does **not** claim overlapping crossfades, audio fades, or a new overlapping timeline
-model.
+Program Monitor adds the same precise scrub/fine-step transport and a **Go to selected
+beat** command. Until the render manifest exposes an exact beat-to-program mapping to
+this UI, that jump is explicitly the saved script's *planned* beat start and must be
+verified against the rendered preview before approval. Source FPS is not persisted, so
+this slice deliberately does not pretend ±1-frame stepping is accurate.
 
-Validation covers v5 compiler selection and downgrade rejection, crop/caption/fade
-bounds, renderer version fencing, source viewport geometry, a real synthetic Remotion
-render using the professional controls, browser autosave → refresh → Undo → render
-preservation, typed AI context and AI proposal serialization. Remote Python, browser,
-renderer, launcher, runtime-image and PR gates are required before merge.
+Validation covers scoped ticket expiry/mismatch, hidden storage identity, authenticated
+session issuance, private source streaming, sampled-time navigation, durable in-point
+updates, Program time navigation and responsive browser behavior. Remote CI/launcher
+gates remain required before merge.
