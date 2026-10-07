@@ -600,7 +600,6 @@ def register_short_episode_publication(
 def register_editorial_publication(
     editorial_run_id: uuid.UUID,
     *,
-    youtube_connection_id: uuid.UUID,
     title: str,
     description: str = "",
     tags: list[str] | None = None,
@@ -612,6 +611,16 @@ def register_editorial_publication(
     contains_synthetic_media: bool = False,
 ) -> Publication:
     """Register an approved Editorial render in metadata hold before provider upload."""
+    with session_scope() as session:
+        run = session.get(EditorialRun, editorial_run_id)
+        if run is None:
+            raise ValueError(f"editorial render not found: {editorial_run_id}")
+        profile = session.get(ChannelProfile, run.channel_profile_id)
+        if profile is None:
+            raise ValueError("Editorial render references a missing channel profile")
+        youtube_connection_id = profile.youtube_connection_id
+        if youtube_connection_id is None:
+            raise ValueError("Connect this channel to YouTube before staging publication")
     return _register_source_publication(
         source_kind="editorial_render",
         source_id=editorial_run_id,
