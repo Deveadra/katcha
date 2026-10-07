@@ -502,7 +502,7 @@ const draft = {
         );
         await page.getByRole('button', {name: 'Set beat start', exact: true}).click();
         assert.equal(
-            await page.locator('#editorial-storyboard [data-footage-start]').inputValue(),
+            await page.locator('#editorial-storyboard [data-footage="start"]').inputValue(),
             '5.12',
         );
         await page.getByRole('button', {name: 'Load source video', exact: true}).click();
