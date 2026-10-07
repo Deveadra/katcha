@@ -292,6 +292,16 @@ class EditorialRenderManifest(Contract):
             for identity in [scene.image_id] if scene.image_id else scene.image_ids:
                 if images[identity].beat_id != scene.beat_id:
                     raise ValueError("Image must belong to its saved script beat")
+        advanced_edits = any(
+            scene.caption_position != "bottom"
+            or scene.caption_scale != 1
+            or scene.caption_background
+            or scene.transition != "cut"
+            or any(use.crop is not None for use in scene.media)
+            for scene in self.timeline
+        )
+        if advanced_edits and self.version != "editorial-render-v5":
+            raise ValueError("Professional beat controls require manifest version 5")
         media = {item.candidate_id: item for item in self.media}
         if len(media) != len(self.media):
             raise ValueError("Render media identities must be unique")
