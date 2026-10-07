@@ -22,7 +22,14 @@ for directory in postgres handoff recovery backups-local; do
 done
 
 runtime_uid=10001
-for directory in   "${DATA_ROOT}/handoff"   "${DATA_ROOT}/handoff/incoming"   "${DATA_ROOT}/handoff/processed"   "${DATA_ROOT}/handoff/failed"   "${DATA_ROOT}/handoff/receipts"; do
+handoff_directories=(
+  "${DATA_ROOT}/handoff"
+  "${DATA_ROOT}/handoff/incoming"
+  "${DATA_ROOT}/handoff/processed"
+  "${DATA_ROOT}/handoff/failed"
+  "${DATA_ROOT}/handoff/receipts"
+)
+for directory in "${handoff_directories[@]}"; do
   install -d -o "${runtime_uid}" -g "${runtime_uid}" -m 0750 "${directory}"
 done
 
