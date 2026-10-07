@@ -9,6 +9,7 @@ on:
       - src/katcha/api/control_auth.py
       - tests/test_cloud_runtime_contract.py
       - tests/test_control_auth.py
+      - tests/test_cloudflare_edge.py
   push:
     branches: [main]
     paths:
@@ -42,7 +43,10 @@ jobs:
       - name: Validate application and edge policy contracts
         run: |
           python -m py_compile src/katcha/ops/cloudflare_edge.py
-          pytest -q tests/test_control_auth.py tests/test_cloud_runtime_contract.py
+          pytest -q \
+            tests/test_control_auth.py \
+            tests/test_cloud_runtime_contract.py \
+            tests/test_cloudflare_edge.py
 
       - uses: hashicorp/setup-terraform@v3
         with:
