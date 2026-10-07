@@ -17,7 +17,7 @@ from urllib.parse import urlsplit
 
 import boto3
 from botocore.config import Config
-from botocore.exceptions import ClientError
+from botocore.exceptions import BotoCoreError, ClientError
 
 
 class MediaCutoverError(RuntimeError):
@@ -401,7 +401,7 @@ def main() -> int:
             f"copied_bytes={human_bytes(copied_bytes)} "
             f"verified_source_objects={final_plan.total_source_objects}"
         )
-    except (MediaCutoverError, ClientError, OSError) as exc:
+    except (MediaCutoverError, BotoCoreError, ClientError, OSError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1
     return 0
