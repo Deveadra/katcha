@@ -28,8 +28,8 @@ def valid_production_env() -> dict[str, str]:
         "KATCHA_S3_ENDPOINT_URL": "https://abc123.r2.cloudflarestorage.com",
         "KATCHA_S3_REGION": "auto",
         "KATCHA_S3_FORCE_PATH_STYLE": "false",
-        "KATCHA_S3_ACCESS_KEY": "r2-access-key",
-        "KATCHA_S3_SECRET_KEY": "r2-secret-key",
+        "KATCHA_S3_ACCESS_KEY": "a" * 32,
+        "KATCHA_S3_SECRET_KEY": "b" * 64,
         "KATCHA_S3_BUCKET": "katcha-media-prod",
         "KATCHA_CREDENTIAL_ENCRYPTION_KEY": "x" * 44,
         "KATCHA_CONTROL_API_TOKEN": "control-token-with-more-than-32-characters",
@@ -93,6 +93,28 @@ def test_production_validator_accepts_nonempty_principal_registry() -> None:
         '[{"name":"operator","token":"principal-token-with-more-than-32-characters"}]'
     )
     assert validate(values) == []
+
+
+def test_production_validator_rejects_local_minio_credentials_for_r2() -> None:
+    values = valid_production_env()
+    values.update(
+        {
+            "KATCHA_S3_ACCESS_KEY": "katcha",
+            "KATCHA_S3_SECRET_KEY": "katcha-local-secret",
+        }
+    )
+
+    errors = validate(values)
+
+    assert any("32-character Cloudflare R2 access key" in error for error in errors)
+    assert any("64-character Cloudflare R2 secret key" in error for error in errors)
+
+
+def test_production_validator_requires_expected_media_bucket() -> None:
+    values = valid_production_env()
+    values["KATCHA_S3_BUCKET"] = "katcha-media"
+
+    assert any("katcha-media-prod" in error for error in validate(values))
 
 
 def test_production_validator_rejects_local_defaults() -> None:
