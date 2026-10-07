@@ -59,7 +59,9 @@ def approved_manifest(
         .limit(1)
     )
     if latest is None or latest.decision != "approve":
-        raise EditorialConflict("Editorial render needs a current operator approval before publication")
+        raise EditorialConflict(
+            "Editorial render needs a current operator approval before publication"
+        )
     manifest = verified_manifest(row, session=session)
     if (
         latest.manifest_digest != _digest(row.artifacts["render_manifest"])
