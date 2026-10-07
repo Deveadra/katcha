@@ -597,6 +597,30 @@ def activate(args: argparse.Namespace) -> None:
             "release SHA must be an exact lower-case 40-character Git SHA"
         )
 
+    # The fence assertion is read-only. Authenticate it before declaring the
+    # inspect-only pass clean, preparing an epoch, or starting hosted services.
+    # A future candidate epoch must never be authorized before commitment.
+    try:
+        fence_preflight = fence_assert(
+            recovery_url,
+            fence_token,
+            args.deployment_id,
+            max(1, active_epoch + 1),
+        )
+    except CutoverError as exc:
+        raise CutoverError(
+            "fence credential preflight failed; verify the effective "
+            "KATCHA_FENCE_TOKEN matches the Cloudflare Worker FENCE_TOKEN"
+        ) from exc
+    if fence_preflight.get("authorized") is not False:
+        raise CutoverError(
+            "fence preflight unexpectedly authorized an uncommitted candidate"
+        )
+    if fence_preflight.get("active_epoch") != active_epoch:
+        raise CutoverError(
+            "fence preflight active epoch differs from authority status"
+        )
+
     print(
         "INITIAL_PRIMARY_PREFLIGHT_OK "
         f"active_epoch={active_epoch} release={args.release_sha}"
