@@ -169,12 +169,6 @@ def policy_matches(statements: list[str], variables: dict[str, str]) -> tuple[bo
         "where target.tag-namespace.name='KatchaRecovery'"
     )
     ids = [variables.get(name, "") for name in VAULT_VARS]
-    expected_vault = (
-        "Allow dynamic-group katcha-recovery-candidates to read secret-bundles "
-        "in compartment katcha-prod where any {"
-        + ", ".join("target.secret.id='" + secret_id + "'" for secret_id in ids)
-        + "}"
-    )
     # OCI may preserve a different order for an 'any' condition; check its
     # fixed prefix and the *exact* four target.secret.id values instead.
     found_tag = compact(expected_tag) in norm
@@ -182,12 +176,16 @@ def policy_matches(statements: list[str], variables: dict[str, str]) -> tuple[bo
         "Allow dynamic-group katcha-recovery-candidates to read secret-bundles "
         "in compartment katcha-prod where any {"
     )
+    expected_conditions = {
+        "target.secret.id='" + secret_id.lower() + "'" for secret_id in ids
+    }
     found_vault = any(
         entry.startswith(vault_prefix)
         and entry.endswith("}")
-        and set(re.findall(r"target\.secret\.id='([^']+)'", entry)) == set(ids)
-        and len(re.findall(r"target\.secret\.id='([^']+)'", entry)) == 4
-        and compact(expected_vault).split("whereany{")[0] in entry
+        and {
+            part for part in entry[len(vault_prefix):-1].split(",") if part
+        } == expected_conditions
+        and len(entry[len(vault_prefix):-1].split(",")) == 4
         for entry in norm
     )
     return found_tag, found_vault
