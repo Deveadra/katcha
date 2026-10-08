@@ -1,0 +1,162 @@
+{
+  "brand_key": "patchdrop",
+  "version": 1,
+  "status": "launch_candidate",
+  "public_name": "PatchDrop",
+  "tagline": "Gaming intel. No filler.",
+  "promise": "Gaming news, updates, discoveries, and player intelligence filtered down to what actually matters.",
+  "audience": {
+    "primary": "Players who want to stay current without watching hours of filler.",
+    "platform_focus": [
+      "youtube_longform",
+      "youtube_shorts"
+    ]
+  },
+  "persona": {
+    "key": "informed_gaming_friend",
+    "energy": 6.5,
+    "traits": [
+      "knowledgeable",
+      "relaxed",
+      "observant",
+      "lightly_funny",
+      "skeptical_when_needed"
+    ],
+    "avoid": [
+      "shouting",
+      "fake_hype",
+      "corporate_delivery",
+      "forced_slang",
+      "generic_reactions"
+    ]
+  },
+  "voice_policy": {
+    "direction_key": "patchdrop_voice_v1",
+    "on_camera_human": false,
+    "delivery": "confident conversational gaming-native VO with dynamic but restrained emphasis",
+    "pace": "fast enough to feel current; slow enough to remain clear"
+  },
+  "cta": {
+    "ritual_key": "next_drop_v1",
+    "primary": "Don't miss the next drop — subscribe.",
+    "alternates": [
+      "Never miss a drop — subscribe.",
+      "If this helped, catch the next drop — subscribe.",
+      "Stay patched in — subscribe."
+    ],
+    "rules": {
+      "max_spoken_seconds": 4,
+      "low_pressure": true,
+      "place_after_value": true,
+      "skip_if_it_breaks_a_critical_story_beat": true
+    }
+  },
+  "visual": {
+    "theme_key": "patchdrop_signal_v1",
+    "palette": {
+      "ink": "#0A0C10",
+      "paper": "#F4F7FA",
+      "drop_lime": "#B8FF3D",
+      "signal_blue": "#4E6CFF",
+      "alert_coral": "#FF625F"
+    },
+    "logo_concept": "digital patch tile/grid with one square dropping from the system",
+    "wordmark_direction": "compact technical sans; editorial rather than esports",
+    "display_type_direction": "condensed grotesk",
+    "body_type_direction": "clean neutral sans",
+    "motion": "quick purposeful cuts, bracket/underline callouts, restrained scale emphasis"
+  },
+  "packaging": {
+    "title_families": [
+      "major_change",
+      "hidden_details",
+      "player_utility",
+      "numbered_discovery",
+      "breaking_implication"
+    ],
+    "thumbnail_family": "single_focus_high_contrast_v1",
+    "thumbnail_rules": {
+      "max_text_words": 4,
+      "prefer_single_subject": true,
+      "brand_accent_role": "directional_or_semantic_highlight",
+      "avoid": [
+        "busy_collages",
+        "full_frame_neon",
+        "title_repetition"
+      ]
+    }
+  },
+  "products": {
+    "breaking": {
+      "target_minutes": [
+        4,
+        7
+      ],
+      "freshness": "hours"
+    },
+    "deep_dive": {
+      "target_minutes": [
+        8,
+        14
+      ],
+      "freshness": "days"
+    },
+    "you_missed_this": {
+      "target_minutes": [
+        7,
+        12
+      ],
+      "freshness": "days"
+    },
+    "player_intel": {
+      "target_minutes": [
+        6,
+        12
+      ],
+      "freshness": "weeks_to_years"
+    },
+    "radar": {
+      "target_minutes": [
+        10,
+        15
+      ],
+      "freshness": "days_to_weeks"
+    },
+    "short_signal": {
+      "target_seconds": [
+        20,
+        45
+      ],
+      "freshness": "hours_to_days"
+    }
+  },
+  "source_priority": {
+    "tier_1": [
+      "publisher",
+      "developer",
+      "platform_holder",
+      "steam",
+      "official_trailer",
+      "patch_notes",
+      "showcase"
+    ],
+    "tier_2": [
+      "reddit",
+      "youtube",
+      "x",
+      "tiktok",
+      "twitch",
+      "discord",
+      "forums"
+    ],
+    "tier_3": [
+      "gaming_press",
+      "interviews",
+      "databases",
+      "historical_context"
+    ]
+  },
+  "experiment_metadata": {
+    "cohort": "patchdrop_launch_v1"
+  }
+}

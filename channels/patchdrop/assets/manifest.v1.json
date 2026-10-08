@@ -1,0 +1,47 @@
+{
+  "brand_key": "patchdrop",
+  "brand_version": 1,
+  "object_store_prefix": "brands/patchdrop/v1/",
+  "assets": [
+    {
+      "asset_key": "logo_primary",
+      "status": "planned",
+      "repo_path": "channels/patchdrop/assets/logo-primary.svg",
+      "object_key": null,
+      "media_type": "image/svg+xml",
+      "sha256": null
+    },
+    {
+      "asset_key": "logo_mark",
+      "status": "planned",
+      "repo_path": "channels/patchdrop/assets/logo-mark.svg",
+      "object_key": null,
+      "media_type": "image/svg+xml",
+      "sha256": null
+    },
+    {
+      "asset_key": "youtube_banner",
+      "status": "planned",
+      "repo_path": null,
+      "object_key": "brands/patchdrop/v1/youtube/banner.png",
+      "media_type": "image/png",
+      "sha256": null
+    },
+    {
+      "asset_key": "voice_reference",
+      "status": "planned",
+      "repo_path": null,
+      "object_key": "brands/patchdrop/v1/voice/reference.wav",
+      "media_type": "audio/wav",
+      "sha256": null
+    },
+    {
+      "asset_key": "sonic_stinger",
+      "status": "planned",
+      "repo_path": null,
+      "object_key": "brands/patchdrop/v1/audio/drop-stinger.wav",
+      "media_type": "audio/wav",
+      "sha256": null
+    }
+  ]
+}
