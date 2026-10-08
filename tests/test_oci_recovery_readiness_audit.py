@@ -132,3 +132,94 @@ def test_backup_report_redacts_unfiltered_journals(capsys):
     assert "backup: TIMER_ACTIVE_ENABLED" in text
     assert "restore-test: TIMER_ACTIVE_ENABLED" in text
     assert "last_success_utc=NONE" in text
+
+
+def _iam_fixture_metadata(argv, *, detail_rule):
+    cmd = " ".join(argv)
+    if "iam domain list" in cmd:
+        return {"data": [{"display-name": "Default", "url": "https://identity.example.test"}]}
+    if "dynamic-resource-groups list" in cmd:
+        assert "--attributes matchingRule" in cmd
+        return {"data": {"Resources": [{
+            "id": "test-scim-group",
+            "displayName": "katcha-recovery-candidates",
+            "matchingRule": None,
+        }]}}
+    if "dynamic-resource-group get" in cmd:
+        assert "--attributes matchingRule" in cmd
+        assert "--dynamic-resource-group-id test-scim-group" in cmd
+        return {"data": {"id": "test-scim-group", "matching-rule": detail_rule}}
+    if "iam tag-namespace list" in cmd:
+        return {"data": [{
+            "name": "KatchaRecovery", "id": "ocid1.tagnamespace.test",
+            "lifecycle-state": "ACTIVE"
+        }]}
+    if "iam tag list" in cmd:
+        return {"data": [{"name": "Candidate", "lifecycle-state": "ACTIVE"}]}
+    if "iam policy list" in cmd:
+        return {"data": [{
+            "name": "katcha-recovery-vault-access", "id": "ocid1.policy.test",
+            "lifecycle-state": "ACTIVE"
+        }]}
+    if "iam policy get" in cmd:
+        return {"data": {"statements": _grant()}}
+    if "vault secret get" in cmd:
+        return {"data": {
+            "lifecycle-state": "ACTIVE",
+            "compartment-id": "ocid1.compartment.test",
+        }}
+    raise AssertionError(f"Unexpected metadata request: {cmd}")
+
+
+def test_oci_matching_rule_is_explicitly_fetched_when_list_field_null(monkeypatch):
+    group_rule = (
+        "All {instance.compartment.id = 'ocid1.compartment.test', "
+        "tag.KatchaRecovery.Candidate.value = 'true'}"
+    )
+    calls = []
+
+    def lookup(argv, **kwargs):
+        calls.append(argv)
+        return _iam_fixture_metadata(argv, detail_rule=group_rule)
+
+    monkeypatch.setattr(audit, "metadata", lookup)
+    findings = audit.iam_audit(["oci"], "ocid1.tenancy.test", _variables())
+    assert findings
+    assert all(passed for _name, passed in findings), findings
+    assert any("dynamic-resource-group get" in " ".join(cmd) for cmd in calls)
+    assert any(
+        "dynamic-resource-groups list" in " ".join(cmd)
+        and "--attributes matchingRule" in " ".join(cmd)
+        for cmd in calls
+    )
+
+
+@pytest.mark.parametrize("rule", [None, "", 42, [], {"value": "unrecognized"}])
+def test_oci_missing_dynamic_group_rule_is_unverified_not_crash(monkeypatch, rule):
+    monkeypatch.setattr(
+        audit,
+        "metadata",
+        lambda argv, **kwargs: _iam_fixture_metadata(argv, detail_rule=rule),
+    )
+    findings = dict(audit.iam_audit(
+        ["oci"], "ocid1.tenancy.test", _variables()
+    ))
+    assert findings["default_domain_dynamic_group_matching_rule"] is False
+    assert findings["active_defined_tag_namespace"] is True
+    assert findings["candidate_four_secret_only_grant"] is True
+
+
+@pytest.mark.parametrize(
+    "payload, expected",
+    [
+        ({"matchingRule": None, "matching-rule": "abc"}, "abc"),
+        ({"matchingRule": 3, "matching-rule": "abc"}, "abc"),
+        ({"matchingRule": "  abc "}, "  abc "),
+        ({"matching-rule": "x"}, "x"),
+        ({"matchingRule": None}, ""),
+        ({"matchingRule": {}}, ""),
+        (None, ""),
+    ],
+)
+def test_dynamic_group_rule_extraction_never_calls_regex_on_null(payload, expected):
+    assert audit._dynamic_group_rule(payload) == expected
