@@ -136,8 +136,27 @@ case "$SECRET_SOURCE" in
     vault_bytes "$RESTORE_ENV_SECRET_ID" > /etc/katcha/restore.env
     chmod 0600 /etc/katcha/katcha.env /etc/katcha/backup.env /etc/katcha/restore.env
     vault_bytes "$AWS_BUNDLE_SECRET_ID" > /tmp/katcha-aws.tgz
-    tar -xzf /tmp/katcha-aws.tgz -C /etc/katcha/aws
+    # A Vault secret is capped at 25 KB. Accept only the three private Roles
+    # Anywhere credential files, never a binary or arbitrary archive paths.
+    python3 - /tmp/katcha-aws.tgz <<'PY'
+import sys
+import tarfile
+
+required = {"config", "runtime/client.pem", "runtime/client-key.pem"}
+with tarfile.open(sys.argv[1], "r:gz") as archive:
+    members = archive.getmembers()
+    paths = [member.name.removeprefix("./") for member in members]
+    if set(paths) != required or len(paths) != len(required):
+        raise SystemExit("Vault AWS bundle must contain exactly three credential files")
+    if any(not member.isfile() or member.size > 24_000 for member in members):
+        raise SystemExit("Vault AWS bundle contains an unsafe or oversized member")
+PY
+    tar -xzf /tmp/katcha-aws.tgz -C /etc/katcha/aws --no-same-owner --no-same-permissions
     rm -f /tmp/katcha-aws.tgz
+    # Download only public software from AWS, pinned by release and SHA-256.
+    # A mismatch or lack of outbound HTTPS must fail recovery before authority
+    # commit, not silently produce a candidate without AWS credentials.
+    bash /opt/katcha/deploy/scripts/install-aws-signing-helper.sh /etc/katcha/aws
     ;;
   break-glass)
     log "Restoring runtime secrets from ephemeral off-OCI handoff"
