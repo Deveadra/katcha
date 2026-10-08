@@ -321,6 +321,18 @@ class RecoveryConfig:
                 )
         if len(self.release_sha) != 40:
             raise RecoveryError("KATCHA_RELEASE_SHA must be an exact git SHA")
+        if self.secret_source == "oci-vault":
+            secret_ids = {
+                "KATCHA_OCI_PRODUCTION_ENV_SECRET_ID": self.production_env_secret_id,
+                "KATCHA_OCI_AWS_BUNDLE_SECRET_ID": self.aws_bundle_secret_id,
+                "KATCHA_OCI_BACKUP_ENV_SECRET_ID": self.backup_env_secret_id,
+                "KATCHA_OCI_RESTORE_ENV_SECRET_ID": self.restore_env_secret_id,
+            }
+            for name, secret_id in secret_ids.items():
+                if not secret_id.startswith("ocid1.vaultsecret."):
+                    raise RecoveryError(
+                        f"{name} must be an OCI Vault secret OCID"
+                    )
         if self.secret_source == "break-glass":
             if not self.break_glass_handoff_url.startswith("https://"):
                 raise RecoveryError(

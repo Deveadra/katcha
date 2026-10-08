@@ -191,6 +191,24 @@ def test_systemd_requires_durable_mount_and_restarts_supervisor() -> None:
 
 
 
+def test_recovery_vault_uses_candidate_instance_principal() -> None:
+    runbook = (ROOT / "docs" / "LIVE_CLOUD_CUTOVER.md").read_text(
+        encoding="utf-8"
+    )
+    bootstrap = (
+        ROOT / "deploy" / "cloud-init" / "oci-recovery-candidate.sh.tmpl"
+    ).read_text(encoding="utf-8")
+
+    assert (
+        "Allow dynamic-group katcha-recovery-candidates to read "
+        "secret-bundles in compartment katcha-prod"
+    ) in runbook
+    assert "katcha-github-recovery" in runbook
+    assert "does not need to read secret contents" in runbook
+    assert "oci secrets secret-bundle get" in bootstrap
+    assert "--auth instance_principal" in bootstrap
+
+
 def test_disaster_backup_units_are_durable_and_scheduled() -> None:
     backup_service = (
         ROOT / "deploy" / "systemd" / "katcha-backup.service"
