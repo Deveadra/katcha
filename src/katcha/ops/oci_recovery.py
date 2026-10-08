@@ -629,6 +629,14 @@ class OciCli:
                 f"katcha-recovery-{incident.incident_id[:8]}-{recovery_mode[:12]}",
                 "--freeform-tags",
                 json.dumps(tags, separators=(",", ":")),
+                # OCI dynamic groups cannot match free-form tags. Apply a
+                # dedicated defined tag as part of creation, before the
+                # candidate requests its Vault secrets by instance principal.
+                "--defined-tags",
+                json.dumps(
+                    {"KatchaRecovery": {"Candidate": "true"}},
+                    separators=(",", ":"),
+                ),
                 "--user-data-file",
                 str(user_data_path),
                 "--wait-for-state",
