@@ -192,6 +192,17 @@ def policy_matches(statements: list[str], variables: dict[str, str]) -> tuple[bo
     return found_tag, found_vault
 
 
+def _dynamic_group_rule(value: object) -> str:
+    """Return only an explicitly provided string rule, never null metadata."""
+    if not isinstance(value, dict):
+        return ""
+    for key in ("matchingRule", "matching-rule"):
+        rule = value.get(key)
+        if isinstance(rule, str) and rule.strip():
+            return rule
+    return ""
+
+
 def iam_audit(oci: list[str], tenancy: str, variables: dict[str, str]) -> list[tuple[str, bool]]:
     production = variables.get("KATCHA_OCI_COMPARTMENT_ID", "")
     if not production.startswith("ocid1.compartment."):
@@ -217,7 +228,8 @@ def iam_audit(oci: list[str], tenancy: str, variables: dict[str, str]) -> list[t
 
     groups = metadata(
         oci + ["--endpoint", domain_url, "identity-domains",
-               "dynamic-resource-groups", "list", "--all", "--output", "json"],
+               "dynamic-resource-groups", "list", "--attributes", "matchingRule",
+               "--all", "--output", "json"],
     ).get("data")
     resources = groups.get("Resources", groups.get("resources")) if isinstance(groups, dict) else None
     if not isinstance(resources, list):
@@ -230,11 +242,25 @@ def iam_audit(oci: list[str], tenancy: str, variables: dict[str, str]) -> list[t
         f"All {{instance.compartment.id = '{production}', "
         "tag.KatchaRecovery.Candidate.value = 'true'}"
     )
-    actual_rule = matching[0].get("matchingRule", matching[0].get("matching-rule", "")) \
-        if len(matching) == 1 else ""
+    actual_rule = ""
+    if len(matching) == 1:
+        # Identity Domains defines matchingRule as returned=request: even a
+        # successful list call may return null unless explicitly requested.
+        # Get this single identified group if its list projection omitted it.
+        actual_rule = _dynamic_group_rule(matching[0])
+        if not actual_rule:
+            group_id = matching[0].get("id")
+            if isinstance(group_id, str) and group_id:
+                detail = metadata(oci + [
+                    "--endpoint", domain_url, "identity-domains",
+                    "dynamic-resource-group", "get", "--dynamic-resource-group-id",
+                    group_id, "--attributes", "matchingRule", "--output", "json",
+                ]).get("data", {})
+                actual_rule = _dynamic_group_rule(detail)
     results.append((
         "default_domain_dynamic_group_matching_rule",
-        len(matching) == 1 and compact(actual_rule) == compact(expected),
+        isinstance(actual_rule, str) and bool(actual_rule)
+        and compact(actual_rule) == compact(expected),
     ))
 
     namespaces = metadata(
