@@ -200,6 +200,23 @@ def test_external_compute_kill_switch_fails_closed(monkeypatch, tmp_path) -> Non
         oci_recovery.RecoveryConfig.from_env()
 
 
+def test_oci_vault_recovery_requires_secret_ocids(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    _base_env(monkeypatch, tmp_path)
+    monkeypatch.setenv(
+        "KATCHA_OCI_PRODUCTION_ENV_SECRET_ID",
+        "not-a-secret-ocid",
+    )
+
+    with pytest.raises(
+        oci_recovery.RecoveryError,
+        match="KATCHA_OCI_PRODUCTION_ENV_SECRET_ID must be an OCI Vault secret OCID",
+    ):
+        oci_recovery.RecoveryConfig.from_env()
+
+
 def test_cross_ad_targets_require_unique_ad_subnet_pairs(monkeypatch, tmp_path) -> None:
     _base_env(monkeypatch, tmp_path)
     monkeypatch.setenv(
