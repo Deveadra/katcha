@@ -3,7 +3,7 @@ set -euo pipefail
 
 # This helper is public software, not recovery secret material. The three
 # Roles Anywhere credential files are restored separately from OCI Vault.
-DEST_DIR="$1"
+DEST_DIR="${1:-}"
 if [[ "$#" -ne 1 || ! -d "$DEST_DIR" || -L "$DEST_DIR" ]]; then
     echo "AWS helper destination must be an existing non-symlink directory." >&2
     exit 20
