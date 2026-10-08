@@ -223,3 +223,76 @@ def test_oci_missing_dynamic_group_rule_is_unverified_not_crash(monkeypatch, rul
 )
 def test_dynamic_group_rule_extraction_never_calls_regex_on_null(payload, expected):
     assert audit._dynamic_group_rule(payload) == expected
+
+
+def test_identity_domain_console_serializes_one_all_rule_inside_any(monkeypatch):
+    # The real OCI Default-domain UI selected "Match any rules defined below"
+    # with exactly one Rule 1 carrying both mandatory constraints. SCIM
+    # serializes that as Any {All {...}}.
+    required = (
+        "All {instance.compartment.id = 'ocid1.compartment.test', "
+        "tag.KatchaRecovery.Candidate.value = 'true'}"
+    )
+    serialized = f"Any {{{required}}}"
+    monkeypatch.setattr(
+        audit,
+        "metadata",
+        lambda argv, **kwargs: _iam_fixture_metadata(argv, detail_rule=serialized),
+    )
+    results = dict(audit.iam_audit(
+        ["oci"], "ocid1.tenancy.test", _variables()
+    ))
+    assert results["default_domain_dynamic_group_matching_rule"] is True
+    assert all(results.values()), results
+
+
+@pytest.mark.parametrize(
+    "actual",
+    [
+        "All {instance.compartment.id = 'ocid1.compartment.test', "
+        "tag.KatchaRecovery.Candidate.value = 'true'}",
+        "Any {All {instance.compartment.id = 'ocid1.compartment.test', "
+        "tag.KatchaRecovery.Candidate.value = 'true'}}",
+        "  ANY { ALL {instance.compartment.id = 'ocid1.compartment.test', "
+        "tag.KatchaRecovery.Candidate.value = 'true'} } ",
+    ],
+)
+def test_candidate_rule_accepts_only_equivalent_single_and_rule(actual):
+    expected = (
+        "All {instance.compartment.id = 'ocid1.compartment.test', "
+        "tag.KatchaRecovery.Candidate.value = 'true'}"
+    )
+    assert audit._candidate_matching_rule_is_exact(actual, expected)
+
+
+@pytest.mark.parametrize(
+    "actual",
+    [
+        None,
+        12,
+        "",
+        "Any {instance.compartment.id = 'ocid1.compartment.test', "
+        "tag.KatchaRecovery.Candidate.value = 'true'}",
+        "All {instance.compartment.id = 'ocid1.compartment.test'}",
+        "Any {All {instance.compartment.id = 'ocid1.compartment.test', "
+        "tag.KatchaRecovery.Candidate.value = 'false'}}",
+        "Any {All {instance.compartment.id = 'ocid1.compartment.test', "
+        "tag.KatchaRecovery.Candidate.value = 'true'}, "
+        "instance.compartment.id = 'ocid1.compartment.other'}",
+        "Any {All {instance.compartment.id = 'ocid1.compartment.test', "
+        "tag.KatchaRecovery.Candidate.value = 'true'}, "
+        "All {instance.compartment.id = 'ocid1.compartment.other'}}",
+        "Any {All {instance.compartment.id = 'ocid1.compartment.other', "
+        "tag.KatchaRecovery.Candidate.value = 'true'}}",
+        "All {Any {instance.compartment.id = 'ocid1.compartment.test', "
+        "tag.KatchaRecovery.Candidate.value = 'true'}}",
+        "Any {Any {All {instance.compartment.id = 'ocid1.compartment.test', "
+        "tag.KatchaRecovery.Candidate.value = 'true'}}}",
+    ],
+)
+def test_candidate_rule_rejects_missing_broadened_or_extra_rules(actual):
+    expected = (
+        "All {instance.compartment.id = 'ocid1.compartment.test', "
+        "tag.KatchaRecovery.Candidate.value = 'true'}"
+    )
+    assert not audit._candidate_matching_rule_is_exact(actual, expected)
