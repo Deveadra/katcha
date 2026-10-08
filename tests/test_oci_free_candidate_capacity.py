@@ -146,3 +146,92 @@ def test_terminated_primary_fails_closed():
 def test_pending_termination_still_consumes_capacity():
     assert candidate._active({"lifecycle-state": "TERMINATING"})
     assert not candidate._active({"lifecycle-state": "TERMINATED"})
+
+
+class MockAuditError(Exception):
+    pass
+
+
+class MockOciAudit:
+    AuditError = MockAuditError
+
+    def __init__(self, fail_session=False, fail_metadata=False):
+        self.fail_session = fail_session
+        self.fail_metadata = fail_metadata
+        self.commands = []
+
+    def read_command(self, argv):
+        self.commands.append(tuple(argv))
+        if self.fail_session:
+            raise self.AuditError("opaque OCI stderr containing private material")
+        return "Valid until ..."
+
+    def metadata(self, argv, *, empty_list_ok=False):
+        self.commands.append(tuple(argv))
+        if self.fail_metadata:
+            raise self.AuditError("opaque OCI provider error")
+        return {"data": []}
+
+
+def test_expired_session_message_not_bastion_and_no_credentials():
+    provider = MockOciAudit(fail_session=True)
+    with pytest.raises(ValueError, match="OCI_ADMIN_SESSION_UNAVAILABLE") as raised:
+        candidate.validate_admin_session(
+            provider, ["oci", "--profile", "KATCHA_VAULT_ADMIN"]
+        )
+    message = str(raised.value)
+    assert "Bastion" in message
+    assert "private material" not in message
+    assert len(provider.commands) == 1
+    assert provider.commands[0][-2:] == ("session", "validate")
+
+
+def test_valid_session_proceeds_without_changing_resources():
+    provider = MockOciAudit()
+    candidate.validate_admin_session(provider, ["oci"])
+    assert provider.commands == [("oci", "session", "validate")]
+
+
+@pytest.mark.parametrize(
+    "cmd,stage",
+    [
+        (["iam", "region-subscription", "list", "--tenancy-id", "ocid1.tenancy.test",
+          "--output", "json"], "iam region-subscription list"),
+        (["compute", "instance", "list", "--compartment-id", "ocid1.compartment.test",
+          "--all", "--output", "json"], "compute instance list"),
+        (["bv", "boot-volume", "list", "--compartment-id", "ocid1.compartment.test",
+          "--all", "--output", "json"], "bv boot-volume list"),
+    ],
+)
+def test_inventory_read_failure_includes_only_safe_stage(cmd, stage):
+    provider = MockOciAudit(fail_metadata=True)
+    with pytest.raises(ValueError, match="OCI_READ_FAILED") as raised:
+        candidate.read_oci_metadata(provider, ["oci"], cmd)
+    message = str(raised.value)
+    assert stage in message
+    assert "opaque" not in message
+    assert "ocid1" not in message
+    assert len(provider.commands) == 1
+    assert provider.commands[0][-1] == "json"
+
+
+def test_successful_readonly_metadata_query_retains_empty_list_semantics():
+    provider = MockOciAudit()
+    result = candidate.read_oci_metadata(
+        provider,
+        ["oci"],
+        ["compute", "instance", "list", "--all", "--output", "json"],
+    )
+    assert result == {"data": []}
+    assert provider.commands[0][:4] == ("oci", "compute", "instance", "list")
+
+
+def test_inventory_metadata_rejects_missing_json_output_flag():
+    provider = MockOciAudit()
+    with pytest.raises(ValueError, match="must request JSON"):
+        candidate.read_oci_metadata(
+            provider,
+            ["oci"],
+            ["compute", "instance", "launch", "--display-name", "unsafe"],
+        )
+    assert not provider.commands
