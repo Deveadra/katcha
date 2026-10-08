@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import binascii
 import hashlib
 import json
 import os
@@ -139,9 +140,9 @@ def remote_read(path: str, home: Path) -> bytes:
     return command(ssh, sensitive=True, timeout=40)
 
 
-def safe_write(path: Path, data: bytes) -> None:
-    if not data or len(data) > MAX_BUNDLE_BYTES:
-        raise ProvisionError(f"Source {path.name} is empty or exceeds {MAX_BUNDLE_BYTES} bytes")
+def safe_write(path: Path, data: bytes, *, limit: int = MAX_BUNDLE_BYTES) -> None:
+    if not data or len(data) > limit:
+        raise ProvisionError(f"Source {path.name} is empty or exceeds {limit} bytes")
     with path.open("xb") as output:
         output.write(data)
     path.chmod(0o600)
@@ -210,7 +211,7 @@ def verify_content(oci: list[str], secret_id: str, staged: Path) -> None:
         raise ProvisionError("Secret bundle is inaccessible or has no CURRENT version")
     try:
         original = base64.b64decode(content, validate=True)
-    except ValueError as exc:
+    except (binascii.Error, ValueError) as exc:
         raise ProvisionError("Existing secret content is invalid") from exc
     if hashlib.sha256(original).digest() != hashlib.sha256(staged.read_bytes()).digest():
         raise ProvisionError(
@@ -254,7 +255,7 @@ def publish_secrets(oci: list[str], compartment: str, vault_id: str, key_id: str
                 "secretContentContent": base64.b64encode(paths[variable].read_bytes()).decode("ascii"),
             }
             request_file = stage / "oci-secret-create-request.json"
-            safe_write(request_file, json.dumps(payload).encode("utf-8"))
+            safe_write(request_file, json.dumps(payload).encode("utf-8"), limit=64_000)
             try:
                 result = response_json(oci + [
                     "vault", "secret", "create-base64",
