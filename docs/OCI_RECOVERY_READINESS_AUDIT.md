@@ -42,6 +42,8 @@ python3 "$HOME/.config/katcha/oci-vault-tools/audit-oci-recovery-readiness.py" -
 
 This checks Default identity-domain dynamic-resource-group metadata, the `KatchaRecovery` defined tag, the root compartment policy `katcha-recovery-vault-access` with four exact `target.secret.id` conditions, the four ACTIVE Vault secret metadata records, and whether the active primary was accidentally tagged as a replacement. It prints only pass/fail metadata, not OCIDs or credential contents.
 
+**OCI Default-domain matching-rule serialization:** The Console's `Match any rules defined below` setting can wrap the single `All {compartment, candidate-tag}` rule as `Any {All {compartment, candidate-tag}}` in its SCIM metadata. The audit recognizes the flat rule and this **single-rule wrapper only**; they are equivalent when exactly one nested rule requires *both* conditions. The audit rejects multiple alternatives, tag-free clauses, changed compartment, or an inner `Any` that weakens the requirements. Do not edit an otherwise correct dynamic group or change its `Match any rules` selector merely to make a text comparison pass.
+
 The host phase reads timer status, mountpoint status, and filters journals for the literal success patterns emitted by `postgres-backup.sh` and `postgres-restore-test.sh`. It never prints raw journal lines. Recent success is classified as fresh if within 3 hours for the hourly backup or 8 days for the weekly restore; the service's `Result` is printed separately because it can be misleading before the first invocation.
 
 **Any `NOT_VERIFIED`, `NO_SUCCESS_MARKER`, or `HOST_AUDIT_UNAVAILABLE` outcome requires investigation. Do not treat a successful script exit as proof all gates passed.**
