@@ -8,7 +8,6 @@ from pathlib import Path
 
 import pytest
 
-
 SOURCE = Path("scripts/provision-oci-recovery-vault.py")
 SPEC = importlib.util.spec_from_file_location("katcha_vault_provision", SOURCE)
 assert SPEC and SPEC.loader
