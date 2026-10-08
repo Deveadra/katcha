@@ -306,3 +306,13 @@ if __name__ == "__main__":
     except (RuntimeError, ValueError, OSError) as exc:
         print("CAPACITY_PREFLIGHT_STOP: " + str(exc), file=sys.stderr)
         raise SystemExit(2)
+    except Exception as exc:
+        # OCI's read-only audit dependency raises its own AuditError when a
+        # session expires or access is denied. Never leak raw OCI stderr or
+        # leave a confusing Python traceback in an operator run.
+        print(
+            "CAPACITY_PREFLIGHT_STOP: " + type(exc).__name__
+            + " (verify OCI administrator session and read permissions)",
+            file=sys.stderr,
+        )
+        raise SystemExit(2) from None
