@@ -209,7 +209,7 @@ def test_secret_list_invalid_or_unexpected_shape_never_looks_empty(monkeypatch):
         b'{"data":"not a list"}',
     ]
     for raw in responses:
-        monkeypatch.setattr(provision, "command", lambda args, **kwargs: raw)
+        monkeypatch.setattr(provision, "command", lambda args, raw=raw, **kwargs: raw)
         with pytest.raises(provision.ProvisionError):
             provision.existing_secret(
                 ["oci"], "ocid1.compartment.test", "ocid1.vault.test",
