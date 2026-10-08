@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import sys
 from pathlib import Path
 
 import pytest
@@ -11,7 +12,6 @@ PATH = Path("scripts/audit-oci-free-candidate-capacity.py")
 SPEC = importlib.util.spec_from_file_location("oci_candidate_capacity", PATH)
 assert SPEC and SPEC.loader
 candidate = importlib.util.module_from_spec(SPEC)
-import sys
 sys.modules[SPEC.name] = candidate
 SPEC.loader.exec_module(candidate)
 
@@ -138,6 +138,6 @@ def test_no_production_instance_id_is_not_allowed():
         candidate.inventory(fetch, TENANCY, "us-ashburn-1", PRODUCTION, "")
 
 
-def test_stopped_primary_not_declared_running():
-    result, _ = run_inventory(state="TERMINATED")
-    assert not result.primary_running  # cannot pass hard prerequisite
+def test_terminated_primary_fails_closed():
+    with pytest.raises(ValueError, match="production primary"):
+        run_inventory(state="TERMINATED")
