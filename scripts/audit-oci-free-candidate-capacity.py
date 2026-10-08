@@ -43,8 +43,10 @@ def _data(value: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def _active(row: dict[str, Any]) -> bool:
+    # Until termination completes, reserved compute/storage may still occupy
+    # allowance. Do not tell the operator an in-flight deletion freed quota.
     return str(row.get("lifecycle-state", "")).upper() not in {
-        "TERMINATED", "TERMINATING", "DELETED",
+        "TERMINATED", "DELETED",
     }
 
 
