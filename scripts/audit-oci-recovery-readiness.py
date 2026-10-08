@@ -196,6 +196,12 @@ def iam_audit(oci: list[str], tenancy: str, variables: dict[str, str]) -> list[t
     production = variables.get("KATCHA_OCI_COMPARTMENT_ID", "")
     if not production.startswith("ocid1.compartment."):
         raise AuditError("production compartment OCID is absent")
+    configured_secrets = [variables.get(name, "") for name in VAULT_VARS]
+    if (
+        any(not value.startswith("ocid1.vaultsecret.") for value in configured_secrets)
+        or len(set(configured_secrets)) != len(VAULT_VARS)
+    ):
+        raise AuditError("four distinct OCI Vault secret OCIDs must be registered")
     results: list[tuple[str, bool]] = []
     domains = metadata(
         oci + ["iam", "domain", "list", "--compartment-id", tenancy, "--all", "--output", "json"],
