@@ -203,6 +203,22 @@ def _dynamic_group_rule(value: object) -> str:
     return ""
 
 
+def _candidate_matching_rule_is_exact(actual: object, expected: str) -> bool:
+    """Accept exactly one required AND rule, optionally wrapped by OCI's UI OR.
+
+    The Default identity domain stores "Match any rules defined below" with a
+    single textual rule as Any {All {...}}. With only one nested rule, that OR
+    is logically identical to the required AND. Do not peel nested wrappers
+    generally: additional rules, alternate conditions and tag-free matchers
+    must remain NOT_VERIFIED.
+    """
+    if not isinstance(actual, str) or not actual.strip():
+        return False
+    required = compact(expected)
+    serialized = compact(actual)
+    return serialized == required or serialized == "any{" + required + "}"
+
+
 def iam_audit(oci: list[str], tenancy: str, variables: dict[str, str]) -> list[tuple[str, bool]]:
     production = variables.get("KATCHA_OCI_COMPARTMENT_ID", "")
     if not production.startswith("ocid1.compartment."):
@@ -259,8 +275,7 @@ def iam_audit(oci: list[str], tenancy: str, variables: dict[str, str]) -> list[t
                 actual_rule = _dynamic_group_rule(detail)
     results.append((
         "default_domain_dynamic_group_matching_rule",
-        isinstance(actual_rule, str) and bool(actual_rule)
-        and compact(actual_rule) == compact(expected),
+        _candidate_matching_rule_is_exact(actual_rule, expected),
     ))
 
     namespaces = metadata(
