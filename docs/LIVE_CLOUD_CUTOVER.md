@@ -450,6 +450,40 @@ Store equivalent bootstrap material in OCI Vault for normal recovery.
 The two additional Vault environment bundles are required so a replacement VM
 restores disaster-backup protection automatically.
 
+### Vault principal separation
+
+Do not grant the dedicated `katcha-github-recovery` API user broad Vault
+inspection or secret-content permissions just to make `oci kms vault list` or
+`oci vault secret list` succeed. The GitHub recovery principal launches and
+manages infrastructure; it passes already-recorded secret OCIDs into cloud-init
+but does not need to read secret contents.
+
+Normal recovery reads those four secret bundles from the replacement VM with
+OCI instance-principal authentication. Create a dynamic group such as
+`katcha-recovery-candidates` with this matching rule:
+
+```text
+instance.compartment.id = '<katcha-prod compartment OCID>'
+```
+
+Then grant only secret-bundle read access:
+
+```text
+Allow dynamic-group katcha-recovery-candidates to read secret-bundles in compartment katcha-prod
+```
+
+This is the permission used by
+`oci secrets secret-bundle get --auth instance_principal` in the recovery
+cloud-init. If `katcha-prod` ever contains unrelated compute instances, replace
+the compartment-wide dynamic-group rule with a dedicated recovery compartment
+or a defined-tag rule before enabling autonomous recovery.
+
+Create the Vault, symmetric encryption key, and the four secrets with a separate
+operator/administrator identity that is authorized to administer Vault. Record
+only the resulting `ocid1.vaultsecret...` identifiers in GitHub repository
+variables. Listing Vaults or Secrets with the restricted GitHub recovery API
+user is not a valid recovery-readiness test.
+
 ## Phase 6 — GitHub recovery credentials
 
 Use a dedicated OCI identity for GitHub recovery rather than a personal
@@ -472,6 +506,9 @@ reads and the `katcha-prod` grants can live together.
 
 The GitHub workflows validate OCI authentication by listing instances only in
 `katcha-prod`; they do not require tenancy-wide region-subscription access.
+They also do not require the `katcha-github-recovery` API user to list Vaults,
+list Secrets, or retrieve secret bundles. Secret contents are retrieved later
+by the recovery candidate's instance principal.
 
 Configure repository secrets required by the OCI recovery workflow:
 
