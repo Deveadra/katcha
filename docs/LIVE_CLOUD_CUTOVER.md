@@ -501,25 +501,54 @@ inspection or secret-content permissions just to make `oci kms vault list` or
 manages infrastructure; it passes already-recorded secret OCIDs into cloud-init
 but does not need to read secret contents.
 
-Normal recovery reads those four secret bundles from the replacement VM with
-OCI instance-principal authentication. Create a dynamic group such as
-`katcha-recovery-candidates` with this matching rule:
+Normal recovery reads the four bundles **only from tagged replacement
+instances** via OCI instance-principal authentication. OCI IAM dynamic group
+rules cannot match the existing free-form recovery tags. The OCI recovery
+launcher therefore now applies an explicit **defined tag** when launching
+each candidate:
 
-```text
-instance.compartment.id = '<katcha-prod compartment OCID>'
+```json
+{"KatchaRecovery": {"Candidate": "true"}}
 ```
 
-Then grant only secret-bundle read access:
+Before enabling recovery, an OCI administrator must create a defined-tag
+namespace `KatchaRecovery` with a string tag key `Candidate` in the
+tenancy. Grant the dedicated GitHub recovery **group** permission to use
+that namespace when creating candidate instances, but **not** to read Vault:
 
 ```text
-Allow dynamic-group katcha-recovery-candidates to read secret-bundles in compartment katcha-prod
+Allow group katcha-github-recovery to use tag-namespaces in tenancy where target.tag-namespace.name='KatchaRecovery'
 ```
 
-This is the permission used by
-`oci secrets secret-bundle get --auth instance_principal` in the recovery
-cloud-init. If `katcha-prod` ever contains unrelated compute instances, replace
-the compartment-wide dynamic-group rule with a dedicated recovery compartment
-or a defined-tag rule before enabling autonomous recovery.
+Create the `katcha-recovery-candidates` dynamic group in the Default identity
+domain. Its matching rule MUST combine the production compartment OCID
+with the defined tag value, using `all`:
+
+```text
+All {instance.compartment.id = '<katcha-prod compartment OCID>', tag.KatchaRecovery.Candidate.value = 'true'}
+```
+
+Restrict its policy to reading exactly the **four** existing Vault secret
+bundles; the literal OCIDs are recorded in the four GitHub repository
+variables, not GitHub Secrets. The resulting policy follows this form:
+
+```text
+Allow dynamic-group katcha-recovery-candidates to read secret-bundles in compartment katcha-prod where any {target.secret.id='<production-env-secret-OCID>', target.secret.id='<aws-bundle-secret-OCID>', target.secret.id='<backup-env-secret-OCID>', target.secret.id='<restore-env-secret-OCID>'}
+```
+
+Use `python3 scripts/print-oci-recovery-vault-iam.py` from the reviewed
+repository checkout to generate the **exact** matching rule and policy
+statements from GitHub's existing OCID variables without manually
+copying their contents. OCI Console account-side creation and permissions
+must be checked by the administrator; do not automatically broaden any
+existing IAM policy or give the recovery GitHub API user access to
+Vault secret contents.
+
+The candidate uses `oci secrets secret-bundle get --auth instance_principal`
+during cloud-init. Membership/policy propagation can take up to about
+one hour, so allow for that before a controlled live candidate-read test.
+Do not enable autonomous recovery until a tagged candidate can retrieve
+all four bundles, and an untagged instance cannot.
 
 Create the Vault, symmetric encryption key, and the four secrets with a separate
 operator/administrator identity that is authorized to administer Vault. Record
