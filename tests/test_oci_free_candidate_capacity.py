@@ -141,3 +141,8 @@ def test_no_production_instance_id_is_not_allowed():
 def test_terminated_primary_fails_closed():
     with pytest.raises(ValueError, match="production primary"):
         run_inventory(state="TERMINATED")
+
+
+def test_pending_termination_still_consumes_capacity():
+    assert candidate._active({"lifecycle-state": "TERMINATING"})
+    assert not candidate._active({"lifecycle-state": "TERMINATED"})
