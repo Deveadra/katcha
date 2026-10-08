@@ -9,11 +9,11 @@ from __future__ import annotations
 
 import argparse
 import configparser
-from datetime import UTC, datetime, timedelta
 import json
 import re
 import subprocess
 import sys
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 REPO = "Deveadra/katcha"
