@@ -35,6 +35,37 @@ def _load_audit():
     return module
 
 
+def validate_admin_session(audit: Any, base: list[str]) -> None:
+    """Classify expired administrator sessions before scanning OCI."""
+    try:
+        audit.read_command(base + ["session", "validate"])
+    except audit.AuditError as exc:
+        raise ValueError(
+            "OCI_ADMIN_SESSION_UNAVAILABLE: the security-token session "
+            "has expired or cannot be validated. This is unrelated to the "
+            "Bastion SSH tunnel. Reauthenticate KATCHA_VAULT_ADMIN, then retry."
+        ) from exc
+
+
+def read_oci_metadata(audit: Any, base: list[str], command: list[str]) -> dict:
+    """Fail closed with a safe request category, never raw OCI credentials."""
+    if not (
+        command[-3:] == ["--all", "--output", "json"]
+        or command[-2:] == ["--output", "json"]
+    ):
+        raise ValueError("OCI inventory command must request JSON metadata")
+    stage = " ".join(command[:3])
+    try:
+        return audit.metadata(base + command, empty_list_ok=True)
+    except audit.AuditError as exc:
+        raise ValueError(
+            "OCI_READ_FAILED at " + stage
+            + ": this read-only request failed. Confirm the administrator "
+            "security-token session is still valid, then check OCI read "
+            "permissions for this resource type. No resources were modified."
+        ) from exc
+
+
 def _data(value: dict[str, Any]) -> list[dict[str, Any]]:
     rows = value.get("data")
     if not isinstance(rows, list) or any(not isinstance(r, dict) for r in rows):
@@ -281,15 +312,12 @@ def main() -> int:
         str(cli), "--config-file", str(file), "--profile", args.admin_profile,
         "--auth", "security_token", "--region", region,
     ]
-    audit.read_command(base + ["session", "validate"])
+    validate_admin_session(audit, base)
 
     def read_only_fetch(command):
-        # No arbitrary OCI command accepted by users; callers use fixed list/get
-        # commands in inventory(). CLI errors abort without echoing raw stderr.
-        if not (command[-3:] == ["--all", "--output", "json"]
-                or command[-2:] == ["--output", "json"]):
-            raise ValueError("OCI inventory command must request JSON metadata")
-        return audit.metadata(base + command, empty_list_ok=True)
+        # Keep OCI metadata failure stage visible but never echo command IDs,
+        # provider stderr, tokens, Vault contents, or the environment.
+        return read_oci_metadata(audit, base, command)
 
     result = inventory(
         read_only_fetch, tenancy, region,
@@ -307,12 +335,10 @@ if __name__ == "__main__":
         print("CAPACITY_PREFLIGHT_STOP: " + str(exc), file=sys.stderr)
         raise SystemExit(2)
     except Exception as exc:
-        # OCI's read-only audit dependency raises its own AuditError when a
-        # session expires or access is denied. Never leak raw OCI stderr or
-        # leave a confusing Python traceback in an operator run.
+        # Unexpected failures still remain non-secret and non-mutating.
         print(
-            "CAPACITY_PREFLIGHT_STOP: " + type(exc).__name__
-            + " (verify OCI administrator session and read permissions)",
+            "CAPACITY_PREFLIGHT_STOP: unexpected local preflight error ("
+            + type(exc).__name__ + "); no OCI resources changed",
             file=sys.stderr,
         )
         raise SystemExit(2) from None
