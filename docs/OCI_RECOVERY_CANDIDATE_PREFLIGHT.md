@@ -37,7 +37,18 @@ git show "$RELEASE:scripts/audit-oci-free-candidate-capacity.py" > "$HOME/.confi
 python3 "$HOME/.config/katcha/oci-vault-tools/audit-oci-free-candidate-capacity.py"
 ```
 
-If your OCI session expires, reauthenticate `KATCHA_VAULT_ADMIN` separately. All output is a capacity **snapshot**, not an OCI spend forecast. A failed compartment/instance/volume/region query must stop the inventory rather than undercount usage or tell you an unsafe launch is available.
+If your OCI session expires, reauthenticate `KATCHA_VAULT_ADMIN` separately. The OCI administrator security-token login is **not** the OCI Bastion SSH tunnel. Refreshing Bastion does not extend OCI API authentication. Check and refresh the session before running the inventory:
+
+```bash
+OCI_BIN="$HOME/.cache/katcha/oci-cli-3.94.1/bin/oci"
+"$OCI_BIN" session validate --profile KATCHA_VAULT_ADMIN --auth security_token
+# Only if invalid or expired:
+"$OCI_BIN" session authenticate --region us-ashburn-1 --profile-name KATCHA_VAULT_ADMIN
+```
+
+`OCI_ADMIN_SESSION_UNAVAILABLE` indicates the security-token check failed; `OCI_READ_FAILED at compute instance list` (or another safe request category) indicates a failure reading that specific metadata resource. Both stop before any mutation. These errors never contain secret material or provider stderr.
+
+All output is a capacity **snapshot**, not an OCI spend forecast. A failed compartment/instance/volume/region query must stop the inventory rather than undercount usage or tell you an unsafe launch is available.
 
 **Never set** `KATCHA_OCI_RECOVERY_CONFIGURED`, `KATCHA_EXTERNAL_COMPUTE_ENABLED` or `KATCHA_OCI_PAID_FALLBACK_ENABLED` to make the preflight pass.
 
