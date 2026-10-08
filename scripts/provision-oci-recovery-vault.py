@@ -56,9 +56,18 @@ def command(args: list[str], *, sensitive: bool = False, timeout: int = 60) -> b
     return result.stdout
 
 
-def response_json(args: list[str]) -> dict:
+def response_json(args: list[str], *, empty_list_ok: bool = False) -> dict:
+    output = command(args)
+    if not output.strip():
+        # OCI CLI's JSON renderer prints nothing for a successful API response
+        # whose list data is []. Only the explicitly authorized list-secrets
+        # metadata call may interpret this as an empty list. All other blank
+        # responses remain an error; never apply this to secret-bundle reads.
+        if empty_list_ok:
+            return {"data": []}
+        raise ProvisionError("CLI returned no JSON metadata")
     try:
-        value = json.loads(command(args))
+        value = json.loads(output)
     except (UnicodeError, json.JSONDecodeError) as exc:
         raise ProvisionError("CLI returned invalid JSON metadata") from exc
     if not isinstance(value, dict):
@@ -193,8 +202,10 @@ def existing_secret(oci: list[str], compartment: str, vault_id: str,
                     name: str) -> dict | None:
     data = response_json(oci + [
         "vault", "secret", "list", "--compartment-id", compartment,
-        "--vault-id", vault_id, "--name", name, "--all",
-    ]).get("data", [])
+        "--vault-id", vault_id, "--name", name, "--all", "--output", "json",
+    ], empty_list_ok=True).get("data")
+    if not isinstance(data, list) or any(not isinstance(row, dict) for row in data):
+        raise ProvisionError("OCI secret-list response has invalid data shape")
     matches = [s for s in data if s.get("secret-name") == name]
     if len(matches) > 1:
         raise ProvisionError(f"Multiple Vault secrets named {name}; refusing ambiguity")

@@ -174,3 +174,71 @@ def test_partial_failure_never_registers_github_variables(
             "ocid1.key.test", tmp_path, staged, {}
         )
     assert published == []
+
+
+def test_empty_successful_oci_secret_listing_is_safe_to_treat_as_no_secrets(monkeypatch):
+    calls = []
+
+    def no_secrets(args, **kwargs):
+        calls.append(args)
+        return b""
+
+    monkeypatch.setattr(provision, "command", no_secrets)
+    row = provision.existing_secret(
+        ["oci"], "ocid1.compartment.test", "ocid1.vault.test", "katcha-aws-bundle"
+    )
+    assert row is None
+    assert len(calls) == 1
+    assert calls[0][-2:] == ["--output", "json"]
+    assert "list" in calls[0] and "--name" in calls[0]
+
+
+def test_empty_other_oci_metadata_remains_a_hard_error(monkeypatch):
+    monkeypatch.setattr(provision, "command", lambda args, **kwargs: b"")
+    with pytest.raises(provision.ProvisionError, match="no JSON metadata"):
+        provision.response_json(["oci", "vault", "secret", "get"])
+
+
+def test_secret_list_invalid_or_unexpected_shape_never_looks_empty(monkeypatch):
+    responses = [
+        b"not JSON",
+        b"{}",
+        b'{"data":null}',
+        b'{"data":{}}',
+        b'{"data":[null]}',
+        b'{"data":"not a list"}',
+    ]
+    for raw in responses:
+        monkeypatch.setattr(provision, "command", lambda args, raw=raw, **kwargs: raw)
+        with pytest.raises(provision.ProvisionError):
+            provision.existing_secret(
+                ["oci"], "ocid1.compartment.test", "ocid1.vault.test",
+                "katcha-production-env"
+            )
+
+
+def test_populated_secret_list_resolves_exact_name(monkeypatch):
+    existing = {
+        "secret-name": "katcha-backup-env",
+        "id": "ocid1.vaultsecret.test.example",
+        "lifecycle-state": "ACTIVE",
+    }
+    monkeypatch.setattr(
+        provision, "command",
+        lambda args, **kwargs: json.dumps({"data": [existing]}).encode("utf-8"),
+    )
+    assert provision.existing_secret(
+        ["oci"], "ocid1.compartment.test", "ocid1.vault.test", "katcha-backup-env"
+    ) == existing
+
+
+def test_cli_failure_does_not_get_interpreted_as_empty_secret_list(monkeypatch):
+    def access_denied(_args, **_kwargs):
+        raise provision.ProvisionError("Command failed (oci, exit=1)")
+
+    monkeypatch.setattr(provision, "command", access_denied)
+    with pytest.raises(provision.ProvisionError, match="exit=1"):
+        provision.existing_secret(
+            ["oci"], "ocid1.compartment.test", "ocid1.vault.test",
+            "katcha-restore-env"
+        )
