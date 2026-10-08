@@ -450,6 +450,49 @@ Store equivalent bootstrap material in OCI Vault for normal recovery.
 The two additional Vault environment bundles are required so a replacement VM
 restores disaster-backup protection automatically.
 
+### OCI Vault AWS bundle size and immutable helper
+
+OCI Vault secret content is capped at 25 KB. The hosted AWS directory also
+contains the public `aws_signing_helper` executable (approximately 4 MB
+compressed), which **must not** be uploaded as a Vault secret. Normal
+`oci-vault` recovery now consumes an AWS credential-only `tar.gz` containing
+exactly these three private files, with no enclosing directory:
+
+- `config`
+- `runtime/client.pem`
+- `runtime/client-key.pem`
+
+On a trusted host, prepare it from the protected current production files
+without printing their contents:
+
+```bash
+sudo install -d -m 0700 /root/katcha-recovery-vault-stage
+sudo python3 scripts/pack-oci-aws-vault-credentials.py \
+  --aws-dir /etc/katcha/aws \
+  --output /root/katcha-recovery-vault-stage/aws-credentials.tgz
+```
+
+The packer refuses missing/symlinked files, an existing output file, and
+archives over 24,000 bytes. Run it from a checkout containing the packer, or
+stream the reviewed packer script over the protected Bastion connection. Do not
+read or print the resulting bytes in logs, chats, or CI output. Provision the
+small archive as the `KATCHA_OCI_AWS_BUNDLE_SECRET_ID` Vault secret using a
+separate authorized Vault operator identity; the restricted GitHub recovery
+identity does not need Vault access.
+
+During OCI-Vault recovery, cloud-init checks the archive's three exact members,
+extracts only the private files, then downloads the official AWS IAM Roles
+Anywhere credential helper version 1.8.5 for the candidate CPU architecture
+from `rolesanywhere.amazonaws.com`. The download is verified against AWS's
+published platform-specific SHA-256 before installation. Recovery fails closed
+if HTTPS to AWS is unavailable, the digest differs, or the bundle contains
+unexpected files. Before enabling autonomous recovery, verify the candidate's
+private network permits this narrowly scoped outbound HTTPS download and a
+checksum-valid result. No helper binary is required in Vault.
+
+The independent, explicitly authorized `break-glass` recovery path continues
+to use its encrypted off-OCI escrow bundle and does not change.
+
 ### Vault principal separation
 
 Do not grant the dedicated `katcha-github-recovery` API user broad Vault
