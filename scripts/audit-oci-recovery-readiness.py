@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import configparser
+from datetime import UTC, datetime, timedelta
 import json
 import re
 import subprocess
@@ -335,13 +336,28 @@ def print_backup_report(data: dict) -> None:
         if not isinstance(row, dict):
             print(unit + ": UNVERIFIED (report missing)")
             continue
+        stamp = row.get("last_success_utc")
+        freshness = "NO_SUCCESS_MARKER"
+        if isinstance(stamp, str) and stamp:
+            try:
+                timestamp = datetime.fromisoformat(stamp)
+                maximum = timedelta(hours=3 if unit == "katcha-backup" else 24 * 8)
+                if timestamp.tzinfo and timedelta(0) <= (
+                    datetime.now(UTC) - timestamp
+                ) <= maximum:
+                    freshness = "SUCCESS_FRESH"
+                else:
+                    freshness = "SUCCESS_STALE_OR_INVALID"
+            except ValueError:
+                freshness = "SUCCESS_TIMESTAMP_INVALID"
         print(
             unit + ": "
             + ("TIMER_ACTIVE_ENABLED" if (
                 row.get("timer_active") is True and row.get("timer_enabled") is True
                 and row.get("timer_loaded") is True
             ) else "TIMER_NOT_READY")
-            + " last_success_utc=" + str(row.get("last_success_utc") or "NONE")
+            + " evidence=" + freshness
+            + " last_success_utc=" + str(stamp or "NONE")
             + " service_result=" + str(row.get("service_result") or "UNKNOWN")
         )
         print(unit + "_next_trigger: " + str(row.get("next_trigger") or "unknown"))
