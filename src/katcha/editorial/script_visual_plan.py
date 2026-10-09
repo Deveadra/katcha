@@ -116,7 +116,7 @@ class ScriptVisualPlanV1(Contract):
 
 
 def _stable_id(prefix: str, digest: str, start: int, end: int, kind: str) -> str:
-    key = f"{digest}:{start}:{end}:{kind}".encode("utf-8")
+    key = f"{digest}:{start}:{end}:{kind}".encode()
     return prefix + hashlib.sha256(key).hexdigest()[:24]
 
 
