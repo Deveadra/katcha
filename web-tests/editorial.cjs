@@ -155,6 +155,24 @@ const draft = {
                     if (loseCreateResponse) { loseCreateResponse = false; return send({ detail: "Connection interrupted. Retry to recover the saved brief." }, 503); }
                     return send(project, 201);
                 }
+                if (url.pathname.endsWith('/script-visual-plan')) {
+                    if (!project?.brief?.script_seed) return send({detail: 'Import a script seed first'}, 409);
+                    return send({
+                        version: 'script-visual-plan-v1', source: 'operator_script_seed',
+                        source_text: project.brief.script_seed.text,
+                        source_sha256: project.brief.script_seed.content_sha256,
+                        spans: [], narration_beat_count: 1, explicit_direction_count: 0,
+                        estimated_spoken_seconds: 9, timing_basis: 'word_count_estimate',
+                        readiness: 'analysis_only_review_required',
+                        requirements: [{
+                            id: 'req-fixture', beat_id: 'beat-fixture', start: 10, end: 30,
+                            kind: 'editorial_coverage', intent: 'Select permitted footage',
+                            origin: 'coverage_placeholder', status: 'unresolved',
+                            rights_status: 'not_assessed', source_time_seconds: null,
+                        }],
+                        gaps: ['Source visuals require grounded inspection'],
+                    });
+                }
                 if (url.pathname.endsWith('/revisions/1')) return send({revision: 1, draft, created_at: '2026-10-01T12:00:00Z'});
                 if (url.pathname.includes('/runs/past-')) {
                     if (url.pathname.endsWith('/review')) return send({status: 'invalidated', blocker: 'Script revision changed; rebuild the render', reviews: [{decision: 'approve', actor: 'editor', note: 'Historical approval', created_at: '2026-10-01'}]});
@@ -413,6 +431,13 @@ const draft = {
         assert.match(await page.locator("#editorial-source-bindings").innerText(), /Managed clip · youtube.com/);
         assert.match(await page.locator("#editorial-source-bindings").innerText(), /Uploaded source · local media/);
         assert.match(await page.locator("#editorial-source-bindings").innerText(), /Script seed · operator-draft\.md/);
+        await page.locator('[data-editorial-stage="script"]').click();
+        await page.locator('#editorial-script-plan-drawer').evaluate(node => { node.open = true; });
+        await page.getByRole('button', {name: 'Analyze imported script'}).click();
+        await page.getByText(/1 narration passage\(s\) · 1 visual\/audio requirement\(s\)/).waitFor();
+        await page.getByText(/No explicit visual directions detected/).waitFor();
+        assert.equal(calls.filter(call => call.path.endsWith('/script-visual-plan')).length, 1);
+        await page.locator('[data-editorial-stage="research"]').click();
         await page.getByRole("button", { name: "Research and draft script", exact: true }).click();
         await page.getByText(/Provider quota rejected/).waitFor();
         assert.equal(calls.find((call) => call.method === "POST" && call.path.endsWith("/runs")).body.target, "script");
