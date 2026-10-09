@@ -6,13 +6,13 @@ import hashlib
 
 import pytest
 from pydantic import ValidationError
+from test_editorial_projects import brief, root, saved  # noqa: F401 - registered pytest fixture
 
 from katcha.editorial.project_schemas import EditorialScriptSeed
 from katcha.editorial.script_visual_plan import (
     ScriptVisualPlanV1,
     build_script_visual_plan,
 )
-from test_editorial_projects import brief, root, saved
 
 
 def plan(text: str):
@@ -113,8 +113,8 @@ def test_different_source_invalidates_ids_and_rejects_corrupt_span():
         ScriptVisualPlanV1.model_validate(bad)
 
 
-def test_imported_project_exposes_read_only_visual_plan_under_channel_scope(saved):
-    client, channel, other = saved
+def test_imported_project_exposes_read_only_visual_plan_under_channel_scope(request):
+    client, channel, other = request.getfixturevalue("saved")
     source = "# Trailer breakdown\n\n[CLIP: trailer opens]\nFirst narration line.\n"
     create = brief("script-plan-import")
     create["brief"]["script_seed"] = {
@@ -141,8 +141,8 @@ def test_imported_project_exposes_read_only_visual_plan_under_channel_scope(save
     assert client.get(f"{root(channel)}/{project_id}").json()["revision"] == 0
 
 
-def test_endpoint_reports_missing_seed_as_explicit_blocker(saved):
-    client, channel, _ = saved
+def test_endpoint_reports_missing_seed_as_explicit_blocker(request):
+    client, channel, _ = request.getfixturevalue("saved")
     made = client.post(root(channel), json=brief("no-visual-seed"))
     assert made.status_code == 201, made.text
     response = client.get(f"{root(channel)}/{made.json()['id']}/script-visual-plan")
