@@ -81,7 +81,7 @@ def test_only_explicit_directives_are_classified_not_dialogue_or_guesswork():
         "(SHOW: old Age of Ultron trailer scene)\n"
     )
     assert result.narration_beat_count == 1
-    assert result.explicit_direction_count == 0  # Parenthetical-only is currently inline.
+    assert result.explicit_direction_count == 1  # Parenthetical cue is explicit, but inline.
     assert len(result.requirements) == 2
     assert result.requirements[1].kind == "video"
     assert result.requirements[1].origin == "inline_direction"
