@@ -13,6 +13,8 @@ from katcha.api.control_auth import control_actor, require_control_channel, requ
 from katcha.config import get_settings
 from katcha.db import session_scope
 from katcha.editorial.images import SourceFrameCapture
+from katcha.editorial.project_schemas import EditorialScriptSeed
+from katcha.editorial.script_visual_plan import ScriptVisualPlanV1, build_script_visual_plan
 from katcha.editorial.project_schemas import (
     CreateEditorialProject,
     EditorialProjectResponse,
@@ -349,6 +351,28 @@ def list_projects(
             .limit(limit)
         )
         return [_project(row) for row in rows]
+
+
+@router.get("/{project_id}/script-visual-plan", response_model=ScriptVisualPlanV1)
+def script_visual_plan(
+    channel_profile_id: uuid.UUID,
+    project_id: uuid.UUID,
+    request: Request,
+    response: Response,
+) -> ScriptVisualPlanV1:
+    """Inspect imported writing intent without provider calls or rights decisions."""
+    _authorize(request, channel_profile_id)
+    response.headers["Cache-Control"] = "private, no-store"
+    try:
+        project = get_project(channel_profile_id, project_id)
+        raw = project.brief.get("script_seed")
+        if not raw:
+            raise EditorialConflict(
+                "Import a script seed before analyzing its visual requirements"
+            )
+        return build_script_visual_plan(EditorialScriptSeed.model_validate(raw))
+    except ValueError as exc:
+        raise _error(exc) from exc
 
 
 @router.get("/{project_id}", response_model=EditorialProjectResponse)
