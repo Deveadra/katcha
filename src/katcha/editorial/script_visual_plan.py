@@ -165,7 +165,11 @@ def _source_sections(text: str, digest: str) -> list[ScriptSpanV1]:
     sections = []
     for start, end, kind in parts:
         raw = text[start:end]
-        beat_id = _stable_id("beat_", digest, start, end, "narration") if kind == "narration" else None
+        beat_id = (
+            _stable_id("beat_", digest, start, end, "narration")
+            if kind == "narration"
+            else None
+        )
         spoken = _INLINE.sub("", raw).strip() if beat_id else None
         sections.append(
             ScriptSpanV1(
@@ -205,7 +209,10 @@ def build_script_visual_plan(seed: EditorialScriptSeed) -> ScriptVisualPlanV1:
                     beat_id=span.beat_id,
                     start=span.start, end=span.end,
                     kind="editorial_coverage",
-                    intent="Select a grounded and permitted visual covering this narration; scene unknown.",
+                    intent=(
+                        "Select a grounded and permitted visual covering this narration; "
+                        "scene unknown."
+                    ),
                     origin="coverage_placeholder",
                 )
             )
@@ -244,7 +251,8 @@ def build_script_visual_plan(seed: EditorialScriptSeed) -> ScriptVisualPlanV1:
     words = sum(len(_WORD.findall(span.spoken_text or "")) for span in spans)
     gaps = [
         "Visual coverage is a placeholder until grounded media or graphics are selected.",
-        "Script directions do not prove character identity, scene contents, timestamps or reuse rights.",
+        "Script directions do not prove character identity, scene contents, "
+        "timestamps or reuse rights.",
         "Narration timing is an estimate until approved uploaded or generated audio is measured.",
     ]
     if not any(span.beat_id for span in spans):
