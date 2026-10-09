@@ -104,7 +104,7 @@ def test_different_source_invalidates_ids_and_rejects_corrupt_span():
     assert first.source_sha256 != updated.source_sha256
     assert first.spans[0].beat_id != updated.spans[0].beat_id
     bad = first.model_dump()
-    bad["spans"][0]["raw"] = "Invented scene"
+    bad["spans"][0]["raw"] = "Invented scenes"
     with pytest.raises(ValidationError, match="exact original script"):
         ScriptVisualPlanV1.model_validate(bad)
     bad = first.model_dump()
