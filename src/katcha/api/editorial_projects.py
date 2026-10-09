@@ -13,14 +13,14 @@ from katcha.api.control_auth import control_actor, require_control_channel, requ
 from katcha.config import get_settings
 from katcha.db import session_scope
 from katcha.editorial.images import SourceFrameCapture
-from katcha.editorial.project_schemas import EditorialScriptSeed
-from katcha.editorial.script_visual_plan import ScriptVisualPlanV1, build_script_visual_plan
 from katcha.editorial.project_schemas import (
     CreateEditorialProject,
     EditorialProjectResponse,
     EditorialRevisionResponse,
+    EditorialScriptSeed,
     SaveEditorialDraft,
 )
+from katcha.editorial.script_visual_plan import ScriptVisualPlanV1, build_script_visual_plan
 from katcha.editorial.storyboard_schemas import (
     SaveStoryboardWorkspace,
     StoryboardWorkspaceResponse,
