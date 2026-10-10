@@ -18,6 +18,10 @@ build/
 .local/
 media/
 
+# Lockfiles
+infra/aws-render-staging/.terraform.lock.hcl
+infra/cloudflare-recovery/.wrangler/
+
 # Renderer
 renderer/test-results/
 renderer/reaction-smoke-previews/
@@ -37,3 +41,7 @@ crash.*.log
 
 # Local intelligence handoff inbox
 handoff/
+
+# Miscellaneous
+NOTES.md
+manual-downloads/

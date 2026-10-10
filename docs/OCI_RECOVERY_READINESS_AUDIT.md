@@ -1,5 +1,8 @@
 # OCI recovery readiness: read-only evidence audit
 
+For the storage-constrained E2 identity-probe planning milestone and its separate
+live approval boundary, see [identity probe acceptance](OCI_IDENTITY_PROBE_ACCEPTANCE.md).
+
 This runbook checks IAM **metadata** and the current primary's backup/restore logs without reading Vault secret contents, starting timers, creating containers, mounting devices, changing the Cloudflare coordinator, or launching a replacement instance.
 
 ## Interpreting the two layers
