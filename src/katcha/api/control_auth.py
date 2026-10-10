@@ -281,6 +281,14 @@ def _require_named_principal_route_access(request: Request) -> None:
         require_control_scope(request, "production:create")
         return
 
+    if method in {"GET", "HEAD"} and re.fullmatch(
+        r"/v1/channels/[^/]+/editorial-projects/[^/]+/script-visual-plan", path
+    ):
+        # A script-derived inventory is read-only writing intent. It does not
+        # authorize providers, media acquisition, rights decisions or rendering.
+        require_control_scope(request, "ai:read")
+        return
+
     if re.fullmatch(
         r"/v1/channels/[^/]+/editorial-projects/[^/]+/(?:narration|images)(?:/[^/]+/revoke)?", path
     ):

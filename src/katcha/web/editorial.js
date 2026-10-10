@@ -4,6 +4,8 @@ window.KatchaEditorial = (() => {
     const esc = (value) => String(value ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
     const state = { channel: "", epoch: 0, project: null, revision: null, run: null, performance: null, busy: false, timer: null, editorKey: "", sourceClipBindings: {}, clipResults: [], clipPickerEpoch: 0, clipSearchTimer: null, scriptSeedMeta: null, sourceMonitorKey: "", sourceMonitorUrl: null, sourceMonitorEpoch: 0, sourceMonitorMetadata: null, sourceMonitorTime: 0, sourceMediaLoaded: false, programMap: null, storyboardWorkspace: null, storyboardSaveTimer: null, storyboardSaving: false, storyboardDirty: false, storyboardRetryCount: 0 };
     let api, apiBlob;
+    let scriptVisualPlan = null;
+    let scriptVisualPlanKey = "";
     function previewReady() {
         return state.run?.stage === "render_ready_for_review" && state.run?.status === "completed";
     }
@@ -575,6 +577,11 @@ window.KatchaEditorial = (() => {
         state.assetRun = assetRun; state.review = review; state.performance = performance; state.narration = narration; state.images = images;
         const pending = read(storageKey(`pending.${id}`), null);
         state.project = project; state.revision = revisions[0] || null; state.run = run;
+        const visualPlanIdentity = `${channel}:${id}:${project.brief?.script_seed?.content_sha256 || ""}`;
+        if (scriptVisualPlanKey !== visualPlanIdentity) {
+            scriptVisualPlanKey = visualPlanIdentity;
+            scriptVisualPlan = null;
+        }
         state.stale = Boolean(pending && pending.revision < project.revision);
         if (state.stale) state.revision = pending;
         state.storyboardWorkspace = !state.stale && storyboardWorkspace?.workspace
@@ -591,7 +598,7 @@ window.KatchaEditorial = (() => {
         el("editorial-discard").hidden = !state.stale;
         feedback(run?.error || "Project loaded. Generated claims and scripts need editorial review.", Boolean(run?.error));
         renderProjectSources();
-        renderActions(); renderEvidence(); renderScript(); renderImages(); renderNarration(); renderStoryboard(); renderDirection(); renderReview(); renderActions();
+        renderActions(); renderEvidence(); renderScript(); renderScriptVisualPlan(); renderImages(); renderNarration(); renderStoryboard(); renderDirection(); renderReview(); renderActions();
         if (storyboardWorkspace?.error && !state.stale) {
             storyboardSyncStatus(
                 `Workspace unavailable · ${storyboardWorkspace.error}`,
@@ -1571,6 +1578,31 @@ window.KatchaEditorial = (() => {
             gaps: artifacts.research?.gaps || [], critique: artifacts.critique || null,
         }, null, 2);
     }
+    function renderScriptVisualPlan() {
+        const drawer = el("editorial-script-plan-drawer");
+        const imported = state.project?.brief?.script_seed;
+        drawer.hidden = !imported;
+        if (!imported) return;
+        if (!scriptVisualPlan) {
+            el("editorial-script-plan-status").textContent =
+                "Analyze this imported text without rewriting it or searching for media.";
+            el("editorial-script-plan-requirements").replaceChildren();
+            return;
+        }
+        const requirements = scriptVisualPlan.requirements || [];
+        const explicit = requirements.filter(item => item.origin !== "coverage_placeholder");
+        const coverage = requirements.length - explicit.length;
+        el("editorial-script-plan-status").textContent =
+            `${scriptVisualPlan.narration_beat_count} narration passage(s) · ${requirements.length} visual/audio requirement(s) · ${coverage} still need grounded visuals. Timing is only a word-count estimate. All rights unassessed.`;
+        el("editorial-script-plan-requirements").innerHTML =
+            (explicit.length ? explicit.map(item => `
+                <article class="item"><div>
+                    <strong>${esc(item.kind.replaceAll("_", " "))}</strong>
+                    <p>${esc(item.intent)}</p>
+                    <small>${esc(item.origin.replaceAll("_", " "))} · Text ${item.start}–${item.end} · Unresolved · Not rights-cleared</small>
+                </div></article>`).join("") : '<p class="empty">No explicit visual directions detected. Every narration passage still needs a grounded visual match.</p>')
+            + '<p class="editorial-seed-status">This is an inventory, not a completed asset manifest or an authorization to download third-party media.</p>';
+    }
     function renderScript() {
         const key = `${state.project.id}.${state.revision?.revision || 0}`;
         const renderKey = state.revision ? key : key + JSON.stringify(state.run?.artifacts?.script || null);
@@ -1668,6 +1700,17 @@ window.KatchaEditorial = (() => {
                 feedback(error.message, true);
             });
         });
+        el("editorial-script-plan-button").addEventListener("click", () => void guarded(async () => {
+            if (!state.project?.brief?.script_seed) throw new Error("Import a script into the project first.");
+            const channel = state.channel;
+            const projectId = state.project.id;
+            const identityAtStart = scriptVisualPlanKey;
+            el("editorial-script-plan-status").textContent = "Analyzing the imported script…";
+            const result = await api(path(channel, `/${encodeURIComponent(projectId)}/script-visual-plan`));
+            if (scriptVisualPlanKey !== identityAtStart || state.project?.id !== projectId) return;
+            scriptVisualPlan = result;
+            renderScriptVisualPlan();
+        }));
         el("editorial-script-seed-file").addEventListener("change", () => void (async () => {
             const file = el("editorial-script-seed-file").files[0];
             if (!file) return;
