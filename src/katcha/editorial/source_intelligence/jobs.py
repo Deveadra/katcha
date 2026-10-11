@@ -16,9 +16,12 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlsplit
 
 from katcha.acquisition.adapters import DiscoveryAdapter, DiscoveryProviderError, get_adapter
+from katcha.editorial.source_intelligence.candidates import (
+    AssetCandidateV1,
+    candidate_from_provider,
+)
 from katcha.editorial.source_intelligence.contracts import (
     ProviderPolicyV1,
     SearchReceiptV1,
@@ -48,6 +51,11 @@ class SearchJobLedger:
         self.path = path
         with self._db() as db:
             db.executescript("""
+                CREATE TABLE IF NOT EXISTS source_search_candidates (
+                    job_id TEXT NOT NULL, candidate_id TEXT NOT NULL,
+                    scope_key TEXT NOT NULL, payload TEXT NOT NULL,
+                    PRIMARY KEY (job_id, candidate_id)
+                );
                 CREATE TABLE IF NOT EXISTS source_search_budgets (
                     scope_key TEXT NOT NULL, provider TEXT NOT NULL,
                     policy TEXT NOT NULL, calls INTEGER NOT NULL DEFAULT 0,
@@ -82,6 +90,17 @@ class SearchJobLedger:
             if row["scope_key"] != scope.key:
                 raise PermissionError("search receipt belongs to another scope")
             return SearchReceiptV1.model_validate_json(row["receipt"])
+
+    def candidates(self, job_id: str, *, scope: SearchScopeV1) -> tuple[AssetCandidateV1, ...]:
+        """Read only after application authorization of the requested scope."""
+        self.read(job_id, scope=scope)
+        with self._db() as db:
+            rows = db.execute(
+                "SELECT payload FROM source_search_candidates WHERE job_id=? AND scope_key=? "
+                "ORDER BY candidate_id",
+                (job_id, scope.key),
+            ).fetchall()
+            return tuple(AssetCandidateV1.model_validate_json(row["payload"]) for row in rows)
 
     def history(self, job_id: str, *, scope: SearchScopeV1) -> tuple[SearchReceiptV1, ...]:
         self.read(job_id, scope=scope)
@@ -207,7 +226,13 @@ class SearchJobLedger:
             )
             return receipt, not error
 
-    def _finish(self, receipt: SearchReceiptV1, **changes: Any) -> SearchReceiptV1:
+    def _finish(
+        self,
+        receipt: SearchReceiptV1,
+        *,
+        candidates: tuple[AssetCandidateV1, ...] = (),
+        **changes: Any,
+    ) -> SearchReceiptV1:
         result = SearchReceiptV1.model_validate(
             {
                 **receipt.model_dump(),
@@ -223,6 +248,17 @@ class SearchJobLedger:
             )
             if updated.rowcount != 1:
                 raise RuntimeError("search receipt changed during dispatch")
+            for candidate in candidates:
+                db.execute(
+                    "INSERT INTO source_search_candidates "
+                    "(job_id, candidate_id, scope_key, payload) VALUES (?,?,?,?)",
+                    (
+                        result.job_id,
+                        candidate.candidate_id,
+                        result.scope.key,
+                        candidate.model_dump_json(),
+                    ),
+                )
             db.execute(
                 "INSERT INTO source_search_receipt_events "
                 "(scope_key, job_id, receipt) VALUES (?,?,?)",
@@ -281,19 +317,12 @@ class SearchJobLedger:
             cursor = bounded_cursor(batch.next_cursor)
             if not batch.done and (not cursor or cursor == job.cursor):
                 raise ValueError("provider did not advance its cursor")
-            urls: list[str] = []
+            normalized: dict[str, AssetCandidateV1] = {}
             for item in batch.items:
-                parts = urlsplit(item.source_url)
-                if (
-                    len(item.source_url) > 4096
-                    or parts.scheme not in {"http", "https"}
-                    or not parts.hostname
-                    or parts.username
-                    or parts.password
-                ):
-                    raise ValueError("provider returned an invalid source reference")
-                if item.source_url not in urls:
-                    urls.append(item.source_url)
+                candidate = candidate_from_provider(item, job, receipt)
+                normalized.setdefault(candidate.candidate_id, candidate)
+            candidates = tuple(normalized.values())
+            urls = tuple(dict.fromkeys(c.original_url for c in candidates))
             usage = batch.provider_usage
             if len(usage) > 30 or any(
                 not isinstance(value, int) or isinstance(value, bool) or value < 0 or len(key) > 100
@@ -303,7 +332,8 @@ class SearchJobLedger:
             return self._finish(
                 receipt,
                 status="succeeded",
-                source_urls=tuple(urls),
+                source_urls=urls,
+                candidates=candidates,
                 next_cursor=cursor,
                 done=batch.done,
                 provider_usage=usage,
