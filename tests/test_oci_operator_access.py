@@ -110,7 +110,7 @@ def test_connect_creates_only_scoped_bastion_session(monkeypatch, tmp_path, caps
     monkeypatch.setattr(admin, "TARGET_KEY", key)
     monkeypatch.setattr(admin, "TARGET_HOSTKEYS", known)
     monkeypatch.setattr(admin, "target", lambda: ("ocid1.bastion.oc1.iad.abc", "10.42.2.144"))
-    monkeypatch.setattr(admin, "listening", lambda: True if spawned else False)
+    monkeypatch.setattr(admin, "listening", lambda: bool(spawned))
     monkeypatch.setattr(admin, "handshake", lambda: bool(spawned))
     monkeypatch.setattr(admin.time, "sleep", lambda seconds: None)
     called = []
