@@ -4,7 +4,6 @@ from __future__ import annotations
 import contextlib
 import importlib.util
 from pathlib import Path
-import subprocess
 
 import pytest
 
