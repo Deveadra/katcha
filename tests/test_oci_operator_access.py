@@ -215,3 +215,21 @@ def test_cleanup_unknown_oci_state_does_not_silently_discard_metadata(monkeypatc
     with pytest.raises(admin.AccessError, match="unavailable"):
         admin.disconnect_locked()
     assert (tmp_path / "session.json").exists()
+
+
+def test_active_managed_session_with_unhealthy_target_is_not_recreated(monkeypatch):
+    monkeypatch.setattr(admin, "lock", contextlib.nullcontext)
+    monkeypatch.setattr(admin, "load", lambda: {"pid": 55, "session_id":
+                                             "ocid1.bastionsession.oc1.iad.owned"})
+    monkeypatch.setattr(admin, "owned", lambda state: True)
+    monkeypatch.setattr(admin, "handshake", lambda: False)
+    monkeypatch.setattr(admin, "listening", lambda: True)
+    calls = []
+    def fake_oci(*args):
+        calls.append(args)
+        return "ACTIVE"
+    monkeypatch.setattr(admin, "oci", fake_oci)
+    with pytest.raises(admin.AccessError, match="inspect primary"):
+        admin.connect()
+    assert len(calls) == 1
+    assert calls[0][:3] == ("bastion", "session", "get")
