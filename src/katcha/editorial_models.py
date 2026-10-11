@@ -9,6 +9,7 @@ from sqlalchemy import (
     CheckConstraint,
     DateTime,
     ForeignKey,
+    ForeignKeyConstraint,
     Integer,
     String,
     Text,
@@ -23,7 +24,10 @@ from katcha.db import Base
 
 class EditorialProject(Base):
     __tablename__ = "editorial_projects"
-    __table_args__ = (CheckConstraint("revision >= 0", name="ck_editorial_project_revision"),)
+    __table_args__ = (
+        CheckConstraint("revision >= 0", name="ck_editorial_project_revision"),
+        UniqueConstraint("id", "channel_profile_id", name="uq_editorial_project_channel_scope"),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
     channel_profile_id: Mapped[uuid.UUID] = mapped_column(
@@ -196,3 +200,82 @@ class EditorialImage(Base):
     status: Mapped[str] = mapped_column(String(32), default="active")
     actor: Mapped[str] = mapped_column(String(255))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class ProjectMediaItem(Base):
+    """A project-scoped reference to canonical media or an external source link."""
+
+    __tablename__ = "project_media_items"
+    __table_args__ = (
+        CheckConstraint("revision > 0", name="ck_project_media_item_revision"),
+        CheckConstraint(
+            "(clip_id IS NOT NULL AND external_reference_url IS NULL) OR "
+            "(clip_id IS NULL AND external_reference_url IS NOT NULL)",
+            name="ck_project_media_item_single_source",
+        ),
+        CheckConstraint(
+            "status IN ('reference_only', 'review_required', 'denied', 'acquired', 'ready')",
+            name="ck_project_media_item_status",
+        ),
+        CheckConstraint(
+            "rights_status IN ('not_assessed', 'reference_only', 'review_permitted', "
+            "'production_cleared', 'restricted', 'denied', 'revoked', 'expired')",
+            name="ck_project_media_item_rights_status",
+        ),
+        CheckConstraint(
+            "status != 'ready' OR (rights_status = 'production_cleared' AND clip_id IS NOT NULL)",
+            name="ck_project_media_item_ready_requires_cleared_clip",
+        ),
+        CheckConstraint(
+            "(rights_assessment_id IS NULL AND rights_assessment_version IS NULL) OR "
+            "(rights_assessment_id IS NOT NULL AND rights_assessment_version > 0)",
+            name="ck_project_media_item_rights_assessment_version",
+        ),
+        CheckConstraint(
+            "rights_status != 'production_cleared' OR rights_assessment_id IS NOT NULL",
+            name="ck_project_media_item_clearance_has_assessment",
+        ),
+        ForeignKeyConstraint(
+            ["project_id", "channel_profile_id"],
+            ["editorial_projects.id", "editorial_projects.channel_profile_id"],
+            name="fk_project_media_item_project_channel",
+        ),
+        ForeignKeyConstraint(
+            ["project_id", "revision"],
+            ["editorial_revisions.project_id", "editorial_revisions.revision"],
+            name="fk_project_media_item_revision",
+        ),
+        UniqueConstraint("request_id", name="uq_project_media_item_request"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
+    project_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, index=True)
+    revision: Mapped[int] = mapped_column(Integer, nullable=False)
+    channel_profile_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("channel_profiles.id"), nullable=False, index=True
+    )
+    clip_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("clips.id"), nullable=True, index=True
+    )
+    external_reference_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    request_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    request_digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    kind: Mapped[str] = mapped_column(String(32), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    rights_status: Mapped[str] = mapped_column(String(32), nullable=False, default="not_assessed")
+    rights_assessment_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("rights_assessments.id"), nullable=True
+    )
+    rights_assessment_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    requirement_ids: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
+    searchable_tags: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
+    provenance: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    source_metadata: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    source_in_seconds: Mapped[float | None] = mapped_column(nullable=True)
+    source_out_seconds: Mapped[float | None] = mapped_column(nullable=True)
+    notes: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    actor: Mapped[str] = mapped_column(String(255), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    last_verified_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
