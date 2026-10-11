@@ -6,7 +6,6 @@ import hashlib
 import json
 import uuid
 from typing import Any
-from urllib.parse import urlsplit
 
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -14,6 +13,7 @@ from sqlalchemy.orm import Session
 
 from katcha.acquisition_models import DiscoveryCandidate, RightsAssessment
 from katcha.db import session_scope
+from katcha.editorial.source_intelligence.candidates import reference_url
 from katcha.editorial_models import EditorialProject, EditorialRevision, ProjectMediaItem
 from katcha.models import Clip, SourceItem
 from katcha.services.clip_lifecycle import channel_ids_for_clip
@@ -36,18 +36,6 @@ _RIGHTS_STATES = {
 def _digest(value: dict[str, Any]) -> str:
     canonical = json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
     return hashlib.sha256(canonical.encode()).hexdigest()
-
-
-def _validate_reference_url(url: str) -> None:
-    parsed = urlsplit(url)
-    if (
-        parsed.scheme not in {"http", "https"}
-        or not parsed.hostname
-        or parsed.username is not None
-        or parsed.password is not None
-        or any(ord(character) < 32 for character in url)
-    ):
-        raise ValueError("External media references must be public HTTP or HTTPS URLs")
 
 
 def _scoped_project(
@@ -90,7 +78,7 @@ def add_project_media_item(
     if (clip_id is None) == (external_reference_url is None):
         raise ValueError("Choose exactly one existing clip or external reference URL")
     if external_reference_url is not None:
-        _validate_reference_url(external_reference_url)
+        external_reference_url = reference_url(external_reference_url)
     if source_in_seconds is not None and source_in_seconds < 0:
         raise ValueError("Source in time cannot be negative")
     if source_out_seconds is not None and source_out_seconds < 0:
@@ -234,20 +222,23 @@ def add_project_media_item(
 
 
 def list_project_media_items(
-    channel_id: uuid.UUID, project_id: uuid.UUID
+    channel_id: uuid.UUID, project_id: uuid.UUID, *, revision: int | None = None
 ) -> list[ProjectMediaItem]:
     with session_scope() as session:
         project = session.get(EditorialProject, project_id)
         if project is None or project.channel_profile_id != channel_id:
             raise EditorialNotFound("Editorial project not found in this channel")
+        if revision is not None and session.get(EditorialRevision, (project_id, revision)) is None:
+            raise EditorialNotFound("Editorial project revision not found in this channel")
+        statement = select(ProjectMediaItem).where(
+            ProjectMediaItem.project_id == project_id,
+            ProjectMediaItem.channel_profile_id == channel_id,
+        )
+        if revision is not None:
+            statement = statement.where(ProjectMediaItem.revision == revision)
         rows = list(
             session.scalars(
-                select(ProjectMediaItem)
-                .where(
-                    ProjectMediaItem.project_id == project_id,
-                    ProjectMediaItem.channel_profile_id == channel_id,
-                )
-                .order_by(ProjectMediaItem.created_at, ProjectMediaItem.id)
+                statement.order_by(ProjectMediaItem.created_at, ProjectMediaItem.id)
             )
         )
         for row in rows:
