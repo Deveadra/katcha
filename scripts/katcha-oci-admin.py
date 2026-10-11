@@ -219,6 +219,17 @@ def connect() -> None:
         if state and owned(state) and handshake():
             print("bastion_tunnel: CONNECTED; reused existing managed tunnel")
             return
+        if state and owned(state) and listening():
+            # Do not recycle a healthy OCI session because the target is down.
+            phase = oci("bastion", "session", "get", "--session-id", state["session_id"],
+                        "--query", 'data."lifecycle-state"', "--raw-output")
+            if phase == "ACTIVE":
+                raise AccessError("managed Bastion session active but target SSH is "
+                                  "unverified; inspect primary/host key without replacing it")
+            if phase not in ("EXPIRED", "DELETED", "FAILED", "CANCELED"):
+                raise AccessError("managed Bastion session state requires review: " + phase)
+            disconnect_locked()
+            state = None
         if listening():
             raise AccessError("port 22022 in use by unverified listener; no session created")
         if state:
