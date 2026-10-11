@@ -28,18 +28,17 @@ nontransient failures. AI may propose, never approve a license.
 
 ## Next eligible assignment
 
-**`KSI-103`: Grounded multi-provider scouting and metadata verification.**
-`KSI-102` merged via PR #349 with passing PR CI; do not redo it. Reuse its
-bounded search-job/replay foundation. Implement grounded provider candidates,
-metadata receipts, cursors and bounded failures, with deterministic fake-provider
-tests and no unauthorized downloads or paid CI calls. Proceed independently; no coordinator assignment needed. `KSI-101` is a separate integration task that must reuse the merged
-PR #346 script planner and check for real overlap in active PRs.
+**`KSI-104`: Semantic query expansion from script requirements.** KSI-101 (#354),
+KSI-102 (#349), and KSI-103 (#353) are merged with passing exact-head CI. Reuse
+the exact-plan requirement adapter, bounded jobs and persisted reference-only
+provider observations. Preserve hypotheses versus observations, source policy,
+negative terms, budgets and replay. No unauthorized live or paid calls.
 
 ## Follow-on ordered tasks
 
 `KSI-101`/`KSI-103` → `KSI-104` → `KSI-105` → integration `KIN-101` (A owner).
 Later, after B shot index, `KSI-106` selects evidence-backed shot intervals.
-Dependencies in `AGENT_BACKLOG.json` are authoritative for eligibility.
+Use the backlog dependency graph as intent; live merged PRs and passing CI prove eligibility.
 
 ## Minimum delivered evidence
 

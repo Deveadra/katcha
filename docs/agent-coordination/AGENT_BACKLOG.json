@@ -17,7 +17,7 @@
       "blocked",
       "superseded"
     ],
-    "accepted_requires": "Verified PR merge into accepted main with required CI passing at exact head; coordinator evidence only.",
+    "accepted_requires": "Verified PR merge into accepted main with required CI passing at exact head; evidence recorded by the implementing agent or reviewer.",
     "in_review": "PR open with exact URL; not a merged capability.",
     "refresh": "Advisory snapshot only. Live GitHub merged PRs and required CI are authoritative. Stale statuses do not block development."
   },
@@ -93,10 +93,25 @@
       ],
       "interfaces": [],
       "coordination_notes": "Reuse merged #346 planner; inspect active PR overlap; no coordinator gate.",
-      "status": "planned",
-      "status_evidence": null,
-      "pr_url": null,
-      "accepted_main_sha": null
+      "status": "accepted",
+      "status_evidence": {
+        "verification_level": "verified_offline",
+        "merged_pr_url": "https://github.com/Deveadra/katcha/pull/354",
+        "pr_head_sha": "c2c73c1ff270c2bdcbbe1be1ac572c5bc1f155e1",
+        "merge_commit_sha": "85d43c8a7c622ce29a7634a8edc19c0c3b5ed5a9",
+        "ci_workflow": "CI",
+        "ci_conclusion": "success",
+        "ci_url": "https://github.com/Deveadra/katcha/actions/runs/38168430486",
+        "checks": [
+          "python: success",
+          "PR Gate: success"
+        ],
+        "test_result": "1475 passed, 1 skipped",
+        "date": "2026-10-11",
+        "notes": "Independent review completed; exact-head CI passed before merge. No live provider or production acceptance."
+      },
+      "pr_url": "https://github.com/Deveadra/katcha/pull/354",
+      "accepted_main_sha": "85d43c8a7c622ce29a7634a8edc19c0c3b5ed5a9"
     },
     {
       "id": "KSI-102",
@@ -157,10 +172,25 @@
         "AssetCandidateV1"
       ],
       "coordination_notes": "",
-      "status": "planned",
-      "status_evidence": null,
-      "pr_url": null,
-      "accepted_main_sha": null
+      "status": "accepted",
+      "status_evidence": {
+        "verification_level": "verified_offline",
+        "merged_pr_url": "https://github.com/Deveadra/katcha/pull/353",
+        "pr_head_sha": "b3ed978fb6968f187b078504aee19d1ed7f0176a",
+        "merge_commit_sha": "6db0849c535bd741cc91836a7ff64d247b27ac6f",
+        "ci_workflow": "CI",
+        "ci_conclusion": "success",
+        "ci_url": "https://github.com/Deveadra/katcha/actions/runs/38168260044",
+        "checks": [
+          "python: success",
+          "PR Gate: success"
+        ],
+        "test_result": "1488 passed, 1 skipped",
+        "date": "2026-10-11",
+        "notes": "Independent review completed; exact-head CI passed before merge. No live provider or production acceptance."
+      },
+      "pr_url": "https://github.com/Deveadra/katcha/pull/353",
+      "accepted_main_sha": "6db0849c535bd741cc91836a7ff64d247b27ac6f"
     },
     {
       "id": "KSI-104",
@@ -245,9 +275,14 @@
         "ProjectMediaItemV1"
       ],
       "coordination_notes": "Agent B owns additive Media Bin mapping model and Alembic migration; inspect heads/overlap; no appointed owner.",
-      "status": "planned",
-      "status_evidence": null,
-      "pr_url": null,
+      "status": "in_review",
+      "status_evidence": {
+        "pr_url": "https://github.com/Deveadra/katcha/pull/355",
+        "pr_head_sha": "2dab119a68eda0446995084e4f4f3180e2376c5f",
+        "date": "2026-10-11",
+        "notes": "Open PR inspected for collision; migration/model/service/test files are disjoint from A work. Required Python CI pending at snapshot; not accepted."
+      },
+      "pr_url": "https://github.com/Deveadra/katcha/pull/355",
       "accepted_main_sha": null
     },
     {
@@ -572,8 +607,8 @@
       "accepted_main_sha": null
     }
   ],
-  "last_reconciled_date": "2026-10-10",
-  "last_reconciled_note": "PRs #345/#346/#349 merged; KSI-103 is next eligible A task, KMI-101 is B task. Status snapshots require live GitHub verification.",
+  "last_reconciled_date": "2026-10-11",
+  "last_reconciled_note": "KSI-101 #354 and KSI-103 #353 accepted with passing exact-head Python CI and PR Gate. KSI-104 is the next eligible A task; KMI-101 is in review in #355, with Python CI pending at snapshot. Live GitHub outranks this snapshot.",
   "agent_execution_policy": {
     "self_service": true,
     "auto_merge": "After green required checks/reviews and mergeability; no direct pushes to main or force-push.",
