@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import json
 import tempfile
 import uuid
 from pathlib import Path
@@ -13,6 +15,10 @@ from katcha.api.control_auth import control_actor, require_control_channel, requ
 from katcha.config import get_settings
 from katcha.db import session_scope
 from katcha.editorial.images import SourceFrameCapture
+from katcha.editorial.media_bin_schemas import (
+    AddProjectMediaItemRequest,
+    ProjectMediaItemResponse,
+)
 from katcha.editorial.project_schemas import (
     CreateEditorialProject,
     EditorialProjectResponse,
@@ -32,6 +38,11 @@ from katcha.editorial_models import (
     EditorialProject,
     EditorialRevision,
     EditorialStoryboardRevision,
+)
+from katcha.services.editorial_media_bin import (
+    add_project_media_item,
+    get_project_media_item,
+    list_project_media_items,
 )
 from katcha.services.editorial_projects import (
     EditorialConflict,
@@ -109,6 +120,77 @@ async def source_media_upload(
     finally:
         if temporary is not None:
             temporary.unlink(missing_ok=True)
+
+
+@router.get(
+    "/{project_id}/media-bin", response_model=list[ProjectMediaItemResponse]
+)
+def media_bin_list(
+    channel_profile_id: uuid.UUID,
+    project_id: uuid.UUID,
+    request: Request,
+    revision: int | None = Query(default=None, ge=1),
+) -> list[ProjectMediaItemResponse]:
+    _authorize(request, channel_profile_id)
+    try:
+        rows = list_project_media_items(channel_profile_id, project_id, revision=revision)
+        return [ProjectMediaItemResponse.model_validate(row) for row in rows]
+    except ValueError as exc:
+        raise _error(exc) from exc
+
+
+@router.post(
+    "/{project_id}/media-bin",
+    response_model=ProjectMediaItemResponse,
+    status_code=201,
+)
+def media_bin_add(
+    channel_profile_id: uuid.UUID,
+    project_id: uuid.UUID,
+    body: AddProjectMediaItemRequest,
+    request: Request,
+) -> ProjectMediaItemResponse:
+    _authorize(request, channel_profile_id, write=True)
+    canonical = json.dumps(body.model_dump(mode="json"), sort_keys=True, separators=(",", ":"))
+    request_key = "http_" + hashlib.sha256(canonical.encode()).hexdigest()
+    try:
+        row = add_project_media_item(
+            channel_profile_id,
+            project_id,
+            body.revision,
+            request_key=request_key,
+            actor=control_actor(request),
+            kind=body.kind,
+            clip_id=body.clip_id,
+            external_reference_url=body.external_reference_url,
+            requirement_ids=body.requirement_ids,
+            searchable_tags=body.searchable_tags,
+            provenance={"origin": "operator_reference"},
+            source_in_seconds=body.source_in_seconds,
+            source_out_seconds=body.source_out_seconds,
+            notes=body.notes,
+        )
+        return ProjectMediaItemResponse.model_validate(row)
+    except ValueError as exc:
+        raise _error(exc) from exc
+
+
+@router.get(
+    "/{project_id}/media-bin/{item_id}", response_model=ProjectMediaItemResponse
+)
+def media_bin_detail(
+    channel_profile_id: uuid.UUID,
+    project_id: uuid.UUID,
+    item_id: uuid.UUID,
+    request: Request,
+) -> ProjectMediaItemResponse:
+    _authorize(request, channel_profile_id)
+    try:
+        return ProjectMediaItemResponse.model_validate(
+            get_project_media_item(channel_profile_id, project_id, item_id)
+        )
+    except ValueError as exc:
+        raise _error(exc) from exc
 
 
 @router.get("/{project_id}/images")

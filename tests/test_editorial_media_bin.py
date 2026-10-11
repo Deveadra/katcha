@@ -170,7 +170,7 @@ def test_existing_clip_is_referenced_once_and_channel_isolation_is_enforced(medi
 
 def test_links_and_ready_state_fail_closed(media_bin):
     _, (channel, _), ((project, revision), _) = media_bin
-    with pytest.raises(ValueError, match="public HTTP or HTTPS"):
+    with pytest.raises(ValueError, match="invalid source reference"):
         add_project_media_item(
             channel,
             project.id,

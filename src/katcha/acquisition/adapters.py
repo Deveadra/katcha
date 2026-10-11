@@ -166,6 +166,7 @@ class ManifestDiscoveryAdapter:
 
 
 _ADAPTERS: dict[tuple[str, str], DiscoveryAdapter] = {}
+_BUILTINS_LOADED = False
 
 
 def register_adapter(adapter: DiscoveryAdapter) -> None:
@@ -178,6 +179,7 @@ def register_adapter(adapter: DiscoveryAdapter) -> None:
 
 
 def get_adapter(key: str, version: str) -> DiscoveryAdapter:
+    _load_builtin_adapters()
     try:
         return _ADAPTERS[(key, version)]
     except KeyError as exc:
@@ -197,6 +199,7 @@ def describe_adapter(adapter: DiscoveryAdapter) -> DiscoveryAdapterCapability:
 
 
 def available_adapters() -> list[dict[str, Any]]:
+    _load_builtin_adapters()
     return [
         describe_adapter(_ADAPTERS[(key, version)]).as_dict()
         for key, version in sorted(_ADAPTERS)
@@ -205,14 +208,23 @@ def available_adapters() -> list[dict[str, Any]]:
 
 register_adapter(ManifestDiscoveryAdapter())
 
-from katcha.acquisition.feeds import RssAtomDiscoveryAdapter  # noqa: E402
-from katcha.acquisition.operator_feed import OperatorFeedDiscoveryAdapter  # noqa: E402
-from katcha.acquisition.reddit_discovery import RedditDiscoveryAdapter  # noqa: E402
-from katcha.acquisition.web_scout import WebScoutDiscoveryAdapter  # noqa: E402
-from katcha.acquisition.youtube_discovery import YouTubeDiscoveryAdapter  # noqa: E402
+def _load_builtin_adapters() -> None:
+    """Load optional providers on first use to avoid import cycles."""
+    global _BUILTINS_LOADED
+    if _BUILTINS_LOADED:
+        return
+    from katcha.acquisition.feeds import RssAtomDiscoveryAdapter
+    from katcha.acquisition.operator_feed import OperatorFeedDiscoveryAdapter
+    from katcha.acquisition.reddit_discovery import RedditDiscoveryAdapter
+    from katcha.acquisition.web_scout import WebScoutDiscoveryAdapter
+    from katcha.acquisition.youtube_discovery import YouTubeDiscoveryAdapter
 
-register_adapter(OperatorFeedDiscoveryAdapter())
-register_adapter(RedditDiscoveryAdapter())
-register_adapter(RssAtomDiscoveryAdapter())
-register_adapter(WebScoutDiscoveryAdapter())
-register_adapter(YouTubeDiscoveryAdapter())
+    for adapter in (
+        OperatorFeedDiscoveryAdapter(),
+        RedditDiscoveryAdapter(),
+        RssAtomDiscoveryAdapter(),
+        WebScoutDiscoveryAdapter(),
+        YouTubeDiscoveryAdapter(),
+    ):
+        register_adapter(adapter)
+    _BUILTINS_LOADED = True
