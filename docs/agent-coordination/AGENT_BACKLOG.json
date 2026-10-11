@@ -1,0 +1,557 @@
+{
+  "schema_version": 1,
+  "pack_version": "1.0",
+  "project": "Katcha — Source Intelligence & Content Intake",
+  "repository": "Deveadra/katcha",
+  "prepared_date": "2026-10-10",
+  "baseline_main_sha": "3d08e5862bedb972c54e4a6ea6e3566354ec9881",
+  "authoritative_spec": "docs/agent-coordination/IMPLEMENTATION_PLAN.md",
+  "contracts": "docs/agent-coordination/CONTRACTS.md",
+  "planning_only": true,
+  "status_policy": {
+    "values": [
+      "planned",
+      "in_progress",
+      "in_review",
+      "accepted",
+      "blocked",
+      "superseded"
+    ],
+    "accepted_requires": "Verified PR merge into accepted main with required CI passing at exact head; coordinator evidence only.",
+    "in_review": "PR open with exact URL; not a merged capability.",
+    "refresh": "Coordinator reconciles this static file after evidence-backed merges; agents do not edit concurrently."
+  },
+  "agent_boundaries": {
+    "A": [
+      "src/katcha/editorial/source_intelligence/"
+    ],
+    "B": [
+      "src/katcha/editorial/media_intake/"
+    ],
+    "shared": "Single coordinator-appointed integration owner per PR; no parallel edits of shared API, models, migrations or UI."
+  },
+  "related_open_prs_at_preparation": [
+    "https://github.com/Deveadra/katcha/pull/345",
+    "https://github.com/Deveadra/katcha/pull/346"
+  ],
+  "tasks": [
+    {
+      "id": "KCO-000",
+      "title": "Accept agent coordination pack and contract/interface freeze",
+      "owner": "Coordinator",
+      "stage": "M0",
+      "priority": "P0",
+      "depends_on": [],
+      "external_gates": [
+        "user_approves_contracts_and_pack_merge"
+      ],
+      "suggested_paths": [
+        "AGENTS.md",
+        "docs/agent-coordination/*"
+      ],
+      "acceptance_criteria": [
+        "Current accepted main and PR #345/#346 state recorded, shared-file collisions classified",
+        "Plan, versioned contract seams, file ownership and source-specific rights gates approved",
+        "Pack merged after review with required CI passing, no historic AGENTS guidance removed"
+      ],
+      "interfaces": [],
+      "coordination_notes": "Gate for starting both implementation agents; no code feature marked complete by merging this pack.",
+      "status": "planned",
+      "status_evidence": null,
+      "pr_url": null,
+      "accepted_main_sha": null
+    },
+    {
+      "id": "KSI-101",
+      "title": "Script requirement inventory integration and full coverage",
+      "owner": "Agent A",
+      "stage": "M1",
+      "priority": "P0",
+      "depends_on": [
+        "KCO-000"
+      ],
+      "external_gates": [
+        "pr346_disposition_verified_and_approved_contract_adapter"
+      ],
+      "suggested_paths": [
+        "src/katcha/editorial/source_intelligence/",
+        "tests/test_source_intelligence_requirements.py"
+      ],
+      "acceptance_criteria": [
+        "All original script bytes/spans preserved with stable identities and no silent rewrite",
+        "All narration beats have typed asset requirements or explicit documented ambiguity; >30 and 100+ cues supported",
+        "Script edits invalidate only dependent records; no invented source timestamps"
+      ],
+      "interfaces": [],
+      "coordination_notes": "Do not duplicate open PR #346; reconcile it before touching parsing integrations.",
+      "status": "planned",
+      "status_evidence": null,
+      "pr_url": null,
+      "accepted_main_sha": null
+    },
+    {
+      "id": "KSI-102",
+      "title": "Bounded search-job planner and provider capability foundation",
+      "owner": "Agent A",
+      "stage": "M1",
+      "priority": "P0",
+      "depends_on": [
+        "KCO-000"
+      ],
+      "external_gates": [],
+      "suggested_paths": [
+        "src/katcha/editorial/source_intelligence/",
+        "tests/test_source_search_jobs.py"
+      ],
+      "acceptance_criteria": [
+        "Typed SourceSearchJobV1 compatible intent with stable idempotency, budget and bounded cursor",
+        "Existing adapter capability mapping and deterministic fake-provider dry-run",
+        "Quota/timeout/replay errors remain durable and no external paid calls occur in tests"
+      ],
+      "interfaces": [],
+      "coordination_notes": "Preferred initial A task if PR #346 remains draft; independent of script parser.",
+      "status": "planned",
+      "status_evidence": null,
+      "pr_url": null,
+      "accepted_main_sha": null
+    },
+    {
+      "id": "KSI-103",
+      "title": "Grounded multi-provider scouting and metadata verification",
+      "owner": "Agent A",
+      "stage": "M1",
+      "priority": "P0",
+      "depends_on": [
+        "KSI-102"
+      ],
+      "external_gates": [],
+      "suggested_paths": [
+        "src/katcha/editorial/source_intelligence/",
+        "tests/test_source_provider_scouting.py"
+      ],
+      "acceptance_criteria": [
+        "Adapters return true URLs/provider IDs with source/metadata receipts and saved cursors",
+        "Reference-only official/YouTube hits never presented as downloadable files",
+        "Unreachable, nontransient, rate-limited providers yield bounded actionable gaps"
+      ],
+      "interfaces": [
+        "SourceSearchJobV1",
+        "AssetCandidateV1"
+      ],
+      "coordination_notes": "",
+      "status": "planned",
+      "status_evidence": null,
+      "pr_url": null,
+      "accepted_main_sha": null
+    },
+    {
+      "id": "KSI-104",
+      "title": "Semantic query expansion from script requirements",
+      "owner": "Agent A",
+      "stage": "M1",
+      "priority": "P0",
+      "depends_on": [
+        "KSI-101",
+        "KSI-103"
+      ],
+      "external_gates": [],
+      "suggested_paths": [
+        "src/katcha/editorial/source_intelligence/",
+        "tests/test_source_query_expansion.py"
+      ],
+      "acceptance_criteria": [
+        "Entity aliases, publisher hints, negative terms and alternatives expand requirements meaningfully",
+        "Grounded and unverified assertions distinguished; search stays within policy/cost bounds",
+        "Repeated execution does not reissue known requests or drop uncovered beats"
+      ],
+      "interfaces": [
+        "AssetRequirementV1",
+        "SourceSearchJobV1"
+      ],
+      "coordination_notes": "",
+      "status": "planned",
+      "status_evidence": null,
+      "pr_url": null,
+      "accepted_main_sha": null
+    },
+    {
+      "id": "KSI-105",
+      "title": "Rank, diversify and report source coverage and gaps",
+      "owner": "Agent A",
+      "stage": "M1",
+      "priority": "P0",
+      "depends_on": [
+        "KSI-104"
+      ],
+      "external_gates": [],
+      "suggested_paths": [
+        "src/katcha/editorial/source_intelligence/",
+        "tests/test_source_candidate_ranker.py"
+      ],
+      "acceptance_criteria": [
+        "Deterministic ranker explains verified relevance, authority, availability and rights hard gates",
+        "Every requirement has evidence-backed state and alternatives or actionable gap",
+        "Candidate counts and link counts cannot falsely imply usable media coverage"
+      ],
+      "interfaces": [
+        "AssetCandidateV1",
+        "AssetRequirementV1"
+      ],
+      "coordination_notes": "",
+      "status": "planned",
+      "status_evidence": null,
+      "pr_url": null,
+      "accepted_main_sha": null
+    },
+    {
+      "id": "KMI-101",
+      "title": "Durable channel-safe project Media Bin references",
+      "owner": "Agent B",
+      "stage": "M2",
+      "priority": "P0",
+      "depends_on": [
+        "KCO-000"
+      ],
+      "external_gates": [],
+      "suggested_paths": [
+        "src/katcha/editorial/media_intake/",
+        "migrations/versions/",
+        "tests/test_project_media_bin.py"
+      ],
+      "acceptance_criteria": [
+        "Project-scoped bin links existing owned clips and external URLs with persistent metadata",
+        "Idempotent updates; all access restricted to authorized channel/project and correct revision",
+        "No duplicate blob copy, no implicit external license, legacy Clip Library remains operational"
+      ],
+      "interfaces": [
+        "ProjectMediaItemV1"
+      ],
+      "coordination_notes": "Preferred initial Agent B PR; shared migration file ownership must be reserved.",
+      "status": "planned",
+      "status_evidence": null,
+      "pr_url": null,
+      "accepted_main_sha": null
+    },
+    {
+      "id": "KMI-102",
+      "title": "Media Bin API and operator status surfaces",
+      "owner": "Agent B",
+      "stage": "M2",
+      "priority": "P0",
+      "depends_on": [
+        "KMI-101"
+      ],
+      "external_gates": [],
+      "suggested_paths": [
+        "src/katcha/editorial/media_intake/",
+        "src/katcha/api/",
+        "tests/test_project_media_bin_api.py"
+      ],
+      "acceptance_criteria": [
+        "API lists/adds/inspects owned or reference-only project items with authorization and stable IDs",
+        "Real statuses distinguish link saved, review required, denied, acquired and ready",
+        "Existing Editorial routes preserved; errors and repeat submissions are deterministic"
+      ],
+      "interfaces": [
+        "ProjectMediaItemV1"
+      ],
+      "coordination_notes": "Shared API file modifications need one integration owner; do not race PR #346.",
+      "status": "planned",
+      "status_evidence": null,
+      "pr_url": null,
+      "accepted_main_sha": null
+    },
+    {
+      "id": "KMI-103",
+      "title": "Permission capabilities, rights status and acquisition receipts",
+      "owner": "Agent B",
+      "stage": "M2",
+      "priority": "P0",
+      "depends_on": [
+        "KMI-101"
+      ],
+      "external_gates": [],
+      "suggested_paths": [
+        "src/katcha/editorial/media_intake/",
+        "tests/test_acquisition_permissions.py"
+      ],
+      "acceptance_criteria": [
+        "Provider-specific download permission separate from access and production eligibility",
+        "Durable AcquisitionReceiptV1 differentiates known failed, succeeded and unknown outcome",
+        "Revoked/expired/unknown external rights always block selection for production use"
+      ],
+      "interfaces": [
+        "AcquisitionReceiptV1",
+        "AssetCandidateV1"
+      ],
+      "coordination_notes": "",
+      "status": "planned",
+      "status_evidence": null,
+      "pr_url": null,
+      "accepted_main_sha": null
+    },
+    {
+      "id": "KMI-104",
+      "title": "Safe and idempotent authorized downloader",
+      "owner": "Agent B",
+      "stage": "M2",
+      "priority": "P0",
+      "depends_on": [
+        "KMI-103"
+      ],
+      "external_gates": [],
+      "suggested_paths": [
+        "src/katcha/editorial/media_intake/",
+        "tests/test_authorized_media_fetch.py"
+      ],
+      "acceptance_criteria": [
+        "Allowlisted authorized media fetch with SSRF/DNS/redirect/size/timeout protection",
+        "Partial download and duplicate replays are crash-safe; unknown paid outcomes not blind retried",
+        "Reference-only sources remain references; no DRM/auth/ToS circumvention"
+      ],
+      "interfaces": [
+        "AcquisitionReceiptV1"
+      ],
+      "coordination_notes": "",
+      "status": "planned",
+      "status_evidence": null,
+      "pr_url": null,
+      "accepted_main_sha": null
+    },
+    {
+      "id": "KMI-105",
+      "title": "Multi-type integrity probes and content deduplication",
+      "owner": "Agent B",
+      "stage": "M2",
+      "priority": "P0",
+      "depends_on": [
+        "KMI-104"
+      ],
+      "external_gates": [],
+      "suggested_paths": [
+        "src/katcha/editorial/media_intake/",
+        "tests/test_media_intake_validation.py"
+      ],
+      "acceptance_criteria": [
+        "Actual video/image/audio content probed and type/size/duration/dimensions validated",
+        "SHA-256 exact and relevant perceptual duplicate records preserved; changed bytes invalidate stale analysis",
+        "Validated assets stored canonically without cross-channel leaks or duplicate object writes"
+      ],
+      "interfaces": [
+        "ProjectMediaItemV1",
+        "AcquisitionReceiptV1"
+      ],
+      "coordination_notes": "",
+      "status": "planned",
+      "status_evidence": null,
+      "pr_url": null,
+      "accepted_main_sha": null
+    },
+    {
+      "id": "KMI-106",
+      "title": "Portable project media export with references and evidence",
+      "owner": "Agent B",
+      "stage": "M2",
+      "priority": "P0",
+      "depends_on": [
+        "KMI-102",
+        "KMI-105"
+      ],
+      "external_gates": [],
+      "suggested_paths": [
+        "src/katcha/editorial/media_intake/",
+        "tests/test_project_media_export.py"
+      ],
+      "acceptance_criteria": [
+        "Reproducible ZIP/folder contains permitted physical media, manifests and references/links.csv",
+        "Sources, metadata, rights evidence, sha256 and gaps survive export and roundtrip",
+        "Never exports credentials, transient signed URLs or externally restricted file bytes"
+      ],
+      "interfaces": [
+        "ProjectMediaItemV1",
+        "AssetCandidateV1",
+        "AcquisitionReceiptV1"
+      ],
+      "coordination_notes": "",
+      "status": "planned",
+      "status_evidence": null,
+      "pr_url": null,
+      "accepted_main_sha": null
+    },
+    {
+      "id": "KIN-101",
+      "title": "Integrate script-to-source scouting into project Media Bin",
+      "owner": "Agent A (integration owner; B reviewer)",
+      "stage": "M2",
+      "priority": "P0",
+      "depends_on": [
+        "KSI-105",
+        "KMI-106"
+      ],
+      "external_gates": [],
+      "suggested_paths": [
+        "src/katcha/orchestration/",
+        "src/katcha/api/",
+        "src/katcha/editorial/",
+        "web-tests/"
+      ],
+      "acceptance_criteria": [
+        "Single Find & prepare media journey creates persisted requirements, grounded links and eligible acquired bin items",
+        "Crash/replay cannot duplicate media or paid/provider work; exact progress and gaps remain visible",
+        "Existing Editor/Clip Library and all permission/rights controls remain intact"
+      ],
+      "interfaces": [
+        "AssetRequirementV1",
+        "AssetCandidateV1",
+        "ProjectMediaItemV1"
+      ],
+      "coordination_notes": "Agent A sole integration owner, Agent B reviews changed shared files.",
+      "status": "planned",
+      "status_evidence": null,
+      "pr_url": null,
+      "accepted_main_sha": null
+    },
+    {
+      "id": "KMI-107",
+      "title": "Measured shot/frame media index and search",
+      "owner": "Agent B",
+      "stage": "M3",
+      "priority": "P1",
+      "depends_on": [
+        "KIN-101"
+      ],
+      "external_gates": [],
+      "suggested_paths": [
+        "src/katcha/editorial/media_intake/",
+        "tests/test_shot_index_search.py"
+      ],
+      "acceptance_criteria": [
+        "Measured shot ranges/keyframes have source hashes, model policy version and observation coverage",
+        "Known-shot fixture retrieval within declared tolerance; no invented timestamps or unseen actions",
+        "Index invalidated by media byte changes and bounded CPU/storage/vision costs"
+      ],
+      "interfaces": [
+        "SceneIndexV1"
+      ],
+      "coordination_notes": "",
+      "status": "planned",
+      "status_evidence": null,
+      "pr_url": null,
+      "accepted_main_sha": null
+    },
+    {
+      "id": "KSI-106",
+      "title": "Evidence-backed requirement-to-shot matching",
+      "owner": "Agent A",
+      "stage": "M3",
+      "priority": "P1",
+      "depends_on": [
+        "KMI-107"
+      ],
+      "external_gates": [],
+      "suggested_paths": [
+        "src/katcha/editorial/source_intelligence/",
+        "tests/test_requirement_shot_matching.py"
+      ],
+      "acceptance_criteria": [
+        "Rank source-relative measured intervals per beat with match explanations and fallback gaps",
+        "Intervals do not exceed source bounds and current rights reassessed",
+        "Operator-locked choices not silently overwritten by recomputation"
+      ],
+      "interfaces": [
+        "RequirementBindingV1",
+        "SceneIndexV1"
+      ],
+      "coordination_notes": "",
+      "status": "planned",
+      "status_evidence": null,
+      "pr_url": null,
+      "accepted_main_sha": null
+    },
+    {
+      "id": "KIN-102",
+      "title": "Safe bindings into existing Editorial direction/storyboard",
+      "owner": "Agent B (integration owner; A reviewer)",
+      "stage": "M3",
+      "priority": "P1",
+      "depends_on": [
+        "KSI-106"
+      ],
+      "external_gates": [],
+      "suggested_paths": [
+        "src/katcha/editorial/",
+        "src/katcha/services/",
+        "renderer/test/"
+      ],
+      "acceptance_criteria": [
+        "Versioned bindings handed to current Editor without rewriting its legacy schema",
+        "Production eligibility checked again at compile/render; no altered historic renders",
+        "One-click/manual replacement verified through tests without silent rights bypass"
+      ],
+      "interfaces": [
+        "RequirementBindingV1"
+      ],
+      "coordination_notes": "B sole shared-file integration owner, A reviews; multi-shot redesign remains PR #345 scope.",
+      "status": "planned",
+      "status_evidence": null,
+      "pr_url": null,
+      "accepted_main_sha": null
+    },
+    {
+      "id": "KQA-101",
+      "title": "Deterministic end-to-end VisionQuest-style source package acceptance",
+      "owner": "Coordinator (A/B implement scoped fixtures)",
+      "stage": "M2/M3",
+      "priority": "P0",
+      "depends_on": [
+        "KIN-101",
+        "KIN-102"
+      ],
+      "external_gates": [],
+      "suggested_paths": [
+        "tests/",
+        "scripts/",
+        "docs/agent-coordination/"
+      ],
+      "acceptance_criteria": [
+        "100+ visual requirements, owned media and authorized simulated providers create a project media package",
+        "Blocked YouTube, stale license, 403, SSRF, duplicate URL, partial fetch, unknown-charge all report honestly",
+        "No live provider calls in CI; exact counts, hashes, gaps, timecodes, cost/rights evidence retained"
+      ],
+      "interfaces": [],
+      "coordination_notes": "Each prior slice still requires its own fixture tests; this ticket adds full-path acceptance.",
+      "status": "planned",
+      "status_evidence": null,
+      "pr_url": null,
+      "accepted_main_sha": null
+    },
+    {
+      "id": "KQA-102",
+      "title": "Authorized real provider/media handoff acceptance",
+      "owner": "Coordinator (both agents review)",
+      "stage": "M3",
+      "priority": "P0",
+      "depends_on": [
+        "KQA-101"
+      ],
+      "external_gates": [
+        "operator_authorizes_real_provider_calls_and_source_permissions"
+      ],
+      "suggested_paths": [
+        "scripts/",
+        "docs/agent-coordination/"
+      ],
+      "acceptance_criteria": [
+        "Operator supplies real provider/source authorization and explicit traffic/spend caps",
+        "Actual script project saves verified media, links, rights receipts, readable export and source timing evidence",
+        "Production readiness claimed only for demonstrated paths; unavailable source/rights remain explicit"
+      ],
+      "interfaces": [],
+      "coordination_notes": "Never run live acceptance from routine CI or without explicit operator authorization.",
+      "status": "planned",
+      "status_evidence": null,
+      "pr_url": null,
+      "accepted_main_sha": null
+    }
+  ]
+}
