@@ -197,7 +197,7 @@ def test_links_and_ready_state_fail_closed(media_bin):
 def test_media_bin_migration_is_additive_and_model_columns_match():
     config = Config("alembic.ini")
     script = ScriptDirectory.from_config(config)
-    assert script.get_heads() == ["0058_project_media_bin"]
+    assert script.get_heads() == ["0059_acquisition_receipts"]
     revision = script.get_revision("0058_project_media_bin")
     assert revision.down_revision == "0057_editorial_image_lineage"
 
@@ -231,3 +231,7 @@ def test_media_bin_migration_is_additive_and_model_columns_match():
     assert {"id", "channel_profile_id"} <= set(
         db.Base.metadata.tables["editorial_projects"].columns.keys()
     )
+    assert script.get_revision("0059_acquisition_receipts").down_revision == (
+        "0058_project_media_bin"
+    )
+    assert "acquisition_receipts" in db.Base.metadata.tables

@@ -279,3 +279,57 @@ class ProjectMediaItem(Base):
     last_verified_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+
+
+class AcquisitionReceipt(Base):
+    """Durable, idempotent record of an authorized provider acquisition attempt."""
+
+    __tablename__ = "acquisition_receipts"
+    __table_args__ = (
+        UniqueConstraint(
+            "channel_profile_id", "operation_key", name="uq_acquisition_receipt_operation"
+        ),
+        CheckConstraint(
+            "status IN ('authorized', 'acquiring', 'succeeded', 'failed', 'unknown')",
+            name="ck_acquisition_receipt_status",
+        ),
+        CheckConstraint(
+            "bytes_received IS NULL OR bytes_received >= 0",
+            name="ck_acquisition_receipt_bytes",
+        ),
+        CheckConstraint(
+            "status != 'succeeded' OR (sha256 IS NOT NULL AND object_store_key IS NOT NULL)",
+            name="ck_acquisition_receipt_success_evidence",
+        ),
+        CheckConstraint(
+            "status != 'unknown' OR error_category IS NOT NULL",
+            name="ck_acquisition_receipt_unknown_reason",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
+    channel_profile_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("channel_profiles.id"), nullable=False, index=True
+    )
+    candidate_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("discovery_candidates.id"), nullable=False, index=True
+    )
+    operation_key: Mapped[str] = mapped_column(String(160), nullable=False)
+    request_digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    status: Mapped[str] = mapped_column(String(24), nullable=False)
+    authorization_scope: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    fetch_url_if_allowed: Mapped[str | None] = mapped_column(Text, nullable=True)
+    request_time: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    response_time: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    bytes_received: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    mime: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    media_probe: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    object_store_key: Mapped[str | None] = mapped_column(Text, nullable=True)
+    duplicate_of: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    source_version: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    download_terms: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    cost_receipt: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    error_category: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    safe_resume_cursor: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
