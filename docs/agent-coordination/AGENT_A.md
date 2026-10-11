@@ -9,8 +9,8 @@ permitted assets from trustworthy, structured discovery outputs.
 
 Root `AGENTS.md` → `docs/UX_GUIDELINES.md` → pack `README.md` → full
 `IMPLEMENTATION_PLAN.md` → `CONTRACTS.md` → `COORDINATION_PROTOCOL.md` →
-`AGENT_BACKLOG.json` → this file. Inspect accepted `main`, open PR #345/#346,
-existing acquisition adapters, script planner, source/research services, tests.
+`AGENT_BACKLOG.json` → this file. Inspect accepted `main`, current PRs, the merged #349 search-job foundation,
+the merged #346 script planner, existing adapters, source/research services, and tests.
 
 ## Your areas and exclusions
 
@@ -26,17 +26,15 @@ scenes without fabricating timestamps. Verify source/publisher and retain
 actual search receipts; track provider budgets, cursors, rate limits, and
 nontransient failures. AI may propose, never approve a license.
 
-## First assignment after KCO-000
+## Next eligible assignment
 
-**`KSI-102`: Bounded search-job and provider capability foundation.** This is
-independent of still-draft PR #346. Provide typed, serializable `SourceSearchJobV1`
-intent, deterministic planner fixture, quotas/replay/idempotence, provider
-capability mapping and tests. Reuse existing discovery adapters. Build no
-competing script parser and do not call real providers in CI.
-
-If #346 is already merged/reconciled, the coordinator may assign `KSI-101`
-first to integrate exact script spans and comprehensive requirements. Do not
-independently decide that a draft is merged or cherry-pick its changes.
+**`KSI-103`: Grounded multi-provider scouting and metadata verification.**
+`KSI-102` merged via PR #349 with passing PR CI; do not redo it. Reuse its
+bounded search-job/replay foundation. Implement grounded provider candidates,
+metadata receipts, cursors and bounded failures, with deterministic fake-provider
+tests and no unauthorized downloads or paid CI calls. Start after coordinator
+assignment. `KSI-101` is a separate integration task that must reuse the merged
+PR #346 script planner and obtain shared-file ownership approval.
 
 ## Follow-on ordered tasks
 

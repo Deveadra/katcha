@@ -16,24 +16,25 @@ acquisition and export) is the first priority**, not unrelated UI or publishing 
 5. `AGENT_BACKLOG.json` — dependency-aware work queue; statuses are not live by default.
 6. Only your role: `AGENT_A.md` (research) or `AGENT_B.md` (intake).
 
-## Initial GitHub situation (historical, verify again)
+## Verified integration baseline (2026-10-10; recheck before each task)
 
-- At pack creation the latest accepted main was `3d08e5862bedb972c54e4a6ea6e3566354ec9881`.
-- Draft PR #345 contains a broader autonomous first-cut plan.
-- Draft PR #346 adds an initial deterministic script/visual plan. It **is not** accepted until verified merged.
-- These are snapshots only. Check current main, PRs and CI before every task.
-- Source-specific implementation must not duplicate in-flight PR #346.
+- Coordination pack merged in PR #347; CI passed on merge commit `0a0a50008e70f8cf37e054cebbc20a857e001054`.
+- PR #345 (first-cut plan) and PR #346 (script visual planner) are merged; reuse their accepted code rather than building a second parser.
+- Pack location is `docs/agent-coordination/` (PRs #348 and #350 relocated it). `AGENT_BACKLOG.json` is coordinator-maintained, not live GitHub state.
+- Agent A's KSI-102 merged via PR #349 with passing PR CI; KSI-103 is next eligible after coordinator assignment.
+- Always inspect current `main`, active PRs, CI and shared-file ownership; these facts can change.
 
 ## Starting two agents safely
 
-**Gate `KCO-000` first:** owner/coordinator accepts the pack's contracts/ownership,
-reconciles open PRs and ensures this pack is on accepted `main`. This pack itself
-is not an implementation PR; merging it does not complete the source engine.
+**`KCO-000` is accepted:** the user approved the v1 coordination contracts and the
+pack was merged with passing CI. This is approval to implement within the stated
+ownership boundaries, **not** approval for unreviewed shared schema changes, merges,
+paid providers or production deployments.
 
-- **Agent A:** `KSI-102` (bounded research-job and provider capability foundation)
-  may start independently while PR #346's script work remains open. `KSI-101`
-  (requirements/coverage integration) requires a verified disposition of #346
-  and an approved integration boundary. Do not fork a duplicate parser.
+- **Agent A:** `KSI-102` was accepted via PR #349. `KSI-103` (grounded provider
+  scouting) is the next eligible independent task. `KSI-101`
+  (requirements/coverage integration) must reuse the merged PR #346 planner
+  and obtain an approved shared-file integration boundary. Do not fork a duplicate parser.
 - **Agent B:** `KMI-101` (persistent project Media Bin records) can start as soon
   as `KCO-000` is accepted, independently of Agent A's research implementation.
 - One ticket per PR unless the coordinator explicitly approves a small combined
@@ -41,8 +42,8 @@ is not an implementation PR; merging it does not complete the source engine.
   `src/katcha/editorial/media_intake/`. Existing shared files require a declared
   integration owner before edits. Both may add disjoint tests.
 
-For guarded local installation, see `INSTALL.md` and `install_pack.py`.
-The installer stages files on a clean non-main branch, never pushes or merges.
+The pack is already tracked in this repository. `INSTALL.md` and `install_pack.py`
+are for fresh installation only; **do not rerun the installer in this checkout**.
 
 ## Operational use
 
@@ -64,7 +65,7 @@ PR merged into current main and gates verified. None is interchangeable.
 ## Pack files
 
 - `IMPLEMENTATION_PLAN.md` — unchanged source plan.
-- `AGENTS.md` — full **proposed** root `AGENTS.md` with additive guidance, preserving current contents.
+- `AGENTS.md` — reference snapshot; repository root `AGENTS.md` is authoritative and carries the additive coordination guidance.
 - `ROOT_AGENTS_MD_ADDITION.md` — additive section for an existing root AGENTS file.
 - `CONTRACTS.md`, `COORDINATION_PROTOCOL.md`, `AGENT_A.md`, `AGENT_B.md`.
 - `AGENT_BACKLOG.json` — machine-readable tasks with ownership, dependencies, status evidence.

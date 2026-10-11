@@ -24,15 +24,15 @@ Use existing managed object storage; no duplicate blob storage solely because a
 project references a clip. A found public YouTube URL is reference-only absent
 permission. Neither a downloader library nor an HTTP 200 grants rights.
 
-## First assignment after KCO-000
+## Current assignment (KCO-000 accepted)
 
 **`KMI-101`: Project Media Bin durable core.** Implement additive bin records
 which safely reference existing channel-owned Clip Library media and saved
 external links without touching Agent A's parser, live providers, or downloader.
 Support stable IDs, project/revision binding, provenance, channel isolation,
 idempotent writes and status reads. Include DB migration compatibility tests.
-Avoid editing files currently owned by PR #346; request an integration owner
-for shared API/model/migration heads.
+PR #346 is merged: reuse its accepted script planner and request an integration
+owner before editing shared API/model/migration heads.
 
 ## Follow-on ordered tasks
 
