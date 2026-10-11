@@ -1,9 +1,10 @@
-# Shared data contracts and inter-agent handoffs (proposed v1)
+# Shared data contracts and inter-agent handoffs (approved v1 coordination baseline)
 
 **Source:** `IMPLEMENTATION_PLAN.md`, sections 3–6. This document freezes the
-*coordination interface proposal*; it does **not** claim executable Pydantic models,
-migrations, or APIs exist on accepted `main`. Confirm final field types and migration
-compatibility in `KCO-000` before either agent changes shared schema code.
+*approved coordination interface baseline*; it does **not** claim executable
+Pydantic models, migrations, or APIs exist on accepted `main`. KCO-000 approves
+handoff intent, not shared schema edits: field types and migration compatibility
+still require coordinator review and a focused PR.
 
 ## Contract authority and rules
 
@@ -43,8 +44,8 @@ graphic/citation), `entities`, `exact_scene_if_verified`,
 `availability`: `reference_only | direct_media_capability | owned | unavailable`.
 Availability describes what the source exposes, not authorization to use it.
 
-Agent A may create independent contract adapters while PR #346 is unresolved,
-but cannot introduce a second authoritative script parser in competition with it.
+Agent A may create independent contract adapters but must reuse the merged
+PR #346 script planner, never introduce a competing authoritative parser.
 
 ## B-owned outputs — handed to A and editor
 

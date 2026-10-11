@@ -16,21 +16,23 @@
    Agent B owns `src/katcha/editorial/media_intake/` and associated tests.
    Shared API files (`src/katcha/api/editorial_projects.py`, others), migration
    heads, `AGENTS.md`, editorial models and web UI are **reserved** for one
-   coordinator-appointed integration owner per PR. Do not independently edit
-   PR #346-owned files until its disposition is known.
+   coordinator-appointed integration owner per PR. PR #346 is merged; inspect its
+   accepted shared-file changes before proposing integration edits.
 5. If work overlaps, **stop that slice**, report exact paths and handoff request.
    Continue only independent, safe work. Do not resolve overlap by resetting
    someone else's work or overwriting their code.
 
 ## Task selection
 
-- Coordinator checks the latest accepted `main`, PR #345/#346 status and changed
-  files, accepts `KCO-000` contract baseline, and assigns two nonoverlapping tasks.
+- `KCO-000` is accepted (PR #347 with passing CI; pack moved in #348/#350).
+  Coordinator checks the latest `main`, active PRs, migrations and changed
+  files before assigning nonoverlapping tasks.
 - Each agent takes **one task per PR** unless explicitly authorized otherwise.
 - A task is eligible only if its `depends_on` tasks are accepted on current
   `main` **and** any `external_gates` are explicitly satisfied.
-- If the script PR remains unresolved, A starts independent `KSI-102`, not a
-  duplicate `KSI-101`; B starts `KMI-101` once `KCO-000` is accepted.
+- A continues `KSI-102` in draft PR #349 until review/merge; B starts
+  `KMI-101` independently. `KSI-101` reuses the merged PR #346 planner and
+  needs an assigned shared-file integration owner.
 - After a merge, re-read `main`, recheck migration heads and reassign from the
   actual updated DAG. Do not manufacture the next phase's completion.
 

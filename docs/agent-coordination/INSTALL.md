@@ -1,5 +1,9 @@
 # Installing this pack into the Katcha repository
 
+**Already installed:** the authoritative pack is tracked at `docs/agent-coordination/`.
+Do not run this installer against the existing Katcha checkout. The instructions
+below are retained only for installing the pack into a repository without it.
+
 **Do not extract on top of `main` or overwrite existing `AGENTS.md`.** This pack
 provides a guarded installer; it does not create branches, commit, deploy,
 push, or merge on your behalf.

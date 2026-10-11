@@ -9,8 +9,8 @@ permitted assets from trustworthy, structured discovery outputs.
 
 Root `AGENTS.md` → `docs/UX_GUIDELINES.md` → pack `README.md` → full
 `IMPLEMENTATION_PLAN.md` → `CONTRACTS.md` → `COORDINATION_PROTOCOL.md` →
-`AGENT_BACKLOG.json` → this file. Inspect accepted `main`, open PR #345/#346,
-existing acquisition adapters, script planner, source/research services, tests.
+`AGENT_BACKLOG.json` → this file. Inspect accepted `main`, current PRs (including draft #349),
+the merged #346 script planner, existing adapters, source/research services, and tests.
 
 ## Your areas and exclusions
 
@@ -26,17 +26,15 @@ scenes without fabricating timestamps. Verify source/publisher and retain
 actual search receipts; track provider budgets, cursors, rate limits, and
 nontransient failures. AI may propose, never approve a license.
 
-## First assignment after KCO-000
+## Current assignment
 
-**`KSI-102`: Bounded search-job and provider capability foundation.** This is
-independent of still-draft PR #346. Provide typed, serializable `SourceSearchJobV1`
-intent, deterministic planner fixture, quotas/replay/idempotence, provider
-capability mapping and tests. Reuse existing discovery adapters. Build no
-competing script parser and do not call real providers in CI.
-
-If #346 is already merged/reconciled, the coordinator may assign `KSI-101`
-first to integrate exact script spans and comprehensive requirements. Do not
-independently decide that a draft is merged or cherry-pick its changes.
+**`KSI-102`: Bounded search-job and provider capability foundation.** Draft
+PR #349 already implements this workstream; continue/review that PR rather
+than creating a duplicate. Provide typed `SourceSearchJobV1` intent, bounded
+replay/idempotency, provider capabilities and deterministic tests. No real
+provider calls in CI. PR #346's script planner is merged; `KSI-101` is a
+separate assignment requiring approved shared-file ownership and reuse of
+that planner, never a competing parser.
 
 ## Follow-on ordered tasks
 

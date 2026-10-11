@@ -42,9 +42,7 @@
       "stage": "M0",
       "priority": "P0",
       "depends_on": [],
-      "external_gates": [
-        "user_approves_contracts_and_pack_merge"
-      ],
+      "external_gates": [],
       "suggested_paths": [
         "AGENTS.md",
         "docs/agent-coordination/*"
@@ -56,10 +54,23 @@
       ],
       "interfaces": [],
       "coordination_notes": "Gate for starting both implementation agents; no code feature marked complete by merging this pack.",
-      "status": "planned",
-      "status_evidence": null,
-      "pr_url": null,
-      "accepted_main_sha": null
+      "status": "accepted",
+      "status_evidence": {
+        "verification_level": "verified_offline",
+        "merged_pr_url": "https://github.com/Deveadra/katcha/pull/347",
+        "merge_commit_sha": "0a0a50008e70f8cf37e054cebbc20a857e001054",
+        "ci_workflow": "CI",
+        "ci_conclusion": "success",
+        "ci_url": "https://github.com/Deveadra/katcha/actions/runs/38096043784",
+        "relocation_prs": [
+          "https://github.com/Deveadra/katcha/pull/348",
+          "https://github.com/Deveadra/katcha/pull/350"
+        ],
+        "script_planner_merged_pr": "https://github.com/Deveadra/katcha/pull/346",
+        "notes": "User approved v1 handoff/ownership baseline. Implementation permitted within agent boundaries; shared migrations/contracts require separate review. Root guidance and duplicate-path cleanup handled by a follow-up maintenance PR."
+      },
+      "pr_url": "https://github.com/Deveadra/katcha/pull/347",
+      "accepted_main_sha": "0a0a50008e70f8cf37e054cebbc20a857e001054"
     },
     {
       "id": "KSI-101",
@@ -71,7 +82,7 @@
         "KCO-000"
       ],
       "external_gates": [
-        "pr346_disposition_verified_and_approved_contract_adapter"
+        "coordinator_approves_merged_pr346_adapter_boundary"
       ],
       "suggested_paths": [
         "src/katcha/editorial/source_intelligence/",
@@ -83,7 +94,7 @@
         "Script edits invalidate only dependent records; no invented source timestamps"
       ],
       "interfaces": [],
-      "coordination_notes": "Do not duplicate open PR #346; reconcile it before touching parsing integrations.",
+      "coordination_notes": "PR #346 merged; reuse accepted script planner. Shared API/model/UI ownership must be assigned before editing.",
       "status": "planned",
       "status_evidence": null,
       "pr_url": null,
@@ -110,9 +121,15 @@
       ],
       "interfaces": [],
       "coordination_notes": "Preferred initial A task if PR #346 remains draft; independent of script parser.",
-      "status": "planned",
-      "status_evidence": null,
-      "pr_url": null,
+      "status": "in_review",
+      "status_evidence": {
+        "pr_url": "https://github.com/Deveadra/katcha/pull/349",
+        "head_sha": "ed12d9c558672f0236a83397adbd48df624e788c",
+        "draft": true,
+        "verification_level": "implemented",
+        "notes": "Open draft PR at reconciliation; not merged, not accepted. Recheck PR head/CI before reviewing."
+      },
+      "pr_url": "https://github.com/Deveadra/katcha/pull/349",
       "accepted_main_sha": null
     },
     {
@@ -553,5 +570,7 @@
       "pr_url": null,
       "accepted_main_sha": null
     }
-  ]
+  ],
+  "last_reconciled_date": "2026-10-10",
+  "last_reconciled_note": "PRs #345/#346 merged, PR #349 draft. Static statuses are evidence snapshots; always recheck live GitHub."
 }
