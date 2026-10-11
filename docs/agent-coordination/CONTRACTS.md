@@ -18,8 +18,9 @@ require implementation tests and normal PR checks, not coordinator approval.
 - Rights states apply independently of acquisition state. Never promote a public
   URL, a downloaded file, an LLM judgment, or legacy unmanaged-clip fallback to
   cleared external production media.
-- Mutations to common schemas/migrations require an explicitly assigned integration
-  owner; additive DB changes only, stable historic record decoding and data safety.
+- The implementing agent owns necessary shared schema/migration changes on its
+  feature branch. Inspect active PRs and migration heads for concrete collisions;
+  additive DB changes only, stable historic record decoding and data safety.
 
 ## A-owned outputs — handed to B
 
