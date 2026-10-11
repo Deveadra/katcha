@@ -1,17 +1,7 @@
 
-## Coordinated Source Intelligence & Media Intake development
-
-For work on script-directed source discovery, rights-safe acquisition, project Media Bin,
-scene indexing, or Editorial asset handoff, read the tracked coordination pack at
-`docs/agent-coordination/README.md` **before editing**. Its task list is planning state,
-not proof of implementation. Read `docs/agent-coordination/IMPLEMENTATION_PLAN.md`,
-`CONTRACTS.md`, and the assigned Agent A/B instructions. Project scope must not
-weaken this repository's existing UI, safety, media, or production controls.
-
-**Guardian Protocol:** use an isolated feature branch/worktree and a reviewed PR; never
-push to `main`, automatically merge, deploy, rewrite shared Git history, force-push,
-or discard another agent's changes. Inspect accepted `main`, unmerged PRs and actual
-file ownership first. Require tests and exact-head CI evidence; mark status accepted
-only after a verified merge. No production credentials, speculative licensing,
-unrestricted scraping, or unattended paid-provider calls. Stop for approval when
-permission, cost, shared-file ownership, or compatibility boundaries are unclear.
+## Autonomous parallel development
+Use docs/agent-coordination for role, contracts and backlog. Live merged PRs and CI outrank stale backlog state.
+Each agent owns its own feature branch and necessary implementation, including ordinary API/model changes and additive Alembic migrations. No coordinator-appointed owner or routine permission request. Check active PRs and migration heads to avoid real collisions.
+Never push directly to main, force-push, rewrite history or discard another agent's work. Create focused PRs; auto-merge when required checks/reviews pass and no conflicts remain, then continue to the next eligible task. Never auto-merge failing or unverified code.
+Use separate checkouts/worktrees WITHIN authorized Codex writable workspace. If a worktree or Git metadata is unwritable, reconnect or switch to a permitted checkout; do not bypass sandbox restrictions.
+Preserve channel isolation, Editorial compatibility and existing data. Stop for genuine code conflicts, destructive migrations, unapproved provider spend/production actions or media rights concerns—not routine file ownership.

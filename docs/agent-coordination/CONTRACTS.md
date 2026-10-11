@@ -4,7 +4,7 @@
 *approved coordination interface baseline*; it does **not** claim executable
 Pydantic models, migrations, or APIs exist on accepted `main`. KCO-000 approves
 handoff intent, not shared schema edits: field types and migration compatibility
-still require coordinator review and a focused PR.
+require implementation tests and normal PR checks, not coordinator approval.
 
 ## Contract authority and rules
 

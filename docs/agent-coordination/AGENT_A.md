@@ -32,9 +32,8 @@ nontransient failures. AI may propose, never approve a license.
 `KSI-102` merged via PR #349 with passing PR CI; do not redo it. Reuse its
 bounded search-job/replay foundation. Implement grounded provider candidates,
 metadata receipts, cursors and bounded failures, with deterministic fake-provider
-tests and no unauthorized downloads or paid CI calls. Start after coordinator
-assignment. `KSI-101` is a separate integration task that must reuse the merged
-PR #346 script planner and obtain shared-file ownership approval.
+tests and no unauthorized downloads or paid CI calls. Proceed independently; no coordinator assignment needed. `KSI-101` is a separate integration task that must reuse the merged
+PR #346 script planner and check for real overlap in active PRs.
 
 ## Follow-on ordered tasks
 
@@ -52,5 +51,4 @@ Dependencies in `AGENT_BACKLOG.json` are authoritative for eligibility.
   fixture/test from real authorized discovery.
 - Branch, SHA, PR, changed paths, exact test commands/CI, risks, next handoff.
 
-Stop at any conflicting shared-file or permission boundary, not at useful
-independent work. Never merge, deploy or push directly to `main`.
+Coordinate only real shared-file conflicts. Auto-merge a PR after required checks/reviews pass and continue. No direct main pushes, force-push or deployment.
