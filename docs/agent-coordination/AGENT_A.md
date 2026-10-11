@@ -9,7 +9,7 @@ permitted assets from trustworthy, structured discovery outputs.
 
 Root `AGENTS.md` → `docs/UX_GUIDELINES.md` → pack `README.md` → full
 `IMPLEMENTATION_PLAN.md` → `CONTRACTS.md` → `COORDINATION_PROTOCOL.md` →
-`AGENT_BACKLOG.json` → this file. Inspect accepted `main`, current PRs (including draft #349),
+`AGENT_BACKLOG.json` → this file. Inspect accepted `main`, current PRs, the merged #349 search-job foundation,
 the merged #346 script planner, existing adapters, source/research services, and tests.
 
 ## Your areas and exclusions
@@ -26,15 +26,15 @@ scenes without fabricating timestamps. Verify source/publisher and retain
 actual search receipts; track provider budgets, cursors, rate limits, and
 nontransient failures. AI may propose, never approve a license.
 
-## Current assignment
+## Next eligible assignment
 
-**`KSI-102`: Bounded search-job and provider capability foundation.** Draft
-PR #349 already implements this workstream; continue/review that PR rather
-than creating a duplicate. Provide typed `SourceSearchJobV1` intent, bounded
-replay/idempotency, provider capabilities and deterministic tests. No real
-provider calls in CI. PR #346's script planner is merged; `KSI-101` is a
-separate assignment requiring approved shared-file ownership and reuse of
-that planner, never a competing parser.
+**`KSI-103`: Grounded multi-provider scouting and metadata verification.**
+`KSI-102` merged via PR #349 with passing PR CI; do not redo it. Reuse its
+bounded search-job/replay foundation. Implement grounded provider candidates,
+metadata receipts, cursors and bounded failures, with deterministic fake-provider
+tests and no unauthorized downloads or paid CI calls. Start after coordinator
+assignment. `KSI-101` is a separate integration task that must reuse the merged
+PR #346 script planner and obtain shared-file ownership approval.
 
 ## Follow-on ordered tasks
 

@@ -121,16 +121,19 @@
       ],
       "interfaces": [],
       "coordination_notes": "Preferred initial A task if PR #346 remains draft; independent of script parser.",
-      "status": "in_review",
+      "status": "accepted",
       "status_evidence": {
-        "pr_url": "https://github.com/Deveadra/katcha/pull/349",
-        "head_sha": "ed12d9c558672f0236a83397adbd48df624e788c",
-        "draft": true,
-        "verification_level": "implemented",
-        "notes": "Open draft PR at reconciliation; not merged, not accepted. Recheck PR head/CI before reviewing."
+        "verification_level": "verified_offline",
+        "merged_pr_url": "https://github.com/Deveadra/katcha/pull/349",
+        "pr_head_sha": "ed12d9c558672f0236a83397adbd48df624e788c",
+        "merge_commit_sha": "a5f6bd76fc44e50ac6104753e6e19aa1d963b68c",
+        "ci_workflow": "CI",
+        "ci_conclusion": "success",
+        "ci_url": "https://github.com/Deveadra/katcha/actions/runs/38098849636",
+        "notes": "Merged implementation with passing PR-head CI. Does not establish live provider end-to-end verification."
       },
       "pr_url": "https://github.com/Deveadra/katcha/pull/349",
-      "accepted_main_sha": null
+      "accepted_main_sha": "a5f6bd76fc44e50ac6104753e6e19aa1d963b68c"
     },
     {
       "id": "KSI-103",
@@ -572,5 +575,5 @@
     }
   ],
   "last_reconciled_date": "2026-10-10",
-  "last_reconciled_note": "PRs #345/#346 merged, PR #349 draft. Static statuses are evidence snapshots; always recheck live GitHub."
+  "last_reconciled_note": "PRs #345/#346/#349 merged; KSI-103 is next eligible A task, KMI-101 is B task. Status snapshots require live GitHub verification."
 }

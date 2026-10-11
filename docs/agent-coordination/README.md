@@ -21,7 +21,7 @@ acquisition and export) is the first priority**, not unrelated UI or publishing 
 - Coordination pack merged in PR #347; CI passed on merge commit `0a0a50008e70f8cf37e054cebbc20a857e001054`.
 - PR #345 (first-cut plan) and PR #346 (script visual planner) are merged; reuse their accepted code rather than building a second parser.
 - Pack location is `docs/agent-coordination/` (PRs #348 and #350 relocated it). `AGENT_BACKLOG.json` is coordinator-maintained, not live GitHub state.
-- Agent A's KSI-102 is tracked in draft PR #349 as of this snapshot. Continue that PR rather than restarting it.
+- Agent A's KSI-102 merged via PR #349 with passing PR CI; KSI-103 is next eligible after coordinator assignment.
 - Always inspect current `main`, active PRs, CI and shared-file ownership; these facts can change.
 
 ## Starting two agents safely
@@ -31,8 +31,8 @@ pack was merged with passing CI. This is approval to implement within the stated
 ownership boundaries, **not** approval for unreviewed shared schema changes, merges,
 paid providers or production deployments.
 
-- **Agent A:** `KSI-102` (bounded research-job and provider capability foundation)
-  continues in draft PR #349 until reviewed and merged. `KSI-101`
+- **Agent A:** `KSI-102` was accepted via PR #349. `KSI-103` (grounded provider
+  scouting) is the next eligible independent task. `KSI-101`
   (requirements/coverage integration) must reuse the merged PR #346 planner
   and obtain an approved shared-file integration boundary. Do not fork a duplicate parser.
 - **Agent B:** `KMI-101` (persistent project Media Bin records) can start as soon

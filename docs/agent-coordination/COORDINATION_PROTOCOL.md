@@ -30,9 +30,9 @@
 - Each agent takes **one task per PR** unless explicitly authorized otherwise.
 - A task is eligible only if its `depends_on` tasks are accepted on current
   `main` **and** any `external_gates` are explicitly satisfied.
-- A continues `KSI-102` in draft PR #349 until review/merge; B starts
-  `KMI-101` independently. `KSI-101` reuses the merged PR #346 planner and
-  needs an assigned shared-file integration owner.
+- `KSI-102` merged via PR #349; A may take `KSI-103` after coordinator
+  assignment. B starts `KMI-101` independently. `KSI-101` reuses the merged
+  PR #346 planner and needs an assigned shared-file integration owner.
 - After a merge, re-read `main`, recheck migration heads and reassign from the
   actual updated DAG. Do not manufacture the next phase's completion.
 
