@@ -15,7 +15,6 @@ import subprocess
 import sys
 import time
 from contextlib import contextmanager
-from datetime import UTC, datetime
 
 HOME = Path.home()
 REPO = "Deveadra/katcha"
@@ -251,7 +250,7 @@ def connect() -> None:
             else:
                 raise AccessError("Bastion session activation timed out")
             host = sid + "@host.bastion." + REGION + ".oci.oraclecloud.com"
-            for attempt in range(24):
+            for _ in range(24):
                 log_fd = os.open(STATE_DIR / "ssh.log",
                                  os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
                 with os.fdopen(log_fd, "wb") as log:
