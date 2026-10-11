@@ -93,8 +93,11 @@ def target() -> tuple[str, str]:
         address = ipaddress.ip_address(ip)
     except ValueError as exc:
         raise AccessError("private target IP invalid") from exc
-    if address.version != 4 or not address.is_private or address.is_loopback:
-        raise AccessError("target must be a private IPv4 address")
+    if address.version != 4 or not any(
+        address in ipaddress.ip_network(network)
+        for network in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16")
+    ):
+        raise AccessError("target must be an RFC1918 private IPv4 address")
     return bastion, ip
 
 
@@ -200,7 +203,10 @@ def disconnect_locked() -> None:
     if not isinstance(sid, str):
         raise AccessError("invalid session state; refusing to delete")
     stop_owned(state)
-    delete_session(sid)
+    phase = oci("bastion", "session", "get", "--session-id", sid,
+                "--query", 'data."lifecycle-state"', "--raw-output")
+    if phase not in ("EXPIRED", "DELETED", "FAILED", "CANCELED"):
+        delete_session(sid)
     (STATE_DIR / "session.json").unlink()
     for name in ("session_key", "session_key.pub"):
         (STATE_DIR / name).unlink(missing_ok=True)
