@@ -31,8 +31,7 @@ which safely reference existing channel-owned Clip Library media and saved
 external links without touching Agent A's parser, live providers, or downloader.
 Support stable IDs, project/revision binding, provenance, channel isolation,
 idempotent writes and status reads. Include DB migration compatibility tests.
-PR #346 is merged: reuse its accepted script planner and request an integration
-owner before editing shared API/model/migration heads.
+PR #346 is merged. You own the additive Alembic migration and necessary model/API edits for KMI-101. No coordinator or Agent A approval required; check current migration heads and active PR overlap.
 
 ## Follow-on ordered tasks
 
@@ -54,4 +53,4 @@ provides editor handoff. Dependencies in backlog decide actual eligibility.
   no secrets or transient signed URLs.
 - Branch, SHA, PR, changed paths, exact test commands/CI, risks, next handoff.
 
-Do not merge, deploy, rewrite history or push directly to `main`.
+Auto-merge PRs after required checks/reviews pass and continue. Never push directly to main, force-push, rewrite history or deploy.

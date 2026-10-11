@@ -19,7 +19,7 @@
     ],
     "accepted_requires": "Verified PR merge into accepted main with required CI passing at exact head; coordinator evidence only.",
     "in_review": "PR open with exact URL; not a merged capability.",
-    "refresh": "Coordinator reconciles this static file after evidence-backed merges; agents do not edit concurrently."
+    "refresh": "Advisory snapshot only. Live GitHub merged PRs and required CI are authoritative. Stale statuses do not block development."
   },
   "agent_boundaries": {
     "A": [
@@ -28,7 +28,7 @@
     "B": [
       "src/katcha/editorial/media_intake/"
     ],
-    "shared": "Single coordinator-appointed integration owner per PR; no parallel edits of shared API, models, migrations or UI."
+    "shared": "Implementing agent owns required shared API/model/migration edits on own branch; check active PR overlap and Alembic heads. Coordinate only actual conflicts."
   },
   "related_open_prs_at_preparation": [
     "https://github.com/Deveadra/katcha/pull/345",
@@ -81,9 +81,7 @@
       "depends_on": [
         "KCO-000"
       ],
-      "external_gates": [
-        "coordinator_approves_merged_pr346_adapter_boundary"
-      ],
+      "external_gates": [],
       "suggested_paths": [
         "src/katcha/editorial/source_intelligence/",
         "tests/test_source_intelligence_requirements.py"
@@ -94,7 +92,7 @@
         "Script edits invalidate only dependent records; no invented source timestamps"
       ],
       "interfaces": [],
-      "coordination_notes": "PR #346 merged; reuse accepted script planner. Shared API/model/UI ownership must be assigned before editing.",
+      "coordination_notes": "Reuse merged #346 planner; inspect active PR overlap; no coordinator gate.",
       "status": "planned",
       "status_evidence": null,
       "pr_url": null,
@@ -246,7 +244,7 @@
       "interfaces": [
         "ProjectMediaItemV1"
       ],
-      "coordination_notes": "Preferred initial Agent B PR; shared migration file ownership must be reserved.",
+      "coordination_notes": "Agent B owns additive Media Bin mapping model and Alembic migration; inspect heads/overlap; no appointed owner.",
       "status": "planned",
       "status_evidence": null,
       "pr_url": null,
@@ -275,7 +273,7 @@
       "interfaces": [
         "ProjectMediaItemV1"
       ],
-      "coordination_notes": "Shared API file modifications need one integration owner; do not race PR #346.",
+      "coordination_notes": "Agent B may edit shared API when no real PR collision.",
       "status": "planned",
       "status_evidence": null,
       "pr_url": null,
@@ -425,7 +423,7 @@
         "AssetCandidateV1",
         "ProjectMediaItemV1"
       ],
-      "coordination_notes": "Agent A sole integration owner, Agent B reviews changed shared files.",
+      "coordination_notes": "Lead agent handles integration; coordinate only concrete overlapping edits.",
       "status": "planned",
       "status_evidence": null,
       "pr_url": null,
@@ -511,7 +509,7 @@
       "interfaces": [
         "RequirementBindingV1"
       ],
-      "coordination_notes": "B sole shared-file integration owner, A reviews; multi-shot redesign remains PR #345 scope.",
+      "coordination_notes": "Lead agent handles integration; coordinate only concrete overlapping edits.",
       "status": "planned",
       "status_evidence": null,
       "pr_url": null,
@@ -575,5 +573,12 @@
     }
   ],
   "last_reconciled_date": "2026-10-10",
-  "last_reconciled_note": "PRs #345/#346/#349 merged; KSI-103 is next eligible A task, KMI-101 is B task. Status snapshots require live GitHub verification."
+  "last_reconciled_note": "PRs #345/#346/#349 merged; KSI-103 is next eligible A task, KMI-101 is B task. Status snapshots require live GitHub verification.",
+  "agent_execution_policy": {
+    "self_service": true,
+    "auto_merge": "After green required checks/reviews and mergeability; no direct pushes to main or force-push.",
+    "migrations": "Feature agent owns additive migration; verify current heads and PR overlap.",
+    "backlog": "advisory; live GitHub is authoritative",
+    "workspace": "Authorized writable checkout; no sandbox bypass"
+  }
 }
