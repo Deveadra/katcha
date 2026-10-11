@@ -41,14 +41,37 @@ their credential behavior; channel-bound credentials require integration review
 before live rollout. Adapter and capability injection are trusted scheduler
 configuration, never user-controlled API fields.
 
-Receipts retain actual returned source URLs, provider usage, cursors, reservation,
-and actionable errors. URLs are references only, without download or rights
-promotion. Exception text is not retained. Structured candidate metadata,
-publisher verification, source-specific retention, and `AssetCandidateV1` handoff
-to Agent B are KSI-103 work, gated on KSI-102 acceptance. Agent B can consume
-receipt IDs and the stable requirement/scope identities without changing these
-owned files. No Agent B chat was identifiable during the ownership inspection;
-no shared-contract change was sent or assumed accepted.
+## KSI-103 — grounded provider pages
+
+`scout(ledger, requests, scope=authorized_scope)` dispatches one page for each of
+up to 20 provider jobs. Existing YouTube/Reddit adapters are reused. The legacy
+paid web scout remains policy-blocked; no new downloader, scraper or AI provider
+is introduced. Trusted scheduler configuration chooses adapters and ceilings.
+
+The ledger now saves `AssetCandidateV1` handoffs and `ProviderObservationV1`
+metadata receipts atomically with successful page receipts. IDs include scope,
+provider, returned source URL and actual provider media ID. Requirement IDs,
+provider title/publisher, whitelisted metadata, observed usage and saved cursors
+survive restart/replay without another request. Fragment normalization retains
+path/query identity. Duplicate candidates within a page collapse by stable ID.
+Existing SQLite ledgers upgrade additively; old receipts remain readable and
+report missing retained metadata without reissuing their search.
+
+All candidates remain **reference_only**, with **not_assessed** rights. Publisher
+and metadata are labeled **provider_reported**; they do not establish official
+publisher authority, observed scenes, measured times, permitted downloads or
+production clearance. No local file or thumbnail is claimed. Unsafe literal
+references, credential-bearing URLs, contradictory YouTube URL/ID pairs and
+oversized evidence fail closed. Future fetching still needs DNS/redirect SSRF
+checks. Arbitrary metadata, embedded file/rights assertions and model summaries
+are excluded from observation records.
+
+Each provider page returns candidates, the saved receipt, an optional bounded
+continuation job, and an actionable gap. Empty pages, configuration/policy blocks,
+403, 429 and unknown outcomes remain distinct. No automatic retries or recursive
+pagination occurs. Scheduling continuations consumes KSI-102 cumulative budgets.
+Independent providers can progress despite another provider's recorded failure.
+This is a callable activity service, not yet a project API or Media Bin UI.
 
 ## Executable offline fixture
 
@@ -71,16 +94,15 @@ they are not live source-discovery evidence or accepted runtime integration.
 Run focused and existing adapter compatibility tests:
 
 ```powershell
-.venv/Scripts/python.exe -m pytest -q tests/test_source_search_jobs.py tests/test_discovery_adapters.py tests/test_discovery_http_errors.py tests/test_youtube_discovery.py tests/test_reddit_discovery.py tests/test_web_scout_discovery.py tests/test_feed_discovery.py --basetemp=.local/ksi102-tests
+.venv/Scripts/python.exe -m pytest -q tests/test_source_provider_scouting.py tests/test_source_search_jobs.py tests/test_discovery_adapters.py tests/test_discovery_http_errors.py tests/test_youtube_discovery.py tests/test_reddit_discovery.py tests/test_web_scout_discovery.py tests/test_feed_discovery.py --basetemp=.local/ksi102-tests
 .venv/Scripts/python.exe -m ruff check src/katcha/editorial/source_intelligence tests/test_source_search_jobs.py
 .venv/Scripts/python.exe -m mypy src/katcha/editorial/source_intelligence --follow-imports=silent
 ```
 
 Use a fresh workspace-local pytest base directory when sandbox temporary folders
 are inaccessible. Scoped type checking silences existing imports; it does not
-certify repository-wide types. Full repository lint currently reports an existing
-E501 at `src/katcha/media/transcription.py:26`, outside Agent A's scope. CI and
-merge acceptance must be checked on the PR's exact head; no waiver is implied.
+certify repository-wide types. Repository-wide lint passes for this slice. CI
+and merge acceptance must be checked on the PR's exact head; no waiver is implied.
 
 Rollback: remove this independent package and its dedicated tests. Do not delete
 a deployed ledger or its evidence as part of rollback. No migrations or legacy
