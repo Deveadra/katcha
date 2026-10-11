@@ -25,9 +25,10 @@ def test_ocids_and_private_target(monkeypatch):
     }
     monkeypatch.setattr(admin, "variable", lambda key: values[key])
     assert admin.target() == ("ocid1.bastion.oc1.iad.abc", "10.42.2.144")
-    values["KATCHA_OCI_PRIMARY_PRIVATE_IP"] = "8.8.8.8"
-    with pytest.raises(admin.AccessError):
-        admin.target()
+    for address in ("8.8.8.8", "198.18.0.1", "127.0.0.1"):
+        values["KATCHA_OCI_PRIMARY_PRIVATE_IP"] = address
+        with pytest.raises(admin.AccessError):
+            admin.target()
 
 
 def test_unknown_listener_blocks_new_oci_session(monkeypatch):
@@ -78,6 +79,7 @@ def test_managed_disconnect_removes_only_recorded_session(monkeypatch, tmp_path)
     monkeypatch.setattr(admin, "owned", lambda state: False)
     deleted = []
     monkeypatch.setattr(admin, "delete_session", deleted.append)
+    monkeypatch.setattr(admin, "oci", lambda *args: "ACTIVE")
     admin.disconnect_locked()
     assert deleted == [session]
     assert not (tmp_path / "session.json").exists()
@@ -92,6 +94,7 @@ def test_failed_remote_cleanup_keeps_managed_record(monkeypatch, tmp_path):
     def fail(sid):
         raise admin.AccessError("API deletion failed")
     monkeypatch.setattr(admin, "delete_session", fail)
+    monkeypatch.setattr(admin, "oci", lambda *args: "ACTIVE")
     with pytest.raises(admin.AccessError, match="deletion failed"):
         admin.disconnect_locked()
     assert (tmp_path / "session.json").exists()
@@ -188,3 +191,27 @@ def test_wrapper_contains_no_instance_creation():
     assert '"session", "delete"' in source
     assert '"instance", "launch"' not in source
     assert '"volume", "create"' not in source
+
+
+def test_expired_managed_session_can_be_replaced_without_failed_delete(monkeypatch, tmp_path):
+    monkeypatch.setattr(admin, "STATE_DIR", tmp_path)
+    admin.save({"pid": 135, "session_id": "ocid1.bastionsession.oc1.iad.expired"})
+    monkeypatch.setattr(admin, "listening", lambda: False)
+    monkeypatch.setattr(admin, "owned", lambda state: False)
+    monkeypatch.setattr(admin, "oci", lambda *args: "EXPIRED")
+    monkeypatch.setattr(admin, "delete_session", lambda *args: pytest.fail("already expired"))
+    admin.disconnect_locked()
+    assert not (tmp_path / "session.json").exists()
+
+
+def test_cleanup_unknown_oci_state_does_not_silently_discard_metadata(monkeypatch, tmp_path):
+    monkeypatch.setattr(admin, "STATE_DIR", tmp_path)
+    admin.save({"pid": 135, "session_id": "ocid1.bastionsession.oc1.iad.pending"})
+    monkeypatch.setattr(admin, "listening", lambda: False)
+    monkeypatch.setattr(admin, "owned", lambda state: False)
+    monkeypatch.setattr(admin, "oci", lambda *args: (_ for _ in ()).throw(
+        admin.AccessError("OCI session state unavailable")
+    ))
+    with pytest.raises(admin.AccessError, match="unavailable"):
+        admin.disconnect_locked()
+    assert (tmp_path / "session.json").exists()
