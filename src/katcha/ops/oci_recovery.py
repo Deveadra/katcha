@@ -546,11 +546,11 @@ def assert_cross_ad_storage_creation_approved(
         audit_at = datetime.fromisoformat(
             _env("KATCHA_OCI_CROSS_AD_STORAGE_AUDITED_AT")
         )
+        if audit_at.utcoffset() is None:
+            raise ValueError("capacity evidence must contain a timezone")
         current = now or datetime.now(UTC)
         age = current - audit_at
-        if audit_at.utcoffset() is None or not timedelta(0) <= age <= timedelta(
-            minutes=15
-        ):
+        if not timedelta(0) <= age <= timedelta(minutes=15):
             raise ValueError("expired capacity evidence")
     except (ValueError, OverflowError) as exc:
         raise RecoveryError(
