@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "pack_version": "1.0",
-  "project": "Katcha — Source Intelligence & Content Intake",
+  "project": "Katcha \u2014 Source Intelligence & Content Intake",
   "repository": "Deveadra/katcha",
   "prepared_date": "2026-10-10",
   "baseline_main_sha": "e811600212566e7e606c590bdfccf63878b2f1a1",
@@ -619,11 +619,26 @@
       "interfaces": [
         "SceneIndexV1"
       ],
-      "coordination_notes": "KIN-101/#373 accepted at aebc0025 with final-head CI; measured indexing is now dependency-ready. Live GitHub remains authoritative.",
-      "status": "planned",
-      "status_evidence": null,
-      "pr_url": null,
-      "accepted_main_sha": null
+      "coordination_notes": "KIN-101/#373 and KMI-107/#375 accepted. Reuse SceneIndexV1 and scoped index/search services; visual-change intervals and sparse color/brightness evidence are measured, not semantic scene understanding or rights clearance.",
+      "status": "accepted",
+      "status_evidence": {
+        "verification_level": "verified_offline",
+        "merged_pr_url": "https://github.com/Deveadra/katcha/pull/375",
+        "pr_head_sha": "34a313b4b433feabd5f98a1b5a14bca0310dc632",
+        "merge_commit_sha": "de563dccbbedb8545dfc12748cf6c9dcb8d5ff62",
+        "ci_workflow": "CI",
+        "ci_conclusion": "success",
+        "ci_url": "https://github.com/Deveadra/katcha/actions/runs/38218457122",
+        "checks": [
+          "python: success (1680 passed, 1 skipped; fresh PostgreSQL migration)",
+          "explorer: success",
+          "PR Gate: success"
+        ],
+        "date": "2026-10-12",
+        "notes": "Measured exact source timestamps/timebase, sparse keyframe hashes and visual-token retrieval within 0.1s fixture tolerance. Actual hash/size checks, current rights and channel gates, bounded local worker, durable fenced/reconciled attempts and additive migration. No provider/vision/OCR/speech calls or production clearance."
+      },
+      "pr_url": "https://github.com/Deveadra/katcha/pull/375",
+      "accepted_main_sha": "de563dccbbedb8545dfc12748cf6c9dcb8d5ff62"
     },
     {
       "id": "KSI-106",
@@ -648,7 +663,7 @@
         "RequirementBindingV1",
         "SceneIndexV1"
       ],
-      "coordination_notes": "",
+      "coordination_notes": "Dependency-ready after KMI-107/#375 acceptance. Consume measured SceneIndexV1 via scoped services; sparse keyframe color tags do not assert scene actions or exhaustive observation. Recheck rights and preserve manual choices.",
       "status": "planned",
       "status_evidence": null,
       "pr_url": null,
@@ -741,7 +756,7 @@
     }
   ],
   "last_reconciled_date": "2026-10-12",
-  "last_reconciled_note": "KSI-101 through KSI-105, KMI-101 through KMI-106 and KIN-101/#373 are accepted with exact-head CI evidence. Media Intake hardening #372 is also accepted. KMI-107 is dependency-ready; KSI-106 remains gated on its measured SceneIndex. Live GitHub outranks this snapshot.",
+  "last_reconciled_note": "KSI-101 through KSI-105, KMI-101 through KMI-107, KIN-101/#373 and Media Intake hardening #372 are accepted with exact-head CI evidence. KSI-106 is dependency-ready; KIN-102 remains gated on its accepted requirement-to-shot bindings. Live GitHub outranks this snapshot.",
   "agent_execution_policy": {
     "self_service": true,
     "auto_merge": "After green required checks/reviews and mergeability; no direct pushes to main or force-push.",
