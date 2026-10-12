@@ -3,8 +3,6 @@
 from __future__ import annotations
 
 import hashlib
-import ipaddress
-import socket
 import tempfile
 import uuid
 from collections.abc import Callable, Iterator
@@ -21,6 +19,7 @@ from katcha.editorial.media_intake.receipts import (
     record_outcome,
     start_acquisition,
 )
+from katcha.editorial.media_intake.transport import PublicDestinationTransport, public_addresses
 from katcha.editorial_models import AcquisitionReceipt
 from katcha.integrations.storage import ObjectStore
 
@@ -57,20 +56,7 @@ def _validate_fetch_url(url: str, permission: ProviderPermissionV1) -> str:
         raise ValueError("Media URL must use HTTPS on an explicitly allowlisted host")
     if any(key.casefold() in SENSITIVE_QUERY_KEYS for key, _ in parse_qsl(parsed.query)):
         raise ValueError("Signed or credential-bearing media URLs are not accepted")
-    try:
-        direct_ip = ipaddress.ip_address(host)
-    except ValueError:
-        direct_ip = None
-    if direct_ip is not None:
-        addresses = [direct_ip]
-    else:
-        try:
-            resolved = socket.getaddrinfo(host, 443, type=socket.SOCK_STREAM)
-        except OSError as exc:
-            raise ValueError("Media host could not be resolved") from exc
-        addresses = [ipaddress.ip_address(item[4][0]) for item in resolved]
-    if not addresses or any(not address.is_global for address in addresses):
-        raise ValueError("Media host resolves to a non-public address")
+    public_addresses(host)
     return parsed.geturl()
 
 
@@ -88,7 +74,7 @@ def fetch_authorized_media(
     actor: str,
     store: ObjectStore | None = None,
     max_bytes: int = MAX_MEDIA_BYTES,
-    client_factory: Callable[..., httpx.Client] = httpx.Client,
+    client_factory: Callable[..., httpx.Client] | None = None,
 ) -> AcquisitionReceipt:
     """Fetch once under a durable claim; ambiguous failures stay unknown and are not retried."""
     if max_bytes <= 0 or max_bytes > MAX_MEDIA_BYTES:
@@ -107,14 +93,20 @@ def fetch_authorized_media(
     if receipt.status in {"succeeded", "failed"}:
         return receipt
     claim_acquisition(channel_id, receipt.id)
-    object_store = store or ObjectStore()
     received = 0
     request_sent = False
+    storage_started = False
     try:
+        object_store = store or ObjectStore()
         with tempfile.NamedTemporaryFile(prefix="katcha-media-", delete=False) as temp:
             temp_path = Path(temp.name)
         try:
-            with client_factory(
+            factory = client_factory or (
+                lambda **kwargs: httpx.Client(
+                    transport=PublicDestinationTransport(permission), **kwargs
+                )
+            )
+            with factory(
                 timeout=httpx.Timeout(20.0, connect=5.0),
                 follow_redirects=False,
                 trust_env=False,
@@ -128,6 +120,7 @@ def fetch_authorized_media(
                         headers={
                             "User-Agent": "KatchaMediaIntake/1.0",
                             "Accept": "video/*, image/*, audio/*",
+                            "Accept-Encoding": "identity",
                         },
                     ) as response:
                         if response.status_code in {301, 302, 303, 307, 308}:
@@ -147,6 +140,13 @@ def fetch_authorized_media(
                                 error_category=f"http_{response.status_code}",
                             )
                             raise ValueError(f"Media provider returned HTTP {response.status_code}")
+                        if not permission.allows("download"):
+                            raise ValueError("Provider download permission expired")
+                        if (
+                            response.headers.get("content-encoding", "identity").casefold()
+                            != "identity"
+                        ):
+                            raise ValueError("Encoded media responses are not supported")
                         content_length = response.headers.get("content-length")
                         if content_length:
                             try:
@@ -164,8 +164,12 @@ def fetch_authorized_media(
                                 received += len(chunk)
                                 if received > max_bytes:
                                     raise ValueError("Media response exceeds the allowed size")
+                                if not permission.allows("download"):
+                                    raise ValueError("Provider download permission expired")
                                 digest.update(chunk)
                                 output.write(chunk)
+                        if received == 0 or (content_length and received != int(content_length)):
+                            raise ValueError("Media response is empty or incomplete")
                         mime = response.headers.get(
                             "content-type", "application/octet-stream"
                         ).split(";", 1)[0]
@@ -175,6 +179,7 @@ def fetch_authorized_media(
 
             sha256 = digest.hexdigest()
             object_key = f"media/sha256/{sha256}"
+            storage_started = True
             if not object_store.exists(object_key):
                 object_store.put_file(temp_path, object_key, content_type=mime)
             return record_outcome(
@@ -195,10 +200,12 @@ def fetch_authorized_media(
             record_outcome(
                 channel_id,
                 receipt.id,
-                status="failed",
+                status="unknown" if storage_started else "failed",
                 response_time=datetime.now(UTC),
                 bytes_received=received,
-                error_category="policy_or_response_error",
+                error_category=(
+                    "storage_outcome_unknown" if storage_started else "policy_or_response_error"
+                ),
             )
         raise
     except Exception as exc:

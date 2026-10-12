@@ -6,7 +6,6 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
 
 from katcha import db
 from katcha.acquisition_models import DiscoveryCandidate
@@ -21,10 +20,10 @@ from katcha.intelligence_models import ChannelProfile
 
 
 @pytest.fixture
-def receipt_db(monkeypatch):
+def receipt_db(monkeypatch, tmp_path):
     db.load_model_metadata()
     engine = create_engine(
-        "sqlite://", poolclass=StaticPool, connect_args={"check_same_thread": False}
+        f"sqlite:///{tmp_path / 'receipts.sqlite'}", connect_args={"check_same_thread": False}
     )
     db.Base.metadata.create_all(engine)
     monkeypatch.setattr(db, "SessionLocal", sessionmaker(bind=engine, expire_on_commit=False))
@@ -141,3 +140,94 @@ def test_success_receipt_requires_durable_content_evidence():
         {**common, "sha256": "a" * 64, "object_store_key": "media/sha256/aaaa"}
     )
     assert valid.status == "succeeded"
+
+
+def synchronized_statements(monkeypatch, prefix):
+    from threading import Barrier, Lock
+
+    from sqlalchemy import event
+
+    barrier, lock = Barrier(2), Lock()
+    arrivals = 0
+    engine = db.SessionLocal.kw["bind"]
+
+    def synchronize(conn, cursor, statement, parameters, context, executemany):
+        nonlocal arrivals
+        if prefix not in statement:
+            return
+        with lock:
+            arrivals += 1
+            wait = arrivals <= 2
+        if wait:
+            barrier.wait(timeout=5)
+
+    event.listen(engine, "before_cursor_execute", synchronize)
+    return lambda: event.remove(engine, "before_cursor_execute", synchronize)
+
+
+def test_concurrent_identical_start_returns_one_receipt(receipt_db, monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+
+    channel_id, candidate_id = receipt_db
+    authorized = permission()
+    remove = synchronized_statements(monkeypatch, "FROM acquisition_receipts")
+
+    def start():
+        return start_acquisition(
+            channel_id,
+            candidate_id,
+            operation_key="concurrent-start",
+            permission=authorized,
+            fetch_url_if_allowed="https://media.example/asset",
+            actor="test",
+        ).id
+
+    try:
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            futures = [executor.submit(start) for _ in range(2)]
+            ids = [future.result(timeout=10) for future in futures]
+    finally:
+        remove()
+    assert ids[0] == ids[1]
+
+
+@pytest.mark.parametrize("operation", ["claim", "outcome"])
+def test_concurrent_receipt_transition_has_one_winner(receipt_db, monkeypatch, operation):
+    from concurrent.futures import ThreadPoolExecutor
+
+    from katcha.editorial.media_intake.receipts import claim_acquisition
+
+    channel_id, candidate_id = receipt_db
+    receipt = start_acquisition(
+        channel_id,
+        candidate_id,
+        operation_key=f"race-{operation}",
+        permission=permission(),
+        fetch_url_if_allowed="https://media.example/asset",
+        actor="test",
+    )
+    remove = synchronized_statements(monkeypatch, "UPDATE acquisition_receipts")
+
+    def transition():
+        try:
+            if operation == "claim":
+                claim_acquisition(channel_id, receipt.id)
+            else:
+                record_outcome(
+                    channel_id,
+                    receipt.id,
+                    status="unknown",
+                    response_time=datetime.now(UTC),
+                    error_category="interrupted_write",
+                )
+            return "won"
+        except ValueError:
+            return "lost"
+
+    try:
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            futures = [executor.submit(transition) for _ in range(2)]
+            outcomes = [future.result(timeout=10) for future in futures]
+    finally:
+        remove()
+    assert sorted(outcomes) == ["lost", "won"]
