@@ -192,12 +192,14 @@ def test_unknown_project_revision_and_item_return_not_found(media_bin_api):
     assert unknown_item.value.status_code == 404
 
 def test_media_bin_export_requires_channel_scope_and_returns_download(
-    monkeypatch, media_bin_api
+    monkeypatch, media_bin_api, tmp_path
 ):
     channel, other_channel, project_id, revision = media_bin_api
+    archive_path = tmp_path / "project.zip"
+    archive_path.write_bytes(b"portable zip bytes")
     monkeypatch.setattr(
-        "katcha.api.editorial_projects.build_project_media_export",
-        lambda *args: b"portable zip bytes",
+        "katcha.editorial.media_intake.export.build_project_media_export_file",
+        lambda *args: archive_path,
     )
     response = media_bin_export(
         channel,
@@ -205,7 +207,9 @@ def test_media_bin_export_requires_channel_scope_and_returns_download(
         authorized_request(channel, scopes={"ai:read"}),
         revision,
     )
-    assert response.body == b"portable zip bytes"
+    assert response.path == archive_path
+    assert not hasattr(response, "body")
+    assert response.path.read_bytes() == b"portable zip bytes"
     assert response.media_type == "application/zip"
     assert response.headers["cache-control"] == "no-store"
     with pytest.raises(HTTPException) as wrong_channel:

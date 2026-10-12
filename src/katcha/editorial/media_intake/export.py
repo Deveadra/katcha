@@ -7,8 +7,11 @@ import hashlib
 import io
 import json
 import re
+import shutil
+import tempfile
 import uuid
 import zipfile
+from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
@@ -29,6 +32,7 @@ from katcha.services.editorial_projects import EditorialNotFound
 
 MAX_ASSET_BYTES = 200 * 1024 * 1024
 MAX_EXPORT_BYTES = 512 * 1024 * 1024
+MAX_METADATA_BYTES = 8 * 1024 * 1024
 _SENSITIVE_KEY = re.compile(
     r"(?:token|secret|password|authorization|credential|signature|private[_-]?key|api[_-]?key)",
     re.IGNORECASE,
@@ -76,18 +80,28 @@ def _portable(value: Any) -> Any:
     return value
 
 
-def _json_bytes(value: Any) -> bytes:
-    return json.dumps(
-        _portable(value), sort_keys=True, separators=(",", ":"), ensure_ascii=False
-    ).encode("utf-8")
-
-
-def _zip_entry(archive: zipfile.ZipFile, name: str, data: bytes) -> None:
+def _zip_info(name: str) -> zipfile.ZipInfo:
     info = zipfile.ZipInfo(name, date_time=(1980, 1, 1, 0, 0, 0))
     info.compress_type = zipfile.ZIP_STORED
     info.create_system = 3
     info.external_attr = 0o100644 << 16
-    archive.writestr(info, data)
+    return info
+
+
+def _zip_entry(archive: zipfile.ZipFile, name: str, data: bytes) -> None:
+    archive.writestr(_zip_info(name), data)
+
+
+def _zip_manifest(archive: zipfile.ZipFile, manifest: dict[str, Any]) -> None:
+    encoder = json.JSONEncoder(sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    size = 0
+    with archive.open(_zip_info("manifest.json"), "w") as target:
+        for chunk in encoder.iterencode(_portable(manifest)):
+            data = chunk.encode("utf-8")
+            size += len(data)
+            if size > MAX_METADATA_BYTES:
+                raise ValueError("Project export metadata exceeds the supported size")
+            target.write(data)
 
 
 def _file_name(sha256: str, mime: str | None) -> str:
@@ -104,13 +118,14 @@ def _file_name(sha256: str, mime: str | None) -> str:
     return f"media/{sha256[:2]}/{sha256}.{extension}"
 
 
-def build_project_media_export(
+def _build_project_media_export(
     channel_id: uuid.UUID,
     project_id: uuid.UUID,
     revision: int,
     *,
     store: ObjectStore | None = None,
-) -> bytes:
+    directory: Path,
+) -> Path:
     """Return a stable ZIP with references, evidence and only verified cleared bytes."""
     object_store = store or ObjectStore()
     with session_scope() as session:
@@ -133,8 +148,9 @@ def build_project_media_export(
         )
         manifest_items: list[dict[str, Any]] = []
         links: list[dict[str, Any]] = []
-        media_files: dict[str, bytes] = {}
+        media_files: dict[str, Path] = {}
         total_media_bytes = 0
+        clearance_snapshots: dict[str, tuple[uuid.UUID, uuid.UUID]] = {}
 
         for item in items:
             clip = session.get(Clip, item.clip_id) if item.clip_id else None
@@ -160,10 +176,7 @@ def build_project_media_export(
                 latest_assessment = (
                     session.scalar(
                         select(RightsAssessment)
-                        .where(
-                            RightsAssessment.discovery_candidate_id
-                            == rights_candidate.id
-                        )
+                        .where(RightsAssessment.discovery_candidate_id == rights_candidate.id)
                         .order_by(RightsAssessment.version.desc())
                     )
                     if rights_candidate is not None
@@ -186,10 +199,7 @@ def build_project_media_export(
                 ):
                     assessment = None
             rights_evidence = []
-            if (
-                assessment is not None
-                and assessment.version == item.rights_assessment_version
-            ):
+            if assessment is not None and assessment.version == item.rights_assessment_version:
                 rights_evidence = list(
                     session.scalars(
                         select(RightsEvidence)
@@ -250,17 +260,21 @@ def build_project_media_export(
             for _candidate, _source, receipt in candidate_rows:
                 validations = list(
                     session.scalars(
-                        select(MediaAssetValidation).where(
+                        select(MediaAssetValidation)
+                        .where(
                             MediaAssetValidation.receipt_id == receipt.id,
                             MediaAssetValidation.channel_profile_id == channel_id,
-                            MediaAssetValidation.status == "validated",
-                            MediaAssetValidation.expected_sha256 == receipt.sha256,
-                            MediaAssetValidation.actual_sha256 == receipt.sha256,
                         )
                         .order_by(MediaAssetValidation.probe_version.desc())
                     )
                 )
                 validation = validations[0] if validations else None
+                if validation is not None and (
+                    validation.status != "validated"
+                    or validation.actual_sha256 != receipt.sha256
+                    or validation.expected_sha256 != receipt.sha256
+                ):
+                    validation = None
                 receipt_evidence = {
                     "status": receipt.status,
                     "sha256": receipt.sha256,
@@ -295,8 +309,7 @@ def build_project_media_export(
                 }
                 cleared = (
                     item.status in {"acquired", "ready"}
-                    and
-                    item.rights_status == "production_cleared"
+                    and item.rights_status == "production_cleared"
                     and assessment is not None
                     and assessment.version == item.rights_assessment_version
                     and assessment.production_eligible
@@ -309,23 +322,71 @@ def build_project_media_export(
                     gap_reason = "stored_media_missing"
                 elif validation.size_bytes > MAX_ASSET_BYTES:
                     gap_reason = "asset_size_limit"
-                elif total_media_bytes + validation.size_bytes > MAX_EXPORT_BYTES:
-                    gap_reason = "export_size_limit"
+                elif clip is None or clip.sha256 != receipt.sha256:
+                    gap_reason = "clip_content_hash_mismatch"
                 else:
-                    try:
-                        data = object_store.get_bytes(
-                            receipt.object_store_key, max_bytes=MAX_ASSET_BYTES
-                        )
-                    except Exception:
-                        gap_reason = "stored_media_unavailable"
+                    proposed_path = _file_name(receipt.sha256 or "", validation.mime)
+                    if proposed_path in media_files:
+                        media_path = proposed_path
                     else:
-                        actual = hashlib.sha256(data).hexdigest()
-                        if actual != receipt.sha256 or actual != validation.actual_sha256:
-                            gap_reason = "stored_media_hash_changed"
+                        temp_path = directory / uuid.uuid4().hex
+                        actual_size = 0
+                        digest = hashlib.sha256()
+                        try:
+                            with temp_path.open("wb") as output:
+                                for chunk in object_store.iter_bytes(
+                                    receipt.object_store_key, chunk_size=1024 * 1024
+                                ):
+                                    actual_size += len(chunk)
+                                    if actual_size > MAX_ASSET_BYTES:
+                                        raise ValueError("asset_size_limit")
+                                    if total_media_bytes + actual_size > MAX_EXPORT_BYTES:
+                                        raise ValueError("export_size_limit")
+                                    digest.update(chunk)
+                                    output.write(chunk)
+                        except ValueError as exc:
+                            gap_reason = (
+                                str(exc)
+                                if str(exc) in {"asset_size_limit", "export_size_limit"}
+                                else "stored_media_unavailable"
+                            )
+                        except Exception:
+                            gap_reason = "stored_media_unavailable"
                         else:
-                            media_path = _file_name(actual, validation.mime)
-                            media_files.setdefault(media_path, data)
-                            total_media_bytes += len(data)
+                            actual = digest.hexdigest()
+                            latest_rights = (
+                                session.execute(
+                                    select(
+                                        RightsAssessment.id, RightsAssessment.production_eligible
+                                    )
+                                    .where(
+                                        RightsAssessment.discovery_candidate_id
+                                        == assessment.discovery_candidate_id
+                                    )
+                                    .order_by(RightsAssessment.version.desc())
+                                ).first()
+                                if assessment is not None
+                                else None
+                            )
+                            if (
+                                actual != receipt.sha256
+                                or actual != validation.actual_sha256
+                                or actual_size != validation.size_bytes
+                            ):
+                                gap_reason = "stored_media_hash_changed"
+                            elif (
+                                assessment is None
+                                or latest_rights is None
+                                or latest_rights[0] != assessment.id
+                                or not latest_rights[1]
+                            ):
+                                gap_reason = "production_clearance_required"
+                            else:
+                                media_path = proposed_path
+                                media_files[media_path] = temp_path
+                                total_media_bytes += actual_size
+                        if media_path is None:
+                            temp_path.unlink(missing_ok=True)
                 if media_path is not None or gap_reason is not None:
                     break
             if clip is not None and not candidate_rows:
@@ -386,6 +447,11 @@ def build_project_media_export(
                 "media_path": media_path,
                 "gap_reason": gap_reason,
             }
+            if media_path is not None and assessment is not None:
+                clearance_snapshots[str(item.id)] = (
+                    assessment.discovery_candidate_id,
+                    assessment.id,
+                )
             manifest_items.append(entry)
             links.append(
                 {
@@ -399,6 +465,24 @@ def build_project_media_export(
                 }
             )
 
+        # Recheck every included item after all downloads, before publishing the archive.
+        for entry, link in zip(manifest_items, links, strict=True):
+            snapshot = clearance_snapshots.get(str(entry["id"]))
+            if snapshot is None:
+                continue
+            latest = session.execute(
+                select(RightsAssessment.id, RightsAssessment.production_eligible)
+                .where(RightsAssessment.discovery_candidate_id == snapshot[0])
+                .order_by(RightsAssessment.version.desc())
+            ).first()
+            if latest is None or latest[0] != snapshot[1] or not latest[1]:
+                entry["media_path"] = None
+                entry["gap_reason"] = "production_clearance_required"
+                link["media_path"] = ""
+                link["gap_reason"] = "production_clearance_required"
+        included_paths = {entry["media_path"] for entry in manifest_items if entry["media_path"]}
+        media_files = {name: path for name, path in media_files.items() if name in included_paths}
+
         manifest = {
             "schema": "katcha-project-media-export-v1",
             "project_id": project.id,
@@ -410,39 +494,94 @@ def build_project_media_export(
             "draft": project_revision.draft,
             "items": manifest_items,
         }
-    csv_buffer = io.StringIO(newline="")
-    writer = csv.DictWriter(
-        csv_buffer,
-        fieldnames=[
-            "item_id",
-            "kind",
-            "source_url",
-            "sha256",
-            "rights_status",
-            "media_path",
-            "gap_reason",
-        ],
-        lineterminator="\n",
-    )
-    writer.writeheader()
-    writer.writerows(links)
+    with tempfile.NamedTemporaryFile(
+        prefix="katcha-project-export-", suffix=".zip", delete=False
+    ) as output:
+        archive_path = Path(output.name)
+        try:
+            with zipfile.ZipFile(
+                _LimitedZipFile(output), mode="w", compression=zipfile.ZIP_STORED
+            ) as archive:
+                _zip_manifest(archive, manifest)
+                with (
+                    archive.open(_zip_info("references/links.csv"), "w") as binary,
+                    io.TextIOWrapper(binary, encoding="utf-8", newline="") as text,
+                ):
+                    writer = csv.DictWriter(
+                        text,
+                        fieldnames=[
+                            "item_id",
+                            "kind",
+                            "source_url",
+                            "sha256",
+                            "rights_status",
+                            "media_path",
+                            "gap_reason",
+                        ],
+                        lineterminator="\n",
+                    )
+                    writer.writeheader()
+                    writer.writerows(links)
+                _zip_entry(
+                    archive,
+                    "README.txt",
+                    (
+                        b"Katcha project media export. Physical media is included only "
+                        b"with matching "
+                        b"validated acquisition evidence and production clearance. "
+                        b"See manifest.json "
+                        b"for gaps.\n"
+                    ),
+                )
+                for name in sorted(media_files):
+                    info = _zip_info(name)
+                    with media_files[name].open("rb") as source, archive.open(info, "w") as target:
+                        shutil.copyfileobj(source, target, length=1024 * 1024)
+        except BaseException:
+            archive_path.unlink(missing_ok=True)
+            raise
+    return archive_path
 
-    output = io.BytesIO()
-    with zipfile.ZipFile(output, mode="w", compression=zipfile.ZIP_STORED) as archive:
-        _zip_entry(archive, "manifest.json", _json_bytes(manifest))
-        _zip_entry(archive, "references/links.csv", csv_buffer.getvalue().encode("utf-8"))
-        _zip_entry(
-            archive,
-            "README.txt",
-            (
-                b"Katcha project media export. Physical media is included only with matching "
-                b"validated acquisition evidence and production clearance. See manifest.json "
-                b"for gaps.\n"
-            ),
+
+class _LimitedZipFile:
+    """Enforce the complete ZIP size, including metadata and its central directory."""
+
+    def __init__(self, output: Any) -> None:
+        self.output = output
+
+    def write(self, data: bytes) -> int:
+        if self.output.tell() + len(data) > MAX_EXPORT_BYTES:
+            raise ValueError("Project export exceeds the supported archive size")
+        return int(self.output.write(data))
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self.output, name)
+
+
+def build_project_media_export(
+    channel_id: uuid.UUID,
+    project_id: uuid.UUID,
+    revision: int,
+    *,
+    store: ObjectStore | None = None,
+) -> bytes:
+    """Preserve the integration API; stage media and ZIP on disk before one bounded read."""
+    archive_path = build_project_media_export_file(channel_id, project_id, revision, store=store)
+    try:
+        return archive_path.read_bytes()
+    finally:
+        archive_path.unlink(missing_ok=True)
+
+
+def build_project_media_export_file(
+    channel_id: uuid.UUID,
+    project_id: uuid.UUID,
+    revision: int,
+    *,
+    store: ObjectStore | None = None,
+) -> Path:
+    """Build a bounded disk archive. The caller owns and must remove the returned file."""
+    with tempfile.TemporaryDirectory(prefix="katcha-media-export-") as directory:
+        return _build_project_media_export(
+            channel_id, project_id, revision, store=store, directory=Path(directory)
         )
-        for name in sorted(media_files):
-            _zip_entry(archive, name, media_files[name])
-    archive_bytes = output.getvalue()
-    if len(archive_bytes) > MAX_EXPORT_BYTES + 1024 * 1024:
-        raise ValueError("Project export exceeds the supported archive size")
-    return archive_bytes

@@ -30,11 +30,10 @@ class MemoryStore:
     def __init__(self, objects: dict[str, bytes]):
         self.objects = objects
 
-    def get_bytes(self, key: str, *, max_bytes: int | None = None) -> bytes:
+    def iter_bytes(self, key: str, chunk_size: int = 1024 * 1024):
         value = self.objects[key]
-        if max_bytes is not None and len(value) > max_bytes:
-            raise ValueError("too large")
-        return value
+        for start in range(0, len(value), chunk_size):
+            yield value[start : start + chunk_size]
 
 
 @pytest.fixture
@@ -244,9 +243,9 @@ def test_export_is_reproducible_and_includes_only_verified_cleared_bytes(export_
         links = archive.read("references/links.csv").decode()
         assert manifest["schema"] == "katcha-project-media-export-v1"
         assert manifest["items"][0]["rights_status"] == "production_cleared"
-        assert manifest["items"][0]["rights_assessment"]["evidence"][0][
-            "evidence_type"
-        ] == "license"
+        assert (
+            manifest["items"][0]["rights_assessment"]["evidence"][0]["evidence_type"] == "license"
+        )
         assert "https://source.example/watch?id=public-source" in links
         for forbidden in (
             "private-storage-key",
@@ -338,3 +337,191 @@ def test_export_is_channel_scoped(export_context):
     _, _, other_channel_id, project_id, revision = export_context
     with pytest.raises(ValueError, match="not found in this channel"):
         build_project_media_export(other_channel_id, project_id, revision, store=MemoryStore({}))
+
+
+def test_latest_rejected_validation_cannot_be_bypassed(export_context):
+    engine, channel_id, _, project_id, revision = export_context
+    data, digest, receipt_id = add_exportable_item(engine, channel_id, project_id, revision)
+    with db.session_scope() as session:
+        session.add(
+            MediaAssetValidation(
+                id=uuid.uuid4(),
+                receipt_id=receipt_id,
+                channel_profile_id=channel_id,
+                probe_version=2,
+                status="rejected",
+                media_type="video",
+                expected_sha256=digest,
+                actual_sha256=digest,
+                mime="video/mp4",
+                size_bytes=len(data),
+                probe={},
+                error_category="content_probe_failed",
+            )
+        )
+    result = build_project_media_export(
+        channel_id, project_id, revision, store=MemoryStore({"internal/private-storage-key": data})
+    )
+    with zipfile.ZipFile(io.BytesIO(result)) as archive:
+        assert not any(name.startswith("media/") for name in archive.namelist())
+        assert "validated_acquisition_required" in archive.read("manifest.json").decode()
+
+
+def test_archive_limit_includes_manifest_and_zip_headers(export_context, monkeypatch):
+    import tempfile
+    from pathlib import Path
+
+    from katcha.editorial.media_intake import export
+
+    _, channel_id, _, project_id, revision = export_context
+    paths = []
+    original = tempfile.NamedTemporaryFile
+
+    def capture(*args, **kwargs):
+        handle = original(*args, **kwargs)
+        paths.append(Path(handle.name))
+        return handle
+
+    monkeypatch.setattr(tempfile, "NamedTemporaryFile", capture)
+    monkeypatch.setattr(export, "MAX_EXPORT_BYTES", 100)
+    with pytest.raises(ValueError, match="archive size"):
+        build_project_media_export(channel_id, project_id, revision, store=MemoryStore({}))
+    assert paths and all(not path.exists() for path in paths)
+
+
+def test_underreported_asset_is_streamed_with_actual_byte_limit(export_context, monkeypatch):
+    from katcha.editorial.media_intake import export
+
+    engine, channel_id, _, project_id, revision = export_context
+    data, _, receipt_id = add_exportable_item(engine, channel_id, project_id, revision)
+    with db.session_scope() as session:
+        row = session.scalar(
+            select(MediaAssetValidation).where(MediaAssetValidation.receipt_id == receipt_id)
+        )
+        row.size_bytes = 1
+    monkeypatch.setattr(export, "MAX_ASSET_BYTES", 5)
+    consumed = []
+
+    class ChunkStore:
+        def iter_bytes(self, key, chunk_size=1024 * 1024):
+            for chunk in (b"1234", b"5678", b"never read"):
+                consumed.append(chunk)
+                yield chunk
+
+        def get_bytes(self, *args, **kwargs):
+            pytest.fail("Export must not materialize complete storage objects")
+
+    result = build_project_media_export(channel_id, project_id, revision, store=ChunkStore())
+    assert consumed == [b"1234", b"5678"]
+    with zipfile.ZipFile(io.BytesIO(result)) as archive:
+        assert not any(name.startswith("media/") for name in archive.namelist())
+        assert "asset_size_limit" in archive.read("manifest.json").decode()
+
+
+def test_clearance_superseded_during_storage_read_omits_bytes(export_context):
+    engine, channel_id, _, project_id, revision = export_context
+    data, _, _ = add_exportable_item(engine, channel_id, project_id, revision)
+
+    class RevokingStore(MemoryStore):
+        def revoke(self):
+            with db.session_scope() as session:
+                previous = session.scalar(select(RightsAssessment))
+                session.add(
+                    RightsAssessment(
+                        id=uuid.uuid4(),
+                        discovery_candidate_id=previous.discovery_candidate_id,
+                        version=2,
+                        production_eligible=False,
+                        reason="Revoked during read",
+                    )
+                )
+
+        def iter_bytes(self, key, chunk_size=1024 * 1024):
+            self.revoke()
+            yield from super().iter_bytes(key, chunk_size)
+
+        def get_bytes(self, key, *, max_bytes=None):
+            self.revoke()
+            return self.objects[key]
+
+    result = build_project_media_export(
+        channel_id,
+        project_id,
+        revision,
+        store=RevokingStore({"internal/private-storage-key": data}),
+    )
+    with zipfile.ZipFile(io.BytesIO(result)) as archive:
+        assert not any(name.startswith("media/") for name in archive.namelist())
+        assert "production_clearance_required" in archive.read("manifest.json").decode()
+
+
+def test_export_requires_receipt_bytes_to_match_canonical_clip(export_context):
+    engine, channel_id, _, project_id, revision = export_context
+    data, _, _ = add_exportable_item(engine, channel_id, project_id, revision)
+    with db.session_scope() as session:
+        clip = session.scalar(select(Clip))
+        clip.sha256 = hashlib.sha256(b"a different canonical clip").hexdigest()
+    result = build_project_media_export(
+        channel_id, project_id, revision, store=MemoryStore({"internal/private-storage-key": data})
+    )
+    with zipfile.ZipFile(io.BytesIO(result)) as archive:
+        assert not any(name.startswith("media/") for name in archive.namelist())
+        assert "clip_content_hash_mismatch" in archive.read("manifest.json").decode()
+
+
+def test_file_export_streams_archive_and_reuses_duplicate_blob(export_context, monkeypatch):
+    from pathlib import Path
+
+    from katcha.editorial.media_intake.export import build_project_media_export_file
+    from katcha.services.editorial_media_bin import add_project_media_item
+
+    engine, channel_id, _, project_id, revision = export_context
+    data, _, _ = add_exportable_item(engine, channel_id, project_id, revision)
+    with db.session_scope() as session:
+        first = session.scalar(select(ProjectMediaItem))
+    add_project_media_item(
+        channel_id,
+        project_id,
+        revision,
+        request_key="second-reference",
+        actor="test",
+        kind="video",
+        clip_id=first.clip_id,
+        status="ready",
+        rights_status="production_cleared",
+        rights_assessment_id=first.rights_assessment_id,
+        rights_assessment_version=1,
+    )
+    reads = []
+
+    class CountingStore(MemoryStore):
+        def iter_bytes(self, key, chunk_size=1024 * 1024):
+            reads.append(key)
+            yield from super().iter_bytes(key, chunk_size)
+
+    def no_materialization(path):
+        pytest.fail("File export must not materialize archive bytes")
+
+    monkeypatch.setattr(Path, "read_bytes", no_materialization)
+    archive_path = build_project_media_export_file(
+        channel_id,
+        project_id,
+        revision,
+        store=CountingStore({"internal/private-storage-key": data}),
+    )
+    try:
+        with zipfile.ZipFile(archive_path) as archive:
+            assert len([name for name in archive.namelist() if name.startswith("media/")]) == 1
+            assert len(json.loads(archive.read("manifest.json"))["items"]) == 2
+        assert reads == ["internal/private-storage-key"]
+    finally:
+        archive_path.unlink(missing_ok=True)
+
+
+def test_manifest_size_limit_is_enforced_before_returning_archive(export_context, monkeypatch):
+    from katcha.editorial.media_intake import export
+
+    _, channel_id, _, project_id, revision = export_context
+    monkeypatch.setattr(export, "MAX_METADATA_BYTES", 32)
+    with pytest.raises(ValueError, match="metadata exceeds"):
+        build_project_media_export(channel_id, project_id, revision, store=MemoryStore({}))

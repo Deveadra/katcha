@@ -8,7 +8,8 @@ import uuid
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import select, update
+from sqlalchemy.exc import IntegrityError
 
 from katcha.acquisition_models import DiscoveryCandidate
 from katcha.db import session_scope
@@ -51,9 +52,7 @@ def start_acquisition(
     with session_scope() as session:
         candidate = session.get(DiscoveryCandidate, candidate_id)
         owner = (
-            (candidate.candidate_metadata or {}).get("channel_profile_id")
-            if candidate
-            else None
+            (candidate.candidate_metadata or {}).get("channel_profile_id") if candidate else None
         )
         if candidate is None or str(owner) != str(channel_id):
             raise ValueError("Discovery candidate is not available to this channel")
@@ -97,8 +96,28 @@ def start_acquisition(
             cost_receipt={},
             safe_resume_cursor={},
         )
-        session.add(row)
-        session.flush()
+        try:
+            with session.begin_nested():
+                session.add(row)
+                session.flush()
+        except IntegrityError as exc:
+            winner = session.scalar(
+                select(AcquisitionReceipt).where(
+                    AcquisitionReceipt.channel_profile_id == channel_id,
+                    AcquisitionReceipt.operation_key == operation_key,
+                )
+            )
+            if winner is None:
+                raise
+            if winner.request_digest != digest:
+                raise ValueError(
+                    "Acquisition operation key was already used for a different request"
+                ) from exc
+            if winner.status == "unknown":
+                raise ValueError(
+                    "Provider outcome is unknown; reconcile it before any retry"
+                ) from exc
+            return winner
         return row
 
 
@@ -106,19 +125,25 @@ def claim_acquisition(channel_id: uuid.UUID, receipt_id: uuid.UUID) -> Acquisiti
     """Atomically claim an authorized receipt once; active/unknown attempts cannot replay."""
     with session_scope() as session:
         row = session.scalar(
-            select(AcquisitionReceipt)
+            update(AcquisitionReceipt)
             .where(
                 AcquisitionReceipt.id == receipt_id,
                 AcquisitionReceipt.channel_profile_id == channel_id,
+                AcquisitionReceipt.status == "authorized",
             )
-            .with_for_update()
+            .values(status="acquiring")
+            .returning(AcquisitionReceipt)
         )
         if row is None:
-            raise ValueError("Acquisition receipt not found in this channel")
-        if row.status != "authorized":
+            owned = session.scalar(
+                select(AcquisitionReceipt.id).where(
+                    AcquisitionReceipt.id == receipt_id,
+                    AcquisitionReceipt.channel_profile_id == channel_id,
+                )
+            )
+            if owned is None:
+                raise ValueError("Acquisition receipt not found in this channel")
             raise ValueError("Acquisition is unfinished or final; reconcile it before any retry")
-        row.status = "acquiring"
-        session.flush()
         return row
 
 
@@ -141,28 +166,38 @@ def record_outcome(
 ) -> AcquisitionReceipt:
     if status not in {"succeeded", "failed", "unknown"}:
         raise ValueError("Acquisition outcome must be succeeded, failed, or unknown")
+    if status == "succeeded" and (not sha256 or not object_store_key):
+        raise ValueError("A succeeded acquisition requires a content hash and object key")
+    if status == "unknown" and not error_category:
+        raise ValueError("An unknown provider outcome requires an error category")
     with session_scope() as session:
         row = session.scalar(
-            select(AcquisitionReceipt).where(
+            update(AcquisitionReceipt)
+            .where(
                 AcquisitionReceipt.id == receipt_id,
                 AcquisitionReceipt.channel_profile_id == channel_id,
+                AcquisitionReceipt.status.in_(["authorized", "acquiring"]),
             )
+            .values(
+                status=status,
+                response_time=response_time,
+                bytes_received=bytes_received,
+                sha256=sha256,
+                mime=mime,
+                media_probe=media_probe or {},
+                object_store_key=object_store_key,
+                error_category=error_category,
+            )
+            .returning(AcquisitionReceipt)
         )
         if row is None:
-            raise ValueError("Acquisition receipt not found in this channel")
-        if row.status in {"unknown", "failed", "succeeded"}:
+            owned = session.scalar(
+                select(AcquisitionReceipt.id).where(
+                    AcquisitionReceipt.id == receipt_id,
+                    AcquisitionReceipt.channel_profile_id == channel_id,
+                )
+            )
+            if owned is None:
+                raise ValueError("Acquisition receipt not found in this channel")
             raise ValueError("Acquisition outcome is already final and cannot be overwritten")
-        if status == "succeeded" and (not sha256 or not object_store_key):
-            raise ValueError("A succeeded acquisition requires a content hash and object key")
-        if status == "unknown" and not error_category:
-            raise ValueError("An unknown provider outcome requires an error category")
-        row.status = status
-        row.response_time = response_time
-        row.bytes_received = bytes_received
-        row.sha256 = sha256
-        row.mime = mime
-        row.media_probe = media_probe or {}
-        row.object_store_key = object_store_key
-        row.error_category = error_category
-        session.flush()
         return row

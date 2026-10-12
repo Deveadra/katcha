@@ -20,6 +20,7 @@ dependencies = [
   "boto3>=1.35,<2",
   "yt-dlp>=2026.8.1",
   "httpx>=0.28,<1",
+  "httpcore>=1.0.9,<1.1",
   "python-multipart>=0.0.18,<1",
   "cryptography>=45,<47",
   "imagehash>=4.3,<5",
