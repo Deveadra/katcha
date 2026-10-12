@@ -69,9 +69,29 @@ python3 scripts/oci-candidate-vault-principal-probe.py deny-four \
   --approve-live-vault-reads
 ```
 
-An approved operator must then make the scoped defined-tag change, verify it
-applies only to the isolated candidate, and supply the OCID of a known-existing
-out-of-allowlist secret for the negative test. Then, on the same guest:
+Only after the four *untagged* denials have been individually observed,
+an authorized operator may perform the one-time candidate-tag transition
+using the OCI administrator's isolated session from the repository root:
+
+```bash
+.venv/bin/python scripts/oci-isolated-identity-probe.py tag-candidate \
+  --instance-id "$APPROVED_CANDIDATE_INSTANCE_ID" \
+  --acknowledge-four-untagged-vault-denials \
+  --approve-isolated-candidate-iam-tag
+```
+
+This command is an **OCI IAM-affecting resource mutation** and requires its
+own approval; the flags do not themselves grant permission. It refuses to
+tag a production instance, any non-probe VM, an unexpected network/disk
+configuration, a candidate already tagged, or a probe without a running
+production primary. It preserves existing defined-tag namespaces, modifies
+only `KatchaRecovery.Candidate`, and re-verifies the exact probe. The
+operator must independently confirm the current dynamic-group scope and
+four exact policy grants. OCI authorization propagation may take time;
+a transient denial is **not** a successful positive test.
+
+Supply a known-existing fifth secret outside the grant list for the
+negative test. Then, on the same guest:
 
 ```bash
 python3 scripts/oci-candidate-vault-principal-probe.py allow-four \
