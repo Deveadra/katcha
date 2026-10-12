@@ -133,7 +133,7 @@ def run_response(row: EditorialRun, *, include_artifacts: bool = True) -> dict:
         "workflow_id": workflow_id(row),
         "attempt": row.attempt,
         "input_revision": row.input_revision,
-        "target": row.options["target"],
+        "target": row.options.get("target", "analysis"),
         "status": row.status,
         "stage": row.stage,
         "error": row.error,
@@ -142,7 +142,7 @@ def run_response(row: EditorialRun, *, include_artifacts: bool = True) -> dict:
     }
     if include_artifacts:
         result["artifacts"] = row.artifacts
-        if row.options["target"] == "narration" and row.status in {
+        if row.options.get("target") == "narration" and row.status in {
             "blocked", "failed", "cancelled"
         }:
             from katcha.editorial.generated_narration import billing_holds
@@ -199,6 +199,10 @@ def list_runs(
         query = select(EditorialRun).where(
             EditorialRun.project_id == project_id,
             EditorialRun.channel_profile_id == channel_profile_id,
+            or_(
+                EditorialRun.options["target"].as_string().is_(None),
+                EditorialRun.options["target"].as_string() != "prepare_media",
+            ),
         )
         if before is not None:
             if offset:
