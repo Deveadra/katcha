@@ -157,6 +157,18 @@ def build_project_media_export(
                     if rights_candidate and rights_candidate.source_item_id
                     else None
                 )
+                latest_assessment = (
+                    session.scalar(
+                        select(RightsAssessment)
+                        .where(
+                            RightsAssessment.discovery_candidate_id
+                            == rights_candidate.id
+                        )
+                        .order_by(RightsAssessment.version.desc())
+                    )
+                    if rights_candidate is not None
+                    else None
+                )
                 assessment_matches_item = rights_source is not None and (
                     (clip is not None and rights_source.clip_id == clip.id)
                     or (
@@ -168,6 +180,9 @@ def build_project_media_export(
                 if (
                     str(rights_owner) != str(channel_id)
                     or not assessment_matches_item
+                    or latest_assessment is None
+                    or latest_assessment.id != assessment.id
+                    or assessment.version != item.rights_assessment_version
                 ):
                     assessment = None
             rights_evidence = []
