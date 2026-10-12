@@ -3,20 +3,17 @@
 from __future__ import annotations
 
 import hashlib
-import json
-import subprocess
 import tempfile
 import uuid
 import warnings
 from pathlib import Path
 from typing import Any
 
-from PIL import Image, UnidentifiedImageError
+from PIL import Image
 from sqlalchemy import select
 
 from katcha.db import session_scope
 from katcha.editorial_models import AcquisitionReceipt, MediaAssetValidation
-from katcha.integrations.download import ffprobe
 from katcha.integrations.storage import ObjectStore
 
 MAX_VALIDATION_BYTES = 200 * 1024 * 1024
@@ -75,36 +72,38 @@ def _image_probe(path: Path) -> tuple[dict[str, Any], str, int, int, str]:
 def _av_probe(
     path: Path, expected_type: str
 ) -> tuple[dict[str, Any], str, float, int | None, int | None]:
-    details = ffprobe(path)
-    raw_streams = details.get("streams")
-    streams = (
-        [item for item in raw_streams if isinstance(item, dict)]
-        if isinstance(raw_streams, list)
-        else []
-    )
-    stream_type = "video" if expected_type == "video" else "audio"
-    stream = next((item for item in streams if item.get("codec_type") == stream_type), None)
-    if stream is None:
-        raise ValueError(f"File does not contain a {stream_type} stream")
-    raw_format = details.get("format")
-    media_format = raw_format if isinstance(raw_format, dict) else {}
-    duration = float(media_format.get("duration") or stream.get("duration") or 0)
-    if not 0 < duration <= MAX_DURATION_SECONDS:
-        raise ValueError("Media duration is outside the supported range")
-    if expected_type == "video":
-        video_width = int(stream.get("width") or 0)
-        video_height = int(stream.get("height") or 0)
-        if (
-            not 0 < video_width <= MAX_DIMENSION
-            or not 0 < video_height <= MAX_DIMENSION
-        ):
-            raise ValueError("Video dimensions are outside the supported range")
-        width: int | None = video_width
-        height: int | None = video_height
-    else:
-        width = None
-        height = None
-    format_name = str(media_format.get("format_name") or "").casefold()
+    # PyAV is part of the media extra and ships its own FFmpeg libraries. This
+    # keeps validation independent of a system ffprobe executable.
+    import av
+
+    width: int | None = None
+    height: int | None = None
+    with av.open(str(path), mode="r") as container:
+        media_streams = [
+            stream for stream in container.streams if stream.type in {"audio", "video"}
+        ]
+        stream_type = "video" if expected_type == "video" else "audio"
+        stream = next((item for item in media_streams if item.type == stream_type), None)
+        if stream is None:
+            raise ValueError(f"File does not contain a {stream_type} stream")
+        duration = float(container.duration / av.time_base) if container.duration else 0.0
+        if not duration and stream.duration and stream.time_base:
+            duration = float(stream.duration * stream.time_base)
+        if not 0 < duration <= MAX_DURATION_SECONDS:
+            raise ValueError("Media duration is outside the supported range")
+        if expected_type == "video":
+            width = int(getattr(stream, "width", 0) or 0)
+            height = int(getattr(stream, "height", 0) or 0)
+            if not 0 < width <= MAX_DIMENSION or not 0 < height <= MAX_DIMENSION:
+                raise ValueError("Video dimensions are outside the supported range")
+        # Decode one frame to reject truncated or merely container-shaped files.
+        if next(container.decode(stream), None) is None:
+            raise ValueError("Media stream contains no decodable content")
+        format_name = str(container.format.name or "").casefold()
+        details = {
+            "format": {"format_name": format_name, "duration": duration},
+            "streams": [{"codec_type": stream_type, "width": width, "height": height}],
+        }
     mime = (
         "video/mp4"
         if expected_type == "video" and any(name in format_name for name in ("mp4", "mov"))
@@ -193,15 +192,7 @@ def validate_acquired_media(
                     probe, actual_mime, duration, width, height = _av_probe(path, expected_type)
                 if not _compatible_mime(receipt.mime, actual_mime):
                     raise ValueError("Declared media type does not match the probed content")
-            except (
-                ValueError,
-                UnidentifiedImageError,
-                Image.DecompressionBombError,
-                Image.DecompressionBombWarning,
-                OSError,
-                subprocess.SubprocessError,
-                json.JSONDecodeError,
-            ):
+            except Exception:
                 error_category = "content_probe_failed"
 
             status = (
