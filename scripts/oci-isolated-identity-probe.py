@@ -739,7 +739,7 @@ def cleanup(oci: Oci, plan: dict[str, Any], instance_id: str) -> dict[str, Any]:
     }
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "mode", choices=("plan", "launch", "verify", "tag-candidate", "cleanup")
@@ -749,7 +749,7 @@ def main() -> int:
     parser.add_argument("--approve-cleanup-of-test-instance-and-boot-volume", action="store_true")
     parser.add_argument("--approve-isolated-candidate-iam-tag", action="store_true")
     parser.add_argument("--acknowledge-four-untagged-vault-denials", action="store_true")
-    options = parser.parse_args()
+    options = parser.parse_args(argv)
     try:
         oci = Oci()
         plan = (
