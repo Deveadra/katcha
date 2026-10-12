@@ -77,6 +77,106 @@ class FakeOci:
         self.boot_inventory = []
 
 
+def test_candidate_identity_tag_requires_exact_probe_and_preserves_existing_tags():
+    class TagOci(FakeOci):
+        def __init__(self):
+            super().__init__()
+            self.updated = []
+
+        def enable_candidate_tag(self, instance_id, defined_tags):
+            self.updated.append((instance_id, defined_tags))
+            self.candidate["defined-tags"] = defined_tags
+
+    oci = TagOci()
+    oci.candidate["defined-tags"] = {"ExistingNamespace": {"Keep": "untouched"}}
+    result = probe.promote_identity_only_candidate(
+        oci, plan(), "ocid1.instance.candidate"
+    )
+    assert result["status"] == "IDENTITY_PROBE_CANDIDATE_TAG_VERIFIED"
+    assert result["vault_candidate_tag"] is True
+    assert result["secret_access_tested"] is False
+    assert oci.updated[0][0] == "ocid1.instance.candidate"
+    assert oci.updated[0][1] == {
+        "ExistingNamespace": {"Keep": "untouched"},
+        "KatchaRecovery": {"Candidate": "true"},
+    }
+    assert probe.verify(
+        oci, plan(), "ocid1.instance.candidate", for_cleanup=True
+    )["vault_candidate_tag"] is True
+    with pytest.raises(probe.ProbeError):
+        probe.promote_identity_only_candidate(
+            oci, plan(), "ocid1.instance.candidate"
+        )
+    assert len(oci.updated) == 1
+
+
+def test_candidate_identity_tag_rejects_wrong_name_and_prod_instance():
+    class TagOci(FakeOci):
+        def enable_candidate_tag(self, *_args):
+            pytest.fail("tag mutation must not happen")
+
+    oci = TagOci()
+    oci.candidate["display-name"] = "unrecognized-instance"
+    with pytest.raises(probe.ProbeError, match="exact isolation probe identity"):
+        probe.promote_identity_only_candidate(
+            oci, plan(), "ocid1.instance.candidate"
+        )
+    with pytest.raises(probe.ProbeError, match="isolated instance contract"):
+        probe.promote_identity_only_candidate(
+            oci, plan(), "ocid1.instance.primary"
+        )
+
+
+def test_candidate_identity_tag_refuses_existing_defined_candidate_field():
+    class TagOci(FakeOci):
+        def enable_candidate_tag(self, *_args):
+            pytest.fail("tag mutation must not happen")
+
+    oci = TagOci()
+    oci.candidate["defined-tags"] = {"KatchaRecovery": {"Candidate": "false"}}
+    with pytest.raises(probe.ProbeError, match="already defined"):
+        probe.promote_identity_only_candidate(
+            oci, plan(), "ocid1.instance.candidate"
+        )
+
+
+def test_candidate_tag_cli_never_changes_freeform_tags(monkeypatch):
+    seen = []
+
+    def fake_command(args, *, timeout=90):
+        seen.append((args, timeout))
+        return "{}"
+
+    monkeypatch.setattr(probe, "command", fake_command)
+    oci = probe.Oci.__new__(probe.Oci)
+    oci.base = ["oci", "--profile", "KATCHA_VAULT_ADMIN"]
+    oci.enable_candidate_tag(
+        "ocid1.instance.candidate",
+        {"KatchaRecovery": {"Candidate": "true"}},
+    )
+    cmd, timeout = seen[0]
+    assert cmd[:3] == ["oci", "--profile", "KATCHA_VAULT_ADMIN"]
+    assert cmd[3:6] == ["compute", "instance", "update"]
+    assert cmd[cmd.index("--instance-id") + 1] == "ocid1.instance.candidate"
+    assert json.loads(cmd[cmd.index("--defined-tags") + 1]) == {
+        "KatchaRecovery": {"Candidate": "true"}
+    }
+    assert "--freeform-tags" not in cmd
+    assert "--force" in cmd
+    assert timeout == 180
+
+
+def test_tag_candidate_cli_requires_separate_scoped_flags(monkeypatch, capsys):
+    monkeypatch.setattr(probe, "Oci", lambda: object())
+    monkeypatch.setattr(probe, "gather", lambda *_args, **_kwargs: plan())
+    with pytest.raises(probe.ProbeError):
+        probe.promote_identity_only_candidate(None, plan(), "ocid1.instance.primary")
+    assert probe.main([
+        "tag-candidate", "--instance-id", "ocid1.instance.candidate"
+    ]) == 2
+    assert "separate IAM-tag approval" in capsys.readouterr().err
+
+
 def test_launch_command_contains_only_isolated_probe_inputs(tmp_path):
     key = tmp_path / "public.key"
     args = probe.launch_args(plan(), key, "abcdef123456")
