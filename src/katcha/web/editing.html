@@ -12,8 +12,10 @@
     <link id="aerith-components" rel="stylesheet" href="/system/aerith-components.css">
     <link id="aerith-motion" rel="stylesheet" href="/system/aerith-motion.css">
     <link rel="stylesheet" href="/pages/production-aerith.css">
+    <link rel="stylesheet" href="/editorial-media-preparation.css">
     <script src="/editorial-frame-inspector.js" defer></script>
     <script src="/editorial-history.js" defer></script>
+    <script src="/editorial-media-preparation.js" defer></script>
     <script src="/editorial.js" defer></script>
     <script src="/editing.js" defer></script>
 <script src="/launcher-bridge.js" defer></script></head>
@@ -157,6 +159,30 @@
 
                                 <section class="editorial-stage-panel" data-editorial-stage-panel="assets" hidden>
                                     <div class="editorial-stage-head"><div><span class="eyebrow">3 · ASSETS</span><h3>Build the project bin</h3><p>Scout supporting media, acquire permitted video, or plug in owned/approved stills.</p></div><a class="editorial-ai-link" data-editorial-ai="assets" href="/ai?focus=chat">Ask Katcha ✦</a></div>
+                                    <section id="editorial-media-preparation" class="editorial-subpanel" aria-labelledby="editorial-media-heading" hidden>
+                                        <h4 id="editorial-media-heading">Find &amp; prepare media</h4>
+                                        <p>Turn your saved script into visual needs, ranked source references and a project Media Bin. References require permission review before production use.</p>
+                                        <label class="check-row"><input id="editorial-media-search-permission" type="checkbox"> Allow bounded public-provider searches for source information. This does not download media or use paid providers.</label>
+                                        <p id="editorial-media-search-scope">The checkbox applies to a new search. Continuing saved work uses its saved search permission.</p>
+                                        <p id="editorial-media-gate" role="status"></p>
+                                        <div class="editorial-stage-actions">
+                                            <button id="editorial-media-start" class="button primary" type="button">Find &amp; prepare media</button>
+                                            <button id="editorial-media-continue" class="button secondary" type="button" hidden>Continue saved media search</button>
+                                            <button id="editorial-media-refresh" class="mini" type="button">Refresh media</button>
+                                        </div>
+                                        <p id="editorial-media-status" role="status" aria-live="polite"></p>
+                                        <section id="editorial-media-recovery" hidden aria-labelledby="editorial-media-recovery-heading">
+                                            <h5 id="editorial-media-recovery-heading">Check the previous search before recovery</h5>
+                                            <p>The previous search may still be running. Stop it or wait for it to finish, then refresh media. Recording an unknown outcome preserves the search limit and does not repeat that search.</p>
+                                            <p id="editorial-media-recovery-wait" role="status"></p>
+                                            <label class="check-row"><input id="editorial-media-worker-stopped" type="checkbox"> The previous search has stopped</label>
+                                            <button id="editorial-media-record-unknown" class="mini" type="button" disabled>Record unknown outcome</button>
+                                        </section>
+                                        <div id="editorial-media-coverage"></div>
+                                        <h4>Project Media Bin</h4>
+                                        <div id="editorial-project-media-bin"></div>
+                                        <details class="ae-help"><summary>Search troubleshooting</summary><pre id="editorial-media-diagnostics"></pre></details>
+                                    </section>
                                     <p id="editorial-asset-gaps"></p>
                                     <div id="editorial-assets"></div>
                                     <div class="editorial-stage-actions"><button id="editorial-acquire-assets" class="button secondary" type="button" disabled>Download selected videos for review</button></div>
