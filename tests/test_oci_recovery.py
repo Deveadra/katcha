@@ -178,6 +178,124 @@ class RecoveryOci:
         self.terminated.append(instance_id)
 
 
+def test_oci_cli_timeout_is_bounded_and_not_silently_ignored(monkeypatch):
+    def timeout(_argv, **kwargs):
+        assert kwargs["timeout"] == 1500
+        raise subprocess.TimeoutExpired("oci", timeout=kwargs["timeout"])
+
+    monkeypatch.setattr(oci_recovery.subprocess, "run", timeout)
+    with pytest.raises(oci_recovery.RecoveryError, match="operation result may be unknown"):
+        oci_recovery.OciCli().run(
+            ["compute", "instance", "launch", "--wait-for-state", "RUNNING"]
+        )
+
+
+def test_oci_provisioning_errors_require_reconciliation(monkeypatch):
+    client = oci_recovery.OciCli()
+
+    def failed(_args):
+        raise oci_recovery.RecoveryError("OCI request interrupted")
+
+    monkeypatch.setattr(client, "run", failed)
+    with pytest.raises(
+        oci_recovery.RecoveryProvisioningOutcomeUnknown,
+        match="reconcile tagged resources",
+    ):
+        client._run_provisioning(
+            ["compute", "instance", "launch"],
+            operation="instance launch",
+            retry_capacity=True,
+        )
+
+    def capacity(_args):
+        raise oci_recovery.CapacityUnavailable("OutOfHostCapacity")
+
+    monkeypatch.setattr(client, "run", capacity)
+    with pytest.raises(oci_recovery.CapacityUnavailable):
+        client._run_provisioning(
+            ["compute", "instance", "launch"],
+            operation="instance launch",
+            retry_capacity=True,
+        )
+    with pytest.raises(oci_recovery.RecoveryProvisioningOutcomeUnknown):
+        client._run_provisioning(
+            ["bv", "volume", "create"], operation="volume creation",
+        )
+
+
+def test_ambiguous_cross_ad_launch_preserves_created_volume_for_reconciliation(
+    monkeypatch, tmp_path,
+):
+    _base_env(monkeypatch, tmp_path)
+    config = oci_recovery.RecoveryConfig.from_env()
+    bootstrap = tmp_path / "bootstrap"
+    bootstrap.write_text("not executed")
+    monkeypatch.setattr(
+        oci_recovery, "render_bootstrap", lambda *args, **kwargs: bootstrap
+    )
+
+    class UncertainOci:
+        def create_recovery_volume(self, *_args, **_kwargs):
+            return "ocid1.volume.maybe-attached"
+
+        def launch(self, *_args, **_kwargs):
+            raise oci_recovery.RecoveryProvisioningOutcomeUnknown(
+                "unknown launch result"
+            )
+
+        def delete_volume(self, *_args):
+            pytest.fail("must not delete potentially attached recovery volume")
+
+        def terminate(self, *_args):
+            pytest.fail("must not terminate unknown candidate")
+
+    incident = oci_recovery.Incident(
+        incident_id="12345678-1234-1234-1234-123456789012",
+        expected_active_epoch=7,
+        active_deployment_id="oci-a1-old",
+    )
+    with pytest.raises(oci_recovery.RecoveryProvisioningOutcomeUnknown):
+        oci_recovery._launch_attempt(
+            config=config,
+            oci=UncertainOci(),
+            coordinator=FakeCoordinator(config),
+            incident=incident,
+            deployment_id="oci-recovery-test",
+            deployment_epoch=8,
+            plan=config.primary,
+            target=oci_recovery.RecoveryTarget(
+                availability_domain="TEST:AD-2", subnet_id="ocid1.subnet.ad2"
+            ),
+            storage_mode="r2-restore",
+            current_volume_id="ocid1.volume.existing",
+            recovery_mode="cross-ad-free-a1",
+        )
+    assert not bootstrap.exists()
+
+
+def test_ambiguous_provisioning_stops_all_fallback_attempts_and_aborts(
+    monkeypatch, tmp_path,
+):
+    _base_env(monkeypatch, tmp_path)
+    config = oci_recovery.RecoveryConfig.from_env()
+    attempts = []
+
+    def uncertain(**kwargs):
+        attempts.append(kwargs["recovery_mode"])
+        raise oci_recovery.RecoveryProvisioningOutcomeUnknown(
+            "candidate may exist"
+        )
+
+    monkeypatch.setattr(oci_recovery, "CoordinatorClient", FakeCoordinator)
+    monkeypatch.setattr(oci_recovery, "_launch_attempt", uncertain)
+    with pytest.raises(oci_recovery.RecoveryProvisioningOutcomeUnknown):
+        oci_recovery.recover(_event(tmp_path), config, RecoveryOci())
+
+    assert attempts == ["always-free-a1"]
+    assert FakeCoordinator.instance.aborted is True
+    assert FakeCoordinator.instance.committed is False
+
+
 def test_paid_budget_rejects_ttl_that_can_exceed_cap(monkeypatch, tmp_path) -> None:
     _base_env(monkeypatch, tmp_path)
     monkeypatch.setenv("KATCHA_OCI_PAID_FALLBACK_TTL_HOURS", "24")
