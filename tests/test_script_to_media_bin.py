@@ -9,13 +9,13 @@ from collections import Counter
 
 import httpx
 import pytest
-from katcha.editorial.media_preparation_schemas import StartMediaPreparation
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from katcha import db
 from katcha.acquisition.adapters import DiscoveredCandidate, DiscoveryBatch, DiscoveryProviderError
+from katcha.editorial.media_preparation_schemas import StartMediaPreparation
 from katcha.editorial.project_schemas import CreateEditorialProject, SaveEditorialDraft
 from katcha.editorial.source_intelligence.contracts import ProviderPolicyV1
 from katcha.editorial.source_intelligence.jobs import SearchJobLedger
@@ -446,8 +446,8 @@ def test_crash_after_durable_evidence_or_bin_insert_replays_without_duplication(
 def test_api_authorization_and_channel_scope_cover_start_status_resume_and_bin(script_to_bin):
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
-    from katcha.api.editorial_media_preparation import router as preparation_router
 
+    from katcha.api.editorial_media_preparation import router as preparation_router
     from katcha.api.editorial_projects import router as projects_router
 
     channel, other_channel, good, bad, _ = script_to_bin
@@ -586,7 +586,6 @@ def test_active_preparation_lease_and_running_receipt_do_not_duplicate_or_comple
     from datetime import UTC, datetime, timedelta
 
     from katcha.editorial.media_preparation_schemas import ReconcileMediaPreparation
-
     from katcha.editorial.source_intelligence.contracts import SourceSearchJobV1
     from katcha.editorial_models import EditorialRun
 
@@ -731,3 +730,96 @@ def test_legacy_editorial_history_remains_visible_and_media_preparation_is_separ
     assert len(rows) == 1 and rows[0]["editorial_run_id"] == str(legacy_id)
     assert rows[0]["target"] == "analysis"
     assert preparation.latest_preparation(channel, project.id).id == preparation_run.id
+
+
+def test_authorizing_reference_search_reuses_owned_bin_item_across_preparation_runs(
+    script_to_bin, monkeypatch
+):
+    from dataclasses import replace
+
+    channel, _, good, bad, _ = script_to_bin
+    project, clip_id = imported_project(channel, "[VISUAL: Vision at a window]", owned_clip=True)
+    configured = preparation.runtime()
+    routes = tuple(
+        replace(route, capability=replace(route.capability, external=True))
+        for route in configured.routes
+    )
+    monkeypatch.setattr(preparation, "runtime", lambda: replace(configured, routes=routes))
+    first = start(channel, project, key="owned-only", authorized=False)
+    first_result = finish(channel, project.id, first.id)
+    assert not good.calls and not bad.calls
+    owned_before = list_project_media_items(channel, project.id)
+    assert len(owned_before) == 1 and owned_before[0].clip_id == clip_id
+    assert first_result["bin_bindings"][0]["media_item_id"] == str(owned_before[0].id)
+
+    second = start(
+        channel,
+        project,
+        key="authorized-references",
+        revision=get_project(channel, project.id).revision,
+        authorized=True,
+    )
+    assert second.id != first.id
+    result = finish(channel, project.id, second.id)
+    owned_after = [item for item in list_project_media_items(channel, project.id) if item.clip_id]
+    assert len(owned_after) == 1 and owned_after[0].id == owned_before[0].id
+    assert owned_after[0].request_digest == owned_before[0].request_digest
+    assert owned_after[0].rights_status == "not_assessed" and owned_after[0].status == "acquired"
+    assert len(list_project_media_items(channel, project.id)) == 2
+    owned_binding = next(
+        binding
+        for binding in result["bin_bindings"]
+        if binding["media_item_id"] == str(owned_before[0].id)
+    )
+    assert owned_binding["requirement_ids"] == []
+    assert owned_binding["provenance"]["basis"] == "existing_project_clip_binding"
+    assert len(good.calls) == 2 and len(bad.calls) == 1
+
+
+def test_matching_operator_reference_preserves_rights_notes_and_saves_new_run_evidence(
+    script_to_bin,
+):
+    channel, _, good, bad, _ = script_to_bin
+    project, _ = imported_project(channel, "[VISUAL: Vision at a window]")
+    run = start(channel, project)
+    operator = add_project_media_item(
+        channel,
+        project.id,
+        run.input_revision,
+        request_key="matching-operator-selection",
+        actor="fixture-editor",
+        kind="citation",
+        external_reference_url="https://publisher.example/press/vision",
+        requirement_ids=["manual-selection"],
+        status="review_required",
+        rights_status="restricted",
+        notes="Keep the selected scene and my restriction review.",
+        provenance={"basis": "operator_selection"},
+    )
+    result = finish(channel, project.id, run.id)
+    items = list_project_media_items(channel, project.id)
+    assert len(items) == 1 and items[0].id == operator.id
+    preserved = items[0]
+    assert preserved.notes == operator.notes and preserved.rights_status == "restricted"
+    assert (
+        preserved.status == "review_required"
+        and preserved.request_digest == operator.request_digest
+    )
+    assert preserved.requirement_ids == ["manual-selection"]
+    assert preserved.provenance == {"basis": "operator_selection"}
+    bindings = result["bin_bindings"]
+    assert len(bindings) == 1 and bindings[0]["media_item_id"] == str(operator.id)
+    requirement_ids = {item["requirement_id"] for item in result["manifest"]["requirements"]}
+    assert set(bindings[0]["requirement_ids"]) == requirement_ids
+    evidence = bindings[0]["provenance"]
+    assert evidence["preparation_run_id"] == str(run.id)
+    assert evidence["providers"] == [good.key]
+    assert evidence["scout_receipt_refs"] and evidence["observation_receipt_refs"]
+    assert set(evidence["scout_receipt_refs"]) <= {
+        receipt["receipt_id"] for receipt in result["search_receipts"]
+    }
+    restored = preparation.get_preparation(channel, project.id, run.id)
+    assert restored.artifacts["bin_bindings"] == bindings
+    preparation.resume_preparation(channel, project.id, run.id)
+    assert len(good.calls) == 2 and len(bad.calls) == 1
+    assert len(list_project_media_items(channel, project.id)) == 1
