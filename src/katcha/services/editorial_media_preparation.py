@@ -239,6 +239,22 @@ def start_preparation(
             project_id=project_id,
             approved_source_classes=("owned", "public_reference"),
         )
+        old_volume = session.scalar(
+            select(EditorialRun.id)
+            .where(
+                EditorialRun.project_id == project_id,
+                EditorialRun.channel_profile_id == channel_id,
+                EditorialRun.options["target"].as_string() == TARGET,
+                EditorialRun.artifacts["manifest"]["scope"]["revision_digest"].as_string()
+                == manifest.scope.revision_digest,
+                EditorialRun.artifacts["ledger_id"].as_string() != configured.ledger.identity,
+            )
+            .limit(1)
+        )
+        if old_volume is not None:
+            raise EditorialConflict(
+                "Restore this script's saved search evidence volume before starting preparation"
+            )
         expansion = expand_queries(
             manifest,
             routes=routes,

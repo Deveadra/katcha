@@ -845,3 +845,40 @@ def test_search_permission_changes_wait_for_existing_preparation(script_to_bin):
     assert (
         len([item for item in list_project_media_items(channel, project.id) if item.clip_id]) == 1
     )
+
+
+def test_new_revision_cannot_bypass_lost_ledger_for_same_script(
+    script_to_bin, monkeypatch, tmp_path
+):
+    from dataclasses import replace
+
+    from katcha.services.editorial_projects import EditorialConflict
+
+    channel, _, good, bad, _ = script_to_bin
+    project, _ = imported_project(channel, "[VISUAL: Vision at a window]")
+    first = start(channel, project)
+    finish(channel, project.id, first.id)
+    calls_before = len(good.calls) + len(bad.calls)
+    save_draft(
+        channel,
+        project.id,
+        SaveEditorialDraft(
+            expected_revision=first.input_revision,
+            idempotency_key="unchanged-script",
+            draft={"version": "editorial-draft-v1", "script": []},
+        ),
+        actor="fixture-editor",
+    )
+    configured = preparation.runtime()
+    monkeypatch.setattr(
+        preparation,
+        "runtime",
+        lambda: replace(
+            configured,
+            ledger=SearchJobLedger(tmp_path / "replaced-evidence.sqlite"),
+        ),
+    )
+    with pytest.raises(EditorialConflict, match="Restore this script's saved search evidence"):
+        start(channel, project, key="new-revision", revision=first.input_revision + 1)
+    assert len(good.calls) + len(bad.calls) == calls_before
+    assert preparation.latest_preparation(channel, project.id).id == first.id
