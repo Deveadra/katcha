@@ -522,3 +522,52 @@ def test_changed_source_during_ranking_fences_publication(match_context, monkeyp
         match(context, request(context, run))
     with db.session_scope() as session:
         assert not list(session.scalars(select(RequirementShotPackage)))
+
+
+def test_selection_rechecks_permission_before_saving_choice(match_context):
+    context = match_context
+    run = prepare(context)
+    package = match(context, request(context, run))
+    reads = 0
+
+    def revoke_on_second_read():
+        nonlocal reads
+        reads += 1
+        if reads == 2:
+            with db.session_scope() as session:
+                session.get(ProjectMediaItem, context[3]).rights_status = "revoked"
+
+    context[-1].after_read = revoke_on_second_read
+    with pytest.raises(ValueError, match="permission"):
+        choose(context, package)
+    with db.session_scope() as session:
+        assert not list(session.scalars(select(OperatorShotChoice)))
+
+
+def test_many_deduplicated_uploads_keep_bounded_resolvable_authority(match_context):
+    context = match_context
+    with db.session_scope() as session:
+        for number in range(130):
+            source_id = uuid.uuid4()
+            session.add(
+                SourceItem(
+                    id=source_id,
+                    platform="upload",
+                    clip_id=context[4],
+                    source_url=f"https://upload.katcha.invalid/copy-{number}",
+                    canonical_url=f"https://upload.katcha.invalid/copy-{number}",
+                    status="ready",
+                    source_metadata={
+                        "channel_profile_id": str(context[0]),
+                        "permitted_use_confirmed": True,
+                    },
+                )
+            )
+    run = prepare(context)
+    package = match(context, request(context, run))
+    refs = package["requirements"][0]["proposals"][0]["evidence_refs"]
+    upload_refs = [value for value in refs if value.startswith("upload:")]
+    assert len(upload_refs) == 1 and len(refs) < 128
+    with db.session_scope() as session:
+        source = session.get(SourceItem, uuid.UUID(upload_refs[0].split(":", 1)[1]))
+        assert source.clip_id == context[4] and source.source_metadata["permitted_use_confirmed"]
