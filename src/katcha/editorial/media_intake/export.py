@@ -143,6 +143,17 @@ def build_project_media_export(
                 if item.rights_assessment_id
                 else None
             )
+            if assessment is not None:
+                rights_candidate = session.get(
+                    DiscoveryCandidate, assessment.discovery_candidate_id
+                )
+                rights_owner = (
+                    (rights_candidate.candidate_metadata or {}).get("channel_profile_id")
+                    if rights_candidate
+                    else None
+                )
+                if str(rights_owner) != str(channel_id):
+                    assessment = None
             rights_evidence = []
             if (
                 assessment is not None
@@ -160,17 +171,29 @@ def build_project_media_export(
             candidate_rows = []
             linked_source = None
             if clip is not None:
-                linked_source = session.scalar(
-                    select(SourceItem)
-                    .where(SourceItem.clip_id == clip.id)
-                    .order_by(SourceItem.id)
+                linked_sources = list(
+                    session.scalars(
+                        select(SourceItem)
+                        .where(SourceItem.clip_id == clip.id)
+                        .order_by(SourceItem.id)
+                    )
+                )
+                linked_source = next(
+                    (
+                        source
+                        for source in linked_sources
+                        if str((source.source_metadata or {}).get("channel_profile_id"))
+                        == str(channel_id)
+                    ),
+                    None,
                 )
                 if source_url is None and linked_source is not None:
                     source_url = _portable_url(linked_source.canonical_url)
                 if source_url is None and linked_source is not None:
                     source_url = _portable_url(linked_source.source_url)
-                candidate_rows = list(
-                    session.execute(
+                candidate_rows = [
+                    row
+                    for row in session.execute(
                         select(DiscoveryCandidate, SourceItem, AcquisitionReceipt)
                         .join(SourceItem, DiscoveryCandidate.source_item_id == SourceItem.id)
                         .join(
@@ -184,17 +207,16 @@ def build_project_media_export(
                         )
                         .order_by(AcquisitionReceipt.created_at, AcquisitionReceipt.id)
                     )
-                )
+                    if str((row[0].candidate_metadata or {}).get("channel_profile_id"))
+                    == str(channel_id)
+                ]
                 if candidate_rows and source_url is None:
                     source_url = _portable_url(candidate_rows[0][0].canonical_url)
 
             receipt_evidence: dict[str, Any] | None = None
             media_path: str | None = None
             gap_reason: str | None = None
-            for candidate, _source, receipt in candidate_rows:
-                owner = (candidate.candidate_metadata or {}).get("channel_profile_id")
-                if str(owner) != str(channel_id):
-                    continue
+            for _candidate, _source, receipt in candidate_rows:
                 validations = list(
                     session.scalars(
                         select(MediaAssetValidation).where(
@@ -207,7 +229,7 @@ def build_project_media_export(
                         .order_by(MediaAssetValidation.probe_version.desc())
                     )
                 )
-                validation = validations[-1] if validations else None
+                validation = validations[0] if validations else None
                 receipt_evidence = {
                     "status": receipt.status,
                     "sha256": receipt.sha256,
