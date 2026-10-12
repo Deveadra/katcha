@@ -26,13 +26,17 @@ scenes without fabricating timestamps. Verify source/publisher and retain
 actual search receipts; track provider budgets, cursors, rate limits, and
 nontransient failures. AI may propose, never approve a license.
 
-## Next eligible assignment
+## Next A integration gate
 
-**`KSI-104`: Semantic query expansion from script requirements.** KSI-101 (#354),
-KSI-102 (#349), and KSI-103 (#353) are merged with passing exact-head CI. Reuse
-the exact-plan requirement adapter, bounded jobs and persisted reference-only
-provider observations. Preserve hypotheses versus observations, source policy,
-negative terms, budgets and replay. No unauthorized live or paid calls.
+KSI-101 through KSI-105 are accepted (#354/#349/#353/#358/#360), with linked
+exact-head CI evidence in the advisory backlog. Reuse the exact-plan adapter,
+bounded query jobs, durable reference candidates and authoritative-ledger
+ranking/coverage report. No provider fixture proves acquired or usable media.
+
+**`KIN-101`: script-to-source-to-Media-Bin integration** requires accepted
+**KMI-106**. KMI-101/#355 and KMI-102/#359 are accepted; acquisition, validation
+and portable export remain prerequisites. Do not bypass that gate or duplicate
+Agent B intake work. Inspect live merged PRs before the next slice.
 
 ## Follow-on ordered tasks
 

@@ -24,14 +24,18 @@ Use existing managed object storage; no duplicate blob storage solely because a
 project references a clip. A found public YouTube URL is reference-only absent
 permission. Neither a downloader library nor an HTTP 200 grants rights.
 
-## Current assignment (KCO-000 accepted)
+## Next B acquisition slice
 
-**`KMI-101`: Project Media Bin durable core.** Implement additive bin records
-which safely reference existing channel-owned Clip Library media and saved
-external links without touching Agent A's parser, live providers, or downloader.
-Support stable IDs, project/revision binding, provenance, channel isolation,
-idempotent writes and status reads. Include DB migration compatibility tests.
-PR #346 is merged. You own the additive Alembic migration and necessary model/API edits for KMI-101. No coordinator or Agent A approval required; check current migration heads and active PR overlap.
+KMI-101/#355, KMI-102/#359 and KMI-103/#361 are accepted with linked
+exact-head CI. Reuse the durable Media Bin, existing project API and scoped
+permission/receipt contracts. No fixture or stored reference grants media rights.
+
+**`KMI-104`: Safe and idempotent authorized downloader.** Implement only
+provider-permitted/operator-authorized fetching with SSRF, DNS, redirect,
+size/timeout and interrupted-transfer protections. Unknown provider outcomes
+require reconciliation; reference-only media remains a reference. Preserve
+existing ObjectStore, rights authority, channel isolation and historical clips.
+Check current migration heads and active PR overlap before editing.
 
 ## Follow-on ordered tasks
 
@@ -39,7 +43,7 @@ PR #346 is merged. You own the additive Alembic migration and necessary model/AP
 `KMI-104` safe authorized fetching → `KMI-105` validation/deduplication →
 `KMI-106` multi-type export → integration `KIN-101` (A owner, B reviewer).
 After integration, `KMI-107` indexes verified shots; later `KIN-102` (B owner)
-provides editor handoff. Dependencies in backlog decide actual eligibility.
+provides editor handoff. Use backlog dependencies as intent; live merged PRs and required CI prove eligibility.
 
 ## Minimum delivered evidence
 
