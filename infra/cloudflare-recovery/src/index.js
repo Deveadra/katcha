@@ -6,6 +6,7 @@ import {
   applyProbe,
   commitAuthority,
   configureWatchdog,
+  claimIncidentDispatch,
   configureBootstrapWatchdog,
   bootstrapWatchdogDecision,
   markBootstrapRedispatched,
@@ -765,19 +766,24 @@ export class RecoveryAuthority extends DurableObject {
       result.state.active?.deployment_id === observed.deploymentId &&
       result.state.active?.epoch === observed.deploymentEpoch
     ) {
-      try {
-        await this.dispatchRecovery(result.state, incident);
-        await this.updateState((current) =>
-          markIncidentDispatched(current, incident.id),
-        );
-      } catch (error) {
-        await this.updateState((current) =>
-          markIncidentDispatchFailed(
-            current,
-            incident.id,
-            error?.message || String(error),
-          ),
-        );
+      const claim = await this.updateState((current) =>
+        claimIncidentDispatch(current, incident.id),
+      );
+      if (claim.claimed) {
+        try {
+          await this.dispatchRecovery(claim.state, claim.state.incident);
+          await this.updateState((current) =>
+            markIncidentDispatched(current, incident.id),
+          );
+        } catch (error) {
+          await this.updateState((current) =>
+            markIncidentDispatchFailed(
+              current,
+              incident.id,
+              error?.message || String(error),
+            ),
+          );
+        }
       }
     }
 
@@ -792,6 +798,7 @@ export class RecoveryAuthority extends DurableObject {
   }
 
   async dispatchBootstrapPoll(state, decision) {
+
     const endpoint = httpsUrl(
       this.env.RECOVERY_DISPATCH_URL,
       "RECOVERY_DISPATCH_URL",
