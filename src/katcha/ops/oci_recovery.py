@@ -1274,45 +1274,102 @@ def _attachment_id(row: dict[str, Any]) -> str:
     return str(row.get("id") or "")
 
 
+def _restore_previous_volume_after_switch_error(
+    oci: OciCli,
+    config: RecoveryConfig,
+    *,
+    previous_instance_id: str,
+    candidate_id: str,
+    volume_id: str,
+) -> None:
+    """Restore only a conclusively detached or still-attached prior leader.
+
+    Never attach over an uncertain or in-flight attachment. OCI timeouts may
+    mean the original detach or candidate attach actually succeeded.
+    """
+    current = oci.volume_attachments(config, volume_id)
+    attached = [
+        row
+        for row in current
+        if _state(row) in {"ATTACHED", "ATTACHING", "DETACHING"}
+    ]
+    if any(_state(row) != "ATTACHED" for row in attached):
+        raise RecoveryCleanupIncomplete(
+            "storage attachment transition remains in progress; preserve instances"
+        )
+    owners = {_attachment_instance_id(row) for row in attached}
+    if not owners:
+        oci.attach(
+            previous_instance_id,
+            volume_id,
+            device_path=config.cross_ad_device_path,
+        )
+    elif owners != {previous_instance_id}:
+        raise RecoveryCleanupIncomplete(
+            "volume attachment ownership is uncertain; preserve instances"
+        )
+    # If still attached, START is idempotent in OciCli; never duplicate attach.
+    oci.start(previous_instance_id)
+
+
 def switch_volume(
     oci: OciCli,
     config: RecoveryConfig,
     candidate_id: str,
     volume_id: str,
 ) -> str | None:
-    previous_instance: str | None = None
     attachments = oci.volume_attachments(config, volume_id)
-    for attachment in attachments:
-        state = _state(attachment)
-        attached_instance = _attachment_instance_id(attachment)
-        if state not in {"ATTACHED", "ATTACHING"} or not attached_instance:
-            continue
-        if attached_instance == candidate_id:
-            return None
-        previous_instance = attached_instance
-        oci.stop(attached_instance)
-        oci.detach(_attachment_id(attachment))
-    try:
+    changing = [
+        row for row in attachments
+        if _state(row) in {"ATTACHING", "DETACHING"}
+    ]
+    if changing:
+        raise RecoveryCleanupIncomplete(
+            "durable volume attachment transition is in progress"
+        )
+    attached = [
+        row for row in attachments if _state(row) == "ATTACHED"
+    ]
+    owners = {_attachment_instance_id(row) for row in attached}
+    if "" in owners or len(owners) > 1:
+        raise RecoveryCleanupIncomplete(
+            "durable volume has ambiguous attachment ownership"
+        )
+    if owners == {candidate_id}:
+        return None
+    previous_instance = next(iter(owners), None)
+    if previous_instance is None:
         oci.attach(
             candidate_id,
             volume_id,
             device_path=config.cross_ad_device_path,
         )
-    except Exception:
-        if previous_instance:
-            try:
-                oci.attach(
-                    previous_instance,
-                    volume_id,
-                    device_path=config.cross_ad_device_path,
-                )
-                oci.start(previous_instance)
-            except Exception as rollback_error:
-                raise RecoveryCleanupIncomplete(
-                    "candidate volume attach failed and restoring the previous "
-                    f"attachment also failed: {rollback_error}"
-                ) from rollback_error
-        raise
+        return None
+
+    try:
+        oci.stop(previous_instance)
+        for attachment in attached:
+            oci.detach(_attachment_id(attachment))
+        oci.attach(
+            candidate_id,
+            volume_id,
+            device_path=config.cross_ad_device_path,
+        )
+    except Exception as switch_error:
+        try:
+            _restore_previous_volume_after_switch_error(
+                oci,
+                config,
+                previous_instance_id=previous_instance,
+                candidate_id=candidate_id,
+                volume_id=volume_id,
+            )
+        except Exception as rollback_error:
+            raise RecoveryCleanupIncomplete(
+                "volume switch outcome cannot be safely rolled back; "
+                "preserve candidate, old leader and volume for reconciliation"
+            ) from rollback_error
+        raise switch_error
     return previous_instance
 
 
@@ -1454,7 +1511,8 @@ def _cleanup_failed_attempt(
     config: RecoveryConfig,
     attempt: CandidateAttempt,
 ) -> None:
-    errors: list[str] = []
+    # Preserve both candidate and storage if detachment or rollback is
+    # uncertain. Termination/deletion could destroy recoverable state.
     try:
         if attempt.storage_mode == "existing-volume":
             rollback_volume(
@@ -1472,23 +1530,25 @@ def _cleanup_failed_attempt(
                 volume_id=attempt.volume_id,
             )
     except Exception as exc:
-        errors.append(f"storage:{type(exc).__name__}:{exc}")
+        raise RecoveryCleanupIncomplete(
+            "recovery storage cleanup incomplete; candidate and volume "
+            "preserved for attachment reconciliation"
+        ) from exc
 
     try:
         oci.terminate(attempt.instance_id)
     except Exception as exc:
-        errors.append(f"terminate:{type(exc).__name__}:{exc}")
+        raise RecoveryCleanupIncomplete(
+            "candidate termination incomplete; recovery volume preserved"
+        ) from exc
 
     if attempt.owns_recovery_volume:
         try:
             oci.delete_volume(attempt.volume_id)
         except Exception as exc:
-            errors.append(f"volume-delete:{type(exc).__name__}:{exc}")
-
-    if errors:
-        raise RecoveryCleanupIncomplete(
-            "recovery attempt cleanup incomplete: " + " | ".join(errors)
-        )
+            raise RecoveryCleanupIncomplete(
+                "candidate terminated but recovery volume deletion incomplete"
+            ) from exc
 
 
 def _launch_attempt(
@@ -1571,9 +1631,9 @@ def _launch_attempt(
             timeout_seconds=config.candidate_timeout_seconds,
         )
         return attempt
-    except RecoveryProvisioningOutcomeUnknown:
-        # A launch/volume creation can succeed even when its CLI request times
-        # out. Preserve the volume and avoid repeat create/unsafe termination.
+    except (RecoveryProvisioningOutcomeUnknown, RecoveryCleanupIncomplete):
+        # The last OCI operation may have changed storage ownership. Do not
+        # terminate or delete anything until the operator reconciles state.
         raise
     except Exception:
         if attempt is not None:
