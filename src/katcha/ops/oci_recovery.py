@@ -132,6 +132,7 @@ class RecoveryConfig:
     paid_max_concurrent: int
     candidate_timeout_seconds: int
     cross_ad_volume_size_gb: int
+    boot_volume_size_gb: int
     cross_ad_device_path: str
     cross_ad_max_backup_age_seconds: int
     retired_volume_grace_hours: int
@@ -283,6 +284,9 @@ class RecoveryConfig:
             cross_ad_volume_size_gb=int(
                 _env("KATCHA_OCI_CROSS_AD_DATA_VOLUME_SIZE_GB", default="50")
             ),
+            boot_volume_size_gb=int(
+                _env("KATCHA_OCI_RECOVERY_BOOT_VOLUME_GB", default="50")
+            ),
             cross_ad_device_path=_env(
                 "KATCHA_OCI_DATA_VOLUME_DEVICE_PATH",
                 default="/dev/oracleoci/oraclevdb",
@@ -355,6 +359,8 @@ class RecoveryConfig:
                 ) from exc
         if self.cross_ad_volume_size_gb < 50:
             raise RecoveryError("cross-AD data volume must be at least 50 GB")
+        if not 50 <= self.boot_volume_size_gb <= 200:
+            raise RecoveryError("recovery candidate boot volume must be 50 to 200 GB")
         if self.cross_ad_max_backup_age_seconds < 900:
             raise RecoveryError("cross-AD backup freshness window must be at least 900 seconds")
         if (
@@ -518,6 +524,45 @@ class CoordinatorClient:
         )
 
 
+def assert_cross_ad_storage_creation_approved(
+    config: RecoveryConfig,
+    *,
+    now: datetime | None = None,
+) -> None:
+    """Require separately approved, recent free storage accounting.
+
+    Assertions originate from an operator's reviewed OCI inventory, not from
+    the recovery dispatcher; a matching assertion does not guarantee billing.
+    """
+    if os.environ.get("KATCHA_OCI_CROSS_AD_STORAGE_CREATION_APPROVED") != "true":
+        raise RecoveryError(
+            "cross-AD storage creation is disabled pending separate approval"
+        )
+    try:
+        raw_gb = _env("KATCHA_OCI_CROSS_AD_FREE_STORAGE_GB")
+        free_gb = int(raw_gb)
+        if str(free_gb) != raw_gb or free_gb < 0:
+            raise ValueError("invalid free capacity")
+        audit_at = datetime.fromisoformat(
+            _env("KATCHA_OCI_CROSS_AD_STORAGE_AUDITED_AT")
+        )
+        current = now or datetime.now(UTC)
+        age = current - audit_at
+        if audit_at.utcoffset() is None or not timedelta(0) <= age <= timedelta(
+            minutes=15
+        ):
+            raise ValueError("expired capacity evidence")
+    except (ValueError, OverflowError) as exc:
+        raise RecoveryError(
+            "cross-AD free storage evidence is missing, stale or invalid"
+        ) from exc
+    needed = config.cross_ad_volume_size_gb + config.boot_volume_size_gb
+    if free_gb < needed:
+        raise RecoveryError(
+            "cross-AD boot and data storage exceed reviewed free headroom"
+        )
+
+
 class OciCli:
     def run(self, args: list[str]) -> dict[str, Any]:
         command = ["oci", *args, "--output", "json"]
@@ -656,6 +701,8 @@ class OciCli:
                 target.subnet_id,
                 "--image-id",
                 plan.image_id,
+                "--boot-volume-size-in-gbs",
+                str(config.boot_volume_size_gb),
                 "--shape",
                 plan.shape,
                 "--shape-config",
@@ -843,6 +890,7 @@ class OciCli:
         deployment_id: str,
         availability_domain: str,
     ) -> str:
+        assert_cross_ad_storage_creation_approved(config)
         tags = {
             "KatchaRole": "recovery-data",
             "KatchaRecoveryIncident": incident.incident_id,
