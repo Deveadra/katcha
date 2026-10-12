@@ -12,7 +12,11 @@ independent Python and GitHub Actions gates are disabled.
 
 The Cloudflare recovery Durable Object probes the current committed leader.
 An incident is opened after the configured consecutive health failures.
-The incident ID is reused for retries; GH Actions additionally serializes
+The incident ID is reused for retries; the Durable Object transactionally
+claims each dispatch before making its network call, preventing simultaneous
+health probes from submitting the same incident twice. An interrupted dispatch
+claim can requeue only after the cooldown and consumes an attempt, so uncertain
+network outcomes do not produce unbounded retries. GH Actions additionally serializes
 recoveries in the `katcha-production-recovery` concurrency group and validates
 the coordinator's current active epoch.
 
