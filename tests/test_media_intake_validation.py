@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import hashlib
-import subprocess
 import uuid
 import wave
 from array import array
@@ -121,27 +120,23 @@ def audio_bytes() -> bytes:
 
 
 def video_bytes(tmp_path: Path) -> bytes:
+    import av
+
     path = tmp_path / "tiny.mp4"
-    subprocess.run(
-        [
-            "ffmpeg",
-            "-loglevel",
-            "error",
-            "-f",
-            "lavfi",
-            "-i",
-            "color=c=red:s=32x24:d=0.2",
-            "-an",
-            "-c:v",
-            "mpeg4",
-            "-pix_fmt",
-            "yuv420p",
-            "-y",
-            str(path),
-        ],
-        check=True,
-        timeout=30,
-    )
+    with av.open(str(path), mode="w", format="mp4") as container:
+        stream = container.add_stream("mpeg4", rate=5)
+        stream.width = 32
+        stream.height = 24
+        stream.pix_fmt = "yuv420p"
+        for _ in range(1):
+            frame = av.VideoFrame(32, 24, "yuv420p")
+            frame.planes[0].update(bytes([81]) * frame.planes[0].buffer_size)
+            frame.planes[1].update(bytes([90]) * frame.planes[1].buffer_size)
+            frame.planes[2].update(bytes([240]) * frame.planes[2].buffer_size)
+            for packet in stream.encode(frame):
+                container.mux(packet)
+        for packet in stream.encode():
+            container.mux(packet)
     return path.read_bytes()
 
 
