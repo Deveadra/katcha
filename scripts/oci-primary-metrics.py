@@ -6,13 +6,13 @@ Data is useful for monitoring, NOT an Oracle idle-reclamation guarantee.
 """
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
 import json
 import math
-from pathlib import Path
 import re
 import subprocess
 import sys
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 HOME = Path.home()
 REPO = "Deveadra/katcha"
