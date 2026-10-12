@@ -246,15 +246,24 @@ def repair_access() -> None:
         except AccessError as exc:
             raise AccessError("Bastion update outcome UNKNOWN; inspect using 'doctor' "
                               "before any retry") from exc
-        # An incomplete verification is not success; the update may have applied.
-        try:
-            actual = active_bastion_single_host_rule(bastion)
-        except AccessError as exc:
-            raise AccessError("Bastion update may have applied, but verification failed; "
-                              "check 'doctor' before retrying") from exc
-        if actual != new:
-            raise AccessError("Bastion update did not verify the proposed rule; "
-                              "check 'doctor' before retrying")
+        # The update can be asynchronous. Poll read-only instead of issuing
+        # another mutation or interpreting transient UPDATING as failure.
+        verified = False
+        for _ in range(45):
+            try:
+                actual = active_bastion_single_host_rule(bastion)
+            except AccessError:
+                actual = None
+            if actual == new:
+                verified = True
+                break
+            if actual is not None and actual != old:
+                raise AccessError("Bastion allowlist changed unexpectedly after update; "
+                                  "inspect before attempting another change")
+            time.sleep(2)
+        if not verified:
+            raise AccessError("Bastion update outcome still unverified after 90 seconds; "
+                              "run 'doctor' before retrying")
         print("BASTION_ALLOWLIST_UPDATED: verified exact " + new)
         print("Next: run 'connect' to create a fresh Bastion session, then 'audit'.")
 
