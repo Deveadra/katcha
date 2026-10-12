@@ -15,6 +15,7 @@
     <link rel="stylesheet" href="/editorial-media-preparation.css">
     <script src="/editorial-frame-inspector.js" defer></script>
     <script src="/editorial-history.js" defer></script>
+    <script src="/editorial-scene-index.js" defer></script>
     <script src="/editorial-media-preparation.js" defer></script>
     <script src="/editorial.js" defer></script>
     <script src="/editing.js" defer></script>
@@ -181,6 +182,27 @@
                                         <div id="editorial-media-coverage"></div>
                                         <h4>Project Media Bin</h4>
                                         <div id="editorial-project-media-bin"></div>
+                                        <section aria-labelledby="editorial-footage-heading">
+                                            <h4 id="editorial-footage-heading">Inspect acquired footage</h4>
+                                            <p>Index permitted video to browse measured visual-change intervals. Colors and brightness describe sparse observed keyframes, not semantic scenes or exhaustive visual coverage. No production permission is granted.</p>
+                                            <label>Footage<select id="editorial-footage-item"></select></label>
+                                            <div class="editorial-stage-actions">
+                                                <button id="editorial-footage-start" class="mini" type="button" disabled>Index footage</button>
+                                                <button id="editorial-footage-refresh" class="mini" type="button" disabled>Refresh footage evidence</button>
+                                                <button id="editorial-footage-cancel" class="mini" type="button" hidden>Cancel indexing</button>
+                                            </div>
+                                            <p id="editorial-footage-status" role="status" aria-live="polite"></p>
+                                            <section id="editorial-footage-recovery" hidden>
+                                                <p>A previous indexing worker may still be active. Stop it and wait at least 90 seconds from its start before recording an interruption, or cancel this attempt to prevent publication.</p>
+                                                <label><input id="editorial-footage-stopped" type="checkbox"> The previous indexing worker has stopped</label>
+                                                <button id="editorial-footage-reconcile" class="mini" type="button" disabled>Record interrupted indexing</button>
+                                            </section>
+                                            <div id="editorial-footage-evidence"></div>
+                                            <label>Observed visual tags<input id="editorial-footage-query" type="text" maxlength="160" placeholder="For example: red bright"></label>
+                                            <p>Search red, green, blue, dark, bright or mid-tone. All entered tags must match a measured interval.</p>
+                                            <button id="editorial-footage-search" class="mini" type="button" disabled>Search observed tags</button>
+                                            <div id="editorial-footage-results"></div>
+                                        </section>
                                         <details class="ae-help"><summary>Search troubleshooting</summary><pre id="editorial-media-diagnostics"></pre></details>
                                     </section>
                                     <p id="editorial-asset-gaps"></p>

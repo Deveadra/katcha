@@ -51,6 +51,13 @@ WORKFLOW_RECOVERY_CONTRACTS: dict[str, WorkflowRecoveryContract] = {
         "production-worker",
         "Compilation persists workflow_id and restart stage.",
     ),
+    "SceneIndexWorkflow": WorkflowRecoveryContract(
+        "SceneIndexWorkflow",
+        RecoveryMode.PERSISTED_RECONCILE,
+        "longform-worker",
+        "MediaSceneIndex receipts persist queue and lease token; the long-form worker "
+        "dispatches each attempt once and fences failed or cancelled attempts.",
+    ),
     "EditorialProjectWorkflow": WorkflowRecoveryContract(
         "EditorialProjectWorkflow",
         RecoveryMode.PERSISTED_RECONCILE,

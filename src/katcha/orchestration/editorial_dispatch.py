@@ -13,6 +13,7 @@ from katcha.config import get_settings
 from katcha.db import session_scope
 from katcha.editorial_models import EditorialRun
 from katcha.orchestration.editorial_workflows import EditorialProjectWorkflow
+from katcha.orchestration.scene_index_dispatch import reconcile_scene_indexes
 from katcha.services.editorial_runs import ACTIVE, EditorialStopped, checkpoint, workflow_id
 
 logger = logging.getLogger(__name__)
@@ -70,6 +71,7 @@ async def editorial_reconciler(client: Client) -> None:
     while True:
         try:
             await reconcile_editorial_runs(client)
+            await reconcile_scene_indexes(client)
         except Exception:
             logger.exception("Editorial reconciliation temporarily unavailable")
         await asyncio.sleep(30)

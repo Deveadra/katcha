@@ -585,12 +585,13 @@ def test_api_channel_authorization_and_bounded_inputs(indexed_context, monkeypat
         return await call_next(request)
 
     def result(*args, **kwargs):
-        calls.append(args)
+        calls.append((args, kwargs))
         return {"status": "completed"}
 
     monkeypatch.setattr(routes, "index_project_media", result)
     monkeypatch.setattr(routes, "get_project_scene_index", result)
     monkeypatch.setattr(routes, "reconcile_project_scene_index", result)
+    monkeypatch.setattr(routes, "cancel_project_scene_index", result)
     monkeypatch.setattr(routes, "search_project_shots", lambda *args: [])
     app.include_router(routes.router)
     base = f"/v1/channels/{channel}/editorial-projects/{project}/media-bin"
@@ -601,8 +602,9 @@ def test_api_channel_authorization_and_bounded_inputs(indexed_context, monkeypat
             client.post(
                 f"{base}/{item}/scene-index", json={}, headers={"x-writer": "1"}
             ).status_code
-            == 200
+            == 202
         )
+        assert calls[-1][1]["enqueue"] is True
         assert (
             client.post(
                 f"{base}/{item}/scene-index", json={"max_frames": 999999}, headers={"x-writer": "1"}
@@ -628,6 +630,13 @@ def test_api_channel_authorization_and_bounded_inputs(indexed_context, monkeypat
                 f"{base}/shot-search", json={"item_ids": [str(item)], "query": "red", "limit": 51}
             ).status_code
             == 422
+        )
+        assert client.post(f"{base}/{item}/scene-index/cancel", json={}).status_code == 403
+        assert (
+            client.post(
+                f"{base}/{item}/scene-index/cancel", json={}, headers={"x-writer": "1"}
+            ).status_code
+            == 200
         )
         before = len(calls)
         assert (
@@ -667,3 +676,202 @@ def test_decoder_concurrency_slot_is_bounded_and_retry_is_explicit(indexed_conte
         )["status"]
         == "completed"
     )
+
+
+def queue(context, **kwargs):
+    return scene_index.index_project_media(
+        context[0],
+        context[2],
+        context[3],
+        actor="fixture",
+        enqueue=True,
+        store=context[-1],
+        **kwargs,
+    )
+
+
+def run_queued(context, token):
+    return scene_index.index_project_media(
+        context[0], context[2], context[3], actor="fixture", store=context[-1], lease_token=token
+    )
+
+
+@pytest.fixture
+def fake_measure(monkeypatch):
+    from katcha.editorial.media_intake.scene_schemas import SceneIndexV1
+
+    def measure(path, digest, directory):
+        return SceneIndexV1.model_validate(
+            {
+                "clip_sha256": digest,
+                "decoder_version": "synthetic-ui-test",
+                "timebase_numerator": 1,
+                "timebase_denominator": 10,
+                "source_origin_tick": 50,
+                "duration_ticks": 30,
+                "decoded_frames": 30,
+                "shots": [
+                    {
+                        "shot_id": "measured",
+                        "start_tick": 0,
+                        "end_tick": 30,
+                        "keyframe_tick": 0,
+                        "keyframe_sha256": "a" * 64,
+                        "visual_tags": ["red"],
+                        "mean_rgb": [255, 0, 0],
+                    }
+                ],
+            }
+        )
+
+    monkeypatch.setattr(scene_index, "_measure", measure)
+    return measure
+
+
+def test_enqueue_is_nonblocking_and_restart_claim_reuses_index(indexed_context, fake_measure):
+    queued = queue(indexed_context)
+    token = queued["receipt"]["lease_token"]
+    assert indexed_context[-1].calls == 0 and queued["evidence"] == {}
+    assert queue(indexed_context) == queued
+    assert run_queued(indexed_context, token)["status"] == "completed"
+    assert queue(indexed_context)["index_id"] == queued["index_id"]
+    with db.session_scope() as session:
+        assert len(list(session.scalars(select(MediaSceneIndex)))) == 1
+    with pytest.raises(ValueError, match="no longer queued"):
+        run_queued(indexed_context, token)
+
+
+def test_cancelled_queue_never_reads_and_stale_callback_cannot_fail_retry(indexed_context):
+    queued = queue(indexed_context)
+    token = queued["receipt"]["lease_token"]
+    cancelled = scene_index.cancel_project_scene_index(
+        indexed_context[0], indexed_context[2], indexed_context[3], actor="fixture"
+    )
+    assert cancelled["error_category"] == "cancelled_by_operator"
+    with pytest.raises(ValueError, match="no longer queued"):
+        run_queued(indexed_context, token)
+    assert indexed_context[-1].calls == 0
+    newer = queue(indexed_context, retry_failed=True)
+    scene_index.stop_scene_index_attempt(uuid.UUID(queued["index_id"]), token, "late_failure")
+    assert (
+        scene_index.get_project_scene_index(
+            indexed_context[0], indexed_context[2], indexed_context[3], verify_bytes=False
+        )
+        == newer
+    )
+    assert newer["receipt"]["lease_token"] != token
+
+
+def test_cancellation_during_decode_fences_result(indexed_context, monkeypatch, fake_measure):
+    queued = queue(indexed_context)
+
+    def cancel(*args):
+        scene_index.cancel_project_scene_index(
+            indexed_context[0], indexed_context[2], indexed_context[3], actor="fixture"
+        )
+        return fake_measure(*args)
+
+    monkeypatch.setattr(scene_index, "_measure", cancel)
+    with pytest.raises(ValueError, match="replaced"):
+        run_queued(indexed_context, queued["receipt"]["lease_token"])
+    with db.session_scope() as session:
+        row = session.scalar(select(MediaSceneIndex))
+        assert row.status == "failed" and not row.evidence
+        assert row.error_category == "cancelled_by_operator"
+
+
+def test_queue_failure_and_scope_and_permission_change(indexed_context, fake_measure):
+    queued = queue(indexed_context)
+    for channel, project in [
+        (indexed_context[1], indexed_context[2]),
+        (indexed_context[0], uuid.uuid4()),
+    ]:
+        with pytest.raises(ValueError, match="not found"):
+            scene_index.cancel_project_scene_index(channel, project, indexed_context[3], actor="x")
+        with pytest.raises(ValueError, match="not found"):
+            scene_index.index_project_media(
+                channel, project, indexed_context[3], actor="x", enqueue=True
+            )
+    with db.session_scope() as session:
+        session.get(SourceItem, indexed_context[5]).source_metadata = {}
+    with pytest.raises(ValueError, match="permission"):
+        run_queued(indexed_context, queued["receipt"]["lease_token"])
+    scene_index.stop_scene_index_attempt(
+        uuid.UUID(queued["index_id"]),
+        queued["receipt"]["lease_token"],
+        "worker_interrupted_or_failed",
+    )
+    assert indexed_context[-1].calls == 0
+
+
+@pytest.mark.asyncio
+async def test_temporal_restart_dispatch_and_connection_failure_preserve_queue(indexed_context):
+    from katcha.orchestration.scene_index_dispatch import reconcile_scene_indexes
+
+    class Client:
+        def __init__(self):
+            self.calls = []
+            self.unavailable = True
+
+        async def start_workflow(self, *args, **kwargs):
+            self.calls.append((args, kwargs))
+            if self.unavailable:
+                raise ConnectionError("offline fixture")
+
+    queued = queue(indexed_context)
+    client = Client()
+    assert await reconcile_scene_indexes(client) == 0
+    client.unavailable = False
+    assert await reconcile_scene_indexes(client) == 1
+    assert client.calls[0][1]["id"] == client.calls[1][1]["id"]
+    assert queued["receipt"]["lease_token"] in client.calls[1][1]["id"]
+    assert indexed_context[-1].calls == 0
+
+
+@pytest.mark.asyncio
+async def test_ended_temporal_attempt_is_failed_without_redecode(indexed_context):
+    from types import SimpleNamespace
+
+    from temporalio.client import WorkflowExecutionStatus
+    from temporalio.exceptions import WorkflowAlreadyStartedError
+
+    from katcha.orchestration.scene_index_dispatch import reconcile_scene_indexes
+
+    class Client:
+        async def start_workflow(self, *args, **kwargs):
+            raise WorkflowAlreadyStartedError(kwargs["id"], "SceneIndexWorkflow")
+
+        def get_workflow_handle(self, identity):
+            return self
+
+        async def describe(self):
+            return SimpleNamespace(status=WorkflowExecutionStatus.FAILED)
+
+    queued = queue(indexed_context)
+    assert await reconcile_scene_indexes(Client()) == 0
+    with db.session_scope() as session:
+        row = session.get(MediaSceneIndex, uuid.UUID(queued["index_id"]))
+        assert row.status == "failed" and row.error_category == "worker_interrupted_or_failed"
+    assert indexed_context[-1].calls == 0
+
+
+@pytest.mark.asyncio
+async def test_workflow_timeout_fences_attempt_without_automatic_decode_retry(monkeypatch):
+    from datetime import timedelta
+
+    from katcha.orchestration import scene_index_workflows as workflows
+
+    calls = []
+
+    async def execute(name, context, **kwargs):
+        calls.append((name, context, kwargs))
+        if name == "measure_project_media":
+            raise TimeoutError("synthetic worker lost")
+
+    monkeypatch.setattr(workflows.workflow, "execute_activity", execute)
+    context = {"index_id": "fixture", "token": "attempt"}
+    await workflows.SceneIndexWorkflow().run(context)
+    assert [call[0] for call in calls] == ["measure_project_media", "fail_scene_index_attempt"]
+    assert calls[0][2]["retry_policy"].maximum_attempts == 1
+    assert calls[0][2]["start_to_close_timeout"] == timedelta(minutes=3)
+    assert calls[1][1] == context

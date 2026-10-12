@@ -23,6 +23,7 @@ window.KatchaMediaPreparation = (() => {
     function render() {
         const context = state.context, run = state.run;
         el('editorial-media-preparation').hidden = !context?.project_id;
+        window.KatchaSceneIndex?.context(context, state.items);
         if (!context?.project_id) return;
         const stale = Boolean(run && (run.stale || (context.revision > 0 && run.input_revision !== context.revision)));
         const blocked = state.busy || context.busy || context.unsaved || !context.has_script;
@@ -184,6 +185,7 @@ window.KatchaMediaPreparation = (() => {
     }
     function init(transport, requestIdentity, reloadProject) {
         api = transport; identity = requestIdentity; reload = reloadProject;
+        window.KatchaSceneIndex?.init(transport);
         el('editorial-media-start').addEventListener('click', () => void work(true));
         el('editorial-media-continue').addEventListener('click', () => void work(false));
         el('editorial-media-refresh').addEventListener('click', () => void refresh());
