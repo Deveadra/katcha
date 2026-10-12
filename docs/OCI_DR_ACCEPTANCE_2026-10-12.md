@@ -47,6 +47,19 @@ Each software change is a non-disruptive repository change. CI exercises
 contracts, mocks, isolated test containers and/or Worker state logic; none
 establishes live OCI recovery or guaranteed R2 restoration.
 
+## Paid-fallback TTL cleanup isolation (implementation, not live acceptance)
+
+The expiry/retired-volume cleanup workflow has an **independent**
+`KATCHA_OCI_CLEANUP_APPROVED` GitHub variable gate; the schedule is no
+longer blocked solely because `KATCHA_OCI_RECOVERY_CONFIGURED` is false.
+This fixes the code-level dependency identified by the independent change
+review without automatically activating destructive cleanup. Missing/false
+`KATCHA_OCI_CLEANUP_APPROVED` leaves the job skipped. The operator must
+obtain a separate reviewed cleanup runbook and explicit authorization before
+setting it true; the recovery launch switches remain disabled. Workflow and
+cleanup logic tests provide **fixture-only proof**, not a live expiry test.
+Never enable cleanup by changing the recovery launch gate.
+
 ## Strict operational posture
 
 1. Keep `KATCHA_OCI_RECOVERY_CONFIGURED=false`,
