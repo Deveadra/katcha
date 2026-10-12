@@ -15,6 +15,7 @@ ROOT = Path(__file__).resolve().parents[1]
 def _base_env(monkeypatch, tmp_path: Path) -> None:
     template = ROOT / "deploy" / "cloud-init" / "oci-recovery-candidate.sh.tmpl"
     values = {
+        "KATCHA_OCI_RECOVERY_CONFIGURED": "true",
         "KATCHA_EXTERNAL_COMPUTE_ENABLED": "true",
         "KATCHA_RECOVERY_COORDINATOR_URL": "https://recovery.katcha.test",
         "KATCHA_RECOVERY_ADMIN_TOKEN": "admin-token",
@@ -187,6 +188,36 @@ def test_paid_budget_rejects_ttl_that_can_exceed_cap(monkeypatch, tmp_path) -> N
         match="TTL exceeds the configured incident budget",
     ):
         oci_recovery.RecoveryConfig.from_env()
+
+
+@pytest.mark.parametrize("disabled", ["false", "FALSE", "", "not-approved"])
+def test_recovery_activation_switch_fails_closed(monkeypatch, tmp_path, disabled) -> None:
+    _base_env(monkeypatch, tmp_path)
+    monkeypatch.setenv("KATCHA_OCI_RECOVERY_CONFIGURED", disabled)
+
+    with pytest.raises(
+        oci_recovery.RecoveryError,
+        match="OCI disaster recovery activation switch is disabled",
+    ):
+        oci_recovery.RecoveryConfig.from_env()
+
+
+def test_recovery_activation_switch_missing_fails_closed(monkeypatch, tmp_path) -> None:
+    _base_env(monkeypatch, tmp_path)
+    monkeypatch.delenv("KATCHA_OCI_RECOVERY_CONFIGURED")
+    with pytest.raises(
+        oci_recovery.RecoveryError,
+        match="OCI disaster recovery activation switch is disabled",
+    ):
+        oci_recovery.RecoveryConfig.from_env()
+
+
+def test_cleanup_configuration_allowed_with_recovery_disabled(monkeypatch, tmp_path) -> None:
+    _base_env(monkeypatch, tmp_path)
+    monkeypatch.setenv("KATCHA_OCI_RECOVERY_CONFIGURED", "false")
+    monkeypatch.setenv("KATCHA_EXTERNAL_COMPUTE_ENABLED", "false")
+    config = oci_recovery.RecoveryConfig.from_env(require_external_compute=False)
+    assert config.compartment_id == "ocid1.compartment.test"
 
 
 def test_external_compute_kill_switch_fails_closed(monkeypatch, tmp_path) -> None:
