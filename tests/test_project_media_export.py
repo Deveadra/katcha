@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import hashlib
 import io
+import json
 import uuid
 import zipfile
 from datetime import UTC, datetime
 
 import pytest
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -239,10 +240,13 @@ def test_export_is_reproducible_and_includes_only_verified_cleared_bytes(export_
         media_name = f"media/{digest[:2]}/{digest}.mp4"
         assert media_name in names
         assert archive.read(media_name) == data
-        manifest = archive.read("manifest.json").decode()
+        manifest = json.loads(archive.read("manifest.json"))
         links = archive.read("references/links.csv").decode()
-        assert '"rights_status":"production_cleared"' in manifest
-        assert '"evidence_type":"license"' in manifest
+        assert manifest["schema"] == "katcha-project-media-export-v1"
+        assert manifest["items"][0]["rights_status"] == "production_cleared"
+        assert manifest["items"][0]["rights_assessment"]["evidence"][0][
+            "evidence_type"
+        ] == "license"
         assert "https://source.example/watch?id=public-source" in links
         for forbidden in (
             "private-storage-key",
@@ -251,7 +255,7 @@ def test_export_is_reproducible_and_includes_only_verified_cleared_bytes(export_
             "temporary-secret",
             "remove-me",
         ):
-            assert forbidden not in manifest + links
+            assert forbidden not in json.dumps(manifest) + links
 
 
 def test_export_gaps_unvalidated_or_changed_media_without_bytes(export_context):
@@ -265,6 +269,28 @@ def test_export_gaps_unvalidated_or_changed_media_without_bytes(export_context):
         assert "stored_media_hash_changed" in manifest
         assert digest in manifest
     assert data
+
+
+def test_export_never_includes_restricted_bytes(export_context):
+    engine, channel_id, _, project_id, revision = export_context
+    data, _, _ = add_exportable_item(engine, channel_id, project_id, revision)
+    with db.session_scope() as session:
+        item = session.scalar(
+            select(ProjectMediaItem).where(ProjectMediaItem.project_id == project_id)
+        )
+        assert item is not None
+        item.status = "denied"
+        item.rights_status = "restricted"
+    archive_bytes = build_project_media_export(
+        channel_id,
+        project_id,
+        revision,
+        store=MemoryStore({"internal/private-storage-key": data}),
+    )
+    with zipfile.ZipFile(io.BytesIO(archive_bytes)) as archive:
+        assert not any(name.startswith("media/") for name in archive.namelist())
+        manifest = json.loads(archive.read("manifest.json"))
+        assert manifest["items"][0]["gap_reason"] == "production_clearance_required"
 
 
 def test_export_is_channel_scoped(export_context):
