@@ -188,6 +188,21 @@ def start_preparation(
         if previous:
             session.expunge(previous)
             return previous
+        active = session.scalar(
+            select(EditorialRun.id)
+            .where(
+                EditorialRun.project_id == project_id,
+                EditorialRun.channel_profile_id == channel_id,
+                EditorialRun.input_revision == project.revision,
+                EditorialRun.options["target"].as_string() == TARGET,
+                EditorialRun.status != "media_completed",
+            )
+            .limit(1)
+        )
+        if active is not None:
+            raise EditorialConflict(
+                "Finish the saved media preparation before changing search permission"
+            )
         revision = session.get(EditorialRevision, (project_id, project.revision))
         seed, source = _seed(project, revision)
         if project.revision == 0:
@@ -241,6 +256,7 @@ def start_preparation(
             status="media_pending",
             stage="media_plan_saved",
             artifacts={
+                "schema_version": 1,
                 "manifest": manifest.model_dump(mode="json"),
                 "script_source": source,
                 "input_draft_digest": revision.digest,
@@ -704,10 +720,12 @@ def reconcile_preparation(
 def response(row: EditorialRun) -> dict[str, Any]:
     project = get_project(row.channel_profile_id, row.project_id)
     return {
+        "schema_version": 1,
         "run_id": str(row.id),
         "project_id": str(row.project_id),
         "channel_profile_id": str(row.channel_profile_id),
         "input_revision": row.input_revision,
+        "external_search_authorized": row.options["external_search_authorized"],
         "status": row.status.removeprefix("media_"),
         "stage": row.stage,
         "error": row.error,

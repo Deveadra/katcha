@@ -823,3 +823,25 @@ def test_matching_operator_reference_preserves_rights_notes_and_saves_new_run_ev
     preparation.resume_preparation(channel, project.id, run.id)
     assert len(good.calls) == 2 and len(bad.calls) == 1
     assert len(list_project_media_items(channel, project.id)) == 1
+
+
+def test_search_permission_changes_wait_for_existing_preparation(script_to_bin):
+    from katcha.services.editorial_projects import EditorialConflict
+
+    channel, _, good, bad, _ = script_to_bin
+    project, _ = imported_project(channel, "[VISUAL: Vision at a window]", owned_clip=True)
+    first = start(channel, project, key="first", authorized=False)
+    with pytest.raises(EditorialConflict, match="Finish the saved media preparation"):
+        start(channel, project, key="second", revision=first.input_revision, authorized=True)
+    assert not good.calls and not bad.calls
+    assert preparation.latest_preparation(channel, project.id).id == first.id
+    assert preparation.response(first)["external_search_authorized"] is False
+    # Exact retry remains possible; a competing permission variant cannot race publication.
+    assert start(channel, project, key="first", authorized=False).id == first.id
+    finish(channel, project.id, first.id)
+    second = start(channel, project, key="second", revision=first.input_revision, authorized=True)
+    assert preparation.response(second)["external_search_authorized"] is True
+    finish(channel, project.id, second.id)
+    assert (
+        len([item for item in list_project_media_items(channel, project.id) if item.clip_id]) == 1
+    )
