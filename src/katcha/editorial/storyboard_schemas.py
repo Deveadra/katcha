@@ -68,7 +68,11 @@ class StoryboardWorkspace(Contract):
         beat_ids = [beat.beat_id for beat in self.beats]
         if len(set(beat_ids)) != len(beat_ids):
             raise ValueError("Storyboard workspace beat IDs must be unique")
-        has_footage = any(beat.media for beat in self.beats)
+        has_footage = any(
+            not use.candidate_id.startswith("approved_shot_")
+            for beat in self.beats
+            for use in beat.media
+        )
         if has_footage and self.asset_run_id is None:
             raise ValueError("Footage selections require their acquisition run")
         if not has_footage and self.asset_run_id is not None:

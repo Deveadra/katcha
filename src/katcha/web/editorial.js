@@ -149,6 +149,10 @@ window.KatchaEditorial = (() => {
         const row = [...el("editorial-storyboard").querySelectorAll("[data-board-beat]")]
             .find(item => !item.hidden);
         const value = row?.querySelector("[data-primary-visual]")?.value || "";
+        if (value.startsWith("media:approved_shot_")) {
+            clearSourceMonitor("Inspect this measured shot’s source timestamps and permission in Assets. The private preview rechecks its current rights.");
+            return;
+        }
         if (!value.startsWith("media:") || !state.project || !state.assetRun) {
             clearSourceMonitor();
             return;
@@ -632,6 +636,7 @@ window.KatchaEditorial = (() => {
             has_script: Boolean(state.project?.brief?.script_seed?.text || state.revision?.draft.script?.length),
             unsaved: Boolean(state.stale || (state.project && read(storageKey(`pending.${state.project.id}`), null))),
             busy: state.busy,
+            beats: (state.revision?.draft.script || []).map(beat => ({id: beat.id, narration: beat.narration})),
         });
     }
     function renderActions() {
@@ -1059,7 +1064,7 @@ window.KatchaEditorial = (() => {
             : {};
         return {
             presentation_mode: mode,
-            asset_run_id: beats.some(beat => beat.media?.length)
+            asset_run_id: beats.some(beat => beat.media?.some(use => !use.candidate_id.startsWith("approved_shot_")))
                 ? state.assetRun?.editorial_run_id || null
                 : null,
             beats,
@@ -1423,6 +1428,9 @@ window.KatchaEditorial = (() => {
             const sources = (draft.sources || []).filter(source => sourceIds.has(source.id));
             const savedChoice = saved[index]?.choice || "";
             const options = [...(state.images?.images || []).filter(item => item.status === "active" && item.beat_id === beat.id).map(item => ({value: `image:${item.id}`, label: `${item.illustration ? "Illustration" : "Image"}: ${item.title}`})), ...choices.filter(item => item.beat_id === beat.id && receipts[item.id]).map(item => ({value: `media:${item.id}`, label: item.title})), ...sources.map(item => ({value: `quote:${item.id}`, label: `Evidence quote: ${item.title}`}))];
+            if (savedChoice.startsWith("media:approved_shot_") && !options.some(item => item.value === savedChoice)) {
+                options.unshift({value: savedChoice, label: "Selected measured shot · permission rechecked at preview"});
+            }
             if (savedChoice && !options.some(item => item.value === savedChoice)) {
                 options.unshift({
                     value: savedChoice,
@@ -1692,6 +1700,11 @@ window.KatchaEditorial = (() => {
     function init(transport, blobTransport) {
         window.KatchaFrameInspector.init(transport, blobTransport);
         api = transport; apiBlob = blobTransport;
+        window.KatchaShotHandoff.init(transport, identity,
+            async () => ensureStoryboardWorkspaceSaved(),
+            async (channel, project) => {
+                if (state.channel === channel && state.project?.id === project) await open(project, {focus: false});
+            });
         window.KatchaMediaPreparation.init(transport, identity, async (channel, project) => {
             if (state.channel === channel && state.project?.id === project) await open(project, {focus: false});
         });
@@ -2012,7 +2025,7 @@ window.KatchaEditorial = (() => {
         el("editorial-render").addEventListener("click", () => void guarded(async () => {
             await ensureStoryboardWorkspaceSaved();
             const channel = state.channel; const project = state.project.id;
-            const payload = {target: "render", expected_revision: state.project.revision, asset_run_id: state.assetRun?.editorial_run_id || null, storyboard: storyboardPlan()};
+            const payload = {target: "render", expected_revision: state.project.revision, asset_run_id: storyboardWorkspaceDraft().asset_run_id, storyboard: storyboardPlan()};
             await api(path(channel, `/${project}/storyboard/preflight`), {method: "POST", body: JSON.stringify({expected_revision: payload.expected_revision, asset_run_id: payload.asset_run_id, plan: payload.storyboard})});
             payload.idempotency_key = identity(`render.${project}`, payload);
             await api(path(channel, `/${project}/runs`), {method: "POST", body: JSON.stringify(payload)});

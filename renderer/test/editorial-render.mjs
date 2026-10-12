@@ -6,7 +6,7 @@ import path from 'node:path';
 import {execFileSync} from 'node:child_process';
 import {bundle} from '@remotion/bundler';
 import {renderMedia, selectComposition} from '@remotion/renderer';
-import {fixture} from './editorial.mjs';
+import {fixture, approvedShotFixture} from './editorial.mjs';
 import {validateEditorialManifest} from '../src/editorial-contract.mjs';
 const temp = await fs.mkdtemp(path.join(os.tmpdir(), 'katcha-editorial-test-'));
 try {
@@ -16,7 +16,7 @@ try {
   execFileSync('ffmpeg', ['-y', '-f', 'lavfi', '-i', 'color=c=navy:size=640x360', '-frames:v', '1', path.join(publicDir, 'still.png')], {stdio: 'ignore'});
   execFileSync('ffmpeg', ['-y', '-f', 'lavfi', '-i', 'color=c=teal:size=360x640', '-frames:v', '1', path.join(publicDir, 'portrait.png')], {stdio: 'ignore'});
   const serveUrl = await bundle({entryPoint: path.resolve('src/entry.jsx'), publicDir});
-  const props = structuredClone(fixture);
+  const props = structuredClone(approvedShotFixture);
   const comparison = structuredClone(props.timeline[0]);
   comparison.beat_id = 'comparison'; comparison.start_frame = 60; comparison.layout = 'comparison';
   comparison.media.push({...comparison.media[0], start_seconds: 3, freeze: true, push_in: 1});
