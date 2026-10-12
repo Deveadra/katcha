@@ -26,18 +26,19 @@ scenes without fabricating timestamps. Verify source/publisher and retain
 actual search receipts; track provider budgets, cursors, rate limits, and
 nontransient failures. AI may propose, never approve a license.
 
-## Next A integration gate
+## Current A handoff
 
-KSI-101 through KSI-105 are accepted (#354/#349/#353/#358/#360), with linked
-exact-head CI evidence in the advisory backlog. Reuse the exact-plan adapter,
-bounded query jobs, durable reference candidates and authoritative-ledger
-ranking/coverage report. No provider fixture proves acquired or usable media.
+KSI-101 through KSI-105 and **KIN-101/#373** are accepted. Reuse the exact-plan
+adapter, bounded search ledger, grounded candidates, reference ranking and the
+scoped Editorial preparation API/Assets panel. KIN-101 merged at `aebc0025` after
+final-head CI (1,652 passed, 1 skipped), independent backend/UI review and Agent B
+Bin/export review. See `../EDITORIAL_MEDIA_PREPARATION.md` for the executable
+handoff, persistent evidence volume and explicit recovery contract.
 
-**`KIN-101`: script-to-source-to-Media-Bin integration** is now dependency-ready:
-KMI-106/#369 is accepted alongside KMI-101/#355 and KMI-102/#359, and authorized
-acquisition, validation and portable export are accepted (#364/#368/#369). Agent A
-owns this integration; Agent B reviews it. Reuse the intake contracts and do not
-duplicate Agent B services.
+**Next A task: `KSI-106`**, after Agent B's accepted **KMI-107** measured shot index.
+KMI-107 is now dependency-ready. Do not duplicate its index or invent scene/shot
+intervals while waiting. Reference metadata and fixture receipts do not prove
+usable media, rights clearance, observed scenes or source-relative times.
 
 ## Follow-on ordered tasks
 

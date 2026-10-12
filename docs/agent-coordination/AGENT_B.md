@@ -31,11 +31,13 @@ Reuse the durable Media Bin, scoped permission/receipt contracts, bounded
 acquisition, integrity validation and portable export; fixtures do not demonstrate
 live source acquisition or confer rights.
 
-**`KMI-107`: Measured shot/frame media index and search** remains gated on
-`KIN-101`. Agent A owns the dependency-ready script-to-source-to-Media-Bin
-integration; Agent B is the reviewer. Begin KMI-107 after that integration is
-accepted. Preserve source hashes, measured timestamps, channel isolation and
-bounded CPU/storage/vision costs.
+**`KMI-107`: Measured shot/frame media index and search** is now dependency-ready:
+KIN-101/#373 merged at `aebc0025` with final-head CI and Agent B's Bin/export review.
+Reuse its scoped project API, canonical Bin references, requirement/evidence
+bindings and preserved operator rights/notes. Build the measured index from real
+owned/authorized files with source hashes, measured timestamps, observation
+coverage, channel isolation and bounded CPU/storage/vision costs. Metadata-only
+references remain unassessed and are not shot observations or files.
 
 ## Follow-on ordered tasks
 

@@ -573,10 +573,29 @@
         "ProjectMediaItemV1"
       ],
       "coordination_notes": "Lead agent handles integration; coordinate only concrete overlapping edits.",
-      "status": "planned",
-      "status_evidence": null,
-      "pr_url": null,
-      "accepted_main_sha": null
+      "status": "accepted",
+      "status_evidence": {
+        "verification_level": "verified_offline",
+        "merged_pr_url": "https://github.com/Deveadra/katcha/pull/373",
+        "pr_head_sha": "4aba15b8f1b118455f722beb59e6d08ab63b68f6",
+        "merge_commit_sha": "aebc0025424291337ba4360c76da38be7367430a",
+        "ci_workflow": "CI",
+        "ci_conclusion": "success",
+        "ci_url": "https://github.com/Deveadra/katcha/actions/runs/38214738312",
+        "checks": [
+          "python: success",
+          "explorer: success",
+          "launcher: success",
+          "PR Gate: success"
+        ],
+        "launcher_ci_url": "https://github.com/Deveadra/katcha/actions/runs/38214738236",
+        "review": "Independent backend/UI review and Agent B Bin/export review passed; all findings fixed.",
+        "test_result": "1652 passed, 1 skipped",
+        "date": "2026-10-12",
+        "notes": "Existing parser/scout/ledger/ranker/Bin composed through scoped Editorial API and Assets UI. Seventeen script-to-Bin integration cases; durable receipts, fenced continuation, explicit unknown recovery, preserved operator notes/rights and canonical Clip reuse. External references remain not_assessed with zero usable media; no live provider/acquisition/production proof."
+      },
+      "pr_url": "https://github.com/Deveadra/katcha/pull/373",
+      "accepted_main_sha": "aebc0025424291337ba4360c76da38be7367430a"
     },
     {
       "id": "KMI-107",
@@ -600,7 +619,7 @@
       "interfaces": [
         "SceneIndexV1"
       ],
-      "coordination_notes": "",
+      "coordination_notes": "KIN-101/#373 accepted at aebc0025 with final-head CI; measured indexing is now dependency-ready. Live GitHub remains authoritative.",
       "status": "planned",
       "status_evidence": null,
       "pr_url": null,
@@ -722,7 +741,7 @@
     }
   ],
   "last_reconciled_date": "2026-10-12",
-  "last_reconciled_note": "KSI-101 through KSI-105 and KMI-101 through KMI-106 are accepted with linked exact-head CI evidence. KIN-101 is now dependency-ready (Agent A owner; Agent B reviewer); KMI-107 remains gated on KIN-101. Live GitHub outranks this snapshot.",
+  "last_reconciled_note": "KSI-101 through KSI-105, KMI-101 through KMI-106 and KIN-101/#373 are accepted with exact-head CI evidence. Media Intake hardening #372 is also accepted. KMI-107 is dependency-ready; KSI-106 remains gated on its measured SceneIndex. Live GitHub outranks this snapshot.",
   "agent_execution_policy": {
     "self_service": true,
     "auto_merge": "After green required checks/reviews and mergeability; no direct pushes to main or force-push.",
