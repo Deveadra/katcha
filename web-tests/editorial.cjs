@@ -500,7 +500,7 @@ const draft = {
         assert.deepEqual(binItems[0].requirement_ids, ['visual-one'], 'Displaying preparation bindings must preserve the saved operator selection');
         await page.setViewportSize({width: 390, height: 844});
         assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
-        assert.equal(await page.locator('#editorial-media-preparation .editorial-stage-actions').evaluate(node => getComputedStyle(node).display), 'grid');
+        assert.equal(await page.locator('#editorial-media-preparation > .editorial-stage-actions').evaluate(node => getComputedStyle(node).display), 'grid');
         await page.locator('#editorial-media-preparation .ae-help > summary').first().focus();
         await page.keyboard.press('Enter');
         assert.match(await page.locator('#editorial-project-media-bin').innerText(), /fixture-additional-receipt/);

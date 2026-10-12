@@ -97,3 +97,35 @@ Deterministic acceptance uses generated three-color footage with cuts at 1 and
 2 seconds and a nonzero source origin. Retrieval tolerance is one 10-fps frame
 (0.1 seconds). This fixture proves measured retrieval, not real-provider visual
 understanding or production clearance.
+
+## Editorial operator integration
+
+Editorial → Assets → Project Media Bin → **Inspect acquired footage** indexes
+acquired canonical video with current inspection permission. Links and restricted,
+denied, expired or revoked media remain visible in the bin but cannot be indexed.
+Choose footage, **Index footage**, then browse normalized source-relative intervals,
+original source timestamp origin, sparse observed tags and permission receipt refs.
+**Search observed tags** accepts only red, green, blue, dark, bright and mid-tone;
+all entered tokens must match. No-match results do not prove absence of a scene.
+Semantic actions, OCR, speech and exhaustive keyframe observation remain unsupported.
+
+The index start endpoint now returns HTTP 202 after recording a durable queued
+attempt in the existing MediaSceneIndex receipt. The existing longform Temporal
+worker reconciles queued/running attempts every 30 seconds using a deterministic
+index-ID + lease-token workflow identity. No new index table, media copy or evidence
+schema is introduced. Source permission and canonical bytes are rechecked at work
+and publication; completed replay, reads and search retain byte verification.
+
+The single decode activity has no automatic retry and a three-minute Temporal
+start-to-close window (including staging); the child decoder retains its 90-second
+wall limit and existing CPU/memory/output bounds. Restart reattaches the same
+workflow; a dead attempt is failed, requiring an explicit operator retry with a new
+lease. Temporal loss leaves the durable queue visible for later reconciliation.
+**Refresh footage evidence** recovers an uncertain response without another decode.
+
+**Cancel indexing** fences publication immediately and preserves canonical footage
+and notes. A currently running child decoder may finish its bounded window before
+releasing resources. Late callbacks cannot change a retried attempt. Legacy
+synchronous attempts retain **Record interrupted indexing** with stopped-worker
+confirmation and the existing 90-second guard. Cancellation does not grant rights;
+production binding and render still require current rights validation.

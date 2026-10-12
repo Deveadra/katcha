@@ -28,6 +28,11 @@ from katcha.orchestration.longform_activities import (
     select_compilation_candidates_activity,
 )
 from katcha.orchestration.longform_workflows import LongformCompilationWorkflow
+from katcha.orchestration.scene_index_dispatch import (
+    fail_scene_index_attempt,
+    measure_project_media,
+)
+from katcha.orchestration.scene_index_workflows import SceneIndexWorkflow
 
 
 def _recovery_stage(row: Compilation) -> str | None:
@@ -105,7 +110,7 @@ async def main() -> None:
         worker = Worker(
             client,
             task_queue=settings.temporal_longform_task_queue,
-            workflows=[LongformCompilationWorkflow, EditorialProjectWorkflow],
+            workflows=[LongformCompilationWorkflow, EditorialProjectWorkflow, SceneIndexWorkflow],
             activities=[
                 select_compilation_candidates_activity,
                 generate_longform_editor_plan_activity,
@@ -116,6 +121,8 @@ async def main() -> None:
                 render_longform_activity,
                 mark_compilation_failed,
                 *EDITORIAL_ACTIVITIES,
+                measure_project_media,
+                fail_scene_index_attempt,
             ],
             activity_executor=activity_executor,
         )

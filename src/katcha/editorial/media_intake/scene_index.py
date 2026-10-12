@@ -215,6 +215,8 @@ def index_project_media(
     actor: str,
     retry_failed: bool = False,
     store: ObjectStore | None = None,
+    enqueue: bool = False,
+    lease_token: str | None = None,
 ) -> dict[str, Any]:
     source = _source(channel_id, project_id, item_id)
     index_id = _identity(channel_id, source)
@@ -222,7 +224,30 @@ def index_project_media(
     token = str(uuid.uuid4())
     with session_scope() as session:
         row = session.get(MediaSceneIndex, index_id)
-        if row is None:
+        if lease_token is not None:
+            if (
+                row is None
+                or row.status != "indexing"
+                or row.receipt.get("lease_token") != lease_token
+                or row.receipt.get("dispatch") != "queued"
+                or row.receipt.get("permission_digest") != source.permission_digest
+            ):
+                raise EditorialConflict("Indexing attempt is no longer queued; refresh saved work")
+            token = lease_token
+            claimed = session.scalar(
+                update(MediaSceneIndex)
+                .where(
+                    MediaSceneIndex.id == index_id,
+                    MediaSceneIndex.status == "indexing",
+                    MediaSceneIndex.receipt["lease_token"].as_string() == token,
+                    MediaSceneIndex.receipt["dispatch"].as_string() == "queued",
+                )
+                .values(receipt={**row.receipt, "dispatch": "running"})
+                .returning(MediaSceneIndex.id)
+            )
+            if claimed is None:
+                raise EditorialConflict("Indexing attempt already claimed")
+        elif row is None:
             row = MediaSceneIndex(
                 id=index_id,
                 channel_profile_id=channel_id,
@@ -232,6 +257,7 @@ def index_project_media(
                 status="indexing",
                 evidence={},
                 receipt={
+                    "dispatch": "queued" if enqueue else "synchronous",
                     "actor": actor,
                     "lease_token": token,
                     "started_at": datetime.now(UTC).isoformat(),
@@ -251,6 +277,8 @@ def index_project_media(
                 raise EditorialConflict("Indexing already started; refresh saved evidence") from exc
         elif row.status == "completed":
             replay = True
+        elif enqueue and row.status == "indexing":
+            return get_project_scene_index(channel_id, project_id, item_id, verify_bytes=False)
         elif row.status == "failed" and retry_failed:
             claimed = session.scalar(
                 update(MediaSceneIndex)
@@ -262,6 +290,7 @@ def index_project_media(
                     status="indexing",
                     error_category=None,
                     receipt={
+                        "dispatch": "queued" if enqueue else "synchronous",
                         "actor": actor,
                         "lease_token": token,
                         "started_at": datetime.now(UTC).isoformat(),
@@ -281,6 +310,10 @@ def index_project_media(
             raise EditorialConflict(
                 "Indexing is unfinished or failed; inspect its receipt before retrying"
             )
+    if enqueue:
+        return get_project_scene_index(
+            channel_id, project_id, item_id, store=store, verify_bytes=replay
+        )
     try:
         with tempfile.TemporaryDirectory(prefix="katcha-scene-index-") as temp:
             directory = Path(temp)
@@ -292,6 +325,14 @@ def index_project_media(
                 )
             if replay:
                 return get_project_scene_index(channel_id, project_id, item_id, verify_bytes=False)
+            with session_scope() as session:
+                current = session.get(MediaSceneIndex, index_id)
+                if (
+                    current is None
+                    or current.status != "indexing"
+                    or current.receipt.get("lease_token") != token
+                ):
+                    raise EditorialConflict("Indexing was cancelled or replaced")
             if not _DECODER_SLOT.acquire(blocking=False):
                 raise EditorialConflict(
                     "Another video inspection is running; retry after it finishes"
@@ -477,4 +518,48 @@ def reconcile_project_scene_index(
         )
         if changed is None:
             raise EditorialConflict("Indexing changed; refresh its current receipt")
+    return get_project_scene_index(channel_id, project_id, item_id, verify_bytes=False)
+
+
+def stop_scene_index_attempt(index_id: uuid.UUID, token: str, category: str) -> None:
+    """Fence only this attempt. A late worker cannot publish or fail a newer attempt."""
+    with session_scope() as session:
+        session.execute(
+            update(MediaSceneIndex)
+            .where(
+                MediaSceneIndex.id == index_id,
+                MediaSceneIndex.status == "indexing",
+                MediaSceneIndex.receipt["lease_token"].as_string() == token,
+            )
+            .values(status="failed", error_category=category)
+        )
+
+
+def cancel_project_scene_index(
+    channel_id: uuid.UUID, project_id: uuid.UUID, item_id: uuid.UUID, *, actor: str
+) -> dict[str, Any]:
+    source = _source(channel_id, project_id, item_id)
+    index_id = _identity(channel_id, source)
+    with session_scope() as session:
+        row = session.get(MediaSceneIndex, index_id)
+        if row is None:
+            raise EditorialNotFound("No indexing operation to cancel")
+        token = row.receipt.get("lease_token", "")
+        session.execute(
+            update(MediaSceneIndex)
+            .where(
+                MediaSceneIndex.id == index_id,
+                MediaSceneIndex.status == "indexing",
+                MediaSceneIndex.receipt["lease_token"].as_string() == token,
+            )
+            .values(
+                status="failed",
+                error_category="cancelled_by_operator",
+                receipt={
+                    **row.receipt,
+                    "cancelled_by": actor,
+                    "cancelled_at": datetime.now(UTC).isoformat(),
+                },
+            )
+        )
     return get_project_scene_index(channel_id, project_id, item_id, verify_bytes=False)
