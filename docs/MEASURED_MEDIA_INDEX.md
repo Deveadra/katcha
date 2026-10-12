@@ -66,6 +66,8 @@ No timestamps or unseen actions are produced by an AI model.
 - External vision, OCR, speech and provider calls: zero.
 
 Index identity includes channel, canonical Clip ID, content SHA and policy.
+Each attempt retains its initiating project/item, actor, permission digest and
+matching upload or rights/validation evidence IDs for provenance.
 Unique claims prevent duplicate decoding; completed replay rechecks actual bytes
 without another decode. Failed attempts require explicit `retry_failed=true`.
 An interrupted `indexing` receipt is not automatically reclaimed. Confirm the

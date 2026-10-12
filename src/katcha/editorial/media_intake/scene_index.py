@@ -43,6 +43,7 @@ class _Source:
     key: str
     permission_digest: str
     declared_size: int
+    permission_evidence_refs: tuple[str, ...]
 
 
 def _source(channel_id: uuid.UUID, project_id: uuid.UUID, item_id: uuid.UUID) -> _Source:
@@ -68,6 +69,7 @@ def _source(channel_id: uuid.UUID, project_id: uuid.UUID, item_id: uuid.UUID) ->
             and (source.source_metadata or {}).get("permitted_use_confirmed") is True
             and str((source.source_metadata or {}).get("channel_profile_id")) == str(channel_id)
         ]
+        authority: tuple[str, ...]
         permission: dict[str, Any] = {"status": item.status, "rights": item.rights_status}
         if item.rights_assessment_id is not None:
             assessment = session.get(RightsAssessment, item.rights_assessment_id)
@@ -134,8 +136,12 @@ def _source(channel_id: uuid.UUID, project_id: uuid.UUID, item_id: uuid.UUID) ->
             ):
                 raise EditorialConflict("Latest successful video integrity evidence is required")
             permission.update(assessment=str(assessment.id), validation=str(validation.id))
+            authority = (f"rights:{assessment.id}", f"validation:{validation.id}")
         elif owned:
             permission["upload_evidence"] = sorted(str(source.id) for source in owned)
+            authority = tuple(
+                f"upload:{source.id}" for source in sorted(owned, key=lambda row: str(row.id))
+            )
         else:
             raise EditorialConflict(
                 "Recorded operator upload permission or current rights evidence is required"
@@ -146,6 +152,7 @@ def _source(channel_id: uuid.UUID, project_id: uuid.UUID, item_id: uuid.UUID) ->
             clip.storage_key,
             hashlib.sha256(json.dumps(permission, sort_keys=True).encode()).hexdigest(),
             int(clip.size_bytes or 0),
+            authority,
         )
 
 
@@ -230,6 +237,10 @@ def index_project_media(
                     "started_at": datetime.now(UTC).isoformat(),
                     "attempt": 1,
                     "vision_provider_calls": 0,
+                    "permission_evidence_refs": list(source.permission_evidence_refs),
+                    "permission_digest": source.permission_digest,
+                    "project_id": str(project_id),
+                    "item_id": str(item_id),
                 },
             )
             try:
@@ -256,6 +267,10 @@ def index_project_media(
                         "started_at": datetime.now(UTC).isoformat(),
                         "attempt": int(row.receipt.get("attempt", 1)) + 1,
                         "vision_provider_calls": 0,
+                        "permission_evidence_refs": list(source.permission_evidence_refs),
+                        "permission_digest": source.permission_digest,
+                        "project_id": str(project_id),
+                        "item_id": str(item_id),
                     },
                 )
                 .returning(MediaSceneIndex.id)

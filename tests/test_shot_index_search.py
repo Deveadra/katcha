@@ -154,6 +154,8 @@ def test_known_shot_measured_boundaries_timebase_sparse_evidence_and_search(inde
     result = build(context)
     evidence = result["evidence"]
     assert result["status"] == "completed"
+    assert result["receipt"]["permission_evidence_refs"] == [f"upload:{context[5]}"]
+    assert result["receipt"]["project_id"] == str(context[2])
     assert evidence["decoded_frames"] == 30
     assert evidence["source_origin_tick"] == 5000
     scale = evidence["timebase_numerator"] / evidence["timebase_denominator"]
