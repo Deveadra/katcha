@@ -24,6 +24,7 @@ window.KatchaMediaPreparation = (() => {
         const context = state.context, run = state.run;
         el('editorial-media-preparation').hidden = !context?.project_id;
         window.KatchaSceneIndex?.context(context, state.items);
+        window.KatchaShotHandoff?.context({...context, items: state.items, preparation: state.run});
         if (!context?.project_id) return;
         const stale = Boolean(run && (run.stale || (context.revision > 0 && run.input_revision !== context.revision)));
         const blocked = state.busy || context.busy || context.unsaved || !context.has_script;

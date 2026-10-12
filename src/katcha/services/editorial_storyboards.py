@@ -7,7 +7,7 @@ render, provider call, rights claim or publication by themselves.
 from __future__ import annotations
 
 import uuid
-from typing import Literal
+from typing import Any, Literal
 
 from sqlalchemy import select, update
 from sqlalchemy.orm import Session
@@ -77,6 +77,7 @@ def _validate_workspace(
         use.candidate_id
         for beat in workspace.beats
         for use in beat.media
+        if not use.candidate_id.startswith("approved_shot_")
     }
     if media_ids:
         asset_run = session.get(EditorialRun, workspace.asset_run_id)
@@ -109,6 +110,8 @@ def _validate_workspace(
         for visual in workspace.beats:
             script_beat = draft_beats[visual.beat_id]
             for use in visual.media:
+                if use.candidate_id.startswith("approved_shot_"):
+                    continue
                 selection = selections.get(use.candidate_id)
                 if (
                     selection is None
@@ -120,6 +123,22 @@ def _validate_workspace(
                         "Storyboard footage must preserve its scouted beat "
                         "and claim references"
                     )
+
+    from katcha.services.editorial_shot_handoff import (
+        resolve_approved_shots,
+        validate_approved_intervals,
+    )
+
+    identities = {
+        use.candidate_id
+        for beat in workspace.beats
+        for use in beat.media
+        if use.candidate_id.startswith("approved_shot_")
+    }
+    resolved = resolve_approved_shots(
+        project.channel_profile_id, project.id, script_revision, identities, session=session
+    )
+    validate_approved_intervals(workspace.beats, resolved)
 
     for visual in workspace.beats:
         image_ids = (
@@ -222,9 +241,12 @@ def save_storyboard(
     *,
     actor: str,
     origin: Literal["operator", "ai_apply"] = "operator",
+    operation_receipt: dict[str, Any] | None = None,
 ) -> EditorialStoryboardRevision:
     request_payload = request.model_dump(mode="json")
-    request_digest = _digest(request_payload)
+    request_digest = _digest(
+        operation_receipt if operation_receipt is not None else request_payload
+    )
     request_id = uuid.uuid5(
         project_id,
         f"editorial-storyboard:{request.script_revision}:{request.idempotency_key}",

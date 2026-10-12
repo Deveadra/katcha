@@ -15,6 +15,7 @@
     <link rel="stylesheet" href="/editorial-media-preparation.css">
     <script src="/editorial-frame-inspector.js" defer></script>
     <script src="/editorial-history.js" defer></script>
+    <script src="/editorial-shot-handoff.js" defer></script>
     <script src="/editorial-scene-index.js" defer></script>
     <script src="/editorial-media-preparation.js" defer></script>
     <script src="/editorial.js" defer></script>
@@ -202,6 +203,21 @@
                                             <p>Search red, green, blue, dark, bright or mid-tone. All entered tags must match a measured interval.</p>
                                             <button id="editorial-footage-search" class="mini" type="button" disabled>Search observed tags</button>
                                             <div id="editorial-footage-results"></div>
+                                        </section>
+                                        <section aria-labelledby="editorial-shot-heading">
+                                            <h4 id="editorial-shot-heading">Choose measured shots for Storyboard</h4>
+                                            <p>Propose intervals from indexed footage, review observed evidence and gaps, then save your own shot choice. Selecting a source does not establish characters, actions or exact scenes and does not grant rights.</p>
+                                            <fieldset><legend>Footage to inspect (up to eight)</legend><div id="editorial-shot-items"></div></fieldset>
+                                            <div class="editorial-stage-actions">
+                                                <button id="editorial-shot-match" type="button" class="mini" disabled>Propose measured shots</button>
+                                                <button id="editorial-shot-refresh" type="button" class="mini" disabled>Refresh saved shot proposals</button>
+                                            </div>
+                                            <p id="editorial-shot-status" role="status" aria-live="polite"></p>
+                                            <label>Target script beat<select id="editorial-shot-beat"></select></label>
+                                            <label class="check-row"><input id="editorial-shot-replace" type="checkbox"> Replace this beat's current visual. Other beats stay as edited; the prior version remains in Undo history.</label>
+                                            <label class="check-row"><input id="editorial-shot-freeze" type="checkbox"> Hold the measured keyframe through this beat instead of playing the interval.</label>
+                                            <p>For playback, the preview must fit entirely inside the measured interval. Shorten the beat or deliberately hold a frame when an interval is too short. Existing narration remains selected.</p>
+                                            <div id="editorial-shot-proposals"></div>
                                         </section>
                                         <details class="ae-help"><summary>Search troubleshooting</summary><pre id="editorial-media-diagnostics"></pre></details>
                                     </section>

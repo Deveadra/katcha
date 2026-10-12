@@ -221,3 +221,12 @@ validateEditorialManifest(annotatedStill);
 annotatedStill.version = 'editorial-render-v3';
 assert.throws(() => validateEditorialManifest(annotatedStill), /image annotation version/);
 console.log('Versioned image comparison and source-region contracts passed');
+
+// KIN-102 server-resolved choices retain the ordinary inert renderer contract.
+export const approvedShotFixture = structuredClone(fixture);
+const approvedShotIdentity = 'approved_shot_' + '1'.repeat(32);
+approvedShotFixture.media[0].candidate_id = approvedShotIdentity;
+approvedShotFixture.timeline[0].media[0].candidate_id = approvedShotIdentity;
+validateEditorialManifest(approvedShotFixture);
+assert.equal(approvedShotFixture.timeline[0].media[0].start_seconds, 1);
+console.log('Approved shot identities preserve source-relative renderer timing');
