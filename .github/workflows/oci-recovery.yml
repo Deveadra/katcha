@@ -359,11 +359,11 @@ jobs:
         run: |
           set -euo pipefail
           message="$(
-            printf '%s\\n' \\
-              'Katcha OCI disaster recovery failed or was blocked.' \\
-              '' \\
-              'Review GitHub run: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}' \\
-              'Verify current production health and coordinator epoch before any retry.' \\
+            printf '%s\n' \
+              'Katcha OCI disaster recovery failed or was blocked.' \
+              '' \
+              'Review GitHub run: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}' \
+              'Verify current production health and coordinator epoch before any retry.' \
               'No successful recovery, fencing, or rollback is implied.'
           )"
           bash scripts/notify-telegram.sh "$message"
