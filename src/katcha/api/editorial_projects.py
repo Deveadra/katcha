@@ -19,6 +19,7 @@ from katcha.editorial.media_bin_schemas import (
     AddProjectMediaItemRequest,
     ProjectMediaItemResponse,
 )
+from katcha.editorial.media_intake.export import build_project_media_export
 from katcha.editorial.project_schemas import (
     CreateEditorialProject,
     EditorialProjectResponse,
@@ -173,6 +174,28 @@ def media_bin_add(
         return ProjectMediaItemResponse.model_validate(row)
     except ValueError as exc:
         raise _error(exc) from exc
+
+
+@router.get("/{project_id}/media-bin/export")
+def media_bin_export(
+    channel_profile_id: uuid.UUID,
+    project_id: uuid.UUID,
+    request: Request,
+    revision: int = Query(ge=1),
+) -> Response:
+    _authorize(request, channel_profile_id)
+    try:
+        archive = build_project_media_export(channel_profile_id, project_id, revision)
+    except ValueError as exc:
+        raise _error(exc) from exc
+    return Response(
+        content=archive,
+        media_type="application/zip",
+        headers={
+            "Content-Disposition": f'attachment; filename="project-{project_id}-r{revision}.zip"',
+            "Cache-Control": "no-store",
+        },
+    )
 
 
 @router.get(

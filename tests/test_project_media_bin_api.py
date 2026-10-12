@@ -10,7 +10,12 @@ from sqlalchemy.pool import StaticPool
 from starlette.requests import Request
 
 from katcha import db
-from katcha.api.editorial_projects import media_bin_add, media_bin_detail, media_bin_list
+from katcha.api.editorial_projects import (
+    media_bin_add,
+    media_bin_detail,
+    media_bin_export,
+    media_bin_list,
+)
 from katcha.editorial.media_bin_schemas import AddProjectMediaItemRequest
 from katcha.editorial.project_schemas import CreateEditorialProject, SaveEditorialDraft
 from katcha.intelligence_models import ChannelProfile
@@ -185,3 +190,29 @@ def test_unknown_project_revision_and_item_return_not_found(media_bin_api):
     with pytest.raises(HTTPException) as unknown_item:
         media_bin_detail(channel, project_id, uuid.uuid4(), request)
     assert unknown_item.value.status_code == 404
+
+def test_media_bin_export_requires_channel_scope_and_returns_download(
+    monkeypatch, media_bin_api
+):
+    channel, other_channel, project_id, revision = media_bin_api
+    monkeypatch.setattr(
+        "katcha.api.editorial_projects.build_project_media_export",
+        lambda *args: b"portable zip bytes",
+    )
+    response = media_bin_export(
+        channel,
+        project_id,
+        authorized_request(channel, scopes={"ai:read"}),
+        revision,
+    )
+    assert response.body == b"portable zip bytes"
+    assert response.media_type == "application/zip"
+    assert response.headers["cache-control"] == "no-store"
+    with pytest.raises(HTTPException) as wrong_channel:
+        media_bin_export(
+            other_channel,
+            project_id,
+            authorized_request(channel, scopes={"ai:read"}),
+            revision,
+        )
+    assert wrong_channel.value.status_code == 403
