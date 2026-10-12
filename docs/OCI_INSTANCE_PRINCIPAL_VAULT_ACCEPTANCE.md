@@ -113,7 +113,16 @@ acceptance. Never auto-tag, launch a second instance, change production
 leadership, or retry a timed-out launch blindly.
 
 Cleanup must follow `scripts/oci-isolated-identity-probe.py cleanup` with
-its separate scoped approval and exact probe ID; verify termination of **the
+its separate scoped approval and exact probe ID. A candidate that has been
+temporarily tagged for instance-principal Vault access must have that tag
+**revoked and the revocation verified before termination**. The cleanup
+runner now enforces that ordering and preserves all other defined tags.
+If OCI cannot confirm revocation, cleanup fails closed without attempting
+VM deletion: treat the still-running authorized probe as a security incident
+and immediately reconcile it with an operator-approved, tightly scoped
+revocation/termination. Do not claim either cleanup or revoked access.
+
+After successful cleanup, verify termination of **the
 probe VM and its newly created boot volume**, complete release of 50 GB, no
 data-volume attachment, and unchanged production health and safety switches.
 A failed or ambiguous cleanup is an operator incident, not a successful test.
