@@ -13,6 +13,7 @@ from katcha.acquisition_models import DiscoveryCandidate
 from katcha.editorial.media_intake.contracts import (
     AcquisitionReceiptV1,
     ProviderPermissionV1,
+    acquisition_permission,
     production_eligibility,
 )
 from katcha.editorial.media_intake.receipts import record_outcome, start_acquisition
@@ -41,7 +42,7 @@ def receipt_db(monkeypatch):
         session.add(
             DiscoveryCandidate(
                 id=candidate_id,
-                adapter_key="test",
+                adapter_key="licensed-provider",
                 external_id=uuid.uuid4().hex,
                 source_url="https://media.example/item",
                 canonical_url=f"https://media.example/{candidate_id}",
@@ -68,9 +69,11 @@ def test_access_and_download_permission_are_distinct_and_rights_gate_production(
     assert metadata_only.allows("metadata")
     assert not metadata_only.allows("download")
     for state in ("not_assessed", "reference_only", "unknown", "expired", "revoked", "denied"):
-        allowed, _ = production_eligibility(state, permission())
+        allowed, _ = production_eligibility(state)
         assert not allowed
-    assert production_eligibility("production_cleared", permission())[0]
+    assert not acquisition_permission(metadata_only)[0]
+    # Production rights do not grant provider download permission.
+    assert production_eligibility("production_cleared")[0]
 
 
 def test_expired_permission_cannot_start_download(receipt_db):

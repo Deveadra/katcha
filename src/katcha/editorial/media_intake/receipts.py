@@ -33,11 +33,16 @@ def start_acquisition(
         raise ValueError("A stable acquisition operation key is required")
     if not permission.allows("download"):
         raise ValueError("Provider-specific download permission is absent or expired")
+    permission_snapshot = permission.model_dump(mode="json")
+    permission_snapshot["operations"] = sorted(permission.operations)
+    permission_snapshot["allowed_hosts"] = sorted(
+        host.rstrip(".").casefold() for host in permission.allowed_hosts
+    )
     payload = {
         "channel_id": str(channel_id),
         "candidate_id": str(candidate_id),
         "operation_key": operation_key,
-        "permission": permission.model_dump(mode="json"),
+        "permission": permission_snapshot,
         "fetch_url_if_allowed": fetch_url_if_allowed,
     }
     digest = hashlib.sha256(
@@ -52,6 +57,8 @@ def start_acquisition(
         )
         if candidate is None or str(owner) != str(channel_id):
             raise ValueError("Discovery candidate is not available to this channel")
+        if candidate.adapter_key != permission.provider:
+            raise ValueError("Provider download permission does not match this source")
         row = session.scalar(
             select(AcquisitionReceipt).where(
                 AcquisitionReceipt.channel_profile_id == channel_id,
@@ -77,6 +84,7 @@ def start_acquisition(
                 "schema": "ProviderPermissionV1",
                 "provider": permission.provider,
                 "operations": sorted(permission.operations),
+                "allowed_hosts": permission_snapshot["allowed_hosts"],
                 "evidence_scope": permission.evidence_scope,
                 "evidence_refs": permission.evidence_refs,
                 "expires_at": permission.expires_at.isoformat() if permission.expires_at else None,
@@ -90,6 +98,26 @@ def start_acquisition(
             safe_resume_cursor={},
         )
         session.add(row)
+        session.flush()
+        return row
+
+
+def claim_acquisition(channel_id: uuid.UUID, receipt_id: uuid.UUID) -> AcquisitionReceipt:
+    """Atomically claim an authorized receipt once; active/unknown attempts cannot replay."""
+    with session_scope() as session:
+        row = session.scalar(
+            select(AcquisitionReceipt)
+            .where(
+                AcquisitionReceipt.id == receipt_id,
+                AcquisitionReceipt.channel_profile_id == channel_id,
+            )
+            .with_for_update()
+        )
+        if row is None:
+            raise ValueError("Acquisition receipt not found in this channel")
+        if row.status != "authorized":
+            raise ValueError("Acquisition is unfinished or final; reconcile it before any retry")
+        row.status = "acquiring"
         session.flush()
         return row
 
