@@ -17,6 +17,7 @@ import {
   fenceResult,
   markCandidateReady,
   markIncidentDispatched,
+  markIncidentDispatchFailed,
   prepareAuthority,
   releaseExternalCompute,
   reserveExternalCompute,
@@ -222,6 +223,79 @@ test("bootstrap heartbeat resets staleness and terminal acquisition disables res
     false,
   );
 });
+
+test("failed recovery dispatch is cooled down and exhausted after three attempts", () => {
+  let state = {
+    ...defaultAuthorityState(),
+    active: {
+      deployment_id: "oci-a1",
+      epoch: 4,
+      health_url: "https://app.example.test/v1/health/ready",
+      consecutive_failures: 0,
+    },
+  };
+  state = configureWatchdog(state, {
+    enabled: true,
+    intervalSeconds: 60,
+    failureThreshold: 1,
+    recoveryRetrySeconds: 300,
+    maxDispatchAttempts: 3,
+  });
+  const failure = {
+    deploymentId: "oci-a1", deploymentEpoch: 4, healthy: false,
+  };
+  let result = applyProbe(state, failure, 1000);
+  assert.equal(result.shouldDispatch, true);
+  const incidentId = result.state.incident.id;
+
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    state = markIncidentDispatchFailed(result.state, incidentId, "dispatch network error",
+      attempt * 500_000);
+    assert.equal(state.incident.dispatch_attempts, attempt);
+    result = applyProbe(state, failure, attempt * 500_000 + 1000);
+    assert.equal(result.shouldDispatch, false);
+    if (attempt < 3) {
+      assert.equal(result.state.incident.status, "pending_dispatch");
+      result = applyProbe(
+        result.state, failure, attempt * 500_000 + 300_000,
+      );
+      assert.equal(result.shouldDispatch, true);
+    }
+  }
+
+  assert.equal(result.state.incident.status, "dispatch_exhausted");
+  result = applyProbe(result.state, failure, 99_000_000);
+  assert.equal(result.shouldDispatch, false);
+  assert.equal(result.state.incident.id, incidentId);
+});
+
+
+test("successfully queued recovery is not redispatched after retry budget", () => {
+  let state = {
+    ...defaultAuthorityState(),
+    active: {
+      deployment_id: "oci-a1",
+      epoch: 4,
+      health_url: "https://app.example.test/v1/health/ready",
+      consecutive_failures: 0,
+    },
+  };
+  state = configureWatchdog(state, {
+    enabled: true, intervalSeconds: 60, failureThreshold: 1,
+    recoveryRetrySeconds: 300, maxDispatchAttempts: 2,
+  });
+  const failure = { deploymentId: "oci-a1", deploymentEpoch: 4, healthy: false };
+  let result = applyProbe(state, failure, 1000);
+  const id = result.state.incident.id;
+  state = markIncidentDispatched(result.state, id, 2000);
+  result = applyProbe(state, failure, 302_000);
+  assert.equal(result.shouldDispatch, true);
+  state = markIncidentDispatched(result.state, id, 303_000);
+  result = applyProbe(state, failure, 603_000);
+  assert.equal(result.shouldDispatch, false);
+  assert.equal(result.state.incident.status, "dispatch_exhausted");
+});
+
 
 test("watchdog defaults unresolved recovery retry to five minutes", () => {
   const state = defaultAuthorityState();
