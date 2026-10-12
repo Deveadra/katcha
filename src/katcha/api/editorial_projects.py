@@ -19,7 +19,6 @@ from katcha.editorial.media_bin_schemas import (
     AddProjectMediaItemRequest,
     ProjectMediaItemResponse,
 )
-from katcha.editorial.media_intake.export import build_project_media_export
 from katcha.editorial.project_schemas import (
     CreateEditorialProject,
     EditorialProjectResponse,
@@ -183,18 +182,19 @@ def media_bin_export(
     request: Request,
     revision: int = Query(ge=1),
 ) -> Response:
+    from katcha.api.media_export_response import MediaExportFileResponse
+    from katcha.editorial.media_intake.export import build_project_media_export_file
+
     _authorize(request, channel_profile_id)
     try:
-        archive = build_project_media_export(channel_profile_id, project_id, revision)
+        archive_path = build_project_media_export_file(channel_profile_id, project_id, revision)
     except ValueError as exc:
         raise _error(exc) from exc
-    return Response(
-        content=archive,
+    return MediaExportFileResponse(
+        path=archive_path,
         media_type="application/zip",
-        headers={
-            "Content-Disposition": f'attachment; filename="project-{project_id}-r{revision}.zip"',
-            "Cache-Control": "no-store",
-        },
+        filename=f"project-{project_id}-r{revision}.zip",
+        headers={"Cache-Control": "no-store"},
     )
 
 
