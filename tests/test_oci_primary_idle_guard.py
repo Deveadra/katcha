@@ -6,7 +6,6 @@ from pathlib import Path
 
 import pytest
 
-
 SOURCE = Path("scripts/oci-primary-idle-guard.py")
 SPEC = importlib.util.spec_from_file_location("a1_idle_guard", SOURCE)
 assert SPEC and SPEC.loader
