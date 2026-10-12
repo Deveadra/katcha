@@ -160,6 +160,7 @@ def test_status_reports_unknown_listener_without_killing_it(monkeypatch, capsys)
 
 
 def test_audit_does_not_assume_exit_zero_means_verified(monkeypatch, capsys):
+    monkeypatch.setattr(admin, "admin_valid", lambda: True)
     monkeypatch.setattr(admin, "handshake", lambda: False)
     monkeypatch.setattr(admin, "run", lambda args, timeout=45: "READ_ONLY_AUDIT_FINISHED")
     assert admin.audit() is False
@@ -516,3 +517,55 @@ def test_repair_declined_confirmation_makes_no_oci_mutation(monkeypatch):
     monkeypatch.setattr(admin, "oci", lambda *a: pytest.fail("declined update"))
     with pytest.raises(admin.AccessError, match="confirmation not received"):
         admin.repair_access()
+
+
+def test_audit_expired_admin_does_not_run_iam_or_capacity(monkeypatch, capsys):
+    monkeypatch.setattr(admin, "admin_valid", lambda: False)
+    monkeypatch.setattr(admin, "handshake", lambda: False)
+    monkeypatch.setattr(admin, "run", lambda *a, **k: pytest.fail(
+        "invalid administrator token must not invoke read-only OCI metadata probes"
+    ))
+    assert admin.audit() is False
+    out = capsys.readouterr().out
+    assert "audit_admin_session: NEEDS_BROWSER_LOGIN" in out
+    assert "IAM: BLOCKED (administrator session invalid or unavailable" in out
+    assert "CAPACITY: BLOCKED (administrator session invalid or unavailable" in out
+    assert "recovery-readiness.py" not in out
+    assert "Overall read-only evidence: INCOMPLETE" in out
+
+
+def test_audit_expired_admin_still_runs_host_backup_audit(monkeypatch, capsys):
+    monkeypatch.setattr(admin, "admin_valid", lambda: False)
+    monkeypatch.setattr(admin, "handshake", lambda: True)
+    commands = []
+
+    def fake_run(args, timeout=45):
+        commands.append(args)
+        assert args[-1] == "--backups-only"
+        return (
+            "=== OCI HOST BACKUP/RESTORE EVIDENCE (READ ONLY) ===\\n"
+            "durable_mount: PASS\\n"
+            "katcha-backup: TIMER_ACTIVE_ENABLED evidence=SUCCESS_FRESH\\n"
+            "katcha-restore-test: TIMER_ACTIVE_ENABLED evidence=SUCCESS_FRESH\\n"
+            "READ_ONLY_AUDIT_FINISHED"
+        )
+
+    monkeypatch.setattr(admin, "run", fake_run)
+    assert admin.audit() is False
+    assert len(commands) == 1
+    out = capsys.readouterr().out
+    assert "BACKUPS" in out
+    assert "durable_mount: PASS" in out
+    assert "Overall read-only evidence: INCOMPLETE" in out
+
+
+def test_audit_valid_admin_with_failed_probe_prints_direct_command(monkeypatch, capsys):
+    monkeypatch.setattr(admin, "admin_valid", lambda: True)
+    monkeypatch.setattr(admin, "handshake", lambda: False)
+    monkeypatch.setattr(admin, "run", lambda *a, **k: (
+        (_ for _ in ()).throw(admin.AccessError("command failed: python3 (exit 2)"))
+    ))
+    assert admin.audit() is False
+    out = capsys.readouterr().out
+    assert "python3 scripts/audit-oci-recovery-readiness.py --iam-only" in out
+    assert "python3 scripts/audit-oci-free-candidate-capacity.py" in out
