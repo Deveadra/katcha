@@ -58,8 +58,10 @@ matching behavior is changed.
 A compile/handoff verifies at most 30 shot choices, eight proposal packages, eight
 footage references and the existing 512 MiB unique-source budget. Canonical bytes
 are verified once over the combined set before metadata-only per-package checks.
-Save and compile recheck approval/rights; the existing render pipeline compiles
-again before output promotion. Preview access, review and publication continue to
+Save and compile recheck approval/rights; rendering verifies again after its durable
+dispatch claim, immediately before the renderer/recovery call, and before output
+promotion. A new request rejected before calling the renderer can safely resume;
+a previously uncertain dispatch retains its uncertainty. Preview access, review and publication continue to
 use current manifest verification. Revocation, replacement, script edits, changed
 bytes/index/Bin evidence or invalid timing blocks use and preserves history.
 

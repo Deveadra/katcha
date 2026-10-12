@@ -492,3 +492,37 @@ def test_existing_review_pipeline_accepts_current_shots_and_invalidates_revocati
     status = review_status(context[0], context[2], run.id)
     assert status["status"] == "invalidated" and status["publication_available"] is False
     assert get_latest_storyboard(context[0], context[2]).version == 1
+
+
+def test_choice_replaced_after_dispatch_claim_prevents_render_call(handoff_context, monkeypatch):
+    from katcha.editorial import render
+
+    context, package, choice = handoff_context
+    workspace = apply(context, choice)
+    run = start_run(
+        context[0],
+        context[2],
+        StartEditorialRun(
+            idempotency_key="replace-before-render",
+            expected_revision=2,
+            target="render",
+            storyboard=plan(workspace),
+        ),
+        actor="operator",
+    )
+    original_claim = render.claim_dispatch
+
+    def replace_after_claim(*args):
+        dispatched = original_claim(*args)
+        choose(context, package, key="replaced-at-dispatch", version=1)
+        return dispatched
+
+    monkeypatch.setattr(render, "claim_dispatch", replace_after_claim)
+    monkeypatch.setattr(
+        render, "render_editorial", lambda manifest: pytest.fail("stale choice dispatched")
+    )
+    assert render.render_project(str(run.id), 1)["status"] == "blocked"
+    with db.session_scope() as session:
+        stored = session.get(EditorialRun, run.id)
+        assert stored.artifacts["render_dispatch"]["state"] == "rejected"
+        assert not stored.artifacts.get("render_result")

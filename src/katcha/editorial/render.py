@@ -90,8 +90,27 @@ def render_project(run_id: str, attempt: int) -> dict:
         row = checkpoint(run_id, attempt, stage="validating_storyboard")
         manifest = current_manifest(row)
         dispatch = claim_dispatch(run_id, attempt, manifest)
-        # Recheck cancellation immediately before the external side effect.
-        checkpoint(run_id, attempt, stage="rendering" if dispatch else "reconciling_render")
+        # Recheck cancellation and current source/choice/rights after the dispatch claim.
+        row = checkpoint(run_id, attempt, stage="rendering" if dispatch else "reconciling_render")
+        try:
+            if current_manifest(row) != manifest:
+                raise EditorialConflict("Script, media or clearance changed before render dispatch")
+        except Exception:
+            if dispatch:
+                # No renderer call occurred. This known rejection may be explicitly resumed;
+                # never change an older uncertain dispatch into a safe-to-repeat receipt.
+                checkpoint(
+                    run_id,
+                    attempt,
+                    artifacts={
+                        "render_dispatch": {
+                            "state": "rejected",
+                            "attempt": attempt,
+                            "reason": "current_evidence_changed_before_dispatch",
+                        }
+                    },
+                )
+            raise
         result = render_editorial(manifest) if dispatch else recover_editorial_output(manifest)
         if result is None:
             raise EditorialConflict(
