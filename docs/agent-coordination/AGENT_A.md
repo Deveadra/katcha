@@ -35,10 +35,14 @@ final-head CI (1,652 passed, 1 skipped), independent backend/UI review and Agent
 Bin/export review. See `../EDITORIAL_MEDIA_PREPARATION.md` for the executable
 handoff, persistent evidence volume and explicit recovery contract.
 
-**Next A task: `KSI-106`**, after Agent B's accepted **KMI-107** measured shot index.
-KMI-107 is now dependency-ready. Do not duplicate its index or invent scene/shot
-intervals while waiting. Reference metadata and fixture receipts do not prove
-usable media, rights clearance, observed scenes or source-relative times.
+**Next A task: `KSI-106`** is dependency-ready after **KMI-107/#375** merged
+at `de563dcc` with final-head CI (1,680 passed, 1 skipped). Reuse the durable
+`SceneIndexV1` and scoped index/search services documented in
+`../MEASURED_MEDIA_INDEX.md`. Initial evidence measures visual-change intervals,
+source timestamps and sparse keyframe hashes/color tags. OCR, speech and semantic
+actions remain unobserved; do not treat sparse evidence as exhaustive inspection.
+Preserve channel and current-rights gates, measured source bounds and operator
+choices when proposing bindings. Provider metadata and references grant no rights.
 
 ## Follow-on ordered tasks
 

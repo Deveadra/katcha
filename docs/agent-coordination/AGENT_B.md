@@ -26,18 +26,22 @@ permission. Neither a downloader library nor an HTTP 200 grants rights.
 
 ## Current B handoff
 
-KMI-101 through KMI-106 are accepted with merged PRs and exact-head CI evidence.
+KMI-101 through KMI-107 are accepted with merged PRs and exact-head CI evidence.
 Reuse the durable Media Bin, scoped permission/receipt contracts, bounded
 acquisition, integrity validation and portable export; fixtures do not demonstrate
 live source acquisition or confer rights.
 
-**`KMI-107`: Measured shot/frame media index and search** is now dependency-ready:
-KIN-101/#373 merged at `aebc0025` with final-head CI and Agent B's Bin/export review.
-Reuse its scoped project API, canonical Bin references, requirement/evidence
-bindings and preserved operator rights/notes. Build the measured index from real
-owned/authorized files with source hashes, measured timestamps, observation
-coverage, channel isolation and bounded CPU/storage/vision costs. Metadata-only
-references remain unassessed and are not shot observations or files.
+**`KMI-107`: Measured shot/frame media index and search** is accepted in #375,
+merge `de563dcc`, with exact-head CI (1,680 passed, 1 skipped). Reuse its durable
+`SceneIndexV1`, source SHA/timebase, sparse keyframe descriptors, scoped services,
+current permission checks and bounded decoder receipts. See
+`../MEASURED_MEDIA_INDEX.md` for the initial visual-token search and coverage limits.
+No semantic actions, OCR, speech, provider calls or production rights are inferred.
+
+**Next B task: `KIN-102`** remains gated on Agent A's accepted `KSI-106`
+requirement-to-shot bindings. Preserve the existing Editorial direction/storyboard
+and recheck production eligibility at compile/render. Live merged PRs and CI prove
+eligibility; coordinate only actual overlapping edits.
 
 ## Follow-on ordered tasks
 
