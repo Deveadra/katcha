@@ -110,8 +110,8 @@ class Oci:
             raise ProbeError("OCI launch returned invalid instance metadata")
         return data
 
-    def enable_candidate_tag(self, instance_id: str, defined_tags: dict[str, Any]) -> None:
-        """Single approved, isolated candidate identity mutation only."""
+    def update_probe_defined_tags(self, instance_id: str, defined_tags: dict[str, Any]) -> None:
+        """Only after caller proves exact probe identity and mutation approval."""
         try:
             command(
                 [
@@ -659,7 +659,7 @@ def promote_identity_only_candidate(
         **original,
         "KatchaRecovery": {**recovery_tags, "Candidate": "true"},
     }
-    oci.enable_candidate_tag(instance_id, updated)
+    oci.update_probe_defined_tags(instance_id, updated)
     verified = verify(oci, plan, instance_id, allow_candidate_tag=True)
     if verified["vault_candidate_tag"] is not True:
         raise ProbeError("identity tag result unverified; reconcile exact probe")
@@ -705,6 +705,31 @@ def cleanup(oci: Oci, plan: dict[str, Any], instance_id: str) -> dict[str, Any]:
     boot_id = attached[0].get("boot-volume-id")
     if not isinstance(boot_id, str) or not boot_id.startswith("ocid1.bootvolume."):
         raise ProbeError("cleanup refused: probe boot volume ID invalid")
+    # Revoke temporary instance-principal Vault authorization *before*
+    # attempting termination. A timed-out delete must not intentionally leave
+    # a still-authorized probe running.
+    original = instance.get("defined-tags") or {}
+    recovery_tags = original.get("KatchaRecovery") or {}
+    if recovery_tags.get("Candidate") == "true":
+        remaining = {
+            key: value for key, value in recovery_tags.items()
+            if key != "Candidate"
+        }
+        new_defined = {**original}
+        if remaining:
+            new_defined["KatchaRecovery"] = remaining
+        else:
+            new_defined.pop("KatchaRecovery", None)
+        oci.update_probe_defined_tags(instance_id, new_defined)
+        after_revoke = oci.read(
+            "compute", "instance", "get", "--instance-id", instance_id
+        )
+        after_tags = (after_revoke.get("defined-tags") or {}).get("KatchaRecovery") or {}
+        if after_tags.get("Candidate") == "true":
+            raise ProbeError(
+                "cleanup refused: instance-principal candidate tag revocation unverified"
+            )
+
     oci.terminate_test_instance(instance_id)
     for _ in range(24):
         rows = _rows(
