@@ -543,10 +543,10 @@ def test_audit_expired_admin_still_runs_host_backup_audit(monkeypatch, capsys):
         commands.append(args)
         assert args[-1] == "--backups-only"
         return (
-            "=== OCI HOST BACKUP/RESTORE EVIDENCE (READ ONLY) ===\\n"
-            "durable_mount: PASS\\n"
-            "katcha-backup: TIMER_ACTIVE_ENABLED evidence=SUCCESS_FRESH\\n"
-            "katcha-restore-test: TIMER_ACTIVE_ENABLED evidence=SUCCESS_FRESH\\n"
+            "=== OCI HOST BACKUP/RESTORE EVIDENCE (READ ONLY) ===\n"
+            "durable_mount: PASS\n"
+            "katcha-backup: TIMER_ACTIVE_ENABLED evidence=SUCCESS_FRESH\n"
+            "katcha-restore-test: TIMER_ACTIVE_ENABLED evidence=SUCCESS_FRESH\n"
             "READ_ONLY_AUDIT_FINISHED"
         )
 
