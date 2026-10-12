@@ -6,6 +6,8 @@ const path = require("node:path");
 const server = spawn("python3", ["-m", "http.server", "8776", "--bind", "127.0.0.1", "--directory", path.resolve(__dirname, "../src/katcha/web")], { stdio: "ignore" });
 const calls = [];
 let project = null, run = null, revision = null, acquisitionRun = null;
+let mediaPreparation = null, loseMediaPlanResponse = true, loseMediaStepResponse = true;
+const binItems = [{id: 'bin-reference', status: 'reference_only', rights_status: 'not_assessed', external_reference_url: 'https://example.com/original', requirement_ids: ['visual-one'], source_metadata: {observations: [{title: 'Fixture interview <unsafe>'}]}, provenance: {receipt_id: 'fixture-receipt'}}, {id: 'bin-revoked', status: 'denied', rights_status: 'revoked', external_reference_url: 'https://example.com/revoked', requirement_ids: [], source_metadata: {title: 'Revoked source'}}];
 const managedClipId = "11111111-1111-4111-8111-111111111111";
 const managedSourceUrl = "https://www.youtube.com/watch?v=fixture";
 const uploadedClipId = "22222222-2222-4222-8222-222222222222";
@@ -154,6 +156,31 @@ const draft = {
                     project = { id: "project", brief: body.brief, revision: 0 };
                     if (loseCreateResponse) { loseCreateResponse = false; return send({ detail: "Connection interrupted. Retry to recover the saved brief." }, 503); }
                     return send(project, 201);
+                }
+                if (url.pathname.endsWith('/media-bin')) return send({items: mediaPreparation?.status === 'completed' ? binItems : []});
+                if (/\/media-preparation(?:\/[^/]+)?(?:\/(?:resume|reconcile))?$/.test(url.pathname)) {
+                    if (!body) return send(mediaPreparation);
+                    if (url.pathname.endsWith('/reconcile')) {
+                        assert.deepEqual(body, {confirmed_worker_stopped: true});
+                        mediaPreparation.status = 'pending'; mediaPreparation.stage = 'planned';
+                        mediaPreparation.recovery_required = false;
+                        return send(mediaPreparation);
+                    }
+                    if (url.pathname.endsWith('/resume')) {
+                        mediaPreparation.progress.completed_jobs += 1;
+                        if (loseMediaStepResponse) { loseMediaStepResponse = false; return send({detail: 'Search response interrupted. Refresh to recover saved progress.'}, 503); }
+                        mediaPreparation.status = 'completed';
+                        mediaPreparation.media_bin_items = binItems;
+                        return send(mediaPreparation);
+                    }
+                    mediaPreparation = mediaPreparation || {
+                        run_id: 'media-fixture', project_id: 'project', channel_profile_id: 'one', external_search_authorized: true, input_revision: 1, status: 'pending', stage: 'planned', stale: false,
+                        progress: {completed_jobs: 0, total_jobs: 2}, manifest: {requirements: [{requirement_id: 'visual-one', intent: 'Show the interview'}, {requirement_id: 'visual-two', intent: 'Operator-supplied footage'}]},
+                        coverage: {requirements: [{requirement_id: 'visual-one', coverage_status: 'reference_only', usable_media_count: 0, references: [{canonical_url: 'https://example.com/original', title: 'Interview reference', rights_state: 'not_assessed'}], gaps: [{category: 'media_rights_unverified', next_action: 'Review permission before using this reference.'}]}, {requirement_id: 'visual-two', coverage_status: 'unresolved', usable_media_count: 0, references: [], gaps: [{category: 'needs_operator_input', next_action: 'Supply permitted footage for this visual need.'}]}]}, planning_gaps: [], media_bin_items: [], bin_bindings: [{media_item_id: 'bin-reference', requirement_ids: ['visual-one', 'visual-two'], provenance: {receipt_id: 'fixture-additional-receipt'}}],
+                    };
+                    project.revision = 1; revision = {revision: 1, draft};
+                    if (loseMediaPlanResponse) { loseMediaPlanResponse = false; return send({detail: 'Plan response lost. Retry the same action.'}, 503); }
+                    return send(mediaPreparation, 201);
                 }
                 if (url.pathname.endsWith('/script-visual-plan')) {
                     if (!project?.brief?.script_seed) return send({detail: 'Import a script seed first'}, 409);
@@ -437,6 +464,71 @@ const draft = {
         await page.getByText(/1 narration passage\(s\) · 1 visual\/audio requirement\(s\)/).waitFor();
         await page.getByText(/No explicit visual directions detected/).waitFor();
         assert.equal(calls.filter(call => call.path.endsWith('/script-visual-plan')).length, 1);
+        await page.locator('[data-editorial-stage="assets"]').click();
+        await page.locator('#editorial-media-status').filter({hasText: 'No media search saved'}).waitFor();
+        assert.equal(await page.locator('#editorial-media-search-permission').isChecked(), false);
+        const binMaterial = await page.locator('#editorial-media-preparation').evaluate(node => ({background: getComputedStyle(node).backgroundColor, border: getComputedStyle(node).borderTopWidth}));
+        assert.notEqual(binMaterial.background, 'rgba(0, 0, 0, 0)');
+        assert.equal(binMaterial.border, '1px');
+        await page.locator('#editorial-media-search-permission').check();
+        await page.locator('#editorial-media-start').focus();
+        await page.keyboard.press('Enter');
+        await page.locator('#editorial-media-status').filter({hasText: 'Plan response lost'}).waitFor();
+        assert.equal(await page.locator('#editorial-media-search-permission').isChecked(), true);
+        await page.locator('#editorial-media-start').click();
+        await page.locator('#editorial-media-status').filter({hasText: 'Search response interrupted'}).waitFor();
+        const mediaPlans = calls.filter(call => call.path.endsWith('/media-preparation') && call.method === 'POST');
+        assert.equal(mediaPlans.length, 2);
+        assert.deepEqual(mediaPlans[0].body, mediaPlans[1].body);
+        assert.equal(mediaPlans[0].body.external_search_authorized, true);
+        await page.locator('#editorial-media-refresh').click();
+        await page.locator('#editorial-media-status').filter({hasText: '1 of 2'}).waitFor();
+        await page.locator('#editorial-media-continue').click();
+        await page.locator('#editorial-media-status').filter({hasText: 'Media search finished'}).waitFor();
+        await page.locator('#editorial-project-media-bin').filter({hasText: 'Permission revoked'}).waitFor();
+        assert.match(await page.locator('#editorial-media-search-scope').textContent(), /Saved search permission: bounded public-provider metadata searches allowed/);
+        assert.match(await page.locator('#editorial-media-coverage').innerText(), /Supply permitted footage/);
+        assert.match(await page.locator('#editorial-project-media-bin').innerText(), /Permission not assessed/);
+        assert.equal(await page.locator('#editorial-project-media-bin script').count(), 0);
+        assert.match(await page.locator('#editorial-project-media-bin').innerText(), /Fixture interview <unsafe>/);
+        assert.match(await page.locator('#editorial-project-media-bin').innerText(), /Linked to 2 script visual needs/);
+        assert.deepEqual(binItems[0].requirement_ids, ['visual-one'], 'Displaying preparation bindings must preserve the saved operator selection');
+        await page.setViewportSize({width: 390, height: 844});
+        assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
+        assert.equal(await page.locator('#editorial-media-preparation .editorial-stage-actions').evaluate(node => getComputedStyle(node).display), 'grid');
+        await page.locator('#editorial-media-preparation .ae-help > summary').first().focus();
+        await page.keyboard.press('Enter');
+        assert.match(await page.locator('#editorial-project-media-bin').innerText(), /fixture-additional-receipt/);
+        await page.locator('#editorial-media-preparation').screenshot({path: path.resolve(__dirname, 'test-results/editorial-media-bin-mobile.png')});
+        await page.setViewportSize({width: 1280, height: 900});
+        mediaPreparation = {...mediaPreparation, status: 'failed', stage: 'media_outcome_unknown', recovery_required: true, recovery_available_at: null, progress: {completed_jobs: 1, total_jobs: 2}};
+        const stepsBeforeRecovery = calls.filter(call => call.path.endsWith('/resume') && call.path.includes('/media-preparation/')).length;
+        await page.locator('#editorial-media-refresh').click();
+        await page.locator('#editorial-media-recovery').waitFor({state: 'visible'});
+        assert.equal(await page.locator('#editorial-media-worker-stopped').isChecked(), false);
+        await page.locator('#editorial-media-worker-stopped').check();
+        assert.equal(await page.locator('#editorial-media-record-unknown').isDisabled(), true);
+        assert.match(await page.locator('#editorial-media-recovery-wait').textContent(), /Recovery time is unavailable/);
+        await page.locator('#editorial-media-worker-stopped').uncheck();
+        mediaPreparation.recovery_available_at = new Date(Date.now() + 600000).toISOString();
+        await page.locator('#editorial-media-refresh').click();
+        await page.locator('#editorial-media-recovery-wait').filter({hasText: 'Recovery can be recorded after'}).waitFor();
+        await page.locator('#editorial-media-worker-stopped').check();
+        assert.equal(await page.locator('#editorial-media-record-unknown').isDisabled(), true);
+        assert.match(await page.locator('#editorial-media-recovery-wait').textContent(), /Recovery can be recorded after/);
+        await page.locator('#editorial-media-worker-stopped').uncheck();
+        mediaPreparation.recovery_available_at = new Date(Date.now() - 1000).toISOString();
+        await page.locator('#editorial-media-refresh').click();
+        await page.locator('#editorial-media-recovery-wait').filter({hasText: 'Confirm the previous search has stopped'}).waitFor();
+        assert.equal(await page.locator('#editorial-media-record-unknown').isDisabled(), true);
+        assert.equal(calls.filter(call => call.path.endsWith('/resume') && call.path.includes('/media-preparation/')).length, stepsBeforeRecovery);
+        await page.locator('#editorial-media-worker-stopped').check();
+        await page.locator('#editorial-media-record-unknown').click();
+        await page.locator('#editorial-media-status').filter({hasText: 'Unknown outcome recorded'}).waitFor();
+        assert.equal(calls.filter(call => call.path.endsWith('/reconcile')).length, 1);
+        await page.locator('#editorial-media-continue').click();
+        await page.locator('#editorial-media-status').filter({hasText: 'Media search finished'}).waitFor();
+        console.log('Fixture media plan recovery, explicit unknown-outcome recovery, rights, gaps and 390px keyboard checks passed.');
         await page.locator('[data-editorial-stage="research"]').click();
         await page.getByRole("button", { name: "Research and draft script", exact: true }).click();
         await page.getByText(/Provider quota rejected/).waitFor();
@@ -446,6 +538,8 @@ const draft = {
         assert.match(await page.locator("#editorial-evidence").innerText(), /theory/);
         assert.equal(await page.locator("#editorial-evidence a").getAttribute("href"), "https://example.com/interview");
         await page.locator('[data-beat-narration="0"]').fill("My edited narration.");
+        assert.equal(await page.locator('#editorial-media-start').isDisabled(), true);
+        assert.match(await page.locator('#editorial-media-gate').textContent(), /Save your script changes/);
         await page.getByRole("button", { name: "Save script revision", exact: true }).click();
         await page.getByText(/Save response interrupted/).waitFor();
         assert.equal(await page.locator('[data-beat-narration="0"]').inputValue(), "My edited narration.");
@@ -774,6 +868,8 @@ const draft = {
         assert.equal(await page.locator('#editorial-review-note').inputValue(), 'Evidence and timing checked.');
         await page.locator('#editorial-approve').click();
         await page.getByText(/Review approved for this rendered revision/).waitFor();
+        // Approval text can remain visible from the prior render; wait for this action to finish reopening its project.
+        await page.waitForFunction(() => !document.getElementById('editorial-render').disabled);
         const reviewCalls = calls.filter(call => call.path.endsWith('/review') && call.body);
         assert.equal(reviewCalls.length, 2);
         assert.deepEqual(reviewCalls[0].body, reviewCalls[1].body);
@@ -888,6 +984,8 @@ const draft = {
             page.getByRole('button', {name: 'Create narrated preview', exact: true}).click(),
         ]);
         await page.getByText(/Review approved for this rendered revision/).waitFor();
+        // Approval text can remain visible from the prior render; wait for this action to finish reopening its project.
+        await page.waitForFunction(() => !document.getElementById('editorial-render').disabled);
         const voiced = calls.find(call => call.body?.storyboard?.presentation_mode === 'narrated');
         assert.equal(voiced.body.storyboard.narration_ids.beat, 'generated-audio');
         assert(voiced, 'Expected a narrated storyboard call to exist');
@@ -953,6 +1051,8 @@ const draft = {
         // Rendering the saved plan preserves speed and push-in, independent of manual controls.
         await page.locator('#editorial-render-directed').click();
         await page.getByText(/Review approved for this rendered revision/).waitFor();
+        // Approval text can remain visible from the prior render; wait for this action to finish reopening its project.
+        await page.waitForFunction(() => !document.getElementById('editorial-render').disabled);
         const directedRender = calls.filter(call => call.body?.target === 'render').at(-1);
         assert.equal(directedRender.body.direction_run_id, 'direction');
         assert.equal(directedRender.body.storyboard.beats[0].overlays[0].kind, 'circle');
@@ -1011,6 +1111,8 @@ const draft = {
         await page.getByRole('button', {name: 'Create narrated preview', exact: true}).click();
         const imageRender = (await imageRenderRequest).postDataJSON();
         await page.getByText(/Review approved for this rendered revision/).waitFor();
+        // Approval text can remain visible from the prior render; wait for this action to finish reopening its project.
+        await page.waitForFunction(() => !document.getElementById('editorial-render').disabled);
         assert.equal(imageRender.storyboard.beats[0].image_id, 'still-image');
         assert.equal(imageRender.storyboard.beats[0].layout, 'image');
         await page.locator('[data-editorial-stage="storyboard"]').click();
@@ -1034,6 +1136,8 @@ const draft = {
         assert.deepEqual(compared.image_ids, ['still-image', 'second-image']);
         assert.deepEqual(compared.overlays[0], {kind: 'circle', media_index: 1, region: {x: .1, y: .25, width: .5, height: .5}, label: 'Compare the symbol'});
         await page.getByText(/Review approved for this rendered revision/).waitFor();
+        // Approval text can remain visible from the prior render; wait for this action to finish reopening its project.
+        await page.waitForFunction(() => !document.getElementById('editorial-render').disabled);
         await page.locator('[data-editorial-stage="storyboard"]').click();
         assert.equal(await page.locator('[data-image-compare]').inputValue(), 'second-image');
         assert.equal(await page.locator('[data-region="x"]').inputValue(), '10');
@@ -1112,7 +1216,20 @@ const draft = {
         await page.locator('#editorial-history-next').click();
         await page.locator('[data-history-run="past-22"]').click();
         await historyStarted;
+        let releaseMedia, mediaRequested;
+        const mediaReadStarted = new Promise(resolve => { mediaRequested = resolve; });
+        await page.route('**/project/media-preparation', async route => {
+            mediaRequested();
+            await new Promise(resolve => { releaseMedia = resolve; });
+            return route.fulfill({status: 200, contentType: 'application/json', body: JSON.stringify(mediaPreparation)});
+        });
+        await page.locator('[data-editorial-stage="assets"]').click();
+        await page.locator('#editorial-media-refresh').click();
+        await mediaReadStarted;
         await page.locator("#channel").selectOption("two");
+        const lateMedia = page.waitForResponse(response => new URL(response.url()).pathname.endsWith('/project/media-preparation'));
+        releaseMedia(); await (await lateMedia).finished();
+        assert.equal(await page.locator('#editorial-media-preparation').isHidden(), true);
         assert.equal(await page.locator('#editorial-history').isHidden(), true);
         const lateResponse = page.waitForResponse(response => new URL(response.url()).pathname.endsWith('/runs/past-22'));
         await delayedHistory();
@@ -1140,5 +1257,12 @@ const draft = {
         assert(nativeSourceReads.every(call => !call.auth));
         assert.deepEqual(errors, []);
         console.log("Editorial project recovery, evidence, script editing, channel isolation and 390px checks passed.");
+    } catch (error) {
+        const activePage = browser.contexts()[0]?.pages()[0];
+        if (activePage) {
+            console.error('Failure page:', await activePage.locator('#editorial-status').textContent(), await activePage.locator('#editorial-feedback').textContent());
+            await activePage.screenshot({path: path.resolve(__dirname, 'test-results/editorial-failure.png'), fullPage: true});
+        }
+        throw error;
     } finally { await browser.close(); server.kill(); }
 })().catch((error) => { server.kill(); console.error(error); process.exitCode = 1; });

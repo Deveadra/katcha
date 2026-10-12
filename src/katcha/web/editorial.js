@@ -519,6 +519,7 @@ window.KatchaEditorial = (() => {
             state.project = null; state.revision = null; state.run = null; state.performance = null; state.editorKey = ""; state.renderKey = "";
             el("editorial-detail").hidden = true;
         }
+        updateMediaPreparation();
         restoreBrief();
         el("editorial-form-fields").disabled = !channel || state.busy;
         el("editorial-projects").innerHTML = `<div class="empty">${channel ? "Loading projects…" : "Select a channel to begin."}</div>`;
@@ -625,6 +626,14 @@ window.KatchaEditorial = (() => {
         const active = state.run && ["queued", "running"].includes(state.run.status);
         el("editorial-acquire-assets").disabled = state.busy || Boolean(active) || state.stale || !scoutId() || !selectedAssets().length;
     }
+    function updateMediaPreparation() {
+        window.KatchaMediaPreparation.context({
+            channel: state.channel, project_id: state.project?.id, revision: state.project?.revision || 0,
+            has_script: Boolean(state.project?.brief?.script_seed?.text || state.revision?.draft.script?.length),
+            unsaved: Boolean(state.stale || (state.project && read(storageKey(`pending.${state.project.id}`), null))),
+            busy: state.busy,
+        });
+    }
     function renderActions() {
         const active = state.run && ["queued", "running"].includes(state.run.status);
         const canResume = state.run && ["failed", "blocked"].includes(state.run.status);
@@ -649,6 +658,7 @@ window.KatchaEditorial = (() => {
         el("editorial-approve").disabled = state.busy || !state.review?.can_approve || !state.previewUrl || state.stale || Boolean(read(storageKey(`pending.${state.project.id}`), null));
         el("editorial-request-changes").disabled = state.busy || !state.review || Boolean(state.review.error);
         updateStoryboardUndo();
+        updateMediaPreparation();
     }
     function reviewNoteKey() { return storageKey(`review-note.${state.run?.editorial_run_id}`); }
     function money(value) {
@@ -1682,6 +1692,9 @@ window.KatchaEditorial = (() => {
     function init(transport, blobTransport) {
         window.KatchaFrameInspector.init(transport, blobTransport);
         api = transport; apiBlob = blobTransport;
+        window.KatchaMediaPreparation.init(transport, identity, async (channel, project) => {
+            if (state.channel === channel && state.project?.id === project) await open(project, {focus: false});
+        });
         el("editorial-source-upload-file").addEventListener("change", () => {
             const file = el("editorial-source-upload-file").files[0];
             if (!file) {
