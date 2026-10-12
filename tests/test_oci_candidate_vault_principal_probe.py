@@ -37,7 +37,7 @@ def test_identity_rejects_untrusted_metadata(document):
 
 
 def test_secret_ids_require_four_distinct_valid_values():
-    good = dict(zip(probe.BUNDLES, IDS))
+    good = dict(zip(probe.BUNDLES, IDS, strict=True))
     assert probe.verify_ids(good) == IDS
     with pytest.raises(probe.AcceptanceError):
         probe.verify_ids({**good, probe.BUNDLES[-1]: IDS[0]})
@@ -103,7 +103,9 @@ def test_cli_uses_instance_principal_and_returns_only_id():
 
 def test_denial_must_be_authorization_failure_not_network_outage():
     def denied(argv, **_kwargs):
-        return subprocess.CompletedProcess(argv, 1, stdout="", stderr="ServiceError: NotAuthorizedOrNotFound")
+        return subprocess.CompletedProcess(
+            argv, 1, stdout="", stderr="ServiceError: NotAuthorizedOrNotFound"
+        )
     assert probe.command(["secrets", "secret-bundle", "get"], run=denied) == (False, "")
 
     def interrupted(argv, **_kwargs):
