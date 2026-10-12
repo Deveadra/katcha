@@ -17,6 +17,7 @@ import {
   fenceResult,
   markCandidateReady,
   markIncidentDispatched,
+  claimIncidentDispatch,
   markIncidentDispatchFailed,
   prepareAuthority,
   releaseExternalCompute,
@@ -223,6 +224,84 @@ test("bootstrap heartbeat resets staleness and terminal acquisition disables res
     false,
   );
 });
+
+test("transactional claim prevents duplicate and stale-epoch GitHub dispatch", () => {
+  let state = {
+    ...defaultAuthorityState(),
+    active: {
+      deployment_id: "oci-a1",
+      epoch: 4,
+      health_url: "https://app.example.test/v1/health/ready",
+      consecutive_failures: 0,
+    },
+  };
+  state = configureWatchdog(state, {
+    enabled: true, intervalSeconds: 60, failureThreshold: 1,
+    recoveryRetrySeconds: 300, maxDispatchAttempts: 2,
+  });
+  const failure = { deploymentId: "oci-a1", deploymentEpoch: 4, healthy: false };
+  const pending = applyProbe(state, failure, 1000);
+  const incidentId = pending.state.incident.id;
+
+  const claimed = claimIncidentDispatch(pending.state, incidentId, 2000);
+  assert.equal(claimed.claimed, true);
+  assert.equal(claimed.state.incident.status, "dispatching");
+  assert.equal(claimed.state.incident.dispatch_attempts, 1);
+
+  const duplicate = claimIncidentDispatch(claimed.state, incidentId, 2000);
+  assert.equal(duplicate.claimed, false);
+  assert.equal(duplicate.state.incident.dispatch_attempts, 1);
+
+  const sent = markIncidentDispatched(claimed.state, incidentId, 3000);
+  assert.equal(sent.incident.status, "dispatched");
+  assert.equal(sent.incident.dispatch_attempts, 1);
+
+  const next = applyProbe(sent, failure, 305_000);
+  assert.equal(next.shouldDispatch, true);
+  const stale = {
+    ...next.state,
+    active: { ...next.state.active, epoch: 5 },
+  };
+  assert.equal(
+    claimIncidentDispatch(stale, incidentId, 306_000).claimed,
+    false,
+  );
+});
+
+
+test("interrupted dispatch claim can retry after cooldown but not forever", () => {
+  let state = {
+    ...defaultAuthorityState(),
+    active: {
+      deployment_id: "oci-a1",
+      epoch: 4,
+      health_url: "https://app.example.test/v1/health/ready",
+      consecutive_failures: 0,
+    },
+  };
+  state = configureWatchdog(state, {
+    enabled: true, intervalSeconds: 60, failureThreshold: 1,
+    recoveryRetrySeconds: 300, maxDispatchAttempts: 2,
+  });
+  const failure = { deploymentId: "oci-a1", deploymentEpoch: 4, healthy: false };
+  let result = applyProbe(state, failure, 1000);
+  const incidentId = result.state.incident.id;
+  state = claimIncidentDispatch(result.state, incidentId, 2000).state;
+  // Simulated Cloudflare worker crash: no mark-success or mark-failure.
+  result = applyProbe(state, failure, 100_000);
+  assert.equal(result.shouldDispatch, false);
+  assert.equal(result.state.incident.status, "dispatching");
+
+  result = applyProbe(result.state, failure, 302_000);
+  assert.equal(result.shouldDispatch, true);
+  assert.equal(result.state.incident.status, "pending_dispatch");
+  state = claimIncidentDispatch(result.state, incidentId, 303_000).state;
+  assert.equal(state.incident.dispatch_attempts, 2);
+  result = applyProbe(state, failure, 604_000);
+  assert.equal(result.shouldDispatch, false);
+  assert.equal(result.state.incident.status, "dispatch_exhausted");
+});
+
 
 test("failed recovery dispatch is cooled down and exhausted after three attempts", () => {
   let state = {
