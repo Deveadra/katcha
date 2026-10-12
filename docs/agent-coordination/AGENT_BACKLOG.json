@@ -4,7 +4,7 @@
   "project": "Katcha — Source Intelligence & Content Intake",
   "repository": "Deveadra/katcha",
   "prepared_date": "2026-10-10",
-  "baseline_main_sha": "3d08e5862bedb972c54e4a6ea6e3566354ec9881",
+  "baseline_main_sha": "e811600212566e7e606c590bdfccf63878b2f1a1",
   "authoritative_spec": "docs/agent-coordination/IMPLEMENTATION_PLAN.md",
   "contracts": "docs/agent-coordination/CONTRACTS.md",
   "planning_only": true,
@@ -437,10 +437,24 @@
         "AcquisitionReceiptV1"
       ],
       "coordination_notes": "",
-      "status": "planned",
-      "status_evidence": null,
-      "pr_url": null,
-      "accepted_main_sha": null
+      "status": "accepted",
+      "status_evidence": {
+        "verification_level": "verified_offline",
+        "merged_pr_url": "https://github.com/Deveadra/katcha/pull/364",
+        "pr_head_sha": "32cf80286373db7dcbd39c0e80fd409b2eb524b0",
+        "merge_commit_sha": "1e8971f64bde242134c771868eefc78b1c5eb58a",
+        "ci_workflow": "CI",
+        "ci_conclusion": "success",
+        "ci_url": "https://github.com/Deveadra/katcha/actions/runs/38191963615",
+        "checks": [
+          "python: success",
+          "PR Gate: success"
+        ],
+        "date": "2026-10-12",
+        "notes": "Exact-head checks passed. Bounded authorized fetching, SSRF/DNS/redirect/size protections, content-addressed storage and durable unknown outcomes. No live media acquisition performed."
+      },
+      "pr_url": "https://github.com/Deveadra/katcha/pull/364",
+      "accepted_main_sha": "1e8971f64bde242134c771868eefc78b1c5eb58a"
     },
     {
       "id": "KMI-105",
@@ -466,10 +480,24 @@
         "AcquisitionReceiptV1"
       ],
       "coordination_notes": "",
-      "status": "planned",
-      "status_evidence": null,
-      "pr_url": null,
-      "accepted_main_sha": null
+      "status": "accepted",
+      "status_evidence": {
+        "verification_level": "verified_offline",
+        "merged_pr_url": "https://github.com/Deveadra/katcha/pull/368",
+        "pr_head_sha": "1f25c2a7974c9ede6e1e08eca11570666e4b7cd8",
+        "merge_commit_sha": "7962304875e45f258b811c54178c0547655959d7",
+        "ci_workflow": "CI",
+        "ci_conclusion": "success",
+        "ci_url": "https://github.com/Deveadra/katcha/actions/runs/38193482371",
+        "checks": [
+          "python: success",
+          "PR Gate: success"
+        ],
+        "date": "2026-10-12",
+        "notes": "Exact-head checks passed. PyAV-backed video/audio probing, image validation, SHA invalidation and channel-scoped duplicate evidence; tests use synthetic fixtures."
+      },
+      "pr_url": "https://github.com/Deveadra/katcha/pull/368",
+      "accepted_main_sha": "7962304875e45f258b811c54178c0547655959d7"
     },
     {
       "id": "KMI-106",
@@ -497,10 +525,25 @@
         "AcquisitionReceiptV1"
       ],
       "coordination_notes": "",
-      "status": "planned",
-      "status_evidence": null,
-      "pr_url": null,
-      "accepted_main_sha": null
+      "status": "accepted",
+      "status_evidence": {
+        "verification_level": "verified_offline",
+        "merged_pr_url": "https://github.com/Deveadra/katcha/pull/369",
+        "pr_head_sha": "388997f5267aee9689d61c94f7f26c3ddda2dbe4",
+        "merge_commit_sha": "e811600212566e7e606c590bdfccf63878b2f1a1",
+        "ci_workflow": "CI",
+        "ci_conclusion": "success",
+        "ci_url": "https://github.com/Deveadra/katcha/actions/runs/38195177525",
+        "checks": [
+          "python: success",
+          "explorer: success",
+          "PR Gate: success"
+        ],
+        "date": "2026-10-12",
+        "notes": "Exact-head checks passed. Deterministic project ZIP preserves links, metadata, rights/acquisition/validation evidence and gaps; bytes require matching validated receipt and current production clearance. Fixture bytes only."
+      },
+      "pr_url": "https://github.com/Deveadra/katcha/pull/369",
+      "accepted_main_sha": "e811600212566e7e606c590bdfccf63878b2f1a1"
     },
     {
       "id": "KIN-101",
@@ -678,8 +721,8 @@
       "accepted_main_sha": null
     }
   ],
-  "last_reconciled_date": "2026-10-11",
-  "last_reconciled_note": "KSI-101 through KSI-105 and KMI-101 through KMI-103 accepted with linked exact-head CI evidence. Next A integration KIN-101 requires KMI-106; permitted fetching/validation/export is not accepted. B may continue KMI-104. Live GitHub outranks this snapshot.",
+  "last_reconciled_date": "2026-10-12",
+  "last_reconciled_note": "KSI-101 through KSI-105 and KMI-101 through KMI-106 are accepted with linked exact-head CI evidence. KIN-101 is now dependency-ready (Agent A owner; Agent B reviewer); KMI-107 remains gated on KIN-101. Live GitHub outranks this snapshot.",
   "agent_execution_policy": {
     "self_service": true,
     "auto_merge": "After green required checks/reviews and mergeability; no direct pushes to main or force-push.",
