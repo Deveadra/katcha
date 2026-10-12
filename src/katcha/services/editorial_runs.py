@@ -329,6 +329,10 @@ def control_run(
             raise EditorialNotFound("Editorial run not found in this project")
         if row.options.get("target") == "prepare_media":
             raise EditorialConflict("Use the project's media preparation controls for this work")
+        if row.options.get("target") == "semantic_matching" and not cancel:
+            raise EditorialConflict(
+                "Semantic inspection cannot be resumed automatically; inspect its saved receipt"
+            )
         # Idempotent retry after an uncertain resume/cancel response.
         if not cancel and row.attempt == expected_attempt + 1:
             session.expunge(row)

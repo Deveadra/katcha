@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import tempfile
 import time
@@ -74,6 +75,7 @@ def _invoke(
     search: bool,
     image: bytes | None,
     video: dict | None,
+    max_output_tokens: int = 12000,
 ) -> ProviderOutput:
     settings = get_settings()
     assert_mutation_authority("ai.editorial", settings=settings)
@@ -149,13 +151,13 @@ def _invoke(
             contents[0] += "\nReturn JSON matching: " + json.dumps(schema.model_json_schema())
             config = types.GenerateContentConfig(
                 tools=[types.Tool(google_search=types.GoogleSearch())],
-                max_output_tokens=6000,
+                max_output_tokens=min(6000, max_output_tokens),
             )
         else:
             config = types.GenerateContentConfig(
                 response_mime_type="application/json",
                 response_schema=schema,
-                max_output_tokens=12000,
+                max_output_tokens=max_output_tokens,
             )
         response = client.models.generate_content(
             model=settings.editorial_gemini_model,
@@ -196,7 +198,15 @@ def structured_call(
     search: bool = False,
     image_key: str | None = None,
     video: dict | None = None,
+    image_bytes: bytes | None = None,
+    output_token_limit: int | None = None,
 ) -> tuple[BaseModel, dict]:
+    if image_bytes is not None and (image_key is not None or video is not None):
+        raise EditorialBlocked("Choose one image input for a provider call")
+    if image_bytes is not None and not 0 < len(image_bytes) <= 2 * 1024 * 1024:
+        raise EditorialBlocked("Inline image exceeds the bounded provider input budget")
+    if output_token_limit is not None and not 1 <= output_token_limit <= 12000:
+        raise EditorialBlocked("Unsupported provider output-token limit")
     if len(prompt) > 180000:
         raise EditorialBlocked(
             "Editorial evidence exceeds the model context budget; narrow the brief"
@@ -210,6 +220,12 @@ def structured_call(
             "search": search,
             "image_key": image_key,
             "video_hash": video.get("sha256") if video else None,
+            **(
+                {"image_sha256": hashlib.sha256(image_bytes).hexdigest()}
+                if image_bytes is not None
+                else {}
+            ),
+            **({"output_token_limit": output_token_limit} if output_token_limit else {}),
         }
     )
     with session_scope() as session:
@@ -257,7 +273,12 @@ def structured_call(
             "max_elapsed_seconds", 7200
         ):
             raise EditorialBlocked("The project's elapsed-time budget is exhausted")
-        provider = select_provider(visual=bool(image_key or video))
+        provider = select_provider(visual=bool(image_key or video or image_bytes))
+        if output_token_limit is not None and provider != "gemini":
+            raise EditorialBlocked(
+                "Bounded semantic inspection requires configured free-tier Gemini; "
+                "the subscription adapter has no verified hard output-token cap"
+            )
         if previous and provider != previous["provider"]:
             raise EditorialBlocked("Provider changed after quota rejection; start a new run")
         if video and provider == "gemini" and video["duration_seconds"] > 1800:
@@ -266,6 +287,8 @@ def structured_call(
         # generous per-second allowance. Actual provider usage replaces this reservation.
         reserved = len(prompt) + len(json.dumps(schema.model_json_schema())) + 12000
         reserved += int(video["duration_seconds"] * 300) if video and provider == "gemini" else 4000
+        if image_bytes is not None:
+            reserved += len(image_bytes)
         consumed = sum(
             call.get("input_tokens", 0) + call.get("output_tokens", 0)
             if call["status"] == "completed"
@@ -277,7 +300,9 @@ def structured_call(
         # Local input failures prove no provider request was sent. Keep them outside the
         # durable submission boundary, while retaining serialized receipt/replay checks.
         native_video = video if provider == "gemini" else None
-        image = ObjectStore().get_bytes(image_key) if image_key and not native_video else None
+        image = (
+            ObjectStore().get_bytes(image_key) if image_key and not native_video else image_bytes
+        )
         calls[key] = {
             "status": "started",
             "digest": digest,
@@ -286,12 +311,26 @@ def structured_call(
             "search": search,
             "reserved_tokens": reserved,
             "submissions": (previous.get("submissions", 1) if previous else 0) + 1,
+            **(
+                {"image_sha256": hashlib.sha256(image_bytes).hexdigest()}
+                if image_bytes is not None
+                else {}
+            ),
+            **({"output_token_limit": output_token_limit} if output_token_limit else {}),
         }
         submissions = calls[key]["submissions"]
         row.artifacts = {**row.artifacts, "provider_calls": calls}
     # No retry/fallback after this point: a request might have reached the provider.
     try:
-        response = _invoke(provider, prompt, schema, search=search, image=image, video=native_video)
+        response = _invoke(
+            provider,
+            prompt,
+            schema,
+            search=search,
+            image=image,
+            video=native_video,
+            **({"max_output_tokens": output_token_limit} if output_token_limit else {}),
+        )
     except Exception as exc:
         # Only a typed provider rejection proves non-acceptance. Transport/string errors stay
         # ambiguous; do not guess from an error message containing the number 429.
@@ -340,6 +379,12 @@ def structured_call(
         if provider == "gemini"
         else "subscription",
         "value": value.model_dump(mode="json"),
+        **(
+            {"image_sha256": hashlib.sha256(image_bytes).hexdigest()}
+            if image_bytes is not None
+            else {}
+        ),
+        **({"output_token_limit": output_token_limit} if output_token_limit else {}),
     }
     with session_scope() as session:
         row = session.scalar(

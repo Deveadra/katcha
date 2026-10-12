@@ -23,6 +23,10 @@ async def dispatch_editorial_run(client: Client, row: EditorialRun) -> str:
     identity = workflow_id(row)
     if row.status not in ACTIVE:
         return identity
+    # Optional synchronous semantic inspection owns its durable no-retry boundary.
+    # Never convert an interrupted source transmission into a new Editorial workflow.
+    if row.options.get("target") == "semantic_matching":
+        return identity
     try:
         await client.start_workflow(
             EditorialProjectWorkflow.run,
