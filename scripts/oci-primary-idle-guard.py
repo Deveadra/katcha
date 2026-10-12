@@ -97,6 +97,7 @@ Group=nogroup
 ExecStart=/usr/bin/python3 {HOST_SCRIPT}
 Restart=always
 RestartSec=30
+MemoryAccounting=yes
 MemoryMax=1800M
 MemorySwapMax=0
 CPUQuota=10%
