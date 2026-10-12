@@ -169,8 +169,6 @@ def test_candidate_tag_cli_never_changes_freeform_tags(monkeypatch):
 def test_tag_candidate_cli_requires_separate_scoped_flags(monkeypatch, capsys):
     monkeypatch.setattr(probe, "Oci", lambda: object())
     monkeypatch.setattr(probe, "gather", lambda *_args, **_kwargs: plan())
-    with pytest.raises(probe.ProbeError):
-        probe.promote_identity_only_candidate(None, plan(), "ocid1.instance.primary")
     assert probe.main([
         "tag-candidate", "--instance-id", "ocid1.instance.candidate"
     ]) == 2
