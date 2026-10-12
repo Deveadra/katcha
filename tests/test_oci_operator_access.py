@@ -183,6 +183,64 @@ def test_no_implicit_admin_browser_login(monkeypatch):
     admin.reauth()
 
 
+def test_reauth_streams_browser_prompts_to_terminal(monkeypatch, tmp_path, capsys):
+    cli = tmp_path / "oci"
+    cli.write_text("fixture", encoding="utf-8")
+    monkeypatch.setattr(admin, "OCI", cli)
+    checks = iter([False, True])
+    monkeypatch.setattr(admin, "admin_valid", lambda: next(checks))
+    monkeypatch.setattr(admin.sys.stdin, "isatty", lambda: True)
+    captured = []
+
+    def fake_run(argv, **kwargs):
+        captured.append((argv, kwargs))
+        return type("Completed", (), {"returncode": 0})()
+
+    monkeypatch.setattr(admin.subprocess, "run", fake_run)
+    admin.reauth()
+    assert len(captured) == 1
+    argv, kwargs = captured[0]
+    assert argv[1:3] == ["session", "authenticate"]
+    assert kwargs == {"check": False, "timeout": 300}
+    assert "capture_output" not in kwargs
+    assert "vault_admin_session: VALID" in capsys.readouterr().out
+
+
+def test_interactive_auth_timeout_is_actionable(monkeypatch):
+    def timeout(argv, **kwargs):
+        raise admin.subprocess.TimeoutExpired(argv, 300)
+
+    monkeypatch.setattr(admin.subprocess, "run", timeout)
+    with pytest.raises(admin.AccessError, match="timed out"):
+        admin.run_interactive(["oci", "session", "authenticate"])
+
+
+def test_interactive_auth_nonzero_does_not_leak_output(monkeypatch):
+    monkeypatch.setattr(
+        admin.subprocess, "run", lambda *a, **k: type("Completed", (), {"returncode": 7})()
+    )
+    with pytest.raises(admin.AccessError) as error:
+        admin.run_interactive(["oci", "session", "authenticate"])
+    assert "exit 7" in str(error.value)
+
+
+def test_interrupted_login_returns_clean_code(monkeypatch, capsys):
+    monkeypatch.setattr(admin, "reauth", lambda: (_ for _ in ()).throw(KeyboardInterrupt()))
+    assert admin.main(["reauth"]) == 130
+    assert "interrupted by operator" in capsys.readouterr().err
+
+
+def test_noninteractive_reauth_never_starts_browser(monkeypatch, tmp_path):
+    cli = tmp_path / "oci"
+    cli.write_text("fixture", encoding="utf-8")
+    monkeypatch.setattr(admin, "OCI", cli)
+    monkeypatch.setattr(admin, "admin_valid", lambda: False)
+    monkeypatch.setattr(admin.sys.stdin, "isatty", lambda: False)
+    monkeypatch.setattr(admin, "run_interactive", lambda *a: pytest.fail("must not run"))
+    with pytest.raises(admin.AccessError, match="requires a terminal"):
+        admin.reauth()
+
+
 def test_wrapper_contains_no_instance_creation():
     wrapper = Path("scripts/katcha-oci-admin.sh").read_text(encoding="utf-8")
     assert "exec python3" in wrapper
