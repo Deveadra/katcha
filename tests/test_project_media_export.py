@@ -293,6 +293,47 @@ def test_export_never_includes_restricted_bytes(export_context):
         assert manifest["items"][0]["gap_reason"] == "production_clearance_required"
 
 
+def test_export_omits_bytes_when_clearance_has_been_superseded(export_context):
+    engine, channel_id, _, project_id, revision = export_context
+    data, _, _ = add_exportable_item(engine, channel_id, project_id, revision)
+    with db.session_scope() as session:
+        item = session.scalar(
+            select(ProjectMediaItem).where(ProjectMediaItem.project_id == project_id)
+        )
+        assert item is not None and item.rights_assessment_id is not None
+        previous = session.get(RightsAssessment, item.rights_assessment_id)
+        assert previous is not None
+        session.add(
+            RightsAssessment(
+                id=uuid.uuid4(),
+                discovery_candidate_id=previous.discovery_candidate_id,
+                version=2,
+                rights_basis="licensed",
+                rights_lane="yellow",
+                rights_gate="review_required",
+                audio_status="review_required",
+                originality_gate="review_required",
+                production_eligible=False,
+                operator_authorized=False,
+                risk_flags=["license_expired"],
+                fair_use_factors={},
+                assessment_metadata={},
+                actor="test",
+                reason="Updated review required",
+            )
+        )
+    archive_bytes = build_project_media_export(
+        channel_id,
+        project_id,
+        revision,
+        store=MemoryStore({"internal/private-storage-key": data}),
+    )
+    with zipfile.ZipFile(io.BytesIO(archive_bytes)) as archive:
+        assert not any(name.startswith("media/") for name in archive.namelist())
+        manifest = json.loads(archive.read("manifest.json"))
+        assert manifest["items"][0]["gap_reason"] == "production_clearance_required"
+
+
 def test_export_is_channel_scoped(export_context):
     _, _, other_channel_id, project_id, revision = export_context
     with pytest.raises(ValueError, match="not found in this channel"):
