@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from threading import RLock
 from typing import Any, Protocol
 
 
@@ -167,6 +168,7 @@ class ManifestDiscoveryAdapter:
 
 _ADAPTERS: dict[tuple[str, str], DiscoveryAdapter] = {}
 _BUILTINS_LOADED = False
+_BUILTIN_LOAD_LOCK = RLock()
 
 
 def register_adapter(adapter: DiscoveryAdapter) -> None:
@@ -208,23 +210,27 @@ def available_adapters() -> list[dict[str, Any]]:
 
 register_adapter(ManifestDiscoveryAdapter())
 
+
 def _load_builtin_adapters() -> None:
     """Load optional providers on first use to avoid import cycles."""
     global _BUILTINS_LOADED
     if _BUILTINS_LOADED:
         return
-    from katcha.acquisition.feeds import RssAtomDiscoveryAdapter
-    from katcha.acquisition.operator_feed import OperatorFeedDiscoveryAdapter
-    from katcha.acquisition.reddit_discovery import RedditDiscoveryAdapter
-    from katcha.acquisition.web_scout import WebScoutDiscoveryAdapter
-    from katcha.acquisition.youtube_discovery import YouTubeDiscoveryAdapter
+    with _BUILTIN_LOAD_LOCK:
+        if _BUILTINS_LOADED:
+            return
+        from katcha.acquisition.feeds import RssAtomDiscoveryAdapter
+        from katcha.acquisition.operator_feed import OperatorFeedDiscoveryAdapter
+        from katcha.acquisition.reddit_discovery import RedditDiscoveryAdapter
+        from katcha.acquisition.web_scout import WebScoutDiscoveryAdapter
+        from katcha.acquisition.youtube_discovery import YouTubeDiscoveryAdapter
 
-    for adapter in (
-        OperatorFeedDiscoveryAdapter(),
-        RedditDiscoveryAdapter(),
-        RssAtomDiscoveryAdapter(),
-        WebScoutDiscoveryAdapter(),
-        YouTubeDiscoveryAdapter(),
-    ):
-        register_adapter(adapter)
-    _BUILTINS_LOADED = True
+        for adapter in (
+            OperatorFeedDiscoveryAdapter(),
+            RedditDiscoveryAdapter(),
+            RssAtomDiscoveryAdapter(),
+            WebScoutDiscoveryAdapter(),
+            YouTubeDiscoveryAdapter(),
+        ):
+            register_adapter(adapter)
+        _BUILTINS_LOADED = True
