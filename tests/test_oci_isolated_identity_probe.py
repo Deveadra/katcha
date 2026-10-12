@@ -83,7 +83,7 @@ def test_candidate_identity_tag_requires_exact_probe_and_preserves_existing_tags
             super().__init__()
             self.updated = []
 
-        def enable_candidate_tag(self, instance_id, defined_tags):
+        def update_probe_defined_tags(self, instance_id, defined_tags):
             self.updated.append((instance_id, defined_tags))
             self.candidate["defined-tags"] = defined_tags
 
@@ -112,7 +112,7 @@ def test_candidate_identity_tag_requires_exact_probe_and_preserves_existing_tags
 
 def test_candidate_identity_tag_rejects_wrong_name_and_prod_instance():
     class TagOci(FakeOci):
-        def enable_candidate_tag(self, *_args):
+        def update_probe_defined_tags(self, *_args):
             pytest.fail("tag mutation must not happen")
 
     oci = TagOci()
@@ -129,7 +129,7 @@ def test_candidate_identity_tag_rejects_wrong_name_and_prod_instance():
 
 def test_candidate_identity_tag_refuses_existing_defined_candidate_field():
     class TagOci(FakeOci):
-        def enable_candidate_tag(self, *_args):
+        def update_probe_defined_tags(self, *_args):
             pytest.fail("tag mutation must not happen")
 
     oci = TagOci()
@@ -150,7 +150,7 @@ def test_candidate_tag_cli_never_changes_freeform_tags(monkeypatch):
     monkeypatch.setattr(probe, "command", fake_command)
     oci = probe.Oci.__new__(probe.Oci)
     oci.base = ["oci", "--profile", "KATCHA_VAULT_ADMIN"]
-    oci.enable_candidate_tag(
+    oci.update_probe_defined_tags(
         "ocid1.instance.candidate",
         {"KatchaRecovery": {"Candidate": "true"}},
     )
@@ -302,11 +302,49 @@ def test_cleanup_remains_available_if_primary_is_down():
     assert result["primary_running"] is False
 
 
-def test_cleanup_can_remove_probe_after_later_vault_tag_test():
-    oci = FakeOci()
-    oci.candidate["defined-tags"] = {"KatchaRecovery": {"Candidate": "true"}}
+def test_cleanup_revokes_candidate_vault_tag_before_termination():
+    class TaggedOci(FakeOci):
+        def __init__(self):
+            super().__init__()
+            self.updated = []
+            self.candidate["defined-tags"] = {
+                "ExistingNamespace": {"Keep": "safe"},
+                "KatchaRecovery": {"Candidate": "true", "Other": "preserved"},
+            }
+
+        def update_probe_defined_tags(self, instance_id, defined_tags):
+            assert self.terminated == []
+            self.updated.append((instance_id, defined_tags))
+            self.candidate["defined-tags"] = defined_tags
+
+    oci = TaggedOci()
     result = probe.cleanup(oci, plan(), "ocid1.instance.candidate")
     assert result["status"] == "TEST_RESOURCES_REMOVED"
+    assert oci.terminated == ["ocid1.instance.candidate"]
+    assert oci.updated == [
+        (
+            "ocid1.instance.candidate",
+            {
+                "ExistingNamespace": {"Keep": "safe"},
+                "KatchaRecovery": {"Other": "preserved"},
+            },
+        )
+    ]
+
+
+def test_cleanup_refuses_termination_when_tag_revocation_unverified():
+    class UncertainOci(FakeOci):
+        def __init__(self):
+            super().__init__()
+            self.candidate["defined-tags"] = {"KatchaRecovery": {"Candidate": "true"}}
+
+        def update_probe_defined_tags(self, *_args):
+            pass  # Simulate response succeeded but tag was not removed.
+
+    oci = UncertainOci()
+    with pytest.raises(probe.ProbeError, match="revocation unverified"):
+        probe.cleanup(oci, plan(), "ocid1.instance.candidate")
+    assert oci.terminated == []
 
 
 def test_cli_cleanup_requires_separate_explicit_flag(monkeypatch, capsys):
