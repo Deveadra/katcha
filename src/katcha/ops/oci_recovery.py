@@ -300,6 +300,11 @@ class RecoveryConfig:
         return config
 
     def validate(self, *, require_external_compute: bool = True) -> None:
+        # Cleanup must work even when new recovery launches are disabled.
+        if require_external_compute and not _bool_env(
+            "KATCHA_OCI_RECOVERY_CONFIGURED", False
+        ):
+            raise RecoveryError("OCI disaster recovery activation switch is disabled")
         if (
             require_external_compute
             and not _bool_env("KATCHA_EXTERNAL_COMPUTE_ENABLED", False)
