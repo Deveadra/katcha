@@ -325,7 +325,7 @@ def test_allowlist_metadata_malformed_fail_closed(monkeypatch):
         admin.bastion_client_access("ocid1.bastion.oc1.iad.test")
 
 
-def test_connect_preflight_blocks_confirmed_mismatch_without_creating_session(monkeypatch, tmp_path):
+def test_connect_preflight_blocks_mismatch_without_session(monkeypatch, tmp_path):
     monkeypatch.setattr(admin, "STATE_DIR", tmp_path / "owned")
     monkeypatch.setattr(admin, "listening", lambda: False)
     key, hosts = tmp_path / "key", tmp_path / "hosts"
