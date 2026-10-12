@@ -2,6 +2,7 @@
 
 Static workflow contract only; no OCI calls or GitHub workflow dispatches.
 """
+import re
 from pathlib import Path
 
 WORKFLOW = Path(".github/workflows/oci-recovery.yml")
@@ -11,8 +12,11 @@ def _job_block(name: str) -> str:
     text = WORKFLOW.read_text(encoding="utf-8")
     start = text.index("  " + name + ":\n")
     remaining = text[start + 2:]
-    next_job = remaining.find("\n  ", len(name) + 2)
-    return remaining if next_job < 0 else remaining[:next_job]
+    # Find the next actual top-level job, not indented job attributes.
+    next_job = re.search(r"(?m)^  [a-z][a-z0-9-]*:\s*$", remaining[len(name) + 2:])
+    if next_job is None:
+        return remaining
+    return remaining[: len(name) + 2 + next_job.start()]
 
 
 def test_scheduled_cleanup_independent_of_recovery_activation():
