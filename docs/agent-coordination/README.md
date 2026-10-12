@@ -4,8 +4,8 @@ Mission: Turn an entire script into grounded candidates, permitted media, an org
 
 Read root AGENTS.md, COORDINATION_PROTOCOL.md, your role file and relevant backlog task. Refer to CONTRACTS.md and IMPLEMENTATION_PLAN.md as needed; do not repeatedly reread everything.
 
-Agent A owns source intelligence and research. KSI-101 through KSI-105 are merged: exact-script requirements (#354), bounded search jobs (#349), grounded scouting (#353), query expansion (#358), and reference ranking/coverage (#360). Reuse these services and #346's exact script planner; do not implement another parser or scout. Next A integration KIN-101 remains gated on KMI-106.
-Agent B owns media intake, project Media Bin persistence and authorized acquisition. Core KMI-101 (#355), API KMI-102 (#359) and permission/receipt KMI-103 (#361) are accepted; KMI-104 is the next dependency-ready B task. Permitted acquisition, file validation and export remain later work.
+Agent A owns source intelligence and research. KSI-101 through KSI-105 are merged: exact-script requirements (#354), bounded search jobs (#349), grounded scouting (#353), query expansion (#358), and reference ranking/coverage (#360). Reuse these services and #346's exact script planner; do not implement another parser or scout. Next A integration KIN-101 is dependency-ready after KMI-106 (#369) merged.
+Agent B owns media intake, project Media Bin persistence and authorized acquisition. KMI-101 through KMI-106 are accepted (#355/#359/#361/#364/#368/#369), covering durable Media Bin storage, scoped APIs, authorized fetching, integrity validation and portable export. Agent B reviews KIN-101; KMI-107 follows that integration.
 
 Self-service loop: writable unique feature branch; implement and test; open PR; green required checks and reviews, no conflicts; auto-merge; refresh main and begin next eligible task.
 Either agent may edit required shared API/model/migration files when no active overlapping PR change exists. Check current migration heads. Coordinate real collisions, not theoretical ones.
@@ -13,7 +13,7 @@ Either agent may edit required shared API/model/migration files when no active o
 Never push directly to main or force-push. Backlog is advisory; GitHub merged PRs and required CI prove progress. No unauthorized downloading, data destruction, paid provider calls or production deployment.
 INSTALL.md is for initial setup only, not for an already installed pack.
 
-## Accepted evidence snapshot — 2026-10-11
+## Accepted evidence snapshot — 2026-10-12
 
 - KSI-103: [PR #353](https://github.com/Deveadra/katcha/pull/353), merge `6db0849c`, [CI](https://github.com/Deveadra/katcha/actions/runs/38168260044): 1,488 passed, 1 skipped; Python and PR Gate passed on PR head `b3ed978f`. Durable provider-reported candidates, reference-only handoffs, saved cursors and bounded gaps.
 - KSI-101: [PR #354](https://github.com/Deveadra/katcha/pull/354), merge `85d43c8a`, [CI](https://github.com/Deveadra/katcha/actions/runs/38168430486): 1,475 passed, 1 skipped; Python and PR Gate passed on PR head `c2c73c1f`. Exact script preserved, exhaustive requirement adapter and selective dependency invalidation.
@@ -26,3 +26,7 @@ Each slice received independent review. Provider fixtures and metadata are not l
 - KMI-102: [PR #359](https://github.com/Deveadra/katcha/pull/359), merge `e0feb19e`, [CI](https://github.com/Deveadra/katcha/actions/runs/38170806971): 1,535 passed, 1 skipped; Python, browser and PR Gate success at `da4ca57e`. Existing project API gains scoped Media Bin operations.
 
 - KMI-103: [PR #361](https://github.com/Deveadra/katcha/pull/361), merge `6f04d041`, [CI](https://github.com/Deveadra/katcha/actions/runs/38171525896): Python Test step and PR Gate success at `3bd47694`. Permission/receipt contracts and durable outcomes; test count not captured, no live acquisition demonstrated.
+
+- KMI-104: [PR #364](https://github.com/Deveadra/katcha/pull/364), merge `1e8971f6`, [CI](https://github.com/Deveadra/katcha/actions/runs/38191963615): Python and PR Gate passed on exact PR head `32cf8028`. Bounded, allowlisted authorized fetching, safe redirect/DNS checks, streamed size limits and durable no-retry treatment for unknown outcomes; no live media acquisition performed.
+- KMI-105: [PR #368](https://github.com/Deveadra/katcha/pull/368), merge `79623048`, [CI](https://github.com/Deveadra/katcha/actions/runs/38193482371): Python and PR Gate passed on exact PR head `1f25c2a7`. PyAV-backed audio/video and image validation, SHA change invalidation and channel-scoped exact/perceptual duplicate evidence; synthetic fixtures only.
+- KMI-106: [PR #369](https://github.com/Deveadra/katcha/pull/369), merge `e8116002`, [CI](https://github.com/Deveadra/katcha/actions/runs/38195177525): Python, Explorer and PR Gate passed on exact PR head `388997f5`. Deterministic portable ZIP, links CSV, sanitized references and rights/acquisition/validation evidence; includes bytes only for matching validated receipts with current production clearance. Fixture bytes only.
