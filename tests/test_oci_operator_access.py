@@ -291,3 +291,84 @@ def test_active_managed_session_with_unhealthy_target_is_not_recreated(monkeypat
         admin.connect()
     assert len(calls) == 1
     assert calls[0][:3] == ("bastion", "session", "get")
+
+
+def test_bastion_allowlist_match(monkeypatch):
+    import json
+    monkeypatch.setattr(admin, "oci", lambda *a: json.dumps({
+        "data": {"client-cidr-block-allow-list": ["1.1.1.0/24", "8.8.8.0/24"]}
+    }))
+    monkeypatch.setattr(admin, "run", lambda *a, **k: "8.8.8.8")
+    verdict, _ = admin.bastion_client_access("ocid1.bastion.oc1.iad.test")
+    assert verdict == "ALLOWED"
+
+
+def test_bastion_allowlist_mismatch_does_not_leak_ips(monkeypatch):
+    import json
+    monkeypatch.setattr(admin, "oci", lambda *a: json.dumps({
+        "data": {"client-cidr-block-allow-list": ["1.1.1.0/24"]}
+    }))
+    monkeypatch.setattr(admin, "run", lambda *a, **k: "8.8.8.8")
+    verdict, message = admin.bastion_client_access("ocid1.bastion.oc1.iad.test")
+    assert verdict == "MISMATCH"
+    assert "8.8.8.8" not in message
+    assert "1.1.1.0" not in message
+
+
+def test_allowlist_metadata_malformed_fail_closed(monkeypatch):
+    import json
+    monkeypatch.setattr(admin, "oci", lambda *a: json.dumps({
+        "data": {"client-cidr-block-allow-list": "8.8.8.0/24"}
+    }))
+    monkeypatch.setattr(admin, "run", lambda *a, **k: pytest.fail("egress query not needed"))
+    with pytest.raises(admin.AccessError, match="metadata unavailable"):
+        admin.bastion_client_access("ocid1.bastion.oc1.iad.test")
+
+
+def test_connect_preflight_blocks_mismatch_without_session(monkeypatch, tmp_path):
+    monkeypatch.setattr(admin, "STATE_DIR", tmp_path / "owned")
+    monkeypatch.setattr(admin, "listening", lambda: False)
+    key, hosts = tmp_path / "key", tmp_path / "hosts"
+    key.touch()
+    hosts.touch()
+    monkeypatch.setattr(admin, "TARGET_KEY", key)
+    monkeypatch.setattr(admin, "TARGET_HOSTKEYS", hosts)
+    monkeypatch.setattr(admin, "target", lambda: (
+        "ocid1.bastion.oc1.iad.test", "10.42.2.144"
+    ))
+    calls = []
+    def fake_oci(*args):
+        calls.append(args)
+        assert args[:3] == ("bastion", "bastion", "get")
+        return "ACTIVE"
+    monkeypatch.setattr(admin, "oci", fake_oci)
+    monkeypatch.setattr(admin, "bastion_client_access", lambda *a: (
+        "MISMATCH", "Bastion client CIDR mismatch"
+    ))
+    monkeypatch.setattr(admin, "run", lambda *a, **k: pytest.fail("no new key/session"))
+    with pytest.raises(admin.AccessError, match="Refusing to create"):
+        admin.connect()
+    assert len(calls) == 1
+
+
+def test_doctor_reports_bastion_mismatch_without_changing_oci(monkeypatch, capsys):
+    monkeypatch.setattr(admin, "status", lambda: False)
+    monkeypatch.setattr(admin, "target", lambda: (
+        "ocid1.bastion.oc1.iad.test", "10.42.2.144"
+    ))
+    monkeypatch.setattr(admin, "bastion_client_access", lambda *a: (
+        "MISMATCH", "public IP outside allowlist"
+    ))
+    assert admin.main(["doctor"]) == 2
+    assert "bastion_client_allowlist: MISMATCH" in capsys.readouterr().out
+
+
+def test_unverified_egress_is_not_reported_as_mismatch(monkeypatch, capsys):
+    monkeypatch.setattr(admin, "target", lambda: (
+        "ocid1.bastion.oc1.iad.test", "10.42.2.144"
+    ))
+    def unavailable(*a):
+        raise admin.AccessError("public IPv4 egress cannot be verified")
+    monkeypatch.setattr(admin, "bastion_client_access", unavailable)
+    assert admin.diagnose_bastion_access() == "UNVERIFIED"
+    assert "UNVERIFIED" in capsys.readouterr().out

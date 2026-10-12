@@ -118,6 +118,55 @@ def target() -> tuple[str, str]:
     return bastion, ip
 
 
+def bastion_client_access(bastion: str) -> tuple[str, str]:
+    """Read-only OCI CIDR allowlist versus observed HTTPS IPv4 egress.
+
+    The HTTPS egress may differ from SSH when a split-tunnel VPN is in use;
+    this is a diagnostic, not an authority to mutate security settings.
+    """
+    raw = oci("bastion", "bastion", "get", "--bastion-id", bastion)
+    try:
+        record = json.loads(raw)
+        data = record["data"]
+        cidrs = data["client-cidr-block-allow-list"]
+        if not isinstance(cidrs, list) or not cidrs or any(
+            not isinstance(item, str) for item in cidrs
+        ):
+            raise ValueError("invalid CIDR list")
+        networks = [ipaddress.ip_network(item, strict=False) for item in cidrs]
+    except (ValueError, KeyError, TypeError) as exc:
+        raise AccessError("Bastion CIDR allowlist metadata unavailable; no changes made") from exc
+    try:
+        ip = ipaddress.IPv4Address(
+            run(["curl", "-4", "-fsS", "--connect-timeout", "4", "--max-time", "10",
+                 "https://api.ipify.org"], timeout=14)
+        )
+        if not ip.is_global:
+            raise ValueError("non-global response")
+    except (AccessError, ValueError) as exc:
+        raise AccessError("public IPv4 egress cannot be verified; check VPN or IP service") from exc
+    if any(ip in network for network in networks):
+        return "ALLOWED", "Observed HTTPS IPv4 is in the OCI Bastion CIDR allowlist"
+    return "MISMATCH", (
+        "Observed HTTPS IPv4 is outside OCI Bastion CIDR allowlist. "
+        "Oracle documents 'closed by remote host' for this case. "
+        "Review your current egress/VPN and Bastion allowlist; changing it needs "
+        "a new session. No Bastion settings were changed."
+    )
+
+
+def diagnose_bastion_access() -> str:
+    try:
+        bastion, _ = target()
+        result, reason = bastion_client_access(bastion)
+        print("bastion_client_allowlist:", result)
+        print(reason)
+        return result
+    except AccessError as exc:
+        print("bastion_client_allowlist: UNVERIFIED (" + str(exc) + ")")
+        return "UNVERIFIED"
+
+
 def listening() -> bool:
     try:
         with socket.create_connection(("127.0.0.1", PORT), timeout=1):
@@ -257,6 +306,16 @@ def connect() -> None:
         if oci("bastion", "bastion", "get", "--bastion-id", bastion,
                "--query", 'data."lifecycle-state"', "--raw-output") != "ACTIVE":
             raise AccessError("existing Bastion is not ACTIVE")
+        # Oracle's documented 'closed by remote host' failure indicates that
+        # current public egress may not match the Bastion client CIDR allowlist.
+        try:
+            allow_status, reason = bastion_client_access(bastion)
+        except AccessError as exc:
+            print("NOTE: Bastion allowlist preflight unavailable: " + str(exc),
+                  file=sys.stderr)
+        else:
+            if allow_status == "MISMATCH":
+                raise AccessError(reason + " Refusing to create a doomed session.")
         key = STATE_DIR / "session_key"
         if key.exists() or key.is_symlink():
             raise AccessError("unexpected ephemeral key exists; investigate manually")
@@ -319,6 +378,12 @@ def connect() -> None:
                 log_data = (STATE_DIR / "ssh.log").read_text(
                     encoding="utf-8", errors="replace"
                 )
+                if "Connection to " in log_data and "closed by remote host" in log_data:
+                    raise AccessError(
+                        "Bastion remote host closed SSH before the local tunnel was established. "
+                        "Run 'doctor' to compare current IPv4 egress with the Bastion CIDR allowlist. "
+                        "Do not create repeated sessions or change network settings blindly."
+                    )
                 if "Permission denied (publickey)" not in log_data:
                     raise AccessError("Bastion SSH failed; inspect protected ssh.log locally")
                 time.sleep(3)
@@ -412,9 +477,10 @@ def main(argv: list[str] | None = None) -> int:
             return 0 if status() else 2
         if command == "doctor":
             ok = status()
-            print("Next: reauth for expired admin; connect for missing tunnel; "
-                  "audit for full read-only evidence.")
-            return 0 if ok else 2
+            access = diagnose_bastion_access()
+            print("Next: reauth for expired admin; investigate Bastion allowlist "
+                  "mismatches before creating new sessions; audit for recovery evidence.")
+            return 0 if ok and access == "ALLOWED" else 2
         if command == "connect":
             connect()
         elif command == "disconnect":
