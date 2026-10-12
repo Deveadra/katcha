@@ -33,10 +33,11 @@ exact-head CI evidence in the advisory backlog. Reuse the exact-plan adapter,
 bounded query jobs, durable reference candidates and authoritative-ledger
 ranking/coverage report. No provider fixture proves acquired or usable media.
 
-**`KIN-101`: script-to-source-to-Media-Bin integration** requires accepted
-**KMI-106**. KMI-101/#355 and KMI-102/#359 are accepted; acquisition, validation
-and portable export remain prerequisites. Do not bypass that gate or duplicate
-Agent B intake work. Inspect live merged PRs before the next slice.
+**`KIN-101`: script-to-source-to-Media-Bin integration** is now dependency-ready:
+KMI-106/#369 is accepted alongside KMI-101/#355 and KMI-102/#359, and authorized
+acquisition, validation and portable export are accepted (#364/#368/#369). Agent A
+owns this integration; Agent B reviews it. Reuse the intake contracts and do not
+duplicate Agent B services.
 
 ## Follow-on ordered tasks
 
