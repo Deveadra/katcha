@@ -48,6 +48,31 @@ are retried only for the documented instance-launch OutOfHostCapacity case;
 other OCI create failures require reconciliation. Neither a mock failure test
 nor an isolated E2 micro probe proves autonomous failover acceptance.
 
+## Durable volume switch and rollback safety
+
+A same-AD candidate must **never** take the production data volume from an
+unknown attachment owner or while OCI reports an attach/detach transition in
+progress. The dispatcher now rejects ambiguous/multiple attachment ownership
+*before* stopping the previous instance. If stop/detach/candidate attach
+fails after the old host was stopped, it re-reads actual volume attachment
+ownership: it either restores the conclusively detached volume to the old
+host and restarts it, or restarts the old host when it still exclusively
+owns the volume. If ownership is in-flight, points to the candidate or
+cannot be read, the switch is classified `RecoveryCleanupIncomplete`.
+
+An uncertain storage state **must not** trigger additional candidates,
+candidate VM termination, or new cross-AD volume deletion. Preserve all
+related instances and volumes for read-only operator reconciliation.
+A separate expiry/budget incident may need operator attention if paid
+compute is involved, but spend control never overrides data safety.
+Do not interpret Python error exit or coordinator abort as proof the
+previous host is running; verify its actual instance state, attachments,
+mount, health, and fenced epoch before recording rollback success.
+
+For unattended game-day acceptance, fault-inject primary stop, detach,
+candidate attach, coordinator commit/abort and cleanup failures. Only a
+live supervised test can establish a complete recovery path.
+
 ## Recovery sequence
 
 1. Cloudflare detects the active production health endpoint failing for the
