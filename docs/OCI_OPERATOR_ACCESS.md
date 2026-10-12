@@ -13,9 +13,9 @@ bash scripts/katcha-oci-admin.sh reauth
 ```
 
 - `status`: read-only admin token validity, managed port-forward tunnel health, GitHub recovery safety switches.
-- `connect`: reuse an existing **managed and verified** SSH tunnel, or create **one temporary OCI Bastion port-forwarding session on the existing Bastion**, at localhost port 22022 (3-hour session lifetime).
+- `connect`: reuse an existing **managed and verified** SSH tunnel, or create **one temporary OCI Bastion port-forwarding session on the existing Bastion**, at localhost port 22022 (3-hour session lifetime). Before creating a session, it attempts a read-only Bastion CIDR check and refuses confirmed mismatches; if external IP verification is unavailable, it warns without incorrectly claiming the allowlist matches.
 - `audit`: run the existing independent read-only IAM/Vault, capacity and production-host backup/restore audits. Missing or stale audit evidence fails the overall status even when an underlying audit exits 0.
-- `doctor`: inspect and suggest next actions without renewing credentials.
+- `doctor`: inspect access and compare the existing OCI Bastion client CIDR allowlist with the current public IPv4 observed via HTTPS. It prints only ALLOWED/MISMATCH/UNVERIFIED and changes nothing. Under split-tunnel VPNs, HTTPS egress may differ from SSH egress; confirm before modifying OCI settings.
 - `disconnect`: close only this wrapper's managed SSH process, delete its own OCI Bastion session and ephemeral RSA key. Refuse to kill an unknown listener.
 - `reauth`: open interactive OCI administrator browser login only if the `KATCHA_VAULT_ADMIN` token is invalid. Login output and input use your terminal directly, so follow the displayed browser/MFA instructions. It stops after five minutes if the login does not finish; Ctrl+C exits cleanly. Bastion connect uses the separate recovery API-key config; it **does not need** admin browser reauthentication.
 
@@ -26,3 +26,8 @@ The wrapper's state, ephemeral Bastion RSA key, logs and persistent Bastion serv
 **Boundaries:** None of these actions creates a compute instance, volume, Vault secret, IAM policy, new Bastion, Cloudflare leader, or deployment. No production disk or recovery switch is touched. Creating a Bastion **session** is still an OCI API operation; it is initiated **only** by `connect`. Launching an E2 Micro identity probe remains separately gated: the last audit showed 50 GB of remaining storage, all of which a test instance would consume.
 
 Old `bootstrap-acquired-oci-host.sh` also creates Bastion sessions but additionally provisions/changes production infrastructure; **do not use that bootstrap script for routine operator access**.
+
+## Bastion 'closed by remote host' failure
+
+Oracle's official Bastion troubleshooting page identifies the error `Connection to host.bastion... closed by remote host.` as a possible client-IP allowlist mismatch. The original production bootstrap restricted the Bastion to the operator's then-current public IPv4 (/32). If the operator's IPv4 changed, `doctor` can flag the mismatch without creating another session. Confirm the actual SSH egress IP (especially with a VPN); updating the Bastion allowlist is a **separate explicit operator action** and requires a new Bastion session afterward. Do not rerun the initial production bootstrap or broaden the allowlist indiscriminately.
+
