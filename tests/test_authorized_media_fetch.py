@@ -413,9 +413,7 @@ def test_partial_storage_write_is_unknown_and_cannot_repeat(fetch_db, monkeypatc
     assert len(calls) == 1
 
 
-def test_rebinding_between_validation_and_connect_never_connects_private(
-    fetch_db, monkeypatch
-):
+def test_rebinding_between_validation_and_connect_never_connects_private(fetch_db, monkeypatch):
     resolutions = []
     destinations = []
 
@@ -553,3 +551,22 @@ def test_interrupted_stream_removes_temp_file_and_stays_unknown(fetch_db, monkey
         receipt = session.scalar(select(AcquisitionReceipt))
         assert receipt.status == "unknown"
         assert receipt.bytes_received == len(b"partial")
+
+
+@pytest.mark.parametrize("unsafe", ["127.0.0.1", "169.254.169.254", "224.0.0.1", "ff02::1"])
+def test_mixed_dns_snapshot_rejects_non_public_unicast_before_socket_creation(monkeypatch, unsafe):
+    from katcha.editorial.media_intake.transport import PublicDestinationBackend
+
+    monkeypatch.setattr(
+        socket,
+        "getaddrinfo",
+        lambda host, port, type: [
+            (None, None, None, None, ("93.184.216.34", port)),
+            (None, None, None, None, (unsafe, port)),
+        ],
+    )
+    monkeypatch.setattr(
+        socket, "socket", lambda *args: pytest.fail("Unsafe DNS must not create sockets")
+    )
+    with pytest.raises(ValueError, match="non-public"):
+        PublicDestinationBackend(permission()).connect_tcp("media.example", 443)

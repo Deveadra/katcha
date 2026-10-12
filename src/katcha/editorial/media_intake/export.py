@@ -151,6 +151,7 @@ def _build_project_media_export(
         media_files: dict[str, Path] = {}
         total_media_bytes = 0
         clearance_snapshots: dict[str, tuple[uuid.UUID, uuid.UUID]] = {}
+        validation_snapshots: dict[str, tuple[uuid.UUID, uuid.UUID]] = {}
 
         for item in items:
             clip = session.get(Clip, item.clip_id) if item.clip_id else None
@@ -452,6 +453,8 @@ def _build_project_media_export(
                     assessment.discovery_candidate_id,
                     assessment.id,
                 )
+                if validation is not None:
+                    validation_snapshots[str(item.id)] = (receipt.id, validation.id)
             manifest_items.append(entry)
             links.append(
                 {
@@ -470,6 +473,26 @@ def _build_project_media_export(
             snapshot = clearance_snapshots.get(str(entry["id"]))
             if snapshot is None:
                 continue
+            validation_snapshot = validation_snapshots.get(str(entry["id"]))
+            if validation_snapshot is not None:
+                latest_probe = session.execute(
+                    select(MediaAssetValidation.id, MediaAssetValidation.status)
+                    .where(
+                        MediaAssetValidation.receipt_id == validation_snapshot[0],
+                        MediaAssetValidation.channel_profile_id == channel_id,
+                    )
+                    .order_by(MediaAssetValidation.probe_version.desc())
+                ).first()
+                if (
+                    latest_probe is None
+                    or latest_probe[0] != validation_snapshot[1]
+                    or latest_probe[1] != "validated"
+                ):
+                    entry["media_path"] = None
+                    entry["gap_reason"] = "validated_acquisition_required"
+                    link["media_path"] = ""
+                    link["gap_reason"] = "validated_acquisition_required"
+                    continue
             latest = session.execute(
                 select(RightsAssessment.id, RightsAssessment.production_eligible)
                 .where(RightsAssessment.discovery_candidate_id == snapshot[0])

@@ -525,3 +525,39 @@ def test_manifest_size_limit_is_enforced_before_returning_archive(export_context
     monkeypatch.setattr(export, "MAX_METADATA_BYTES", 32)
     with pytest.raises(ValueError, match="metadata exceeds"):
         build_project_media_export(channel_id, project_id, revision, store=MemoryStore({}))
+
+
+def test_probe_rejected_during_storage_read_cannot_be_published(export_context):
+    engine, channel_id, _, project_id, revision = export_context
+    data, digest, receipt_id = add_exportable_item(engine, channel_id, project_id, revision)
+
+    class RejectingStore(MemoryStore):
+        def iter_bytes(self, key, chunk_size=1024 * 1024):
+            with db.session_scope() as session:
+                session.add(
+                    MediaAssetValidation(
+                        id=uuid.uuid4(),
+                        receipt_id=receipt_id,
+                        channel_profile_id=channel_id,
+                        probe_version=2,
+                        status="rejected",
+                        media_type="video",
+                        expected_sha256=digest,
+                        actual_sha256=digest,
+                        mime="video/mp4",
+                        size_bytes=len(data),
+                        probe={},
+                        error_category="content_probe_failed",
+                    )
+                )
+            yield from super().iter_bytes(key, chunk_size)
+
+    result = build_project_media_export(
+        channel_id,
+        project_id,
+        revision,
+        store=RejectingStore({"internal/private-storage-key": data}),
+    )
+    with zipfile.ZipFile(io.BytesIO(result)) as archive:
+        assert not any(name.startswith("media/") for name in archive.namelist())
+        assert "validated_acquisition_required" in archive.read("manifest.json").decode()

@@ -26,7 +26,7 @@ def public_addresses(host: str) -> list[str]:
         addresses = [ipaddress.ip_address(record[4][0]) for record in records]
     else:
         addresses = [direct]
-    if not addresses or any(not address.is_global for address in addresses):
+    if not addresses or any(not address.is_global or address.is_multicast for address in addresses):
         raise ValueError("Media host resolves to a non-public address")
     return list(dict.fromkeys(str(address) for address in addresses))
 
