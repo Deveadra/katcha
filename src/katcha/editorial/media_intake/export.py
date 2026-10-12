@@ -152,7 +152,23 @@ def build_project_media_export(
                     if rights_candidate
                     else None
                 )
-                if str(rights_owner) != str(channel_id):
+                rights_source = (
+                    session.get(SourceItem, rights_candidate.source_item_id)
+                    if rights_candidate and rights_candidate.source_item_id
+                    else None
+                )
+                assessment_matches_item = rights_source is not None and (
+                    (clip is not None and rights_source.clip_id == clip.id)
+                    or (
+                        item.external_reference_url is not None
+                        and item.external_reference_url
+                        in {rights_source.source_url, rights_source.canonical_url}
+                    )
+                )
+                if (
+                    str(rights_owner) != str(channel_id)
+                    or not assessment_matches_item
+                ):
                     assessment = None
             rights_evidence = []
             if (
