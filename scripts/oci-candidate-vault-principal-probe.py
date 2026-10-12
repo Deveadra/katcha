@@ -23,7 +23,7 @@ BUNDLES = (
     "KATCHA_OCI_RESTORE_ENV_SECRET_ID",
 )
 DENIAL_CODES = ("NotAuthorizedOrNotFound", "NotAuthorized", "Forbidden")
-OCID = re.compile(r"^ocid1\\.vaultsecret\\.[A-Za-z0-9._-]+$")
+OCID = re.compile(r"^ocid1\.vaultsecret\.[A-Za-z0-9._-]+$")
 
 
 class AcceptanceError(RuntimeError):
