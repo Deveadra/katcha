@@ -54,6 +54,7 @@ def test_candidate_launch_attaches_defined_tag_before_cloud_init(tmp_path, monke
     config = SimpleNamespace(
         compartment_id="ocid1.compartment.test",
         assign_public_ip=False,
+        boot_volume_size_gb=50,
     )
     data = tmp_path / "user-data.sh"
     data.write_text("#!/bin/bash\n", encoding="utf-8")
@@ -76,6 +77,7 @@ def test_candidate_launch_attaches_defined_tag_before_cloud_init(tmp_path, monke
     assert json.loads(argv[argv.index("--defined-tags") + 1]) == {
         "KatchaRecovery": {"Candidate": "true"}
     }
+    assert argv[argv.index("--boot-volume-size-in-gbs") + 1] == "50"
     assert "--freeform-tags" in argv
     assert argv.index("--defined-tags") < argv.index("--user-data-file")
 
