@@ -3,32 +3,35 @@ from logging.config import fileConfig
 from alembic import context
 from sqlalchemy import engine_from_config, pool, text
 
-from katcha import acquisition_models  # noqa: F401
-from katcha import automation_schedule_models  # noqa: F401
-from katcha import brand_models  # noqa: F401
-from katcha import brand_preview_models  # noqa: F401
-from katcha import chatgpt_models  # noqa: F401
-from katcha import codex_models  # noqa: F401
-from katcha import command_center_models  # noqa: F401
-from katcha import discovery_poll_models  # noqa: F401
-from katcha import discovery_trend_models  # noqa: F401
-from katcha import edit_blueprint_models  # noqa: F401
-from katcha import edit_performance_models  # noqa: F401
-from katcha import editorial_models  # noqa: F401
-from katcha import intelligence_models  # noqa: F401
-from katcha import longform_models  # noqa: F401
-from katcha import models  # noqa: F401
-from katcha import packaging_intelligence_models  # noqa: F401
-from katcha import packaging_models  # noqa: F401
-from katcha import production_models  # noqa: F401
-from katcha import publishing_models  # noqa: F401
-from katcha import reach_models  # noqa: F401
-from katcha import render_models  # noqa: F401
-from katcha import short_episode_models  # noqa: F401
-from katcha import telegram_models  # noqa: F401
-from katcha import trend_activation_models  # noqa: F401
-from katcha import trend_calibration_models  # noqa: F401
-from katcha import trend_models  # noqa: F401
+from katcha import (
+    acquisition_models,  # noqa: F401
+    automation_schedule_models,  # noqa: F401
+    brand_models,  # noqa: F401
+    brand_preview_models,  # noqa: F401
+    chatgpt_models,  # noqa: F401
+    codex_models,  # noqa: F401
+    command_center_models,  # noqa: F401
+    discovery_poll_models,  # noqa: F401
+    discovery_trend_models,  # noqa: F401
+    edit_blueprint_models,  # noqa: F401
+    edit_performance_models,  # noqa: F401
+    editorial_models,  # noqa: F401
+    intelligence_models,  # noqa: F401
+    longform_models,  # noqa: F401
+    models,  # noqa: F401
+    packaging_intelligence_models,  # noqa: F401
+    packaging_models,  # noqa: F401
+    production_models,  # noqa: F401
+    publishing_models,  # noqa: F401
+    reach_models,  # noqa: F401
+    render_models,  # noqa: F401
+    scene_index_models,  # noqa: F401
+    short_episode_models,  # noqa: F401
+    telegram_models,  # noqa: F401
+    trend_activation_models,  # noqa: F401
+    trend_calibration_models,  # noqa: F401
+    trend_models,  # noqa: F401
+)
 from katcha.config import get_settings
 from katcha.db import Base
 
