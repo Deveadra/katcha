@@ -372,3 +372,147 @@ def test_unverified_egress_is_not_reported_as_mismatch(monkeypatch, capsys):
     monkeypatch.setattr(admin, "bastion_client_access", unavailable)
     assert admin.diagnose_bastion_access() == "UNVERIFIED"
     assert "UNVERIFIED" in capsys.readouterr().out
+
+
+def test_repair_checks_two_independent_public_ipv4_sources(monkeypatch):
+    calls = []
+    def fake_run(argv, timeout=45):
+        calls.append(argv)
+        return "75.168.42.11"
+    monkeypatch.setattr(admin, "run", fake_run)
+    assert str(admin.current_public_ipv4()) == "75.168.42.11"
+    assert [argv[-1] for argv in calls] == [
+        "https://api.ipify.org", "https://checkip.amazonaws.com"
+    ]
+
+
+def test_repair_refuses_disagreeing_external_ip_sources(monkeypatch):
+    answers = iter(["75.168.42.11", "75.168.42.12"])
+    monkeypatch.setattr(admin, "run", lambda *a, **k: next(answers))
+    with pytest.raises(admin.AccessError, match="disagree"):
+        admin.current_public_ipv4()
+
+
+@pytest.mark.parametrize("rules, state", [
+    (["75.168.1.2/32", "8.8.8.8/32"], "ACTIVE"),
+    (["75.168.0.0/16"], "ACTIVE"),
+    (["75.168.1.2/32"], "DELETED"),
+])
+def test_repair_rejects_unexpected_allowlist_shapes(monkeypatch, rules, state):
+    import json
+    bastion = "ocid1.bastion.oc1.iad.existing"
+    monkeypatch.setattr(admin, "oci", lambda *a: json.dumps({
+        "data": {"id": bastion, "lifecycle-state": state,
+                 "client-cidr-block-allow-list": rules}
+    }))
+    with pytest.raises(admin.AccessError, match="could not be verified"):
+        admin.active_bastion_single_host_rule(bastion)
+
+
+def test_repair_updates_only_existing_bastion_after_approval(monkeypatch, capsys):
+    monkeypatch.setattr(admin, "lock", contextlib.nullcontext)
+    monkeypatch.setattr(admin, "listening", lambda: False)
+    bastion = "ocid1.bastion.oc1.iad.existing"
+    monkeypatch.setattr(admin, "target", lambda: (bastion, "10.42.2.144"))
+    monkeypatch.setattr(admin, "current_public_ipv4", lambda: admin.ipaddress.IPv4Address(
+        "75.168.42.11"
+    ))
+    monkeypatch.setattr(admin.sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr("builtins.input", lambda *a: "UPDATE")
+    commands = []
+    def fake_oci(*args):
+        commands.append(args)
+        if args[:3] == ("bastion", "bastion", "get"):
+            rule = "75.168.42.11/32" if any(
+                row[:3] == ("bastion", "bastion", "update") for row in commands
+            ) else "75.168.1.2/32"
+            import json
+            return json.dumps({
+                "data": {"id": bastion, "lifecycle-state": "ACTIVE",
+                         "client-cidr-block-allow-list": [rule]}
+            })
+        if args[:3] == ("bastion", "bastion", "update"):
+            assert args == ("bastion", "bastion", "update", "--bastion-id", bastion,
+                            "--client-cidr-list", '["75.168.42.11/32"]', "--force")
+            return ""
+        pytest.fail("unauthorized OCI command")
+    monkeypatch.setattr(admin, "oci", fake_oci)
+    admin.repair_access()
+    assert sum(a[2] == "update" for a in commands) == 1
+    assert "BASTION_ALLOWLIST_UPDATED: verified exact" in capsys.readouterr().out
+
+
+def test_repair_never_updates_without_tty_or_confirmation(monkeypatch):
+    monkeypatch.setattr(admin, "lock", contextlib.nullcontext)
+    monkeypatch.setattr(admin, "listening", lambda: False)
+    monkeypatch.setattr(admin, "target", lambda: ("ocid1.bastion.oc1.iad.a",
+                                                "10.42.2.144"))
+    monkeypatch.setattr(admin, "active_bastion_single_host_rule",
+                        lambda *a: "75.168.0.1/32")
+    monkeypatch.setattr(admin, "current_public_ipv4",
+                        lambda: admin.ipaddress.IPv4Address("75.168.0.2"))
+    monkeypatch.setattr(admin.sys.stdin, "isatty", lambda: False)
+    monkeypatch.setattr(admin, "oci", lambda *a: pytest.fail("no mutation"))
+    with pytest.raises(admin.AccessError, match="interactive confirmation"):
+        admin.repair_access()
+
+
+def test_repair_approved_but_changed_allowlist_refuses_update(monkeypatch):
+    monkeypatch.setattr(admin, "lock", contextlib.nullcontext)
+    monkeypatch.setattr(admin, "listening", lambda: False)
+    monkeypatch.setattr(admin, "target", lambda: ("ocid1.bastion.oc1.iad.a", "10.42.2.144"))
+    previous = iter(["75.168.0.1/32", "75.168.0.3/32"])
+    monkeypatch.setattr(admin, "active_bastion_single_host_rule",
+                        lambda *a: next(previous))
+    monkeypatch.setattr(admin, "current_public_ipv4",
+                        lambda: admin.ipaddress.IPv4Address("75.168.0.2"))
+    monkeypatch.setattr(admin.sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr("builtins.input", lambda *a: "UPDATE")
+    monkeypatch.setattr(admin, "oci", lambda *a: pytest.fail("no update permitted"))
+    with pytest.raises(admin.AccessError, match="changed during approval"):
+        admin.repair_access()
+
+
+def test_repair_idempotent_if_existing_rule_current(monkeypatch, capsys):
+    monkeypatch.setattr(admin, "lock", contextlib.nullcontext)
+    monkeypatch.setattr(admin, "listening", lambda: False)
+    monkeypatch.setattr(admin, "target", lambda: ("ocid1.bastion.oc1.iad.a", "10.42.2.144"))
+    monkeypatch.setattr(admin, "active_bastion_single_host_rule",
+                        lambda *a: "75.168.0.2/32")
+    monkeypatch.setattr(admin, "current_public_ipv4",
+                        lambda: admin.ipaddress.IPv4Address("75.168.0.2"))
+    monkeypatch.setattr(admin, "oci", lambda *a: pytest.fail("no update needed"))
+    admin.repair_access()
+    assert "ALREADY_CURRENT" in capsys.readouterr().out
+
+
+def test_repair_fails_closed_on_ambiguous_write(monkeypatch):
+    monkeypatch.setattr(admin, "lock", contextlib.nullcontext)
+    monkeypatch.setattr(admin, "listening", lambda: False)
+    monkeypatch.setattr(admin, "target", lambda: ("ocid1.bastion.oc1.iad.a", "10.42.2.144"))
+    monkeypatch.setattr(admin, "active_bastion_single_host_rule",
+                        lambda *a: "75.168.0.1/32")
+    monkeypatch.setattr(admin, "current_public_ipv4",
+                        lambda: admin.ipaddress.IPv4Address("75.168.0.2"))
+    monkeypatch.setattr(admin.sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr("builtins.input", lambda *a: "UPDATE")
+    def ambiguous(*args):
+        raise admin.AccessError("provider timed out")
+    monkeypatch.setattr(admin, "oci", ambiguous)
+    with pytest.raises(admin.AccessError, match="outcome UNKNOWN"):
+        admin.repair_access()
+
+
+def test_repair_declined_confirmation_makes_no_oci_mutation(monkeypatch):
+    monkeypatch.setattr(admin, "lock", contextlib.nullcontext)
+    monkeypatch.setattr(admin, "listening", lambda: False)
+    monkeypatch.setattr(admin, "target", lambda: ("ocid1.bastion.oc1.iad.a", "10.42.2.144"))
+    monkeypatch.setattr(admin, "active_bastion_single_host_rule",
+                        lambda *a: "75.168.0.1/32")
+    monkeypatch.setattr(admin, "current_public_ipv4",
+                        lambda: admin.ipaddress.IPv4Address("75.168.0.2"))
+    monkeypatch.setattr(admin.sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr("builtins.input", lambda *a: "NO")
+    monkeypatch.setattr(admin, "oci", lambda *a: pytest.fail("declined update"))
+    with pytest.raises(admin.AccessError, match="confirmation not received"):
+        admin.repair_access()

@@ -167,6 +167,108 @@ def diagnose_bastion_access() -> str:
         return "UNVERIFIED"
 
 
+
+def current_public_ipv4() -> ipaddress.IPv4Address:
+    """Require agreement between two independent external IPv4 reflectors."""
+    observed = []
+    for url in ("https://api.ipify.org", "https://checkip.amazonaws.com"):
+        try:
+            address = ipaddress.IPv4Address(
+                run(["curl", "-4", "-fsS", "--connect-timeout", "4",
+                     "--max-time", "10", url], timeout=14).strip()
+            )
+        except (AccessError, ValueError) as exc:
+            raise AccessError("public IPv4 could not be independently verified; "
+                              "Bastion allowlist unchanged") from exc
+        if not address.is_global:
+            raise AccessError("public IPv4 reflector returned non-global address; "
+                              "Bastion allowlist unchanged")
+        observed.append(address)
+    if observed[0] != observed[1]:
+        raise AccessError("public IPv4 sources disagree; inspect proxy/VPN/egress before "
+                          "changing the allowlist")
+    return observed[0]
+
+
+def active_bastion_single_host_rule(bastion: str) -> str:
+    """Only allow replacing the bootstrap's exact single-host /32 allowlist."""
+    try:
+        response = json.loads(oci("bastion", "bastion", "get", "--bastion-id", bastion))
+        record = response["data"]
+        if record["id"] != bastion or record["lifecycle-state"] != "ACTIVE":
+            raise ValueError("wrong resource or inactive Bastion")
+        rules = record["client-cidr-block-allow-list"]
+        if not isinstance(rules, list) or len(rules) != 1 or not isinstance(rules[0], str):
+            raise ValueError("expected exactly one existing rule")
+        network = ipaddress.IPv4Network(rules[0], strict=True)
+        if network.prefixlen != 32:
+            raise ValueError("existing rule is not a /32")
+    except (AccessError, ValueError, KeyError, TypeError) as exc:
+        raise AccessError("Bastion identity, state, or single IPv4 /32 allowlist "
+                          "could not be verified; no changes made") from exc
+    return str(network)
+
+
+def repair_access() -> None:
+    """Explicitly approved mutation: replace one existing Bastion /32 with current IPv4."""
+    with lock():
+        if listening():
+            raise AccessError("port 22022 is already listening; inspect the existing "
+                              "tunnel before changing Bastion access")
+        bastion, _ = target()  # Target and existing Bastion from GitHub variables only.
+        old = active_bastion_single_host_rule(bastion)
+        new = str(ipaddress.IPv4Network(str(current_public_ipv4()) + "/32"))
+        print("Existing OCI Bastion: verified ACTIVE; single-host allowlist", flush=True)
+        print("Current permitted IPv4:", old, flush=True)
+        print("Proposed replacement:", new, flush=True)
+        print("Scope: existing Bastion client IP allowlist only; no VM, disk, "
+              "network rules, or production changes.", flush=True)
+        if old == new:
+            print("BASTION_ALLOWLIST_ALREADY_CURRENT; no update needed")
+            return
+        if not sys.stdin.isatty():
+            raise AccessError("interactive confirmation required; no changes made")
+        try:
+            approval = input("Type UPDATE to replace the existing /32 rule: ").strip()
+        except EOFError as exc:
+            raise AccessError("confirmation unavailable; no changes made") from exc
+        if approval != "UPDATE":
+            raise AccessError("confirmation not received; no changes made")
+        # Recheck both Oracle resource metadata and the observed egress IP
+        # before making exactly one OCI update. Never broaden to /0.
+        if active_bastion_single_host_rule(bastion) != old:
+            raise AccessError("Bastion allowlist changed during approval; no update attempted")
+        if str(ipaddress.IPv4Network(str(current_public_ipv4()) + "/32")) != new:
+            raise AccessError("public IPv4 changed during approval; no update attempted")
+        try:
+            oci("bastion", "bastion", "update", "--bastion-id", bastion,
+                "--client-cidr-list", json.dumps([new]), "--force")
+        except AccessError as exc:
+            raise AccessError("Bastion update outcome UNKNOWN; inspect using 'doctor' "
+                              "before any retry") from exc
+        # The update can be asynchronous. Poll read-only instead of issuing
+        # another mutation or interpreting transient UPDATING as failure.
+        verified = False
+        for _ in range(45):
+            try:
+                actual = active_bastion_single_host_rule(bastion)
+            except AccessError:
+                actual = None
+            if actual == new:
+                verified = True
+                break
+            if actual is not None and actual != old:
+                raise AccessError("Bastion allowlist changed unexpectedly after update; "
+                                  "inspect before attempting another change")
+            time.sleep(2)
+        if not verified:
+            raise AccessError("Bastion update outcome still unverified after 90 seconds; "
+                              "run 'doctor' before retrying")
+        print("BASTION_ALLOWLIST_UPDATED: verified exact " + new)
+        print("Next: run 'connect' to create a fresh Bastion session, then 'audit'.")
+
+
+
 def listening() -> bool:
     try:
         with socket.create_connection(("127.0.0.1", PORT), timeout=1):
@@ -470,7 +572,7 @@ def audit() -> bool:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("command", choices=("status", "connect", "disconnect", "audit",
-                                             "doctor", "reauth"))
+                                             "doctor", "reauth", "repair-access"))
     command = parser.parse_args(argv).command
     try:
         if command == "status":
@@ -488,6 +590,8 @@ def main(argv: list[str] | None = None) -> int:
                 disconnect_locked()
         elif command == "reauth":
             reauth()
+        elif command == "repair-access":
+            repair_access()
         elif command == "audit":
             return 0 if audit() else 2
     except KeyboardInterrupt:
