@@ -117,7 +117,8 @@ def build_project_media_export(
         project = session.get(EditorialProject, project_id)
         if project is None or project.channel_profile_id != channel_id:
             raise EditorialNotFound("Editorial project not found in this channel")
-        if session.get(EditorialRevision, (project_id, revision)) is None:
+        project_revision = session.get(EditorialRevision, (project_id, revision))
+        if project_revision is None:
             raise EditorialNotFound("Editorial project revision not found in this channel")
         items = list(
             session.scalars(
@@ -157,7 +158,17 @@ def build_project_media_export(
 
             source_url = _portable_url(item.external_reference_url)
             candidate_rows = []
+            linked_source = None
             if clip is not None:
+                linked_source = session.scalar(
+                    select(SourceItem)
+                    .where(SourceItem.clip_id == clip.id)
+                    .order_by(SourceItem.id)
+                )
+                if source_url is None and linked_source is not None:
+                    source_url = _portable_url(linked_source.canonical_url)
+                if source_url is None and linked_source is not None:
+                    source_url = _portable_url(linked_source.source_url)
                 candidate_rows = list(
                     session.execute(
                         select(DiscoveryCandidate, SourceItem, AcquisitionReceipt)
@@ -171,6 +182,7 @@ def build_project_media_export(
                             AcquisitionReceipt.channel_profile_id == channel_id,
                             AcquisitionReceipt.status == "succeeded",
                         )
+                        .order_by(AcquisitionReceipt.created_at, AcquisitionReceipt.id)
                     )
                 )
                 if candidate_rows and source_url is None:
@@ -192,6 +204,7 @@ def build_project_media_export(
                             MediaAssetValidation.expected_sha256 == receipt.sha256,
                             MediaAssetValidation.actual_sha256 == receipt.sha256,
                         )
+                        .order_by(MediaAssetValidation.probe_version.desc())
                     )
                 )
                 validation = validations[-1] if validations else None
@@ -228,6 +241,8 @@ def build_project_media_export(
                     },
                 }
                 cleared = (
+                    item.status in {"acquired", "ready"}
+                    and
                     item.rights_status == "production_cleared"
                     and assessment is not None
                     and assessment.version == item.rights_assessment_version
@@ -248,7 +263,7 @@ def build_project_media_export(
                         data = object_store.get_bytes(
                             receipt.object_store_key, max_bytes=MAX_ASSET_BYTES
                         )
-                    except (AttributeError, KeyError, OSError, ValueError):
+                    except Exception:
                         gap_reason = "stored_media_unavailable"
                     else:
                         actual = hashlib.sha256(data).hexdigest()
@@ -336,6 +351,10 @@ def build_project_media_export(
             "project_id": project.id,
             "channel_profile_id": channel_id,
             "revision": revision,
+            "project_input_digest": project.input_digest,
+            "project_brief": project.brief,
+            "revision_digest": project_revision.digest,
+            "draft": project_revision.draft,
             "items": manifest_items,
         }
     csv_buffer = io.StringIO(newline="")
