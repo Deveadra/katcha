@@ -39,9 +39,9 @@ would be consumed by a single 50 GB probe boot volume.
   resource-preserving reconciliation and tests. Merged and passing
   exact-head PR CI.
 - [PR #383](https://github.com/Deveadra/katcha/pull/383):
-  proposed incident dispatch claim, retry cap/cooldown, operator failure
-  notification and watchdog contract tests. **Consult merged/CI status before
-  treating as accepted `main`**.
+  transactional incident dispatch claim, retry cap/cooldown, operator failure
+  notification and watchdog contract tests. Merged and passing exact-head
+  PR CI.
 
 Each software change is a non-disruptive repository change. CI exercises
 contracts, mocks, isolated test containers and/or Worker state logic; none
@@ -65,12 +65,19 @@ establishes live OCI recovery or guaranteed R2 restoration.
    `katcha-prod-ad3-private` subnet and inspected Bastion-only admin NSG.
    One 50 GB boot disk, **no other storage**, no public IP, no userdata,
    no production mounts or services. Name/tag uniquely as an isolated probe;
-   do not tag as recovery candidate at launch.
+   do not tag as recovery candidate at launch. Plan one time-limited,
+   operator-monitored identity run (target no more than two hours from
+   verified launch to confirmed boot-volume deletion); this is an operational
+   limit, not an automatic OCI billing guard.
 4. **Cost boundary:** the previously observed 50 GB free remainder falls to
    zero while that boot volume exists. The reported E2 Always Free allowance
    does not guarantee placement or zero billing under the tenancy's
    Free Trial/billing status; collect up-to-date account-specific cost
-   evidence and budget alarms **before** asking to launch.
+   evidence and budget alarms **before** asking to launch. Even if the
+   estimated rate is zero under a verified entitlement, budget/usage
+   monitoring and an explicit maximum tolerated charge are necessary;
+   absent provider/account price evidence, the possible USD charge remains
+   **unverified**, not $0.
 5. Approval must separately cover (a) creating one test instance and 50 GB
    boot volume, (b) if accepted, exact candidate defined-tag mutation and
    four approved Vault reads plus denial against a **known-existing** fifth
