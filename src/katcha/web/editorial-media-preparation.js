@@ -59,12 +59,17 @@ window.KatchaMediaPreparation = (() => {
         const coverage = el('editorial-media-coverage'); coverage.replaceChildren();
         if (run) {
             const requirements = new Map((run.manifest?.requirements || []).map(row => [row.requirement_id, row]));
+            const planningGaps = new Map();
+            for (const gap of run.planning_gaps || []) {
+                if (!planningGaps.has(gap.requirement_id)) planningGaps.set(gap.requirement_id, []);
+                planningGaps.get(gap.requirement_id).push(gap);
+            }
             const rows = run.coverage?.requirements || [];
             for (const row of rows) {
                 const card = text('article', '', 'editorial-beat');
                 card.append(text('h5', requirements.get(row.requirement_id)?.intent || 'Script visual need'));
                 card.append(text('p', `${String(row.coverage_status || 'unresolved').replaceAll('_', ' ')} · ${row.usable_media_count || 0} cleared media`));
-                const gaps = [...(row.gaps || []), ...(run.planning_gaps || []).filter(gap => gap.requirement_id === row.requirement_id)];
+                const gaps = [...(row.gaps || []), ...(planningGaps.get(row.requirement_id) || [])];
                 const seen = new Set();
                 for (const gap of gaps) {
                     const value = gap.next_action || String(gap.category || 'Needs review').replaceAll('_', ' ');
@@ -119,10 +124,11 @@ window.KatchaMediaPreparation = (() => {
         try {
             const [run, bin] = await Promise.all([
                 api(`${base(context)}/media-preparation`),
-                context.revision > 0 ? api(`${base(context)}/media-bin?revision=${context.revision}`) : Promise.resolve({items: []}),
+                context.revision > 0 ? api(`${base(context)}/media-bin?revision=${context.revision}`) : Promise.resolve([]),
             ]);
             if (epoch !== state.epoch || readEpoch !== state.readEpoch) return;
-            state.run = run; state.items = bin.items || []; state.message = ''; render();
+            if (!Array.isArray(bin)) throw new Error('The saved Media Bin response is unavailable.');
+            state.run = run; state.items = bin; state.message = ''; render();
         } catch (error) {
             if (epoch !== state.epoch) return;
             if (readEpoch !== state.readEpoch) return;

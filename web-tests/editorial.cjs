@@ -157,7 +157,7 @@ const draft = {
                     if (loseCreateResponse) { loseCreateResponse = false; return send({ detail: "Connection interrupted. Retry to recover the saved brief." }, 503); }
                     return send(project, 201);
                 }
-                if (url.pathname.endsWith('/media-bin')) return send({items: mediaPreparation?.status === 'completed' ? binItems : []});
+                if (url.pathname.endsWith('/media-bin')) return send(mediaPreparation?.status === 'completed' ? binItems : []);
                 if (/\/media-preparation(?:\/[^/]+)?(?:\/(?:resume|reconcile))?$/.test(url.pathname)) {
                     if (!body) return send(mediaPreparation);
                     if (url.pathname.endsWith('/reconcile')) {
@@ -490,6 +490,11 @@ const draft = {
         assert.match(await page.locator('#editorial-media-coverage').innerText(), /Supply permitted footage/);
         assert.match(await page.locator('#editorial-project-media-bin').innerText(), /Permission not assessed/);
         assert.equal(await page.locator('#editorial-project-media-bin script').count(), 0);
+        assert.match(await page.locator('#editorial-project-media-bin').innerText(), /Fixture interview <unsafe>/);
+        assert.match(await page.locator('#editorial-project-media-bin').innerText(), /Linked to 2 script visual needs/);
+        await page.locator('#editorial-media-refresh').click();
+        await page.locator('#editorial-media-status').filter({hasText: 'Media search finished'}).waitFor();
+        assert.match(await page.locator('#editorial-project-media-bin').innerText(), /Permission revoked/);
         assert.match(await page.locator('#editorial-project-media-bin').innerText(), /Fixture interview <unsafe>/);
         assert.match(await page.locator('#editorial-project-media-bin').innerText(), /Linked to 2 script visual needs/);
         assert.deepEqual(binItems[0].requirement_ids, ['visual-one'], 'Displaying preparation bindings must preserve the saved operator selection');
