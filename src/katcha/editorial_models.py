@@ -289,6 +289,7 @@ class AcquisitionReceipt(Base):
         UniqueConstraint(
             "channel_profile_id", "operation_key", name="uq_acquisition_receipt_operation"
         ),
+        UniqueConstraint("id", "channel_profile_id", name="uq_acquisition_receipt_channel_scope"),
         CheckConstraint(
             "status IN ('authorized', 'acquiring', 'succeeded', 'failed', 'unknown')",
             name="ck_acquisition_receipt_status",
@@ -332,4 +333,53 @@ class AcquisitionReceipt(Base):
     cost_receipt: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
     error_category: Mapped[str | None] = mapped_column(String(80), nullable=True)
     safe_resume_cursor: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class MediaAssetValidation(Base):
+    """Versioned integrity and format probe evidence scoped to an acquisition channel."""
+
+    __tablename__ = "media_asset_validations"
+    __table_args__ = (
+        UniqueConstraint("receipt_id", "probe_version", name="uq_media_validation_receipt_version"),
+        UniqueConstraint("id", "channel_profile_id", name="uq_media_validation_channel_scope"),
+        CheckConstraint("probe_version > 0", name="ck_media_validation_probe_version"),
+        CheckConstraint("size_bytes > 0", name="ck_media_validation_size_positive"),
+        CheckConstraint(
+            "status IN ('validated', 'rejected')", name="ck_media_validation_status"
+        ),
+        CheckConstraint(
+            "media_type IN ('video', 'image', 'audio')", name="ck_media_validation_type"
+        ),
+        ForeignKeyConstraint(
+            ["receipt_id", "channel_profile_id"],
+            ["acquisition_receipts.id", "acquisition_receipts.channel_profile_id"],
+            name="fk_media_validation_receipt_channel",
+        ),
+        ForeignKeyConstraint(
+            ["duplicate_of_id", "channel_profile_id"],
+            ["media_asset_validations.id", "media_asset_validations.channel_profile_id"],
+            name="fk_media_validation_duplicate_channel",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
+    receipt_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    channel_profile_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("channel_profiles.id"), nullable=False, index=True
+    )
+    probe_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    media_type: Mapped[str] = mapped_column(String(16), nullable=False)
+    expected_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    actual_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    perceptual_hash: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    duplicate_of_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    mime: Mapped[str] = mapped_column(String(160), nullable=False)
+    size_bytes: Mapped[int] = mapped_column(Integer, nullable=False)
+    duration_seconds: Mapped[float | None] = mapped_column(nullable=True)
+    width: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    height: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    probe: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    error_category: Mapped[str | None] = mapped_column(String(80), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
