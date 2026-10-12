@@ -24,25 +24,25 @@ Use existing managed object storage; no duplicate blob storage solely because a
 project references a clip. A found public YouTube URL is reference-only absent
 permission. Neither a downloader library nor an HTTP 200 grants rights.
 
-## Next B acquisition slice
+## Current B handoff
 
-KMI-101/#355, KMI-102/#359 and KMI-103/#361 are accepted with linked
-exact-head CI. Reuse the durable Media Bin, existing project API and scoped
-permission/receipt contracts. No fixture or stored reference grants media rights.
+KMI-101 through KMI-106 are accepted with merged PRs and exact-head CI evidence.
+Reuse the durable Media Bin, scoped permission/receipt contracts, bounded
+acquisition, integrity validation and portable export; fixtures do not demonstrate
+live source acquisition or confer rights.
 
-**`KMI-104`: Safe and idempotent authorized downloader.** Implement only
-provider-permitted/operator-authorized fetching with SSRF, DNS, redirect,
-size/timeout and interrupted-transfer protections. Unknown provider outcomes
-require reconciliation; reference-only media remains a reference. Preserve
-existing ObjectStore, rights authority, channel isolation and historical clips.
-Check current migration heads and active PR overlap before editing.
+**`KMI-107`: Measured shot/frame media index and search** remains gated on
+`KIN-101`. Agent A owns the dependency-ready script-to-source-to-Media-Bin
+integration; Agent B is the reviewer. Begin KMI-107 after that integration is
+accepted. Preserve source hashes, measured timestamps, channel isolation and
+bounded CPU/storage/vision costs.
 
 ## Follow-on ordered tasks
 
 `KMI-102` Media Bin API → `KMI-103` acquisition capability/receipt gates →
 `KMI-104` safe authorized fetching → `KMI-105` validation/deduplication →
 `KMI-106` multi-type export → integration `KIN-101` (A owner, B reviewer).
-After integration, `KMI-107` indexes verified shots; later `KIN-102` (B owner)
+After KIN-101, `KMI-107` indexes verified shots; later `KIN-102` (B owner)
 provides editor handoff. Use backlog dependencies as intent; live merged PRs and required CI prove eligibility.
 
 ## Minimum delivered evidence
