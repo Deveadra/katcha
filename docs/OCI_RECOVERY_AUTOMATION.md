@@ -73,6 +73,42 @@ For unattended game-day acceptance, fault-inject primary stop, detach,
 candidate attach, coordinator commit/abort and cleanup failures. Only a
 live supervised test can establish a complete recovery path.
 
+## Cross-AD storage approval and free-headroom gate
+
+OCI's Always Free block-storage allowance is shared between instance boot
+volumes and durable block volumes. A cross-AD failover adds **both** a new
+candidate boot volume (pinned by `KATCHA_OCI_RECOVERY_BOOT_VOLUME_GB`,
+default 50 GB) **and** a new R2-restoration data volume (default 50 GB).
+Therefore the stock cross-AD plan needs **at least 100 GB additional
+headroom**, not just the 50 GB data disk. With the last reported 50 GB
+free remainder, the storage guard blocks creation.
+
+Storage creation is **disabled by default** even if other recovery
+switches are enabled. Before a controlled, separately approved cross-AD
+attempt, a human must verify current boot/block usage across all active
+compartments and every availability domain, including unattached disks,
+then supply ALL THREE metadata variables:
+
+- `KATCHA_OCI_CROSS_AD_STORAGE_CREATION_APPROVED=true` — explicit approval
+  of the **specific** new cross-AD boot/data resource plan and possible
+  charge (not general recovery permission).
+- `KATCHA_OCI_CROSS_AD_FREE_STORAGE_GB` — the integral GB remainder
+  reported by fresh account-level inventory.
+- `KATCHA_OCI_CROSS_AD_STORAGE_AUDITED_AT` — timezone-aware ISO timestamp
+  for that evidence, maximum 15 minutes old at the point of creation.
+
+If any flag, timestamp or combined-headroom check fails, the dispatcher
+**does not call OCI volume create** and records that target as blocked.
+Candidate launches now explicitly request a 50 GB boot volume unless an
+approved 50–200 GB size is configured. An incompatible image blocks
+launch rather than silently increasing boot-storage allocation.
+
+These input variables are **operator assertions**, not a provider-backed
+billing guarantee or a substitute for live OCI inventory, account-plan
+review and cost monitoring. Race conditions between audit and provisioning
+remain possible. Keep the storage gate false outside a separately approved
+game-day; do not use it to turn a storage shortage into unexpected spend.
+
 ## Recovery sequence
 
 1. Cloudflare detects the active production health endpoint failing for the
