@@ -4,7 +4,10 @@ from alembic.script import ScriptDirectory
 
 def test_ranked_trend_editing_activation_and_render_revisions_share_one_history() -> None:
     script = ScriptDirectory.from_config(Config("alembic.ini"))
-    assert script.get_heads() == ["0061_media_scene_indexes"]
+    assert script.get_heads() == ["0062_requirement_shot_matching"]
+    assert script.get_revision("0062_requirement_shot_matching").down_revision == (
+        "0061_media_scene_indexes"
+    )
     assert script.get_revision("0061_media_scene_indexes").down_revision == (
         "0060_media_asset_validations"
     )

@@ -54,6 +54,7 @@ def load_model_metadata() -> None:
         render_models,
         scene_index_models,
         short_episode_models,
+        shot_matching_models,
         telegram_models,
         trend_activation_models,
         trend_calibration_models,
