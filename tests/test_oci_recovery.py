@@ -296,6 +296,136 @@ def test_ambiguous_provisioning_stops_all_fallback_attempts_and_aborts(
     assert FakeCoordinator.instance.committed is False
 
 
+@pytest.mark.parametrize(
+    ("approved", "headroom", "expected_ok"),
+    [
+        ("false", "200", False),
+        ("true", "50", False),
+        ("true", "99", False),
+        ("true", "100", True),
+        ("true", "101", True),
+    ],
+)
+def test_cross_ad_storage_requires_approval_and_combined_boot_data_headroom(
+    monkeypatch, tmp_path, approved, headroom, expected_ok,
+):
+    _base_env(monkeypatch, tmp_path)
+    config = oci_recovery.RecoveryConfig.from_env()
+    observed = datetime(2026, 10, 12, 15, 30, tzinfo=UTC)
+    monkeypatch.setenv("KATCHA_OCI_CROSS_AD_STORAGE_CREATION_APPROVED", approved)
+    monkeypatch.setenv("KATCHA_OCI_CROSS_AD_FREE_STORAGE_GB", headroom)
+    monkeypatch.setenv(
+        "KATCHA_OCI_CROSS_AD_STORAGE_AUDITED_AT", observed.isoformat()
+    )
+    if expected_ok:
+        oci_recovery.assert_cross_ad_storage_creation_approved(
+            config, now=observed + timedelta(minutes=5)
+        )
+    else:
+        with pytest.raises(oci_recovery.RecoveryError):
+            oci_recovery.assert_cross_ad_storage_creation_approved(
+                config, now=observed + timedelta(minutes=5)
+            )
+
+
+@pytest.mark.parametrize(
+    "observed_at",
+    [
+        "",
+        "2026-10-12T15:30:00",
+        "2026-10-12T15:00:00+00:00",
+        "2026-10-12T15:40:00+00:00",
+    ],
+)
+def test_cross_ad_storage_rejects_missing_naive_stale_or_future_evidence(
+    monkeypatch, tmp_path, observed_at,
+):
+    _base_env(monkeypatch, tmp_path)
+    config = oci_recovery.RecoveryConfig.from_env()
+    monkeypatch.setenv("KATCHA_OCI_CROSS_AD_STORAGE_CREATION_APPROVED", "true")
+    monkeypatch.setenv("KATCHA_OCI_CROSS_AD_FREE_STORAGE_GB", "150")
+    monkeypatch.setenv("KATCHA_OCI_CROSS_AD_STORAGE_AUDITED_AT", observed_at)
+    with pytest.raises(oci_recovery.RecoveryError):
+        oci_recovery.assert_cross_ad_storage_creation_approved(
+            config, now=datetime(2026, 10, 12, 15, 35, tzinfo=UTC)
+        )
+
+
+def test_cross_ad_storage_refusal_prevents_any_oci_create(monkeypatch, tmp_path):
+    _base_env(monkeypatch, tmp_path)
+    config = oci_recovery.RecoveryConfig.from_env()
+    client = oci_recovery.OciCli()
+    monkeypatch.delenv("KATCHA_OCI_CROSS_AD_STORAGE_CREATION_APPROVED", raising=False)
+
+    def forbidden_run(_argv):
+        pytest.fail("OCI volume create must not execute without approval")
+
+    monkeypatch.setattr(client, "run", forbidden_run)
+    with pytest.raises(
+        oci_recovery.RecoveryError, match="pending separate approval"
+    ):
+        client.create_recovery_volume(
+            config,
+            oci_recovery.Incident("incident", 7, "previous"),
+            deployment_id="candidate",
+            availability_domain="TEST:AD-2",
+        )
+
+
+def test_cross_ad_storage_validated_create_and_exact_candidate_boot_size(
+    monkeypatch, tmp_path,
+):
+    _base_env(monkeypatch, tmp_path)
+    config = oci_recovery.RecoveryConfig.from_env()
+    observed = datetime.now(UTC)
+    monkeypatch.setenv("KATCHA_OCI_CROSS_AD_STORAGE_CREATION_APPROVED", "true")
+    monkeypatch.setenv("KATCHA_OCI_CROSS_AD_FREE_STORAGE_GB", "100")
+    monkeypatch.setenv(
+        "KATCHA_OCI_CROSS_AD_STORAGE_AUDITED_AT", observed.isoformat()
+    )
+    client = oci_recovery.OciCli()
+    calls = []
+
+    def fake_run(argv):
+        calls.append(argv)
+        if argv[:3] == ["bv", "volume", "create"]:
+            return {"data": {"id": "ocid1.volume.new"}}
+        if argv[:3] == ["compute", "instance", "launch"]:
+            return {"data": {"id": "ocid1.instance.candidate"}}
+        pytest.fail("unexpected OCI operation")
+
+    monkeypatch.setattr(client, "run", fake_run)
+    incident = oci_recovery.Incident("incident", 7, "previous")
+    volume = client.create_recovery_volume(
+        config,
+        incident,
+        deployment_id="candidate",
+        availability_domain="TEST:AD-2",
+    )
+    assert volume == "ocid1.volume.new"
+    candidate = client.launch(
+        config, incident, deployment_id="candidate", deployment_epoch=8,
+        plan=config.primary, target=config.alternate_targets[0],
+        recovery_mode="cross-ad-free-a1", data_volume_id=volume,
+        storage_mode="r2-restore", user_data_path=tmp_path / "bootstrap",
+    )
+    assert candidate == "ocid1.instance.candidate"
+    launch = calls[-1]
+    assert launch[launch.index("--boot-volume-size-in-gbs") + 1] == "50"
+
+
+def test_recovery_boot_size_rejects_oversized_or_undersized_images(
+    monkeypatch, tmp_path,
+):
+    _base_env(monkeypatch, tmp_path)
+    for size in ("49", "201"):
+        monkeypatch.setenv("KATCHA_OCI_RECOVERY_BOOT_VOLUME_GB", size)
+        with pytest.raises(
+            oci_recovery.RecoveryError, match="boot volume must be 50 to 200",
+        ):
+            oci_recovery.RecoveryConfig.from_env()
+
+
 def test_paid_budget_rejects_ttl_that_can_exceed_cap(monkeypatch, tmp_path) -> None:
     _base_env(monkeypatch, tmp_path)
     monkeypatch.setenv("KATCHA_OCI_PAID_FALLBACK_TTL_HOURS", "24")
