@@ -17,7 +17,7 @@ bash scripts/katcha-oci-admin.sh reauth
 - `audit`: run the existing independent read-only IAM/Vault, capacity and production-host backup/restore audits. Missing or stale audit evidence fails the overall status even when an underlying audit exits 0.
 - `doctor`: inspect and suggest next actions without renewing credentials.
 - `disconnect`: close only this wrapper's managed SSH process, delete its own OCI Bastion session and ephemeral RSA key. Refuse to kill an unknown listener.
-- `reauth`: open interactive OCI administrator browser login only if the `KATCHA_VAULT_ADMIN` token is invalid. Bastion connect uses the separate recovery API-key config; it **does not need** admin browser reauthentication.
+- `reauth`: open interactive OCI administrator browser login only if the `KATCHA_VAULT_ADMIN` token is invalid. Login output and input use your terminal directly, so follow the displayed browser/MFA instructions. It stops after five minutes if the login does not finish; Ctrl+C exits cleanly. Bastion connect uses the separate recovery API-key config; it **does not need** admin browser reauthentication.
 
 Prerequisites: WSL Linux, installed isolated OCI CLI at `~/.cache/katcha/oci-cli-3.94.1/bin/oci`, working `gh` login for `Deveadra/katcha`, existing recovery API-key config `~/.config/katcha/oci-github-recovery/config`, local `~/.ssh/katcha-oci` and **pinned primary host key** at `~/.config/katcha/production/bastion/target_known_hosts`. If the latter is absent, stop and re-establish it via a trusted verification path; do not disable strict host-key checks.
 
