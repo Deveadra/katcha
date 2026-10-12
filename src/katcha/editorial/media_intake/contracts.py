@@ -14,6 +14,7 @@ from katcha.editorial.project_schemas import Contract
 class ProviderPermissionV1(Contract):
     provider: str = Field(min_length=1, max_length=80)
     operations: set[Literal["metadata", "preview", "download"]]
+    allowed_hosts: list[str] = Field(default_factory=list, max_length=50)
     evidence_scope: str = Field(min_length=1, max_length=1000)
     evidence_refs: list[str] = Field(default_factory=list, max_length=50)
     expires_at: datetime | None = None
@@ -27,6 +28,10 @@ class ProviderPermissionV1(Contract):
             if expiry <= current:
                 return False
         return operation in self.operations
+
+    def allows_host(self, hostname: str) -> bool:
+        host = hostname.rstrip(".").casefold()
+        return any(host == allowed.rstrip(".").casefold() for allowed in self.allowed_hosts)
 
 
 class AcquisitionReceiptV1(Contract):
@@ -60,9 +65,17 @@ class AcquisitionReceiptV1(Contract):
         return self
 
 
-def production_eligibility(rights_state: str, permission: ProviderPermissionV1) -> tuple[bool, str]:
+def production_eligibility(rights_state: str) -> tuple[bool, str]:
     if rights_state != "production_cleared":
         return False, f"Rights state {rights_state!r} does not authorize production use"
+    return True, "Current rights evidence authorizes production use"
+
+
+def acquisition_permission(
+    permission: ProviderPermissionV1, *, provider: str | None = None
+) -> tuple[bool, str]:
+    if provider is not None and permission.provider != provider:
+        return False, "Provider permission does not match the source provider"
     if not permission.allows("download"):
-        return False, "Provider download permission is absent or expired"
-    return True, "Current rights evidence and provider download permission are present"
+        return False, "Provider-specific download permission is absent or expired"
+    return True, "Provider-specific download permission is present"
