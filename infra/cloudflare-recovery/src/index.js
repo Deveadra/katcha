@@ -598,6 +598,11 @@ export class RecoveryAuthority extends DurableObject {
             "recovery_retry_seconds",
             86400,
           ),
+          maxDispatchAttempts: positiveInt(
+            body.max_dispatch_attempts ?? 3,
+            "max_dispatch_attempts",
+            10,
+          ),
         };
         if (config.intervalSeconds < 30) {
           throw new HttpError(400, "interval_seconds must be at least 30");
@@ -755,6 +760,7 @@ export class RecoveryAuthority extends DurableObject {
 
     if (
       !result.ignored &&
+      result.shouldDispatch === true &&
       incident?.status === "pending_dispatch" &&
       result.state.active?.deployment_id === observed.deploymentId &&
       result.state.active?.epoch === observed.deploymentEpoch
