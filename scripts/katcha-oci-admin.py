@@ -529,12 +529,23 @@ def status() -> bool:
 
 def audit() -> bool:
     success = True
+    # Both administrator metadata audits require the same short-lived OCI
+    # browser security token. Diagnose it once without running probes that
+    # would only return an opaque Python exit code.
+    admin_ready = admin_valid()
+    if not admin_ready:
+        print("audit_admin_session: NEEDS_BROWSER_LOGIN")
     for name, command, markers in [
         ("IAM", "audit-oci-recovery-readiness.py", ["vault_admin_session: VALID",
                                                     "candidate_four_secret_only_grant: PASS"]),
         ("CAPACITY", "audit-oci-free-candidate-capacity.py",
          ["READ_ONLY_CAPACITY_PREFLIGHT_COMPLETE"]),
     ]:
+        if not admin_ready:
+            print(name + ": BLOCKED (administrator session invalid or unavailable; "
+                  "run 'bash scripts/katcha-oci-admin.sh reauth')")
+            success = False
+            continue
         arguments = [sys.executable, str(SCRIPTS / command)]
         if name == "IAM":
             arguments.append("--iam-only")
@@ -546,7 +557,16 @@ def audit() -> bool:
             ):
                 success = False
         except AccessError as exc:
-            print(name + ": BLOCKED (" + str(exc) + ")")
+            # Preserve generic/redacted command errors: these scripts may call
+            # OCI and GitHub, so raw stderr and exception chains are not safe
+            # to print. Give an exact diagnostic command for the operator.
+            diagnostic = (
+                "python3 scripts/audit-oci-recovery-readiness.py --iam-only"
+                if name == "IAM"
+                else "python3 scripts/audit-oci-free-candidate-capacity.py"
+            )
+            print(name + ": BLOCKED (" + str(exc) + "; diagnose with '" +
+                  diagnostic + "' in your WSL terminal)")
             success = False
     if handshake():
         try:
