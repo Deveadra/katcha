@@ -54,6 +54,7 @@ permissions:
   contents: read
 
 env:
+  KATCHA_OCI_RECOVERY_CONFIGURED: ${{ vars.KATCHA_OCI_RECOVERY_CONFIGURED }}
   KATCHA_EXTERNAL_COMPUTE_ENABLED: ${{ vars.KATCHA_EXTERNAL_COMPUTE_ENABLED }}
   KATCHA_RECOVERY_COORDINATOR_URL: ${{ vars.KATCHA_RECOVERY_COORDINATOR_URL }}
   KATCHA_RECOVERY_ADMIN_TOKEN: ${{ secrets.KATCHA_RECOVERY_ADMIN_TOKEN }}
@@ -137,6 +138,19 @@ jobs:
       cancel-in-progress: false
     timeout-minutes: 60
     steps:
+      - name: Reject unauthorized recovery dispatch before OCI setup
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${KATCHA_OCI_RECOVERY_CONFIGURED:-}" != "true" ]]; then
+            echo "RECOVERY_DISABLED: KATCHA_OCI_RECOVERY_CONFIGURED is not true; no OCI action attempted." >&2
+            exit 41
+          fi
+          if [[ "${KATCHA_EXTERNAL_COMPUTE_ENABLED:-}" != "true" ]]; then
+            echo "RECOVERY_DISABLED: KATCHA_EXTERNAL_COMPUTE_ENABLED is not true; no OCI action attempted." >&2
+            exit 42
+          fi
+
       - uses: actions/checkout@v4
 
       - uses: actions/setup-python@v5
