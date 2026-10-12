@@ -47,6 +47,21 @@ def run(args: list[str], timeout: int = 45) -> str:
     return result.stdout.strip()
 
 
+def run_interactive(args: list[str], timeout: int = 300) -> None:
+    """Use the user's terminal for a browser/MFA flow; never capture its prompts."""
+    try:
+        # Inherit stdin/stdout/stderr so OCI can display instructions and receive
+        # verification input. Capturing stdout/stderr hides all login progress.
+        result = subprocess.run(args, check=False, timeout=timeout)
+    except subprocess.TimeoutExpired as exc:
+        raise AccessError("interactive OCI login timed out; retry from a WSL terminal") from exc
+    except OSError as exc:
+        raise AccessError("interactive OCI login could not start") from exc
+    if result.returncode:
+        raise AccessError("interactive OCI login failed (exit "
+                          + str(result.returncode) + ")")
+
+
 def oci(*args: str) -> str:
     if not OCI.is_file() or not API_CONFIG.is_file():
         raise AccessError("recovery OCI CLI/API-key configuration missing")
@@ -70,8 +85,10 @@ def reauth() -> None:
         return
     if not sys.stdin.isatty():
         raise AccessError("administrator browser authentication requires a terminal")
-    run([str(OCI), "session", "authenticate", "--region", REGION,
-         "--profile-name", "KATCHA_VAULT_ADMIN"], 600)
+    print("OCI browser sign-in may require a browser or manual verification.", flush=True)
+    print("Follow the OCI CLI instructions shown below (five-minute limit).", flush=True)
+    run_interactive([str(OCI), "session", "authenticate", "--region", REGION,
+                     "--profile-name", "KATCHA_VAULT_ADMIN"])
     if not admin_valid():
         raise AccessError("browser reauthentication did not validate")
     print("vault_admin_session: VALID")
@@ -407,6 +424,9 @@ def main(argv: list[str] | None = None) -> int:
             reauth()
         elif command == "audit":
             return 0 if audit() else 2
+    except KeyboardInterrupt:
+        print("\nOCI_OPERATOR_STOP: interrupted by operator", file=sys.stderr)
+        return 130
     except (AccessError, OSError) as exc:
         print("OCI_OPERATOR_STOP: " + str(exc), file=sys.stderr)
         return 2
