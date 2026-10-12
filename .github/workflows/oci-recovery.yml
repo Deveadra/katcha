@@ -138,6 +138,8 @@ jobs:
       cancel-in-progress: false
     timeout-minutes: 60
     steps:
+      - uses: actions/checkout@v4
+
       - name: Reject unauthorized recovery dispatch before OCI setup
         shell: bash
         run: |
@@ -150,8 +152,6 @@ jobs:
             echo "RECOVERY_DISABLED: KATCHA_EXTERNAL_COMPUTE_ENABLED is not true; no OCI action attempted." >&2
             exit 42
           fi
-
-      - uses: actions/checkout@v4
 
       - uses: actions/setup-python@v5
         with:
@@ -347,6 +347,26 @@ jobs:
           fi
           python -m katcha.ops.break_glass delete-handoff \
             --object-key "$object_key"
+
+      - name: Notify operator if recovery failed or was blocked
+        if: failure()
+        shell: bash
+        env:
+          KATCHA_TELEGRAM_BOT_TOKEN: ${{ secrets.KATCHA_TELEGRAM_BOT_TOKEN }}
+          KATCHA_TELEGRAM_CHAT_ID: ${{ secrets.KATCHA_TELEGRAM_CHAT_ID }}
+          KATCHA_TELEGRAM_THREAD_ID: ${{ vars.KATCHA_TELEGRAM_THREAD_ID }}
+          KATCHA_TELEGRAM_REQUIRED: "true"
+        run: |
+          set -euo pipefail
+          message="$(
+            printf '%s\n' \
+              'Katcha OCI disaster recovery failed or was blocked.' \
+              '' \
+              'Review GitHub run: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}' \
+              'Verify current production health and coordinator epoch before any retry.' \
+              'No successful recovery, fencing, or rollback is implied.'
+          )"
+          bash scripts/notify-telegram.sh "$message"
 
   recovery-watchdog-backstop:
     if: >-
