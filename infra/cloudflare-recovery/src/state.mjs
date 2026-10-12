@@ -20,6 +20,7 @@ export function defaultAuthorityState() {
       interval_seconds: 60,
       failure_threshold: 3,
       recovery_retry_seconds: 300,
+      max_dispatch_attempts: 3,
     },
     bootstrap_watchdog: {
       enabled: false,
@@ -315,6 +316,7 @@ export function configureWatchdog(
     intervalSeconds,
     failureThreshold,
     recoveryRetrySeconds = 300,
+    maxDispatchAttempts = 3,
   },
   nowMs = Date.now(),
 ) {
@@ -326,6 +328,7 @@ export function configureWatchdog(
       interval_seconds: intervalSeconds,
       failure_threshold: failureThreshold,
       recovery_retry_seconds: recoveryRetrySeconds,
+      max_dispatch_attempts: maxDispatchAttempts,
     },
   };
   next = event(next, "watchdog.configured", nowMs, {
@@ -547,6 +550,7 @@ export function applyProbe(
     incident = {
       id: crypto.randomUUID(),
       status: "pending_dispatch",
+      dispatch_attempts: 0,
       opened_at: probeAt,
       deployment_id: deploymentId,
       epoch: deploymentEpoch,
@@ -566,11 +570,39 @@ export function applyProbe(
       nowMs - Date.parse(incident.dispatched_at) >=
         state.watchdog.recovery_retry_seconds * 1000
     ) {
+      if (Number(incident.dispatch_attempts || 0) >= state.watchdog.max_dispatch_attempts) {
+        incident = {
+          ...incident,
+          status: "dispatch_exhausted",
+          last_dispatch_error: "recovery dispatch retry budget exhausted",
+        };
+      } else {
+        incident = {
+          ...incident,
+          status: "pending_dispatch",
+          retry_queued_at: probeAt,
+        };
+        shouldDispatch = true;
+      }
+    }
+  }
+
+  if (incident?.status === "pending_dispatch") {
+    const attempts = Number(incident.dispatch_attempts || 0);
+    if (attempts >= state.watchdog.max_dispatch_attempts) {
       incident = {
         ...incident,
-        status: "pending_dispatch",
-        retry_queued_at: probeAt,
+        status: "dispatch_exhausted",
+        last_dispatch_error: "recovery dispatch retry budget exhausted",
       };
+      shouldDispatch = false;
+    } else if (
+      incident.last_dispatch_attempt_at &&
+      nowMs - Date.parse(incident.last_dispatch_attempt_at) <
+        state.watchdog.recovery_retry_seconds * 1000
+    ) {
+      shouldDispatch = false;
+    } else {
       shouldDispatch = true;
     }
   }
@@ -601,7 +633,9 @@ export function markIncidentDispatched(current, incidentId, nowMs = Date.now()) 
     incident: {
       ...state.incident,
       status: "dispatched",
+      dispatch_attempts: Number(state.incident.dispatch_attempts || 0) + 1,
       dispatched_at: nowIso(nowMs),
+      last_dispatch_attempt_at: nowIso(nowMs),
       last_dispatch_error: null,
     },
   };
@@ -621,7 +655,12 @@ export function markIncidentDispatchFailed(
     ...state,
     incident: {
       ...state.incident,
-      status: "pending_dispatch",
+      status:
+        Number(state.incident.dispatch_attempts || 0) + 1 >=
+        state.watchdog.max_dispatch_attempts
+          ? "dispatch_exhausted"
+          : "pending_dispatch",
+      dispatch_attempts: Number(state.incident.dispatch_attempts || 0) + 1,
       last_dispatch_error: String(error || "dispatch failed").slice(0, 1000),
       last_dispatch_attempt_at: nowIso(nowMs),
     },
