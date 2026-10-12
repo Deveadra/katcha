@@ -6,6 +6,23 @@ Durable Object watchdog opens a Katcha production incident.
 The design goal is **Always Free first, bounded paid continuity second**. The
 dispatcher never commits a replacement merely because OCI launched an instance.
 
+## Activation safety boundary
+
+The repository variable `KATCHA_OCI_RECOVERY_CONFIGURED` is an independent,
+fail-closed gate for manual and watchdog-dispatched recovery. It must be exactly
+`true` before a dispatch can install OCI tooling or call the OCI API. The
+Python recovery configuration independently requires this switch and
+`KATCHA_EXTERNAL_COMPUTE_ENABLED` for new recovery attempts; the latter alone
+never authorizes disaster recovery. Both remain `false` pending separate
+live acceptance and explicit activation approval. An unauthorized dispatch
+fails visibly rather than producing a misleading successful skipped run.
+
+The scheduled expiry and retired-volume cleanup path intentionally remains
+available even after either launch switch is turned off; disabling new compute
+must never block teardown of previously authorized resources. None of these
+offline safeguards constitute a live candidate-principal, R2 restore, fencing,
+or failover acceptance test.
+
 ## Recovery sequence
 
 1. Cloudflare detects the active production health endpoint failing for the
