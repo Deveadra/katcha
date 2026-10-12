@@ -197,7 +197,10 @@ def test_links_and_ready_state_fail_closed(media_bin):
 def test_media_bin_migration_is_additive_and_model_columns_match():
     config = Config("alembic.ini")
     script = ScriptDirectory.from_config(config)
-    assert script.get_heads() == ["0061_media_scene_indexes"]
+    assert script.get_heads() == ["0062_requirement_shot_matching"]
+    assert script.get_revision("0062_requirement_shot_matching").down_revision == (
+        "0061_media_scene_indexes"
+    )
     assert script.get_revision("0061_media_scene_indexes").down_revision == (
         "0060_media_asset_validations"
     )

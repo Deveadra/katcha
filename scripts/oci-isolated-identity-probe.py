@@ -110,6 +110,30 @@ class Oci:
             raise ProbeError("OCI launch returned invalid instance metadata")
         return data
 
+    def update_probe_defined_tags(self, instance_id: str, defined_tags: dict[str, Any]) -> None:
+        """Only after caller proves exact probe identity and mutation approval."""
+        try:
+            command(
+                [
+                    *self.base,
+                    "compute",
+                    "instance",
+                    "update",
+                    "--instance-id",
+                    instance_id,
+                    "--defined-tags",
+                    json.dumps(defined_tags, separators=(",", ":")),
+                    "--force",
+                    "--output",
+                    "json",
+                ],
+                timeout=180,
+            )
+        except ProbeError as exc:
+            raise ProbeError(
+                "candidate tag outcome uncertain; inspect exact probe before retry"
+            ) from exc
+
     def terminate_test_instance(self, instance_id: str) -> None:
         try:
             command(
@@ -502,7 +526,12 @@ def launch_args(plan: dict[str, Any], key_path: Path, probe_id: str) -> list[str
 
 
 def verify(
-    oci: Oci, plan: dict[str, Any], instance_id: str, *, for_cleanup: bool = False
+    oci: Oci,
+    plan: dict[str, Any],
+    instance_id: str,
+    *,
+    for_cleanup: bool = False,
+    allow_candidate_tag: bool = False,
 ) -> dict[str, Any]:
     instance = oci.read("compute", "instance", "get", "--instance-id", instance_id)
     if not isinstance(instance, dict):
@@ -510,13 +539,14 @@ def verify(
     tags = instance.get("freeform-tags") or {}
     defined = instance.get("defined-tags") or {}
     accepted_states = {"RUNNING", "STOPPED"} if for_cleanup else {"RUNNING"}
+    candidate_tag = (defined.get("KatchaRecovery") or {}).get("Candidate") == "true"
     if (
         instance.get("lifecycle-state") not in accepted_states
         or instance.get("shape") != OCI_SHAPE
         or instance.get("availability-domain") != plan["availability_domain"]
         or tags.get("KatchaIsolationProbe") != "true"
         or tags.get("KatchaProduction") != "false"
-        or (not for_cleanup and (defined.get("KatchaRecovery") or {}).get("Candidate") == "true")
+        or (not for_cleanup and not allow_candidate_tag and candidate_tag)
         or instance_id == plan["primary_id"]
     ):
         raise ProbeError("candidate does not satisfy isolated instance contract")
@@ -596,7 +626,50 @@ def verify(
         "public_ip": False,
         "data_volumes": 0,
         "production_bootstrap": False,
-        "vault_candidate_tag": False,
+        "vault_candidate_tag": candidate_tag,
+        "recovery_enabled": False,
+    }
+
+
+def promote_identity_only_candidate(
+    oci: Oci,
+    plan: dict[str, Any],
+    instance_id: str,
+) -> dict[str, Any]:
+    """Scoped candidate defined-tag transition, never a production bootstrap."""
+    verify(oci, plan, instance_id)
+    instance = oci.read("compute", "instance", "get", "--instance-id", instance_id)
+    tags = instance.get("freeform-tags") or {}
+    probe_id = tags.get("KatchaProbeId", "")
+    if (
+        not isinstance(probe_id, str)
+        or not re.fullmatch(r"[0-9a-f]{12}", probe_id)
+        or instance.get("display-name") != "katcha-identity-probe-" + probe_id
+    ):
+        raise ProbeError("identity tag refused: exact isolation probe identity missing")
+    original = instance.get("defined-tags") or {}
+    if not isinstance(original, dict) or any(
+        not isinstance(value, dict) for value in original.values()
+    ):
+        raise ProbeError("identity tag refused: invalid defined-tag metadata")
+    recovery_tags = original.get("KatchaRecovery") or {}
+    if not isinstance(recovery_tags, dict) or "Candidate" in recovery_tags:
+        raise ProbeError("identity tag refused: candidate tag already defined")
+    updated = {
+        **original,
+        "KatchaRecovery": {**recovery_tags, "Candidate": "true"},
+    }
+    oci.update_probe_defined_tags(instance_id, updated)
+    verified = verify(oci, plan, instance_id, allow_candidate_tag=True)
+    if verified["vault_candidate_tag"] is not True:
+        raise ProbeError("identity tag result unverified; reconcile exact probe")
+    return {
+        "status": "IDENTITY_PROBE_CANDIDATE_TAG_VERIFIED",
+        "instance_id": instance_id,
+        "vault_candidate_tag": True,
+        "primary_running": verified["primary_running"],
+        "no_production_bootstrap": True,
+        "secret_access_tested": False,
         "recovery_enabled": False,
     }
 
@@ -632,6 +705,31 @@ def cleanup(oci: Oci, plan: dict[str, Any], instance_id: str) -> dict[str, Any]:
     boot_id = attached[0].get("boot-volume-id")
     if not isinstance(boot_id, str) or not boot_id.startswith("ocid1.bootvolume."):
         raise ProbeError("cleanup refused: probe boot volume ID invalid")
+    # Revoke temporary instance-principal Vault authorization *before*
+    # attempting termination. A timed-out delete must not intentionally leave
+    # a still-authorized probe running.
+    original = instance.get("defined-tags") or {}
+    recovery_tags = original.get("KatchaRecovery") or {}
+    if recovery_tags.get("Candidate") == "true":
+        remaining = {
+            key: value for key, value in recovery_tags.items()
+            if key != "Candidate"
+        }
+        new_defined = {**original}
+        if remaining:
+            new_defined["KatchaRecovery"] = remaining
+        else:
+            new_defined.pop("KatchaRecovery", None)
+        oci.update_probe_defined_tags(instance_id, new_defined)
+        after_revoke = oci.read(
+            "compute", "instance", "get", "--instance-id", instance_id
+        )
+        after_tags = (after_revoke.get("defined-tags") or {}).get("KatchaRecovery") or {}
+        if after_tags.get("Candidate") == "true":
+            raise ProbeError(
+                "cleanup refused: instance-principal candidate tag revocation unverified"
+            )
+
     oci.terminate_test_instance(instance_id)
     for _ in range(24):
         rows = _rows(
@@ -666,13 +764,17 @@ def cleanup(oci: Oci, plan: dict[str, Any], instance_id: str) -> dict[str, Any]:
     }
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("mode", choices=("plan", "launch", "verify", "cleanup"))
+    parser.add_argument(
+        "mode", choices=("plan", "launch", "verify", "tag-candidate", "cleanup")
+    )
     parser.add_argument("--instance-id", help="required for verify or cleanup")
     parser.add_argument("--approve-launch-and-storage-exhaustion", action="store_true")
     parser.add_argument("--approve-cleanup-of-test-instance-and-boot-volume", action="store_true")
-    options = parser.parse_args()
+    parser.add_argument("--approve-isolated-candidate-iam-tag", action="store_true")
+    parser.add_argument("--acknowledge-four-untagged-vault-denials", action="store_true")
+    options = parser.parse_args(argv)
     try:
         oci = Oci()
         plan = (
@@ -706,6 +808,21 @@ def main() -> int:
             if not options.instance_id:
                 raise ProbeError("verify requires --instance-id")
             print(json.dumps(verify(oci, plan, options.instance_id), sort_keys=True))
+            return 0
+        if options.mode == "tag-candidate":
+            if (
+                not options.instance_id
+                or not options.approve_isolated_candidate_iam_tag
+                or not options.acknowledge_four_untagged_vault_denials
+            ):
+                raise ProbeError(
+                    "tag-candidate requires exact instance ID, separate IAM-tag "
+                    "approval, and confirmed four negative Vault checks"
+                )
+            print(json.dumps(
+                promote_identity_only_candidate(oci, plan, options.instance_id),
+                sort_keys=True,
+            ))
             return 0
         if options.mode == "cleanup":
             if (
