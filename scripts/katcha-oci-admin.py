@@ -592,7 +592,7 @@ def audit() -> bool:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("command", choices=("status", "connect", "disconnect", "audit",
-                                             "doctor", "reauth", "repair-access"))
+                                             "doctor", "reauth", "repair-access", "metrics"))
     command = parser.parse_args(argv).command
     try:
         if command == "status":
@@ -614,6 +614,17 @@ def main(argv: list[str] | None = None) -> int:
             repair_access()
         elif command == "audit":
             return 0 if audit() else 2
+        elif command == "metrics":
+            # The helper validates OCI CLI output and only prints filtered data.
+            # Inherit terminal output; never hide useful metrics errors.
+            try:
+                result = subprocess.run(
+                    [sys.executable, str(SCRIPTS / "oci-primary-metrics.py")],
+                    check=False, timeout=360,
+                )
+            except subprocess.TimeoutExpired as exc:
+                raise AccessError("read-only OCI metrics command timed out") from exc
+            return result.returncode
     except KeyboardInterrupt:
         print("\nOCI_OPERATOR_STOP: interrupted by operator", file=sys.stderr)
         return 130
