@@ -23,6 +23,31 @@ must never block teardown of previously authorized resources. None of these
 offline safeguards constitute a live candidate-principal, R2 restore, fencing,
 or failover acceptance test.
 
+## Ambiguous OCI create response
+
+An OCI CLI timeout, malformed launch response, or transport failure is **not**
+proof that a VM or volume was never created. The recovery dispatcher now treats
+an uncertain instance launch or cross-AD volume create as an unresolved
+provisioning outcome: it stops further free/paid candidate attempts, aborts
+the uncommitted coordinator epoch, and preserves any possibly related storage
+for an operator to reconcile. This is deliberate fail-closed behavior, not
+completed rollback or automatic recovery.
+
+The operator must review OCI instance inventory across the configured recovery
+compartment, the incident/deployment tags
+(`KatchaRecoveryIncident`, `KatchaDeploymentId`, `KatchaRecoveryMode`),
+and all newly created volumes tagged `KatchaEphemeralRecoveryVolume=true`.
+Verify the candidate's actual lifecycle and volume attachments **before**
+deciding whether to resume or remove a resource. Do not retry launch, delete a
+possibly attached volume, or report recovery success from a timed-out request.
+Record all uncertain resource IDs and final cleanup evidence in the incident.
+
+While the production activation switches are disabled, cleanup of previously
+authorized resources remains separately available. Provider capacity errors
+are retried only for the documented instance-launch OutOfHostCapacity case;
+other OCI create failures require reconciliation. Neither a mock failure test
+nor an isolated E2 micro probe proves autonomous failover acceptance.
+
 ## Recovery sequence
 
 1. Cloudflare detects the active production health endpoint failing for the

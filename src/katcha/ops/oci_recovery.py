@@ -35,6 +35,10 @@ class RecoveryCleanupIncomplete(RecoveryError):
     """Recovery cleanup did not fully restore the pre-attempt resource state."""
 
 
+class RecoveryProvisioningOutcomeUnknown(RecoveryCleanupIncomplete):
+    """OCI may have accepted a create request; neither retry nor delete blindly."""
+
+
 def _usd_to_microusd(value: Decimal | float | str) -> int:
     amount = Decimal(str(value))
     if amount < 0:
@@ -523,7 +527,12 @@ class OciCli:
                 check=True,
                 capture_output=True,
                 text=True,
+                timeout=1500 if "--wait-for-state" in args else 180,
             )
+        except subprocess.TimeoutExpired as exc:
+            raise RecoveryError("OCI CLI timed out; operation result may be unknown") from exc
+        except OSError as exc:
+            raise RecoveryError("OCI CLI process could not start") from exc
         except subprocess.CalledProcessError as exc:
             message = "\n".join(filter(None, [exc.stdout, exc.stderr]))
             lowered = message.casefold()
@@ -538,8 +547,34 @@ class OciCli:
             ) from exc
         if not completed.stdout.strip():
             return {}
-        data = json.loads(completed.stdout)
+        try:
+            data = json.loads(completed.stdout)
+        except ValueError as exc:
+            raise RecoveryError("OCI CLI returned malformed JSON") from exc
         return data if isinstance(data, dict) else {"data": data}
+
+    def _run_provisioning(
+        self,
+        args: list[str],
+        *,
+        operation: str,
+        retry_capacity: bool = False,
+    ) -> dict[str, Any]:
+        """Fail closed if OCI could have created a resource before an error."""
+        try:
+            return self.run(args)
+        except CapacityUnavailable as exc:
+            if retry_capacity:
+                # OutOfHostCapacity during instance launch is a provider-declared
+                # placement failure. It is the sole automatic capacity retry.
+                raise
+            raise RecoveryProvisioningOutcomeUnknown(
+                f"OCI {operation} outcome unknown; reconcile tagged resources before retry"
+            ) from exc
+        except (RecoveryError, subprocess.TimeoutExpired, OSError, ValueError) as exc:
+            raise RecoveryProvisioningOutcomeUnknown(
+                f"OCI {operation} outcome unknown; reconcile tagged resources before retry"
+            ) from exc
 
     def list_instances(self, config: RecoveryConfig) -> list[dict[str, Any]]:
         data = self.run(
@@ -608,7 +643,7 @@ class OciCli:
             tags["KatchaEstimatedHourlyUsd"] = (
                 f"{config.paid_estimated_hourly_usd:.8f}"
             )
-        result = self.run(
+        result = self._run_provisioning(
             [
                 "compute",
                 "instance",
@@ -648,11 +683,15 @@ class OciCli:
                 "RUNNING",
                 "--max-wait-seconds",
                 "1200",
-            ]
+            ],
+            operation="instance launch",
+            retry_capacity=True,
         )
         instance_id = str((result.get("data") or {}).get("id") or "")
         if not instance_id:
-            raise RecoveryError("OCI launch returned no instance OCID")
+            raise RecoveryProvisioningOutcomeUnknown(
+                "OCI instance launch returned no OCID; reconcile tagged resources before retry"
+            )
         return instance_id
 
     def volume_attachments(
@@ -810,7 +849,7 @@ class OciCli:
             "KatchaDeploymentId": deployment_id,
             "KatchaEphemeralRecoveryVolume": "true",
         }
-        result = self.run(
+        result = self._run_provisioning(
             [
                 "bv",
                 "volume",
@@ -829,11 +868,14 @@ class OciCli:
                 "AVAILABLE",
                 "--max-wait-seconds",
                 "1200",
-            ]
+            ],
+            operation="volume creation",
         )
         volume_id = str((result.get("data") or {}).get("id") or "")
         if not volume_id:
-            raise RecoveryError("OCI volume create returned no volume OCID")
+            raise RecoveryProvisioningOutcomeUnknown(
+                "OCI volume creation returned no OCID; reconcile tagged resources before retry"
+            )
         return volume_id
 
     def delete_volume(self, volume_id: str) -> None:
@@ -1529,6 +1571,10 @@ def _launch_attempt(
             timeout_seconds=config.candidate_timeout_seconds,
         )
         return attempt
+    except RecoveryProvisioningOutcomeUnknown:
+        # A launch/volume creation can succeed even when its CLI request times
+        # out. Preserve the volume and avoid repeat create/unsafe termination.
+        raise
     except Exception:
         if attempt is not None:
             try:
