@@ -73,6 +73,16 @@ pagination occurs. Scheduling continuations consumes KSI-102 cumulative budgets.
 Independent providers can progress despite another provider's recorded failure.
 This is a callable activity service, not yet a project API or Media Bin UI.
 
+## KIN-101 project composition
+
+`services/editorial_media_preparation.py` now composes these accepted services
+with existing EditorialRun checkpoints, project revisions and Media Bin storage.
+The scoped Editorial API and Assets panel expose saved plans, bounded continuation,
+ranked reference coverage, rights states and explicit recovery. See
+[`docs/EDITORIAL_MEDIA_PREPARATION.md`](../../../../docs/EDITORIAL_MEDIA_PREPARATION.md)
+for the API, evidence-volume requirement and full script-to-Bin fixture proof.
+Historical service-only notes above describe the original KSI slices.
+
 ## Executable offline fixture
 
 From this worktree in PowerShell:

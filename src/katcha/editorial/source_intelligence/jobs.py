@@ -10,6 +10,7 @@ on uncertain outcomes, so crash recovery cannot accidentally repeat paid work.
 from __future__ import annotations
 
 import sqlite3
+import uuid
 from collections.abc import Iterator
 from contextlib import closing, contextmanager
 from datetime import UTC, datetime, timedelta
@@ -51,6 +52,10 @@ class SearchJobLedger:
         self.path = path
         with self._db() as db:
             db.executescript("""
+                CREATE TABLE IF NOT EXISTS source_search_ledger_identity (
+                    singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+                    ledger_id TEXT NOT NULL
+                );
                 CREATE TABLE IF NOT EXISTS source_search_candidates (
                     job_id TEXT NOT NULL, candidate_id TEXT NOT NULL,
                     scope_key TEXT NOT NULL, payload TEXT NOT NULL,
@@ -71,6 +76,21 @@ class SearchJobLedger:
                     job_id TEXT NOT NULL, receipt TEXT NOT NULL
                 );
             """)
+            db.execute(
+                "INSERT OR IGNORE INTO source_search_ledger_identity VALUES (1, ?)",
+                (str(uuid.uuid4()),),
+            )
+
+    @property
+    def identity(self) -> str:
+        """Durable volume identity; a missing/replaced ledger must fail closed."""
+        with self._db() as db:
+            row = db.execute(
+                "SELECT ledger_id FROM source_search_ledger_identity WHERE singleton=1"
+            ).fetchone()
+            if row is None:
+                raise RuntimeError("Search ledger identity is missing; restore its evidence volume")
+            return str(row["ledger_id"])
 
     @contextmanager
     def _db(self) -> Iterator[sqlite3.Connection]:

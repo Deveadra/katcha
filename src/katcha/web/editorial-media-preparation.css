@@ -1,0 +1,16 @@
+/* Scoped layout composes the shared Production controls and Aerith materials. */
+#editorial-media-preparation { min-width: 0; }
+#editorial-media-preparation > .check-row,
+#editorial-media-preparation > .editorial-stage-actions,
+#editorial-media-preparation > .ae-help,
+#editorial-media-preparation > #editorial-media-recovery { margin: var(--ae-space-3, 12px); }
+#editorial-media-preparation p, #editorial-media-preparation a { overflow-wrap: anywhere; }
+#editorial-media-preparation pre { white-space: pre-wrap; overflow-wrap: anywhere; max-width: 100%; }
+#editorial-media-preparation .check-row { display: flex; align-items: flex-start; gap: var(--ae-space-2, 8px); }
+#editorial-media-preparation .check-row input { flex: 0 0 auto; }
+#editorial-media-preparation h5 { margin: 0; font: inherit; font-weight: 700; }
+#editorial-media-preparation a { text-decoration: underline; }
+@media (max-width: 600px) {
+    #editorial-media-preparation .editorial-stage-actions { display: grid; }
+    #editorial-media-preparation .editorial-stage-actions button { white-space: normal; }
+}

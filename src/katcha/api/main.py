@@ -26,6 +26,7 @@ from katcha.api.content import router as content_router
 from katcha.api.control import router as control_router
 from katcha.api.control_auth import require_control_token, require_native_channel_body
 from katcha.api.edit_blueprints import router as edit_blueprints_router
+from katcha.api.editorial_media_preparation import router as editorial_media_preparation_router
 from katcha.api.editorial_projects import router as editorial_projects_router
 from katcha.api.editorial_runs import router as editorial_runs_router
 from katcha.api.explorer import router as explorer_router
@@ -188,6 +189,7 @@ app = FastAPI(
     lifespan=_lifespan,
 )
 app.include_router(editorial_projects_router)
+app.include_router(editorial_media_preparation_router)
 app.include_router(editorial_runs_router)
 app.include_router(acquisition_router)
 app.include_router(brands_router)

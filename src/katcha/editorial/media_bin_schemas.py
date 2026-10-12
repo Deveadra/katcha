@@ -60,6 +60,8 @@ class ProjectMediaItemResponse(Contract):
     rights_assessment_version: int | None
     requirement_ids: list[str]
     searchable_tags: list[str]
+    provenance: dict = Field(default_factory=dict)
+    source_metadata: dict = Field(default_factory=dict)
     source_in_seconds: float | None
     source_out_seconds: float | None
     notes: str

@@ -327,6 +327,8 @@ def control_run(
         )
         if row is None:
             raise EditorialNotFound("Editorial run not found in this project")
+        if row.options.get("target") == "prepare_media":
+            raise EditorialConflict("Use the project's media preparation controls for this work")
         # Idempotent retry after an uncertain resume/cancel response.
         if not cancel and row.attempt == expected_attempt + 1:
             session.expunge(row)
