@@ -210,10 +210,10 @@ jobs:
         env:
           KATCHA_SEARCH_LEDGER_TEST_DATABASE_URL: postgresql+psycopg://katcha:katcha@127.0.0.1:5432/katcha
         # Enforce a subprocess deadline even if runner job cancellation stalls.
-        # Verbose test names identify the specific blocker in the log.
+        # Bounded test parameter IDs prevent oversized log output.
         run: |
           set -o pipefail
-          timeout --signal=INT --kill-after=15s 900s pytest -vv -x
+          timeout --signal=INT --kill-after=15s 900s pytest -q
 
       - name: Verify built-in brand assets through S3-compatible HTTP endpoint
         env:
