@@ -855,3 +855,233 @@ def test_ledger_overrides_async_pooled_session_before_durable_claim(database, in
         assert reopen(database).read(planned().job_id, scope=SCOPE).status == "succeeded"
     finally:
         weaker.dispose()
+
+
+def legacy_source(tmp_path, *, pre_identity=True):
+    source = tmp_path / "legacy-search.sqlite"
+    ledger = SearchJobLedger(source)
+    success_job = planned("legacy-success")
+    unknown_job = planned("legacy-unknown")
+    success = dispatch(ledger, success_job)
+    unknown = dispatch(ledger, unknown_job, FixtureAdapter(fail=True))
+    identity = ledger.identity
+    with sqlite3.connect(source) as connection:
+        if pre_identity:
+            connection.execute("DROP TABLE source_search_candidates")
+            connection.execute("DROP TABLE source_search_ledger_identity")
+        else:
+            connection.execute("DELETE FROM source_search_candidates")
+    return source, success_job, unknown_job, success, unknown, identity
+
+
+def legacy_import(engine, source, gap_jobs, **changes):
+    from katcha.editorial.source_intelligence.postgres_jobs import import_sqlite_ledger
+
+    return import_sqlite_ledger(
+        engine,
+        source,
+        recovery_generation=7,
+        confirmed_quiesced=True,
+        legacy_evidence_ref="reviewed-record",
+        legacy_metadata_gap_job_ids=gap_jobs,
+        **changes,
+    )
+
+
+def assert_empty_target(database):
+    with database.connect() as connection:
+        for table in (*TABLES, "source_search_ledger_head"):
+            assert connection.execute(text(f'SELECT COUNT(*) FROM "{table}"')).scalar_one() == 0
+
+
+def test_pre_identity_legacy_import_preserves_receipts_events_budgets_without_replay(
+    database, tmp_path
+):
+    from katcha.editorial.source_intelligence.postgres_jobs import (
+        SearchLedgerRecoveryError,
+        import_sqlite_ledger,
+    )
+
+    source, success_job, unknown_job, success, unknown, _ = legacy_source(tmp_path)
+    raw_tables = ("source_search_jobs", "source_search_receipt_events", "source_search_budgets")
+    with sqlite3.connect(source) as connection:
+        historical = {
+            table: sorted(connection.execute(f'SELECT * FROM "{table}"').fetchall())
+            for table in raw_tables
+        }
+    original_bytes = source.read_bytes()
+    with pytest.raises(SearchLedgerRecoveryError):
+        import_sqlite_ledger(database, source, recovery_generation=7, confirmed_quiesced=True)
+    assert_empty_target(database)
+    report = legacy_import(database, source, (success_job.job_id,), allow_pre_identity=True)
+    assert report["identity_assigned_for_pre_identity"] is True
+    UUID(report["ledger_id"])
+    assert report["metadata_gaps"] == [
+        {"job_id": success_job.job_id, "category": "legacy_candidate_metadata_unavailable"}
+    ]
+    assert source.read_bytes() == original_bytes
+    with database.connect() as connection:
+        imported = {
+            table: sorted(
+                tuple(row) for row in connection.execute(text(f'SELECT * FROM "{table}"'))
+            )
+            for table in raw_tables
+        }
+    assert imported == historical
+    active_report = activate(database)
+    assert active_report["metadata_gaps"] == report["metadata_gaps"]
+    assert active_report["identity_assigned_for_pre_identity"] is True
+    adapter = FixtureAdapter()
+    ledger = reopen(database)
+    assert dispatch(ledger, success_job, adapter) == success
+    assert dispatch(ledger, unknown_job, adapter) == unknown
+    assert ledger.candidates(success_job.job_id, scope=SCOPE) == ()
+    assert not adapter.calls
+
+
+def test_pre_identity_assignment_is_deterministic_for_same_logical_history(database, tmp_path):
+    source, success_job, _, _, _, _ = legacy_source(tmp_path)
+    first = legacy_import(database, source, (success_job.job_id,), allow_pre_identity=True)
+    # Clear only this isolated test target, then import an SQLite backup at a
+    # different path. Assignment must identify history, rather than its path.
+    with database.begin() as connection:
+        for table in (*TABLES, "source_search_ledger_head"):
+            connection.execute(text(f'DELETE FROM "{table}"'))
+    copy = tmp_path / "moved-history.sqlite"
+    with sqlite3.connect(source) as origin, sqlite3.connect(copy) as target:
+        origin.backup(target)
+    second = legacy_import(database, copy, (success_job.job_id,), allow_pre_identity=True)
+    assert first["ledger_id"] == second["ledger_id"]
+    assert first["metadata_gaps"] == second["metadata_gaps"]
+
+
+def test_upgraded_legacy_metadata_gap_requires_named_job_and_preserves_identity(database, tmp_path):
+    from katcha.editorial.source_intelligence.postgres_jobs import (
+        SearchLedgerRecoveryError,
+        import_sqlite_ledger,
+    )
+
+    source, success_job, unknown_job, success, unknown, identity = legacy_source(
+        tmp_path, pre_identity=False
+    )
+    with pytest.raises(SearchLedgerRecoveryError):
+        import_sqlite_ledger(database, source, recovery_generation=7, confirmed_quiesced=True)
+    assert_empty_target(database)
+    report = legacy_import(database, source, (success_job.job_id,))
+    assert report["ledger_id"] == identity
+    assert report["identity_assigned_for_pre_identity"] is False
+    assert report["metadata_gaps"] == [
+        {"job_id": success_job.job_id, "category": "legacy_candidate_metadata_unavailable"}
+    ]
+    activate(database)
+    adapter = FixtureAdapter()
+    assert dispatch(reopen(database), success_job, adapter) == success
+    assert dispatch(reopen(database), unknown_job, adapter) == unknown
+    assert not adapter.calls
+
+
+def test_legacy_gap_permission_cannot_mask_partial_modern_candidate_loss(database, tmp_path):
+    from katcha.editorial.source_intelligence.postgres_jobs import SearchLedgerRecoveryError
+
+    source = tmp_path / "partial-modern.sqlite"
+
+    class TwoCandidates(FixtureAdapter):
+        def discover(self, query, cursor):
+            return DiscoveryBatch(
+                items=(
+                    DiscoveredCandidate("https://example.org/one", external_id="one"),
+                    DiscoveredCandidate("https://example.org/two", external_id="two"),
+                )
+            )
+
+    job = planned()
+    dispatch(SearchJobLedger(source), job, TwoCandidates())
+    with sqlite3.connect(source) as connection:
+        connection.execute(
+            "DELETE FROM source_search_candidates WHERE candidate_id="
+            "(SELECT MIN(candidate_id) FROM source_search_candidates)"
+        )
+        assert (
+            connection.execute("SELECT COUNT(*) FROM source_search_candidates").fetchone()[0] == 1
+        )
+    with pytest.raises(SearchLedgerRecoveryError):
+        legacy_import(database, source, (job.job_id,))
+    assert_empty_target(database)
+
+
+@pytest.mark.parametrize("gap_type", ["nonexistent", "unknown-outcome", "duplicate", "unlisted"])
+def test_legacy_gap_job_ids_must_exactly_describe_missing_success_metadata(
+    database, tmp_path, gap_type
+):
+    from katcha.editorial.source_intelligence.postgres_jobs import SearchLedgerRecoveryError
+
+    source, success_job, unknown_job, _, _, _ = legacy_source(tmp_path, pre_identity=False)
+    gaps = {
+        "nonexistent": (success_job.job_id, "ssj_missing"),
+        "unknown-outcome": (success_job.job_id, unknown_job.job_id),
+        "duplicate": (success_job.job_id, success_job.job_id),
+        "unlisted": (),
+    }[gap_type]
+    with pytest.raises(SearchLedgerRecoveryError):
+        legacy_import(database, source, gaps)
+    assert_empty_target(database)
+
+
+def test_legacy_import_mid_insert_is_atomic_and_retry_preserves_assigned_identity(
+    database, tmp_path
+):
+    from sqlalchemy import event
+
+    source, success_job, _, _, _, _ = legacy_source(tmp_path)
+
+    def interrupt(connection, cursor, statement, parameters, context, executemany):
+        if statement.lstrip().startswith("INSERT INTO source_search_receipt_events"):
+            raise RuntimeError("Injected legacy import interruption")
+
+    event.listen(database, "before_cursor_execute", interrupt)
+    try:
+        with pytest.raises(RuntimeError, match="legacy import interruption"):
+            legacy_import(database, source, (success_job.job_id,), allow_pre_identity=True)
+    finally:
+        event.remove(database, "before_cursor_execute", interrupt)
+    assert_empty_target(database)
+    report = legacy_import(database, source, (success_job.job_id,), allow_pre_identity=True)
+    assert report["identity_assigned_for_pre_identity"] is True
+    activate(database)
+    assert reopen(database).read(success_job.job_id, scope=SCOPE).status == "succeeded"
+
+
+def test_legacy_import_malformed_payload_failure_is_sanitized_and_atomic(database, tmp_path):
+    from katcha.editorial.source_intelligence.postgres_jobs import SearchLedgerRecoveryError
+
+    source, success_job, _, _, _, _ = legacy_source(tmp_path)
+    secret = "fixture-secret-DO-NOT-ECHO"
+    with sqlite3.connect(source) as connection:
+        connection.execute(
+            "UPDATE source_search_jobs SET receipt=?", ('{"secret":"' + secret + '"}',)
+        )
+    with pytest.raises(SearchLedgerRecoveryError) as failure:
+        legacy_import(database, source, (success_job.job_id,), allow_pre_identity=True)
+    assert secret not in str(failure.value)
+    assert "input_value" not in str(failure.value)
+    assert_empty_target(database)
+
+
+def test_legacy_override_never_repairs_deleted_modern_identity_row(database, tmp_path):
+    from katcha.editorial.source_intelligence.postgres_jobs import SearchLedgerRecoveryError
+
+    source, success_job, _, _, _, _ = legacy_source(tmp_path, pre_identity=False)
+    with sqlite3.connect(source) as connection:
+        connection.execute("DELETE FROM source_search_ledger_identity")
+    with pytest.raises(SearchLedgerRecoveryError):
+        legacy_import(database, source, (success_job.job_id,), allow_pre_identity=True)
+    assert_empty_target(database)
+
+
+def test_pre_identity_import_requires_independent_explicit_assignment_flag(database, tmp_path):
+    from katcha.editorial.source_intelligence.postgres_jobs import SearchLedgerRecoveryError
+
+    source, success_job, _, _, _, _ = legacy_source(tmp_path)
+    with pytest.raises(SearchLedgerRecoveryError):
+        legacy_import(database, source, (success_job.job_id,))
+    assert_empty_target(database)

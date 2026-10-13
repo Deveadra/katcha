@@ -11,12 +11,14 @@ from __future__ import annotations
 import hashlib
 import json
 import sqlite3
+import uuid
 from collections.abc import Iterator, Mapping
 from contextlib import closing, contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from pydantic import ValidationError
 from sqlalchemy import Connection, Engine, text
 from sqlalchemy.exc import SQLAlchemyError
 
@@ -124,7 +126,20 @@ def _lock_and_verify(
 
 
 def _report(connection: Connection, head: Mapping[str, Any]) -> dict[str, Any]:
+    legacy = {}
+    for line in head["activation_evidence"].splitlines():
+        try:
+            event = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(event, dict) and event.get("kind") == "legacy_import":
+            legacy = event
     return {
+        "metadata_gaps": [
+            {"job_id": job_id, "category": "legacy_candidate_metadata_unavailable"}
+            for job_id in legacy.get("metadata_gap_job_ids", [])
+        ],
+        "identity_assigned_for_pre_identity": legacy.get("identity_assigned", False),
         **dict(head),
         "counts": {
             table: connection.scalar(text(f"SELECT COUNT(*) FROM {table}"))
@@ -242,6 +257,10 @@ class PostgresSearchJobLedger(SearchJobLedger):
                 yield adapter
                 if adapter.mutated:
                     _save_seal(connection, head, max_evidence_rows=self.max_evidence_rows)
+        except ValidationError as exc:
+            raise SearchLedgerRecoveryError(
+                "Saved search evidence could not be validated; keep dispatch disabled"
+            ) from exc
         except SQLAlchemyError as exc:
             # Omit server/connection strings, SQL and parameters from user-facing
             # errors; availability errors never trigger alternate evidence stores.
@@ -336,7 +355,11 @@ def activate_postgres_ledger(
         return _report(connection, head)
 
 
-def _validate_snapshot(snapshot: dict[str, list[dict[str, Any]]]) -> str:
+def _validate_snapshot(
+    snapshot: dict[str, list[dict[str, Any]]],
+    *,
+    legacy_metadata_gap_job_ids: frozenset[str] = frozenset(),
+) -> str:
     identity = snapshot["source_search_ledger_identity"]
     if len(identity) != 1 or identity[0]["singleton"] != 1 or not identity[0]["ledger_id"]:
         raise SearchLedgerRecoveryError(
@@ -377,7 +400,20 @@ def _validate_snapshot(snapshot: dict[str, list[dict[str, Any]]]) -> str:
         ):
             raise SearchLedgerRecoveryError("Historical candidate receipt binding mismatch")
         candidate_urls.setdefault(job.job_id, set()).add(candidate.original_url)
+    for job_id in legacy_metadata_gap_job_ids:
+        receipt = receipts.get(job_id)
+        if (
+            receipt is None
+            or receipt.status != "succeeded"
+            or not receipt.source_urls
+            or candidate_urls.get(job_id)
+        ):
+            raise SearchLedgerRecoveryError(
+                "Reviewed legacy metadata gap does not match retained evidence"
+            )
     for job_id, receipt in receipts.items():
+        if job_id in legacy_metadata_gap_job_ids:
+            continue
         if candidate_urls.get(job_id, set()) != set(receipt.source_urls):
             raise SearchLedgerRecoveryError("Historical candidate coverage is incomplete")
     latest: dict[str, str] = {}
@@ -476,6 +512,9 @@ def import_sqlite_ledger(
     *,
     recovery_generation: int,
     confirmed_quiesced: bool = False,
+    legacy_evidence_ref: str | None = None,
+    legacy_metadata_gap_job_ids: tuple[str, ...] = (),
+    allow_pre_identity: bool = False,
 ) -> dict[str, Any]:
     """WAL-consistent historical import into an empty, migrated PostgreSQL target.
 
@@ -494,7 +533,18 @@ def import_sqlite_ledger(
         raise SearchLedgerRecoveryError(
             "Historical SQLite ledger missing; restore it, never replace it"
         )
+    if (allow_pre_identity or legacy_metadata_gap_job_ids) and not legacy_evidence_ref:
+        raise SearchLedgerRecoveryError("Explicit reviewed legacy provenance is required")
+    if legacy_evidence_ref is not None and (
+        not isinstance(legacy_evidence_ref, str)
+        or not legacy_evidence_ref.strip()
+        or len(legacy_evidence_ref) > 1024
+    ):
+        raise SearchLedgerRecoveryError("Legacy provenance must be a bounded evidence reference")
+    if len(set(legacy_metadata_gap_job_ids)) != len(legacy_metadata_gap_job_ids):
+        raise SearchLedgerRecoveryError("Duplicate legacy metadata gap identities")
     snapshot = {}
+    missing_tables = []
     # URI mode=ro refuses accidental database creation; backup includes committed WAL.
     with (
         closing(sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True)) as source,
@@ -505,21 +555,79 @@ def import_sqlite_ledger(
         if copy.execute("PRAGMA integrity_check").fetchone()[0] != "ok":
             raise SearchLedgerRecoveryError("SQLite evidence integrity check failed")
         try:
+            present = {
+                row[0] for row in copy.execute("SELECT name FROM sqlite_master WHERE type='table'")
+            }
+            missing_tables = sorted(set(SOURCE_LEDGER_COLUMNS) - present)
+            permitted = {"source_search_candidates"} if legacy_evidence_ref else set()
+            if allow_pre_identity:
+                permitted.add("source_search_ledger_identity")
+            if set(missing_tables) - permitted:
+                raise SearchLedgerRecoveryError("Historical SQLite evidence schema is incomplete")
             total = sum(
                 copy.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
                 for table in SOURCE_LEDGER_COLUMNS
+                if table in present
             )
             if total > DEFAULT_MAX_EVIDENCE_ROWS:
                 raise SearchLedgerRecoveryError("Historical evidence exceeds the import scan bound")
             for table, columns in SOURCE_LEDGER_COLUMNS.items():
-                snapshot[table] = [
-                    dict(row) for row in copy.execute(f"SELECT {','.join(columns)} FROM {table}")
-                ]
+                snapshot[table] = (
+                    [dict(row) for row in copy.execute(f"SELECT {','.join(columns)} FROM {table}")]
+                    if table in present
+                    else []
+                )
         except sqlite3.DatabaseError as exc:
             raise SearchLedgerRecoveryError(
                 "Historical SQLite evidence schema is incomplete"
             ) from exc
-    ledger_id = _validate_snapshot(snapshot)
+    source_sha256 = hashlib.sha256(
+        json.dumps(
+            {
+                "missing_tables": missing_tables,
+                "rows": {
+                    table: sorted(json.dumps(row, sort_keys=True) for row in rows)
+                    for table, rows in snapshot.items()
+                },
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode()
+    ).hexdigest()
+    identity_assigned = "source_search_ledger_identity" in missing_tables
+    if identity_assigned:
+        snapshot["source_search_ledger_identity"] = [
+            {
+                "singleton": 1,
+                "ledger_id": str(
+                    uuid.uuid5(uuid.NAMESPACE_URL, "katcha-legacy-search-ledger:" + source_sha256)
+                ),
+            }
+        ]
+    try:
+        ledger_id = _validate_snapshot(
+            snapshot, legacy_metadata_gap_job_ids=frozenset(legacy_metadata_gap_job_ids)
+        )
+    except ValidationError as exc:
+        raise SearchLedgerRecoveryError(
+            "Historical search evidence could not be validated"
+        ) from exc
+    legacy_attestation = ""
+    if legacy_evidence_ref:
+        legacy_attestation = (
+            json.dumps(
+                {
+                    "kind": "legacy_import",
+                    "source_sha256": source_sha256,
+                    "missing_tables": missing_tables,
+                    "identity_assigned": identity_assigned,
+                    "metadata_gap_job_ids": sorted(legacy_metadata_gap_job_ids),
+                    "asserted_provenance_ref": legacy_evidence_ref.strip(),
+                },
+                sort_keys=True,
+            )
+            + "\n"
+        )
     with engine.begin() as connection:
         _durable(connection)
         # The target has no head yet; table locks serialize concurrent importers.
@@ -543,7 +651,7 @@ def import_sqlite_ledger(
             "ledger_id": ledger_id,
             "recovery_generation": recovery_generation,
             "recovery_required": True,
-            "activation_evidence": "",
+            "activation_evidence": legacy_attestation,
             "integrity_sha256": "",
         }
         head["integrity_sha256"] = _seal(connection, head)

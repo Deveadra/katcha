@@ -236,3 +236,118 @@ def test_unexpected_failures_never_expose_secret_connection_or_sql_details(
     assert all(
         value not in captured.err for value in ("secret", "private-host", "payload-sensitive")
     )
+
+
+@pytest.mark.parametrize("pre_identity", [False, True])
+def test_legacy_import_flags_forward_only_explicit_reviewed_exceptions(
+    pre_identity, offline_cli, monkeypatch, tmp_path, capsys
+):
+    engine, calls, run = offline_cli
+    source = tmp_path / "historical.sqlite"
+    jobs = ("ssj_" + "a" * 64, "ssj_" + "b" * 64)
+
+    def operation(received, path, **kwargs):
+        assert received is engine and path == source
+        expected = {
+            "recovery_generation": 8,
+            "confirmed_quiesced": True,
+            "legacy_evidence_ref": "review:pre-candidate-history",
+            "legacy_metadata_gap_job_ids": jobs,
+        }
+        if pre_identity:
+            expected["allow_pre_identity"] = True
+        assert kwargs == expected
+        calls.append("legacy-import")
+        return {
+            "recovery_required": True,
+            "metadata_gaps": [
+                {"job_id": job, "category": "legacy_candidate_metadata_unavailable"} for job in jobs
+            ],
+            "identity_assigned_for_pre_identity": pre_identity,
+        }
+
+    monkeypatch.setattr(cli, "import_sqlite_ledger", operation)
+    arguments = [
+        "import-sqlite",
+        "--source",
+        str(source),
+        "--generation",
+        "8",
+        "--confirm-workers-stopped",
+        "--legacy-evidence-ref",
+        " review:pre-candidate-history ",
+        "--legacy-metadata-gap-job-id",
+        jobs[0],
+        "--legacy-metadata-gap-job-id",
+        jobs[1],
+    ]
+    if pre_identity:
+        arguments.append("--allow-pre-identity")
+    run(arguments)
+    assert calls == ["legacy-import"]
+    report = json.loads(capsys.readouterr().out)
+    assert report["recovery_required"] is True
+    assert report["metadata_gaps"] == [
+        {"job_id": job, "category": "legacy_candidate_metadata_unavailable"} for job in jobs
+    ]
+    assert report["identity_assigned_for_pre_identity"] is pre_identity
+    assert not source.exists()
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        ["--allow-pre-identity"],
+        ["--legacy-metadata-gap-job-id", "ssj_" + "a" * 64],
+        ["--legacy-evidence-ref", "  "],
+        [
+            "--legacy-evidence-ref",
+            "review:record",
+            "--legacy-metadata-gap-job-id",
+            "same-job",
+            "--legacy-metadata-gap-job-id",
+            "same-job",
+        ],
+    ],
+)
+def test_legacy_exception_without_exact_review_declaration_stops_before_import(extra, offline_cli):
+    _, calls, run = offline_cli
+    with pytest.raises(SystemExit) as exc:
+        run(["import-sqlite", "--source", "retained.sqlite", "--generation", "8", *extra])
+    assert exc.value.code == 2
+    assert calls == []
+
+
+def test_review_reference_alone_does_not_enable_missing_identity_or_metadata(
+    offline_cli, monkeypatch, capsys
+):
+    engine, calls, run = offline_cli
+
+    def operation(received, path, **kwargs):
+        assert received is engine
+        assert kwargs == {
+            "recovery_generation": 8,
+            "confirmed_quiesced": False,
+            "legacy_evidence_ref": "review:retained-history",
+        }
+        calls.append("import")
+        raise SearchLedgerRecoveryError("Legacy metadata exception was not explicitly declared")
+
+    monkeypatch.setattr(cli, "import_sqlite_ledger", operation)
+    with pytest.raises(SystemExit) as exc:
+        run(
+            [
+                "import-sqlite",
+                "--source",
+                "retained.sqlite",
+                "--generation",
+                "8",
+                "--legacy-evidence-ref",
+                "review:retained-history",
+            ]
+        )
+    assert exc.value.code == 2
+    assert calls == ["import"]
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "not explicitly declared" in captured.err
