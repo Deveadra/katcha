@@ -12,6 +12,7 @@ import os
 import re
 import subprocess
 import sys
+import time
 import urllib.request
 from typing import Callable
 
@@ -112,12 +113,47 @@ def evaluate(
     }
 
 
+def verify_revocation_with_bounded_retries(
+    secret_ids: tuple[str, ...],
+    *,
+    max_propagation_seconds: int = 600,
+    run: Callable = command,
+    clock: Callable = time.monotonic,
+    sleep: Callable = time.sleep,
+) -> dict[str, object]:
+    """Require all four real denials after tag removal; do not retry network faults."""
+    if not 1 <= max_propagation_seconds <= 600:
+        raise AcceptanceError("revocation propagation window must be 1..600 seconds")
+    deadline = clock() + max_propagation_seconds
+    while True:
+        try:
+            evidence = evaluate("deny-four", secret_ids, forbidden_id=None, run=run)
+        except AcceptanceError as exc:
+            # Only a still-effective ALLOW decision can be attributed to IAM
+            # propagation. Transport and malformed responses fail immediately.
+            if str(exc) != "untagged identity unexpectedly accessed a Vault bundle":
+                raise
+            remaining = deadline - clock()
+            if remaining <= 0:
+                raise AcceptanceError(
+                    "revocation propagation timed out: Vault access still permitted"
+                ) from exc
+            sleep(min(10.0, remaining))
+            continue
+        return {
+            **evidence,
+            "status": "POST_REVOCATION_FOUR_DENIED",
+            "effective_vault_access_denied": True,
+        }
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("mode", choices=("deny-four", "allow-four"))
+    parser.add_argument("mode", choices=("deny-four", "allow-four", "verify-revoked"))
     parser.add_argument("--expected-instance-id", required=True)
     parser.add_argument("--forbidden-secret-id")
     parser.add_argument("--approve-live-vault-reads", action="store_true")
+    parser.add_argument("--max-propagation-seconds", type=int, default=600)
     args = parser.parse_args(argv)
     try:
         if not args.approve_live_vault_reads:
@@ -127,9 +163,15 @@ def main(argv: list[str] | None = None) -> int:
         if identity() != args.expected_instance_id:
             raise AcceptanceError("instance metadata does not match approved candidate")
         secret_ids = verify_ids(os.environ)
-        result = evaluate(
-            args.mode, secret_ids, forbidden_id=args.forbidden_secret_id
-        )
+        if args.mode == "verify-revoked":
+            result = verify_revocation_with_bounded_retries(
+                secret_ids,
+                max_propagation_seconds=args.max_propagation_seconds,
+            )
+        else:
+            result = evaluate(
+                args.mode, secret_ids, forbidden_id=args.forbidden_secret_id
+            )
     except AcceptanceError as exc:
         print(json.dumps({"status": "BLOCKED", "reason": str(exc)}, sort_keys=True))
         return 2
