@@ -752,3 +752,86 @@ def test_lost_postgres_schema_never_recreates_evidence(database, initialized):
             ).scalar_one()
             == 0
         )
+
+
+def test_stale_dump_then_canonical_restore_quarantine_blocks_same_generation(
+    database, initialized, tmp_path
+):
+    from katcha.editorial.source_intelligence.postgres_jobs import (
+        SearchLedgerRecoveryError,
+        inspect_postgres_ledger,
+    )
+
+    dispatch(initialized, planned("before-backup"))
+    dump = tmp_path / "stale.dump"
+    env, args = dump_restore(database, dump)
+    missing = planned("unknown-after-backup")
+    dispatch(initialized, missing, FixtureAdapter(fail=True))
+    restore(database, dump, env, args)
+    # Execute the exact inhibition SQL shipped in the canonical restore script.
+    script = (
+        Path(__file__).resolve().parents[1] / "deploy/scripts/postgres-disaster-restore.sh"
+    ).read_text()
+    quarantine_sql = script.split("<<'SQL'\n", 1)[1].split("\nSQL\n", 1)[0]
+    with database.begin() as connection:
+        connection.execute(text(quarantine_sql))
+    assert inspect_postgres_ledger(database)["recovery_required"] is True
+    restored = reopen(database, generation=7)
+    assert restored.read(missing.job_id, scope=SCOPE) is None
+    calls = FixtureAdapter()
+    with pytest.raises(SearchLedgerRecoveryError, match="offline recovery review"):
+        dispatch(restored, missing, calls)
+    assert not calls.calls
+
+
+def test_integrity_scan_capacity_rolls_back_claim_before_provider(database, initialized):
+    from katcha.editorial.source_intelligence.postgres_jobs import (
+        PostgresSearchJobLedger,
+        SearchLedgerRecoveryError,
+        inspect_postgres_ledger,
+    )
+
+    before = inspect_postgres_ledger(database)
+    bounded = PostgresSearchJobLedger(
+        database, recovery_generation=7, dispatch_enabled=True, max_evidence_rows=1
+    )
+    adapter = FixtureAdapter()
+    with pytest.raises(SearchLedgerRecoveryError, match="scan bound"):
+        dispatch(bounded, planned(), adapter)
+    assert not adapter.calls
+    assert inspect_postgres_ledger(database) == before
+
+
+def test_upgrade_old_postgres_schema_keeps_evidence_uninitialized(database):
+    import sys
+
+    from katcha.editorial.source_intelligence.postgres_jobs import SearchLedgerRecoveryError
+
+    database.dispose()
+    with database.begin() as connection:
+        connection.execute(text("DROP SCHEMA public CASCADE"))
+        connection.execute(text("CREATE SCHEMA public"))
+    env = {
+        **os.environ,
+        "KATCHA_DATABASE_URL": database.url.render_as_string(hide_password=False),
+    }
+    for revision in ("0062_requirement_shot_matching", "head"):
+        subprocess.run(
+            [sys.executable, "-m", "alembic", "upgrade", revision],
+            cwd=Path(__file__).resolve().parents[1],
+            env=env,
+            check=True,
+            capture_output=True,
+        )
+    with database.connect() as connection:
+        assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == (
+            "0063_authoritative_search_ledger"
+        )
+        assert (
+            connection.execute(text("SELECT COUNT(*) FROM source_search_ledger_head")).scalar_one()
+            == 0
+        )
+    adapter = FixtureAdapter()
+    with pytest.raises(SearchLedgerRecoveryError, match="uninitialized"):
+        dispatch(reopen(database), planned(), adapter)
+    assert not adapter.calls

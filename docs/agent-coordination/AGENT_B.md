@@ -77,3 +77,5 @@ provides editor handoff. Use backlog dependencies as intent; live merged PRs and
 - Branch, SHA, PR, changed paths, exact test commands/CI, risks, next handoff.
 
 Auto-merge PRs after required checks/reviews pass and continue. Never push directly to main, force-push, rewrite history or deploy.
+
+Offline KQA-102 preparation and search-ledger recovery are reviewed in [PR #395](https://github.com/Deveadra/katcha/pull/395). Head `594996b2525179325b671c05023afe6db11a558f` passed [exact-head CI](https://github.com/Deveadra/katcha/actions/runs/38336337419): 1,886 passed, 1 skipped, including real PostgreSQL fixture recovery and offline plan tests. Final head checks are required before merge. This evidence does not accept the full KQA-101 path or authorize live KQA-102 calls.

@@ -47,3 +47,5 @@ KQA-101's complete deterministic source-package proof remains planned. The
 [KQA-102 offline plan harness](../KQA102_OFFLINE_ACCEPTANCE.md) prepares scope,
 source declarations, budgets and the evidence checklist only. No real provider
 calls, source verification or production acceptance have occurred.
+
+Offline KQA-102 preparation and search-ledger recovery are reviewed in [PR #395](https://github.com/Deveadra/katcha/pull/395). Head `594996b2525179325b671c05023afe6db11a558f` passed [exact-head CI](https://github.com/Deveadra/katcha/actions/runs/38336337419): 1,886 passed, 1 skipped, including real PostgreSQL fixture recovery and offline plan tests. Final head checks are required before merge. This evidence does not accept the full KQA-101 path or authorize live KQA-102 calls.

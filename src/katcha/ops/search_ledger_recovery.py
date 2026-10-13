@@ -8,6 +8,7 @@ from pathlib import Path
 
 from katcha.db import engine
 from katcha.editorial.source_intelligence.postgres_jobs import (
+    SearchLedgerRecoveryError,
     activate_postgres_ledger,
     import_sqlite_ledger,
     inspect_postgres_ledger,
@@ -36,26 +37,37 @@ def main() -> None:
     activate.add_argument("--completeness-record", required=True)
     activate.add_argument("--confirm-workers-stopped", action="store_true")
     args = parser.parse_args()
-    if args.command == "inspect":
-        report = inspect_postgres_ledger(engine)
-    elif args.command == "quarantine":
-        report = quarantine_postgres_ledger(engine)
-    elif args.command == "import-sqlite":
-        report = import_sqlite_ledger(
-            engine,
-            args.source,
-            recovery_generation=args.generation,
-            confirmed_quiesced=args.confirm_workers_stopped,
-        )
-    else:
-        report = activate_postgres_ledger(
-            engine,
-            expected_identity=args.expected_identity,
-            expected_seal=args.expected_seal,
-            recovery_generation=args.generation,
-            expected_generation=args.expected_generation,
-            completeness_evidence=args.completeness_record,
-            confirmed_quiesced=args.confirm_workers_stopped,
+    try:
+        if args.command == "inspect":
+            report = inspect_postgres_ledger(engine)
+        elif args.command == "quarantine":
+            report = quarantine_postgres_ledger(engine)
+        elif args.command == "import-sqlite":
+            report = import_sqlite_ledger(
+                engine,
+                args.source,
+                recovery_generation=args.generation,
+                confirmed_quiesced=args.confirm_workers_stopped,
+            )
+        else:
+            report = activate_postgres_ledger(
+                engine,
+                expected_identity=args.expected_identity,
+                expected_seal=args.expected_seal,
+                recovery_generation=args.generation,
+                expected_generation=args.expected_generation,
+                completeness_evidence=args.completeness_record,
+                confirmed_quiesced=args.confirm_workers_stopped,
+            )
+    except SearchLedgerRecoveryError as exc:
+        parser.exit(2, f"Search evidence recovery refused: {exc}\n")
+    except Exception:
+        # Never expose arbitrary connection strings, SQL or row parameters in a
+        # CLI traceback. A failed operation cannot authorize recovery or retries.
+        parser.exit(
+            2,
+            "Search evidence recovery failed; keep dispatch disabled "
+            "and inspect retained evidence.\n",
         )
     print(json.dumps(report, sort_keys=True))
 

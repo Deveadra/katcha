@@ -787,9 +787,14 @@
       "coordination_notes": "Offline preparation added: scripts/kqa102_acceptance_plan.py validates scoped source declarations, evidence references and traffic/spend caps and emits a digest-bound checklist. It cannot execute provider calls, verify live rights or satisfy real acceptance. KQA-101 full-path acceptance and separate operator authorization remain required before any live exercise.",
       "status": "planned",
       "status_evidence": {
-        "verification_level": "offline_prepared_pending_ci",
+        "verification_level": "verified_offline_prepared",
+        "feature_pr_url": "https://github.com/Deveadra/katcha/pull/395",
+        "pr_head_sha": "594996b2525179325b671c05023afe6db11a558f",
+        "ci_url": "https://github.com/Deveadra/katcha/actions/runs/38336337419",
+        "ci_conclusion": "success",
+        "test_result": "1886 passed, 1 skipped (includes 27 real PostgreSQL fixture recovery cases and 26 offline KQA plan cases)",
         "date": "2026-10-12",
-        "notes": "Local offline plan harness and tests are prepared for this feature PR; no merged-harness or live acceptance claimed. Record the exact head and green CI when this PR is accepted."
+        "notes": "Offline preparation verified on this feature head; final PR head must pass required checks before merge. This is not KQA-101 full-path or KQA-102 live acceptance. Zero live provider calls; separate operator authorization and full-path acceptance remain required."
       },
       "pr_url": null,
       "accepted_main_sha": null

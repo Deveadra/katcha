@@ -46,3 +46,17 @@ def test_search_config_dispatch_defaults_closed():
     settings = Settings(_env_file=None)
     assert settings.source_search_dispatch_enabled is False
     assert settings.source_search_recovery_generation == 0
+
+
+def test_runtime_reports_missing_recovery_configuration_without_creating_evidence(
+    tmp_path, monkeypatch
+):
+    settings = SimpleNamespace(
+        source_search_recovery_generation=0, source_search_dispatch_enabled=False, work_dir=tmp_path
+    )
+    monkeypatch.setattr(preparation, "get_settings", lambda: settings)
+    preparation.runtime.cache_clear()
+    with pytest.raises(preparation.EditorialConflict, match="not been configured"):
+        preparation.runtime()
+    assert list(tmp_path.iterdir()) == []
+    preparation.runtime.cache_clear()
