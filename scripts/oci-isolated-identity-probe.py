@@ -691,6 +691,8 @@ def revoke_candidate_tag(
         raise ProbeError("refused tag revocation: exact probe identity missing")
     original = instance.get("defined-tags") or {}
     recovery_tags = original.get("KatchaRecovery") or {}
+    if recovery_tags.get("Candidate") != "true":
+        raise ProbeError("candidate tag is absent; no revocation action performed")
     if recovery_tags.get("Candidate") == "true":
         remaining = {
             key: value for key, value in recovery_tags.items()
@@ -710,7 +712,6 @@ def revoke_candidate_tag(
             raise ProbeError(
                 "cleanup refused: instance-principal candidate tag revocation unverified"
             )
-
 
     return {
         "status": "CANDIDATE_TAG_REMOVED_DATA_PLANE_NOT_YET_VERIFIED",
