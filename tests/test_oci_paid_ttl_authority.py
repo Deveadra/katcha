@@ -238,12 +238,13 @@ def test_future_stopped_paid_instance_never_deleted():
     assert coordinator.settled == []
 
 
-def test_terminated_instance_is_not_retried_or_mutated():
+def test_terminated_instance_is_not_retried_but_budget_is_reconciled():
     oci = FakeOci(paid(state="TERMINATED"))
     coordinator = Coordinator()
     assert execute(oci, coordinator) == []
     assert oci.terminated == []
-    assert coordinator.settled == []
+    assert oci.stopped == []
+    assert coordinator.settled == [("reservation", 196_667)]
 
 
 def test_termination_error_never_settles_budget_as_finished():
