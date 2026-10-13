@@ -6,6 +6,7 @@ has been completely received, hashed and probed.
 """
 from __future__ import annotations
 
+from contextlib import suppress
 import hashlib
 import json
 import math
@@ -275,7 +276,7 @@ def _probe_object(store: ObjectStore, key: str) -> tuple[dict, float, int, int]:
         video = next(stream for stream in streams if stream.get("codec_type") == "video")
         duration = float((probe.get("format") or {}).get("duration") or 0)
         width, height = int(video.get("width") or 0), int(video.get("height") or 0)
-        if not 0 < duration or width <= 0 or height <= 0:
+        if duration <= 0 or width <= 0 or height <= 0:
             raise ValueError("Invalid video metadata")
     except Exception:
         # Never return an expiring signed GET URL embedded in subprocess errors.
@@ -387,10 +388,8 @@ def finish(channel_id: uuid.UUID, source_id: uuid.UUID, *, actor: str) -> dict:
         session.flush()
         result = _receipt(row)
     # Staging can be safely retried by lifecycle cleanup if this delete fails.
-    try:
+    with suppress(ClientError):
         store.delete(key)
-    except ClientError:
-        pass
     return result
 
 
