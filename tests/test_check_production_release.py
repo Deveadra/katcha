@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import pytest
+
 from scripts import check_production_release as release
 
 SHA = "a" * 40
