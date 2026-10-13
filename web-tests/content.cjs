@@ -11,7 +11,7 @@ let browser;
     const page=await browser.newPage({viewport:{width:1440,height:1000}});
     const errors=[];page.on('pageerror',e=>errors.push(e.message));
     const requests=[];
-    let row=null,loseResponse=true;
+    let row=null,loseResponse=true,rejectFirstChunk=false;
     const channel='11111111-1111-4111-8111-111111111111';
     const item='22222222-2222-4222-8222-222222222222';
     const production='33333333-3333-4333-8333-333333333333';
@@ -33,6 +33,12 @@ let browser;
             const bytes=req.postDataBuffer();
             const offset=Number(url.searchParams.get('offset'));
             assert.equal(offset,row.upload_offset);
+            if(rejectFirstChunk && offset===0){
+                row.error='R2 rejected upload write credentials or permission (AccessDenied).';
+                await route.fulfill({status:503,json:{detail:row.error}});
+                return;
+            }
+            row.error=null;
             row.chunks.push({offset,size:bytes.length,sha256:crypto.createHash('sha256').update(bytes).digest('hex')});
             row.upload_offset+=bytes.length;
             if(loseResponse){loseResponse=false;await route.fulfill({status:503,json:{detail:'Fixture connection lost after chunk was saved'}});return;}
@@ -71,6 +77,26 @@ let browser;
     await page.screenshot({path:'/tmp/katcha-content-mobile.png',fullPage:true});
     await page.keyboard.press('Tab');
     assert(await page.evaluate(()=>document.activeElement.tagName!=='BODY'));
+    // First-byte R2 denial must be visible in the saved receipt and recover
+    // using the original file after the store is repaired.
+    row=null;
+    rejectFirstChunk=true;
+    loseResponse=false;
+    await page.locator('#title').fill('Stalled first chunk');
+    await page.locator('#file').setInputFiles({
+        name:'stalled.mp4',mimeType:'video/mp4',buffer:Buffer.from('1234567890')
+    });
+    await page.locator('#add').click();
+    await page.locator('#upload-notice').getByText(/after 3 attempts/).waitFor();
+    assert.equal(row.upload_offset,0);
+    assert.equal(row.chunks.length,0);
+    assert.match(await page.locator('#detail').innerText(),/AccessDenied/);
+    assert.match(await page.locator('#detail').innerText(),/0 \/ 10 bytes/);
+    rejectFirstChunk=false;
+    await page.locator('#add').click();
+    await page.getByText('Media is ready. Choose a production step in Content details.').waitFor();
+    assert.equal(row.upload_offset,10);
+    assert.equal(row.error,null);
     assert.deepEqual(errors,[]);
-    console.log('Content: durable receipt, uncertain chunk recovery, unchanged video, package history, keyboard and 390px layout passed.');
+    console.log('Content: lost-response reconciliation and first-byte storage recovery, unchanged video, package history, keyboard and 390px layout passed.');
 })().catch(e=>{console.error(e);process.exitCode=1;}).finally(async()=>{if(browser)await browser.close();server.kill();});
