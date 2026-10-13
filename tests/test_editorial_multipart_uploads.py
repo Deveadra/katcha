@@ -7,7 +7,7 @@ from types import SimpleNamespace
 import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 from starlette.requests import Request
@@ -434,6 +434,6 @@ def test_failover_after_hash_blocks_canonical_copy_and_registration(
     assert not store.client.copied
     with db.session_scope() as session:
         assert session.scalar(
-            __import__("sqlalchemy").select(Clip).where(Clip.sha256 == "c" * 64)
+            select(Clip).where(Clip.sha256 == "c" * 64)
         ) is None
         assert session.get(SourceItem, source_id).clip_id is None
