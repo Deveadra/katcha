@@ -250,3 +250,25 @@ def test_named_principal_channel_and_mutation_scope():
     with pytest.raises(HTTPException) as wrong_channel:
         _auth(request, uuid.uuid4(), write=False)
     assert wrong_channel.value.status_code == 403
+
+
+def test_aborted_upload_may_be_restarted_with_same_source_identity(upload_db):
+    channel, _, store = upload_db
+    initial = begin(channel, identity="restart-me")
+    cancelled = uploads.cancel(channel, uuid.UUID(initial["source_id"]))
+    assert cancelled["state"] == "cancelled"
+    assert len(store.client.aborted) == 1
+    restarted = begin(channel, identity="restart-me")
+    assert restarted["source_id"] == initial["source_id"]
+    assert restarted["state"] == "uploading"
+    assert len(store.client.uploads) == 2
+
+
+def test_size_verification_rejects_truncation_without_promoting_media(upload_db):
+    _, _, store = upload_db
+    key = "upload-staging/test-truncated"
+    store.client.items[key] = b"short"
+    with pytest.raises(ValueError, match="size"):
+        uploads._hash_object(store, key, 8)
+    assert key in store.client.items
+    assert not store.client.copied
