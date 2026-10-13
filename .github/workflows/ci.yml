@@ -209,9 +209,11 @@ jobs:
       - name: Test
         env:
           KATCHA_SEARCH_LEDGER_TEST_DATABASE_URL: postgresql+psycopg://katcha:katcha@127.0.0.1:5432/katcha
-        # Named test progress pinpoints any future suite timeout rather than
-        # leaving a silent 15-minute window before the job is terminated.
-        run: pytest -vv -x
+        # Enforce a subprocess deadline even if runner job cancellation stalls.
+        # Verbose test names identify the specific blocker in the log.
+        run: |
+          set -o pipefail
+          timeout --signal=INT --kill-after=15s 900s pytest -vv -x
 
       - name: Verify built-in brand assets through S3-compatible HTTP endpoint
         env:
