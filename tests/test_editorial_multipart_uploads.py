@@ -327,9 +327,10 @@ def test_real_http_scoping_and_input_validation(upload_db, monkeypatch):
         "size_bytes": 3 * 1024**3, "content_type": "video/mp4",
         "idempotency_key": "web-upload-fixture", "permitted_use": True,
     }
-    with TestClient(
+    client = TestClient(
         app, headers={"Authorization": "Bearer large-media-test-editor-token-001"}
-    ) as client:
+    )
+    try:
         initial = client.post(base, json=payload)
         assert initial.status_code == 201, initial.text
         sid = initial.json()["source_id"]
@@ -350,4 +351,6 @@ def test_real_http_scoping_and_input_validation(upload_db, monkeypatch):
             f"{base}/{sid}/parts", json={"part_number": 1},
             headers=reader_headers,
         ).status_code == 403
+    finally:
+        client.close()
     assert len(store.client.uploads) == 1
