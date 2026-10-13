@@ -106,6 +106,18 @@ while IFS=$'\t' read -r filename database; do
     sh "$database" "/tmp/$filename"
   "${compose[@]}" exec -T postgres rm -f "/tmp/$filename"
 
+  # A complete older dump can still omit calls made after its snapshot. Quarantine
+  # only search dispatch; this does not authorize or modify OCI recovery gates.
+  "${compose[@]}" exec -T postgres sh -c \
+    'psql -U "$POSTGRES_USER" -d "$1" -v ON_ERROR_STOP=1' sh "$database" <<'SQL'
+DO $$
+BEGIN
+  IF to_regclass('public.source_search_ledger_head') IS NOT NULL THEN
+    UPDATE public.source_search_ledger_head SET recovery_required = true;
+  END IF;
+END $$;
+SQL
+
   table_count="$(
     "${compose[@]}" exec -T postgres sh -c \
       'psql -U "$POSTGRES_USER" -d "$1" -At -v ON_ERROR_STOP=1 -c "SELECT count(*) FROM pg_catalog.pg_tables WHERE schemaname NOT IN ('"'"'pg_catalog'"'"','"'"'information_schema'"'"');"' \
@@ -138,4 +150,4 @@ fi
 
 rm -rf "$RESTORE_ROOT"
 trap - EXIT
-echo "Katcha disaster restore completed for $restored databases."
+echo "Katcha disaster restore completed for $restored databases. Search dispatch remains quarantined pending evidence reconciliation."

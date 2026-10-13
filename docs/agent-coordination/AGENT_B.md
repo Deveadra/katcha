@@ -38,10 +38,23 @@ current permission checks and bounded decoder receipts. See
 `../MEASURED_MEDIA_INDEX.md` for the initial visual-token search and coverage limits.
 No semantic actions, OCR, speech, provider calls or production rights are inferred.
 
-**Next B task: `KIN-102`** remains gated on Agent A's accepted `KSI-106`
-requirement-to-shot bindings. Preserve the existing Editorial direction/storyboard
-and recheck production eligibility at compile/render. Live merged PRs and CI prove
-eligibility; coordinate only actual overlapping edits.
+**KIN-102/#390 is accepted**, merge `27b362c53cac17d1769c74ef13f5324601d9b547`,
+with exact-head CI at `30be860243b4fa3b579819fdaa1469dd3bad87a0`:
+1,802 passed, 1 skipped; Python, Explorer, Renderer, ranked-render E2E and PR Gate
+succeeded in [CI 38281808012](https://github.com/Deveadra/katcha/actions/runs/38281808012).
+Launcher and the selected runtime-image build also succeeded. Editorial now binds
+explicit measured choices into saved Storyboard beats, preserves other visuals
+and history, and checks rights/choices after dispatch claim before rendering and
+again before promotion. See `../APPROVED_SHOT_STORYBOARD_HANDOFF.md`.
+KMI-107 operator indexing/search integration is also merged in #389. Fixtures
+and mocked dispatch races establish offline behavior; `acceptance-media` and
+`full-startup` were skipped, and the separate local Editorial encode is unverified.
+
+**Next eligible acceptance work: KQA-101** remains planned full-path acceptance.
+KQA-102 has an offline scoped plan/checklist harness only; it cannot execute live
+calls or certify rights. See `../KQA102_OFFLINE_ACCEPTANCE.md`. Separate operator
+source/provider authorization and explicit traffic/spend caps remain the real
+live gate; no coordinator ownership approval is introduced.
 
 ## Follow-on ordered tasks
 

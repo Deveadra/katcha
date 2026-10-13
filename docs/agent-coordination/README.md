@@ -4,8 +4,8 @@ Mission: Turn an entire script into grounded candidates, permitted media, an org
 
 Read root AGENTS.md, COORDINATION_PROTOCOL.md, your role file and relevant backlog task. Refer to CONTRACTS.md and IMPLEMENTATION_PLAN.md as needed; do not repeatedly reread everything.
 
-Agent A owns source intelligence and research. KSI-101 through KSI-105 are merged: exact-script requirements (#354), bounded search jobs (#349), grounded scouting (#353), query expansion (#358), and reference ranking/coverage (#360). Reuse these services and #346's exact script planner; do not implement another parser or scout. KIN-101 (#373) now connects these services to Editorial and the project Media Bin. KMI-107 (#375) is accepted; A's next KSI-106 task is dependency-ready.
-Agent B owns media intake, project Media Bin persistence and authorized acquisition. KMI-101 through KMI-106 are accepted (#355/#359/#361/#364/#368/#369), covering durable Media Bin storage, scoped APIs, authorized fetching, integrity validation and portable export. Agent B reviewed KIN-101 and delivered accepted KMI-107 (#375); B's KIN-102 editor handoff remains gated on accepted KSI-106.
+Agent A owns source intelligence and research. KSI-101 through KSI-105 are merged: exact-script requirements (#354), bounded search jobs (#349), grounded scouting (#353), query expansion (#358), and reference ranking/coverage (#360). Reuse these services and #346's exact script planner; do not implement another parser or scout. KIN-101 (#373) now connects these services to Editorial and the project Media Bin. KMI-107 (#375) and KSI-106 (#379) are accepted; the latter preserves measured evidence and operator choices.
+Agent B owns media intake, project Media Bin persistence and authorized acquisition. KMI-101 through KMI-106 are accepted (#355/#359/#361/#364/#368/#369), covering durable Media Bin storage, scoped APIs, authorized fetching, integrity validation and portable export. Agent B reviewed KIN-101 and delivered accepted KMI-107 (#375); KIN-102 (#390) is accepted and binds approved measured shots into existing Storyboard/render contracts.
 
 Self-service loop: writable unique feature branch; implement and test; open PR; green required checks and reviews, no conflicts; auto-merge; refresh main and begin next eligible task.
 Either agent may edit required shared API/model/migration files when no active overlapping PR change exists. Check current migration heads. Coordinate real collisions, not theoretical ones.
@@ -37,5 +37,13 @@ Each slice received independent review. Provider fixtures and metadata are not l
 - KMI-107: [PR #375](https://github.com/Deveadra/katcha/pull/375), merge `de563dcc`, [CI](https://github.com/Deveadra/katcha/actions/runs/38218457122): **1,680 passed, 1 skipped**; Python, Explorer and PR Gate passed on final head `34a313b4`. Additive durable index/receipts, measured source-relative visual-change intervals, sparse frame hashes/color tags, scoped retrieval, actual byte invalidation and current rights checks, bounded local decoder and fenced explicit recovery. Generated known-shot retrieval within 0.1s tolerance; no semantic scene recognition, OCR/speech/provider calls or production clearance. Consumer contract: `docs/MEASURED_MEDIA_INDEX.md`.
 
 KIN-101's full handoff is documented in `docs/EDITORIAL_MEDIA_PREPARATION.md`.
-KMI-107 is accepted; A's KSI-106 may now proceed. B's KIN-102 remains gated on its acceptance.
+KSI-106/#379 and KIN-102/#390 are accepted. KQA-101 remains planned full-path acceptance; KQA-102 has offline preparation only, with no live provider exercise.
 Preserve the authoritative search ledger volume and existing operator annotations.
+
+- KSI-106: [PR #379](https://github.com/Deveadra/katcha/pull/379), merge `94b332f519c90efd5b37aab36a0057918b4dffb3`, [CI](https://github.com/Deveadra/katcha/actions/runs/38272257656): **1,759 passed, 1 skipped** at head `aff9b6f31edd98c4c11f91cbb668c1782aa82566`; Python, Explorer and PR Gate succeeded. Durable measured proposals, scoped evidence and preserved locked choices; no semantic or live-rights claim.
+- KIN-102: [PR #390](https://github.com/Deveadra/katcha/pull/390), merge `27b362c53cac17d1769c74ef13f5324601d9b547`, [CI](https://github.com/Deveadra/katcha/actions/runs/38281808012): **1,802 passed, 1 skipped** at head `30be860243b4fa3b579819fdaa1469dd3bad87a0`; all selected checks passed. Approved choices enter existing Storyboard/render with final rights rechecks. Independent review reproduced and verified the dispatch-claim race fix. `acceptance-media` and `full-startup` were skipped; separate local Editorial encode remains unverified.
+
+KQA-101's complete deterministic source-package proof remains planned. The
+[KQA-102 offline plan harness](../KQA102_OFFLINE_ACCEPTANCE.md) prepares scope,
+source declarations, budgets and the evidence checklist only. No real provider
+calls, source verification or production acceptance have occurred.
