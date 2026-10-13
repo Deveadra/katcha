@@ -204,7 +204,7 @@ jobs:
       - name: Test manual content recovery first
         env:
           KATCHA_SEARCH_LEDGER_TEST_DATABASE_URL: postgresql+psycopg://katcha:katcha@127.0.0.1:5432/katcha
-        run: pytest -q tests/test_manual_content.py
+        run: pytest -q tests/test_manual_content.py tests/test_media_export_response.py
 
       - name: Test
         env:
