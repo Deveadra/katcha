@@ -193,6 +193,11 @@ async def upload_chunk(
         return await asyncio.to_thread(
             content.accept_chunk, channel_profile_id, item_id, offset, bytes(data)
         )
+    except content.ContentUploadStorageError as exc:
+        # The service committed a sanitized diagnostic and did not advance the
+        # offset. 503 is intentionally retryable, unlike a 403/409 auth or
+        # file-integrity failure.
+        raise HTTPException(503, str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(409, str(exc)) from exc
 
