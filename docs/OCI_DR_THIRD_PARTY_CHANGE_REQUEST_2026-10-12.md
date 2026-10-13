@@ -1,10 +1,62 @@
 # OCI Autonomous DR — independent change review and approval request
 
-**Change ID:** KATCHA-OCI-DR-2026-10-12-R1  
-**Status:** **NO-GO / FOR INDEPENDENT REVIEW**. This document is a proposal, **not** permission to execute.  
-**Repository:** `Deveadra/katcha`; audited accepted `main` at `27d24233135241ad0c9c01d7bb61a91a513191c5` (2026-10-12).  
+**Change ID:** KATCHA-OCI-DR-2026-10-13-R2 — responds to independent rejection of R1  
+**Status:** **CHANGES REQUIRED / NO-GO / FOR INDEPENDENT RE-REVIEW**. This document is a proposal, **not** permission to execute.  
+**Repository:** `Deveadra/katcha`; reviewed initial `main` at `27d24233135241ad0c9c01d7bb61a91a513191c5` (2026-10-12), then re-inspected `612de812d8855a4e17b8234b0ca66a106a60af54` on 2026-10-13. **Final exact accepted release SHA must be recaptured after blocking fixes merge; these are historical source references, not an execution pin.**  
 **Owner:** Katcha operator; **approval:** independent security, OCI billing/FinOps, SRE/DBA reviewers **and then explicit final user greenlight tied to the reviewed revision and phases**.  
 **Production:** OCI `katcha-prod-primary-001`, home region `us-ashburn-1`, A1.Flex 2 OCPU/12 GB. **No approved change window, maintenance notice or live resource authority exists yet.**
+
+## R2 critical-review reconciliation (2026-10-13)
+
+The independent source-based review **rejected R1**. Reviewers did not approve resource
+creation, IAM mutation, Vault data-plane reads, cleanup, paid fallback or production
+failover. This R2 revision preserves **NO-GO**.
+
+- **CRITICAL — paid TTL data safety:** accepted `main` at the audit still contained
+  `cleanup_expired_paid()` with TTL-triggered `softstop` and `terminate` that
+  could stop an expired **active** production recovery leader. Separate blocking
+  fix **[PR #400](https://github.com/Deveadra/katcha/pull/400)** prohibits
+  SOFTSTOP of running paid leaders and restricts termination to pre-tagged,
+  already-STOPPED retired instances after two fresh coordinator/OCI checks for
+  a newer active deployment, matching epoch and no pending handover. The new
+  retirement-authorization tag requires independently witnessed negative
+  old-epoch fencing after handover; read-only coordinator queries are not an
+  atomic lease. **NO paid operations or expiry enablement** before exact-head
+  tests, merge and independent review of this residual race.
+- **PR #393 (already merged)** fixed the cleanup **scheduling** dependency:
+  `paid-fallback-expiry` is gated by separate default-off
+  `KATCHA_OCI_CLEANUP_APPROVED`, not the recovery activation flag. That was
+  a legitimate improvement, **not** live cleanup acceptance. Prior R1 wording
+  calling the scheduling dependency unfixed is superseded.
+- **Phase 1 cleanup authorization gap:** normal cleanup and exact-resource
+  **emergency containment must be approved, staffed and independently executable
+  *before* launch**, not in a later Phase 3 grant. The pre-approved emergency
+  envelope is restricted to the verified E2 probe and its new, exact 50 GB
+  boot volume, even if candidate-tag removal or guest access fails.
+  Separate blocking **[PR #401](https://github.com/Deveadra/katcha/pull/401)**
+  implements discrete `revoke-tag`, `verify-revoked` and
+  `emergency-contain` operations. The emergency path explicitly does not claim
+  effective IAM revocation or production readiness.
+- **Revocation:** `verify-revoked` requires four successful OCI
+  instance-principal **denials**, with propagation retries bounded by 600 seconds.
+  Normal deletion needs independently witnessed after-revocation results.
+  If unavailable/compromised, use only preauthorized exact emergency
+  containment and escalate residual token/security risk.
+- **Evidence:** PR #391's earlier two green GitHub checks with eight skipped
+  jobs were **documentation checks**, not script/terraform or live acceptance.
+  Targeted exact-head `tests/test_oci_paid_ttl_authority.py`,
+  `tests/test_oci_recovery.py`,
+  `tests/test_oci_isolated_identity_probe.py` and
+  `tests/test_oci_candidate_vault_principal_probe.py` plus recovery
+  workflow CI are required after these two code PRs are accepted.
+  No reviewer signature, account quote, existing fifth bundle, fresh OCI
+  inventory, live restore, RTO/RPO or enforceable two-hour resource cutoff
+  has been observed.
+
+**Live gating:** neither code PR merges nor a document review can lift NO-GO.
+The independently enforced test termination deadline is a **separate outstanding
+blocker**; an operator-monitored two-hour target is not a hard resource TTL.
+A stage-specific failover/spend plan is also still missing.
 
 ## A. Evidence register (what is known versus not known)
 
@@ -26,9 +78,9 @@ Oracle documentation: [Always Free compute/storage](https://docs.oracle.com/en-u
 
 After third-party review, request *separately worded* user greenlights for:
 
-1. **Phase 1:** exactly one isolated `VM.Standard.E2.1.Micro`, one new 50 GB boot volume, private Bastion-only network; no candidate tag at launch.
+1. **Phases 1 + emergency containment approved together BEFORE launch:** exactly one isolated `VM.Standard.E2.1.Micro`, one 50 GB boot volume and private Bastion-only network, with advance scoped authority to revoke, isolate, terminate and delete **only** that identified test VM/new boot volume on incident, and tested independent cutoff/backup operator; no candidate tag at launch.
 2. **Phase 2:** instance-principal **four untagged denied reads**, exact scope application of `KatchaRecovery.Candidate=true`, **four authorized bundle reads**, and denial on an **independently confirmed, existing fifth secret** outside the four grants. No secret-body output or storage.
-3. **Phase 3:** revoke the candidate tag, prove revocation (negative reads where safe), terminate the exact test VM and delete *only its newly created boot volume*, verify reclaimed quota.
+3. **Phase 3 (not separately authorizing emergency cleanup):** invoke the **already approved** normal cleanup after tagged access is revoked and four **mandatory successful post-revocation denials** are observed. Independently confirm production API readiness, original disk inventory unchanged, exact test VM/boot removal, and restored quota.
 4. **Phase 4:** a **new revision and separate approved maintenance window** for A1 application/R2 recovery, fenced-epoch transfer and rollback, including any paid fallback. Phase 1–3 success does **not** authorize Phase 4.
 
 A user greenlight must cite the specific approved plan revision, scope, spend ceiling, stop time, approved reviewer decisions, and allowed OCI actions. The earlier request to prepare this plan is **not** that greenlight. An accepted GitHub PR alone is not cloud-execution consent.
@@ -43,7 +95,7 @@ A user greenlight must cite the specific approved plan revision, scope, spend ce
 4. Require primary actual RUNNING/ready plus durable volume UUID/mount, coordinator active ID/epoch, valid fence for active and deny for stale epoch; Cloudflare health and current incident state. No active pending recovery incident or parallel provisioning. Confirm `KATCHA_OCI_RECOVERY_CONFIGURED=false`, `KATCHA_EXTERNAL_COMPUTE_ENABLED=false`, `KATCHA_OCI_PAID_FALLBACK_ENABLED=false`, and `KATCHA_OCI_CROSS_AD_STORAGE_CREATION_APPROVED!=true` from fresh values.
 5. Check R2 backup complete marker, manifest SHA-256 per database and age (recovery bootstrap policy <= 7200 s). Verify most recent hourly production backup (<3 h) and isolated weekly PostgreSQL restore (<8 days); include DB count, schema and service results. DO NOT trigger production backup or cleanup automatically during read-only inspection.
 6. Confirm exactly four ACTIVE Vault secret OCIDs as **metadata**, their tenancy/compartment, defined-tag dynamic-group matching conjunction and policy conditions, no privileged wildcard. Independently confirm whether a known-existing **fifth** ACTIVE out-of-policy secret can be used as a denial fixture without expanding grants or creating secrets.
-7. Obtain OCI account-specific current price/usage evidence and paid/trial policy, expected resource charges, monthly limits, egress/tunnel assumptions, available credits, verified external-compute budget limits, and an independently effective shutdown/check process. Do not depend on a 24-hour OCI budget email to cap a two-hour test.
+7. Obtain OCI account-specific current price/usage evidence and paid/trial policy, expected resource charges, monthly limits, egress/tunnel assumptions, available credits, verified external-compute budget limits, and a **tested independently enforceable** emergency cleanup/deadline mechanism plus named backup operator. Do not depend on a 24-hour OCI budget email to cap a two-hour test.
 8. Record observation time, release SHA, operator, reviewer, evidence access location, sanitization proof and PASS/FAIL for each gate. **Old 2026-10-08 data cannot satisfy a 2026-10-12 or later launch.** Refresh immediately before any final approved mutation; cross-AD volume gate permits at most a 15-minute-old storage assertion.
 
 **STOP:** any missing/expired/conflicting evidence, a stale backup, unverified costs, unsupported subnet/boot image, inability to clean up, primary instability, other active candidate, unmatched IAM policy or nonzero unknown charges beyond the approved ceiling.
@@ -60,7 +112,7 @@ A user greenlight must cite the specific approved plan revision, scope, spend ce
 | Payload | No production cloud-init, no production secrets, no Katcha services, no coordinator call; only approved SSH public key and narrow `KatchaIsolationProbe=true`, `KatchaProduction=false`, unique `KatchaProbeId` freeform tags |
 | Identity | Candidate defined tag **absent** at creation; candidate tag applied only during Phase 2 after four recorded denials |
 | Operation | One `scripts/oci-isolated-identity-probe.py plan` (read-only), then a separately authorized `launch --approve-launch-and-storage-exhaustion` executed from pinned, CI-passed source |
-| Runtime | Target <2 hours **from launched to confirmed boot-volume deletion** under active operator supervision, with independent local deadline, escalation and backup operator; do not promise a hard OCI TTL unless tested |
+| Runtime | Target <2 hours **from launch to confirmed boot-volume deletion**; preauthorized exact-resource emergency cleanup, independently tested enforcement mechanism, backup operator and hard incident escalations are **NO-GO prerequisites**. Supervision alone is insufficient |
 | Retained evidence | Probe nonce, OCI instance/boot IDs **only in restricted evidence store**, image digest/OCID, lifecycle and network readbacks, primary unchanged, timestamps and observed OCI cost/usage |
 
 **Free-storage arithmetic (from stale baseline, to be reverified):** 200 GB allowance − 150 GB already allocated = **50 GB**. One 50 GB probe consumes all remaining headroom; **zero** additional free GB remains during probe. Never run it simultaneously with a cross-AD fresh-volume rehearsal. If Oracle reports different remaining space or image size, revise/reject instead of creating a larger volume.
@@ -76,13 +128,46 @@ A user greenlight must cite the specific approved plan revision, scope, spend ce
 * Independently verify the fifth fixture is an **ACTIVE, known-existing** secret outside the four `target.secret.id` grants and that the candidate does not have another allowed IAM path. If none exists, **fail acceptance and request a revised plan**, do not invent/create one.
 * Run `allow-four`: four exact successful ID matches plus explicit denial for the fifth. Audit record must include successful/failing result and observed timestamps, zero exposed secret bodies, policy version and dynamic group metadata. No Cloudflare fence or production leadership mutation in this phase.
 
-## F. Phase 3 — bounded exact-resource cleanup and security rollback
+## F. Phase 3 — already-authorized cleanup and containment
 
-* Before VM termination, remove **only** the temporary `KatchaRecovery.Candidate` defined tag while preserving all other namespaces; re-read OCI instance metadata and preferably prove access is again denied using instance principal. Metadata tag disappearance alone does not guarantee immediate propagation; record any missing negative read as **unverified**.
-* Execute only `scripts/oci-isolated-identity-probe.py cleanup --instance-id <approved exact ID> --approve-cleanup-of-test-instance-and-boot-volume`; never use broad cleanup against unrelated instances or volumes.
-* Verify probe ID/display name, expected isolated tags, exact compartment/subnet/NSG, one 50 GB boot disk, no attached data disk and no public IP. Termination uses `--preserve-boot-volume false`. Confirm VM TERMINATED, boot volume absent, *original* three boot/block volumes intact, 50 GB allowance restored, unchanged primary running/ready and all recovery switches still false.
-* On failed tag revocation or ambiguous termination, treat as **security and cost incident** with operator escalation. Do not claim success, reuse the instance, launch replacement, retry blind delete, or tamper with production. Record final cost and outstanding resources.
-* Stop the exercise on deadline or abnormal event; when safe, perform already-approved exact-resource cleanup under supervision. **An OCI budget alert is not a substitute for this.**
+**The authority to clean up must be included in the Phase 1 greenlight.**
+The exact VM/boot IDs become available only after creation; before launch,
+preauthorize the unique probe nonce, resource envelope, exact-selector process
+and restricted OCI administrator role, with an operator and independent backup
+operator able to execute both normal and emergency containment. Phase 2 Vault
+tagging remains a separate approval. A successful guest test must not start
+until this containment contract is proven operational.
+
+1. From an independently identified administrator session, execute
+   `scripts/oci-isolated-identity-probe.py revoke-tag` for the exact VM.
+   Preserve all unrelated tags. Metadata revocation output is explicitly
+   `DATA_PLANE_NOT_YET_VERIFIED`.
+2. On the same guest, run
+   `scripts/oci-candidate-vault-principal-probe.py verify-revoked` with an
+   explicit maximum 600-second propagation window. **All four** authorized
+   Vault bundles must return real authorization denials. Network errors,
+   tag disappearance and user attestation alone are not sufficient.
+3. After separately witnessed denials, run previously approved exact-resource
+   `cleanup --acknowledge-post-revocation-four-denials`. The CLI flag is an
+   attestation **to existing restricted evidence**, not itself a Vault query.
+4. If the guest or tag cannot be safely revoked, run the **preauthorized**
+   exact-resource `emergency-contain --instance-id <exact>
+   --expected-boot-volume-id <exact> --approve-emergency-probe-containment`.
+   This path must refuse mismatched resources and reports IAM as UNVERIFIED.
+   Treat any issued token, leaked credential or stalled OCI termination as an
+   active security incident; follow separately reviewed administrator
+   containment when the runner itself cannot complete.
+5. Perform **independent** before/after inventory checks for all original
+   boot/block volumes including OCIDs and sizes, test boot absence, exact VM
+   termination, 50 GB recovered storage, production readiness endpoint,
+   coordinator active epoch, R2/backup health, recovery switches and actual
+   billing. The exact-resource script's OCI RUNNING check does not prove
+   production API health or unchanged other disks.
+
+**Hard stop:** the prior two-hour human target is not automatic. Reviewer
+must demonstrate an effective, separately executable cutoff/cleanup capability
+and escalation to a backup operator before approving the initial launch.
+
 
 ## G. Phase 4 — separately reviewed A1/R2/disruptive game-day (NOT YET SIZED OR APPROVED)
 
@@ -90,7 +175,7 @@ This requires a **new stage-specific authorization and measured billing schedule
 
 1. **New architecture/resource accounting:** primary already consumes 2 A1 OCPU/12 GB. No assumption a parallel A1 is free. A same-AD replacement needs a new ~50 GB boot disk plus temporarily dual VM footprint; cross-AD needs **both** 50 GB new boot **and** ≥50 GB restored data volume (≥100 GB new). Historical free headroom is only 50 GB. Do **not** delete primary disks or reduce redundancy to make a test look free.
 2. **Paid fallback design:** independently quote exact shape/SKU (shape and image, OCPUs, RAM, per-hour compute, boot/block GB-month, backup/network/tunnel/egress, currency/tax if applicable) from account Console; set one-incident charge ceiling and concurrency=1, finite TTL, independent operator stop and rollback funding. `estimated_hourly_rate × max_hours + storage + transfer + tax + contingency <= explicitly approved maximum` and verify remaining trial credits/charge method. **All rates, ceiling and resulting USD estimate are presently UNKNOWN and must not be invented.**
-3. **Mandatory code gate:** currently `.github/workflows/oci-recovery.yml` job `paid-fallback-expiry` is scheduled only when `vars.KATCHA_OCI_RECOVERY_CONFIGURED == 'true'`. That contradicts the runbook claim that disabling new recovery does not inhibit paid cleanup. **Fix this with exact-head tests + independent review before approving any paid instance**, and verify no cleanup can delete unowned/active primary resources.
+3. **Mandatory code gate:** merged PR #393 decoupled paid cleanup scheduling from new recovery, now requiring separately approved default-off `KATCHA_OCI_CLEANUP_APPROVED`. **This is not proof of safe cleanup.** Blocking PR #400 addresses active/pending-leader preservation and requires targeted passing exact-head CI, merge, independent verification of retirement tag/fencing, and a live witnessed non-destructive rehearsal before any paid instance or cleanup-gate activation.
 4. **Non-disruptive rehearsal first:** staged isolated A1-compatible VM only with separate capacity/storage approval; proven Vault bootstrap, authenticated and SHA-256 checked immutable R2 restoration, PostgreSQL/Temporal/application state/schema verification, local health, intentionally fenced nonleader behavior, rollback of any newly created data disk without touching primary.
 5. **Maintenance-window failover:** operator, second operator, SRE/DBA and billing watch present; freeze conflicting deploys and writers. Define measured backup recovery point, expected max downtime, explicit DNS/Tunnel and Cloudflare checks, health timeout, coordinator active/pending epoch state and cutover decision checkpoint. Before `commit`, old primary must remain authoritative; after `commit`, verify old epoch cannot write, the new epoch can, public routing is healthy, and backup continues on the new leader. **Never set both hosts authoritative.**
 6. **Failure ladders:** capacity-unavailable → do not overprovision; candidate readiness failure → abort pending and reconcile volume/old-host restart; uncertain create/attach/detach → preserve all resources, freeze retries; ambiguous coordinator commit → read actual epoch, never blindly revert to old epoch; after confirmed commit a return to prior host requires a **new monotonic epoch** with fencing and health checks. Failed cleanup is a persistent incident with explicit cost tracking.
@@ -125,4 +210,4 @@ Reviewers MUST use the linked [evidence worksheet](OCI_DR_REVIEW_EVIDENCE_TEMPLA
 
 **Decision choices:** `NO-GO` (default), `CHANGES REQUIRED`, `APPROVE PHASE 1 ONLY`, `APPROVE PHASES 1–3`, or later `APPROVE PHASE 4 REVISION`. Blank/implicit acceptance means **NO-GO**. Even reviewer approval is not the user's explicit final greenlight.
 
-**Review blockers already known:** outdated OCI/billing/health snapshot; no verified existing fifth-secret fixture; unresolved paid-expiry scheduling guard; no complete live A1 cross-AD cost/capacity plan. This change proposal therefore is **not currently executable**.
+**Review blockers already known:** outdated OCI/billing/health snapshot; no verified existing fifth-secret fixture; **paid cleanup authority/fencing and emergency identity-probe containment fixes pending review**, independent enforced test cutoff unproven, and no complete live A1 cross-AD cost/capacity plan. This change proposal therefore is **not currently executable**.
