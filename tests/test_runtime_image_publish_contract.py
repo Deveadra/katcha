@@ -23,6 +23,7 @@ def test_release_images_wait_for_successful_main_ci() -> None:
     assert 'run?.conclusion !== "success"' in source
     assert 'run?.head_branch !== "main"' in source
     assert "run?.head_repository?.full_name" in source
+    assert 'core.setFailed("Rejected image publication:' in source
 
 
 def test_release_requires_current_main_head_not_stale_ci() -> None:
