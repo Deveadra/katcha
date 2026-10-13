@@ -327,9 +327,18 @@ window.KatchaEditorial = (() => {
             channel, filename: file.name, size: file.size,
             lastModified: file.lastModified, title,
         });
-        // The identifier is stable across tabs on the same origin, while the
-        // fingerprint avoids storing source filenames directly in localStorage.
-        const fingerprint = await sha256Hex(new TextEncoder().encode(metadata));
+        // Resist accidental reuse when two different large files have the
+        // same filename, modification timestamp and size. Sample only 2 MiB;
+        // SHA-256 of the *entire* file is still verified by Katcha after upload.
+        const sampleBytes = 1024 * 1024;
+        const [first, last] = await Promise.all([
+            file.slice(0, sampleBytes).arrayBuffer(),
+            file.slice(Math.max(0, file.size - sampleBytes)).arrayBuffer(),
+        ]);
+        const contents = [await sha256Hex(first), await sha256Hex(last)];
+        const fingerprint = await sha256Hex(
+            new TextEncoder().encode(JSON.stringify({metadata, contents})),
+        );
         const key = "katcha.editorial.multipart." + fingerprint;
         try {
             const existing = localStorage.getItem(key);
