@@ -39,6 +39,7 @@ media = [
   "av>=11,<19",
 ]
 dev = [
+  "google-genai>=1.30,<2",
   "pytest>=8.3,<9",
   "pytest-asyncio>=0.24,<1",
   "ruff>=0.8,<1",
