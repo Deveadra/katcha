@@ -203,7 +203,11 @@ jobs:
       - name: Test
         env:
           KATCHA_SEARCH_LEDGER_TEST_DATABASE_URL: postgresql+psycopg://katcha:katcha@127.0.0.1:5432/katcha
-        run: pytest -q
+        run: |
+          # Identify the exact test instead of leaving a 15-minute silent hang.
+          # A timeout MUST fail CI rather than allow an untested release.
+          python -m pip install 'pytest-timeout>=2.3,<3'
+          pytest -vv --timeout=120 --timeout-method=thread
 
       - name: Verify built-in brand assets through S3-compatible HTTP endpoint
         env:
