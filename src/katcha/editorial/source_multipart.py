@@ -454,14 +454,21 @@ def _finish_locked(channel_id: uuid.UUID, source_id: uuid.UUID, *, actor: str) -
 
 
 def cancel(channel_id: uuid.UUID, source_id: uuid.UUID) -> dict:
+    # The verifier holds the same distributed lock for its entire operation.
+    # A failed/abandoned verification may be discarded once its worker exits.
+    with _verification_guard(source_id):
+        return _cancel_locked(channel_id, source_id)
+
+
+def _cancel_locked(channel_id: uuid.UUID, source_id: uuid.UUID) -> dict:
     store = _client_store()
     with session_scope() as session:
         row = _load(session, channel_id, source_id, locked=True)
         meta = dict(row.source_metadata)
         if meta["state"] == "cancelled":
             return _receipt(row)
-        if meta["state"] != "uploading":
-            raise ValueError("Cannot cancel source media during verification or after completion")
+        if meta["state"] not in {"uploading", "verifying"}:
+            raise ValueError("Upload cannot be cancelled in its current state")
         assert_mutation_authority("storage.multipart.abort", settings=store.settings)
         try:
             store.client.abort_multipart_upload(
