@@ -6,6 +6,7 @@ from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
 import pytest
+from botocore.exceptions import ClientError
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
@@ -515,3 +516,83 @@ def test_scoped_manual_prepare_and_review_are_ai_free_and_idempotent(workspace, 
         assert publication.status_code == 200, publication.text
         assert publication.json()["stage"] == "metadata_hold"
         assert publication.json()["privacy_status"] == "private"
+
+
+def test_upload_first_chunk_never_requires_bucket_head(workspace, monkeypatch):
+    channel, _, _ = workspace
+
+    class ObjectWriter(MemoryStore):
+        def ensure_bucket(self):
+            raise AssertionError("R2 HeadBucket must never gate a permitted object write")
+
+    monkeypatch.setattr(content, "ObjectStore", ObjectWriter)
+    receipt = intake(channel, key="headless-object-write", data=b"video")
+    result = content.accept_chunk(channel, receipt.id, 0, b"video")
+    assert result["upload_offset"] == 5
+    with db.session_scope() as session:
+        row = session.get(ContentItem, receipt.id)
+        assert row.upload_offset == 5
+        assert row.error is None
+        assert len(row.details["chunks"]) == 1
+
+
+def test_first_chunk_storage_denial_persists_safe_error_and_retry_recovers(
+    workspace, monkeypatch
+):
+    channel, _, _ = workspace
+    receipt = intake(channel, key="r2-denied-first-byte", data=b"video")
+
+    class AccessDeniedStore(MemoryStore):
+        def put_bytes(self, *_args):
+            raise ClientError(
+                {
+                    "Error": {
+                        "Code": "AccessDenied",
+                        "Message": "SECRET_ACCESS_KEY_MUST_NOT_APPEAR",
+                    }
+                },
+                "PutObject",
+            )
+
+    monkeypatch.setattr(content, "ObjectStore", AccessDeniedStore)
+    with TestClient(app) as client:
+        url = f"/v1/channels/{channel}/content/{receipt.id}"
+        first = client.put(url + "/chunks?offset=0", content=b"video")
+        assert first.status_code == 503, first.text
+        assert "AccessDenied" in first.json()["detail"]
+        assert "SECRET_ACCESS_KEY_MUST_NOT_APPEAR" not in first.text
+        stored = client.get(url).json()
+        assert stored["upload_offset"] == 0
+        assert stored["chunks"] == []
+        assert "AccessDenied" in stored["error"]
+        assert "SECRET_ACCESS_KEY_MUST_NOT_APPEAR" not in stored["error"]
+        monkeypatch.setattr(content, "ObjectStore", MemoryStore)
+        resumed = client.put(url + "/chunks?offset=0", content=b"video")
+        assert resumed.status_code == 200, resumed.text
+        assert resumed.json()["upload_offset"] == 5
+        assert client.get(url).json()["error"] is None
+    with db.session_scope() as session:
+        row = session.get(ContentItem, receipt.id)
+        assert len(row.details["chunks"]) == 1
+        assert row.upload_offset == 5
+
+
+def test_fenced_storage_write_never_advances_acknowledged_bytes(workspace, monkeypatch):
+    from katcha.runtime_fence import LeadershipFenceError
+
+    channel, _, _ = workspace
+    receipt = intake(channel, key="fenced-first-byte", data=b"video")
+
+    class FencedStore(MemoryStore):
+        def put_bytes(self, *_args):
+            raise LeadershipFenceError("sensitive coordinator diagnosis")
+
+    monkeypatch.setattr(content, "ObjectStore", FencedStore)
+    with pytest.raises(content.ContentUploadStorageError, match="active Katcha primary"):
+        content.accept_chunk(channel, receipt.id, 0, b"video")
+    with db.session_scope() as session:
+        row = session.get(ContentItem, receipt.id)
+        assert row.upload_offset == 0
+        assert "sensitive coordinator diagnosis" not in row.error
+    monkeypatch.setattr(content, "ObjectStore", MemoryStore)
+    assert content.accept_chunk(channel, receipt.id, 0, b"video")["upload_offset"] == 5
