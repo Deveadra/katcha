@@ -235,6 +235,10 @@ def sign_part(channel_id: uuid.UUID, source_id: uuid.UUID, part_number: int) -> 
             raise ValueError("Upload is no longer accepting parts")
         if not 1 <= part_number <= meta["part_count"]:
             raise ValueError("Part number is outside this upload")
+        expected_size = min(
+            int(meta["part_bytes"]),
+            int(meta["size_bytes"]) - (part_number - 1) * int(meta["part_bytes"]),
+        )
     assert_mutation_authority("storage.multipart.sign_part", settings=store.settings)
     url = store._client(store.settings.s3_browser_endpoint_url).generate_presigned_url(
         "upload_part",
@@ -243,11 +247,17 @@ def sign_part(channel_id: uuid.UUID, source_id: uuid.UUID, part_number: int) -> 
             "Key": meta["staging_key"],
             "UploadId": meta["upload_id"],
             "PartNumber": part_number,
+            "ContentLength": expected_size,
         },
         ExpiresIn=SIGNATURE_TTL_SECONDS,
         HttpMethod="PUT",
     )
-    return {"url": url, "part_number": part_number, "expires_seconds": SIGNATURE_TTL_SECONDS}
+    return {
+        "url": url,
+        "part_number": part_number,
+        "size_bytes": expected_size,
+        "expires_seconds": SIGNATURE_TTL_SECONDS,
+    }
 
 
 def _validate_completed_parts(parts: list[dict], meta: dict) -> list[dict]:
@@ -374,6 +384,7 @@ def finish(channel_id: uuid.UUID, source_id: uuid.UUID, *, actor: str) -> dict:
                 MetadataDirective="COPY",
             )
         lifecycle = ensure_lifecycle(session, clip)
+        stale_archive_key = lifecycle.archive_key
         if lifecycle.lifecycle_state != "hot":
             lifecycle.lifecycle_state = "hot"
             lifecycle.archive_key = None
@@ -408,6 +419,10 @@ def finish(channel_id: uuid.UUID, source_id: uuid.UUID, *, actor: str) -> dict:
         ))
         session.flush()
         result = _receipt(row)
+    # Retire stale archival media only after the durable hot state is committed.
+    if stale_archive_key and stale_archive_key != canonical_key:
+        with suppress(ClientError):
+            store.delete(stale_archive_key)
     # Staging can be safely retried by lifecycle cleanup if this delete fails.
     with suppress(ClientError):
         store.delete(key)
@@ -419,8 +434,10 @@ def cancel(channel_id: uuid.UUID, source_id: uuid.UUID) -> dict:
     with session_scope() as session:
         row = _load(session, channel_id, source_id, locked=True)
         meta = dict(row.source_metadata)
-        if meta["state"] == "ready":
-            raise ValueError("Completed source media cannot be cancelled")
+        if meta["state"] == "cancelled":
+            return _receipt(row)
+        if meta["state"] != "uploading":
+            raise ValueError("Cannot cancel source media during verification or after completion")
         assert_mutation_authority("storage.multipart.abort", settings=store.settings)
         try:
             store.client.abort_multipart_upload(
