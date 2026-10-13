@@ -448,3 +448,47 @@ body[data-katcha-page="channel"] .custom-goals {
         margin-left: 0;
     }
 }
+
+
+/* Recent operations stay scannable even when the channel has months of events. */
+body[data-katcha-page="channel"] .channel-activity-item > strong {
+    white-space: normal;
+    overflow-wrap: anywhere;
+    line-height: 1.4;
+}
+
+body[data-katcha-page="channel"] .channel-activity-history {
+    grid-column: 1 / -1;
+    min-width: 0;
+    margin-top: 3px;
+}
+
+body[data-katcha-page="channel"] .channel-activity-history > summary {
+    padding: 13px 15px;
+    border: 1px solid var(--ae-line);
+    border-radius: var(--ae-radius-panel);
+    background: var(--ae-surface-soft);
+    color: var(--ae-text-secondary);
+    font-size: 12px;
+    font-weight: 650;
+    cursor: pointer;
+}
+
+body[data-katcha-page="channel"] .channel-activity-history > summary:hover,
+body[data-katcha-page="channel"] .channel-activity-history > summary:focus-visible {
+    color: var(--ae-text);
+    border-color: var(--ae-violet);
+}
+
+body[data-katcha-page="channel"] .channel-activity-older-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 9px;
+    margin-top: 10px;
+}
+
+@media (max-width: 950px) {
+    body[data-katcha-page="channel"] .channel-activity-older-grid {
+        grid-template-columns: minmax(0, 1fr);
+    }
+}
