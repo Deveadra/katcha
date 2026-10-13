@@ -247,3 +247,34 @@ def test_replay_of_pre_upgrade_run_preserves_identity_with_new_default_fields(sa
         actor="test",
     )
     assert replay.id == row.id
+
+
+@pytest.mark.parametrize("status", ["queued", "running"])
+def test_interrupted_optional_semantics_does_not_block_normal_start_or_resume(saved, status):
+    interrupted = new_run(saved)
+    with db.session_scope() as session:
+        row = session.get(EditorialRun, interrupted.id)
+        row.options = {"target": "semantic_matching"}
+        row.status = status
+        row.artifacts = {"provider_calls": {"inspect": {"status": "started"}}}
+    normal = start_run(
+        interrupted.channel_profile_id,
+        interrupted.project_id,
+        StartEditorialRun(expected_revision=0, idempotency_key="normal-after-semantic"),
+        actor="test",
+    )
+    assert normal.status == "queued"
+    with db.session_scope() as session:
+        session.get(EditorialRun, normal.id).status = "failed"
+    resumed = control_run(
+        normal.channel_profile_id,
+        normal.project_id,
+        normal.id,
+        expected_attempt=1,
+        cancel=False,
+    )
+    assert resumed.status == "queued" and resumed.attempt == 2
+    with db.session_scope() as session:
+        row = session.get(EditorialRun, interrupted.id)
+        assert row.status == status and row.attempt == 1
+        assert row.artifacts["provider_calls"]["inspect"]["status"] == "started"

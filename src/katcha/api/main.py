@@ -30,6 +30,8 @@ from katcha.api.editorial_media_preparation import router as editorial_media_pre
 from katcha.api.editorial_projects import router as editorial_projects_router
 from katcha.api.editorial_runs import router as editorial_runs_router
 from katcha.api.editorial_scene_index import router as editorial_scene_index_router
+from katcha.api.editorial_semantic_matching import router as editorial_semantic_matching_router
+from katcha.api.editorial_shot_handoff import router as editorial_shot_handoff_router
 from katcha.api.editorial_shot_matching import router as editorial_shot_matching_router
 from katcha.api.explorer import router as explorer_router
 from katcha.api.goals import router as goals_router
@@ -194,6 +196,8 @@ app.include_router(editorial_projects_router)
 app.include_router(editorial_media_preparation_router)
 app.include_router(editorial_scene_index_router)
 app.include_router(editorial_shot_matching_router)
+app.include_router(editorial_semantic_matching_router)
+app.include_router(editorial_shot_handoff_router)
 app.include_router(editorial_runs_router)
 app.include_router(acquisition_router)
 app.include_router(brands_router)

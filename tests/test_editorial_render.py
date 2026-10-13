@@ -69,7 +69,7 @@ def test_revoked_rights_prevent_promotion_after_render(saved, monkeypatch):
     monkeypatch.setattr(
         render,
         "current_manifest",
-        Mock(side_effect=[manifest, EditorialConflict("clearance revoked")]),
+        Mock(side_effect=[manifest, manifest, EditorialConflict("clearance revoked")]),
     )
     assert render.render_project(str(row.id), 1)["status"] == "blocked"
     stored = get_run(row.channel_profile_id, row.project_id, row.id)
@@ -101,4 +101,50 @@ def test_confirmed_predispatch_rejection_can_resume_after_configuration_fix(save
     )
     assert render.render_project(str(row.id), resumed.attempt)["status"] == "completed"
     assert dispatch.call_count == 2
+    recover.assert_not_called()
+
+
+def test_revocation_after_dispatch_claim_prevents_renderer_call_and_can_safely_resume(
+    saved, monkeypatch
+):
+    row, manifest, _, dispatch, recover = setup_render(saved, monkeypatch)
+    monkeypatch.setattr(
+        render,
+        "current_manifest",
+        Mock(side_effect=[manifest, EditorialConflict("clearance revoked")]),
+    )
+    assert render.render_project(str(row.id), 1)["status"] == "blocked"
+    assert (
+        get_run(row.channel_profile_id, row.project_id, row.id).artifacts["render_dispatch"][
+            "state"
+        ]
+        == "rejected"
+    )
+    dispatch.assert_not_called()
+    recover.assert_not_called()
+    monkeypatch.setattr(render, "current_manifest", Mock(return_value=manifest))
+    resumed = control_run(
+        row.channel_profile_id, row.project_id, row.id, expected_attempt=1, cancel=False
+    )
+    assert render.render_project(str(row.id), resumed.attempt)["status"] == "completed"
+    dispatch.assert_called_once()
+    recover.assert_not_called()
+
+
+def test_late_recovery_clearance_failure_preserves_uncertain_receipt(saved, monkeypatch):
+    row, manifest, _, dispatch, recover = setup_render(saved, monkeypatch)
+    assert render.claim_dispatch(str(row.id), 1, manifest) is True
+    monkeypatch.setattr(
+        render,
+        "current_manifest",
+        Mock(side_effect=[manifest, EditorialConflict("clearance revoked")]),
+    )
+    assert render.render_project(str(row.id), 1)["status"] == "blocked"
+    assert (
+        get_run(row.channel_profile_id, row.project_id, row.id).artifacts["render_dispatch"][
+            "state"
+        ]
+        == "started"
+    )
+    dispatch.assert_not_called()
     recover.assert_not_called()

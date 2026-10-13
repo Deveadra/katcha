@@ -231,6 +231,10 @@ class Settings(BaseSettings):
     s3_region: str = "auto"
     s3_force_path_style: bool = True
 
+    # Separate from OCI leadership: restored search evidence requires offline reconciliation.
+    source_search_dispatch_enabled: bool = False
+    source_search_recovery_generation: int = Field(default=0, ge=0)
+
     work_dir: Path = Path("/tmp/katcha")
     intelligence_handoff_dir: Path = Path("/tmp/katcha/handoff")
     analysis_frame_count: int = Field(default=6, ge=3, le=12)
@@ -252,6 +256,7 @@ class Settings(BaseSettings):
     elevenlabs_timeout_seconds: int = Field(default=90, ge=10, le=300)
     elevenlabs_usd_per_1000_credits: float = Field(default=0.0, ge=0)
     ai_enabled: bool = False
+    semantic_matching_dispatch_enabled: bool = False
     ai_execution_mode: Literal["auto", "fixture", "live"] = "auto"
     ai_live_routing_mode: Literal["free_first", "balanced", "quality", "economy"] = (
         "free_first"

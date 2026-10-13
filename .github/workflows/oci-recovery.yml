@@ -417,10 +417,13 @@ jobs:
           echo "Coordinator probe completed: healthy=$healthy incident=$incident_status"
 
   paid-fallback-expiry:
+    # Cleanup must remain independently available when recovery launch is
+    # disabled. Keep it OFF until the cleanup runbook is independently
+    # reviewed and the operator explicitly sets this separate approval gate.
     if: >-
       github.event_name == 'schedule' &&
       github.event.schedule == '7,22,37,52 * * * *' &&
-      vars.KATCHA_OCI_RECOVERY_CONFIGURED == 'true'
+      vars.KATCHA_OCI_CLEANUP_APPROVED == 'true'
     runs-on: ubuntu-latest
     concurrency:
       group: katcha-production-recovery

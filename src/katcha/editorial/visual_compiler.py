@@ -171,7 +171,11 @@ def compile_project_visuals(
                 "Active channel brand identity is inconsistent; reactivate branding"
             )
         run = session.get(EditorialRun, asset_run_id) if asset_run_id else None
-        uses_video = any(beat.media for beat in plan.beats)
+        uses_video = any(
+            not use.candidate_id.startswith("approved_shot_")
+            for beat in plan.beats
+            for use in beat.media
+        )
         if (uses_video or asset_run_id) and (
             run is None
             or run.project_id != project_id
@@ -194,7 +198,12 @@ def compile_project_visuals(
         images = resolve_images(session, channel_id, project_id, expected_revision, plan)
         artifacts = run.artifacts if run else {}
         receipts = dict(artifacts.get("acquired_assets") or {})
-        used = {item.candidate_id for beat in plan.beats for item in beat.media}
+        used = {
+            item.candidate_id
+            for beat in plan.beats
+            for item in beat.media
+            if not item.candidate_id.startswith("approved_shot_")
+        }
         if not used <= receipts.keys():
             raise EditorialConflict("Storyboard references an asset outside this acquisition")
         selections = {item["id"]: item for item in artifacts.get("asset_selection", [])}
@@ -202,6 +211,8 @@ def compile_project_visuals(
         for visual in plan.beats:
             beat = beats.get(visual.beat_id)
             for use in visual.media:
+                if use.candidate_id.startswith("approved_shot_"):
+                    continue
                 selection = selections.get(use.candidate_id)
                 if (
                     beat is None
@@ -243,7 +254,22 @@ def compile_project_visuals(
                     rights_assessment_id=current["rights_assessment_id"],
                 )
             )
-    return compile_visuals(
+        from katcha.services.editorial_shot_handoff import (
+            resolve_approved_shots,
+            validate_approved_intervals,
+        )
+
+        choices = {
+            use.candidate_id
+            for beat in plan.beats
+            for use in beat.media
+            if use.candidate_id.startswith("approved_shot_")
+        }
+        approved = resolve_approved_shots(
+            channel_id, project_id, expected_revision, choices, session=session
+        )
+        resolved.extend(value[1] for value in approved.values())
+    manifest = compile_visuals(
         project_id=str(project_id),
         revision=expected_revision,
         draft=draft,
@@ -253,3 +279,5 @@ def compile_project_visuals(
         images=images,
         brand=brand,
     )
+    validate_approved_intervals(manifest.timeline, approved)
+    return manifest

@@ -35,14 +35,22 @@ final-head CI (1,652 passed, 1 skipped), independent backend/UI review and Agent
 Bin/export review. See `../EDITORIAL_MEDIA_PREPARATION.md` for the executable
 handoff, persistent evidence volume and explicit recovery contract.
 
-**Next A task: `KSI-106`** is dependency-ready after **KMI-107/#375** merged
-at `de563dcc` with final-head CI (1,680 passed, 1 skipped). Reuse the durable
-`SceneIndexV1` and scoped index/search services documented in
-`../MEASURED_MEDIA_INDEX.md`. Initial evidence measures visual-change intervals,
-source timestamps and sparse keyframe hashes/color tags. OCR, speech and semantic
-actions remain unobserved; do not treat sparse evidence as exhaustive inspection.
-Preserve channel and current-rights gates, measured source bounds and operator
-choices when proposing bindings. Provider metadata and references grant no rights.
+**KSI-106/#379 is accepted**, merge `94b332f519c90efd5b37aab36a0057918b4dffb3`,
+with exact-head CI at `aff9b6f31edd98c4c11f91cbb668c1782aa82566`:
+1,759 passed, 1 skipped; Python, Explorer and PR Gate succeeded in
+[CI 38272257656](https://github.com/Deveadra/katcha/actions/runs/38272257656).
+Reuse `RequirementBindingV1` and append-only operator choices as documented in
+`../REQUIREMENT_SHOT_MATCHING.md`. Sparse measured evidence cannot assert unseen
+characters/actions or grant rights. KIN-102/#390 now consumes these contracts
+without changing matching logic; its accepted handoff rechecks current rights.
+
+**Next eligible acceptance work: KQA-101** remains planned. More than 100
+requirements in a matching fixture and prior script-to-Bin slice tests do not
+prove the required complete source-package path. KQA-102's offline plan harness
+is prepared separately; it executes no provider work and does not constitute
+real-media acceptance. See `../KQA102_OFFLINE_ACCEPTANCE.md`. Live work requires
+separate operator authorization, source permissions and explicit traffic/spend
+caps; coordinate only actual overlapping edits.
 
 ## Follow-on ordered tasks
 

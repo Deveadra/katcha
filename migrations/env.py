@@ -26,6 +26,7 @@ from katcha import (
     reach_models,  # noqa: F401
     render_models,  # noqa: F401
     scene_index_models,  # noqa: F401
+    search_ledger_models,  # noqa: F401
     short_episode_models,  # noqa: F401
     telegram_models,  # noqa: F401
     trend_activation_models,  # noqa: F401
@@ -69,10 +70,7 @@ def _ensure_version_table_capacity(connection) -> None:
         )
     )
     connection.execute(
-        text(
-            "ALTER TABLE alembic_version "
-            "ALTER COLUMN version_num TYPE VARCHAR(255)"
-        )
+        text("ALTER TABLE alembic_version ALTER COLUMN version_num TYPE VARCHAR(255)")
     )
     connection.commit()
 

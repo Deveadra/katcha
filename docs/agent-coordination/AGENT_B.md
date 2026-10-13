@@ -38,10 +38,23 @@ current permission checks and bounded decoder receipts. See
 `../MEASURED_MEDIA_INDEX.md` for the initial visual-token search and coverage limits.
 No semantic actions, OCR, speech, provider calls or production rights are inferred.
 
-**Next B task: `KIN-102`** remains gated on Agent A's accepted `KSI-106`
-requirement-to-shot bindings. Preserve the existing Editorial direction/storyboard
-and recheck production eligibility at compile/render. Live merged PRs and CI prove
-eligibility; coordinate only actual overlapping edits.
+**KIN-102/#390 is accepted**, merge `27b362c53cac17d1769c74ef13f5324601d9b547`,
+with exact-head CI at `30be860243b4fa3b579819fdaa1469dd3bad87a0`:
+1,802 passed, 1 skipped; Python, Explorer, Renderer, ranked-render E2E and PR Gate
+succeeded in [CI 38281808012](https://github.com/Deveadra/katcha/actions/runs/38281808012).
+Launcher and the selected runtime-image build also succeeded. Editorial now binds
+explicit measured choices into saved Storyboard beats, preserves other visuals
+and history, and checks rights/choices after dispatch claim before rendering and
+again before promotion. See `../APPROVED_SHOT_STORYBOARD_HANDOFF.md`.
+KMI-107 operator indexing/search integration is also merged in #389. Fixtures
+and mocked dispatch races establish offline behavior; `acceptance-media` and
+`full-startup` were skipped, and the separate local Editorial encode is unverified.
+
+**Next eligible acceptance work: KQA-101** remains planned full-path acceptance.
+KQA-102 has an offline scoped plan/checklist harness only; it cannot execute live
+calls or certify rights. See `../KQA102_OFFLINE_ACCEPTANCE.md`. Separate operator
+source/provider authorization and explicit traffic/spend caps remain the real
+live gate; no coordinator ownership approval is introduced.
 
 ## Follow-on ordered tasks
 
@@ -64,3 +77,5 @@ provides editor handoff. Use backlog dependencies as intent; live merged PRs and
 - Branch, SHA, PR, changed paths, exact test commands/CI, risks, next handoff.
 
 Auto-merge PRs after required checks/reviews pass and continue. Never push directly to main, force-push, rewrite history or deploy.
+
+Offline KQA-102 preparation and search-ledger recovery are accepted in merged [PR #395](https://github.com/Deveadra/katcha/pull/395), merge `33bb80139dc84e707b3510a91c792b326d82d828`. Final head `3b6b6fdd4b0c9849b09b1850c4b8d3ab2353e011` passed [exact-head CI](https://github.com/Deveadra/katcha/actions/runs/38337429257): 1,909 passed, 1 skipped, including 31 real PostgreSQL fixture recovery cases and offline plan tests. Independent review addressed synchronous-WAL durability in both ledger transactions and restore quarantine. This accepts offline preparation, not the full KQA-101 path or live KQA-102 calls. Production cutover/activation remains a separately approved operator action.

@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "pack_version": "1.0",
-  "project": "Katcha — Source Intelligence & Content Intake",
+  "project": "Katcha \u2014 Source Intelligence & Content Intake",
   "repository": "Deveadra/katcha",
   "prepared_date": "2026-10-10",
   "baseline_main_sha": "e811600212566e7e606c590bdfccf63878b2f1a1",
@@ -663,11 +663,27 @@
         "RequirementBindingV1",
         "SceneIndexV1"
       ],
-      "coordination_notes": "Dependency-ready after KMI-107/#375 acceptance. Consume measured SceneIndexV1 via scoped services; sparse keyframe color tags do not assert scene actions or exhaustive observation. Recheck rights and preserve manual choices.",
-      "status": "planned",
-      "status_evidence": null,
-      "pr_url": null,
-      "accepted_main_sha": null
+      "coordination_notes": "Accepted with merged PR and exact-head CI; reuse existing contracts and coordinate only concrete overlapping edits.",
+      "status": "accepted",
+      "status_evidence": {
+        "verification_level": "verified_offline",
+        "merged_pr_url": "https://github.com/Deveadra/katcha/pull/379",
+        "pr_head_sha": "aff9b6f31edd98c4c11f91cbb668c1782aa82566",
+        "merge_commit_sha": "94b332f519c90efd5b37aab36a0057918b4dffb3",
+        "ci_workflow": "CI",
+        "ci_conclusion": "success",
+        "ci_url": "https://github.com/Deveadra/katcha/actions/runs/38272257656",
+        "checks": [
+          "python: success",
+          "explorer: success",
+          "PR Gate: success"
+        ],
+        "test_result": "1759 passed, 1 skipped",
+        "date": "2026-10-12",
+        "notes": "Durable measured RequirementBindingV1 proposals and append-only locked choices with scoped current-evidence checks. Generated-footage tests include more than 100 requirements; this slice is not KQA-101 full-path acceptance. No live provider or rights clearance proof."
+      },
+      "pr_url": "https://github.com/Deveadra/katcha/pull/379",
+      "accepted_main_sha": "94b332f519c90efd5b37aab36a0057918b4dffb3"
     },
     {
       "id": "KIN-102",
@@ -692,11 +708,31 @@
       "interfaces": [
         "RequirementBindingV1"
       ],
-      "coordination_notes": "Lead agent handles integration; coordinate only concrete overlapping edits.",
-      "status": "planned",
-      "status_evidence": null,
-      "pr_url": null,
-      "accepted_main_sha": null
+      "coordination_notes": "Accepted with merged PR and exact-head CI; reuse existing contracts and coordinate only concrete overlapping edits.",
+      "status": "accepted",
+      "status_evidence": {
+        "verification_level": "verified_offline",
+        "merged_pr_url": "https://github.com/Deveadra/katcha/pull/390",
+        "pr_head_sha": "30be860243b4fa3b579819fdaa1469dd3bad87a0",
+        "merge_commit_sha": "27b362c53cac17d1769c74ef13f5324601d9b547",
+        "ci_workflow": "CI",
+        "ci_conclusion": "success",
+        "ci_url": "https://github.com/Deveadra/katcha/actions/runs/38281808012",
+        "checks": [
+          "python: success",
+          "explorer: success",
+          "renderer: success",
+          "ranked-render-e2e: success",
+          "PR Gate: success",
+          "launcher: success",
+          "selected runtime-image build: success"
+        ],
+        "test_result": "1802 passed, 1 skipped",
+        "date": "2026-10-12",
+        "notes": "Explicit approved-shot Storyboard handoff with preserved legacy selections/history and current rights/choice checks after dispatch claim before renderer/recovery and output promotion. Independent review addressed the reproduced rights race. Tests use generated footage and synthetic responses; final-dispatch tests mock renderer. acceptance-media and full-startup skipped; separate local Editorial encode remains unverified. No live acquisition/production rights clearance proof."
+      },
+      "pr_url": "https://github.com/Deveadra/katcha/pull/390",
+      "accepted_main_sha": "27b362c53cac17d1769c74ef13f5324601d9b547"
     },
     {
       "id": "KQA-101",
@@ -720,7 +756,7 @@
         "No live provider calls in CI; exact counts, hashes, gaps, timecodes, cost/rights evidence retained"
       ],
       "interfaces": [],
-      "coordination_notes": "Each prior slice still requires its own fixture tests; this ticket adds full-path acceptance.",
+      "coordination_notes": "Dependency-ready after KIN-101/#373 and KIN-102/#390. Full 100+ requirement script-to-source-package acceptance remains planned; earlier slice tests, synthetic UI journeys and ranked-render CI do not prove this complete path.",
       "status": "planned",
       "status_evidence": null,
       "pr_url": null,
@@ -748,15 +784,26 @@
         "Production readiness claimed only for demonstrated paths; unavailable source/rights remain explicit"
       ],
       "interfaces": [],
-      "coordination_notes": "Never run live acceptance from routine CI or without explicit operator authorization.",
+      "coordination_notes": "Offline preparation added: scripts/kqa102_acceptance_plan.py validates scoped source declarations, evidence references and traffic/spend caps and emits a digest-bound checklist. It cannot execute provider calls, verify live rights or satisfy real acceptance. KQA-101 full-path acceptance and separate operator authorization remain required before any live exercise.",
       "status": "planned",
-      "status_evidence": null,
+      "status_evidence": {
+        "verification_level": "verified_offline_prepared",
+        "feature_pr_url": "https://github.com/Deveadra/katcha/pull/395",
+        "pr_head_sha": "3b6b6fdd4b0c9849b09b1850c4b8d3ab2353e011",
+        "ci_url": "https://github.com/Deveadra/katcha/actions/runs/38337429257",
+        "ci_conclusion": "success",
+        "test_result": "1909 passed, 1 skipped (includes 31 real PostgreSQL fixture recovery cases and 26 offline KQA plan cases)",
+        "date": "2026-10-12",
+        "notes": "Offline operator plan harness accepted in merged PR395 with exact-head green CI and independent review. This is not KQA-101 full-path or KQA-102 live acceptance. Zero live provider calls; separate operator authorization and full-path acceptance remain required.",
+        "merged_harness_pr_url": "https://github.com/Deveadra/katcha/pull/395",
+        "merge_commit_sha": "33bb80139dc84e707b3510a91c792b326d82d828"
+      },
       "pr_url": null,
       "accepted_main_sha": null
     }
   ],
   "last_reconciled_date": "2026-10-12",
-  "last_reconciled_note": "KSI-101 through KSI-105, KMI-101 through KMI-107, KIN-101/#373 and Media Intake hardening #372 are accepted with exact-head CI evidence. KSI-106 is dependency-ready; KIN-102 remains gated on its accepted requirement-to-shot bindings. Live GitHub outranks this snapshot.",
+  "last_reconciled_note": "KSI-101 through KSI-106, KMI-101 through KMI-107, KIN-101/#373 and KIN-102/#390 are accepted with exact-head CI; operator index integration #389 is merged. KQA-101 remains planned full-path acceptance; KQA-102 has offline preparation only and requires separate live authorization. No new ownership gates. Live GitHub outranks this snapshot.",
   "agent_execution_policy": {
     "self_service": true,
     "auto_merge": "After green required checks/reviews and mergeability; no direct pushes to main or force-push.",

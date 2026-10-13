@@ -53,6 +53,7 @@ def load_model_metadata() -> None:
         reach_models,
         render_models,
         scene_index_models,
+        search_ledger_models,
         short_episode_models,
         shot_matching_models,
         telegram_models,
