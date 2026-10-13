@@ -14,7 +14,7 @@ from contextlib import suppress
 from pathlib import Path
 
 from botocore.exceptions import ClientError
-from sqlalchemy import select
+from sqlalchemy import select, text
 
 from katcha.config import get_settings
 from katcha.db import session_scope
@@ -122,6 +122,13 @@ def initiate(
     key = f"upload-staging/{channel_id}/{source_id}.{extension}"
     with session_scope() as session:
         ensure_active_profile(session, channel_id)
+        # Serialize identical starts across API processes before issuing any R2
+        # operation. A row lock alone cannot lock a row that does not exist yet.
+        if session.get_bind().dialect.name == "postgresql":
+            session.execute(
+                text("SELECT pg_advisory_xact_lock(:upload_key)"),
+                {"upload_key": int.from_bytes(source_id.bytes[:8], "big", signed=True)},
+            )
         row = session.scalar(_source(channel_id, source_id, locked=True))
         if row is not None:
             meta = row.source_metadata or {}
@@ -131,6 +138,20 @@ def initiate(
                 or meta.get("request_digest") != request_digest
             ):
                 raise ValueError("Upload identity was already used for different media")
+            if meta.get("state") == "cancelled":
+                assert_mutation_authority(
+                    "storage.multipart.restart", settings=store.settings
+                )
+                replacement = store.client.create_multipart_upload(
+                    Bucket=store.settings.s3_bucket,
+                    Key=meta["staging_key"],
+                    ContentType=meta["content_type"],
+                )
+                meta["upload_id"] = replacement["UploadId"]
+                meta["state"] = "uploading"
+                row.source_metadata = meta
+                row.status = SourceStatus.REGISTERED.value
+                session.flush()
             return _receipt(row)
         # The S3 initiation and journal insertion are deliberately serialized.
         # R2's abort-incomplete-multipart lifecycle handles the rare crash between
