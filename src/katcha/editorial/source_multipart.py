@@ -10,7 +10,7 @@ import hashlib
 import json
 import math
 import uuid
-from contextlib import suppress
+from contextlib import contextmanager, suppress
 from pathlib import Path
 
 from botocore.exceptions import ClientError
@@ -315,7 +315,31 @@ def _probe_object(store: ObjectStore, key: str) -> tuple[dict, float, int, int]:
     return probe, duration, width, height
 
 
+@contextmanager
+def _verification_guard(source_id: uuid.UUID):
+    """Serialize costly final verification across OCI API workers.
+
+    A PostgreSQL transaction-level advisory lock is released automatically if
+    the worker process exits or the connection fails. No clip row is locked
+    while the server streams multiple gigabytes from R2.
+    """
+    with session_scope() as session:
+        if session.get_bind().dialect.name == "postgresql":
+            key = int.from_bytes(source_id.bytes[:8], "big", signed=True)
+            claimed = session.scalar(
+                text("SELECT pg_try_advisory_xact_lock(:key)"), {"key": key}
+            )
+            if not claimed:
+                raise ValueError("Upload verification is already running; retry after it finishes")
+        yield
+
+
 def finish(channel_id: uuid.UUID, source_id: uuid.UUID, *, actor: str) -> dict:
+    with _verification_guard(source_id):
+        return _finish_locked(channel_id, source_id, actor=actor)
+
+
+def _finish_locked(channel_id: uuid.UUID, source_id: uuid.UUID, *, actor: str) -> dict:
     store = _client_store()
     with session_scope() as session:
         row = _load(session, channel_id, source_id, locked=True)
