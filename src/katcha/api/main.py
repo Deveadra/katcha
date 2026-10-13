@@ -28,12 +28,12 @@ from katcha.api.control_auth import require_control_token, require_native_channe
 from katcha.api.edit_blueprints import router as edit_blueprints_router
 from katcha.api.editorial_media_preparation import router as editorial_media_preparation_router
 from katcha.api.editorial_projects import router as editorial_projects_router
-from katcha.api.editorial_source_multipart import router as editorial_source_multipart_router
 from katcha.api.editorial_runs import router as editorial_runs_router
 from katcha.api.editorial_scene_index import router as editorial_scene_index_router
 from katcha.api.editorial_semantic_matching import router as editorial_semantic_matching_router
 from katcha.api.editorial_shot_handoff import router as editorial_shot_handoff_router
 from katcha.api.editorial_shot_matching import router as editorial_shot_matching_router
+from katcha.api.editorial_source_multipart import router as editorial_source_multipart_router
 from katcha.api.explorer import router as explorer_router
 from katcha.api.goals import router as goals_router
 from katcha.api.integrations import router as integrations_router
