@@ -216,7 +216,7 @@ def test_coordinator_changes_during_verification_prevents_termination():
             mock.authority["active"]["epoch"] = 10
 
     coordinator.on_status = flip_state
-    assert_preserved(oci, coordinator, "authority changed")
+    assert_preserved(oci, coordinator, "successor epoch|authority changed")
 
 
 def test_valid_stopped_expired_retired_paid_can_be_deleted_only_after_two_checks():
