@@ -276,9 +276,12 @@ def _require_named_principal_route_access(request: Request) -> None:
         return
 
     if re.fullmatch(
-        r"/v1/channels/[^/]+/editorial-projects/source-uploads(?:/multipart(?:/[^/]+(?:/parts|/complete)?)?)?", path
+        r"/v1/channels/[^/]+/editorial-projects/source-uploads"
+        r"(?:/multipart(?:/[^/]+(?:/parts|/complete)?)?)?", path
     ):
-        require_control_scope(request, "ai:read" if method in {"GET", "HEAD"} else "production:create")
+        require_control_scope(
+            request, "ai:read" if method in {"GET", "HEAD"} else "production:create"
+        )
         return
 
     if method in {"GET", "HEAD"} and re.fullmatch(
