@@ -20,8 +20,8 @@ from katcha.intelligence_models import ChannelProfile
 from katcha.models import Clip, DomainEvent, SourceItem
 from katcha.orchestration.activities import _extract_video_shape
 from katcha.production_models import Production
-from katcha.runtime_fence import LeadershipFenceError
 from katcha.publishing_models import Publication
+from katcha.runtime_fence import LeadershipFenceError
 from katcha.services.channel_profiles import ensure_active_profile
 
 CHUNK_BYTES = 8 * 1024 * 1024
