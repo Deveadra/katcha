@@ -12,6 +12,11 @@ const managedClipId = "11111111-1111-4111-8111-111111111111";
 const managedSourceUrl = "https://www.youtube.com/watch?v=fixture";
 const uploadedClipId = "22222222-2222-4222-8222-222222222222";
 const uploadedSourceUrl = "https://upload.katcha.invalid/33333333-3333-4333-8333-333333333333";
+const largeUploadId = "44444444-4444-4444-8444-444444444444";
+const largeClipId = "55555555-5555-4555-8555-555555555555";
+const largeUploadUrl = "https://upload.katcha.invalid/" + largeUploadId;
+const receivedLargeParts = new Set([1]); // resumable transfer with one part already on R2
+let retryLargePartTwo = true;
 let loseSourceMediaResponse = true;
 let loseCreateResponse = true, loseSaveResponse = true;
 let publication = null;
@@ -53,6 +58,17 @@ const draft = {
         const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
         const errors = [];
         page.on("pageerror", (error) => { errors.push(error.message); console.error("Browser error:", error.message); });
+        await page.route("https://r2.example.test/**", (route) => {
+            const part = Number(new URL(route.request().url()).pathname.split("/").at(-1));
+            assert.equal(route.request().method(), "PUT");
+            assert(!route.request().headers().authorization, "R2 part PUT must never include a control token");
+            if (part === 2 && retryLargePartTwo) {
+                retryLargePartTwo = false;
+                return route.fulfill({status: 503, body: "transient R2 failure"});
+            }
+            receivedLargeParts.add(part);
+            return route.fulfill({status: 200, headers: {ETag: '"fixture-part"'}, body: ""});
+        });
         await page.route("**/v1/**", (route) => {
             const request = route.request();
             const url = new URL(request.url());
@@ -79,6 +95,48 @@ const draft = {
                 platform: "youtube", status: "ready", title: "Official trailer",
                 creator: "Marvel Entertainment", discovered_at: "2026-10-01T12:00:00Z",
             }]);
+            if (url.pathname.endsWith("/editorial-projects/source-uploads/multipart")) {
+                assert.equal(request.method(), "POST");
+                assert.equal(body.size_bytes, 3 * 1024 ** 3);
+                assert.equal(body.permitted_use, true);
+                assert.equal(body.content_type, "video/mp4");
+                return send({
+                    source_id: largeUploadId, source_url: largeUploadUrl,
+                    clip_id: null, filename: "mock-large.mp4", title: "mock-large",
+                    size_bytes: 3 * 1024 ** 3, part_bytes: 64 * 1024 ** 2,
+                    part_count: 48, state: "uploading",
+                }, 201);
+            }
+            if (url.pathname.endsWith("/source-uploads/multipart/" + largeUploadId)) {
+                assert.equal(request.method(), "GET");
+                return send({
+                    source_id: largeUploadId, state: "uploading",
+                    parts: [...receivedLargeParts].map(part_number => ({
+                        part_number, size: 64 * 1024 ** 2, etag: '"fixture-part"'
+                    })),
+                });
+            }
+            if (url.pathname.endsWith("/source-uploads/multipart/" + largeUploadId + "/parts")) {
+                assert.equal(request.method(), "POST");
+                assert(body.part_number >= 2 && body.part_number <= 48);
+                return send({
+                    part_number: body.part_number,
+                    size_bytes: 64 * 1024 ** 2,
+                    expires_seconds: 600,
+                    url: "https://r2.example.test/signed/" + body.part_number,
+                });
+            }
+            if (url.pathname.endsWith("/source-uploads/multipart/" + largeUploadId + "/complete")) {
+                assert.equal(request.method(), "POST");
+                assert.equal(receivedLargeParts.size, 48);
+                return send({
+                    source_id: largeUploadId, source_url: largeUploadUrl,
+                    clip_id: largeClipId, filename: "mock-large.mp4", title: "mock-large",
+                    size_bytes: 3 * 1024 ** 3, part_bytes: 64 * 1024 ** 2,
+                    part_count: 48, state: "ready", duration_seconds: 125,
+                    width: 3840, height: 2160, deduplicated: false,
+                });
+            }
             if (url.pathname.endsWith("/editorial-projects/source-uploads")) {
                 calls.at(-1).sourceUploadKey = url.searchParams.get("idempotency_key");
                 if (loseSourceMediaResponse) {
@@ -411,6 +469,31 @@ const draft = {
         const sourceUploads = calls.filter(call => call.path.endsWith("/source-uploads"));
         assert.equal(sourceUploads.length, 2);
         assert.equal(sourceUploads[0].sourceUploadKey, sourceUploads[1].sourceUploadKey);
+        // Fixture emulates a 3 GiB File without allocating a 3 GiB browser
+        // buffer or sending any real R2 traffic.
+        await page.evaluate(() => {
+            const file = new File([new Uint8Array(32)], "mock-large.mp4", {
+                type: "video/mp4", lastModified: 100,
+            });
+            Object.defineProperty(file, "size", {value: 3 * 1024 ** 3});
+            Object.defineProperty(file, "slice", {value: (start, end) => {
+                const chunk = new Blob([new Uint8Array(32)], {type: "video/mp4"});
+                Object.defineProperty(chunk, "size", {value: end - start});
+                return chunk;
+            }});
+            const input = document.getElementById("editorial-source-upload-file");
+            Object.defineProperty(input, "files", {configurable: true, value: [file]});
+            input.dispatchEvent(new Event("change", {bubbles: true}));
+        });
+        await page.locator("#editorial-source-upload-button").click();
+        await page.getByText(/mock-large\\.mp4 ready/).waitFor();
+        assert.equal(receivedLargeParts.size, 48);
+        assert.equal(retryLargePartTwo, false);
+        assert.match(await page.locator("#editorial-selected-clips").innerText(), /mock-large/);
+        assert.equal(
+            calls.filter(call => call.path.endsWith("/source-uploads/multipart")).length, 1,
+        );
+        await page.locator('[data-editorial-remove-source]').last().click();
         await page.getByText("Start from a script", {exact: true}).click();
         await page.locator("#editorial-script-seed-file").setInputFiles({
             name: "operator-draft.md",
