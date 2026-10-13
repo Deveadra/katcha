@@ -866,9 +866,9 @@ const analytics = [
         const activity = getComputedStyle(document.querySelector(".channel-activity-list"));
         return {
             metricDisplay: metrics.display,
-            metricColumns: metrics.gridTemplateColumns.trim().split(/\\s+/).length,
+            metricColumns: metrics.gridTemplateColumns.trim().split(/\s+/).length,
             activityDisplay: activity.display,
-            activityColumns: activity.gridTemplateColumns.trim().split(/\\s+/).length,
+            activityColumns: activity.gridTemplateColumns.trim().split(/\s+/).length,
         };
     });
     assert.deepEqual(layout, {
