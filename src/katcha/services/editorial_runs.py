@@ -6,7 +6,7 @@ import uuid
 from datetime import UTC, datetime
 from urllib.parse import urlsplit
 
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
 from katcha.db import session_scope
@@ -129,7 +129,10 @@ def start_run(
             raise EditorialConflict("Draft changed; reload before starting work")
         active = session.scalar(
             select(EditorialRun.id).where(
-                EditorialRun.project_id == project_id, EditorialRun.status.in_(ACTIVE)
+                EditorialRun.project_id == project_id,
+                EditorialRun.status.in_(ACTIVE),
+                func.coalesce(EditorialRun.options["target"].as_string(), "")
+                != "semantic_matching",
             )
         )
         if active is not None:
@@ -353,7 +356,10 @@ def control_run(
                 raise EditorialConflict("Draft changed; start a new run for the current revision")
             active = session.scalar(
                 select(EditorialRun.id).where(
-                    EditorialRun.project_id == project_id, EditorialRun.status.in_(ACTIVE)
+                    EditorialRun.project_id == project_id,
+                    EditorialRun.status.in_(ACTIVE),
+                    func.coalesce(EditorialRun.options["target"].as_string(), "")
+                    != "semantic_matching",
                 )
             )
             if active is not None:

@@ -28,6 +28,15 @@ from katcha.services.editorial_projects import EditorialConflict
 from katcha.services.editorial_runs import control_run
 
 
+@pytest.fixture(autouse=True)
+def semantic_fixture_admission(monkeypatch):
+    monkeypatch.setattr(
+        semantic,
+        "get_settings",
+        lambda: SimpleNamespace(semantic_matching_dispatch_enabled=True),
+    )
+
+
 def request(context, run, **changes):
     body = SemanticMatchRequest(
         preparation_run_id=run.id,
@@ -363,3 +372,27 @@ def test_actual_gemini_sdk_receives_hard_output_cap_and_pixels(monkeypatch):
     assert captured["config"].max_output_tokens == 2048
     assert captured["contents"][1].inline_data.data == b"fixture-pixels"
     assert not captured["config"].tools and result.text == '{"hypotheses":[]}'
+
+
+def test_semantic_dispatch_configuration_defaults_closed():
+    from katcha.config import Settings
+
+    assert Settings(_env_file=None).semantic_matching_dispatch_enabled is False
+
+
+def test_server_admission_blocks_before_source_access_or_submission(
+    match_context, fixture_provider, monkeypatch
+):
+    context = match_context
+    run = prepare(context)
+    monkeypatch.setattr(
+        semantic, "get_settings", lambda: SimpleNamespace(semantic_matching_dispatch_enabled=False)
+    )
+    monkeypatch.setattr(
+        semantic,
+        "_context",
+        lambda *args, **kwargs: pytest.fail("disabled inspection accessed source"),
+    )
+    with pytest.raises(EditorialConflict, match="dispatch is disabled"):
+        match(context, request(context, run))
+    assert fixture_provider == []

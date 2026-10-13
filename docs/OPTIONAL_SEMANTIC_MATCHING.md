@@ -22,7 +22,10 @@ indexing UI, live provider validation or deployment is included.
 
 ## Explicit prerequisites and enforced bounds
 
-- Off by default: every POST requires `external_inspection_authorized=true` from
+- The server admission `KATCHA_SEMANTIC_MATCHING_DISPATCH_ENABLED` defaults to
+  `false`; disabled admission blocks before source access or submission. Operators
+  must keep it closed through restore until all later-call ambiguity is reconciled.
+  This feature does not enable it in any deployment. Every POST also requires `external_inspection_authorized=true` from
   an authenticated channel-scoped writer. This authorizes transmitting the
   selected frame pixels and selected requirement text to the configured
   provider; ordinary measured matching/indexing never invokes this capability.
@@ -109,7 +112,8 @@ inspectable. Restore/read without matching current bytes fails closed.
    may explicitly authorize a new request identity. Replaying the old identity
    still returns its old state. This never retries an ambiguous call.
 5. The ordinary Editorial reconciler never dispatches semantic runs, including
-   interrupted runs. A partial/historical restore cannot prove the absence of
+   interrupted runs. Normal start/resume admission excludes these optional rows,
+   so an interrupted inspection cannot block ordinary Editorial work. A partial/historical restore cannot prove the absence of
    later calls: retain production recovery/provider gates until the backup
    completeness and external-call ambiguity are reconciled. Restoring a backup
    is not authorization for a fresh call. No live recovery gates are changed by

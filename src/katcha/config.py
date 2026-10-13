@@ -22,15 +22,9 @@ class ControlCredentialSettings(BaseModel):
     @field_validator("token", mode="before")
     @classmethod
     def validate_token(cls, value):
-        raw = (
-            value.get_secret_value()
-            if isinstance(value, SecretStr)
-            else str(value or "")
-        )
+        raw = value.get_secret_value() if isinstance(value, SecretStr) else str(value or "")
         if len(raw.strip()) < 16:
-            raise ValueError(
-                "control credential tokens must contain at least 16 characters"
-            )
+            raise ValueError("control credential tokens must contain at least 16 characters")
         return raw.strip()
 
     @field_validator("not_before", "expires_at")
@@ -39,9 +33,7 @@ class ControlCredentialSettings(BaseModel):
         if value is None:
             return None
         if value.tzinfo is None or value.utcoffset() is None:
-            raise ValueError(
-                "control credential timestamps must include a timezone"
-            )
+            raise ValueError("control credential timestamps must include a timezone")
         return value
 
     @model_validator(mode="after")
@@ -51,9 +43,7 @@ class ControlCredentialSettings(BaseModel):
             and self.expires_at is not None
             and self.expires_at <= self.not_before
         ):
-            raise ValueError(
-                "control credential expires_at must be after not_before"
-            )
+            raise ValueError("control credential expires_at must be after not_before")
         return self
 
 
@@ -73,26 +63,16 @@ class ControlPrincipalSettings(BaseModel):
     def validate_legacy_token(cls, value):
         if value is None:
             return None
-        raw = (
-            value.get_secret_value()
-            if isinstance(value, SecretStr)
-            else str(value or "")
-        )
+        raw = value.get_secret_value() if isinstance(value, SecretStr) else str(value or "")
         if len(raw.strip()) < 16:
-            raise ValueError(
-                "control principal tokens must contain at least 16 characters"
-            )
+            raise ValueError("control principal tokens must contain at least 16 characters")
         return raw.strip()
 
     @field_validator("scopes")
     @classmethod
     def validate_scopes(cls, values: list[str]) -> list[str]:
         normalized = list(
-            dict.fromkeys(
-                str(value).strip()
-                for value in values
-                if str(value).strip()
-            )
+            dict.fromkeys(str(value).strip() for value in values if str(value).strip())
         )
         if not normalized:
             raise ValueError("control principal scopes cannot be empty")
@@ -102,16 +82,10 @@ class ControlPrincipalSettings(BaseModel):
     @classmethod
     def validate_channel_profile_ids(cls, values: list[str]) -> list[str]:
         normalized = list(
-            dict.fromkeys(
-                str(value).strip()
-                for value in values
-                if str(value).strip()
-            )
+            dict.fromkeys(str(value).strip() for value in values if str(value).strip())
         )
         if not normalized:
-            raise ValueError(
-                "control principal channel_profile_ids cannot be empty"
-            )
+            raise ValueError("control principal channel_profile_ids cannot be empty")
         if "*" in normalized:
             return ["*"]
         for value in normalized:
@@ -121,9 +95,7 @@ class ControlPrincipalSettings(BaseModel):
     @model_validator(mode="after")
     def validate_credentials(self):
         if self.token is None and not self.credentials:
-            raise ValueError(
-                "control principal requires token or credentials"
-            )
+            raise ValueError("control principal requires token or credentials")
         ids: set[str] = set()
         token_values: set[str] = set()
         if self.token is not None:
@@ -132,15 +104,11 @@ class ControlPrincipalSettings(BaseModel):
         for credential in self.credentials:
             key = credential.id.casefold()
             if key in ids:
-                raise ValueError(
-                    f"duplicate control credential id: {credential.id}"
-                )
+                raise ValueError(f"duplicate control credential id: {credential.id}")
             ids.add(key)
             token = credential.token.get_secret_value()
             if token in token_values:
-                raise ValueError(
-                    "control credential tokens must be unique"
-                )
+                raise ValueError("control credential tokens must be unique")
             token_values.add(token)
         return self
 
@@ -182,11 +150,7 @@ class Settings(BaseSettings):
     control_principals: list[ControlPrincipalSettings] = Field(default_factory=list)
 
     def resolved_control_scopes(self) -> set[str]:
-        values = {
-            item.strip()
-            for item in self.control_api_scopes.split(",")
-            if item.strip()
-        }
+        values = {item.strip() for item in self.control_api_scopes.split(",") if item.strip()}
         return values or {"*"}
 
     @field_validator("control_api_token", mode="before")
@@ -201,16 +165,12 @@ class Settings(BaseSettings):
         for principal in self.control_principals:
             key = principal.name.casefold()
             if key in names:
-                raise ValueError(
-                    f"duplicate control principal name: {principal.name}"
-                )
+                raise ValueError(f"duplicate control principal name: {principal.name}")
             names.add(key)
             for credential in principal.resolved_credentials():
                 token = credential.token.get_secret_value()
                 if token in token_values:
-                    raise ValueError(
-                        "control principal credential tokens must be unique"
-                    )
+                    raise ValueError("control principal credential tokens must be unique")
                 token_values.add(token)
         return self
 
@@ -252,10 +212,9 @@ class Settings(BaseSettings):
     elevenlabs_timeout_seconds: int = Field(default=90, ge=10, le=300)
     elevenlabs_usd_per_1000_credits: float = Field(default=0.0, ge=0)
     ai_enabled: bool = False
+    semantic_matching_dispatch_enabled: bool = False
     ai_execution_mode: Literal["auto", "fixture", "live"] = "auto"
-    ai_live_routing_mode: Literal["free_first", "balanced", "quality", "economy"] = (
-        "free_first"
-    )
+    ai_live_routing_mode: Literal["free_first", "balanced", "quality", "economy"] = "free_first"
     conversation_provider: Literal["gemini", "codex", "auto"] = "gemini"
     agent_provider: Literal["codex", "gemini", "auto"] = "codex"
     allow_paid_openai_fallback: bool = False

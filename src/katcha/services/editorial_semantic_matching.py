@@ -11,6 +11,7 @@ from pathlib import Path
 
 from sqlalchemy import select
 
+from katcha.config import get_settings
 from katcha.db import session_scope
 from katcha.editorial.media_intake.scene_index import (
     _DECODER_SLOT,
@@ -203,6 +204,10 @@ def match_semantics(channel, project, body: SemanticMatchRequest, *, actor, stor
     if not body.external_inspection_authorized:
         raise EditorialConflict(
             "Optional semantic inspection is off; explicit authorization required"
+        )
+    if not get_settings().semantic_matching_dispatch_enabled:
+        raise EditorialConflict(
+            "Optional semantic dispatch is disabled; operator admission is required"
         )
     store = store or ObjectStore()
     row, context = _context(channel, project, body, store)
