@@ -277,7 +277,7 @@ def _probe_object(store: ObjectStore, key: str) -> tuple[dict, float, int, int]:
         width, height = int(video.get("width") or 0), int(video.get("height") or 0)
         if not 0 < duration or width <= 0 or height <= 0:
             raise ValueError("Invalid video metadata")
-    except Exception as exc:
+    except Exception:
         # Never return an expiring signed GET URL embedded in subprocess errors.
         raise ValueError("Uploaded object is not decodable video") from None
     return probe, duration, width, height
@@ -313,7 +313,7 @@ def finish(channel_id: uuid.UUID, source_id: uuid.UUID, *, actor: str) -> dict:
     digest = _hash_object(store, key, int(meta["size_bytes"]))
     probe, duration, width, height = _probe_object(store, key)
     extension = Path(meta["original_filename"]).suffix.lower().lstrip(".")
-    canonical_key = ObjectStore.raw_key(digest, extension)
+    canonical_key = store.raw_key(digest, extension)
     with session_scope() as session:
         row = _load(session, channel_id, source_id, locked=True)
         meta = dict(row.source_metadata)
