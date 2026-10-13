@@ -70,6 +70,65 @@ Never construct an empty replacement for missing historical evidence.
    false. Enabling it requires a separately approved operational decision; existing
    provider policy, rights checks and OCI leadership fencing still apply.
 
+## Explicit compatibility for older retained ledgers
+
+Earlier accepted search-ledger releases predate candidate metadata storage and
+then durable volume identity: KSI-102 (`a5f6bd76`) retained jobs, budgets and receipt
+events without identity/candidate tables; KSI-103 (`6db0849c`) introduced candidates,
+and later integration added identity. This is historical code evidence, not proof
+that a particular retained file is complete or grants source rights.
+
+Strict import remains the default. Review the retained snapshot and original
+release evidence offline before considering these explicit exceptions. Do not
+use historical compatibility to bypass missing claims, budget rows, receipt
+history, scope mismatches or a changed current identity. A present but empty
+identity table indicates lost evidence and remains rejected. Preserve the source
+file, WAL and recorded snapshot digest; rehearse in an empty isolated target.
+
+For a reviewed ledger lacking candidate metadata, enumerate **every exact
+succeeded job ID** whose receipt contains source URLs but has no candidate rows.
+Use repeated `--legacy-metadata-gap-job-id` flags together with a durable reviewed
+`--legacy-evidence-ref`. Partial candidate sets still fail; unknown/unlisted jobs,
+extra gap declarations and inconsistent retained evidence must not be accepted.
+A missing candidate table with no such successful jobs needs only the reviewed
+legacy reference. The importer preserves receipts/URLs and budget reservations;
+it does not fabricate candidates, refill metadata, repeat searches or grant rights.
+
+If the reviewed historical format also lacks the identity table, explicitly add
+`--allow-pre-identity`. Only that attested import assigns a deterministic identity
+from the retained snapshot digest. It does not generate a replacement for an
+existing lost identity or enable runtime initialization. Check any saved Editorial
+identity references; incompatible references remain closed and require separately
+reviewed recovery, never automatic rewriting.
+
+```sh
+python -m katcha.ops.search_ledger_recovery import-sqlite \
+  --source /retained/early-source-search-ledger.sqlite --generation 1 \
+  --confirm-workers-stopped --legacy-evidence-ref REVIEWED_HISTORICAL_RECORD \
+  --legacy-metadata-gap-job-id EXACT_SUCCEEDED_JOB_ID \
+  --allow-pre-identity
+python -m katcha.ops.search_ledger_recovery inspect
+```
+
+Supply `--allow-pre-identity` only for a genuinely missing old identity table;
+remove it for identity-bearing snapshots. Supply gap IDs only for actual reviewed
+metadata gaps; the example is a template, not executable authorization. A legacy
+reference alone never silently permits missing identity or successful-job metadata.
+
+Inspect `metadata_gaps` (category `legacy_candidate_metadata_unavailable`) and
+`identity_assigned_for_pre_identity`. The sealed import audit records snapshot
+SHA, missing tables, exact gap IDs and the asserted review reference. These markers
+remain visible after activation. Original job, budget and event text/IDs survive;
+replay returns the retained succeeded/running/unknown receipt without contacting
+its provider. Missing metadata remains a visible limitation rather than acquired,
+indexed or production-eligible media. Import stays quarantined pending the same
+separate completeness review and activation procedure above.
+
+Historical attestation cannot prove that entire job/budget/event groups were
+never deleted, or reconstruct absent provider outcomes. If that completeness
+cannot be established from retained evidence, leave dispatch disabled. Never
+create a clean ledger or retry ambiguous calls to fill historical gaps.
+
 ## Restore and the missing interval
 
 1. Keep all API/activity workers stopped and provider dispatch disabled. Use the
