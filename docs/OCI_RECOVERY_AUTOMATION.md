@@ -155,25 +155,58 @@ game-day; do not use it to turn a storage shortage into unexpected spend.
     restart the previous instance, abort the pending epoch and terminate the
     failed candidate.
 
-## Paid fallback expiry
+## Paid fallback expiry — preservation takes priority over TTL
 
-Paid fallback instances carry these OCI free-form tags:
+The scheduled cleanup workflow is independently gated behind
+`KATCHA_OCI_CLEANUP_APPROVED=true` (PR #393); no recovery launch switch is
+needed for housekeeping. **Do not activate this gate without independent
+safety review and tested handover procedures.** The gate alone is not a
+termination authorization.
 
-- `KatchaRecoveryMode=paid-fallback`
-- `KatchaRecoveryIncident=<incident UUID>`
-- `KatchaDeploymentId=<deployment identity>`
-- `KatchaDeploymentEpoch=<epoch>`
-- `KatchaExpiresAt=<UTC timestamp>`
+**Expired does not mean disposable.** A paid fallback can be the legitimate
+production leader after its TTL passes. The expiry task therefore NEVER
+`SOFTSTOP`s a running, starting, stopping or otherwise non-STOPPED paid VM.
+It fails visibly and escalates for supervised migration and verified fencing.
+Do not retry the same job to force a stop, or bypass it by changing TTL tags.
 
-The recovery workflow runs a cleanup pass every 15 minutes. Once the expiry
-timestamp is reached it soft-stops and terminates the paid instance. Cleanup runs
-even when the global external-compute kill switch has subsequently been turned
-off, so disabling new spend cannot accidentally disable cleanup of existing
-spend.
+Automatic termination is allowed only for an **already STOPPED** paid VM with
+a valid deployment ID/epoch and explicit
+`KatchaPaidCleanupAuthorized=true` freeform tag. The authorization must be
+added separately by an approved operator *after* a witnessed, committed
+handover and negative old-epoch write/fence checks. The cleanup action does
+not create the authorization tag.
 
-A later return-to-free migration slice should normally replace the paid leader
-with a new A1 candidate before expiry. Expiry remains a hard last-resort spend
-ceiling rather than an automatic extension.
+Immediately before `terminate`, cleanup must verify twice that:
+
+- coordinator status is reachable and reports a specific active deployment
+  with strictly greater epoch than the target and **no pending deployment**;
+- the active deployment ID is **different** from the paid target;
+- OCI inventory has exactly one RUNNING instance representing that active
+  deployment and matching its epoch;
+- the target's exact instance ID, freeform tags, paid identity and STOPPED
+  lifecycle agree with a fresh OCI `get`.
+
+Any missing tag, invalid expiration, unknown coordinator/instance state,
+missing successor, pending handover, changing epoch, malformed budget
+reservation or OCI API error **fails closed**; the job must not stop a live
+paid leader. Already terminated resources are not retried. Budget settlement
+occurs after confirmed `terminate`; settlement failures require an operator
+reconciliation incident rather than a claim that the account was charged $0.
+
+**Concurrency limitation:** two independent API reads do not form an atomic
+lease against subsequent manual operations. The explicit retirement tag and
+the no-pending/newer-epoch rule reduce risk but do not prove global atomic
+exclusion. Keep production-recovery and housekeeping in the shared GitHub
+concurrency group, prohibit manual repromotion of retired epochs, and require
+independent reviewer signoff before enabling the scheduled gate. A later
+durable coordinator retirement lease is needed before claiming arbitrary
+multi-writer/multi-operator cleanup is race-free.
+
+To test this path in CI without touching OCI:
+`pytest -q tests/test_oci_paid_ttl_authority.py tests/test_oci_recovery.py`.
+These are simulated contract tests and not live fenced-handover evidence.
+The two-hour E2 identity-probe cleanup uses an entirely separate exact-instance
+runner and must not reuse this paid-expiry housekeeping path.
 
 ## Same-AD and cross-AD recovery
 
