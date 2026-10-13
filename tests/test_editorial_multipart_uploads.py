@@ -377,3 +377,63 @@ def test_cross_worker_verification_is_denied_when_postgres_lock_is_held(monkeypa
         uploads.finish(uuid.uuid4(), uuid.uuid4(), actor="operator")
     with pytest.raises(ValueError, match="verification is already running"):
         uploads.cancel(uuid.uuid4(), uuid.uuid4())
+
+
+def test_failover_between_part_listing_and_commit_blocks_external_mutation(
+    upload_db, monkeypatch
+):
+    channel, _, store = upload_db
+    started = begin(channel, identity="fence-complete", size_bytes=64 * 1024**2)
+    source_id = uuid.UUID(started["source_id"])
+    store.client.upload_parts = [
+        {"PartNumber": 1, "Size": 64 * 1024**2, "ETag": '"verified"'}
+    ]
+
+    def revoke(action, **kwargs):
+        if action == "storage.multipart.complete_parts":
+            raise RuntimeError("leadership epoch changed")
+
+    monkeypatch.setattr(uploads, "assert_mutation_authority", revoke)
+    with pytest.raises(RuntimeError, match="leadership"):
+        uploads.finish(channel, source_id, actor="test")
+    assert not store.client.completed
+    assert not store.client.copied
+    assert uploads.status(channel, source_id)["state"] == "uploading"
+
+
+def test_failover_after_hash_blocks_canonical_copy_and_registration(
+    upload_db, monkeypatch
+):
+    channel, _, store = upload_db
+    started = begin(channel, identity="fence-copy", size_bytes=64 * 1024**2)
+    source_id = uuid.UUID(started["source_id"])
+    with db.session_scope() as session:
+        row = session.get(SourceItem, source_id)
+        stage = row.source_metadata["staging_key"]
+    store.client.items[stage] = b"media"
+    monkeypatch.setattr(
+        uploads, "_hash_object", lambda *_args: "c" * 64
+    )
+    monkeypatch.setattr(
+        uploads, "_probe_object",
+        lambda *_args: (
+            {"format": {"duration": "3"}, "streams": [
+                {"codec_type": "video", "width": 3840, "height": 2160}
+            ]},
+            3.0, 3840, 2160,
+        ),
+    )
+
+    def revoke(action, **kwargs):
+        if action == "storage.multipart.copy_canonical":
+            raise RuntimeError("leadership epoch changed")
+
+    monkeypatch.setattr(uploads, "assert_mutation_authority", revoke)
+    with pytest.raises(RuntimeError, match="leadership"):
+        uploads.finish(channel, source_id, actor="test")
+    assert not store.client.copied
+    with db.session_scope() as session:
+        assert session.scalar(
+            __import__("sqlalchemy").select(Clip).where(Clip.sha256 == "c" * 64)
+        ) is None
+        assert session.get(SourceItem, source_id).clip_id is None
