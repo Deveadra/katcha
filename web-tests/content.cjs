@@ -53,13 +53,12 @@ let browser;
     await page.locator('#file').setInputFiles({name:'fixture.mp4',mimeType:'video/mp4',buffer:Buffer.from('1234567890')});
     await page.locator('#rights').check();
     await page.locator('#add').click();
-    await page.waitForFunction(()=>document.querySelector('#message').textContent.includes('connection lost'));
-    assert.equal(await page.locator('#title').inputValue(),'Fixture finished video');
-    assert.match(await page.locator('#detail').innerText(),/5 \/ 10 bytes/);
-    await page.evaluate(()=>{for(const key of Object.keys(sessionStorage))if(key.startsWith('katcha.intake.'))sessionStorage.removeItem(key);});
-    await page.locator('#add').click();
     await page.getByText('Media is ready. Choose a production step in Content details.').waitFor();
-    assert.equal(requests.filter(r=>r.path.endsWith('/chunks')).length,2,'Resume does not retransmit the acknowledged chunk');
+    assert.equal(await page.locator('#title').inputValue(),'Fixture finished video');
+    assert.equal(requests.filter(r=>r.path.endsWith('/chunks')).length,2,
+        'Lost chunk response must reconcile with saved receipt, not retransmit acknowledged bytes');
+    assert.equal(row.upload_offset,10);
+    assert.equal(await page.locator('#upload-notice').innerText(),'');
     await page.getByRole('button',{name:'Use video unchanged',exact:true}).click();
     await page.getByRole('button',{name:'Review for YouTube'}).waitFor();
     assert(!requests.some(r=>r.body?.mode==='ai_short'));
