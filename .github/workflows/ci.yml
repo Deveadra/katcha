@@ -207,7 +207,7 @@ jobs:
           # Identify the exact test instead of leaving a 15-minute silent hang.
           # A timeout MUST fail CI rather than allow an untested release.
           python -m pip install 'pytest-timeout>=2.3,<3'
-          pytest -vv -x --timeout=45 --timeout-method=signal
+          timeout --signal=TERM --kill-after=10s 420s pytest -vv -x --timeout=45 --timeout-method=signal
 
       - name: Verify built-in brand assets through S3-compatible HTTP endpoint
         env:
