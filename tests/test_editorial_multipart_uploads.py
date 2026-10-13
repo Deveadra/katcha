@@ -133,7 +133,7 @@ def test_three_gib_browser_upload_is_scoped_resumable_and_never_buffers_media(up
     assert uploads.status(channel, uuid.UUID(started["source_id"]))["parts"] == []
 
     store.client.upload_parts = [
-        {"PartNumber": index, "Size": 64 * 1024**2, "ETag": '"part-%d"' % index}
+        {"PartNumber": index, "Size": 64 * 1024**2, "ETag": f'"part-{index}"'}
         for index in range(1, 49)
     ]
     resumed = uploads.status(channel, uuid.UUID(started["source_id"]))
@@ -162,7 +162,7 @@ def test_finish_promotes_only_verified_canonical_clip_and_recovers_replay(upload
     started = begin(channel, size_bytes=2 * 64 * 1024**2)
     source_id = uuid.UUID(started["source_id"])
     store.client.upload_parts = [
-        {"PartNumber": index, "Size": 64 * 1024**2, "ETag": '"p%d"' % index}
+        {"PartNumber": index, "Size": 64 * 1024**2, "ETag": f'"p{index}"'}
         for index in range(1, 3)
     ]
     hashed = []
