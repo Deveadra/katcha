@@ -858,6 +858,78 @@ const analytics = [
     assert.equal(await page.locator("#channel-activity").isHidden(), false);
     assert.match(await page.locator("#channel-activity-list").innerText(), /VisionQuest Final Trailer/);
     assert.match(await page.locator("#channel-activity-list").innerText(), /downloading/i);
+
+    // Appearance regression: the four KPI panels and activity cards must be
+    // laid out by their real page CSS, not native unstyled document flow.
+    const layout = await page.evaluate(() => {
+        const metrics = getComputedStyle(document.querySelector(".metric-grid"));
+        const activity = getComputedStyle(document.querySelector(".channel-activity-list"));
+        return {
+            metricDisplay: metrics.display,
+            metricColumns: metrics.gridTemplateColumns.trim().split(/\\s+/).length,
+            activityDisplay: activity.display,
+            activityColumns: activity.gridTemplateColumns.trim().split(/\\s+/).length,
+        };
+    });
+    assert.deepEqual(layout, {
+        metricDisplay: "grid",
+        metricColumns: 4,
+        activityDisplay: "grid",
+        activityColumns: 2,
+    });
+
+    // Only routine historical events may be tucked away. Current operations
+    // and attention events must remain visible with an expandable full trail.
+    const activityLayout = await page.evaluate(() => {
+        const original = state.operations;
+        try {
+            state.operations = {
+                ...original,
+                attention: [{
+                    id: "needs-help",
+                    state: "attention",
+                    status: "failed",
+                    title: "Publication needs attention",
+                    updated_at: "2026-10-13T09:30:00Z",
+                }],
+                activity: Array.from({ length: 14 }, (_, index) => ({
+                    aggregate_id: "history-" + index,
+                    event_type: "profile_synced",
+                    aggregate_type: "channel_profile",
+                    created_at: new Date(Date.parse("2026-10-13T09:00:00Z") - index * 60000).toISOString(),
+                })),
+            };
+            renderChannelActivity();
+            const container = document.querySelector("#channel-activity-list");
+            const details = container.querySelector(".channel-activity-history");
+            const initial = container.querySelectorAll(":scope > .channel-activity-item").length;
+            const recentItems = container.querySelectorAll(".channel-activity-older-grid > .channel-activity-item").length;
+            const hasAttention = [...container.querySelectorAll(":scope > .channel-activity-item > strong")]
+                .some((element) => element.textContent.includes("Publication needs attention"));
+            const initiallyClosed = !details.open;
+            details.open = true;
+            const expandedVisible = details.querySelector(".channel-activity-item").getClientRects().length > 0;
+            return {
+                initial,
+                recentItems,
+                hasAttention,
+                initiallyClosed,
+                expandedVisible,
+                summary: details.querySelector("summary").textContent.trim(),
+            };
+        } finally {
+            state.operations = original;
+            renderChannelActivity();
+        }
+    });
+    assert.deepEqual(activityLayout, {
+        initial: 7,
+        recentItems: 8,
+        hasAttention: true,
+        initiallyClosed: true,
+        expandedVisible: true,
+        summary: "Show 8 older events",
+    });
     await page.locator('[data-channel-tab="content"]').click();
     await page.locator('[data-publication="publication-3"]').click();
     await page.waitForFunction(() => document.querySelectorAll("[data-apply-packaging]").length > 0);
