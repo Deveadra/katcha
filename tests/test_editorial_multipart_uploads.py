@@ -26,6 +26,7 @@ class MemoryS3:
         self.aborted = []
         self.copied = []
         self.completed = []
+        self.signed_parts = []
 
     def create_multipart_upload(self, **kwargs):
         self.uploads.append(kwargs)
@@ -33,6 +34,8 @@ class MemoryS3:
 
     def generate_presigned_url(self, operation, Params, ExpiresIn, **kwargs):
         assert ExpiresIn <= 600
+        if operation == "upload_part":
+            self.signed_parts.append(dict(Params))
         return "https://r2.example.test/signed/" + operation
 
     def list_parts(self, **kwargs):
@@ -130,6 +133,8 @@ def test_three_gib_browser_upload_is_scoped_resumable_and_never_buffers_media(up
     signed = uploads.sign_part(channel, uuid.UUID(started["source_id"]), 48)
     assert signed["url"].startswith("https://r2.example.test/")
     assert signed["expires_seconds"] <= 600
+    assert signed["size_bytes"] == 64 * 1024**2
+    assert store.client.signed_parts[-1]["ContentLength"] == 64 * 1024**2
     assert uploads.status(channel, uuid.UUID(started["source_id"]))["parts"] == []
 
     store.client.upload_parts = [
@@ -272,3 +277,22 @@ def test_size_verification_rejects_truncation_without_promoting_media(upload_db)
         uploads._hash_object(store, key, 8)
     assert key in store.client.items
     assert not store.client.copied
+
+
+def test_last_part_is_exactly_signed_and_verifying_cannot_be_aborted(upload_db):
+    channel, _, store = upload_db
+    started = begin(channel, identity="unequal-last", size_bytes=65 * 1024**2)
+    sid = uuid.UUID(started["source_id"])
+    last = uploads.sign_part(channel, sid, 2)
+    assert last["size_bytes"] == 1024**2
+    assert store.client.signed_parts[-1]["ContentLength"] == 1024**2
+    with db.session_scope() as session:
+        source = session.get(SourceItem, sid)
+        meta = dict(source.source_metadata)
+        meta["state"] = "verifying"
+        source.source_metadata = meta
+    with pytest.raises(ValueError, match="Cannot cancel"):
+        uploads.cancel(channel, sid)
+    assert not store.client.aborted
+    with pytest.raises(ValueError, match="no longer"):
+        uploads.sign_part(channel, sid, 1)
