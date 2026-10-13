@@ -282,7 +282,7 @@ def test_size_verification_rejects_truncation_without_promoting_media(upload_db)
     assert not store.client.copied
 
 
-def test_last_part_is_exactly_signed_and_verifying_cannot_be_aborted(upload_db):
+def test_last_part_is_exactly_signed_and_abandoned_verification_can_be_discarded(upload_db):
     channel, _, store = upload_db
     started = begin(channel, identity="unequal-last", size_bytes=65 * 1024**2)
     sid = uuid.UUID(started["source_id"])
@@ -294,11 +294,11 @@ def test_last_part_is_exactly_signed_and_verifying_cannot_be_aborted(upload_db):
         meta = dict(source.source_metadata)
         meta["state"] = "verifying"
         source.source_metadata = meta
-    with pytest.raises(ValueError, match="Cannot cancel"):
-        uploads.cancel(channel, sid)
-    assert not store.client.aborted
     with pytest.raises(ValueError, match="no longer"):
         uploads.sign_part(channel, sid, 1)
+    abandoned = uploads.cancel(channel, sid)
+    assert abandoned["state"] == "cancelled"
+    assert len(store.client.aborted) == 1
 
 
 def test_real_http_scoping_and_input_validation(upload_db, monkeypatch):
@@ -375,3 +375,5 @@ def test_cross_worker_verification_is_denied_when_postgres_lock_is_held(monkeypa
     monkeypatch.setattr(uploads, "session_scope", locked_connection)
     with pytest.raises(ValueError, match="verification is already running"):
         uploads.finish(uuid.uuid4(), uuid.uuid4(), actor="operator")
+    with pytest.raises(ValueError, match="verification is already running"):
+        uploads.cancel(uuid.uuid4(), uuid.uuid4())
