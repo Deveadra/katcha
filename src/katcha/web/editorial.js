@@ -322,6 +322,28 @@ window.KatchaEditorial = (() => {
             </article>`;
         }).join("") : '<p class="empty">No managed clips pinned. Source links will be acquired only when needed.</p>';
     }
+    async function largeSourceIdentity(file, title, channel) {
+        const metadata = JSON.stringify({
+            channel, filename: file.name, size: file.size,
+            lastModified: file.lastModified, title,
+        });
+        // The identifier is stable across tabs on the same origin, while the
+        // fingerprint avoids storing source filenames directly in localStorage.
+        const fingerprint = await sha256Hex(new TextEncoder().encode(metadata));
+        const key = "katcha.editorial.multipart." + fingerprint;
+        try {
+            const existing = localStorage.getItem(key);
+            if (existing) return existing;
+            const created = crypto.randomUUID();
+            localStorage.setItem(key, created);
+            return created;
+        } catch {
+            return identity("source-upload", {
+                filename: file.name, size: file.size, lastModified: file.lastModified, title,
+            });
+        }
+    }
+
     async function uploadLargeSourceMedia(file, title, requestId, channel) {
         const base = path(channel, "/source-uploads/multipart");
         const begun = await api(base, {
@@ -334,6 +356,11 @@ window.KatchaEditorial = (() => {
             }),
         });
         if (begun.state === "ready") return begun;
+        if (begun.state === "verifying") {
+            return api(base + "/" + encodeURIComponent(begun.source_id) + "/complete", {
+                method: "POST",
+            });
+        }
         if (begun.state !== "uploading") {
             throw new Error("This upload cannot resume. Inspect or cancel the previous upload before retrying.");
         }
@@ -403,9 +430,11 @@ window.KatchaEditorial = (() => {
         }
         const channel = state.channel;
         const title = el("editorial-source-upload-title").value.trim();
-        const requestId = identity("source-upload", {
-            filename: file.name, size: file.size, lastModified: file.lastModified, title,
-        });
+        const requestId = file.size > 512 * 1024 * 1024
+            ? await largeSourceIdentity(file, title, channel)
+            : identity("source-upload", {
+                filename: file.name, size: file.size, lastModified: file.lastModified, title,
+            });
         const button = el("editorial-source-upload-button");
         button.disabled = true;
         el("editorial-source-upload-status").textContent = "Preparing " + file.name + "…";
