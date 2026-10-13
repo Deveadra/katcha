@@ -1381,7 +1381,7 @@ function renderChannelActivity() {
             '<div class="studio-card empty-state">Nothing is queued or running for this channel right now.</div>';
         return;
     }
-    container.innerHTML = rows.map((item) => {
+    const renderCards = (items) => items.map((item) => {
         const link = item.source_url
             ? '<a target="_blank" rel="noopener noreferrer" href="' +
                 escapeHtml(item.source_url) +
@@ -1412,6 +1412,20 @@ function renderChannelActivity() {
             '</div></article>'
         );
     }).join("");
+
+    // Keep active work and failures visible; collapse only routine historical
+    // events. A long audit trail should not bury actionable channel controls.
+    const actionable = rows.filter((item) => item.state !== "recent");
+    const history = rows.filter((item) => item.state === "recent");
+    const older = history.slice(6);
+    container.innerHTML = renderCards([...actionable, ...history.slice(0, 6)]) +
+        (older.length
+            ? '<details class="channel-activity-history"><summary>Show ' +
+                older.length +
+                ' older events</summary><div class="channel-activity-older-grid">' +
+                renderCards(older) +
+                '</div></details>'
+            : "");
 }
 
 
