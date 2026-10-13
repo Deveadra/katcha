@@ -4,6 +4,7 @@ window.KatchaEditorial = (() => {
     const esc = (value) => String(value ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
     const state = { channel: "", epoch: 0, project: null, revision: null, run: null, performance: null, busy: false, timer: null, editorKey: "", sourceClipBindings: {}, clipResults: [], clipPickerEpoch: 0, clipSearchTimer: null, scriptSeedMeta: null, sourceMonitorKey: "", sourceMonitorUrl: null, sourceMonitorEpoch: 0, sourceMonitorMetadata: null, sourceMonitorTime: 0, sourceMediaLoaded: false, programMap: null, storyboardWorkspace: null, storyboardSaveTimer: null, storyboardSaving: false, storyboardDirty: false, storyboardRetryCount: 0 };
     let api, apiBlob;
+    let pendingLargeUpload = null;
     let scriptVisualPlan = null;
     let scriptVisualPlanKey = "";
     function previewReady() {
@@ -364,6 +365,7 @@ window.KatchaEditorial = (() => {
                 permitted_use: true, idempotency_key: requestId,
             }),
         });
+        pendingLargeUpload = {channel, sourceId: begun.source_id};
         if (begun.state === "ready") return begun;
         if (begun.state === "verifying") {
             return api(base + "/" + encodeURIComponent(begun.source_id) + "/complete", {
@@ -448,6 +450,8 @@ window.KatchaEditorial = (() => {
             });
         const button = el("editorial-source-upload-button");
         button.disabled = true;
+        el("editorial-source-upload-cancel").hidden = true;
+        pendingLargeUpload = null;
         el("editorial-source-upload-status").textContent = "Preparing " + file.name + "…";
         try {
             let result;
@@ -464,6 +468,8 @@ window.KatchaEditorial = (() => {
                 });
             }
             if (channel !== state.channel) return;
+            pendingLargeUpload = null;
+            el("editorial-source-upload-cancel").hidden = true;
             state.sourceClipBindings[result.source_url] = {
                 clip_id: result.clip_id,
                 title: result.title,
@@ -1836,8 +1842,35 @@ window.KatchaEditorial = (() => {
         el("editorial-source-upload-button").addEventListener("click", () => {
             void uploadSourceMedia().catch(error => {
                 el("editorial-source-upload-status").textContent = error.message;
+                if (pendingLargeUpload?.channel === state.channel) {
+                    el("editorial-source-upload-cancel").hidden = false;
+                }
                 feedback(error.message, true);
             });
+        });
+        el("editorial-source-upload-cancel").addEventListener("click", () => {
+            void (async () => {
+                const pending = pendingLargeUpload;
+                if (!pending || pending.channel !== state.channel) return;
+                const button = el("editorial-source-upload-cancel");
+                button.disabled = true;
+                try {
+                    const base = path(pending.channel, "/source-uploads/multipart");
+                    await api(base + "/" + encodeURIComponent(pending.sourceId), {
+                        method: "DELETE",
+                    });
+                    if (pendingLargeUpload === pending && pending.channel === state.channel) {
+                        pendingLargeUpload = null;
+                        button.hidden = true;
+                        el("editorial-source-upload-status").textContent =
+                            "Discarded unfinished upload. Select the file and upload again.";
+                    }
+                } catch (error) {
+                    feedback(error.message, true);
+                } finally {
+                    button.disabled = false;
+                }
+            })();
         });
         el("editorial-script-plan-button").addEventListener("click", () => void guarded(async () => {
             if (!state.project?.brief?.script_seed) throw new Error("Import a script into the project first.");
