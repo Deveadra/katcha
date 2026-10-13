@@ -354,3 +354,24 @@ def test_real_http_scoping_and_input_validation(upload_db, monkeypatch):
     finally:
         client.close()
     assert len(store.client.uploads) == 1
+
+
+def test_cross_worker_verification_is_denied_when_postgres_lock_is_held(monkeypatch):
+    from contextlib import contextmanager
+
+    class LockedSession:
+        def get_bind(self):
+            return SimpleNamespace(dialect=SimpleNamespace(name="postgresql"))
+
+        def scalar(self, statement, params):
+            assert "pg_try_advisory_xact_lock" in str(statement)
+            assert isinstance(params["key"], int)
+            return False
+
+    @contextmanager
+    def locked_connection():
+        yield LockedSession()
+
+    monkeypatch.setattr(uploads, "session_scope", locked_connection)
+    with pytest.raises(ValueError, match="verification is already running"):
+        uploads.finish(uuid.uuid4(), uuid.uuid4(), actor="operator")
