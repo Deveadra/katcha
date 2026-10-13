@@ -412,7 +412,9 @@ window.KatchaEditorial = (() => {
         }
         // Bound both browser memory and active R2 transfers. Retrying reuses
         // server-listed parts rather than replaying the complete 3 GiB file.
-        await Promise.all([worker(), worker()]);
+        const transfers = await Promise.allSettled([worker(), worker()]);
+        const failure = transfers.find(item => item.status === "rejected");
+        if (failure) throw failure.reason;
         if (channel === state.channel) status.textContent = "Upload complete. Verifying the file and registering it in Katcha…";
         return api(base + "/" + encodeURIComponent(begun.source_id) + "/complete", {
             method: "POST",
