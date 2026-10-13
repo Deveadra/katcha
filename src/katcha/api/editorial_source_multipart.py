@@ -39,8 +39,20 @@ def _auth(request: Request, channel_id: uuid.UUID, *, write: bool) -> None:
 
 
 def _bad_request(exc: ValueError) -> HTTPException:
-    status_code = 409 if "identity" in str(exc) or "no longer" in str(exc) else 422
-    return HTTPException(status_code, str(exc))
+    detail = str(exc)
+    if "not found for this channel" in detail:
+        status_code = 404
+    elif any(
+        marker in detail
+        for marker in (
+            "identity", "no longer", "already running", "cannot be cancelled",
+            "not eligible to complete",
+        )
+    ):
+        status_code = 409
+    else:
+        status_code = 422
+    return HTTPException(status_code, detail)
 
 
 @router.post("", status_code=201)
