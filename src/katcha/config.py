@@ -256,6 +256,7 @@ class Settings(BaseSettings):
     elevenlabs_timeout_seconds: int = Field(default=90, ge=10, le=300)
     elevenlabs_usd_per_1000_credits: float = Field(default=0.0, ge=0)
     ai_enabled: bool = False
+    semantic_matching_dispatch_enabled: bool = False
     ai_execution_mode: Literal["auto", "fixture", "live"] = "auto"
     ai_live_routing_mode: Literal["free_first", "balanced", "quality", "economy"] = (
         "free_first"

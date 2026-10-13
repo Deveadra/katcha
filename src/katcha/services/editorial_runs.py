@@ -6,7 +6,7 @@ import uuid
 from datetime import UTC, datetime
 from urllib.parse import urlsplit
 
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
 from katcha.db import session_scope
@@ -129,7 +129,10 @@ def start_run(
             raise EditorialConflict("Draft changed; reload before starting work")
         active = session.scalar(
             select(EditorialRun.id).where(
-                EditorialRun.project_id == project_id, EditorialRun.status.in_(ACTIVE)
+                EditorialRun.project_id == project_id,
+                EditorialRun.status.in_(ACTIVE),
+                func.coalesce(EditorialRun.options["target"].as_string(), "")
+                != "semantic_matching",
             )
         )
         if active is not None:
@@ -329,6 +332,10 @@ def control_run(
             raise EditorialNotFound("Editorial run not found in this project")
         if row.options.get("target") == "prepare_media":
             raise EditorialConflict("Use the project's media preparation controls for this work")
+        if row.options.get("target") == "semantic_matching" and not cancel:
+            raise EditorialConflict(
+                "Semantic inspection cannot be resumed automatically; inspect its saved receipt"
+            )
         # Idempotent retry after an uncertain resume/cancel response.
         if not cancel and row.attempt == expected_attempt + 1:
             session.expunge(row)
@@ -349,7 +356,10 @@ def control_run(
                 raise EditorialConflict("Draft changed; start a new run for the current revision")
             active = session.scalar(
                 select(EditorialRun.id).where(
-                    EditorialRun.project_id == project_id, EditorialRun.status.in_(ACTIVE)
+                    EditorialRun.project_id == project_id,
+                    EditorialRun.status.in_(ACTIVE),
+                    func.coalesce(EditorialRun.options["target"].as_string(), "")
+                    != "semantic_matching",
                 )
             )
             if active is not None:
