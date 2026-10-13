@@ -43,6 +43,16 @@ def _postgres(engine: Engine) -> None:
         raise ValueError("Authoritative search evidence requires PostgreSQL")
 
 
+def _durable(connection: Connection) -> None:
+    # A pooled session may have disabled synchronous commit. A claim must reach
+    # durable local WAL before provider I/O; refuse servers without fsync.
+    if connection.scalar(text("SHOW fsync")) != "on":
+        raise SearchLedgerRecoveryError(
+            "Search evidence requires PostgreSQL fsync; keep dispatch disabled"
+        )
+    connection.execute(text("SET LOCAL synchronous_commit = 'on'"))
+
+
 def _seal(
     connection: Connection,
     head: Mapping[str, Any],
@@ -226,6 +236,7 @@ class PostgresSearchJobLedger(SearchJobLedger):
     def _db(self) -> Iterator[_ConnectionAdapter]:
         try:
             with self.engine.begin() as connection:
+                _durable(connection)
                 head = _lock_and_verify(connection, max_evidence_rows=self.max_evidence_rows)
                 adapter = _ConnectionAdapter(connection, head, self)
                 yield adapter
@@ -243,6 +254,7 @@ def inspect_postgres_ledger(engine: Engine) -> dict[str, Any]:
     _postgres(engine)
     try:
         with engine.begin() as connection:
+            _durable(connection)
             return _report(connection, _lock_and_verify(connection))
     except SQLAlchemyError as exc:
         raise SearchLedgerRecoveryError(
@@ -254,6 +266,7 @@ def quarantine_postgres_ledger(engine: Engine) -> dict[str, Any]:
     """Offline restore inhibition. Does not repair, initialize or authorize work."""
     _postgres(engine)
     with engine.begin() as connection:
+        _durable(connection)
         # Inhibit before verification; missing/inconsistent head still cannot run.
         connection.execute(text(f"UPDATE {HEAD} SET recovery_required=TRUE"))
     return inspect_postgres_ledger(engine)
@@ -283,6 +296,7 @@ def activate_postgres_ledger(
     if isinstance(recovery_generation, bool) or recovery_generation < 1:
         raise ValueError("Recovery generation must be positive")
     with engine.begin() as connection:
+        _durable(connection)
         head = _lock_and_verify(connection)
         if (head["ledger_id"], head["integrity_sha256"], head["recovery_generation"]) != (
             expected_identity,
@@ -507,6 +521,7 @@ def import_sqlite_ledger(
             ) from exc
     ledger_id = _validate_snapshot(snapshot)
     with engine.begin() as connection:
+        _durable(connection)
         # The target has no head yet; table locks serialize concurrent importers.
         names = [HEAD, *SOURCE_LEDGER_COLUMNS]
         connection.execute(text("LOCK TABLE " + ",".join(names) + " IN ACCESS EXCLUSIVE MODE"))

@@ -110,6 +110,8 @@ Never construct an empty replacement for missing historical evidence.
 
 Every metadata transaction locks the common head before verifying evidence.
 Claims commit before provider I/O; completion uses the existing receipt-text CAS.
+Every ledger transaction requires server fsync and forces local synchronous WAL
+commit, even when its pooled connection defaults to asynchronous commit.
 Crashes retain reservations, and replay never retries running/unknown outcomes.
 A missing database, head, identity, table, event, candidate or changed payload
 fails closed before provider work. A transaction failure rolls back budgets,

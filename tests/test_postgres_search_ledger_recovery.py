@@ -835,3 +835,21 @@ def test_upgrade_old_postgres_schema_keeps_evidence_uninitialized(database):
     with pytest.raises(SearchLedgerRecoveryError, match="uninitialized"):
         dispatch(reopen(database), planned(), adapter)
     assert not adapter.calls
+
+
+def test_ledger_overrides_async_pooled_session_before_durable_claim(database, initialized):
+    from katcha.editorial.source_intelligence.postgres_jobs import PostgresSearchJobLedger
+
+    weaker = create_engine(database.url, connect_args={"options": "-c synchronous_commit=off"})
+    try:
+        with weaker.connect() as connection:
+            assert connection.scalar(text("SHOW synchronous_commit")) == "off"
+        ledger = PostgresSearchJobLedger(weaker, recovery_generation=7, dispatch_enabled=True)
+        with ledger._db() as adapter:
+            assert adapter.connection.scalar(text("SHOW synchronous_commit")) == "on"
+        assert dispatch(ledger, planned()).status == "succeeded"
+        with weaker.connect() as connection:
+            assert connection.scalar(text("SHOW synchronous_commit")) == "off"
+        assert reopen(database).read(planned().job_id, scope=SCOPE).status == "succeeded"
+    finally:
+        weaker.dispose()
