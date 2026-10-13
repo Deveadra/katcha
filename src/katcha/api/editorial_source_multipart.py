@@ -39,7 +39,8 @@ def _auth(request: Request, channel_id: uuid.UUID, *, write: bool) -> None:
 
 
 def _bad_request(exc: ValueError) -> HTTPException:
-    return HTTPException(409 if "identity" in str(exc) or "no longer" in str(exc) else 422, str(exc))
+    status_code = 409 if "identity" in str(exc) or "no longer" in str(exc) else 422
+    return HTTPException(status_code, str(exc))
 
 
 @router.post("", status_code=201)
@@ -70,7 +71,9 @@ async def inspect(channel_profile_id: uuid.UUID, source_id: uuid.UUID, request: 
 
 
 @router.post("/{source_id}/parts")
-async def sign(channel_profile_id: uuid.UUID, source_id: uuid.UUID, body: SignPart, request: Request):
+async def sign(
+    channel_profile_id: uuid.UUID, source_id: uuid.UUID, body: SignPart, request: Request
+):
     _auth(request, channel_profile_id, write=True)
     try:
         return await run_in_threadpool(
