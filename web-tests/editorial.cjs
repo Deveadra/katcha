@@ -486,7 +486,7 @@ const draft = {
             input.dispatchEvent(new Event("change", {bubbles: true}));
         });
         await page.locator("#editorial-source-upload-button").click();
-        await page.getByText(/mock-large\\.mp4 ready/).waitFor();
+        await page.getByText("mock-large.mp4 ready").waitFor();
         assert.equal(receivedLargeParts.size, 48);
         assert.equal(retryLargePartTwo, false);
         assert.match(await page.locator("#editorial-selected-clips").innerText(), /mock-large/);
