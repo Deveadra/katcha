@@ -2324,8 +2324,15 @@ def cleanup_expired_paid(
 
         state = _state(row)
         if state in {"TERMINATED", "TERMINATING"}:
-            # A past termination does not grant authority to touch other VMs.
-            # Budget reconciliation happens through the separate finance audit.
+            # Preserve the existing non-destructive accounting reconciliation
+            # for resources which OCI already reports as terminated.
+            if tags.get("KatchaBudgetReservationId", "").strip():
+                _settle_paid_instance_budget(
+                    coordinator,
+                    row,
+                    ended_at=current,
+                    reason="reconciled terminated paid fallback",
+                )
             continue
 
         expires_raw = tags.get("KatchaExpiresAt", "").strip()
