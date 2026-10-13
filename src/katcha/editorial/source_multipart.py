@@ -355,6 +355,9 @@ def _finish_locked(channel_id: uuid.UUID, source_id: uuid.UUID, *, actor: str) -
             if not store.exists(key):
                 parts = _parts(store, meta)
                 manifest = _validate_completed_parts(parts, meta)
+                assert_mutation_authority(
+                    "storage.multipart.complete_parts", settings=store.settings
+                )
                 store.client.complete_multipart_upload(
                     Bucket=store.settings.s3_bucket,
                     Key=key,
@@ -380,6 +383,9 @@ def _finish_locked(channel_id: uuid.UUID, source_id: uuid.UUID, *, actor: str) -
         deduplicated = clip is not None
         if clip is None:
             if not store.exists(canonical_key):
+                assert_mutation_authority(
+                    "storage.multipart.copy_canonical", settings=store.settings
+                )
                 store.client.copy_object(
                     Bucket=store.settings.s3_bucket,
                     Key=canonical_key,
@@ -401,6 +407,9 @@ def _finish_locked(channel_id: uuid.UUID, source_id: uuid.UUID, *, actor: str) -
             session.add(clip)
             session.flush()
         elif not store.exists(clip.storage_key):
+            assert_mutation_authority(
+                "storage.multipart.repair_canonical", settings=store.settings
+            )
             store.client.copy_object(
                 Bucket=store.settings.s3_bucket,
                 Key=clip.storage_key,
