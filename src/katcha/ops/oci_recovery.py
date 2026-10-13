@@ -2257,7 +2257,7 @@ def _verified_retired_paid_instance(
             raise RecoveryError("coordinator state unavailable for paid cleanup")
         active = state.get("active")
         pending = state.get("pending")
-        if not isinstance(active, dict) or pending:
+        if not isinstance(active, dict) or pending is not None:
             raise RecoveryError(
                 "paid cleanup blocked by absent active authority or pending handover"
             )
