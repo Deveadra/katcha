@@ -6,11 +6,11 @@ has been completely received, hashed and probed.
 """
 from __future__ import annotations
 
-from contextlib import suppress
 import hashlib
 import json
 import math
 import uuid
+from contextlib import suppress
 from pathlib import Path
 
 from botocore.exceptions import ClientError
