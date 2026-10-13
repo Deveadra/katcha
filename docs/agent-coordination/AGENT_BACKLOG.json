@@ -789,12 +789,14 @@
       "status_evidence": {
         "verification_level": "verified_offline_prepared",
         "feature_pr_url": "https://github.com/Deveadra/katcha/pull/395",
-        "pr_head_sha": "594996b2525179325b671c05023afe6db11a558f",
-        "ci_url": "https://github.com/Deveadra/katcha/actions/runs/38336337419",
+        "pr_head_sha": "3b6b6fdd4b0c9849b09b1850c4b8d3ab2353e011",
+        "ci_url": "https://github.com/Deveadra/katcha/actions/runs/38337429257",
         "ci_conclusion": "success",
-        "test_result": "1886 passed, 1 skipped (includes 27 real PostgreSQL fixture recovery cases and 26 offline KQA plan cases)",
+        "test_result": "1909 passed, 1 skipped (includes 31 real PostgreSQL fixture recovery cases and 26 offline KQA plan cases)",
         "date": "2026-10-12",
-        "notes": "Offline preparation verified on this feature head; final PR head must pass required checks before merge. This is not KQA-101 full-path or KQA-102 live acceptance. Zero live provider calls; separate operator authorization and full-path acceptance remain required."
+        "notes": "Offline operator plan harness accepted in merged PR395 with exact-head green CI and independent review. This is not KQA-101 full-path or KQA-102 live acceptance. Zero live provider calls; separate operator authorization and full-path acceptance remain required.",
+        "merged_harness_pr_url": "https://github.com/Deveadra/katcha/pull/395",
+        "merge_commit_sha": "33bb80139dc84e707b3510a91c792b326d82d828"
       },
       "pr_url": null,
       "accepted_main_sha": null
