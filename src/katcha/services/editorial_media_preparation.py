@@ -19,7 +19,7 @@ from sqlalchemy.orm import Session
 
 from katcha.acquisition.adapters import DiscoveryAdapter, get_adapter
 from katcha.config import get_settings
-from katcha.db import session_scope
+from katcha.db import engine, session_scope
 from katcha.editorial.media_bin_schemas import ProjectMediaItemResponse
 from katcha.editorial.media_preparation_schemas import (
     ReconcileMediaPreparation,
@@ -37,6 +37,10 @@ from katcha.editorial.source_intelligence.candidate_ranker import (
 from katcha.editorial.source_intelligence.contracts import ProviderPolicyV1, SourceSearchJobV1
 from katcha.editorial.source_intelligence.jobs import SearchJobLedger
 from katcha.editorial.source_intelligence.planner import SearchCapability, search_capability
+from katcha.editorial.source_intelligence.postgres_jobs import (
+    PostgresSearchJobLedger,
+    SearchLedgerRecoveryError,
+)
 from katcha.editorial.source_intelligence.query_expansion import ProviderRoute, expand_queries
 from katcha.editorial.source_intelligence.requirements import AssetManifestV1, build_asset_manifest
 from katcha.editorial.source_intelligence.scouting import ScoutPageV1, ScoutRequest, scout
@@ -76,8 +80,28 @@ def runtime() -> PreparationRuntime:
         max_results=240,
         external_search_authorized=False,
     )
+    settings = get_settings()
+    if settings.source_search_recovery_generation < 1:
+        raise EditorialConflict(
+            "Search evidence recovery has not been configured. "
+            "An operator must import and verify retained evidence before continuing."
+        )
+    try:
+        ledger = PostgresSearchJobLedger(
+            engine,
+            recovery_generation=settings.source_search_recovery_generation,
+            dispatch_enabled=settings.source_search_dispatch_enabled,
+        )
+        # Never replace absent or damaged historical evidence with an empty ledger.
+        _ = ledger.identity
+    except SearchLedgerRecoveryError as exc:
+        raise EditorialConflict(str(exc)) from exc
+    except Exception as exc:
+        raise EditorialConflict(
+            "Search evidence is unavailable. Restore and verify the saved ledger before continuing."
+        ) from exc
     return PreparationRuntime(
-        ledger=SearchJobLedger(get_settings().work_dir / "source-search-ledger.sqlite"),
+        ledger=ledger,
         routes=tuple(
             ProviderRoute(search_capability(adapter), policy, "public_reference", 10)
             for adapter in adapters.values()
