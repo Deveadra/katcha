@@ -55,6 +55,10 @@ class MemoryS3:
 
 
 class MemoryStore:
+    @staticmethod
+    def raw_key(sha256, extension):
+        return f"raw/{sha256[:2]}/{sha256}.{extension}"
+
     def __init__(self):
         self.settings = SimpleNamespace(
             s3_bucket="katcha-media-prod",
