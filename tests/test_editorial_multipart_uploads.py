@@ -6,6 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 from fastapi import HTTPException
+from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -13,6 +14,8 @@ from starlette.requests import Request
 
 from katcha import db
 from katcha.api.editorial_source_multipart import _auth
+from katcha.api.main import app
+from katcha.config import Settings
 from katcha.editorial import source_multipart as uploads
 from katcha.intelligence_models import ChannelProfile
 from katcha.models import Clip, SourceItem
@@ -296,3 +299,55 @@ def test_last_part_is_exactly_signed_and_verifying_cannot_be_aborted(upload_db):
     assert not store.client.aborted
     with pytest.raises(ValueError, match="no longer"):
         uploads.sign_part(channel, sid, 1)
+
+
+def test_real_http_scoping_and_input_validation(upload_db, monkeypatch):
+    channel, other, store = upload_db
+    settings = Settings(
+        _env_file=None,
+        env="test",
+        control_api_token=None,
+        control_principals=[
+            {
+                "name": "editor", "token": "large-media-test-editor-token-001",
+                "scopes": ["production:create", "ai:read"],
+                "channel_profile_ids": [str(channel)],
+            },
+            {
+                "name": "reader", "token": "large-media-test-reader-token-002",
+                "scopes": ["ai:read"],
+                "channel_profile_ids": [str(channel)],
+            },
+        ],
+    )
+    monkeypatch.setattr("katcha.api.control_auth.get_settings", lambda: settings)
+    base = f"/v1/channels/{channel}/editorial-projects/source-uploads/multipart"
+    payload = {
+        "filename": "trailer.mp4", "title": "4k fixture",
+        "size_bytes": 3 * 1024**3, "content_type": "video/mp4",
+        "idempotency_key": "web-upload-fixture", "permitted_use": True,
+    }
+    with TestClient(
+        app, headers={"Authorization": "Bearer large-media-test-editor-token-001"}
+    ) as client:
+        initial = client.post(base, json=payload)
+        assert initial.status_code == 201, initial.text
+        sid = initial.json()["source_id"]
+        assert initial.json()["part_count"] == 48
+        assert client.get(f"{base}/{sid}").status_code == 200
+        part = client.post(f"{base}/{sid}/parts", json={"part_number": 1})
+        assert part.status_code == 200, part.text
+        assert part.json()["size_bytes"] == 64 * 1024**2
+        assert client.post(base, json=payload | {"size_bytes": 0}).status_code == 422
+        assert client.post(base, json=payload | {"permitted_use": False}).status_code == 422
+        assert client.post(
+            f"/v1/channels/{other}/editorial-projects/source-uploads/multipart",
+            json=payload,
+        ).status_code == 403
+        reader_headers = {"Authorization": "Bearer large-media-test-reader-token-002"}
+        assert client.get(f"{base}/{sid}", headers=reader_headers).status_code == 200
+        assert client.post(
+            f"{base}/{sid}/parts", json={"part_number": 1},
+            headers=reader_headers,
+        ).status_code == 403
+    assert len(store.client.uploads) == 1
