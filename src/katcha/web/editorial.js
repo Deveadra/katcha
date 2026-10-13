@@ -322,37 +322,108 @@ window.KatchaEditorial = (() => {
             </article>`;
         }).join("") : '<p class="empty">No managed clips pinned. Source links will be acquired only when needed.</p>';
     }
+    async function uploadLargeSourceMedia(file, title, requestId, channel) {
+        const base = path(channel, "/source-uploads/multipart");
+        const begun = await api(base, {
+            method: "POST",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({
+                filename: file.name, title: title || null, size_bytes: file.size,
+                content_type: file.type || "application/octet-stream",
+                permitted_use: true, idempotency_key: requestId,
+            }),
+        });
+        if (begun.state === "ready") return begun;
+        if (begun.state !== "uploading") {
+            throw new Error("This upload cannot resume. Inspect or cancel the previous upload before retrying.");
+        }
+        const detail = await api(base + "/" + encodeURIComponent(begun.source_id));
+        const received = new Set((detail.parts || []).map(item => item.part_number));
+        let completedBytes = (detail.parts || []).reduce((sum, item) => sum + item.size, 0);
+        const count = begun.part_count;
+        let nextPart = 1;
+        const status = el("editorial-source-upload-status");
+        const updateProgress = () => {
+            if (channel !== state.channel) return;
+            status.textContent = "Uploading " + file.name + ": " +
+                Math.min(100, Math.floor(100 * completedBytes / file.size)) + "% (" +
+                completedBytes.toLocaleString() + " / " + file.size.toLocaleString() + " bytes)";
+        };
+        updateProgress();
+        async function worker() {
+            while (nextPart <= count) {
+                const partNumber = nextPart++;
+                if (received.has(partNumber)) continue;
+                const offset = (partNumber - 1) * begun.part_bytes;
+                const chunk = file.slice(offset, Math.min(file.size, offset + begun.part_bytes));
+                let uploaded = false;
+                for (let attempt = 0; attempt < 3 && !uploaded; attempt++) {
+                    const signed = await api(base + "/" + encodeURIComponent(begun.source_id) + "/parts", {
+                        method: "POST",
+                        headers: {"Content-Type": "application/json"},
+                        body: JSON.stringify({part_number: partNumber}),
+                    });
+                    let response;
+                    try {
+                        // Browser sends bytes directly to R2, not Katcha/Cloudflare Workers.
+                        response = await fetch(signed.url, {method: "PUT", body: chunk});
+                    } catch {
+                        if (attempt === 2) {
+                            throw new Error("Cannot upload to R2. Check your connection and the bucket's allowed-origin PUT CORS policy.");
+                        }
+                        continue;
+                    }
+                    if (response.ok) uploaded = true;
+                    else if (attempt === 2) {
+                        throw new Error("R2 rejected video part " + partNumber + " (HTTP " + response.status + ").");
+                    }
+                }
+                if (!uploaded) throw new Error("Could not upload video part " + partNumber + ".");
+                completedBytes += chunk.size;
+                updateProgress();
+            }
+        }
+        // Bound both browser memory and active R2 transfers. Retrying reuses
+        // server-listed parts rather than replaying the complete 3 GiB file.
+        await Promise.all([worker(), worker()]);
+        if (channel === state.channel) status.textContent = "Upload complete. Verifying the file and registering it in Katcha…";
+        return api(base + "/" + encodeURIComponent(begun.source_id) + "/complete", {
+            method: "POST",
+        });
+    }
+
     async function uploadSourceMedia() {
         const file = el("editorial-source-upload-file").files[0];
         if (!file) throw new Error("Choose a source video to upload.");
-        if (file.size <= 0 || file.size > 512 * 1024 * 1024) {
-            throw new Error("Choose a source video no larger than 512 MiB.");
+        if (file.size <= 0 || file.size > 4 * 1024 * 1024 * 1024) {
+            throw new Error("Choose a source video no larger than 4 GiB.");
         }
         if (!el("editorial-source-upload-confirm").checked) {
             throw new Error("Confirm you have permission to use this source video.");
         }
+        const channel = state.channel;
         const title = el("editorial-source-upload-title").value.trim();
         const requestId = identity("source-upload", {
-            filename: file.name,
-            size: file.size,
-            lastModified: file.lastModified,
-            title,
+            filename: file.name, size: file.size, lastModified: file.lastModified, title,
         });
-        const params = new URLSearchParams({
-            filename: file.name,
-            idempotency_key: requestId,
-            permitted_use: "true",
-        });
-        if (title) params.set("title", title);
         const button = el("editorial-source-upload-button");
         button.disabled = true;
-        el("editorial-source-upload-status").textContent = `Uploading ${file.name}…`;
+        el("editorial-source-upload-status").textContent = "Preparing " + file.name + "…";
         try {
-            const result = await api(path(state.channel, `/source-uploads?${params}`), {
-                method: "POST",
-                body: file,
-                headers: {"Content-Type": file.type || "application/octet-stream"},
-            });
+            let result;
+            if (file.size > 512 * 1024 * 1024) {
+                result = await uploadLargeSourceMedia(file, title, requestId, channel);
+            } else {
+                const params = new URLSearchParams({
+                    filename: file.name, idempotency_key: requestId, permitted_use: "true",
+                });
+                if (title) params.set("title", title);
+                result = await api(path(channel, "/source-uploads?" + params), {
+                    method: "POST", body: file,
+                    headers: {"Content-Type": file.type || "application/octet-stream"},
+                });
+            }
+            if (channel !== state.channel) return;
             state.sourceClipBindings[result.source_url] = {
                 clip_id: result.clip_id,
                 title: result.title,
@@ -368,7 +439,9 @@ window.KatchaEditorial = (() => {
             saveBrief();
             renderClipResults();
             el("editorial-source-upload-status").textContent =
-                `${result.filename} ready · ${duration(result.duration_seconds)} · ${result.width}×${result.height}${result.deduplicated ? " · reused existing media" : ""}`;
+                result.filename + " ready · " + duration(result.duration_seconds) + " · " +
+                result.width + "×" + result.height +
+                (result.deduplicated ? " · reused existing media" : "");
             feedback("Source upload is managed by Katcha and pinned to this project.");
         } finally {
             button.disabled = false;
