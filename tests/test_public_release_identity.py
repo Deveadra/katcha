@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import pytest
-from fastapi import HTTPException
+from fastapi import HTTPException, Response
 
 from katcha.api.main import app, release_identity
 
@@ -15,7 +15,10 @@ def test_release_route_is_public_and_stable() -> None:
 
 def test_release_health_reports_exact_configured_sha(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("KATCHA_RELEASE_SHA", SHA)
-    assert release_identity() == {"release_sha": SHA}
+    assert release_identity(Response()) == {"release_sha": SHA}
+    response = Response()
+    release_identity(response)
+    assert response.headers["cache-control"] == "no-store"
 
 
 @pytest.mark.parametrize("bad", ["", "main", "f" * 39, "f" * 41, "F" * 40])
@@ -24,7 +27,7 @@ def test_release_health_fails_closed_on_noncommit(
 ) -> None:
     monkeypatch.setenv("KATCHA_RELEASE_SHA", bad)
     with pytest.raises(HTTPException) as caught:
-        release_identity()
+        release_identity(Response())
     assert caught.value.status_code == 503
     assert "release identity unavailable" in str(caught.value.detail)
 
@@ -33,6 +36,6 @@ def test_release_health_does_not_return_credentials(monkeypatch: pytest.MonkeyPa
     monkeypatch.setenv("KATCHA_RELEASE_SHA", SHA)
     monkeypatch.setenv("KATCHA_CONTROL_API_TOKEN", "private-token-value")
     monkeypatch.setenv("KATCHA_CLOUDFLARE_TUNNEL_TOKEN", "private-tunnel-value")
-    returned = release_identity()
+    returned = release_identity(Response())
     assert returned == {"release_sha": SHA}
     assert "private" not in str(returned)
