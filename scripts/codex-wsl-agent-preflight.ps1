@@ -7,10 +7,15 @@ param(
     [string]$Distro = 'Ubuntu-24.04',
     [ValidateNotNullOrEmpty()]
     [string]$CodexRoot = (Join-Path $env:USERPROFILE '.codex'),
-    [switch]$CheckOnly
+    [switch]$CheckOnly,
+    [switch]$Diagnose
 )
 
 $ErrorActionPreference = 'Stop'
+
+if ($CheckOnly -and $Diagnose) {
+    throw 'Choose either -CheckOnly or -Diagnose, not both.'
+}
 
 if (-not (Get-Command wsl.exe -ErrorAction SilentlyContinue)) {
     throw 'wsl.exe is unavailable. Run this script on the Windows host.'
@@ -36,22 +41,35 @@ if [ ! -d "$root" ]; then
     exit 1
 fi
 
+# Process /proc entries belong to the selected Linux user; never repair an
+# unrelated user's process. The helper .lock is the strongest identity signal.
+uid="$(id -u)"
+all_appservers=0
+codex_appservers=0
+expected_layout=0
 matches=()
-backends=0
-for proc in /proc/[0-9]*; do
-    pid="${proc##*/}"
-    exe="$(readlink "$proc/exe" 2>/dev/null || true)"
-    case "$exe" in
-        "$root"/bin/wsl/*/codex) ;;
-        *) continue ;;
-    esac
 
-    # Require the literal app-server argument, rather than a substring match.
+for proc in /proc/[0-9]*; do
+    [ "$(stat -c %u "$proc" 2>/dev/null || true)" = "$uid" ] || continue
+
+    # Detect app-server first. Its executable can move between Codex releases.
     if ! grep -zFxq -- 'app-server' "$proc/cmdline" 2>/dev/null; then
         continue
     fi
-    backends=$((backends + 1))
+    all_appservers=$((all_appservers + 1))
 
+    pid="${proc##*/}"
+    exe="$(readlink "$proc/exe" 2>/dev/null || true)"
+    # Do not accept deleted executables, arbitrary names, or empty paths.
+    [ "${exe##*/}" = codex ] || continue
+    [ -x "$exe" ] || continue
+    codex_appservers=$((codex_appservers + 1))
+    case "$exe" in
+        "$root"/bin/wsl/*/codex) expected_layout=$((expected_layout + 1)) ;;
+    esac
+
+    # Accept an alternate executable location ONLY when the running, same-user
+    # Codex app-server actually has an FD on this installation's helper lock.
     for fd in "$proc"/fd/*; do
         target="$(readlink "$fd" 2>/dev/null || true)"
         case "$target" in
@@ -63,12 +81,37 @@ for proc in /proc/[0-9]*; do
     done
 done
 
-if [ "${#matches[@]}" -ne 1 ]; then
-    echo "STOP: Expected one live Codex Desktop helper; found ${#matches[@]} (app-server processes: $backends)." >&2
-    echo 'Start Codex Desktop and open its WSL workspace; close duplicate Desktop backends before retrying.' >&2
-    exit 1
+printf 'Discovery: app-server=%s codex-app-server=%s expected-bin-layout=%s valid-helper-locks=%s\n' \
+    "$all_appservers" "$codex_appservers" "$expected_layout" "${#matches[@]}"
+
+if [ "$mode" = diagnose ]; then
+    if [ "${#matches[@]}" -eq 1 ]; then
+        IFS='|' read -r dpid dexe dhelper <<< "${matches[0]}"
+        printf 'MATCH: PID=%s executable=%s helper=%s\n' "$dpid" "$dexe" "$dhelper"
+    elif [ "${#matches[@]}" -eq 0 ]; then
+        echo 'DIAGNOSTIC: No verified live helper. No changes made.'
+    else
+        echo 'DIAGNOSTIC: Multiple verified helpers. No changes made.'
+    fi
+    echo 'CODEX_WSL_HELPER_DIAGNOSTIC_COMPLETE'
+    exit 0
 fi
 
+if [ "${#matches[@]}" -ne 1 ]; then
+    if [ "${#matches[@]}" -gt 1 ]; then
+        echo 'STOP: Multiple verified Codex helpers. No links changed.' >&2
+    elif [ "$all_appservers" -eq 0 ]; then
+        echo 'STOP: No app-server process is visible in this WSL distribution.' >&2
+        echo 'Check that Codex Desktop has opened the Ubuntu-24.04 WSL workspace; launching the app alone may not start its WSL backend.' >&2
+    elif [ "$codex_appservers" -eq 0 ]; then
+        echo 'STOP: app-server process found, but none has a live executable named codex.' >&2
+    else
+        echo 'STOP: Codex app-server found but it does not hold the expected live helper .lock under this Codex root.' >&2
+        echo 'The helper may use a different root, may have exited, or may not be initialized yet.' >&2
+    fi
+    echo 'Use -Diagnose for a read-only discovery summary. No links changed.' >&2
+    exit 1
+fi
 IFS='|' read -r pid exe helper <<< "${matches[0]}"
 
 # Fail closed when process identity, ownership, or helper path has changed.
@@ -152,7 +195,7 @@ try {
         throw 'Cannot map the temporary Bash script into WSL.'
     }
 
-    $mode = if ($CheckOnly) { 'check' } else { 'repair' }
+    $mode = if ($Diagnose) { 'diagnose' } elseif ($CheckOnly) { 'check' } else { 'repair' }
     $linuxScript = $scriptPaths[0].Trim()
     $output = @(& wsl.exe --distribution $Distro --exec bash $linuxScript $linuxRoot $mode)
     $exitCode = $LASTEXITCODE
@@ -161,7 +204,7 @@ try {
         throw "Codex WSL helper $mode failed (exit $exitCode); see STOP/MISSING diagnostics above."
     }
 
-    $marker = if ($CheckOnly) { 'CODEX_WSL_HELPER_CHECK_OK' } else { 'CODEX_WSL_HELPER_REPAIR_OK' }
+    $marker = if ($Diagnose) { 'CODEX_WSL_HELPER_DIAGNOSTIC_COMPLETE' } elseif ($CheckOnly) { 'CODEX_WSL_HELPER_CHECK_OK' } else { 'CODEX_WSL_HELPER_REPAIR_OK' }
     if ($output -notcontains $marker) {
         throw "Codex helper reported exit 0 without $marker."
     }
