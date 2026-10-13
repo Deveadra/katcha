@@ -903,6 +903,8 @@ const analytics = [
             const container = document.querySelector("#channel-activity-list");
             const details = container.querySelector(".channel-activity-history");
             const initial = container.querySelectorAll(":scope > .channel-activity-item").length;
+            const shownRecent = initial - (state.operations.intake || []).length -
+                (state.operations.attention || []).length - (state.operations.active || []).length;
             const recentItems = container.querySelectorAll(".channel-activity-older-grid > .channel-activity-item").length;
             const hasAttention = [...container.querySelectorAll(":scope > .channel-activity-item > strong")]
                 .some((element) => element.textContent.includes("Publication needs attention"));
@@ -910,7 +912,7 @@ const analytics = [
             details.open = true;
             const expandedVisible = details.querySelector(".channel-activity-item").getClientRects().length > 0;
             return {
-                initial,
+                shownRecent,
                 recentItems,
                 hasAttention,
                 initiallyClosed,
@@ -923,7 +925,7 @@ const analytics = [
         }
     });
     assert.deepEqual(activityLayout, {
-        initial: 7,
+        shownRecent: 6,
         recentItems: 8,
         hasAttention: true,
         initiallyClosed: true,
