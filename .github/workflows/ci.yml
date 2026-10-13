@@ -200,10 +200,15 @@ jobs:
       - name: Install PostgreSQL recovery test tools
         run: sudo apt-get update && sudo apt-get install -y postgresql-client
 
+      - name: Test multipart smoke (temporary diagnostics)
+        env:
+          KATCHA_SEARCH_LEDGER_TEST_DATABASE_URL: postgresql+psycopg://katcha:katcha@127.0.0.1:5432/katcha
+        run: pytest -vv -x tests/test_editorial_multipart_uploads.py
+
       - name: Test
         env:
           KATCHA_SEARCH_LEDGER_TEST_DATABASE_URL: postgresql+psycopg://katcha:katcha@127.0.0.1:5432/katcha
-        run: pytest -q
+        run: pytest -vv -x
 
       - name: Verify built-in brand assets through S3-compatible HTTP endpoint
         env:
