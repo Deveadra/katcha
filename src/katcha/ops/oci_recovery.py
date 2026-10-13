@@ -2221,6 +2221,93 @@ def cleanup_retired_volumes(
     return deleted
 
 
+def _verified_retired_paid_instance(
+    config: RecoveryConfig,
+    oci: OciCli,
+    coordinator: CoordinatorClient,
+    row: dict[str, Any],
+) -> None:
+    """Fail closed unless this STOPPED VM is explicitly retired and fenced.
+
+    This is not a TTL-triggered stop of a current leader. Retirement requires
+    operator authorization after a committed handover, plus two fresh
+    coordinator/OCI observations immediately before destructive work.
+    """
+    instance_id = _instance_id(row)
+    tags = _tags(row)
+    deployment_id = tags.get("KatchaDeploymentId", "").strip()
+    epoch_raw = tags.get("KatchaDeploymentEpoch", "").strip()
+    if (
+        not instance_id
+        or not deployment_id
+        or not epoch_raw.isdecimal()
+        or int(epoch_raw) < 1
+        or tags.get("KatchaPaidCleanupAuthorized") != "true"
+        or _state(row) != "STOPPED"
+    ):
+        raise RecoveryError(
+            "paid expiry needs STOPPED instance, complete deployment tags and "
+            "independently authorized post-handover cleanup"
+        )
+    paid_epoch = int(epoch_raw)
+
+    def authority_snapshot() -> tuple[str, int]:
+        state = coordinator.status()  # Never rely on cached incident/epoch data.
+        if not isinstance(state, dict):
+            raise RecoveryError("coordinator state unavailable for paid cleanup")
+        active = state.get("active")
+        pending = state.get("pending")
+        if not isinstance(active, dict) or pending:
+            raise RecoveryError(
+                "paid cleanup blocked by absent active authority or pending handover"
+            )
+        active_id = active.get("deployment_id")
+        active_epoch = active.get("epoch")
+        if (
+            not isinstance(active_id, str)
+            or not active_id.strip()
+            or type(active_epoch) is not int
+            or active_epoch <= paid_epoch
+            or active_id == deployment_id
+        ):
+            raise RecoveryError(
+                "paid cleanup blocked: deployment is active or handover unverified"
+            )
+        rows = oci.list_instances(config)
+        matching = [
+            candidate
+            for candidate in rows
+            if _state(candidate) not in {"TERMINATED", "TERMINATING"}
+            and _tags(candidate).get("KatchaDeploymentId") == active_id
+        ]
+        if len(matching) != 1 or _state(matching[0]) != "RUNNING":
+            raise RecoveryError(
+                "paid cleanup blocked: unique running successor is unverified"
+            )
+        if _tags(matching[0]).get("KatchaDeploymentEpoch") != str(active_epoch):
+            raise RecoveryError(
+                "paid cleanup blocked: successor epoch does not match authority"
+            )
+        return active_id, active_epoch
+
+    first = authority_snapshot()
+    fresh = oci.get_instance(instance_id)
+    if (
+        not isinstance(fresh, dict)
+        or _instance_id(fresh) != instance_id
+        or _state(fresh) != "STOPPED"
+        or _tags(fresh) != tags
+        or not _is_paid_recovery(fresh)
+    ):
+        raise RecoveryError(
+            "paid cleanup blocked: target identity or STOPPED state changed"
+        )
+    if authority_snapshot() != first:
+        raise RecoveryError(
+            "paid cleanup blocked: coordinator authority changed during verification"
+        )
+
+
 def cleanup_expired_paid(
     config: RecoveryConfig,
     oci: OciCli,
@@ -2237,48 +2324,43 @@ def cleanup_expired_paid(
 
         state = _state(row)
         if state in {"TERMINATED", "TERMINATING"}:
-            if tags.get("KatchaBudgetReservationId", "").strip():
-                _settle_paid_instance_budget(
-                    coordinator,
-                    row,
-                    ended_at=current,
-                    reason="reconciled terminated paid fallback",
-                )
+            # A past termination does not grant authority to touch other VMs.
+            # Budget reconciliation happens through the separate finance audit.
             continue
 
-        expires_raw = tags.get("KatchaExpiresAt", "")
-        if not expires_raw:
-            oci.softstop(_instance_id(row))
-            raise RecoveryError(
-                f"paid fallback instance {_instance_id(row)} is missing KatchaExpiresAt"
-            )
+        expires_raw = tags.get("KatchaExpiresAt", "").strip()
         try:
-            expires = datetime.fromisoformat(
-                expires_raw.replace("Z", "+00:00")
-            )
+            expires = datetime.fromisoformat(expires_raw.replace("Z", "+00:00"))
+            if expires.tzinfo is None:
+                raise ValueError("expiration has no timezone")
         except ValueError as exc:
-            oci.softstop(_instance_id(row))
             raise RecoveryError(
-                f"paid fallback instance {_instance_id(row)} has invalid KatchaExpiresAt"
+                "paid fallback expiration missing or invalid; "
+                "no automatic stop or termination permitted"
             ) from exc
-        if expires.tzinfo is None:
-            oci.softstop(_instance_id(row))
-            raise RecoveryError(
-                f"paid fallback instance {_instance_id(row)} has timezone-less KatchaExpiresAt"
-            )
         if expires.astimezone(UTC) > current:
             continue
 
-        instance_id = _instance_id(row)
-        oci.softstop(instance_id)
+        # An expired RUNNING VM may be the actual production leader.
+        # Never SOFTSTOP it for cost enforcement. Escalate to a supervised
+        # replacement and fenced handover before cleanup.
+        if state != "STOPPED":
+            raise RecoveryError(
+                "expired paid instance is not STOPPED; preserve production "
+                "authority and escalate for fenced handover"
+            )
+
+        _verified_retired_paid_instance(config, oci, coordinator, row)
+        # Settle only after termination so an OCI failure cannot mark live
+        # compute as finished; a failed settlement is an operator incident.
+        oci.terminate(_instance_id(row))
         _settle_paid_instance_budget(
             coordinator,
             row,
             ended_at=current,
-            reason="paid fallback TTL expired",
+            reason="verified retired paid fallback terminated",
         )
-        oci.terminate(instance_id)
-        terminated.append(instance_id)
+        terminated.append(_instance_id(row))
     return terminated
 
 
