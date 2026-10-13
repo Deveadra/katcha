@@ -73,8 +73,10 @@ All endpoints share `/v1/channels/{channel_id}/editorial-projects/source-uploads
   ten minutes, after the current deployment-leader fencing check.
 - `POST /{source_id}/complete` completes and verifies *all* parts from
   R2's inventory and registers the clip, returning the source binding.
-- `DELETE /{source_id}` aborts an unfinished upload and deletes its staging
-  object. Completed canonical media cannot be deleted here.
+- `DELETE /{source_id}` aborts an unfinished upload, or discards a failed
+  verification after its worker has stopped, and removes staging data.
+  A competing live verifier receives a conflict instead of being interrupted;
+  completed canonical media cannot be deleted here.
 
 The API requires the authenticated channel plus `production:create` for
 mutations; read/status requires `ai:read`. Presigned part URLs are bearer
@@ -87,11 +89,17 @@ and registration are fenced. New URLs are never minted by stale leaders.
 - A 3 GiB example requires 48 x 64 MiB PUTs. All but the last part must
   have the full part size, and no video may exceed 4 GiB.
 - Failed parts receive bounded retries; reselect the *same* file to resume.
-  Upload identity is file size/name/mtime/title plus channel scope. Changing
-  these values intentionally makes a different upload.
+  Upload identity includes file size/name/mtime/title, channel scope, and
+  bounded SHA-256 fingerprints of the first and last 1 MiB. The browser never
+  loads a multi-GiB file into RAM to calculate a digest; the server hashes the
+  entire received file before Clip Library registration. Re-select the same
+  file and title to resume, or use **Discard failed large upload** after an
+  error to clean staging and restart.
 - Multi-GiB SHA-256 verification may take significant wall time: the UI
-  distinguishes the completion and verification phases. Do not force-kill
-  the OCI API during verification. A retry can safely repeat verification.
+  distinguishes the completion and verification phases. PostgreSQL advisory
+  locking prevents duplicate verifier workers for the same source and releases
+  automatically if a worker stops. Do not force-kill the OCI API during
+  verification; retries recover a completed staged object without reuploading.
 - S3/Cloudflare control-plane credentials must remain server-only.
   Browser devtools will contain **temporary signed part URLs**, not permanent
   credentials. Do not include presigned URLs in bug reports.
