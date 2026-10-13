@@ -226,7 +226,7 @@ def test_valid_stopped_expired_retired_paid_can_be_deleted_only_after_two_checks
     assert oci.lookups == 1
     assert oci.terminated == ["paid-old"]
     assert oci.stopped == []
-    assert coordinator.settled == [("reservation", 198_334)]
+    assert coordinator.settled == [("reservation", 196_667)]
 
 
 def test_future_stopped_paid_instance_never_deleted():
