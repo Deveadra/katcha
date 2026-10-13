@@ -11,7 +11,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
-from fastapi import Depends, FastAPI, HTTPException, Query, Request, status
+from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response, status
 from fastapi.responses import RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import select, text
@@ -342,8 +342,9 @@ def live() -> HealthResponse:
 
 
 @app.get("/v1/health/release", include_in_schema=False)
-def release_identity() -> dict[str, str]:
+def release_identity(response: Response) -> dict[str, str]:
     """Public non-secret release attestation for the OCI deployment controller."""
+    response.headers["Cache-Control"] = "no-store"
     sha = os.environ.get("KATCHA_RELEASE_SHA", "").strip()
     if re.fullmatch(r"[0-9a-f]{40}", sha) is None:
         raise HTTPException(status_code=503, detail="release identity unavailable")
