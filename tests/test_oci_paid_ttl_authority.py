@@ -135,6 +135,7 @@ def test_expired_stopped_active_missing_or_stale_authority_never_deleted(active)
 @pytest.mark.parametrize("pending", [
     {"deployment_id": "paid-deployment", "epoch": 10},
     {"deployment_id": "different", "epoch": 10},
+    {},
 ])
 def test_pending_candidate_blocks_cleanup_even_of_stopped_vm(pending):
     oci = FakeOci()
