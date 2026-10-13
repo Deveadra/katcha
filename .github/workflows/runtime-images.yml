@@ -63,7 +63,7 @@ jobs:
                 run?.head_repository?.full_name !== context.repo.owner + "/" + context.repo.repo ||
                 !/^[0-9a-f]{40}$/.test(run?.head_sha || "")
               ) {
-                core.info("No image publication: CI was not a successful push to this repository's main.");
+                core.setFailed("Rejected image publication: CI was not a successful push to this repository's main.");
                 core.setOutput("matrix", JSON.stringify({include: []}));
                 core.setOutput("has_images", "false");
                 core.setOutput("release_sha", "");
@@ -75,7 +75,7 @@ jobs:
                 branch: "main",
               });
               if (main.data.commit.sha !== run.head_sha) {
-                core.info("No image publication: CI revision is no longer main HEAD.");
+                core.setFailed("Rejected image publication: CI revision is no longer main HEAD.");
                 core.setOutput("matrix", JSON.stringify({include: []}));
                 core.setOutput("has_images", "false");
                 core.setOutput("release_sha", "");
