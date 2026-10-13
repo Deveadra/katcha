@@ -3,6 +3,8 @@ from __future__ import annotations
 import asyncio
 import logging
 import mimetypes
+import os
+import re
 import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -337,6 +339,15 @@ def _require_youtube_execution() -> None:
 @app.get("/v1/health/live", response_model=HealthResponse)
 def live() -> HealthResponse:
     return HealthResponse(status="ok", version=__version__)
+
+
+@app.get("/v1/health/release", include_in_schema=False)
+def release_identity() -> dict[str, str]:
+    """Public non-secret release attestation for the OCI deployment controller."""
+    sha = os.environ.get("KATCHA_RELEASE_SHA", "").strip()
+    if re.fullmatch(r"[0-9a-f]{40}", sha) is None:
+        raise HTTPException(status_code=503, detail="release identity unavailable")
+    return {"release_sha": sha}
 
 
 @app.get("/v1/runtime/ai")
