@@ -774,7 +774,9 @@ def test_stale_dump_then_canonical_restore_quarantine_blocks_same_generation(
     ).read_text()
     quarantine_sql = script.split("<<'SQL'\n", 1)[1].split("\nSQL\n", 1)[0]
     with database.begin() as connection:
+        connection.execute(text("SET LOCAL synchronous_commit = 'off'"))
         connection.execute(text(quarantine_sql))
+        assert connection.scalar(text("SHOW synchronous_commit")) == "on"
     assert inspect_postgres_ledger(database)["recovery_required"] is True
     restored = reopen(database, generation=7)
     assert restored.read(missing.job_id, scope=SCOPE) is None

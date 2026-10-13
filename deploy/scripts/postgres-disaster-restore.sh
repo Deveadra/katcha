@@ -112,6 +112,10 @@ while IFS=$'\t' read -r filename database; do
     'psql -U "$POSTGRES_USER" -d "$1" -v ON_ERROR_STOP=1' sh "$database" <<'SQL'
 DO $$
 BEGIN
+  IF current_setting('fsync') <> 'on' THEN
+    RAISE EXCEPTION 'Search evidence recovery requires PostgreSQL fsync';
+  END IF;
+  PERFORM set_config('synchronous_commit', 'on', true);
   IF to_regclass('public.source_search_ledger_head') IS NOT NULL THEN
     UPDATE public.source_search_ledger_head SET recovery_required = true;
   END IF;
