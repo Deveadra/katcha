@@ -135,7 +135,8 @@ jobs:
     needs: changes
     if: github.event_name != 'pull_request' || needs.changes.outputs.python == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # Full suite previously hit 15 minutes without a failing test result.
+    timeout-minutes: 30
     services:
       postgres:
         image: postgres:16-alpine
@@ -200,10 +201,19 @@ jobs:
       - name: Install PostgreSQL recovery test tools
         run: sudo apt-get update && sudo apt-get install -y postgresql-client
 
+      - name: Test manual content recovery first
+        env:
+          KATCHA_SEARCH_LEDGER_TEST_DATABASE_URL: postgresql+psycopg://katcha:katcha@127.0.0.1:5432/katcha
+        run: pytest -q tests/test_manual_content.py tests/test_media_export_response.py
+
       - name: Test
         env:
           KATCHA_SEARCH_LEDGER_TEST_DATABASE_URL: postgresql+psycopg://katcha:katcha@127.0.0.1:5432/katcha
-        run: pytest -q
+        # Enforce a subprocess deadline even if runner job cancellation stalls.
+        # Bounded test parameter IDs prevent oversized log output.
+        run: |
+          set -o pipefail
+          timeout --signal=INT --kill-after=15s 900s pytest -q
 
       - name: Verify built-in brand assets through S3-compatible HTTP endpoint
         env:

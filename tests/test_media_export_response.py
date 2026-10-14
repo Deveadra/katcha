@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-import anyio
+import asyncio
+
 import pytest
 
 from katcha.api.media_export_response import MediaExportFileResponse
@@ -8,19 +9,25 @@ from katcha.api.media_export_response import MediaExportFileResponse
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("disconnect", [False, True])
-async def test_archive_cleanup_on_completion_or_disconnect(tmp_path, monkeypatch, disconnect):
+async def test_archive_cleanup_on_completion_or_disconnect(tmp_path, disconnect):
     archive = tmp_path / "export.zip"
     archive.write_bytes(b"a" * (2 * 64 * 1024))
     body_sizes = []
 
-    async def run_sync(func, *args, **kwargs):
-        return func(*args)
+    # Exercise actual AnyIO file I/O: replacing the thread runner globally
+    # can deadlock newer Starlette/AnyIO file-response implementations.
 
-    # Keep file I/O deterministic; exercise the actual ASGI file response and send failure.
-    monkeypatch.setattr(anyio.to_thread, "run_sync", run_sync)
+    request_delivered = False
 
     async def receive():
-        return {"type": "http.request", "body": b"", "more_body": False}
+        nonlocal request_delivered
+        if not request_delivered:
+            request_delivered = True
+            return {"type": "http.request", "body": b"", "more_body": False}
+        # A real ASGI receive blocks until the next message/disconnect.
+        # Returning http.request forever creates a busy loop that starves
+        # streaming/cancellation and hangs the entire test suite.
+        await asyncio.Event().wait()
 
     async def send(message):
         if message["type"] == "http.response.body":
@@ -32,9 +39,9 @@ async def test_archive_cleanup_on_completion_or_disconnect(tmp_path, monkeypatch
     scope = {"type": "http", "method": "GET", "headers": [], "extensions": {}}
     if disconnect:
         with pytest.raises(OSError, match="disconnected"):
-            await response(scope, receive, send)
+            await asyncio.wait_for(response(scope, receive, send), timeout=10)
     else:
-        await response(scope, receive, send)
+        await asyncio.wait_for(response(scope, receive, send), timeout=10)
         assert sum(body_sizes) == 2 * 64 * 1024
     assert body_sizes and max(body_sizes) <= 64 * 1024
     assert not archive.exists()
