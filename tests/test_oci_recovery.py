@@ -546,97 +546,45 @@ def test_candidate_lookup_and_paid_count_ignore_terminated_instances() -> None:
     assert oci_recovery.paid_instance_count(rows) == 1
 
 
-def test_cleanup_terminates_only_expired_paid_instances(monkeypatch, tmp_path) -> None:
+def test_cleanup_refuses_expired_running_paid_leader(monkeypatch, tmp_path) -> None:
     _base_env(monkeypatch, tmp_path)
     config = oci_recovery.RecoveryConfig.from_env()
     now = datetime(2026, 10, 2, 16, 0, tzinfo=UTC)
 
     class FakeOci:
-        def __init__(self) -> None:
-            self.softstopped = []
-            self.terminated = []
+        terminated = []
+        softstopped = []
 
         def list_instances(self, _config):
-            return [
-                {
-                    "id": "expired",
-                    "lifecycle-state": "RUNNING",
-                    "freeform-tags": {
-                        "KatchaRecoveryMode": "cross-ad-paid-fallback",
-                        "KatchaPaidFallback": "true",
-                        "KatchaExpiresAt": (now - timedelta(minutes=1)).isoformat(),
-                    },
+            return [{
+                "id": "paid-leader",
+                "lifecycle-state": "RUNNING",
+                "freeform-tags": {
+                    "KatchaRecoveryMode": "paid-fallback",
+                    "KatchaPaidFallback": "true",
+                    "KatchaDeploymentId": "leader",
+                    "KatchaDeploymentEpoch": "9",
+                    "KatchaExpiresAt": (now - timedelta(minutes=1)).isoformat(),
                 },
-                {
-                    "id": "future",
-                    "lifecycle-state": "RUNNING",
-                    "freeform-tags": {
-                        "KatchaRecoveryMode": "paid-fallback",
-                        "KatchaPaidFallback": "true",
-                        "KatchaExpiresAt": (now + timedelta(hours=1)).isoformat(),
-                    },
-                },
-                {
-                    "id": "free",
-                    "lifecycle-state": "RUNNING",
-                    "freeform-tags": {
-                        "KatchaRecoveryMode": "cross-ad-free-a1",
-                    },
-                },
-            ]
-
-        def softstop(self, instance_id):
-            self.softstopped.append(instance_id)
+            }]
 
         def terminate(self, instance_id):
             self.terminated.append(instance_id)
 
-    class Coordinator:
-        def __init__(self):
-            self.settled = []
-
-        def settle_external_compute(
-            self,
-            reservation_id,
-            *,
-            actual_cost_microusd,
-            metadata=None,
-        ):
-            del metadata
-            self.settled.append((reservation_id, actual_cost_microusd))
-            return {"reservation": {"status": "settled"}}
+        def softstop(self, instance_id):
+            self.softstopped.append(instance_id)
 
     oci = FakeOci()
-    original_list = oci.list_instances
+    with pytest.raises(
+        oci_recovery.RecoveryError,
+        match="preserve production authority",
+    ):
+        oci_recovery.cleanup_expired_paid(
+            config, oci, object(), now=now,
+        )
+    assert oci.softstopped == []
+    assert oci.terminated == []
 
-    def list_instances_with_budget(_config):
-        rows = original_list(_config)
-        for row in rows:
-            if row["id"] == "expired":
-                row["freeform-tags"].update(
-                    {
-                        "KatchaBudgetReservationId": "reservation-expired",
-                        "KatchaBudgetReservedMicrousd": "1200000",
-                        "KatchaPaidStartedAt": (
-                            now - timedelta(hours=2)
-                        ).isoformat(),
-                        "KatchaEstimatedHourlyUsd": "0.10",
-                    }
-                )
-        return rows
-    oci.list_instances = list_instances_with_budget
-    coordinator = Coordinator()
-    terminated = oci_recovery.cleanup_expired_paid(
-        config,
-        oci,
-        coordinator,
-        now=now,
-    )
-
-    assert terminated == ["expired"]
-    assert oci.softstopped == ["expired"]
-    assert oci.terminated == ["expired"]
-    assert coordinator.settled == [("reservation-expired", 198_334)]
 
 
 def test_recovery_prefers_cross_ad_free_before_paid(monkeypatch, tmp_path) -> None:
@@ -1618,67 +1566,52 @@ def test_failed_paid_attempt_settles_full_reservation_before_retry(
     ]
 
 
-def test_paid_cleanup_stops_before_termination_when_budget_settlement_fails(
-    monkeypatch,
-    tmp_path,
+def test_paid_cleanup_never_stops_running_vm_when_coordinator_is_unavailable(
+    monkeypatch, tmp_path,
 ) -> None:
     _base_env(monkeypatch, tmp_path)
     config = oci_recovery.RecoveryConfig.from_env()
     now = datetime(2026, 10, 4, 12, 0, tzinfo=UTC)
 
     class FakeOci:
-        def __init__(self) -> None:
-            self.softstopped: list[str] = []
-            self.terminated: list[str] = []
+        def __init__(self):
+            self.stops = []
+            self.terminated = []
 
         def list_instances(self, _config):
-            return [
-                {
-                    "id": "paid-expired",
-                    "lifecycle-state": "RUNNING",
-                    "freeform-tags": {
-                        "KatchaPaidFallback": "true",
-                        "KatchaRecoveryMode": "paid-fallback",
-                        "KatchaExpiresAt": (
-                            now - timedelta(minutes=1)
-                        ).isoformat(),
-                        "KatchaBudgetReservationId": "reservation-1",
-                        "KatchaBudgetReservedMicrousd": "1200000",
-                        "KatchaPaidStartedAt": (
-                            now - timedelta(hours=3)
-                        ).isoformat(),
-                        "KatchaEstimatedHourlyUsd": "0.10",
-                    },
-                }
-            ]
+            return [{
+                "id": "paid-expired",
+                "lifecycle-state": "RUNNING",
+                "freeform-tags": {
+                    "KatchaPaidFallback": "true",
+                    "KatchaExpiresAt": (now - timedelta(minutes=1)).isoformat(),
+                },
+            }]
 
         def softstop(self, instance_id):
-            self.softstopped.append(instance_id)
+            self.stops.append(instance_id)
 
         def terminate(self, instance_id):
             self.terminated.append(instance_id)
 
     class FailingCoordinator:
-        def settle_external_compute(self, *_args, **_kwargs):
+        def status(self):
             raise oci_recovery.RecoveryError("coordinator unavailable")
 
     oci = FakeOci()
     with pytest.raises(
         oci_recovery.RecoveryError,
-        match="coordinator unavailable",
+        match="preserve production authority",
     ):
         oci_recovery.cleanup_expired_paid(
-            config,
-            oci,
-            FailingCoordinator(),
-            now=now,
+            config, oci, FailingCoordinator(), now=now,
         )
-
-    assert oci.softstopped == ["paid-expired"]
+    assert oci.stops == []
     assert oci.terminated == []
 
 
-def test_paid_instance_cost_uses_runtime_and_caps_at_expiry() -> None:
+
+def test_paid_instance_cost_accounts_for_runtime_past_expiry() -> None:
     started = datetime(2026, 10, 4, 10, 0, tzinfo=UTC)
     row = {
         "id": "paid",
@@ -1701,4 +1634,4 @@ def test_paid_instance_cost_uses_runtime_and_caps_at_expiry() -> None:
     assert oci_recovery._paid_instance_cost_microusd(
         row,
         ended_at=started + timedelta(hours=20),
-    ) == 1_200_000
+    ) == 2_000_000

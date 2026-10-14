@@ -128,6 +128,7 @@ jobs:
           bash -n scripts/notify-telegram.sh
           pytest -q \
             tests/test_oci_recovery.py \
+            tests/test_oci_paid_ttl_authority.py \
             tests/test_external_compute_budget.py \
             tests/test_disaster_backup.py \
             tests/test_break_glass.py \
@@ -477,3 +478,25 @@ jobs:
 
       - name: Enforce paid fallback TTL and retired-volume cleanup
         run: python -m katcha.ops.oci_recovery cleanup
+
+      - name: Alert operator if paid cleanup is blocked
+        if: failure()
+        shell: bash
+        env:
+          KATCHA_TELEGRAM_BOT_TOKEN: ${{ secrets.KATCHA_TELEGRAM_BOT_TOKEN }}
+          KATCHA_TELEGRAM_CHAT_ID: ${{ secrets.KATCHA_TELEGRAM_CHAT_ID }}
+          KATCHA_TELEGRAM_THREAD_ID: ${{ vars.KATCHA_TELEGRAM_THREAD_ID }}
+          KATCHA_TELEGRAM_REQUIRED: "true"
+        run: |
+          set -euo pipefail
+          message="$(
+            printf '%s\n' \
+              'Katcha OCI paid recovery cleanup BLOCKED.' \
+              '' \
+              'Run: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}' \
+              'Expired paid compute may still be the active production leader.' \
+              'Do not stop, delete, change TTL, or retry blindly.' \
+              'Check the current coordinator epoch and arrange a fenced handover.' \
+              'Resource cleanup and cost settlement are NOT confirmed.'
+          )"
+          bash scripts/notify-telegram.sh "$message"
