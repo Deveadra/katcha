@@ -8,6 +8,7 @@ import secrets
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from functools import lru_cache
 from typing import Annotated
 
 from fastapi import Depends, HTTPException, Request
@@ -25,6 +26,7 @@ _PUBLIC_PATHS = {
     "/v1/health/live",
     "/v1/health/ready",
     "/v1/health/release",
+    "/v1/control/access-login",
     "/v1/integrations/youtube/oauth/callback",
     "/auth/callback",
 }
@@ -50,6 +52,102 @@ def _principal_actor(name: str) -> str:
 
 def _credential_fingerprint(token: str) -> str:
     return hashlib.sha256(token.encode()).hexdigest()[:12]
+
+
+@lru_cache(maxsize=8)
+def _cloudflare_access_jwks_client(team_domain: str):
+    import jwt
+
+    return jwt.PyJWKClient(f"{team_domain}/cdn-cgi/access/certs")
+
+
+def _authenticate_cloudflare_access(request: Request, settings: Settings) -> None:
+    team_domain = settings.cloudflare_access_team_domain
+    audience = settings.cloudflare_access_audience
+    if not team_domain or not audience:
+        raise HTTPException(
+            status_code=503,
+            detail="Cloudflare Access authentication is not configured",
+        )
+
+    assertion = request.headers.get("Cf-Access-Jwt-Assertion")
+    if not assertion:
+        raise HTTPException(
+            status_code=401,
+            detail="control-plane authentication required",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    try:
+        import jwt
+
+        signing_key = _cloudflare_access_jwks_client(
+            team_domain
+        ).get_signing_key_from_jwt(assertion)
+    except ImportError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail="Cloudflare Access verification is unavailable",
+        ) from exc
+    except jwt.PyJWKClientConnectionError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail="Cloudflare Access verification is temporarily unavailable",
+        ) from exc
+    except jwt.PyJWKClientError as exc:
+        raise HTTPException(
+            status_code=401,
+            detail="Cloudflare Access session is invalid or expired",
+        ) from exc
+
+    try:
+        claims = jwt.decode(
+            assertion,
+            signing_key.key,
+            algorithms=["RS256"],
+            audience=audience,
+            issuer=team_domain,
+            options={"require": ["exp", "iss", "aud", "sub"]},
+        )
+    except jwt.InvalidTokenError as exc:
+        raise HTTPException(
+            status_code=401,
+            detail="Cloudflare Access session is invalid or expired",
+            headers={"WWW-Authenticate": "Bearer"},
+        ) from exc
+
+    email = claims.get("email")
+    if not isinstance(email, str) or not email.strip():
+        raise HTTPException(
+            status_code=401,
+            detail="Cloudflare Access did not provide an operator email",
+        )
+    normalized_email = email.strip().casefold()
+    principal = next(
+        (
+            candidate
+            for candidate in settings.cloudflare_access_principals
+            if normalized_email == candidate.email
+        ),
+        None,
+    )
+    if principal is None:
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                "This Cloudflare Access email is not assigned to a "
+                "Katcha operator"
+            ),
+        )
+
+    _set_identity(
+        request,
+        actor=_principal_actor("cloudflare-access:" + principal.name),
+        scopes=set(principal.scopes),
+        channel_profile_ids=set(principal.channel_profile_ids),
+        principal_name=principal.name,
+    )
+    request.state.control_authentication_mode = "cloudflare_access"
 
 
 @dataclass(frozen=True, slots=True)
@@ -121,6 +219,10 @@ def _authenticate(
     credentials: HTTPAuthorizationCredentials | None,
     settings: Settings,
 ) -> None:
+    if credentials is None and request.headers.get("Cf-Access-Jwt-Assertion"):
+        _authenticate_cloudflare_access(request, settings)
+        return
+
     if settings.control_principals:
         if credentials is None:
             raise HTTPException(
@@ -154,9 +256,15 @@ def _authenticate(
     expected = settings.control_api_token
     if expected is None:
         if settings.env == "production":
+            if not settings.cloudflare_access_principals:
+                raise HTTPException(
+                    status_code=503,
+                    detail="control-plane authentication not configured",
+                )
             raise HTTPException(
-                status_code=503,
-                detail="control-plane authentication not configured",
+                status_code=401,
+                detail="control-plane authentication required",
+                headers={"WWW-Authenticate": "Bearer"},
             )
         _set_identity(
             request,

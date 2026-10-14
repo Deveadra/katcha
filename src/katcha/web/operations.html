@@ -45,18 +45,31 @@
                             <option value="">All channels</option>
                         </select>
                     </label>
-                    <button id="refresh" class="ops-secondary" type="button" disabled>Refresh</button>
+                    <button id="refresh" class="ops-secondary" type="button" disabled>
+                        Refresh
+                    </button>
                 </div>
             </header>
 
-            <form id="connect-form" class="ops-connect">
-                <label for="token">Control-plane token</label>
-                <input id="token" type="password" autocomplete="off" placeholder="Token if required">
-                <button class="primary" type="submit">Connect</button>
-                <small>Kept only in this tab. The Katcha launcher supplies its own credential automatically.</small>
+            <form id="connect-form" class="ops-connect" hidden>
+                <div class="ops-access-copy">
+                    <strong>Sign in to load your channel briefing</strong>
+                    <p id="access-message">Use the email authorized for this Katcha workspace.</p>
+                    <a id="access-login" class="ops-primary" href="#" hidden>
+                        Sign in with Cloudflare Access ↗
+                    </a>
+                </div>
+                <details id="manual-token-details" class="ops-token-details" hidden>
+                    <summary>Advanced: connect with a control-plane token</summary>
+                    <label for="token">Control-plane token</label>
+                    <input id="token" type="password" autocomplete="off" placeholder="Paste token">
+                    <button class="ops-secondary" type="submit">Connect with token</button>
+                </details>
             </form>
 
-            <div id="status" class="ops-status" role="status" aria-live="polite">Connect to load live operations.</div>
+            <div id="status" class="ops-status" role="status" aria-live="polite">
+                Loading your channel briefing…
+            </div>
 
             <section class="ops-panel briefing-panel" aria-labelledby="briefing-title">
                 <div class="panel-head">
