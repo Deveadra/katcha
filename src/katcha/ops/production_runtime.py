@@ -124,10 +124,30 @@ def validate(values: dict[str, str]) -> list[str]:
         principal_registry not in {"", "[]", "{}"}
         and not is_placeholder(principal_registry)
     )
-    if is_placeholder(control_token) and not principals_configured:
+    access_principal_registry = values.get(
+        "KATCHA_CLOUDFLARE_ACCESS_PRINCIPALS", ""
+    ).strip()
+    access_principals_configured = (
+        access_principal_registry not in {"", "[]", "{}"}
+        and not is_placeholder(access_principal_registry)
+    )
+    if (
+        is_placeholder(control_token)
+        and not principals_configured
+        and not access_principals_configured
+    ):
         errors.append(
-            "configure KATCHA_CONTROL_API_TOKEN or a non-empty KATCHA_CONTROL_PRINCIPALS"
+            "configure KATCHA_CONTROL_API_TOKEN, KATCHA_CONTROL_PRINCIPALS, "
+            "or a Cloudflare Access principal"
         )
+    if access_principals_configured:
+        for key in (
+            "KATCHA_CLOUDFLARE_ACCESS_TEAM_DOMAIN",
+            "KATCHA_CLOUDFLARE_ACCESS_AUDIENCE",
+            "KATCHA_CLOUDFLARE_ACCESS_APPLICATION_DOMAIN",
+        ):
+            if is_placeholder(values.get(key, "")):
+                errors.append(f"{key} is required for Cloudflare Access principals")
 
     redirect = require(values, "KATCHA_YOUTUBE_REDIRECT_URI", errors)
     if redirect:

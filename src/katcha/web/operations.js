@@ -62,6 +62,43 @@ function setStatus(message, kind = "") {
     host.className = "ops-status" + (kind ? " " + kind : "");
 }
 
+async function showAccessPrompt(error) {
+    const form = $("connect-form");
+    form.hidden = false;
+    const tokenDetails = $("manual-token-details");
+    const localDevelopment =
+        location.port === "8765" ||
+        ["localhost", "127.0.0.1"].includes(location.hostname);
+    tokenDetails.hidden = !localDevelopment;
+    tokenDetails.open = localDevelopment;
+
+    $("access-message").textContent = error.status === 403
+        ? "This email has no Katcha operator profile. Use an authorized email or contact the workspace owner."
+        : "Sign in with the email authorized for this Katcha workspace.";
+    const login = $("access-login");
+    login.hidden = true;
+    try {
+        const returnTo = location.pathname + location.search + location.hash;
+        const response = await fetch(
+            "/v1/control/access-login?return_to=" + encodeURIComponent(returnTo),
+            { headers: { Accept: "application/json" }, cache: "no-store" },
+        );
+        if (!response.ok) throw new Error("sign-in settings unavailable");
+        const info = await response.json();
+        if (info.enabled && info.login_url) {
+            login.href = info.login_url;
+            login.hidden = false;
+            return;
+        }
+        $("access-message").textContent = localDevelopment
+            ? "Use your local launcher to connect. A standalone development server can use the token option under Advanced."
+            : "Cloudflare sign-in is not set up for this site yet. Ask the Katcha owner to finish Access setup.";
+    } catch {
+        $("access-message").textContent =
+            "Katcha could not load sign-in settings. Refresh the page or contact the workspace owner.";
+    }
+}
+
 async function api(path, { method = "GET", body = null } = {}) {
     const headers = { Accept: "application/json" };
     if (state.token) headers.Authorization = "Bearer " + state.token;
@@ -327,8 +364,16 @@ async function loadOverview(channelId = "", { preserveStatus = false } = {}) {
         $("refresh").disabled = false;
         return payload;
     } catch (error) {
-        setStatus(error.message, "error");
-        if (error.status === 401 || error.status === 403) $("connect-form").hidden = false;
+        if (error.status === 401 || error.status === 403) {
+            if (error.status === 401 && state.token) {
+                state.token = "";
+                sessionStorage.removeItem("katcha.controlToken");
+            }
+            setStatus("Sign in to choose a channel and load its briefing.", "error");
+            void showAccessPrompt(error);
+        } else {
+            setStatus(error.message, "error");
+        }
         return null;
     } finally {
         state.loading = false;

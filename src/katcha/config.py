@@ -1,8 +1,10 @@
+import re
 import uuid
 from datetime import datetime
 from functools import lru_cache
 from pathlib import Path
 from typing import Literal
+from urllib.parse import urlsplit
 
 from pydantic import BaseModel, Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -157,6 +159,59 @@ class ControlPrincipalSettings(BaseModel):
         return credentials
 
 
+class CloudflareAccessPrincipalSettings(BaseModel):
+    name: str = Field(
+        min_length=1,
+        max_length=64,
+        pattern=r"^[A-Za-z0-9_.:-]+$",
+    )
+    email: str
+    scopes: list[str] = Field(default_factory=lambda: ["*"])
+    channel_profile_ids: list[str] = Field(default_factory=lambda: ["*"])
+
+    @field_validator("email")
+    @classmethod
+    def normalize_email(cls, value: str) -> str:
+        normalized = value.strip().casefold()
+        if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", normalized):
+            raise ValueError("Cloudflare Access principal email must be valid")
+        return normalized
+
+    @field_validator("scopes")
+    @classmethod
+    def validate_scopes(cls, values: list[str]) -> list[str]:
+        normalized = list(
+            dict.fromkeys(
+                str(value).strip()
+                for value in values
+                if str(value).strip()
+            )
+        )
+        if not normalized:
+            raise ValueError("Cloudflare Access principal scopes cannot be empty")
+        return normalized
+
+    @field_validator("channel_profile_ids")
+    @classmethod
+    def validate_channel_profile_ids(cls, values: list[str]) -> list[str]:
+        normalized = list(
+            dict.fromkeys(
+                str(value).strip()
+                for value in values
+                if str(value).strip()
+            )
+        )
+        if not normalized:
+            raise ValueError(
+                "Cloudflare Access principal channel_profile_ids cannot be empty"
+            )
+        if "*" in normalized:
+            return ["*"]
+        for value in normalized:
+            uuid.UUID(value)
+        return normalized
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_prefix="KATCHA_",
@@ -180,6 +235,12 @@ class Settings(BaseSettings):
     control_api_token: SecretStr | None = None
     control_api_scopes: str = "*"
     control_principals: list[ControlPrincipalSettings] = Field(default_factory=list)
+    cloudflare_access_principals: list[CloudflareAccessPrincipalSettings] = Field(
+        default_factory=list
+    )
+    cloudflare_access_team_domain: str | None = None
+    cloudflare_access_audience: str | None = None
+    cloudflare_access_application_domain: str | None = None
 
     def resolved_control_scopes(self) -> set[str]:
         values = {
@@ -212,7 +273,85 @@ class Settings(BaseSettings):
                         "control principal credential tokens must be unique"
                     )
                 token_values.add(token)
+        access_emails: set[str] = set()
+        access_names: set[str] = set()
+        for principal in self.cloudflare_access_principals:
+            name = principal.name.casefold()
+            if name in access_names:
+                raise ValueError(
+                    f"duplicate Cloudflare Access principal name: {principal.name}"
+                )
+            access_names.add(name)
+            if principal.email in access_emails:
+                raise ValueError(
+                    "Cloudflare Access emails must map to one operator principal"
+                )
+            access_emails.add(principal.email)
+        access_configured = all(
+            (
+                self.cloudflare_access_team_domain,
+                self.cloudflare_access_audience,
+                self.cloudflare_access_application_domain,
+            )
+        )
+        if any(
+            (
+                self.cloudflare_access_team_domain,
+                self.cloudflare_access_audience,
+                self.cloudflare_access_application_domain,
+            )
+        ) and not access_configured:
+            raise ValueError(
+                "Cloudflare Access requires team domain, audience, and "
+                "application domain"
+            )
+        if self.cloudflare_access_principals and not access_configured:
+            raise ValueError(
+                "Cloudflare Access principals require complete Access configuration"
+            )
         return self
+
+    @field_validator("cloudflare_access_team_domain")
+    @classmethod
+    def validate_cloudflare_access_team_domain(cls, value: str | None) -> str | None:
+        if value is None or not value.strip():
+            return None
+        normalized = value.strip().rstrip("/")
+        parsed = urlsplit(normalized)
+        if (
+            parsed.scheme != "https"
+            or not parsed.hostname
+            or parsed.path
+            or parsed.query
+            or parsed.fragment
+        ):
+            raise ValueError(
+                "Cloudflare Access team domain must be an HTTPS origin"
+            )
+        return normalized
+
+    @field_validator("cloudflare_access_audience")
+    @classmethod
+    def normalize_cloudflare_access_audience(cls, value: str | None) -> str | None:
+        return value.strip() if value and value.strip() else None
+
+    @field_validator("cloudflare_access_application_domain")
+    @classmethod
+    def validate_cloudflare_access_application_domain(
+        cls, value: str | None
+    ) -> str | None:
+        if value is None or not value.strip():
+            return None
+        normalized = value.strip().casefold().rstrip(".")
+        if "://" in normalized or "/" in normalized or "@" in normalized:
+            raise ValueError(
+                "Cloudflare Access application domain must be a hostname"
+            )
+        if not re.fullmatch(r"[a-z0-9.-]+", normalized):
+            raise ValueError(
+                "Cloudflare Access application domain must be a hostname"
+            )
+        return normalized
 
     database_url: str = "postgresql+psycopg://katcha:katcha@localhost:5432/katcha"
 

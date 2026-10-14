@@ -93,8 +93,8 @@ body[data-katcha-page="operations"] .ops-secondary:hover {
 
 body[data-katcha-page="operations"] .ops-connect {
     display: grid;
-    grid-template-columns: auto minmax(220px, 360px) auto minmax(0, 1fr);
-    align-items: center;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: start;
     gap: var(--ae-space-2);
     padding: 12px 14px;
     border: 1px solid var(--ae-line);
@@ -102,15 +102,69 @@ body[data-katcha-page="operations"] .ops-connect {
     background: var(--ae-surface);
 }
 
-body[data-katcha-page="operations"] .ops-connect label {
+body[data-katcha-page="operations"] .ops-connect[hidden],
+body[data-katcha-page="operations"] .ops-token-details[hidden] {
+    display: none;
+}
+
+body[data-katcha-page="operations"] .ops-access-copy {
+    display: grid;
+    gap: 5px;
+}
+
+body[data-katcha-page="operations"] .ops-access-copy strong {
+    color: var(--ae-text);
+    font-size: 11px;
+}
+
+body[data-katcha-page="operations"] .ops-access-copy p {
+    margin: 0;
+    color: var(--ae-text-secondary);
+    font-size: 10px;
+}
+
+body[data-katcha-page="operations"] .ops-access-copy a {
+    display: inline-flex;
+    align-items: center;
+    justify-self: start;
+    min-height: var(--ae-control-height);
+    margin-top: 3px;
+    padding: 0 14px;
+    border: 1px solid var(--ae-line-hover);
+    border-radius: var(--ae-radius-control);
+    background: var(--ae-accent);
+    color: var(--ae-bg);
+    font-size: 10px;
+    font-weight: 800;
+    text-decoration: none;
+}
+
+body[data-katcha-page="operations"] .ops-access-copy a[hidden] {
+    display: none;
+}
+
+body[data-katcha-page="operations"] .ops-token-details {
+    grid-column: 1 / -1;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(180px, 320px) auto;
+    align-items: center;
+    gap: var(--ae-space-2);
+    width: 100%;
+    border-top: 1px solid var(--ae-line);
+    padding-top: 9px;
+}
+
+body[data-katcha-page="operations"] .ops-token-details summary {
+    grid-column: 1 / -1;
+    color: var(--ae-text-tertiary);
+    font-size: 9px;
+    cursor: pointer;
+}
+
+body[data-katcha-page="operations"] .ops-token-details label {
     color: var(--ae-text-secondary);
     font-size: 10px;
     font-weight: 740;
-}
-
-body[data-katcha-page="operations"] .ops-connect small {
-    color: var(--ae-text-tertiary);
-    font-size: 9px;
 }
 
 body[data-katcha-page="operations"] .ops-status {
@@ -545,11 +599,14 @@ body[data-katcha-page="operations"] .event-name span {
     }
 
     body[data-katcha-page="operations"] .ops-connect {
-        grid-template-columns: 1fr auto;
+        grid-template-columns: 1fr;
     }
 
-    body[data-katcha-page="operations"] .ops-connect label,
-    body[data-katcha-page="operations"] .ops-connect small {
+    body[data-katcha-page="operations"] .ops-token-details {
+        grid-template-columns: 1fr;
+    }
+
+    body[data-katcha-page="operations"] .ops-token-details summary {
         grid-column: 1 / -1;
     }
 

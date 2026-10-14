@@ -3,6 +3,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 from typing import Literal
+from urllib.parse import urlencode, urlsplit, urlunsplit
 
 from fastapi import APIRouter, Request
 from pydantic import BaseModel, Field
@@ -18,6 +19,7 @@ from katcha.api.control_auth import (
     control_principal_name,
     control_scopes,
 )
+from katcha.config import get_settings
 from katcha.control_contract import (
     CONTROL_CONTRACT_VERSION,
     capability_flags,
@@ -77,12 +79,19 @@ class ControlSessionResponse(BaseModel):
         "named_principal",
         "legacy_token",
         "local_development",
+        "cloudflare_access",
     ]
     scopes: list[str]
     channel_access: ChannelAccessResponse
     capabilities: ControlCapabilitiesResponse
     action_permissions: dict[str, ActionPermissionResponse]
     event_stream: EventStreamCapabilityResponse
+
+
+class CloudflareAccessLoginResponse(BaseModel):
+    enabled: bool
+    login_url: str | None = None
+    message: str
 
 
 def _authentication_mode(
@@ -95,6 +104,50 @@ def _authentication_mode(
     if actor == "local-development":
         return "local_development"
     return "legacy_token"
+
+
+def _safe_return_path(value: str) -> str:
+    if not value.startswith("/") or value.startswith("//") or "\\" in value:
+        return "/operations"
+    parsed = urlsplit(value)
+    if parsed.scheme or parsed.netloc or not parsed.path.startswith("/"):
+        return "/operations"
+    return urlunsplit(("", "", parsed.path, parsed.query, ""))
+
+
+@router.get("/access-login", response_model=CloudflareAccessLoginResponse)
+def cloudflare_access_login(
+    return_to: str = "/operations",
+) -> CloudflareAccessLoginResponse:
+    settings = get_settings()
+    team_domain = settings.cloudflare_access_team_domain
+    audience = settings.cloudflare_access_audience
+    application_domain = settings.cloudflare_access_application_domain
+    enabled = bool(
+        team_domain
+        and audience
+        and application_domain
+        and settings.cloudflare_access_principals
+    )
+    if not enabled:
+        return CloudflareAccessLoginResponse(
+            enabled=False,
+            message="Cloudflare sign-in has not been configured for this site.",
+        )
+
+    path = _safe_return_path(return_to)
+    login_path = "/cdn-cgi/access/login/" + application_domain
+    login_url = (
+        team_domain
+        + login_path
+        + "?"
+        + urlencode({"kid": audience, "redirect_url": path})
+    )
+    return CloudflareAccessLoginResponse(
+        enabled=True,
+        login_url=login_url,
+        message="Sign in with the email allowed by Cloudflare Access.",
+    )
 
 
 @router.get("/session", response_model=ControlSessionResponse)
@@ -128,9 +181,13 @@ def control_session(http_request: Request) -> ControlSessionResponse:
         actor=actor,
         principal_name=principal_name,
         credential=credential,
-        authentication_mode=_authentication_mode(
-            actor=actor,
-            principal_name=principal_name,
+        authentication_mode=(
+            "cloudflare_access"
+            if getattr(http_request.state, "control_authentication_mode", None)
+            == "cloudflare_access"
+            else _authentication_mode(
+                actor=actor, principal_name=principal_name
+            )
         ),
         scopes=sorted(scopes),
         channel_access=ChannelAccessResponse(

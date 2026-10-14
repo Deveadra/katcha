@@ -86,6 +86,44 @@ its configured validity window. It never returns raw token material.
 No database migration is required for credential rotation; the registry remains a
 deployment secret/configuration concern.
 
+## Browser sign-in with Cloudflare Access
+
+The operations briefing can send the browser to Cloudflare Access instead of asking
+the operator to paste a bearer token. This works when the public app hostname is
+protected by a Cloudflare Access self-hosted application. Cloudflare must forward
+`Cf-Access-Jwt-Assertion` to Katcha; Katcha verifies its signature, issuer, audience,
+and expiry before trusting the email claim.
+
+Configure the Access team origin, application AUD tag, and protected app hostname:
+
+```text
+KATCHA_CLOUDFLARE_ACCESS_TEAM_DOMAIN=https://<team>.cloudflareaccess.com
+KATCHA_CLOUDFLARE_ACCESS_AUDIENCE=<application-aud-tag>
+KATCHA_CLOUDFLARE_ACCESS_APPLICATION_DOMAIN=app.example.com
+```
+
+Map each permitted Access email to a named Access principal. That principal's
+configured scopes and channel allowlist apply to the browser session. This separate
+registry does not change or disable existing bearer credentials:
+
+```json
+[
+  {
+    "name": "operator-ui",
+    "email": "operator@example.com",
+    "scopes": ["*"],
+    "channel_profile_ids": ["*"]
+  }
+]
+```
+
+Store that list in `KATCHA_CLOUDFLARE_ACCESS_PRINCIPALS`.
+
+The Access policy and Katcha's principal mapping are both required. A valid Access
+session for an unmapped email receives 403. When Access is not configured, the
+briefing explains that sign-in is unavailable and keeps token entry hidden in hosted
+production. The local launcher continues to supply its own credential.
+
 ## Operational acceptance
 
 After named principals are configured, run the controlled operator/Aerith
