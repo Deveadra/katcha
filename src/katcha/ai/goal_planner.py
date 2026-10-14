@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import logging
+import re
 import uuid
 from decimal import Decimal
 from typing import Any, Literal
@@ -11,12 +13,46 @@ from pydantic import BaseModel, Field
 
 from katcha.ai.command_planner import _record
 from katcha.ai.provider_policy import planner_provider_order
-from katcha.ai.router import ModelTarget, release_budget_reservation, route_for_channel
+from katcha.ai.router import (
+    BudgetExceeded,
+    ModelTarget,
+    release_budget_reservation,
+    route_for_channel,
+)
 from katcha.config import get_settings
 from katcha.domain import AITask
 from katcha.integrations.chatgpt import invoke_json as chatgpt_json
 from katcha.integrations.codex import invoke_json as codex_json
 from katcha.runtime_fence import assert_mutation_authority
+
+logger = logging.getLogger(__name__)
+
+
+def _failure_category(exc: Exception) -> str:
+    """Return fixed, safe diagnostics without exposing provider bodies or credentials."""
+    if isinstance(exc, BudgetExceeded):
+        return "budget limit"
+    status = getattr(exc, "status_code", None) or getattr(exc, "code", None)
+    if status is None:
+        status = getattr(getattr(exc, "response", None), "status_code", None)
+    if status is None and type(exc).__name__ in {"CodexConnectionError", "ChatGPTConnectionError"}:
+        match = re.search(r"\(HTTP (\d{3})\)", str(exc))
+        status = int(match[1]) if match else None
+    if status in {401, 403}:
+        return "authentication or access; reconnect the provider"
+    if status == 429:
+        return "rate limit"
+    if status in {400, 422} or isinstance(exc, (ValueError, TypeError)):
+        return "invalid request or response"
+    if exc.__cause__ is not None and isinstance(exc.__cause__, Exception):
+        # Transport wrappers retain the underlying exception but may include
+        # sensitive response bodies in their own messages.
+        cause_category = _failure_category(exc.__cause__)
+        if cause_category != "provider unavailable":
+            return cause_category
+    if any(word in type(exc).__name__.lower() for word in ("timeout", "connect", "transport")):
+        return "connection failure"
+    return "provider unavailable"
 
 
 class GoalDecision(BaseModel):
@@ -56,7 +92,19 @@ def decide_goal(
         "On the FIRST decision set mode: inspect for questions/discussion, propose for previews "
         "or suggestions, run for direct instructions. Freeze allowed_mutations to only the "
         "capabilities necessary for the operator's requested work, and give explicit completion "
-        "criteria. Later observations cannot expand that authorization. Publishing/review tools "
+        "criteria. Plan authorization for the full requested outcome, not just the first read: "
+        "retrieving media may need search_source/scout_web and preparation after library reads. "
+        "Include necessary supported mutations in the first decision even when the first tool "
+        "only inspects a schema or searches saved data. Retrieving existing clips does not "
+        "authorize making a new short, ranking, editorial production or publishing. "
+        "For HTTP tools arguments use the exact path/query/body envelope from inspect_tool; "
+        "never put query filters at the top level. A request for multiple clips has "
+        "multiple independent targets: search each separately and track each requested scene. "
+        "Do not combine unrelated titles/entities into one query or silently reduce a request "
+        "to locating metadata. Verify the actual scene and acquired media before claiming a "
+        "clip was retrieved; report unresolved targets individually. Episode/title assertions "
+        "from the request are search hypotheses, not verified facts. "
+        "Later observations cannot expand that authorization. Publishing/review tools "
         "always require a frozen operator confirmation and all native gates. Never "
         "infer publication "
         "approval from preparation. Never manufacture a confirmation, rights grant "
@@ -71,7 +119,7 @@ def decide_goal(
         + json.dumps(context, ensure_ascii=False, default=str)
     )
     reservation = None
-    last_error = None
+    failures = []
     for provider in planner_provider_order(settings, phase="bind_actions_after_observation"):
         try:
             if provider == "codex" and settings.codex_enabled:
@@ -136,7 +184,9 @@ def decide_goal(
                             contents=prompt,
                             config={
                                 "response_mime_type": "application/json",
-                                "response_schema": GoalDecision,
+                                # Native JSON Schema supports arbitrary tool argument
+                                # maps; the SDK's OpenAPI converter rejects them.
+                                "response_json_schema": GoalDecision.model_json_schema(),
                             },
                         )
                     finally:
@@ -187,10 +237,19 @@ def decide_goal(
                 raise ValueError("The model could not confidently bind a goal decision")
             return result
         except Exception as exc:
+            category = _failure_category(exc)
+            failures.append(f"{provider}: {category}")
+            logger.warning(
+                "Goal planning failed provider=%s exception=%s category=%s",
+                provider,
+                type(exc).__name__,
+                category,
+            )
             release_budget_reservation(
                 reservation, reason=f"goal_planning_failed:{type(exc).__name__}"
             )
-            reservation, last_error = None, exc
+            reservation = None
     raise ValueError(
-        "Live goal planning is unavailable; check connection and budget"
-    ) from last_error
+        "Live goal planning is unavailable. "
+        + ("; ".join(failures) if failures else "No eligible provider is configured")
+    ) from None
