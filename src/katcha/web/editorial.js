@@ -376,6 +376,12 @@ window.KatchaEditorial = (() => {
             throw new Error("This upload cannot resume. Inspect or cancel the previous upload before retrying.");
         }
         const detail = await api(base + "/" + encodeURIComponent(begun.source_id));
+        if (detail.state === "ready") return detail;
+        if (detail.state === "verifying") {
+            return api(base + "/" + encodeURIComponent(begun.source_id) + "/complete", {
+                method: "POST",
+            });
+        }
         const received = new Set((detail.parts || []).map(item => item.part_number));
         let completedBytes = (detail.parts || []).reduce((sum, item) => sum + item.size, 0);
         const count = begun.part_count;

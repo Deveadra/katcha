@@ -17,6 +17,7 @@ const largeClipId = "55555555-5555-4555-8555-555555555555";
 const largeUploadUrl = "https://upload.katcha.invalid/" + largeUploadId;
 const receivedLargeParts = new Set([1]); // resumable transfer with one part already on R2
 let retryLargePartTwo = true;
+let recoverLargeCompletion = false;
 let loseSourceMediaResponse = true;
 let loseCreateResponse = true, loseSaveResponse = true;
 let publication = null;
@@ -110,7 +111,7 @@ const draft = {
             if (url.pathname.endsWith("/source-uploads/multipart/" + largeUploadId)) {
                 assert.equal(request.method(), "GET");
                 return send({
-                    source_id: largeUploadId, state: "uploading",
+                    source_id: largeUploadId, state: recoverLargeCompletion ? "verifying" : "uploading",
                     parts: [...receivedLargeParts].map(part_number => ({
                         part_number, size: 64 * 1024 ** 2, etag: '"fixture-part"'
                     })),
@@ -492,6 +493,28 @@ const draft = {
         assert.match(await page.locator("#editorial-selected-clips").innerText(), /mock-large/);
         assert.equal(
             calls.filter(call => call.path.endsWith("/source-uploads/multipart")).length, 1,
+        );
+        // R2 completed, but the API response/journal commit was lost. Begin
+        // still says uploading; the reconciled status must resume verification
+        // without signing or retransmitting any parts.
+        recoverLargeCompletion = true;
+        const signsBeforeRecovery = calls.filter(
+            call => call.path.endsWith("/source-uploads/multipart/" + largeUploadId + "/parts")
+        ).length;
+        await page.evaluate(() => {
+            document.getElementById("editorial-source-upload-status").textContent = "Recovery fixture";
+        });
+        await page.locator("#editorial-source-upload-button").click();
+        await page.getByText("mock-large.mp4 ready").waitFor();
+        assert.equal(
+            calls.filter(call => call.path.endsWith("/source-uploads/multipart")).length, 2,
+        );
+        assert.equal(
+            calls.filter(call => call.path.endsWith("/source-uploads/multipart/" + largeUploadId + "/parts")).length,
+            signsBeforeRecovery,
+        );
+        assert.equal(
+            calls.filter(call => call.path.endsWith("/source-uploads/multipart/" + largeUploadId + "/complete")).length, 2,
         );
         await page.locator('[data-editorial-remove-source]').last().click();
         await page.getByText("Start from a script", {exact: true}).click();

@@ -131,7 +131,7 @@ def initiate(
             )
         row = session.scalar(_source(channel_id, source_id, locked=True))
         if row is not None:
-            meta = row.source_metadata or {}
+            meta = dict(row.source_metadata or {})
             if (
                 meta.get("multipart") is not True
                 or meta.get("channel_profile_id") != str(channel_id)
@@ -222,7 +222,21 @@ def status(channel_id: uuid.UUID, source_id: uuid.UUID) -> dict:
         row = _load(session, channel_id, source_id)
         receipt = _receipt(row)
         meta = dict(row.source_metadata)
-    receipt["parts"] = _parts(_client_store(), meta) if meta["state"] == "uploading" else []
+    receipt["parts"] = []
+    if meta["state"] == "uploading":
+        store = _client_store()
+        try:
+            receipt["parts"] = _parts(store, meta)
+        except ClientError as exc:
+            # Completion can succeed remotely before its response or the journal
+            # commit survives. Expose a recoverable read-only snapshot; finish()
+            # performs the fenced, locked transition and full verification.
+            if (
+                exc.response.get("Error", {}).get("Code") != "NoSuchUpload"
+                or not store.exists(meta["staging_key"])
+            ):
+                raise
+            receipt["state"] = "verifying"
     return receipt
 
 

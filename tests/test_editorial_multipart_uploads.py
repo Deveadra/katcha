@@ -5,6 +5,7 @@ import uuid
 from types import SimpleNamespace
 
 import pytest
+from botocore.exceptions import ClientError
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, select
@@ -33,7 +34,7 @@ class MemoryS3:
 
     def create_multipart_upload(self, **kwargs):
         self.uploads.append(kwargs)
-        return {"UploadId": "opaque-r2-upload-id"}
+        return {"UploadId": f"opaque-r2-upload-id-{len(self.uploads)}"}
 
     def generate_presigned_url(self, operation, Params, ExpiresIn, **kwargs):
         assert ExpiresIn <= 600
@@ -42,6 +43,8 @@ class MemoryS3:
         return "https://r2.example.test/signed/" + operation
 
     def list_parts(self, **kwargs):
+        if kwargs["Key"] in self.items:
+            raise ClientError({"Error": {"Code": "NoSuchUpload"}}, "ListParts")
         return {"Parts": list(self.upload_parts), "IsTruncated": False}
 
     def complete_multipart_upload(self, **kwargs):
@@ -270,6 +273,14 @@ def test_aborted_upload_may_be_restarted_with_same_source_identity(upload_db):
     assert restarted["source_id"] == initial["source_id"]
     assert restarted["state"] == "uploading"
     assert len(store.client.uploads) == 2
+    source_id = uuid.UUID(restarted["source_id"])
+    assert uploads.status(channel, source_id)["state"] == "uploading"
+    uploads.sign_part(channel, source_id, 1)
+    assert store.client.signed_parts[-1]["UploadId"] == "opaque-r2-upload-id-2"
+    with db.session_scope() as session:
+        meta = session.get(SourceItem, source_id).source_metadata
+        assert meta["state"] == "uploading"
+        assert meta["upload_id"] == "opaque-r2-upload-id-2"
 
 
 def test_size_verification_rejects_truncation_without_promoting_media(upload_db):
@@ -437,3 +448,58 @@ def test_failover_after_hash_blocks_canonical_copy_and_registration(
             select(Clip).where(Clip.sha256 == "c" * 64)
         ) is None
         assert session.get(SourceItem, source_id).clip_id is None
+
+
+def test_lost_remote_completion_response_recovers_through_status(upload_db, monkeypatch):
+    channel, other, store = upload_db
+    started = begin(channel, identity="lost-completion", size_bytes=5)
+    source_id = uuid.UUID(started["source_id"])
+    store.client.upload_parts = [{"PartNumber": 1, "Size": 5, "ETag": '"part"'}]
+    complete = store.client.complete_multipart_upload
+
+    def lose_response(**kwargs):
+        complete(**kwargs)
+        raise OSError("completion response lost")
+
+    monkeypatch.setattr(store.client, "complete_multipart_upload", lose_response)
+    with pytest.raises(OSError, match="response lost"):
+        uploads.finish(channel, source_id, actor="test")
+    with db.session_scope() as session:
+        assert session.get(SourceItem, source_id).source_metadata["state"] == "uploading"
+    assert begin(channel, identity="lost-completion", size_bytes=5)["state"] == "uploading"
+    snapshot = uploads.status(channel, source_id)
+    assert snapshot["state"] == "verifying"
+    assert snapshot["parts"] == []
+    with pytest.raises(ValueError, match="not found"):
+        uploads.status(other, source_id)
+    # Status is read-only: the mutation and verification remain in finish().
+    with db.session_scope() as session:
+        assert session.get(SourceItem, source_id).source_metadata["state"] == "uploading"
+    monkeypatch.setattr(
+        uploads, "_probe_object",
+        lambda *_args: ({"format": {"duration": "3"}}, 3.0, 3840, 2160),
+    )
+    receipt = uploads.finish(channel, source_id, actor="test")
+    assert receipt["state"] == "ready"
+    assert receipt["sha256"] == uploads.hashlib.sha256(b"media").hexdigest()
+    assert len(store.client.completed) == 1
+    assert len(store.client.copied) == 1
+
+
+@pytest.mark.parametrize("code", ["NoSuchUpload", "AccessDenied"])
+def test_status_does_not_mask_missing_upload_or_storage_denial(upload_db, monkeypatch, code):
+    channel, _, store = upload_db
+    started = begin(channel, identity="missing-" + code)
+    source_id = uuid.UUID(started["source_id"])
+
+    def deny(**kwargs):
+        raise ClientError({"Error": {"Code": code}}, "ListParts")
+
+    monkeypatch.setattr(store.client, "list_parts", deny)
+    if code == "AccessDenied":
+        with db.session_scope() as session:
+            key = session.get(SourceItem, source_id).source_metadata["staging_key"]
+        store.client.items[key] = b"media"
+    with pytest.raises(ClientError) as rejected:
+        uploads.status(channel, source_id)
+    assert rejected.value.response["Error"]["Code"] == code
