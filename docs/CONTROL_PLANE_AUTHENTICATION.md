@@ -134,3 +134,26 @@ principal-bound event consumption, a real Katcha AI command, explicit proposal
 confirmation, Temporal workflow completion, audit attribution, and event-cursor
 acknowledgement without creating or publishing media.
 
+
+### Hosted workspace connection
+
+On `app.katcha.stream`, Home, Trends, Clips, Channel Studio, and Production
+verify `GET /v1/control/session` using the same-origin Cloudflare Access
+browser session and automatically load data only after the server returns an
+authenticated actor. A denied session shows a sign-in or operator-mapping
+explanation. Explicit bearer entry remains a fallback; the local launcher does
+not use this browser bootstrap.
+
+**Deployment requirements:** The Cloudflare Access app must protect
+`app.katcha.stream`, forward its JWT assertion, and the deployed **API release**
+must support Access identity verification. Set the team domain, application AUD,
+application domain, and an explicit mapped email/principal with appropriate
+scopes in the protected production environment. A Cloudflare login alone does
+not grant Katcha API privileges. Do not remove the existing legacy operator
+credential until the browser session and channel permissions are verified.
+
+Release publication to GHCR does **not** update the running OCI primary. Verify
+the exact deployed SHA, apply a reviewed production rollout, then check
+`/v1/control/session`, `/v1/channels`, and the browser connection state for
+all five workspaces. Do not authorize production promotion merely because a
+branch or PR was merged.
