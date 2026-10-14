@@ -1169,3 +1169,20 @@ def list_clips(
         if clip_status:
             stmt = stmt.where(Clip.status == clip_status)
         return list(session.scalars(stmt))
+
+
+@app.get("/", include_in_schema=False)
+def root_workspace() -> RedirectResponse:
+    """Send the public application entry point to the existing home briefing."""
+    return RedirectResponse(url="/home")
+
+# Keep this fallback mount LAST. Workspace shells are served from workspace-specific
+# /.../assets/ paths, but their CSS/JS use root-absolute URLs (including /pages/*).
+# Without this mount those requests return 404 under the real FastAPI server,
+# even though browser fixtures (which serve web/ at /) appear fully styled.
+# Specific application and /v1 routes above take precedence over this mount.
+app.mount(
+    "/",
+    StaticFiles(directory=Path(__file__).parents[1] / "web"),
+    name="web-root-assets",
+)
