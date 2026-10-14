@@ -70,6 +70,7 @@ async function showAccessPrompt(error) {
         location.port === "8765" ||
         ["localhost", "127.0.0.1"].includes(location.hostname);
     tokenDetails.hidden = !localDevelopment;
+    tokenDetails.open = localDevelopment;
 
     $("access-message").textContent = error.status === 403
         ? "This email has no Katcha operator profile. Use an authorized email or contact the workspace owner."
