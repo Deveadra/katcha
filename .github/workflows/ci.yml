@@ -213,7 +213,8 @@ jobs:
         # Bounded test parameter IDs prevent oversized log output.
         run: |
           set -o pipefail
-          timeout --signal=INT --kill-after=15s 900s pytest -q
+          python -m pip install 'pytest-timeout>=2.3,<3'
+          timeout --signal=INT --kill-after=15s 900s pytest -vv --timeout=120 --timeout-method=signal
 
       - name: Verify built-in brand assets through S3-compatible HTTP endpoint
         env:

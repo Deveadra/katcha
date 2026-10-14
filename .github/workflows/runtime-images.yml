@@ -1,7 +1,11 @@
 name: Publish runtime images
 
 on:
-  push:
+  # Only a successful full CI run for a push to main can publish images.
+  # PRs continue to build without publishing.
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
     branches: [main]
   pull_request:
     paths:
@@ -14,7 +18,6 @@ on:
       - Dockerfile.minio
       - pyproject.toml
       - renderer/**
-  workflow_dispatch:
 
 permissions:
   contents: read
@@ -33,6 +36,7 @@ jobs:
     outputs:
       matrix: ${{ steps.plan.outputs.matrix }}
       has_images: ${{ steps.plan.outputs.has_images }}
+      release_sha: ${{ steps.plan.outputs.release_sha }}
     steps:
       - name: Select images and platforms
         id: plan
@@ -49,6 +53,36 @@ jobs:
             ];
 
             let selected = definitions;
+            let releaseSha = context.sha;
+            if (context.eventName === "workflow_run") {
+              const run = context.payload.workflow_run;
+              if (
+                run?.event !== "push" ||
+                run?.conclusion !== "success" ||
+                run?.head_branch !== "main" ||
+                run?.head_repository?.full_name !== context.repo.owner + "/" + context.repo.repo ||
+                !/^[0-9a-f]{40}$/.test(run?.head_sha || "")
+              ) {
+                core.setFailed("Rejected image publication: CI was not a successful push to this repository's main.");
+                core.setOutput("matrix", JSON.stringify({include: []}));
+                core.setOutput("has_images", "false");
+                core.setOutput("release_sha", "");
+                return;
+              }
+              const main = await github.rest.repos.getBranch({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                branch: "main",
+              });
+              if (main.data.commit.sha !== run.head_sha) {
+                core.setFailed("Rejected image publication: CI revision is no longer main HEAD.");
+                core.setOutput("matrix", JSON.stringify({include: []}));
+                core.setOutput("has_images", "false");
+                core.setOutput("release_sha", "");
+                return;
+              }
+              releaseSha = run.head_sha;
+            }
             if (context.eventName === "pull_request") {
               const files = await github.paginate(github.rest.pulls.listFiles, {
                 owner: context.repo.owner,
@@ -83,6 +117,7 @@ jobs:
             }));
             core.setOutput("matrix", JSON.stringify({include}));
             core.setOutput("has_images", include.length ? "true" : "false");
+            core.setOutput("release_sha", releaseSha);
             core.info(`Selected runtime images: ${include.map((entry) => entry.image).join(", ") || "none"}`);
 
   build:
@@ -95,6 +130,9 @@ jobs:
       matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.plan.outputs.release_sha }}
+          persist-credentials: false
 
       - uses: docker/setup-qemu-action@v3
         if: github.event_name != 'pull_request'
@@ -109,31 +147,64 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and publish exact revision
+      - name: Build exact revision before release recheck
         uses: docker/build-push-action@v7
         with:
           context: .
           file: ${{ matrix.dockerfile }}
           platforms: ${{ matrix.platforms }}
-          push: ${{ github.event_name != 'pull_request' }}
+          push: false
           tags: |
-            ghcr.io/deveadra/${{ matrix.image }}:${{ github.sha }}
+            ghcr.io/deveadra/${{ matrix.image }}:${{ needs.plan.outputs.release_sha }}
             ghcr.io/deveadra/${{ matrix.image }}:main
           labels: |
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
-            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.revision=${{ needs.plan.outputs.release_sha }}
+          cache-from: type=gha,scope=${{ matrix.image }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image }}
+
+      - name: Recheck current main immediately before publication
+        if: github.event_name == 'workflow_run'
+        uses: actions/github-script@v7
+        env:
+          RELEASE_SHA: ${{ needs.plan.outputs.release_sha }}
+        with:
+          script: |
+            const main = await github.rest.repos.getBranch({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              branch: "main",
+            });
+            if (main.data.commit.sha !== process.env.RELEASE_SHA) {
+              core.setFailed("Rejected image publication: main advanced while images were building.");
+            }
+
+      - name: Publish cached exact revision
+        if: github.event_name == 'workflow_run'
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          platforms: ${{ matrix.platforms }}
+          push: ${{ github.event_name == 'workflow_run' }}
+          tags: |
+            ghcr.io/deveadra/${{ matrix.image }}:${{ needs.plan.outputs.release_sha }}
+            ghcr.io/deveadra/${{ matrix.image }}:main
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ needs.plan.outputs.release_sha }}
           cache-from: type=gha,scope=${{ matrix.image }}
           cache-to: type=gha,mode=max,scope=${{ matrix.image }}
 
   verify-public:
     name: Verify anonymous runtime pulls
-    needs: build
-    if: github.event_name != 'pull_request' && needs.build.result == 'success'
+    needs: [plan, build]
+    if: github.event_name == 'workflow_run' && needs.build.result == 'success'
     runs-on: ubuntu-latest
     permissions:
       contents: read
     env:
-      IMAGE_TAG: ${{ github.sha }}
+      IMAGE_TAG: ${{ needs.plan.outputs.release_sha }}
     steps:
       - name: Pull runtime images without a registry login
         shell: bash
@@ -152,5 +223,5 @@ jobs:
             echo "Anonymous pull: ${ref}"
             docker pull "${ref}"
             revision="$(docker inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "${ref}")"
-            test "${revision}" = "${GITHUB_SHA}"
+            test "${revision}" = "${IMAGE_TAG}"
           done

@@ -674,7 +674,60 @@ def promote_identity_only_candidate(
     }
 
 
-def cleanup(oci: Oci, plan: dict[str, Any], instance_id: str) -> dict[str, Any]:
+def revoke_candidate_tag(
+    oci: Oci,
+    plan: dict[str, Any],
+    instance_id: str,
+) -> dict[str, Any]:
+    """Revoke tag while guest remains available for negative Vault tests."""
+    verify(oci, plan, instance_id, for_cleanup=True)
+    instance = oci.read("compute", "instance", "get", "--instance-id", instance_id)
+    tags = instance.get("freeform-tags") or {}
+    if (
+        not re.fullmatch(r"[0-9a-f]{12}", tags.get("KatchaProbeId", ""))
+        or instance.get("display-name")
+        != "katcha-identity-probe-" + tags["KatchaProbeId"]
+    ):
+        raise ProbeError("refused tag revocation: exact probe identity missing")
+    original = instance.get("defined-tags") or {}
+    recovery_tags = original.get("KatchaRecovery") or {}
+    if recovery_tags.get("Candidate") != "true":
+        raise ProbeError("candidate tag is absent; no revocation action performed")
+    if recovery_tags.get("Candidate") == "true":
+        remaining = {
+            key: value for key, value in recovery_tags.items()
+            if key != "Candidate"
+        }
+        new_defined = {**original}
+        if remaining:
+            new_defined["KatchaRecovery"] = remaining
+        else:
+            new_defined.pop("KatchaRecovery", None)
+        oci.update_probe_defined_tags(instance_id, new_defined)
+        after_revoke = oci.read(
+            "compute", "instance", "get", "--instance-id", instance_id
+        )
+        after_tags = (after_revoke.get("defined-tags") or {}).get("KatchaRecovery") or {}
+        if after_tags.get("Candidate") == "true":
+            raise ProbeError(
+                "cleanup refused: instance-principal candidate tag revocation unverified"
+            )
+
+    return {
+        "status": "CANDIDATE_TAG_REMOVED_DATA_PLANE_NOT_YET_VERIFIED",
+        "instance_id": instance_id,
+        "vault_effective_access_revoked": False,
+    }
+
+
+def cleanup(
+    oci: Oci,
+    plan: dict[str, Any],
+    instance_id: str,
+    *,
+    emergency: bool = False,
+    expected_boot_id: str | None = None,
+) -> dict[str, Any]:
     # verify checks the probe tag, no data volumes, private network, and
     # 50 GB boot volume even if the candidate is stopped or primary is down.
     verify(oci, plan, instance_id, for_cleanup=True)
@@ -705,30 +758,20 @@ def cleanup(oci: Oci, plan: dict[str, Any], instance_id: str) -> dict[str, Any]:
     boot_id = attached[0].get("boot-volume-id")
     if not isinstance(boot_id, str) or not boot_id.startswith("ocid1.bootvolume."):
         raise ProbeError("cleanup refused: probe boot volume ID invalid")
-    # Revoke temporary instance-principal Vault authorization *before*
-    # attempting termination. A timed-out delete must not intentionally leave
-    # a still-authorized probe running.
-    original = instance.get("defined-tags") or {}
-    recovery_tags = original.get("KatchaRecovery") or {}
-    if recovery_tags.get("Candidate") == "true":
-        remaining = {
-            key: value for key, value in recovery_tags.items()
-            if key != "Candidate"
-        }
-        new_defined = {**original}
-        if remaining:
-            new_defined["KatchaRecovery"] = remaining
-        else:
-            new_defined.pop("KatchaRecovery", None)
-        oci.update_probe_defined_tags(instance_id, new_defined)
-        after_revoke = oci.read(
-            "compute", "instance", "get", "--instance-id", instance_id
+    if emergency:
+        if (
+            not expected_boot_id
+            or boot_id != expected_boot_id
+            or not boot_id.startswith("ocid1.bootvolume.")
+        ):
+            raise ProbeError("emergency cleanup refused: exact boot volume mismatch")
+    elif (
+        (instance.get("defined-tags") or {}).get("KatchaRecovery") or {}
+    ).get("Candidate") == "true":
+        raise ProbeError(
+            "normal cleanup refused: revoke candidate tag and verify "
+            "four post-revocation Vault denials before termination"
         )
-        after_tags = (after_revoke.get("defined-tags") or {}).get("KatchaRecovery") or {}
-        if after_tags.get("Candidate") == "true":
-            raise ProbeError(
-                "cleanup refused: instance-principal candidate tag revocation unverified"
-            )
 
     oci.terminate_test_instance(instance_id)
     for _ in range(24):
@@ -757,8 +800,14 @@ def cleanup(oci: Oci, plan: dict[str, Any], instance_id: str) -> dict[str, Any]:
     except ProbeError:
         primary_running = False
     return {
-        "status": "TEST_RESOURCES_REMOVED",
+        "status": (
+            "EMERGENCY_TEST_RESOURCES_REMOVED_IAM_UNVERIFIED"
+            if emergency else "TEST_RESOURCES_REMOVED"
+        ),
         "instance_id": instance_id,
+        "production_api_readiness_verified": False,
+        "original_disk_inventory_verified": False,
+        "effective_iam_revocation_verified": False,
         "test_boot_volume_removed": True,
         "primary_running": primary_running,
     }
@@ -767,19 +816,26 @@ def cleanup(oci: Oci, plan: dict[str, Any], instance_id: str) -> dict[str, Any]:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "mode", choices=("plan", "launch", "verify", "tag-candidate", "cleanup")
+        "mode", choices=(
+            "plan", "launch", "verify", "tag-candidate", "revoke-tag",
+            "cleanup", "emergency-contain",
+        )
     )
     parser.add_argument("--instance-id", help="required for verify or cleanup")
     parser.add_argument("--approve-launch-and-storage-exhaustion", action="store_true")
     parser.add_argument("--approve-cleanup-of-test-instance-and-boot-volume", action="store_true")
     parser.add_argument("--approve-isolated-candidate-iam-tag", action="store_true")
     parser.add_argument("--acknowledge-four-untagged-vault-denials", action="store_true")
+    parser.add_argument("--approve-isolated-candidate-tag-revocation", action="store_true")
+    parser.add_argument("--acknowledge-post-revocation-four-denials", action="store_true")
+    parser.add_argument("--approve-emergency-probe-containment", action="store_true")
+    parser.add_argument("--expected-boot-volume-id")
     options = parser.parse_args(argv)
     try:
         oci = Oci()
         plan = (
             cleanup_plan()
-            if options.mode == "cleanup"
+            if options.mode in {"cleanup", "emergency-contain", "revoke-tag"}
             else gather(oci, for_new_launch=options.mode in {"plan", "launch"})
         )
         if options.mode == "plan":
@@ -824,15 +880,45 @@ def main(argv: list[str] | None = None) -> int:
                 sort_keys=True,
             ))
             return 0
+        if options.mode == "revoke-tag":
+            if (
+                not options.instance_id
+                or not options.approve_isolated_candidate_tag_revocation
+            ):
+                raise ProbeError(
+                    "revoke-tag requires exact instance ID and pre-approved scope"
+                )
+            print(json.dumps(
+                revoke_candidate_tag(oci, plan, options.instance_id),
+                sort_keys=True,
+            ))
+            return 0
         if options.mode == "cleanup":
             if (
                 not options.instance_id
                 or not options.approve_cleanup_of_test_instance_and_boot_volume
+                or not options.acknowledge_post_revocation_four_denials
             ):
                 raise ProbeError(
-                    "cleanup requires exact instance ID and explicit test-resource approval"
+                    "cleanup requires exact instance ID, pre-authorized deletion, "
+                    "and witnessed four negative post-revocation Vault checks"
                 )
             print(json.dumps(cleanup(oci, plan, options.instance_id), sort_keys=True))
+            return 0
+        if options.mode == "emergency-contain":
+            if (
+                not options.instance_id
+                or not options.expected_boot_volume_id
+                or not options.approve_emergency_probe_containment
+            ):
+                raise ProbeError(
+                    "emergency containment requires exact instance ID, exact "
+                    "boot-volume ID and advance containment authorization"
+                )
+            print(json.dumps(cleanup(
+                oci, plan, options.instance_id, emergency=True,
+                expected_boot_id=options.expected_boot_volume_id,
+            ), sort_keys=True))
             return 0
         if not options.approve_launch_and_storage_exhaustion:
             raise ProbeError("launch requires explicit approval and storage-exhaustion flag")
