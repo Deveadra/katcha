@@ -8,8 +8,17 @@ $('token').value = sessionStorage.getItem('katcha.controlToken') || '';
 async function api(path, options = {}) {
     const token = sessionStorage.getItem('katcha.controlToken');
     const response = await fetch(path, {...options, headers: {...(token ? {Authorization: 'Bearer '+token} : {}), ...(options.body instanceof Blob ? {} : {'Content-Type':'application/json'}), ...options.headers}});
-    const body = await response.json();
-    if (!response.ok) throw new Error(typeof body.detail === 'string' ? body.detail : 'Request failed. Check your inputs and try again.');
+    // Non-JSON proxy errors must retain their HTTP status for diagnostics.
+    let body;
+    try { body = await response.json(); } catch { body = null; }
+    if (!response.ok) {
+        const error = new Error(
+            typeof body?.detail === 'string' ? body.detail :
+            'Server rejected request (HTTP ' + response.status + '). Check the upload configuration.'
+        );
+        error.httpStatus = response.status;
+        throw error;
+    }
     return body;
 }
 function endpoint(suffix='') { return '/v1/channels/'+contentState.channel+'/content'+suffix; }
@@ -36,8 +45,8 @@ function detail(row) {
     const bytes=(offset,size)=>size ? `${Number(offset||0).toLocaleString()} / ${Number(size).toLocaleString()} bytes (${Math.floor(Number(offset||0)/Number(size)*100)}%)` : 'Waiting for upload size';
     $('detail').innerHTML=`<h2>${esc(row.title)}</h2><p>${esc(human(row.phase))}</p><details><summary>Troubleshooting</summary><small>Content ID: ${esc(row.id)}</small></details>
     ${row.error ? `<p role="alert">${esc(row.error)}</p>`:''}
-    ${row.input_kind==='file' ? `<p>Received: ${esc(bytes(row.upload_offset,row.size_bytes))}</p>`:''}
-    ${row.phase==='uploading' ? '<p>Reselect the same file and choose Add content to resume. Completed chunks are verified before continuing.</p>':''}
+    ${row.input_kind==='file' ? `<p>Received: <strong id="content-received-counter">${esc(bytes(row.upload_offset,row.size_bytes))}</strong></p>`:''}
+    ${row.phase==='uploading' ? '<p>Reselect the same file above and choose Add content to resume. A zero-byte receipt with a storage error needs R2 authorization or connectivity repaired first; choosing the file repeatedly cannot fix that.</p>':''}
     ${row.phase==='failed'||(row.error && !row.clip_id && row.input_kind==='url') ? '<button class="button secondary" data-action="retry-download">Retry download</button>':''}
     ${row.media ? `<p>${esc(row.media.width)} × ${esc(row.media.height)} · ${esc(row.media.duration_seconds)} seconds</p><a href="/clips?channel=${encodeURIComponent(contentState.channel)}&clip=${encodeURIComponent(row.clip_id)}">Inspect media and source history in Clips</a><p>Use the finished video unchanged, or start an optional AI short. Existing rights checks still apply. Permission does not establish original authorship or YouTube monetization eligibility.</p>${row.readiness ? `<p>Production readiness: ${esc(row.readiness.reason)}</p>` : ''}<button class="button primary" data-action="preserve"${row.readiness?.eligible===false?' disabled':''}>Use video unchanged</button> <button class="button secondary" data-action="ai_short"${row.readiness?.eligible===false?' disabled':''}>Create AI short</button><p><a href="/studio?channel=${encodeURIComponent(contentState.channel)}&clip=${encodeURIComponent(row.clip_id)}">Edit in Clip Studio</a></p>`:''}
     <h3>Production</h3>${row.productions.length ? row.productions.map(p=>`<p>${esc(human(p.kind))}: ${esc(human(p.stage||p.status))}${p.error ? ' · '+esc(p.error):''}</p>${p.status==='approved' && !row.publications.some(v=>v.production_id===p.id) ? `<button class="button secondary" data-production="${esc(p.id)}">Review for YouTube</button>`:''}`).join(''):'<p>No production yet. Media must finish arriving before preparation can start.</p>'}
@@ -69,16 +78,82 @@ $('previous').onclick=()=>{contentState.offset=Math.max(0,contentState.offset-25
 $('next').onclick=()=>{contentState.offset+=25;load().catch(e=>message(e.message));};
 $('items').onclick=e=>{const button=e.target.closest('[data-item]');if(button){rememberItem(button.dataset.item);load().catch(e=>message(e.message));}};
 $('pause').onclick=()=>{contentState.pause=true;message('Pausing after the current chunk. Your uploaded bytes remain saved.');};
+const uploadDelay = ms => new Promise(resolve => setTimeout(resolve, ms));
+function uploadProgress(offset, size) {
+    $('upload-progress').value = size ? Math.min(100, offset / size * 100) : 0;
+    if (contentState.selected?.phase === 'uploading') {
+        contentState.selected.upload_offset = offset;
+        const counter = $('content-received-counter');
+        if (counter) counter.textContent = offset.toLocaleString() + ' / ' +
+            size.toLocaleString() + ' bytes (' + Math.floor(offset / size * 100) + '%)';
+    }
+}
+async function digestChunk(blob) {
+    const hash = await crypto.subtle.digest('SHA-256', await blob.arrayBuffer());
+    return Array.from(new Uint8Array(hash)).map(b=>b.toString(16).padStart(2,'0')).join('');
+}
+async function verifySavedChunks(file, receipt) {
+    for (const chunk of receipt.chunks || []) {
+        if (chunk.offset + chunk.size > file.size ||
+            await digestChunk(file.slice(chunk.offset, chunk.offset + chunk.size)) !== chunk.sha256) {
+            throw new Error('The selected file differs from the saved upload. Choose the original video.');
+        }
+    }
+}
+async function sendVerifiedChunk(receipt, file, offset) {
+    const size = Math.min(receipt.chunk_bytes || 8 * 1024 ** 2, file.size - offset);
+    const segment = file.slice(offset, offset + size);
+    const chunkUrl = endpoint('/' + receipt.id + '/chunks?offset=' + offset);
+    for (let attempt = 0; attempt < 3; attempt++) {
+        try {
+            const result = await api(chunkUrl, {method:'PUT', body:segment});
+            if (!(result.upload_offset > offset && result.upload_offset <= file.size)) {
+                throw new Error('Server returned an invalid upload offset. The upload was paused.');
+            }
+            return result.upload_offset;
+        } catch(error) {
+            // Permission, scope, invalid file, and proxy size errors cannot
+            // be repaired by repeatedly transmitting the same data.
+            if ([400,401,403,404,409,413,415,422].includes(error.httpStatus)) {
+                throw new Error('Upload stopped at byte ' + offset + ': ' + error.message);
+            }
+            // A response can be lost after R2 and PostgreSQL commit. Reconcile
+            // the durable receipt before reissuing the same chunk.
+            let saved = null;
+            try { saved = await api(endpoint('/' + receipt.id)); } catch {}
+            if (saved?.upload_offset > offset) {
+                const confirmed = (saved.chunks || []).find(
+                    chunk => chunk.offset === offset && chunk.size === size
+                );
+                if (!confirmed || await digestChunk(segment) !== confirmed.sha256) {
+                    throw new Error('Saved upload differs from the selected file. Upload stopped safely.');
+                }
+                if (saved.upload_offset > file.size) {
+                    throw new Error('Saved upload exceeds this file. Upload stopped safely.');
+                }
+                return saved.upload_offset;
+            }
+            if (attempt === 2) {
+                throw new Error('Upload stopped at byte ' + offset + ' after 3 attempts: ' +
+                    error.message + ' The receipt remains saved; see Content history.');
+            }
+            message('Chunk at byte ' + offset + ' was not acknowledged. Retrying (' +
+                (attempt + 2) + '/3)…');
+            await uploadDelay(350 * (attempt + 1));
+        }
+    }
+    throw new Error('Upload stopped: no chunk acknowledgement was received.');
+}
 $('intake-form').addEventListener('submit',async e=>{
     e.preventDefault();if(contentState.busy||!contentState.channel)return;
     contentState.busy=true;contentState.pause=false;$('add').disabled=true;$('channel').disabled=true;
+    $('upload-notice').textContent='';
     try {
         const kind=$('input-kind').value,file=$('file').files[0];
         if(kind==='file'&&!file)throw new Error('Choose a video file.');
         if(kind==='clip'&&!$('clip-id').value)throw new Error('Choose a clip in Clips and select Create video first.');
         if(kind==='file'&&file.size>4*1024**3)throw new Error('Choose a video export up to 4 GiB.');
-        // A retry uses the saved identity. Every saved chunk is checked against the reselected file.
-        const inputIdentity=kind==='file'?`${file.name}:${file.size}:${file.lastModified}`:kind==='url'?$('url').value:$('clip-id').value;
+        const inputIdentity=kind==='file'?file.name+':'+file.size+':'+file.lastModified:kind==='url'?$('url').value:$('clip-id').value;
         let fingerprint=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(inputIdentity)))).map(b=>b.toString(16).padStart(2,'0')).join('');
         const storageKey='katcha.intake.'+contentState.channel+'.'+fingerprint;
         const selected=contentState.selected;
@@ -90,20 +165,24 @@ $('intake-form').addEventListener('submit',async e=>{
         rememberItem(receipt.id);await load();
         if(kind==='file'&&!receipt.clip_id){
             $('pause').hidden=false;$('upload-progress').hidden=false;
-            for(const chunk of receipt.chunks||[]){
-                const digest=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',await file.slice(chunk.offset,chunk.offset+chunk.size).arrayBuffer()))).map(b=>b.toString(16).padStart(2,'0')).join('');
-                if(digest!==chunk.sha256)throw new Error('The reselected file differs from the saved upload. Choose the original file.');
-            }
+            await verifySavedChunks(file,receipt);
             let offset=receipt.upload_offset;
+            uploadProgress(offset,file.size);
             while(offset<file.size&&!contentState.pause){
-                const result=await api(endpoint('/'+receipt.id+'/chunks?offset='+offset),{method:'PUT',body:file.slice(offset,Math.min(offset+(receipt.chunk_bytes||8*1024**2),file.size))});
-                offset=result.upload_offset;$('upload-progress').value=offset/file.size*100;message(`Received ${offset.toLocaleString()} of ${file.size.toLocaleString()} bytes.`);
+                offset=await sendVerifiedChunk(receipt,file,offset);
+                uploadProgress(offset,file.size);
+                message('Received '+offset.toLocaleString()+' of '+file.size.toLocaleString()+' bytes.');
             }
             if(contentState.pause){message('Upload paused. Reselect the same file to resume.');await load();return;}
             message('All bytes received. Validating video…');await api(endpoint('/'+receipt.id+'/complete'),{method:'POST'});
         }
         await load();message(kind==='url'?'Receipt saved. Check download progress in Content details.':'Media is ready. Choose a production step in Content details.');
-    }catch(error){message(error.message+' Your entered values are retained. Check content history for a saved receipt before retrying.');await load().catch(()=>{});}
+    }catch(error){
+        const detail=error.message+' Your saved receipt and acknowledged chunks are retained.';
+        message(detail);
+        $('upload-notice').textContent=detail;
+        await load().catch(()=>{});
+    }
     finally{contentState.busy=false;$('add').disabled=false;$('channel').disabled=false;$('pause').hidden=true;}
 });
 $('detail').onclick=async e=>{

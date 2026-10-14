@@ -82,3 +82,20 @@ def test_channel_page_styles_match_workspace_assets_and_do_not_shadow_api() -> N
     # The catch-all static mount must remain below API routes and serve only web/.
     assert client.get("/v1/health/live").status_code == 200
     assert client.get("/pyproject.toml").status_code == 404
+
+
+def test_domain_root_opens_operational_home_instead_of_json_404() -> None:
+    client = TestClient(app)
+    redirect = client.get("/", follow_redirects=False)
+    assert redirect.status_code == 307
+    assert redirect.headers["location"] == "/home"
+
+    page = client.get("/", follow_redirects=True)
+    assert page.status_code == 200
+    assert "text/html" in page.headers["content-type"]
+    assert "Your channel briefing" in page.text
+
+    # Redirecting the domain root must not shadow API routes or break assets.
+    assert client.get("/operations.js").status_code == 200
+    assert client.get("/operations-aerith.css").status_code == 200
+    assert client.get("/v1/health/live").status_code == 200

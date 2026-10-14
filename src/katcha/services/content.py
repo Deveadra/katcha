@@ -6,6 +6,7 @@ import uuid
 from pathlib import Path
 from typing import Any
 
+from botocore.exceptions import BotoCoreError, ClientError
 from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -20,10 +21,16 @@ from katcha.models import Clip, DomainEvent, SourceItem
 from katcha.orchestration.activities import _extract_video_shape
 from katcha.production_models import Production
 from katcha.publishing_models import Publication
+from katcha.runtime_fence import LeadershipFenceError
 from katcha.services.channel_profiles import ensure_active_profile
 
 CHUNK_BYTES = 8 * 1024 * 1024
 MAX_FILE_BYTES = 4 * 1024 * 1024 * 1024
+
+
+class ContentUploadStorageError(RuntimeError):
+    """A safely reportable storage failure; the receipt and offset survive."""
+
 
 
 def _item(session: Session, channel_id: uuid.UUID, item_id: uuid.UUID) -> ContentItem:
@@ -114,6 +121,8 @@ def create_content(
 
 def accept_chunk(channel_id: uuid.UUID, item_id: uuid.UUID, offset: int, data: bytes) -> dict:
     digest = hashlib.sha256(data).hexdigest()
+    storage_error: str | None = None
+    result: dict | None = None
     with session_scope() as session:
         row = _item(session, channel_id, item_id)
         if row.input_kind != "file" or row.status != "uploading":
@@ -128,14 +137,52 @@ def accept_chunk(channel_id: uuid.UUID, item_id: uuid.UUID, offset: int, data: b
         if offset != row.upload_offset or not 0 < len(data) <= min(CHUNK_BYTES, remaining):
             raise ValueError("Upload offset or chunk size does not match the saved receipt")
         key = f"intake/{row.id}/{offset}"
-        store = ObjectStore()
-        store.ensure_bucket()
-        store.put_bytes(data, key, "application/octet-stream")
-        chunks.append({"offset": offset, "size": len(data), "sha256": digest, "key": key})
-        row.details = {**row.details, "chunks": chunks}
-        row.upload_offset += len(data)
-        row.error = None
-        return {"upload_offset": row.upload_offset, "replayed": False}
+        try:
+            # An existing configured R2 bucket does NOT need HeadBucket or
+            # CreateBucket for each part. A restricted object-write credential
+            # may legitimately lack bucket-level HEAD/list permissions.
+            store = ObjectStore()
+            store.put_bytes(data, key, "application/octet-stream")
+        except LeadershipFenceError:
+            storage_error = (
+                "Upload paused: the active Katcha primary has not authorized an "
+                "R2 write. No new bytes were acknowledged. Retry after recovery."
+            )
+        except ClientError as exc:
+            code = str(exc.response.get("Error", {}).get("Code", ""))
+            if code in {"AccessDenied", "InvalidAccessKeyId", "SignatureDoesNotMatch"}:
+                storage_error = (
+                    "R2 rejected the upload write credentials or permission "
+                    f"({code}). The saved content and previously uploaded chunks are intact."
+                )
+            else:
+                storage_error = (
+                    "R2 did not accept the upload chunk. The saved content and "
+                    "previously uploaded chunks are intact; retry later."
+                )
+        except (BotoCoreError, OSError):
+            storage_error = (
+                "R2 storage connection failed before upload acknowledgement. "
+                "The saved content and previously uploaded chunks are intact."
+            )
+        if storage_error is not None:
+            # Record the failure in the existing content receipt, including when
+            # R2 returned an error before offset zero. Do not leak provider URLs,
+            # access keys or low-level boto exceptions into the API/UI.
+            row.error = storage_error
+        else:
+            chunks.append({"offset": offset, "size": len(data), "sha256": digest, "key": key})
+            row.details = {**row.details, "chunks": chunks}
+            row.upload_offset += len(data)
+            row.error = None
+            result = {"upload_offset": row.upload_offset, "replayed": False}
+
+    # Raise outside the transaction so a failed storage write can persist a
+    # sanitized diagnostic while not falsely advancing the saved byte offset.
+    if storage_error is not None:
+        raise ContentUploadStorageError(storage_error)
+    assert result is not None
+    return result
 
 
 def finish_upload(channel_id: uuid.UUID, item_id: uuid.UUID) -> dict:
