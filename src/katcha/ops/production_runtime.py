@@ -137,7 +137,8 @@ def validate(values: dict[str, str]) -> list[str]:
         and not access_principals_configured
     ):
         errors.append(
-            "configure a control token, bearer principal, or Cloudflare Access principal"
+            "configure KATCHA_CONTROL_API_TOKEN, KATCHA_CONTROL_PRINCIPALS, "
+            "or a Cloudflare Access principal"
         )
     if access_principals_configured:
         for key in (
