@@ -35,6 +35,7 @@ from katcha.api.editorial_scene_index import router as editorial_scene_index_rou
 from katcha.api.editorial_semantic_matching import router as editorial_semantic_matching_router
 from katcha.api.editorial_shot_handoff import router as editorial_shot_handoff_router
 from katcha.api.editorial_shot_matching import router as editorial_shot_matching_router
+from katcha.api.editorial_source_multipart import router as editorial_source_multipart_router
 from katcha.api.explorer import router as explorer_router
 from katcha.api.goals import router as goals_router
 from katcha.api.integrations import router as integrations_router
@@ -194,6 +195,7 @@ app = FastAPI(
     description="Standalone control plane for Katcha media workflows.",
     lifespan=_lifespan,
 )
+app.include_router(editorial_source_multipart_router)
 app.include_router(editorial_projects_router)
 app.include_router(editorial_media_preparation_router)
 app.include_router(editorial_scene_index_router)

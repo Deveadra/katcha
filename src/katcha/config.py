@@ -228,6 +228,9 @@ class Settings(BaseSettings):
     s3_access_key: str = "katcha"
     s3_secret_key: str = "katcha-local-secret"
     s3_bucket: str = "katcha-media"
+    # Public browser-reachable S3/R2 API host; credentials remain server-side.
+    # Must use HTTPS in production and have exact-origin bucket PUT CORS.
+    s3_browser_endpoint_url: str | None = None
     s3_region: str = "auto"
     s3_force_path_style: bool = True
 
