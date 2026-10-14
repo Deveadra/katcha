@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 from typing import Literal
-from urllib.parse import quote, urlencode, urlsplit, urlunsplit
+from urllib.parse import urlencode, urlsplit, urlunsplit
 
 from fastapi import APIRouter, Request
 from pydantic import BaseModel, Field
@@ -112,7 +112,7 @@ def _safe_return_path(value: str) -> str:
     parsed = urlsplit(value)
     if parsed.scheme or parsed.netloc or not parsed.path.startswith("/"):
         return "/operations"
-    return urlunsplit(("", "", parsed.path, parsed.query, parsed.fragment))
+    return urlunsplit(("", "", parsed.path, parsed.query, ""))
 
 
 @router.get("/access-login", response_model=CloudflareAccessLoginResponse)
@@ -121,10 +121,11 @@ def cloudflare_access_login(
 ) -> CloudflareAccessLoginResponse:
     settings = get_settings()
     team_domain = settings.cloudflare_access_team_domain
+    audience = settings.cloudflare_access_audience
     application_domain = settings.cloudflare_access_application_domain
     enabled = bool(
         team_domain
-        and settings.cloudflare_access_audience
+        and audience
         and application_domain
         and settings.cloudflare_access_principals
     )
@@ -135,13 +136,12 @@ def cloudflare_access_login(
         )
 
     path = _safe_return_path(return_to)
-    redirect_url = urlunsplit(("https", application_domain, path, "", ""))
-    login_path = "/cdn-cgi/access/login/" + quote(application_domain, safe="")
+    login_path = "/cdn-cgi/access/login/" + application_domain
     login_url = (
         team_domain
         + login_path
         + "?"
-        + urlencode({"redirect_url": redirect_url})
+        + urlencode({"kid": audience, "redirect_url": path})
     )
     return CloudflareAccessLoginResponse(
         enabled=True,
