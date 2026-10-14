@@ -19,6 +19,10 @@ on:
       - tests/test_disaster_backup.py
       - tests/test_cloud_runtime_contract.py
       - scripts/notify-telegram.sh
+      - scripts/oci-isolated-identity-probe.py
+      - scripts/oci-candidate-vault-principal-probe.py
+      - tests/test_oci_isolated_identity_probe.py
+      - tests/test_oci_candidate_vault_principal_probe.py
   repository_dispatch:
     types: [katcha-recovery]
   workflow_dispatch:
@@ -126,7 +130,10 @@ jobs:
           bash -n deploy/cloud-init/oci-recovery-candidate.sh.tmpl
           bash -n deploy/scripts/postgres-disaster-restore.sh
           bash -n scripts/notify-telegram.sh
+          python -m py_compile scripts/oci-isolated-identity-probe.py scripts/oci-candidate-vault-principal-probe.py
           pytest -q \
+            tests/test_oci_isolated_identity_probe.py \
+            tests/test_oci_candidate_vault_principal_probe.py \
             tests/test_oci_recovery.py \
             tests/test_oci_paid_ttl_authority.py \
             tests/test_external_compute_budget.py \

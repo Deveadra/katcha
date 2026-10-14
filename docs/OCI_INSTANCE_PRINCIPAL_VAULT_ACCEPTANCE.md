@@ -105,27 +105,91 @@ restricted evidence record, observed timestamps, IAM policy version, and OCI
 monitoring/Audit events (without secret contents). Do not place IDs, raw stdout,
 credentials or Vault response bodies in public PR logs.
 
-## Cleanup and stop conditions
+## Cleanup, IAM revocation and preauthorized emergency containment
 
-Any mismatch, unexpected grant, timeout, missing guest identity, missing
-fifth-secret fixture, primary health failure, or exhausted capacity blocks
-acceptance. Never auto-tag, launch a second instance, change production
-leadership, or retry a timed-out launch blindly.
+**Approval timing:** the exact-probe `cleanup` **and**
+`emergency-contain` paths, operator identity, exact resource selector,
+limited lifespan, billing/incident escalation and fallback administration
+must all be reviewed and preauthorized **before Phase 1 launch**.
+A later approval to use IAM tags may remain separate; containment permission
+cannot be deferred until after creating a potentially compromised VM.
 
-Cleanup must follow `scripts/oci-isolated-identity-probe.py cleanup` with
-its separate scoped approval and exact probe ID. A candidate that has been
-temporarily tagged for instance-principal Vault access must have that tag
-**revoked and the revocation verified before termination**. The cleanup
-runner now enforces that ordering and preserves all other defined tags.
-If OCI cannot confirm revocation, cleanup fails closed without attempting
-VM deletion: treat the still-running authorized probe as a security incident
-and immediately reconcile it with an operator-approved, tightly scoped
-revocation/termination. Do not claim either cleanup or revoked access.
+After the positive tagged tests, revoke **only** the candidate defined tag
+using the OCI administrator session and the same isolated candidate:
 
-After successful cleanup, verify termination of **the
-probe VM and its newly created boot volume**, complete release of 50 GB, no
-data-volume attachment, and unchanged production health and safety switches.
-A failed or ambiguous cleanup is an operator incident, not a successful test.
+```bash
+.venv/bin/python scripts/oci-isolated-identity-probe.py revoke-tag \
+  --instance-id "$APPROVED_CANDIDATE_INSTANCE_ID" \
+  --approve-isolated-candidate-tag-revocation
+```
+
+This returns `CANDIDATE_TAG_REMOVED_DATA_PLANE_NOT_YET_VERIFIED` and
+**does not terminate the guest**. Tag removal is not proof effective
+authorization expired. Still on the guest run:
+
+```bash
+python3 scripts/oci-candidate-vault-principal-probe.py verify-revoked \
+  --expected-instance-id "$APPROVED_CANDIDATE_INSTANCE_ID" \
+  --max-propagation-seconds 600 \
+  --approve-live-vault-reads
+```
+
+The guest polls for at most 600 seconds, emits success only after four explicit
+denials and fails on transport/IAM errors or continued successful reads. Verify
+the tag's absence in OCI metadata separately. Capture sanitized evidence
+with timestamps; do not use the original **untagged** deny-four evidence as
+proof of post-revocation denial. **If any read remains allowed, raise a
+security incident; do not claim revocation successful.**
+
+Only after the reviewer witnesses all four post-revocation denials, invoke
+preapproved normal cleanup from the trusted administrator workstation:
+
+```bash
+.venv/bin/python scripts/oci-isolated-identity-probe.py cleanup \
+  --instance-id "$APPROVED_CANDIDATE_INSTANCE_ID" \
+  --acknowledge-post-revocation-four-denials \
+  --approve-cleanup-of-test-instance-and-boot-volume
+```
+
+The acknowledge flag records operator attestation; it does **not** itself
+query Vault or prove that denials occurred. The restricted evidence bundle must
+retain the guest result. Normal cleanup refuses a candidate still tagged.
+
+**Emergency fallback (authorized before launch):** if revocation or guest
+access fails, treat the probe as potentially privileged, isolate the incident
+and execute the separate, verified exact-resource emergency containment action:
+
+```bash
+.venv/bin/python scripts/oci-isolated-identity-probe.py emergency-contain \
+  --instance-id "$APPROVED_CANDIDATE_INSTANCE_ID" \
+  --expected-boot-volume-id "$APPROVED_NEW_PROBE_BOOT_VOLUME_ID" \
+  --approve-emergency-probe-containment
+```
+
+This does **not** broaden secret IAM, touch production, or retry an unknown VM.
+The runner checks probe identity, exact boot volume, no production data disk,
+private VNIC/NSG and unique resource tags before exact VM termination and
+new-boot-volume cleanup. It bypasses the failed tag-revocation precondition
+**only** within that explicitly preauthorized emergency resource envelope.
+Output is `EMERGENCY_TEST_RESOURCES_REMOVED_IAM_UNVERIFIED`; OCI termination
+does not prove removal of issued tokens or effective policy revocation.
+If even this action cannot identify or terminate the VM, escalate immediately
+to an independently authorized OCI administrator for direct containment;
+leave production untouched and preserve forensic evidence.
+
+**Independent post-cleanup verification is mandatory**, because the runner
+checks instance metadata and new boot removal but does **not** verify production
+API readiness or prove that the entire preexisting volume inventory remained
+unchanged. Read back exact termination, boot volume absence, all previous
+disk OCIDs/counts and occupied GB, running production primary, public health,
+Cloudflare active epoch, all disabled recovery/spend flags, and account costs.
+Record these as independent evidence; any mismatch means FAIL.
+
+The operator's two-hour runtime is **not** a mechanically enforced expiry:
+an independent reliable cutoff and backup operator are still a blocking
+preflight requirement. No resource launch is authorized solely by the CLI
+existence or a timestamped checklist. A failed or ambiguous cleanup is an
+open security/cost incident, not a completed acceptance test.
 
 Even successful access tests do **not** prove guest bootstrap, R2 access,
 PostgreSQL restore, fencing, Cloudflare authority, or failover. Those need

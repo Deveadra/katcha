@@ -302,7 +302,7 @@ def test_cleanup_remains_available_if_primary_is_down():
     assert result["primary_running"] is False
 
 
-def test_cleanup_revokes_candidate_vault_tag_before_termination():
+def test_tag_revocation_keeps_guest_running_for_post_revocation_denials():
     class TaggedOci(FakeOci):
         def __init__(self):
             super().__init__()
@@ -318,33 +318,92 @@ def test_cleanup_revokes_candidate_vault_tag_before_termination():
             self.candidate["defined-tags"] = defined_tags
 
     oci = TaggedOci()
-    result = probe.cleanup(oci, plan(), "ocid1.instance.candidate")
-    assert result["status"] == "TEST_RESOURCES_REMOVED"
-    assert oci.terminated == ["ocid1.instance.candidate"]
-    assert oci.updated == [
-        (
-            "ocid1.instance.candidate",
-            {
-                "ExistingNamespace": {"Keep": "safe"},
-                "KatchaRecovery": {"Other": "preserved"},
-            },
-        )
-    ]
+    with pytest.raises(probe.ProbeError, match="normal cleanup refused"):
+        probe.cleanup(oci, plan(), "ocid1.instance.candidate")
+    assert oci.terminated == []
+    result = probe.revoke_candidate_tag(oci, plan(), "ocid1.instance.candidate")
+    assert result["status"] == "CANDIDATE_TAG_REMOVED_DATA_PLANE_NOT_YET_VERIFIED"
+    assert result["vault_effective_access_revoked"] is False
+    assert oci.terminated == []
+    assert oci.updated == [(
+        "ocid1.instance.candidate", {
+            "ExistingNamespace": {"Keep": "safe"},
+            "KatchaRecovery": {"Other": "preserved"},
+        },
+    )]
+    with pytest.raises(probe.ProbeError, match="tag is absent"):
+        probe.revoke_candidate_tag(oci, plan(), "ocid1.instance.candidate")
+    assert probe.cleanup(
+        oci, plan(), "ocid1.instance.candidate"
+    )["production_api_readiness_verified"] is False
 
 
-def test_cleanup_refuses_termination_when_tag_revocation_unverified():
+def test_failed_revocation_can_be_emergency_contained_with_exact_boot_id():
     class UncertainOci(FakeOci):
         def __init__(self):
             super().__init__()
             self.candidate["defined-tags"] = {"KatchaRecovery": {"Candidate": "true"}}
 
         def update_probe_defined_tags(self, *_args):
-            pass  # Simulate response succeeded but tag was not removed.
+            pass
 
     oci = UncertainOci()
     with pytest.raises(probe.ProbeError, match="revocation unverified"):
-        probe.cleanup(oci, plan(), "ocid1.instance.candidate")
+        probe.revoke_candidate_tag(oci, plan(), "ocid1.instance.candidate")
     assert oci.terminated == []
+    with pytest.raises(probe.ProbeError, match="exact boot volume mismatch"):
+        probe.cleanup(
+            oci, plan(), "ocid1.instance.candidate", emergency=True,
+            expected_boot_id="ocid1.bootvolume.wrong",
+        )
+    assert oci.terminated == []
+    result = probe.cleanup(
+        oci, plan(), "ocid1.instance.candidate", emergency=True,
+        expected_boot_id="ocid1.bootvolume.test",
+    )
+    assert result["status"] == "EMERGENCY_TEST_RESOURCES_REMOVED_IAM_UNVERIFIED"
+    assert result["effective_iam_revocation_verified"] is False
+    assert result["original_disk_inventory_verified"] is False
+    assert oci.terminated == ["ocid1.instance.candidate"]
+
+
+def test_emergency_containment_rejects_nonprobe_or_data_volume():
+    oci = FakeOci()
+    oci.candidate["display-name"] = "katcha-prod-primary-001"
+    with pytest.raises(probe.ProbeError, match="not the exact probe"):
+        probe.cleanup(
+            oci, plan(), "ocid1.instance.candidate", emergency=True,
+            expected_boot_id="ocid1.bootvolume.test",
+        )
+    assert oci.terminated == []
+    oci.candidate["display-name"] = "katcha-identity-probe-abcdef123456"
+    oci.volume_attachments = [{"lifecycle-state": "ATTACHED"}]
+    with pytest.raises(probe.ProbeError, match="unexpectedly has a data volume"):
+        probe.cleanup(
+            oci, plan(), "ocid1.instance.candidate", emergency=True,
+            expected_boot_id="ocid1.bootvolume.test",
+        )
+    assert oci.terminated == []
+
+
+def test_emergency_cli_requires_advance_exact_resource_authorization(monkeypatch, capsys):
+    monkeypatch.setattr(probe, "Oci", lambda: object())
+    monkeypatch.setattr(probe, "cleanup_plan", plan)
+    assert probe.main([
+        "emergency-contain", "--instance-id", "ocid1.instance.candidate",
+    ]) == 2
+    assert "advance containment authorization" in capsys.readouterr().err
+
+
+def test_normal_cleanup_cli_requires_post_revocation_denials(monkeypatch, capsys):
+    monkeypatch.setattr(probe, "Oci", lambda: object())
+    monkeypatch.setattr(probe, "cleanup_plan", plan)
+    assert probe.main([
+        "cleanup", "--instance-id", "ocid1.instance.candidate",
+        "--approve-cleanup-of-test-instance-and-boot-volume",
+    ]) == 2
+    assert "four negative post-revocation" in capsys.readouterr().err
+
 
 
 def test_cli_cleanup_requires_separate_explicit_flag(monkeypatch, capsys):
