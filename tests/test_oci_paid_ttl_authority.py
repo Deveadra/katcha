@@ -227,7 +227,7 @@ def test_valid_stopped_expired_retired_paid_can_be_deleted_only_after_two_checks
     assert oci.lookups == 1
     assert oci.terminated == ["paid-old"]
     assert oci.stopped == []
-    assert coordinator.settled == [("reservation", 196_667)]
+    assert coordinator.settled == [("reservation", 200_000)]
 
 
 def test_future_stopped_paid_instance_never_deleted():
@@ -244,7 +244,7 @@ def test_terminated_instance_is_not_retried_but_budget_is_reconciled():
     assert execute(oci, coordinator) == []
     assert oci.terminated == []
     assert oci.stopped == []
-    assert coordinator.settled == [("reservation", 196_667)]
+    assert coordinator.settled == [("reservation", 200_000)]
 
 
 def test_termination_error_never_settles_budget_as_finished():
@@ -255,3 +255,45 @@ def test_termination_error_never_settles_budget_as_finished():
     oci = Broken()
     coordinator = Coordinator()
     assert_preserved(oci, coordinator, "termination status unknown")
+
+
+@pytest.mark.parametrize(("tag", "value"), [
+    ("KatchaBudgetReservationId", None),
+    ("KatchaBudgetReservationId", " "),
+    ("KatchaBudgetReservedMicrousd", None),
+    ("KatchaBudgetReservedMicrousd", "invalid"),
+    ("KatchaBudgetReservedMicrousd", "0"),
+    ("KatchaPaidStartedAt", "invalid"),
+    ("KatchaPaidStartedAt", "2026-10-13T12:00:00"),
+    ("KatchaEstimatedHourlyUsd", None),
+    ("KatchaEstimatedHourlyUsd", "NaN"),
+    ("KatchaEstimatedHourlyUsd", "Infinity"),
+    ("KatchaEstimatedHourlyUsd", "-0.10"),
+])
+def test_malformed_budget_metadata_blocks_deletion_before_settlement(tag, value):
+    row = paid()
+    if value is None:
+        del row["freeform-tags"][tag]
+    else:
+        row["freeform-tags"][tag] = value
+    assert_preserved(FakeOci(row), Coordinator(), "budget reservation tags")
+
+
+def test_preserved_ttl_overrun_is_included_in_retirement_accounting():
+    row = paid(expires=NOW - timedelta(hours=1))
+    oci = FakeOci(row)
+    coordinator = Coordinator()
+    assert execute(oci, coordinator) == ["paid-old"]
+    assert coordinator.settled == [("reservation", 200_000)]
+
+
+def test_settlement_failure_occurs_only_after_confirmed_retirement():
+    class FailedSettlement(Coordinator):
+        def settle_external_compute(self, *args, **kwargs):
+            raise oci_recovery.RecoveryError("accounting unavailable")
+
+    oci = FakeOci()
+    with pytest.raises(oci_recovery.RecoveryError, match="accounting unavailable"):
+        execute(oci, FailedSettlement())
+    assert oci.terminated == ["paid-old"]
+    assert oci.stopped == []

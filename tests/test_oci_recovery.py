@@ -1611,7 +1611,7 @@ def test_paid_cleanup_never_stops_running_vm_when_coordinator_is_unavailable(
 
 
 
-def test_paid_instance_cost_uses_runtime_and_caps_at_expiry() -> None:
+def test_paid_instance_cost_accounts_for_runtime_past_expiry() -> None:
     started = datetime(2026, 10, 4, 10, 0, tzinfo=UTC)
     row = {
         "id": "paid",
@@ -1634,4 +1634,4 @@ def test_paid_instance_cost_uses_runtime_and_caps_at_expiry() -> None:
     assert oci_recovery._paid_instance_cost_microusd(
         row,
         ended_at=started + timedelta(hours=20),
-    ) == 1_200_000
+    ) == 2_000_000

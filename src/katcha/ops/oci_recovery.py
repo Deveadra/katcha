@@ -1125,14 +1125,9 @@ def _paid_instance_cost_microusd(
         ) from None
 
     effective_end = ended_at.astimezone(UTC)
-    expires_raw = tags.get("KatchaExpiresAt", "").strip()
-    if expires_raw:
-        try:
-            expires = datetime.fromisoformat(expires_raw.replace("Z", "+00:00"))
-            if expires.tzinfo is not None:
-                effective_end = min(effective_end, expires.astimezone(UTC))
-        except ValueError:
-            pass
+    # TTL limits authorization for new spend; it does not stop OCI billing.
+    # A preserved production leader can outlive its TTL, so account through
+    # the observed end rather than silently discarding the overrun.
 
     elapsed_seconds = max(
         (effective_end - started.astimezone(UTC)).total_seconds(),
@@ -2308,6 +2303,30 @@ def _verified_retired_paid_instance(
         )
 
 
+def _validate_paid_cleanup_budget(row: dict[str, Any]) -> None:
+    """Reject unusable accounting identity before irreversible retirement."""
+    tags = _tags(row)
+    try:
+        reservation_id = tags.get("KatchaBudgetReservationId", "").strip()
+        reserved = int(tags.get("KatchaBudgetReservedMicrousd", ""))
+        started = datetime.fromisoformat(
+            tags.get("KatchaPaidStartedAt", "").replace("Z", "+00:00")
+        )
+        hourly = Decimal(tags.get("KatchaEstimatedHourlyUsd", ""))
+        if (
+            not reservation_id
+            or reserved <= 0
+            or started.tzinfo is None
+            or not hourly.is_finite()
+            or hourly <= 0
+        ):
+            raise ValueError("incomplete accounting metadata")
+    except (ValueError, ArithmeticError):
+        raise RecoveryError(
+            "paid cleanup blocked: missing or malformed budget reservation tags"
+        ) from None
+
+
 def cleanup_expired_paid(
     config: RecoveryConfig,
     oci: OciCli,
@@ -2357,6 +2376,7 @@ def cleanup_expired_paid(
                 "authority and escalate for fenced handover"
             )
 
+        _validate_paid_cleanup_budget(row)
         _verified_retired_paid_instance(config, oci, coordinator, row)
         # Settle only after termination so an OCI failure cannot mark live
         # compute as finished; a failed settlement is an operator incident.
