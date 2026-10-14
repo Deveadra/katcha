@@ -206,3 +206,70 @@ def test_revocation_status_not_claimed_by_initial_negative_mode():
     assert result["status"] == "UNTAGGED_FOUR_DENIED"
     assert result.get("effective_vault_access_denied") is None
 
+
+
+def test_revocation_slow_denials_cannot_succeed_after_shared_deadline():
+    elapsed = [0.0]
+    calls = []
+
+    def deny(argv):
+        calls.append(argv[4])
+        elapsed[0] += 4.0
+        return False, ""
+
+    with pytest.raises(probe.AcceptanceError, match="propagation timed out"):
+        probe.verify_revocation_with_bounded_retries(
+            IDS, max_propagation_seconds=10,
+            run=deny, clock=lambda: elapsed[0],
+        )
+    assert calls == list(IDS[:3])
+
+
+def test_revocation_slow_denials_within_deadline_succeed():
+    elapsed = [0.0]
+
+    def deny(argv):
+        elapsed[0] += 2.0
+        return False, ""
+
+    result = probe.verify_revocation_with_bounded_retries(
+        IDS, max_propagation_seconds=10,
+        run=deny, clock=lambda: elapsed[0],
+    )
+    assert result["status"] == "POST_REVOCATION_FOUR_DENIED"
+    assert elapsed[0] == 8.0
+
+
+def test_revocation_real_requests_use_remaining_subprocess_timeout(monkeypatch):
+    elapsed = [0.0]
+    timeouts = []
+
+    def cli(argv, *, timeout):
+        timeouts.append(timeout)
+        elapsed[0] += 2.0
+        return False, ""
+
+    monkeypatch.setattr(probe, "command", cli)
+    result = probe.verify_revocation_with_bounded_retries(
+        IDS, max_propagation_seconds=10, clock=lambda: elapsed[0],
+    )
+    assert result["effective_vault_access_denied"] is True
+    assert timeouts == [10.0, 8.0, 6.0, 4.0]
+
+
+def test_revocation_does_not_start_request_at_expired_deadline():
+    times = iter([0.0, 10.0])
+    with pytest.raises(probe.AcceptanceError, match="propagation timed out"):
+        probe.verify_revocation_with_bounded_retries(
+            IDS, max_propagation_seconds=10, clock=lambda: next(times),
+            run=lambda argv: pytest.fail("request began after deadline"),
+        )
+
+
+def test_command_honors_short_shared_deadline_timeout():
+    def runner(argv, **kwargs):
+        assert kwargs["timeout"] == 2.5
+        raise subprocess.TimeoutExpired(argv, kwargs["timeout"])
+
+    with pytest.raises(probe.AcceptanceError, match="timed out"):
+        probe.command(["secrets", "secret-bundle", "get"], run=runner, timeout=2.5)

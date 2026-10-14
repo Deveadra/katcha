@@ -49,10 +49,15 @@ def identity(fetch: Callable | None = None) -> str:
     return value
 
 
-def command(args: list[str], run: Callable = subprocess.run) -> tuple[bool, str]:
+def command(
+    args: list[str],
+    run: Callable = subprocess.run,
+    *,
+    timeout: float = 60,
+) -> tuple[bool, str]:
     argv = ["oci", "--auth", "instance_principal", *args]
     try:
-        result = run(argv, capture_output=True, text=True, timeout=60, check=False)
+        result = run(argv, capture_output=True, text=True, timeout=timeout, check=False)
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise AcceptanceError("instance-principal OCI CLI unavailable or timed out") from exc
     if result.returncode == 0:
@@ -117,7 +122,7 @@ def verify_revocation_with_bounded_retries(
     secret_ids: tuple[str, ...],
     *,
     max_propagation_seconds: int = 600,
-    run: Callable = command,
+    run: Callable | None = None,
     clock: Callable = time.monotonic,
     sleep: Callable = time.sleep,
 ) -> dict[str, object]:
@@ -125,9 +130,26 @@ def verify_revocation_with_bounded_retries(
     if not 1 <= max_propagation_seconds <= 600:
         raise AcceptanceError("revocation propagation window must be 1..600 seconds")
     deadline = clock() + max_propagation_seconds
+
+    def bounded_request(argv: list[str]) -> tuple[bool, str]:
+        remaining = deadline - clock()
+        if remaining <= 0:
+            raise AcceptanceError("revocation propagation timed out")
+        # Bound every real subprocess by the remaining shared deadline.
+        result = (
+            command(argv, timeout=min(60.0, remaining))
+            if run is None else run(argv)
+        )
+        # Slow denied responses must not report success after the cutoff.
+        if clock() >= deadline:
+            raise AcceptanceError("revocation propagation timed out")
+        return result
+
     while True:
         try:
-            evidence = evaluate("deny-four", secret_ids, forbidden_id=None, run=run)
+            evidence = evaluate(
+                "deny-four", secret_ids, forbidden_id=None, run=bounded_request
+            )
         except AcceptanceError as exc:
             # Only a still-effective ALLOW decision can be attributed to IAM
             # propagation. Transport and malformed responses fail immediately.
