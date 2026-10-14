@@ -103,3 +103,59 @@ def test_api_rejects_untrusted_relative_path() -> None:
     for path in ("https://example.org", "/../secrets", "//evil.org"):
         with pytest.raises(release.ReleaseNotEligible):
             release.api_get(path)
+
+
+@pytest.mark.parametrize("field", ["updated_at", "run_started_at"])
+@pytest.mark.parametrize("bad", [None, 123, "", "a", "z", "2026-10-13T15:01:00",
+                                "2026-99-13T15:01:00Z"])
+def test_malformed_or_naive_timestamps_block(field: str, bad: object) -> None:
+    ci, images = success()
+    target = ci[0] if field == "updated_at" else images[0]
+    target[field] = bad
+    with pytest.raises(release.ReleaseNotEligible):
+        release.verify_evidence(SHA, SHA, ci, images)
+
+
+def test_timestamp_offsets_use_absolute_time() -> None:
+    ci, images = success()
+    ci[0]["updated_at"] = "2026-10-13T16:01:00+01:00"
+    images[0]["run_started_at"] = "2026-10-13T15:02:00Z"
+    assert release.verify_evidence(SHA, SHA, ci, images)["sha"] == SHA
+    ci[0]["updated_at"] = "2026-10-13T14:01:00-01:00"
+    images[0]["run_started_at"] = "2026-10-13T14:02:00Z"
+    with pytest.raises(release.ReleaseNotEligible):
+        release.verify_evidence(SHA, SHA, ci, images)
+
+
+@pytest.mark.parametrize("changes", [{"repository": None}, {"repository": []},
+                                    {"id": "invalid"}, {"id": True}, {"id": 0}])
+def test_malformed_run_fields_block(changes: dict) -> None:
+    ci, images = success()
+    ci[0].update(changes)
+    with pytest.raises(release.ReleaseNotEligible):
+        release.verify_evidence(SHA, SHA, ci, images)
+
+
+@pytest.mark.parametrize("main", [{"commit": None}, {"commit": []},
+                                 {"commit": {"sha": None}}])
+def test_malformed_main_response_blocks(monkeypatch: pytest.MonkeyPatch, main: dict) -> None:
+    monkeypatch.setattr(release, "api_get", lambda path: main)
+    with pytest.raises(release.ReleaseNotEligible):
+        release.check_release(SHA)
+
+
+@pytest.mark.parametrize("result", [
+    {"total_count": 0, "workflow_runs": None},
+    {"total_count": None, "workflow_runs": []},
+    {"total_count": "1", "workflow_runs": []},
+    {"total_count": True, "workflow_runs": []},
+    {"total_count": 1, "workflow_runs": []},
+])
+def test_malformed_or_truncated_run_list_blocks(
+    monkeypatch: pytest.MonkeyPatch, result: dict
+) -> None:
+    def fetch(path: str) -> dict:
+        return {"commit": {"sha": SHA}} if path == "/branches/main" else result
+    monkeypatch.setattr(release, "api_get", fetch)
+    with pytest.raises(release.ReleaseNotEligible):
+        release.check_release(SHA)

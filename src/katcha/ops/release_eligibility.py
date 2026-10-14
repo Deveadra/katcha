@@ -14,6 +14,7 @@ import sys
 import urllib.error
 import urllib.parse
 import urllib.request
+from datetime import datetime
 from typing import Any
 
 REPOSITORY = "Deveadra/katcha"
@@ -49,26 +50,49 @@ def api_get(path: str) -> Any:
 def matching_runs(
     runs: list[dict[str, Any]], sha: str, workflow: str, event: str
 ) -> list[dict[str, Any]]:
+    if not isinstance(runs, list):
+        raise ReleaseNotEligible("missing workflow run list")
     matches: list[dict[str, Any]] = []
     for run in runs:
         if not isinstance(run, dict):
-            continue
+            raise ReleaseNotEligible("workflow run response malformed")
+        repository = run.get("repository")
+        if not isinstance(repository, dict):
+            raise ReleaseNotEligible("workflow repository response malformed")
+        ident = run.get("id")
+        if type(ident) is not int or ident <= 0:
+            raise ReleaseNotEligible("workflow run identity malformed")
         if (
             run.get("path") == workflow
             and run.get("head_sha") == sha
             and run.get("head_branch") == "main"
             and run.get("event") == event
-            and run.get("repository", {}).get("full_name") == REPOSITORY
+            and repository.get("full_name") == REPOSITORY
         ):
             matches.append(run)
-    return sorted(matches, key=lambda x: int(x.get("id") or 0), reverse=True)
+    return sorted(matches, key=lambda x: x["id"], reverse=True)
+
+
+def evidence_timestamp(value: object) -> datetime:
+    if not isinstance(value, str):
+        raise ReleaseNotEligible("workflow timestamp malformed")
+    try:
+        timestamp = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise ReleaseNotEligible("workflow timestamp malformed") from exc
+    if timestamp.tzinfo is None or timestamp.utcoffset() is None:
+        raise ReleaseNotEligible("workflow timestamp must include timezone")
+    return timestamp
 
 
 def verify_evidence(
     sha: str, main_sha: str, ci_runs: list[dict[str, Any]],
     image_runs: list[dict[str, Any]]
 ) -> dict[str, Any]:
-    if not SHA_RE.fullmatch(sha) or not SHA_RE.fullmatch(main_sha):
+    if (
+        not isinstance(sha, str) or not SHA_RE.fullmatch(sha)
+        or not isinstance(main_sha, str) or not SHA_RE.fullmatch(main_sha)
+    ):
         raise ReleaseNotEligible("invalid commit identity")
     if sha != main_sha:
         raise ReleaseNotEligible("release SHA differs from current main")
@@ -84,13 +108,9 @@ def verify_evidence(
         raise ReleaseNotEligible("latest matching run not successful")
     # A workflow_run normally starts after CI finishes. Reject unrelated or
     # reordered successes rather than inferring release authority.
-    ci_finished = last_ci.get("updated_at")
-    image_started = last_image.get("run_started_at")
-    if (
-        not isinstance(ci_finished, str)
-        or not isinstance(image_started, str)
-        or image_started < ci_finished
-    ):
+    ci_finished = evidence_timestamp(last_ci.get("updated_at"))
+    image_started = evidence_timestamp(last_image.get("run_started_at"))
+    if image_started < ci_finished:
         raise ReleaseNotEligible("image publication does not follow successful CI")
     return {
         "status": "ELIGIBLE_FOR_PREDEPLOY_REVIEW",
@@ -102,12 +122,17 @@ def verify_evidence(
 
 
 def check_release(sha: str) -> dict[str, Any]:
-    if not SHA_RE.fullmatch(sha):
+    if not isinstance(sha, str) or not SHA_RE.fullmatch(sha):
         raise ReleaseNotEligible("sha must be an exact lowercase 40-character git commit")
     main = api_get("/branches/main")
     if not isinstance(main, dict):
         raise ReleaseNotEligible("invalid main branch response")
-    current = main.get("commit", {}).get("sha")
+    commit = main.get("commit")
+    if not isinstance(commit, dict):
+        raise ReleaseNotEligible("invalid main commit response")
+    current = commit.get("sha")
+    if not isinstance(current, str) or not SHA_RE.fullmatch(current):
+        raise ReleaseNotEligible("invalid main commit identity")
     # Both sources are fetched independently, scoped by their named workflow.
     # Pagination is deliberately bounded and all failure paths are fail-closed.
     params = urllib.parse.urlencode({"head_sha": sha, "per_page": 100})
@@ -116,10 +141,14 @@ def check_release(sha: str) -> dict[str, Any]:
     if not isinstance(ci_result, dict) or not isinstance(image_result, dict):
         raise ReleaseNotEligible("workflow evidence response malformed")
     for result in (ci_result, image_result):
-        if result.get("total_count", 0) > len(result.get("workflow_runs", [])):
-            raise ReleaseNotEligible("workflow evidence truncated; refuse to infer approval")
-        if not isinstance(result.get("workflow_runs"), list):
+        runs = result.get("workflow_runs")
+        count = result.get("total_count")
+        if not isinstance(runs, list):
             raise ReleaseNotEligible("missing workflow run list")
+        if type(count) is not int or count < 0 or count < len(runs):
+            raise ReleaseNotEligible("workflow evidence count malformed")
+        if count > len(runs):
+            raise ReleaseNotEligible("workflow evidence truncated; refuse to infer approval")
     return verify_evidence(
         sha, current, ci_result["workflow_runs"], image_result["workflow_runs"]
     )
