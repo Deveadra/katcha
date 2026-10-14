@@ -154,7 +154,11 @@ def test_cli_report_is_offline_and_never_overwrites_input_or_existing_report(tmp
     assert destination.read_bytes() == report
 
 
-@pytest.mark.parametrize("payload", ['{"format_version":1,"format_version":1}', "x" * 1_048_577])
+@pytest.mark.parametrize(
+    "payload",
+    ['{"format_version":1,"format_version":1}', "x" * 1_048_577],
+    ids=["duplicate-keys", "oversize-json"],
+)
 def test_ambiguous_or_oversize_json_creates_no_report(tmp_path, payload):
     source, destination = tmp_path / "input.json", tmp_path / "report.json"
     source.write_text(payload)
