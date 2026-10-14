@@ -57,6 +57,7 @@ let handoffItems = [];
 let handoffArchived = 0;
 let loseSaveResponse = false;
 let executeFails = false;
+let delayedFinds = null;
 
 function clone(value) {
     return JSON.parse(JSON.stringify(value));
@@ -251,6 +252,7 @@ function overview(source) {
         }
 
         if (source && url.pathname.endsWith("/finds") && req.method() === "GET") {
+            if (delayedFinds?.sourceId === sourceId) await delayedFinds.promise;
             let sourceFinds = [...(finds.get(sourceId) || [])];
             const q = (url.searchParams.get("q") || "").toLowerCase();
             const limit = Number(url.searchParams.get("limit") || 25);
@@ -656,11 +658,31 @@ function overview(source) {
                 platform: "youtube",
             },
         }]);
+        // Overview/header rendering precedes the independent finds request.
+        // Hold that request to exercise the race deterministically.
+        let releaseXboxFinds;
+        delayedFinds = {
+            sourceId: xbox.id,
+            promise: new Promise((resolve) => { releaseXboxFinds = resolve; }),
+        };
         const resetSourceSearch = page.locator("#source-search");
         await resetSourceSearch.fill("Xbox Launch Watch");
         await page.waitForFunction(() => document.querySelectorAll(".source-row").length === 1);
         await page.locator(".source-row").click();
-        await page.waitForFunction(() => document.querySelector("#source-name")?.textContent === "Xbox Launch Watch");
+        try {
+            await page.waitForFunction(() =>
+                document.querySelector("#source-name")?.textContent === "Xbox Launch Watch" &&
+                document.querySelector("#all-finds")?.textContent.includes("Loading finds")
+            );
+            assert.equal(await page.locator("#all-finds [data-add-clip]").count(), 0);
+        } finally {
+            releaseXboxFinds();
+            delayedFinds = null;
+        }
+        await page.waitForFunction(() =>
+            document.querySelectorAll("#all-finds [data-add-clip]").length === 1 &&
+            document.querySelector("#all-finds")?.textContent.includes("Xbox handheld reveal")
+        );
         assert.equal(await page.locator("#all-finds [data-add-clip]").count(), 1);
         assert.match(await page.locator("#history").innerText(), /Resume now/);
         const executeCountBeforeResume = requests.filter((row) =>
