@@ -11,7 +11,7 @@ from temporalio.common import WorkflowIDReusePolicy
 from temporalio.exceptions import WorkflowAlreadyStartedError
 from temporalio.worker import Worker
 
-from katcha.config import get_settings
+from katcha.config import Settings, get_settings
 from katcha.db import session_scope
 from katcha.longform_models import Compilation
 from katcha.orchestration.editorial_activities import EDITORIAL_ACTIVITIES
@@ -89,6 +89,31 @@ async def _resume_persisted_longform_work(client: Client, settings) -> tuple[int
     return resumed, present
 
 
+def create_longform_worker(
+    client: Client, settings: Settings, activity_executor: concurrent.futures.Executor,
+) -> Worker:
+    """Use the same Editorial and measured-media registrations in every deployment."""
+    return Worker(
+        client,
+        task_queue=settings.temporal_longform_task_queue,
+        workflows=[LongformCompilationWorkflow, EditorialProjectWorkflow, SceneIndexWorkflow],
+        activities=[
+            select_compilation_candidates_activity,
+            generate_longform_editor_plan_activity,
+            critique_longform_plan_activity,
+            finalize_longform_plan_activity,
+            generate_longform_narration_activity,
+            build_longform_manifest_activity,
+            render_longform_activity,
+            mark_compilation_failed,
+            *EDITORIAL_ACTIVITIES,
+            measure_project_media,
+            fail_scene_index_attempt,
+        ],
+        activity_executor=activity_executor,
+    )
+
+
 async def main() -> None:
     settings = get_settings()
     logging.basicConfig(
@@ -107,25 +132,7 @@ async def main() -> None:
     )
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=4) as activity_executor:
-        worker = Worker(
-            client,
-            task_queue=settings.temporal_longform_task_queue,
-            workflows=[LongformCompilationWorkflow, EditorialProjectWorkflow, SceneIndexWorkflow],
-            activities=[
-                select_compilation_candidates_activity,
-                generate_longform_editor_plan_activity,
-                critique_longform_plan_activity,
-                finalize_longform_plan_activity,
-                generate_longform_narration_activity,
-                build_longform_manifest_activity,
-                render_longform_activity,
-                mark_compilation_failed,
-                *EDITORIAL_ACTIVITIES,
-                measure_project_media,
-                fail_scene_index_attempt,
-            ],
-            activity_executor=activity_executor,
-        )
+        worker = create_longform_worker(client, settings, activity_executor)
         reconciler = asyncio.create_task(editorial_reconciler(client))
         try:
             await worker.run()

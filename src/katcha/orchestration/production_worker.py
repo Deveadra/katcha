@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import concurrent.futures
 import logging
+from contextlib import suppress
 
 from sqlalchemy import select
 from temporalio.client import Client
@@ -19,16 +20,8 @@ from katcha.orchestration.brand_preview_activities import (
     render_brand_preview_activity,
 )
 from katcha.orchestration.brand_preview_workflows import StagedBrandPreviewWorkflow
-from katcha.orchestration.longform_activities import (
-    build_longform_manifest_activity,
-    critique_longform_plan_activity,
-    finalize_longform_plan_activity,
-    generate_longform_editor_plan_activity,
-    generate_longform_narration_activity,
-    mark_compilation_failed,
-    render_longform_activity,
-    select_compilation_candidates_activity,
-)
+from katcha.orchestration.editorial_dispatch import editorial_reconciler
+from katcha.orchestration.longform_worker import create_longform_worker
 from katcha.orchestration.longform_workflows import LongformCompilationWorkflow
 from katcha.orchestration.production_activities import (
     build_render_manifest_activity,
@@ -278,23 +271,14 @@ async def main() -> None:
             ],
             activity_executor=activity_executor,
         )
-        longform_worker = Worker(
-            client,
-            task_queue=settings.temporal_longform_task_queue,
-            workflows=[LongformCompilationWorkflow],
-            activities=[
-                select_compilation_candidates_activity,
-                generate_longform_editor_plan_activity,
-                critique_longform_plan_activity,
-                finalize_longform_plan_activity,
-                generate_longform_narration_activity,
-                build_longform_manifest_activity,
-                render_longform_activity,
-                mark_compilation_failed,
-            ],
-            activity_executor=activity_executor,
-        )
-        await run_worker_group([production_worker, longform_worker])
+        longform_worker = create_longform_worker(client, settings, activity_executor)
+        reconciler = asyncio.create_task(editorial_reconciler(client))
+        try:
+            await run_worker_group([production_worker, longform_worker])
+        finally:
+            reconciler.cancel()
+            with suppress(asyncio.CancelledError):
+                await reconciler
 
 
 if __name__ == "__main__":
