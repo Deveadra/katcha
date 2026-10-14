@@ -105,7 +105,10 @@ def test_upload_replay_is_exact_and_retains_revocation(project):
     assert upload(project)["status"] == "revoked"
 
 
-@pytest.mark.parametrize("data", [b"", b"not audio", wav()[:-8], wav(0), wav(rate=4000)])
+@pytest.mark.parametrize(
+    "data", [b"", b"not audio", wav()[:-8], wav(0), wav(rate=4000)],
+    ids=["empty", "not-audio", "truncated", "no-frames", "unsupported-rate"],
+)
 def test_bad_audio_is_rejected_before_storage(project, data):
     with pytest.raises(ValueError):
         upload(project, audio=data)

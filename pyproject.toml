@@ -25,6 +25,9 @@ dependencies = [
   "cryptography>=45,<47",
   "imagehash>=4.3,<5",
   "Pillow>=11,<12",
+  # Media intake and measured-shot indexing run in hosted API/production images.
+  # PyAV 19 removed metadata_errors, which faster-whisper still passes to av.open.
+  "av>=11,<19",
 ]
 
 [project.optional-dependencies]
@@ -35,8 +38,6 @@ ai = [
 ]
 media = [
   "faster-whisper>=1.1,<2",
-  # PyAV 19 removed metadata_errors, which faster-whisper still passes to av.open.
-  "av>=11,<19",
 ]
 dev = [
   "google-genai>=1.30,<2",

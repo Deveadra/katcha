@@ -8,6 +8,10 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
+
 # Third-party dependencies are keyed only by pyproject.toml. Katcha source changes
 # therefore reuse this expensive layer instead of reinstalling dependencies.
 COPY pyproject.toml ./
