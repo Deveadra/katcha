@@ -45,7 +45,8 @@ def _render(tmp_path: Path, api_sha: str | None) -> dict:
     })
     result = subprocess.run(
         [
-            "docker", "compose", "--project-name", "katcha-production",
+            "docker", "compose", "--profile", "*",
+            "--project-name", "katcha-production",
             "--env-file", str(env_file), "-f", str(COMPOSE),
             "config", "--no-env-resolution", "--format", "json",
         ],
