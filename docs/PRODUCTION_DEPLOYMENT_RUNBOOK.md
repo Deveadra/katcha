@@ -1,151 +1,194 @@
-# Production deployment — GitHub Actions → existing OCI primary
+# Katcha production deployment — GitHub-approved, OCI host-pull
 
-**Status:** Code implemented behind two disabled-by-default permissions and a
-one-time, manually registered production runner. Nothing runs on OCI merely
-because this workflow is merged. This is a **bounded supervised full-stack
-promotion**, NOT a zero-downtime API-only hot swap.
+**Status:** Manual GitHub production deployment workflow and root-owned OCI
+executor implemented, disabled by default. A one-time installation and
+two independent operator opt-ins are required. Neither merging this PR nor
+publishing Docker images changes the running OCI production release.
 
-The GitHub Actions workflow named **Production deployment** appears under Actions
-after this change merges into `main`. It takes an exact SHA, Temporal workflow
-interruption policy and explicit confirmation. **Publish runtime images** builds
-artifacts and **Application launcher** tests the local application; neither
-deploys to OCI.
+## Why host-pull (not a GitHub runner on OCI)
 
-## Trust and production ownership
+`Deveadra/katcha` is a **public repository**. A persistent self-hosted
+GitHub Actions runner installed on the production VM risks executing untrusted
+public-PR workflow code. **No self-hosted runner is permitted on production.**
+GitHub-hosted runners also cannot safely reach the private OCI VM without new
+privileged access. Instead:
 
-- The existing OCI A1 primary retains its private networking, single active
-  deployment identity/epoch, PostgreSQL volume and R2 buckets.
-- A **dedicated unprivileged GitHub runner user** `katcha-deploy` on that host
-  receives only workflow jobs labelled `katcha-production`. Do not give that
-  user the Docker socket/group, the sudo group, or credentials under
-  `/etc/katcha`. Limit it to this one repository, never an organization-wide
-  shared runner. Do not run pull-request workflows on this runner.
-- The workflow's deploy job uses the GitHub Environment `katcha-production`.
-  **Configure required reviewer approval, restrict deployments to main, and
-  prevent self-approval where available.** Do not remove approval for speed.
-- Only the fixed-path root-owned `/usr/local/sbin/katcha-production-deploy`
-  may be run through passwordless sudo. The workflow cannot supply a script,
-  host, OCI instance, shell command or arbitrary filename.
-- Two explicit flags are independently required:
-  `KATCHA_PRODUCTION_DEPLOY_ENABLED=true` as a GitHub **repository variable**
-  and the root-only file `/etc/katcha/production-deploy.enabled`, with exactly
-  that one line, ownership root and permissions 0600. Both **default OFF**.
-- There is no OCI admin token, GitHub recovery key, Cloudflare bypass token,
-  Bastion network change, new compute, or paid fallback in this workflow.
-  Initial runner installation requires a one-time operator SSH session.
-  Subsequent manual deployments do **not** require daily Bastion sessions.
-- A repository compromise remains high impact even with an unprivileged
-  runner. Protect main, require code review for this workflow and deploy scripts,
-  and keep the host gate disabled outside approved maintenance windows.
+1. GitHub-hosted Actions verifies current `main` CI and GHCR publication.
+2. A protected GitHub Environment `katcha-production` requires operator review.
+3. The approved Actions job uses an environment-only 256-bit HMAC signing key
+   to publish a short-lived, SHA-specific GitHub **Deployment request**.
+4. A one-minute, root-owned systemd timer on the existing OCI VM anonymously
+   reads GitHub's public deployment feed, verifies the HMAC, exact target,
+   host identity, UTC time window, and replay protection, and invokes only
+   `/usr/local/sbin/katcha-production-deploy`. The signing key is kept in
+   `/etc/katcha/production-deploy.key` (root-owned, mode 0600).
+5. The executor independently rechecks release evidence, current OCI authority
+   and running containers before any lifecycle operation. Signed requests
+   expire after 20 minutes and are consumed at most once, even if execution
+   fails or the host restarts. Retry requires a **new** protected GitHub run.
 
-## One-time setup (operator-owned)
+No OCI administrator API key, recovery secret, GitHub PAT, GitHub runner,
+new public SSH route, Bastion session, paid instance or Cloudflare bypass is
+used for routine deployment requests. A one-time **operator** SSH session
+is still required for installer and secret provisioning.
 
-1. In GitHub → **Settings → Environments**, create `katcha-production`.
-   Require reviewer approval and main-only deployment branch protection. In
-   **Settings → Secrets and variables → Actions → Variables**, keep
-   `KATCHA_PRODUCTION_DEPLOY_ENABLED` **false** until fully configured.
-2. On the verified OCI production VM, create the isolated service account
-   (only once):
-   ```bash
-   id katcha-deploy || sudo useradd --create-home --shell /bin/bash katcha-deploy
-   id -nG katcha-deploy
-   ```
-   Verify it does **not** belong to `sudo`, `docker`, or `root` groups.
-3. GitHub → **Settings → Actions → Runners → New self-hosted runner**.
-   Select **Linux / ARM64**. Under the account `katcha-deploy`, in its own
-   `/home/katcha-deploy/actions-runner` directory, follow GitHub's
-   displayed exact download/checksum/registration instructions. Scope it only
-   to `Deveadra/katcha` and give it the additional custom runner label
-   **katcha-production**. Start it as a systemd service using GitHub's
-   documented `svc.sh install katcha-deploy` procedure. Never place the
-   runner under `/opt/katcha` or in the Docker group.
-4. From an existing operator SSH session on
-   `ubuntu@katcha-prod-primary-001`, after the PR is reviewed/merged and
-   exact-head CI succeeds, fetch accepted main **without changing the live
-   checkout** and install the reviewed root-owned executor:
-   ```bash
-   cd /opt/katcha
-   sudo git fetch origin main
-   TARGET="$(sudo git -C /opt/katcha rev-parse origin/main)"
-   TEMP="$(mktemp --suffix=.sh)"
-   sudo git -C /opt/katcha show "$TARGET:deploy/scripts/install-production-deployer.sh" > "$TEMP"
-   bash -n "$TEMP"
-   sudo bash "$TEMP" --install
-   rm -f "$TEMP"
-   ```
-   The installer validates the runner user, compiles the executor, installs a
-   narrowly scoped sudoers entry with `visudo`, and leaves the app running.
-   It does not create or enable the production gate.
-5. Once the environment approvals, restricted runner, backups, and CI are
-   reviewed, explicitly enable **both** gates:
-   ```bash
-   printf '%s\n' 'KATCHA_PRODUCTION_DEPLOY_ENABLED=true' | \
-     sudo install -o root -g root -m 0600 /dev/stdin /etc/katcha/production-deploy.enabled
-   sudo ls -l /etc/katcha/production-deploy.enabled
-   ```
-   Set the GitHub repository variable `KATCHA_PRODUCTION_DEPLOY_ENABLED=true`
-   separately. That change does not itself trigger deployment.
+## Before enabling: mandatory one-time operator setup
 
-## Deploy from the GitHub UI
+**1. GitHub review boundaries.** In the repository GitHub UI:
+
+- Settings → Environments → create **`katcha-production`** with required
+  reviewer approval, main-only branch restriction and self-review prevention
+  where supported. Require branch review for deployment workflow/code changes.
+- Settings → Secrets and variables → Actions → Variables → create
+  `KATCHA_PRODUCTION_DEPLOY_ENABLED=false`.
+- Do not enable until a second operator has reviewed the workflow, scripts,
+  backup policy, Temportal workflow safety, and recovery implications.
+
+**2. Generate the same signing key at both ends without posting it anywhere.**
+From trusted **WSL Ubuntu** (not Oracle Cloud Shell):
+
+```bash
+umask 077
+mkdir -p "$HOME/.config/katcha"
+openssl rand -hex 32 > "$HOME/.config/katcha/production-deploy.key"
+gh secret set KATCHA_PRODUCTION_DEPLOY_HMAC_KEY \
+  --repo Deveadra/katcha --env katcha-production \
+  < "$HOME/.config/katcha/production-deploy.key"
+```
+
+Using the already verified OCI Bastion SSH connection, transfer the file to
+`/etc/katcha/production-deploy.key` without printing the secret. For example,
+use the same strict-host-key `ssh` options from
+[OCI Operator Access](OCI_OPERATOR_ACCESS.md) and append this fixed remote
+command, with stdin redirected from the WSL file:
+
+```bash
+'sudo sh -c "umask 077; cat > /etc/katcha/production-deploy.key"' \
+  < "$HOME/.config/katcha/production-deploy.key"
+```
+
+The last snippet is the **suffix of the SSH command**, not a standalone
+command. Never paste the signing key in ChatGPT, workflow inputs or logs.
+
+**3. Install the approved code on the existing OCI primary, without touching
+the running checkout or containers.** After this PR is merged and its main
+CI/image evidence is accepted, in the existing OCI SSH session:
+
+```bash
+cd /opt/katcha
+sudo git fetch origin main
+TARGET="$(sudo git -C /opt/katcha rev-parse origin/main)"
+TEMP="$(mktemp --suffix=.sh)"
+sudo git -C /opt/katcha show "$TARGET:deploy/scripts/install-production-deployer.sh" > "$TEMP"
+bash -n "$TEMP"
+sudo bash "$TEMP" --install
+rm -f "$TEMP"
+```
+
+The installer copies the root-owned fixed executor, HMAC poller and systemd
+units from the reviewed main tree; compiles both Python scripts and reloads
+systemd. It does **not** enable the timer or advance the application checkout.
+The old unleased Compose owner continues running until an explicitly approved
+supervisor stop. After any accepted deployer code update, rerun the reviewed
+installer to update the root-owned copies.
+
+**4. Explicitly enable only after review.** On the production host:
+
+```bash
+printf '%s\n' KATCHA_PRODUCTION_DEPLOY_ENABLED=true |
+  sudo sh -c 'umask 077; cat > /etc/katcha/production-deploy.enabled'
+sudo systemctl enable --now katcha-production-deploy-poll.timer
+sudo systemctl list-timers katcha-production-deploy-poll.timer
+```
+
+Then set the GitHub **repository variable**
+`KATCHA_PRODUCTION_DEPLOY_ENABLED=true`. These two switches are
+independent. The host poller does no network activity when its local gate is
+absent or disabled; enabling it does **not** deploy a release by itself.
+
+## Deploy from GitHub Actions
 
 Actions → **Production deployment** → **Run workflow**:
 
-- Branch: **main**.
-- `release_sha`: exact latest full 40-character accepted `main` commit.
-- `running_workflows`: `refuse` by default. If any active Temporal workflows
-  exist, the job fails before mutation. `approved-resume` explicitly permits
-  a bounded restart while up to 100 running workflows remain; use it only after
-  reviewing potential retries, activity idempotency, and any in-progress media
-  work. Approval does **not** make non-idempotent activities safe.
-- `confirmation`: exactly `DEPLOY KATCHA PRODUCTION`.
+- Select branch `main`.
+- Enter the exact latest 40-character accepted main SHA.
+- Choose `running_workflows=refuse` unless a supervised review permits a
+  full-stack interruption of active Temporal activities. The override
+  `approved-resume` may cause durable workflows to retry; it must **not**
+  be interpreted as a guarantee of activity idempotence.
+- Type `DEPLOY KATCHA PRODUCTION`.
 
-After the GitHub-hosted preflight passes, the protected `katcha-production`
-environment requests reviewer approval. The restricted OCI runner then runs
-the fixed installed executor through sudo.
+GitHub validates exact-main CI + image publication and requests approval for
+the `katcha-production` environment. The protected job signs a deployment
+request and exits **after requesting**, not after finishing, the OCI rollout.
+The registered host timer picks it up within the request's 20-minute window.
+No desktop session, admin reauthentication or SSH tunnel is needed **for
+subsequent deployments**.
 
-The executor independently rechecks main, exact successful push CI and GHCR
-publication, ancestry and changed-file list, root-only gate, mounted durable
-disk, clean checkout, current release, healthy nine-container inventory,
-Cloudflare coordinator fence and Temporal count. **All migration changes are
-blocked** until a separate tested migration-safe rollout mechanism exists.
+## What the executor does
 
-It downloads immutable ARM64 images and validates source labels/digests while
-the old stack remains live. It runs a fresh PostgreSQL backup and isolated
-restore verification. With authority and acceptance still valid, it stops the
-single attached supervisor, waits for the old stack to exit, and acquires
-the **same private kernel Compose lease** introduced by PR #421. It performs
-an ff-only checkout update, atomically pins the new SHA, releases that lease,
-then restarts the existing systemd service (whose successor acquires the lease
-for its entire attached lifetime). It checks nine containers, local release
-identity, and coordinator fencing. The old supervisor is not assumed to hold
-this lease before adoption: the controller explicitly verifies it and its
-containers have stopped before taking ownership.
-A service interruption is expected; Temporal histories persist in PostgreSQL.
+- Root-only local enablement and a private exclusive deployment lock;
+  active OCI host, mounted durable volume, clean `main` checkout, and
+  matching pinned/running old release.
+- Independent fresh GitHub release evidence, bounded and descendant commit
+  comparison, deny migration/disaster-restore code changes, healthy nine
+  running services, Cloudflare coordinator leader/epoch fence and Temporal
+  workflow count.
+- Stage the exact four ARM64 runtime images, validate source revision labels,
+  record image IDs and local registry digest references; compare running
+  image IDs after launch to staged IDs.
+- Start a **fresh three-database R2 backup and isolated restore test**. Verify
+  success result **and new journal completion markers**; a skipped oneshot
+  must never count as a backup.
+- Reconfirm authority and eligibility immediately before mutation. Stop the
+  sole attached `katcha.service` owner, ensure its Compose containers exited,
+  acquire PR #421's **same private kernel Compose owner lease**, fast-forward
+  the checkout, atomically update the exact global SHA, then release the lease
+  so the successor service can obtain it before Compose startup.
+- Verify health, the local SHA route, the fence, and Temporal visibility.
+  Record pre/post running workflow counts and a protected audit under
+  `/srv/katcha/deployments/`.
+- On failure, attempt to restore old configuration/images and checkout
+  without Git-history deletion, and record `ROLLED_BACK` or
+  `RECOVERY_REQUIRED`. **Do not blindly re-dispatch a failed rollout.**
+  The absence of migration-file changes does not prove every runtime data
+  write is backward-compatible.
 
-On failed readiness, it attempts a non-destructive rollback to the old pinned
-images and checkout, preserving Git history and data. If rollback fails, it
-stops and reports `RECOVERY_REQUIRED`; do not attempt repeat deployments.
-Result and protected pre-change env copy are retained under
-`/srv/katcha/deployments` (root-only). After a rollback, the checkout may be
-detached at the old commit and needs explicit operator reconciliation.
+**Expected impact:** This is a supervised **full-stack restart**, not a
+zero-downtime API-only swap. PostgreSQL data and Temporal histories remain
+on the existing durable volume, R2 objects are untouched, and existing
+leadership identity/epoch and paid-compute/recovery switches stay unchanged.
+Running workflows may pause/retry; require human review of activity
+idempotence before selecting `approved-resume`.
 
-**Public Cloudflare Access browser checks remain necessary after a successful
-host rollout**: `app.katcha.stream` authentication, navigation, data, asset
-HTTP responses, and AI/media tasks. Host readiness alone does not verify them.
+**Public acceptance remains separate:** The signed-request job and host
+readiness do not automatically verify protected browser navigation,
+Cloudflare Access sessions, CSS/assets, media jobs or live AI behavior.
+Inspect `https://app.katcha.stream` and the exact public release after
+the host reports `DEPLOYED`. Independent signed GHCR digest attestation,
+automatic zero-downtime worker draining, and safe unattended schema
+migrations require additional implementation before autonomous deployment
+on every push should be enabled.
 
-## Hard stops
+## Inspect / disable / recover
 
-- No job can mutate OCI if either deployment flag is absent/false, target SHA
-  is stale, approved workflow evidence is missing, backup/restore fails, or
-  the coordinator fence rejects authority.
-- Migrations or unknown/oversized Git comparisons are refused; this code is
-  not an unattended migration executor.
-- Never manually start another `docker compose up` alongside the attached
-  supervisor; never force-push/reset the Git checkout; never replace R2 or
-  PostgreSQL state from local files; never enable OCI recovery or paid fallback
-  to deploy an ordinary release.
-- If there is no eligible, online, dedicated self-hosted runner, the deploy job
-  will queue rather than use an unsafe GitHub-hosted tunnel. Verify the runner
-  is connected before dispatching.
-- Keep `KATCHA_PRODUCTION_DEPLOY_ENABLED=false` and remove the host gate
-  during prolonged downtime or until all launch safeguards have been audited.
+On OCI:
+
+```bash
+sudo systemctl status katcha-production-deploy-poll.timer --no-pager
+sudo journalctl -u katcha-production-deploy-poll.service -n 60 --no-pager
+sudo ls -la /srv/katcha/deployments/requests
+curl -fsS http://127.0.0.1:8000/v1/health/release
+```
+
+Emergency disable:
+
+```bash
+sudo systemctl disable --now katcha-production-deploy-poll.timer
+sudo rm -f /etc/katcha/production-deploy.enabled
+```
+
+Also set the GitHub repository deployment flag **false**. Do not restart
+`katcha.service` or launch competing Docker Compose commands to fix a
+stalled deployment. A consumed/failed signed request is never automatically
+retried; inspect the protected audit and arrange a new reviewed request.
