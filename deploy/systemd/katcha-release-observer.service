@@ -1,0 +1,25 @@
+[Unit]
+Description=Katcha production release observer (read-only)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+WorkingDirectory=/opt/katcha
+Environment=PYTHONPATH=/opt/katcha/src
+ExecStart=/usr/bin/python3 -m katcha.ops.production_release_observer --production-env /etc/katcha/katcha.env
+TimeoutStartSec=90s
+UMask=0077
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectControlGroups=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+CapabilityBoundingSet=
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+StandardOutput=journal
+StandardError=journal
