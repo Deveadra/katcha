@@ -112,9 +112,14 @@ blocked** until a separate tested migration-safe rollout mechanism exists.
 It downloads immutable ARM64 images and validates source labels/digests while
 the old stack remains live. It runs a fresh PostgreSQL backup and isolated
 restore verification. With authority and acceptance still valid, it stops the
-single attached supervisor, waits for the old stack to exit, performs an
-ff-only checkout update, atomically pins the new SHA, restarts the existing
-systemd service, checks nine containers, local release identity, and fence.
+single attached supervisor, waits for the old stack to exit, and acquires
+the **same private kernel Compose lease** introduced by PR #421. It performs
+an ff-only checkout update, atomically pins the new SHA, releases that lease,
+then restarts the existing systemd service (whose successor acquires the lease
+for its entire attached lifetime). It checks nine containers, local release
+identity, and coordinator fencing. The old supervisor is not assumed to hold
+this lease before adoption: the controller explicitly verifies it and its
+containers have stopped before taking ownership.
 A service interruption is expected; Temporal histories persist in PostgreSQL.
 
 On failed readiness, it attempts a non-destructive rollback to the old pinned
