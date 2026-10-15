@@ -484,6 +484,42 @@ def healthy(target: str, seconds: int = 300,
 
 
 
+def stop_supervisor() -> None:
+    """Stop the sole Compose owner, accepting its observed SIGINT exit only.
+
+    Attached Compose can finish stopping every service and exit 130. systemd
+    records that cleanly stopped stack as failed/exit-code. Clear that specific
+    result only after proving neither its process nor project containers remain.
+    All other failures retain their diagnostic state and block deployment.
+    """
+    run("systemctl", "stop", "katcha.service", timeout=180)
+
+    def verify_stopped() -> str:
+        if run("docker", "ps", "--filter",
+               "label=com.docker.compose.project=katcha-production",
+               "--format", "{{.ID}}"):
+            raise Blocked("old Compose supervisor did not fully stop")
+        if run("systemctl", "show", "-p", "MainPID", "--value",
+               "katcha.service") != "0":
+            raise Blocked("production supervisor process remains active")
+        return run("systemctl", "show", "-p", "ActiveState", "--value",
+                   "katcha.service")
+
+    state = verify_stopped()
+    if state == "failed":
+        result = run("systemctl", "show", "-p", "Result", "--value",
+                     "katcha.service")
+        status = run("systemctl", "show", "-p", "ExecMainStatus", "--value",
+                     "katcha.service")
+        if (result, status) != ("exit-code", "130"):
+            raise Blocked("unexpected production supervisor stop failure")
+        run("systemctl", "reset-failed", "katcha.service")
+        # Resetting the unit must not conceal a concurrent restart or live stack.
+        state = verify_stopped()
+    if state != "inactive":
+        raise Blocked("production supervisor is not inactive after stop")
+
+
 def acquire_supervisor_lease() -> int:
     """Serialize checkout/pin mutation with the active Compose owner's lease.
 
@@ -569,15 +605,7 @@ def deploy(target: str, policy: str, migration_policy: str = "refuse") -> dict[s
         # Start recovery obligation BEFORE requesting the stop: systemctl can
         # time out after already stopping some or all of the running stack.
         started_change = True
-        run("systemctl", "stop", "katcha.service", timeout=180)
-        remaining = run("docker", "ps", "--filter",
-                        "label=com.docker.compose.project=katcha-production",
-                        "--format", "{{.ID}}")
-        if remaining:
-            raise Blocked("old Compose supervisor did not fully stop")
-        if run("systemctl", "show", "-p", "ActiveState", "--value",
-               "katcha.service") != "inactive":
-            raise Blocked("old Compose supervisor is still active")
+        stop_supervisor()
         lease_fd = acquire_supervisor_lease()
         try:
             run("git", "-C", str(REPO), "merge", "--ff-only", target, timeout=60)
@@ -612,17 +640,7 @@ def deploy(target: str, policy: str, migration_policy: str = "refuse") -> dict[s
             raise Blocked("forward-only migration rollout failed; old image rollback prohibited") from exc
         if started_change:
             try:
-                run("systemctl", "stop", "katcha.service", timeout=180)
-                if run("systemctl", "show", "-p", "ActiveState", "--value",
-                       "katcha.service") != "inactive":
-                    raise Blocked("supervisor still active during rollback")
-                remaining = run(
-                    "docker", "ps", "--filter",
-                    "label=com.docker.compose.project=katcha-production",
-                    "--format", "{{.ID}}",
-                )
-                if remaining:
-                    raise Blocked("old containers still running during rollback")
+                stop_supervisor()
                 lease_fd = acquire_supervisor_lease()
                 try:
                     atomic_env(original)
