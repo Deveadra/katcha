@@ -56,6 +56,9 @@ def cf_goal(monkeypatch):
         control_api_token=None,
         control_principals=[],
         cloudflare_access_principals=[p],
+        cloudflare_access_team_domain="https://katcha.cloudflareaccess.com",
+        cloudflare_access_audience="fixture-access-audience",
+        cloudflare_access_application_domain="app.katcha.stream",
     )
     monkeypatch.setattr(goal_receipts, "get_settings", lambda: settings)
     monkeypatch.setattr("katcha.api.control_auth.get_settings", lambda: settings)
