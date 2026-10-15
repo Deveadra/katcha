@@ -29,6 +29,7 @@ trap 'rm -rf "$staging"' EXIT
 for path in \
   deploy/scripts/production-deploy.py \
   deploy/scripts/production-deploy-poll.py \
+  src/katcha/ops/release_eligibility.py \
   deploy/systemd/katcha-production-deploy-poll.service \
   deploy/systemd/katcha-production-deploy-poll.timer; do
   mkdir -p "$staging/$(dirname "$path")"
@@ -37,7 +38,13 @@ for path in \
 done
 python3 -m py_compile \
   "$staging/deploy/scripts/production-deploy.py" \
-  "$staging/deploy/scripts/production-deploy-poll.py"
+  "$staging/deploy/scripts/production-deploy-poll.py" \
+  "$staging/src/katcha/ops/release_eligibility.py"
+
+install -d -o root -g root -m 0700 /usr/local/lib/katcha-production-deploy
+install -o root -g root -m 0600 \
+  "$staging/src/katcha/ops/release_eligibility.py" \
+  /usr/local/lib/katcha-production-deploy/release_eligibility.py
 
 install -o root -g root -m 0755 \
   "$staging/deploy/scripts/production-deploy.py" \
