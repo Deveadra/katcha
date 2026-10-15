@@ -13,7 +13,7 @@ from temporalio.api.workflowservice.v1 import DescribeTaskQueueRequest
 
 from katcha.acquisition.runtime import DISCOVERY_TASK_QUEUE
 from katcha.ai.subscription import subscription_connected
-from katcha.config import get_settings
+from katcha.config import get_ai_settings as get_settings
 from katcha.db import session_scope
 from katcha.intelligence.runtime import INTELLIGENCE_TASK_QUEUE
 from katcha.models import DomainEvent

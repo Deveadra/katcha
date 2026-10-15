@@ -19,7 +19,8 @@ from katcha.ai.router import (
     route_for_channel,
 )
 from katcha.ai.subscription import generate_subscription_json
-from katcha.config import Settings, get_settings
+from katcha.config import Settings
+from katcha.config import get_ai_settings as get_settings
 from katcha.db import session_scope
 from katcha.domain import AITask
 from katcha.editorial.personas import HostPersona

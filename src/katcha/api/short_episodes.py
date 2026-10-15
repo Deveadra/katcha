@@ -26,7 +26,7 @@ from katcha.api.short_episode_schemas import (
     StartShortEpisodeEditorialRequest,
     StartShortEpisodeEditorialResponse,
 )
-from katcha.config import get_settings
+from katcha.config import get_ai_settings as get_settings
 from katcha.db import session_scope
 from katcha.domain import ReviewDecision
 from katcha.orchestration.client import (

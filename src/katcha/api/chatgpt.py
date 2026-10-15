@@ -6,7 +6,7 @@ from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, Field
 
-from katcha.config import get_settings
+from katcha.config import get_ai_settings as get_settings
 from katcha.integrations.chatgpt import (
     ChatGPTConnectionError,
     begin_chatgpt_oauth,

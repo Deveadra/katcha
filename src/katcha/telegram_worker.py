@@ -490,6 +490,9 @@ async def _handle_feedback(
     )
     if row is None:
         return False
+    from katcha.services.application_ai_settings import effective_settings
+
+    settings = effective_settings(settings)
     if not settings.ai_enabled:
         await asyncio.to_thread(
             client.send_message,

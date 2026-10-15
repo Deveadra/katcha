@@ -10,7 +10,7 @@ from sqlalchemy import delete, func, select
 from temporalio import activity
 
 from katcha.audio.tts import get_voice_profile, synthesize_speech
-from katcha.config import get_settings
+from katcha.config import get_ai_settings as get_settings
 from katcha.db import session_scope
 from katcha.domain import CompilationStatus
 from katcha.editorial.personas import get_persona

@@ -15,7 +15,7 @@ from katcha.acquisition.adapters import (
 )
 from katcha.ai.pricing import estimate_token_cost
 from katcha.ai.router import ModelTarget, assert_ai_budget, record_usage
-from katcha.config import get_settings
+from katcha.config import get_ai_settings as get_settings
 from katcha.domain import AITask
 from katcha.integrations.chatgpt import (
     ChatGPTConnectionError,

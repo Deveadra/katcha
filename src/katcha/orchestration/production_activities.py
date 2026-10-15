@@ -9,7 +9,8 @@ from sqlalchemy import func, select
 from temporalio import activity
 
 from katcha.audio.tts import VoiceProfile, get_voice_profile, synthesize_speech
-from katcha.config import Settings, get_settings
+from katcha.config import Settings
+from katcha.config import get_ai_settings as get_settings
 from katcha.db import session_scope
 from katcha.domain import ProductionStatus
 from katcha.editing.blueprints import EditBlueprintContract

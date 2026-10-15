@@ -19,6 +19,7 @@ from sqlalchemy import select, text
 from katcha import __version__
 from katcha.ai.subscription import subscription_connected
 from katcha.api.acquisition import router as acquisition_router
+from katcha.api.ai_settings import router as ai_settings_router
 from katcha.api.brands import router as brands_router
 from katcha.api.chatgpt import router as chatgpt_router
 from katcha.api.clip_library import router as clip_library_router
@@ -91,7 +92,7 @@ from katcha.api.studio import router as studio_router
 from katcha.api.telegram import router as telegram_router
 from katcha.api.trends import router as trends_router
 from katcha.clip_lifecycle_models import ClipLifecycle
-from katcha.config import get_settings
+from katcha.config import get_ai_settings as get_settings
 from katcha.db import session_scope
 from katcha.domain import (
     AnalysisStatus,
@@ -204,6 +205,7 @@ app.include_router(editorial_semantic_matching_router)
 app.include_router(editorial_shot_handoff_router)
 app.include_router(editorial_runs_router)
 app.include_router(acquisition_router)
+app.include_router(ai_settings_router)
 app.include_router(brands_router)
 app.include_router(chatgpt_router)
 app.include_router(codex_router)

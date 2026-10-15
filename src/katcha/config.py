@@ -510,3 +510,10 @@ def get_settings() -> Settings:
     settings = Settings()
     settings.work_dir.mkdir(parents=True, exist_ok=True)
     return settings
+
+
+def get_ai_settings() -> Settings:
+    """Resolve shared overrides for AI clients without changing infrastructure settings."""
+    from katcha.services.application_ai_settings import effective_settings
+
+    return effective_settings(get_settings())

@@ -16,7 +16,7 @@ from pydantic import BaseModel
 from sqlalchemy import select, update
 
 from katcha.acquisition.web_scout import _grounded_url_keys, _normalized_url
-from katcha.config import get_settings
+from katcha.config import get_ai_settings as get_settings
 from katcha.db import session_scope
 from katcha.editorial_models import EditorialRun
 from katcha.integrations import chatgpt, codex

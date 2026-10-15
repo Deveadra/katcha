@@ -22,7 +22,8 @@ from katcha.ai.router import (
     release_budget_reservation,
     route_for_channel,
 )
-from katcha.config import Settings, get_settings
+from katcha.config import Settings
+from katcha.config import get_ai_settings as get_settings
 from katcha.domain import AITask
 from katcha.runtime_fence import assert_mutation_authority
 from katcha.services.elevenlabs_integration import resolve_elevenlabs_voice

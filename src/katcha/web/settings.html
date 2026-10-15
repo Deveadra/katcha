@@ -102,6 +102,17 @@
                             <button id="codex-reconnect" type="button" class="secondary" hidden>Reconnect</button>
                             <button id="codex-disconnect" type="button" class="ghost danger" hidden>Disconnect</button>
                         </div>
+                        <div id="codex-finish" hidden>
+                            <p>After signing in, your browser may show that localhost cannot be reached. Copy that tab’s full address and paste it here to complete the connection to this Katcha app. Keep the address private.</p>
+                            <p><a id="codex-signin-link" target="_blank" rel="noopener">Open sign-in again</a></p>
+                            <form id="codex-finish-form">
+                                <label class="field"><span>Sign-in return address</span>
+                                    <input id="codex-return-address" type="password" autocomplete="off" required aria-describedby="codex-return-help">
+                                    <small id="codex-return-help">Starts with http://localhost:1457/auth/callback. It is used once to complete this sign-in.</small>
+                                </label>
+                                <button id="codex-finish-button" type="submit" class="primary">Finish connecting Codex</button>
+                            </form>
+                        </div>
                     </article>
 
                     <article class="settings-card direct-chatgpt-card">
@@ -158,11 +169,11 @@
                             <label class="field">
                                 <span>Conversation & command understanding</span>
                                 <select id="conversation-provider" name="KATCHA_CONVERSATION_PROVIDER">
-                                    <option value="gemini">Gemini Flash-Lite · preferred free tier</option>
+                                    <option value="gemini">Gemini Flash-Lite</option>
                                     <option value="codex">Codex subscription</option>
                                     <option value="auto">Auto</option>
                                 </select>
-                                <small>Use an AI Studio free-tier Gemini project to keep routine Katcha chat from consuming Codex capacity.</small>
+                                <small>Uses the configured Gemini project and its available quota for routine chat.</small>
                             </label>
                             <label class="field">
                                 <span>Heavy agent / research work</span>
@@ -189,7 +200,7 @@
                             <label class="field">
                                 <span>Gemini API key</span>
                                 <input id="gemini-key" name="KATCHA_GEMINI_API_KEY" type="password" autocomplete="new-password" placeholder="Not configured">
-                                <small id="gemini-state">Default conversation brain. Prefer a Gemini API project that remains on the free tier.</small>
+                                <small id="gemini-state">Used for Gemini requests within the configured budgets.</small>
                             </label>
                             <div class="button-row provider-tests">
                                 <button id="test-openai" type="button" class="secondary">Test OpenAI API</button>
