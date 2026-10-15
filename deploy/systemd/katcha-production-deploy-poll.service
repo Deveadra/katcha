@@ -1,0 +1,16 @@
+[Unit]
+Description=Katcha signed production deployment request poller
+Wants=network-online.target
+After=network-online.target docker.service
+Requires=docker.service
+RequiresMountsFor=/srv/katcha
+
+[Service]
+Type=oneshot
+User=root
+WorkingDirectory=/opt/katcha
+ExecStart=/usr/local/sbin/katcha-production-deploy-poll
+TimeoutStartSec=130min
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=5
