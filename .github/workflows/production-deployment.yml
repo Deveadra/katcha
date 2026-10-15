@@ -24,6 +24,12 @@ on:
         default: refuse
         type: choice
         options: [refuse, approved-resume]
+      migration_policy:
+        description: Migration approval; default is no schema changes
+        required: true
+        default: refuse
+        type: choice
+        options: [refuse, approve-additive-0064]
       confirmation:
         description: Type DEPLOY KATCHA PRODUCTION
         required: true
@@ -104,6 +110,7 @@ jobs:
         env:
           TARGET_SHA: ${{ inputs.release_sha }}
           POLICY: ${{ inputs.running_workflows }}
+          MIGRATION_POLICY: ${{ inputs.migration_policy }}
           DEPLOY_KEY: ${{ secrets.KATCHA_PRODUCTION_DEPLOY_HMAC_KEY }}
           ENABLED: ${{ vars.KATCHA_PRODUCTION_DEPLOY_ENABLED }}
         with:
@@ -111,10 +118,12 @@ jobs:
             const crypto = require("crypto");
             const sha = process.env.TARGET_SHA;
             const policy = process.env.POLICY;
+            const migrationPolicy = process.env.MIGRATION_POLICY;
             const key = process.env.DEPLOY_KEY || "";
             if (process.env.ENABLED !== "true" ||
                 !/^[0-9a-f]{40}$/.test(sha || "") ||
                 !["refuse", "approved-resume"].includes(policy) ||
+                !["refuse", "approve-additive-0064"].includes(migrationPolicy) ||
                 !/^[0-9a-f]{64}$/.test(key) ||
                 context.ref !== "refs/heads/main") {
               throw new Error("Production deployment request authorization missing or invalid");
@@ -129,7 +138,7 @@ jobs:
             const expires_at = issued_at + 1200;
             const nonce = crypto.randomBytes(16).toString("hex");
             const host = "katcha-prod-primary-001";
-            const message = ["katcha-production-v1", sha, policy, host,
+            const message = ["katcha-production-v2", sha, policy, migrationPolicy, host,
                              String(issued_at), String(expires_at), nonce].join("\n");
             const signature = crypto.createHmac("sha256", Buffer.from(key, "hex"))
               .update(message, "utf8").digest("hex");
@@ -145,7 +154,8 @@ jobs:
               transient_environment: false,
               production_environment: true,
               payload: {
-                version: 1, sha, policy, host, issued_at, expires_at, nonce, signature
+                version: 2, sha, policy, migration_policy: migrationPolicy,
+                host, issued_at, expires_at, nonce, signature
               }
             });
             core.info("Production deployment request published: id=" + data.id +
