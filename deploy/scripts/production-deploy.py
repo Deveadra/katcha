@@ -229,6 +229,64 @@ def workflows(policy: str) -> int:
     return count
 
 
+def temporal_inventory(policy: str) -> tuple[tuple[str, str], ...]:
+    """Inspect all open executions and forbid interrupted in-flight activities."""
+    count = workflows(policy)
+    if not count:
+        return ()
+    raw = run(
+        "docker", "exec", "katcha-production-temporal-1", "temporal",
+        "--output", "json", "workflow", "list",
+        "--address", "temporal:7233", "--namespace", "default",
+        "--query", 'ExecutionStatus="Running"', "--limit", "101",
+        timeout=30,
+    )
+    try:
+        executions = json.loads(raw)
+    except ValueError as exc:
+        raise Blocked("Temporal execution inventory is not machine-readable") from exc
+    if not isinstance(executions, list) or len(executions) != count:
+        raise Blocked("Temporal execution inventory differs from live count")
+    ids: set[tuple[str, str]] = set()
+    for item in executions:
+        if not isinstance(item, dict) or not isinstance(item.get("execution"), dict):
+            raise Blocked("Temporal workflow identity missing")
+        execution = item["execution"]
+        wid, rid = execution.get("workflowId"), execution.get("runId")
+        if (not isinstance(wid, str) or not wid or len(wid) > 255
+            or not isinstance(rid, str) or not rid or len(rid) > 128
+            or "\x00" in wid or "\x00" in rid):
+            raise Blocked("Temporal workflow identity malformed")
+        ident = (wid, rid)
+        if ident in ids:
+            raise Blocked("Temporal workflow inventory contains duplicate run")
+        ids.add(ident)
+        try:
+            details = json.loads(run(
+                "docker", "exec", "katcha-production-temporal-1", "temporal",
+                "--output", "json", "workflow", "describe",
+                "--address", "temporal:7233", "--namespace", "default",
+                "--workflow-id", wid, "--run-id", rid, timeout=30,
+            ))
+        except ValueError as exc:
+            raise Blocked("Temporal activity state is not machine-readable") from exc
+        if not isinstance(details, dict) or not isinstance(
+            details.get("workflowExecutionInfo"), dict
+        ):
+            raise Blocked("Temporal workflow description incomplete")
+        info = details["workflowExecutionInfo"]
+        observed = info.get("execution")
+        if (not isinstance(observed, dict)
+            or observed.get("workflowId") != wid or observed.get("runId") != rid):
+            raise Blocked("Temporal workflow description changed during inspection")
+        for field in ("pendingActivities", "pendingChildren",
+                      "pendingWorkflowTask", "pendingNexusOperations"):
+            pending = details.get(field, [])
+            if pending not in (None, [], {}):
+                raise Blocked("Temporal has pending activities or tasks; drain required")
+    return tuple(sorted(ids))
+
+
 def database_query(sql: str) -> str:
     """Static PostgreSQL observations in the already-running database container."""
     statements = {
