@@ -605,6 +605,12 @@ def connection_status() -> dict[str, object]:
             "display_name": connection.display_name,
             "selected_model": connection.selected_model,
             "access_token_expires_at": connection.access_token_expires_at,
+            # Preserve connection identity even when the short-lived access token
+            # expires; the refresh token is exercised by a live provider test.
+            "refresh_due": (
+                connection.access_token_expires_at is None
+                or connection.access_token_expires_at <= datetime.now(UTC)
+            ),
         }
 
     with session_scope() as session:

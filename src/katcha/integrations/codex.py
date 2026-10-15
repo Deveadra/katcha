@@ -752,6 +752,9 @@ def connection_status() -> dict[str, object]:
         "plan_type": row.plan_type,
         "selected_model": row.selected_model,
         "access_token_expires_at": row.access_token_expires_at,
+        # A saved connection is not proof of live inference. An expired access token
+        # may still be renewable with the server-side refresh credential.
+        "refresh_due": row.access_token_expires_at <= datetime.now(UTC),
     }
 
 

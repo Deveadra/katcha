@@ -175,18 +175,27 @@ def test_api_provider(provider: str) -> dict[str, object]:
             from openai import OpenAI
 
             model = "gpt-5.6-luna"
-            OpenAI(
+            response = OpenAI(
                 api_key=settings.openai_api_key,
                 timeout=20.0,
                 max_retries=0,
-            ).models.retrieve(model)
+            ).responses.create(
+                model=model,
+                input="Reply with exactly KATCHA_OPENAI_CONNECTED",
+                max_output_tokens=64,
+                store=False,
+            )
+            if str(getattr(response, "output_text", "") or "").strip() != "KATCHA_OPENAI_CONNECTED":
+                raise ChatGPTConnectionError(
+                    "OpenAI accepted the test request but did not complete the expected inference"
+                )
             return {
                 "ok": True,
                 "provider": provider,
                 "model": model,
                 "detail": (
-                    "Credential and model access confirmed. Inference quota/billing "
-                    "is checked by the provider when a generation request runs."
+                    "Live OpenAI inference verified for the selected model. "
+                    "Automatic fallback remains subject to the operator's spend policy."
                 ),
             }
 
