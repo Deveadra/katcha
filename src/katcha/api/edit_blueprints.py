@@ -10,7 +10,12 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from katcha.edit_blueprint_models import ChannelEditBlueprintVersion
 from katcha.edit_performance_models import EditBlueprintPerformanceSnapshot
-from katcha.editing.blueprints import header_explainer_v1, persona_commentary_v1
+from katcha.editing.blueprints import (
+    header_explainer_v1,
+    meme_v1,
+    persona_commentary_v1,
+    source_original_v1,
+)
 from katcha.services.channel_edit_blueprints import (
     activate_edit_blueprint_version,
     create_edit_blueprint_version,
@@ -101,6 +106,24 @@ def get_edit_blueprint_templates() -> list[EditBlueprintTemplateResponse]:
     persona = persona_commentary_v1()
     explainer = header_explainer_v1()
     return [
+        EditBlueprintTemplateResponse(
+            key="source_original",
+            display_name="Original clip (no commentary)",
+            description=(
+                "Keep the original sound and video. "
+                "The default when you do not ask for commentary."
+            ),
+            contract=source_original_v1().model_dump(mode="json"),
+        ),
+        EditBlueprintTemplateResponse(
+            key="meme",
+            display_name="Meme remix",
+            description=(
+                "Find relevant meme sounds, reaction clips, and images "
+                "to add to the original clip, without generated commentary."
+            ),
+            contract=meme_v1().model_dump(mode="json"),
+        ),
         EditBlueprintTemplateResponse(
             key=persona.key,
             display_name="Persona commentary",

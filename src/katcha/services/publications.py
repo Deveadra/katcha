@@ -140,6 +140,10 @@ def _approved_render_key(
         source = _source(session, source_kind=source_kind, source_id=source_id)
         if source.status != ProductionStatus.APPROVED.value:
             raise ValueError("production must be approved before publication")
+        if (source.analysis_snapshot or {}).get("source_only_preparation"):
+            from katcha.services.acquisition import assert_clip_production_eligible
+
+            assert_clip_production_eligible(source.clip_id)
         render = session.scalar(
             select(ProductionAsset).where(
                 ProductionAsset.production_id == source_id,

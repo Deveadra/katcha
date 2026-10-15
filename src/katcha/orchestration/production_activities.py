@@ -150,6 +150,28 @@ def generate_script_candidates(production_id: str) -> dict[str, object]:
                 .order_by(ProductionScript.candidate_index)
             )
         )
+        blueprint = _frozen_blueprint(production)
+        if blueprint is not None and blueprint.narration.mode == "source_only":
+            # A source-preserving edit has no script generation or paid narration call.
+            script = next((row for row in existing if row.style == "source_original"), None)
+            if script is None:
+                script = ProductionScript(
+                    production_id=production_uuid, candidate_index=0,
+                    style="source_original", narration="", interaction_prompt=None,
+                    rationale="Preserve source video and audio without commentary.",
+                    provider="local", model="source-original-v1",
+                    prompt_version=production.prompt_version, selected=True,
+                    script_metadata={"segments": [], "title_angle": ""},
+                )
+                session.add(script)
+                session.flush()
+            script.selected = True
+            production.selected_script_id = script.id
+            production.status = ProductionStatus.SCRIPTED.value
+            production.stage = "script_selected"
+            production.error = None
+            return {"production_id": production_id, "candidate_count": 1,
+                    "reused": bool(existing), "skipped": True}
         if len(existing) == 3:
             return {"production_id": production_id, "candidate_count": 3, "reused": True}
         if production.stage == "script_call_started":
@@ -543,7 +565,7 @@ def build_render_manifest_activity(production_id: str) -> dict[str, object]:
             and blueprint.composition == "blueprint_video"
             and blueprint.narration.mode in {"text_only", "source_only"}
         ):
-            if production.channel_profile_id is None:
+            if production.channel_profile_id is None and blueprint.narration.mode != "source_only":
                 raise RuntimeError("blueprint render requires channel-scoped production")
             if brand is None:
                 raise RuntimeError("blueprint render requires frozen brand visual tokens")
@@ -574,9 +596,13 @@ def build_render_manifest_activity(production_id: str) -> dict[str, object]:
                     (narration_asset.asset_metadata or {}).get("duration_seconds") or 0
                 )
             headline = str((script.script_metadata or {}).get("title_angle") or "").strip()
+            from katcha.services.production_meme_assets import meme_events_for_production
+
             manifest = build_blueprint_render_manifest(
+                meme_events=meme_events_for_production(session, production, store),
                 render_id=production_id,
-                channel_profile_id=str(production.channel_profile_id),
+                channel_profile_id=(str(production.channel_profile_id)
+                                    if production.channel_profile_id else "shared"),
                 brand=brand,
                 blueprint=blueprint,
                 source_storage_key=clip.storage_key,

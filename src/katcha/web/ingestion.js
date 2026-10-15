@@ -13,7 +13,7 @@ const methods = {
 };
 const usage = {
     candidate_review: ['Find content for review', 'Finds may be offered to Clips for operator review. Nothing is published automatically.'],
-    discovery_only: ['Research only', 'Finds are used as trend, packaging, audience, and editorial context and are not offered as clip candidates.'],
+    discovery_only: ['Research automatically', 'Finds feed research. You can still download any find or ask Katcha to prepare it.'],
     operator_authorized: ['Operator decides each use', 'Record that the operator will make the content-use decision.'],
     render_allowed: ['Production-intended', 'Mark this source as production-intended after normal rights, originality, and approval checks.'],
     blocked: ['Blocked', 'This source is blocked from normal use.'],
@@ -748,7 +748,7 @@ function renderFinds(page, row) {
             '</p>';
         return;
     }
-    const canPromote = !['discovery_only', 'blocked'].includes(row.usage_mode);
+    const canPromote = true;
     $('all-finds').innerHTML = findings.map(item => {
         const candidate = item.candidate || {};
         const url = safeExternalUrl(candidate.source_url);
@@ -1138,9 +1138,7 @@ async function handleInspectorClick(e) {
                 ' found. Showing up to five.</p><ul>' +
                 data.candidates.map(candidate => {
                     const safe = safeExternalUrl(candidate.source_url);
-                    const canPromote = candidate.id &&
-                        selected.usage_mode !== 'discovery_only' &&
-                        selected.usage_mode !== 'blocked';
+                    const canPromote = Boolean(candidate.id);
                     return '<li>' +
                         (safe
                             ? '<a href="' + esc(safe) + '" target="_blank" rel="noopener noreferrer">' +

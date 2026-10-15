@@ -202,7 +202,19 @@ const hydrateBlueprintManifest = async (manifest) => {
   const narration = manifest.narration?.asset_key
     ? {...manifest.narration, url: await renderAssetUrl(manifest.narration.asset_key)}
     : null;
-  return {...manifest, source, narration, brand: await hydrateBrand(manifest.brand)};
+  const meme_events = await Promise.all((manifest.meme_events || []).map(async (event) => {
+    if (!event.storage_key?.startsWith(`productions/${manifest.render_id}/meme/`)
+      || event.storage_key.split('/').includes('..') || event.storage_key.includes('\\')
+      || !['image', 'audio', 'video'].includes(event.kind)
+      || !Number.isFinite(event.start_seconds) || event.start_seconds < 0
+      || !Number.isFinite(event.duration_seconds) || event.duration_seconds <= 0
+      || event.start_seconds + event.duration_seconds > manifest.output_duration_seconds + 0.00001) {
+      throw new Error('Invalid production meme addition');
+    }
+    if (!(await exists(event.storage_key))) throw new Error('Prepared meme asset is missing');
+    return {...event, url: await renderAssetUrl(event.storage_key)};
+  }));
+  return {...manifest, source, narration, meme_events, brand: await hydrateBrand(manifest.brand)};
 };
 
 const hydrateRankedEpisodeManifest = async (manifest) => {

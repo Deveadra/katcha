@@ -52,6 +52,14 @@ class ShortProductionWorkflow:
             elif start_stage != "render":
                 raise ValueError(f"unsupported production start stage: {start_stage}")
 
+            if workflow.patched("production-meme-assets-v1"):
+                await workflow.execute_activity(
+                    "prepare_meme_assets",
+                    production_id,
+                    start_to_close_timeout=timedelta(minutes=12),
+                    retry_policy=paid_once,
+                )
+
             await workflow.execute_activity(
                 "build_render_manifest_activity",
                 production_id,

@@ -641,11 +641,17 @@ def classify_intent(prompt: str, selected_clip_ids: list[uuid.UUID]) -> str:
 
 def infer_edit_blueprint_key(prompt: str) -> str | None:
     text = prompt.casefold()
-    if "commentary" in text:
+    if re.search(r"\bmemes?\b", text) and not re.search(
+        r"\b(?:no|without)\s+memes?\b", text
+    ):
+        return "meme"
+    if "commentary" in text and not re.search(
+        r"\b(?:no|without|skip)\s+(?:any\s+)?commentary\b|don't add commentary", text
+    ):
         return "persona_commentary"
     if "header" in text or "explainer" in text:
         return "header_explainer"
-    return None
+    return "source_original"
 
 
 def _search_terms(prompt: str) -> list[str]:

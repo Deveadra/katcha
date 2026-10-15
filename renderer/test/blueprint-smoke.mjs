@@ -43,13 +43,20 @@ try {
     '-an', path.join(publicDir, 'synthetic-source.mp4'),
   ]);
 
+  await exec('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-y',
+    '-f', 'lavfi', '-i', 'color=c=red:s=120x120', '-frames:v', '1',
+    path.join(publicDir, 'reaction.png')]);
+  await exec('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-y',
+    '-f', 'lavfi', '-i', 'sine=frequency=600:duration=1',
+    path.join(publicDir, 'reaction.wav')]);
   const serveUrl = await bundle({
     entryPoint: path.resolve('test/blueprint-smoke-entry.jsx'),
     publicDir,
     outDir: path.join(tempDir, 'bundle'),
   });
 
-  const ids = ['SyntheticPersonaBlueprint', 'SyntheticHeaderBlueprint'];
+  const ids = ['SyntheticPersonaBlueprint', 'SyntheticHeaderBlueprint',
+    'SyntheticSourceOriginal', 'SyntheticMemeBlueprint'];
   const stills = [];
   for (const id of ids) {
     const composition = await selectComposition({serveUrl, id, inputProps: {}});
@@ -91,7 +98,11 @@ try {
     stills[1],
     'persona and header blueprints unexpectedly rendered identical frames',
   );
-  console.log('PASS: both editing blueprints encode and remain visually distinct.');
+  assert.notDeepEqual(stills[2], stills[3], 'Meme reaction image is not visible');
+  const {stderr: volume} = await exec('ffmpeg', ['-hide_banner', '-i',
+    path.join(outputDir, 'SyntheticMemeBlueprint.mp4'), '-af', 'volumedetect', '-f', 'null', '-']);
+  assert.match(volume, /max_volume: -[\d.]+ dB/, 'Meme soundbit has no audible samples');
+  console.log('PASS: original source, commentary, header and meme renders; visible reaction and audible soundbit.');
 } finally {
   await fs.rm(tempDir, {recursive: true, force: true});
 }

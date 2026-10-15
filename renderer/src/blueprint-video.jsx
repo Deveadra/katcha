@@ -3,6 +3,7 @@ import {BrandLogo} from './brand-logo.jsx';
 import {
   AbsoluteFill,
   Audio,
+  Img,
   OffthreadVideo,
   Sequence,
   useCurrentFrame,
@@ -77,7 +78,21 @@ const Captions = ({narration, brand}) => {
   );
 };
 
-export const BlueprintVideo = ({source, header, narration, brand}) => {
+export const MemeTrack = ({events = []}) => {
+  const {fps} = useVideoConfig();
+  const style = {position: 'absolute', right: '5%', bottom: '18%', width: '42%',
+    maxHeight: '35%', objectFit: 'contain', borderRadius: 8};
+  return events.map((event) => (
+    <Sequence key={event.id} from={secondsToFrames(event.start_seconds, fps)}
+      durationInFrames={Math.max(1, secondsToFrames(event.duration_seconds, fps))}>
+      {event.kind === 'audio' ? <Audio src={event.url} volume={event.volume} />
+        : event.kind === 'image' ? <Img src={event.url} style={style} />
+        : <OffthreadVideo src={event.url} volume={event.volume} style={style} />}
+    </Sequence>
+  ));
+};
+
+export const BlueprintVideo = ({source, header, narration, brand, meme_events}) => {
   const {fps, height} = useVideoConfig();
   const durationInFrames = Math.max(1, secondsToFrames(source.duration_seconds, fps));
   const sourceHeight = Math.max(1, height - source.top_px);
@@ -138,6 +153,7 @@ export const BlueprintVideo = ({source, header, narration, brand}) => {
         </Sequence>
       ) : null}
 
+      <MemeTrack events={meme_events} />
       <BrandLogo logo={brand?.logo} />
       <Captions narration={narration} brand={brand} />
     </AbsoluteFill>

@@ -49,6 +49,17 @@ class BlueprintNarrationPlan(BaseModel):
     cues: list[RenderCaptionCue] = Field(default_factory=list)
 
 
+class BlueprintMemeEvent(BaseModel):
+    id: str = Field(min_length=1, max_length=100)
+    kind: Literal["image", "audio", "video"]
+    storage_key: str = Field(min_length=1)
+    source_url: str = Field(min_length=1, max_length=4000)
+    title: str = Field(min_length=1, max_length=300)
+    start_seconds: float = Field(ge=0, allow_inf_nan=False)
+    duration_seconds: float = Field(gt=0, le=10, allow_inf_nan=False)
+    volume: float = Field(default=0.55, ge=0, le=1, allow_inf_nan=False)
+
+
 class BlueprintRenderManifest(BaseModel):
     version: Literal["blueprint-render-v1"] = "blueprint-render-v1"
     render_id: str = Field(min_length=1)
@@ -65,6 +76,7 @@ class BlueprintRenderManifest(BaseModel):
     source: BlueprintSourcePlan
     header: BlueprintHeaderPlan
     narration: BlueprintNarrationPlan | None = None
+    meme_events: list[BlueprintMemeEvent] = Field(default_factory=list, max_length=8)
     output_duration_seconds: float = Field(gt=0)
     output_key: str = Field(min_length=1)
 
@@ -75,6 +87,30 @@ class BlueprintRenderManifest(BaseModel):
             raise ValueError("blueprint snapshot identity does not match manifest lineage")
         if self.brand.brand_key != self.brand_key or self.brand.version != self.brand_version:
             raise ValueError("brand snapshot identity does not match manifest lineage")
+
+        if blueprint.meme.enabled and not self.meme_events:
+            raise ValueError("Meme blueprint requires prepared meme additions")
+        if self.meme_events and not blueprint.meme.enabled:
+            raise ValueError("Meme additions require an enabled meme blueprint")
+        if len(self.meme_events) > blueprint.meme.max_assets:
+            raise ValueError("Too many meme additions for this blueprint")
+        if len({event.id for event in self.meme_events}) != len(self.meme_events):
+            raise ValueError("Duplicate meme event identity")
+        for event in self.meme_events:
+            expected_prefix = f"productions/{self.render_id}/meme/"
+            if (
+                not event.storage_key.startswith(expected_prefix)
+                or ".." in event.storage_key.split("/")
+                or "\\" in event.storage_key
+            ):
+                raise ValueError("Meme asset must belong to this production")
+            if event.duration_seconds > blueprint.meme.max_asset_seconds:
+                raise ValueError("Meme addition exceeds the blueprint duration limit")
+            if (
+                event.start_seconds + event.duration_seconds
+                > self.output_duration_seconds + 0.00001
+            ):
+                raise ValueError("Meme addition extends beyond the source clip")
 
         expects_header = blueprint.source_layout.mode == "header_panel"
         if self.header.enabled != expects_header:
@@ -117,6 +153,7 @@ def build_blueprint_render_manifest(
     width: int = 1080,
     height: int = 1920,
     fps: int = 30,
+    meme_events: list[BlueprintMemeEvent] | None = None,
 ) -> BlueprintRenderManifest:
     if source_duration_seconds < blueprint.quality.min_source_seconds:
         raise ValueError("source is shorter than the blueprint minimum")
@@ -220,6 +257,7 @@ def build_blueprint_render_manifest(
         source=source,
         header=header,
         narration=narration,
+        meme_events=meme_events or [],
         output_duration_seconds=round(duration, 3),
         output_key=output_key,
     )

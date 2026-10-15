@@ -23,6 +23,7 @@ from katcha.orchestration.brand_preview_workflows import StagedBrandPreviewWorkf
 from katcha.orchestration.editorial_dispatch import editorial_reconciler
 from katcha.orchestration.longform_worker import create_longform_worker
 from katcha.orchestration.longform_workflows import LongformCompilationWorkflow
+from katcha.orchestration.meme_activities import prepare_meme_assets
 from katcha.orchestration.production_activities import (
     build_render_manifest_activity,
     generate_narration_assets,
@@ -255,6 +256,7 @@ async def main() -> None:
                 generate_script_candidates,
                 select_script_candidate,
                 generate_narration_assets,
+                prepare_meme_assets,
                 build_render_manifest_activity,
                 render_short_activity,
                 mark_production_failed,

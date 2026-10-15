@@ -8,6 +8,7 @@ from sqlalchemy import select
 
 from katcha.db import session_scope
 from katcha.domain import ChannelStatus, ProductionStatus, ReviewDecision
+from katcha.editing.blueprints import EditBlueprintContract
 from katcha.editorial.personas import get_persona
 from katcha.integrations.storage import ObjectStore
 from katcha.intelligence_models import ChannelProfile
@@ -21,6 +22,7 @@ from katcha.production_models import (
 from katcha.services.acquisition import (
     ClipAcquisitionState,
     assert_clip_production_eligible,
+    clip_acquisition_state,
 )
 from katcha.services.channel_brands import brand_for_channel
 from katcha.services.channel_edit_blueprints import blueprint_for_channel
@@ -49,7 +51,8 @@ def _analysis_snapshot(clip: Clip, features: ClipFeature) -> dict[str, object]:
         "transcript": features.transcript,
         "local_features": dict(features.local_features or {}),
         "ai_features": dict(features.ai_features or {}),
-        "candidate_score": float(features.candidate_score or 0),
+        "candidate_score": (float(features.candidate_score)
+                            if features.candidate_score is not None else None),
         "score_breakdown": dict(features.score_breakdown or {}),
         "features_updated_at": features.updated_at.isoformat() if features.updated_at else None,
     }
@@ -120,10 +123,36 @@ def register_short_production(
         features = session.get(ClipFeature, clip_id)
         if clip is None:
             raise ValueError(f"clip not found: {clip_id}")
-        if features is None or features.candidate_score is None:
+        source_only = edit_blueprint.narration.mode == "source_only"
+        if edit_blueprint.meme.enabled and channel_profile_id is None:
+            raise ValueError("Choose a channel before searching for meme additions")
+        if not source_only and (features is None or features.candidate_score is None):
             raise ValueError("clip must have completed scoring before production")
-        acquisition_state = assert_clip_production_eligible(clip_id)
-        snapshot = _analysis_snapshot(clip, features)
+        if source_only:
+            if not clip.storage_key or not clip.duration_seconds or clip.duration_seconds <= 0:
+                raise ValueError("source clip needs downloaded media and a measured duration")
+            acquisition_state = clip_acquisition_state(clip_id)
+        else:
+            acquisition_state = assert_clip_production_eligible(clip_id)
+        snapshot = _analysis_snapshot(clip, features) if features is not None else {
+            "clip_sha256": clip.sha256,
+            "duration_seconds": float(clip.duration_seconds or 0),
+            "transcript": None,
+            "local_features": {},
+            "ai_features": {},
+            "candidate_score": None,
+            "score_breakdown": {},
+            "features_updated_at": None,
+        }
+        snapshot["source_only_preparation"] = source_only
+        if source_only and channel_profile_id is not None:
+            snapshot["source"] = _passthrough_source_snapshot(
+                session, clip_id, channel_profile_id
+            )
+            snapshot["source"]["grounding_facts"] = [
+                fact.replace("Official source", "Source")
+                for fact in snapshot["source"].get("grounding_facts", [])
+            ]
         snapshot["acquisition"] = _acquisition_snapshot(acquisition_state)
 
         production = Production(
@@ -480,8 +509,20 @@ def register_regeneration(
                 "production must be in review, rejected, or failed state to regenerate"
             )
         _validate_channel_scope(session, parent.channel_profile_id)
-        acquisition_state = assert_clip_production_eligible(parent.clip_id)
+        blueprint = (EditBlueprintContract.model_validate(parent.edit_blueprint_snapshot)
+                     if parent.edit_blueprint_snapshot else None)
+        source_only = blueprint is not None and blueprint.narration.mode == "source_only"
+        if source_only:
+            clip = session.get(Clip, parent.clip_id)
+            if (clip is None or not clip.storage_key or not clip.duration_seconds
+                    or clip.duration_seconds <= 0):
+                raise ValueError("source clip needs downloaded media and a measured duration")
+            acquisition_state = clip_acquisition_state(parent.clip_id)
+        else:
+            acquisition_state = assert_clip_production_eligible(parent.clip_id)
         child_snapshot = dict(parent.analysis_snapshot or {})
+        if source_only:
+            child_snapshot["source_only_preparation"] = True
         child_snapshot["acquisition"] = _acquisition_snapshot(acquisition_state)
         if note:
             feedback = list(child_snapshot.get("operator_feedback") or [])
