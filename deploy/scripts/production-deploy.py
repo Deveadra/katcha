@@ -300,12 +300,21 @@ def update_pin(target: str, backup: Path) -> None:
     backup.write_bytes(original)
     backup.chmod(0o600)
     rows = original.decode("utf-8").splitlines(keepends=True)
+    old_sha, _ = pinned(ENV)
     count = 0
+    api_count = 0
     for i, row in enumerate(rows):
         if row.startswith("KATCHA_RELEASE_SHA="):
             rows[i] = "KATCHA_RELEASE_SHA=" + target + "\n"
             count += 1
-    if count != 1:
+        elif row.startswith("KATCHA_API_RELEASE_SHA="):
+            existing = row.partition("=")[2].strip().strip("'\\\"")
+            if existing and existing != old_sha:
+                raise Blocked("API pin does not match predeployment global release")
+            rows[i] = ("KATCHA_API_RELEASE_SHA=" + target + "\n"
+                       if existing else "KATCHA_API_RELEASE_SHA=\n")
+            api_count += 1
+    if count != 1 or api_count > 1:
         raise Blocked("invalid release pin count")
     atomic_env("".join(rows).encode("utf-8"))
 
@@ -396,8 +405,10 @@ def deploy(target: str, policy: str) -> dict[str, Any]:
     backup.chmod(0o600)
     started_change = False
     try:
-        run("systemctl", "stop", "katcha.service", timeout=180)
+        # Start recovery obligation BEFORE requesting the stop: systemctl can
+        # time out after already stopping some or all of the running stack.
         started_change = True
+        run("systemctl", "stop", "katcha.service", timeout=180)
         remaining = run("docker", "ps", "--filter",
                         "label=com.docker.compose.project=katcha-production",
                         "--format", "{{.ID}}")
