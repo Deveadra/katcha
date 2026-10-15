@@ -181,6 +181,38 @@ def test_update_pin_preserves_other_secret_settings(
     assert target.stat().st_mode & 0o077 == 0
 
 
+def test_update_pin_also_updates_existing_aligned_api_override(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    app = module()
+    target = tmp_path / "katcha.env"
+    backup = tmp_path / "before.env"
+    target.write_text(
+        f"KATCHA_RELEASE_SHA={OLD}\nKATCHA_API_RELEASE_SHA={OLD}\n"
+        "SECRETS_UNCHANGED=yes\n"
+    )
+    target.chmod(0o600)
+    monkeypatch.setattr(app, "ENV", target)
+    app.update_pin(NEW, backup)
+    assert f"KATCHA_RELEASE_SHA={NEW}\n" in target.read_text()
+    assert f"KATCHA_API_RELEASE_SHA={NEW}\n" in target.read_text()
+    assert f"KATCHA_API_RELEASE_SHA={OLD}\n" in backup.read_text()
+    assert "SECRETS_UNCHANGED=yes" in target.read_text()
+
+
+def test_update_pin_keeps_blank_api_override_unset(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    app = module()
+    target = tmp_path / "katcha.env"
+    before = tmp_path / "before.env"
+    target.write_text(f"KATCHA_RELEASE_SHA={OLD}\nKATCHA_API_RELEASE_SHA=\n")
+    target.chmod(0o600)
+    monkeypatch.setattr(app, "ENV", target)
+    app.update_pin(NEW, before)
+    assert target.read_text() == f"KATCHA_RELEASE_SHA={NEW}\nKATCHA_API_RELEASE_SHA=\n"
+
+
 def test_workflow_is_manual_approved_and_has_no_public_host_runner() -> None:
     source = (ROOT / ".github/workflows/production-deployment.yml").read_text()
     assert "workflow_dispatch:" in source
