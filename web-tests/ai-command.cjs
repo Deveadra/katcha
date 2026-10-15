@@ -32,6 +32,8 @@ let restrictedSession = false;
 let durableMode = false;
 let failGoalOnce = true;
 let goalPhase = "completed";
+let retryFailsOnce = true;
+let replacementGoal = null;
 const goalBodies = [];
 let goalId = "88888888-8888-4888-8888-888888888888";
 let browser;
@@ -230,11 +232,29 @@ let browser;
             }
             data = {goal_id: goalId, thread_id: threadId, channel_profile_id: channelId,
                 status: goalPhase, summary: "Saved goal status", result: {}};
+        } else if (url.pathname === "/v1/ai/goals/" + goalId + "/retry") {
+            if (retryFailsOnce) {
+                retryFailsOnce = false;
+                await route.abort("failed");
+                return;
+            }
+            replacementGoal = {
+                goal_id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+                command_id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+                thread_id: threadId, channel_profile_id: channelId,
+                request: {...goalBodies.at(-1), thread_id: threadId},
+                status: "completed", summary: "Retried request completed",
+                result: {thread_id: threadId, answer: "Retried request completed", evidence: [], actions: []},
+            };
+            data = replacementGoal;
+        } else if (replacementGoal && url.pathname === "/v1/ai/goals/" + replacementGoal.goal_id) {
+            data = replacementGoal;
         } else if (url.pathname === "/v1/ai/goals/" + goalId + "/cancel") {
             goalPhase = "cancelled";
             data = {status: goalPhase};
         } else if (url.pathname === "/v1/ai/goals/" + goalId) {
             data = {goal_id: goalId, thread_id: threadId, channel_profile_id: channelId,
+                retryable: goalPhase === "blocked",
                 status: goalPhase, summary: goalPhase === "cancelled" ? "Planning stopped" :
                     "Saved workflow result received", result: goalPhase === "completed" ? {
                     thread_id: threadId, answer: "Durable goal completed from its saved result",
@@ -893,6 +913,26 @@ let browser;
     await page.getByRole("button", {name: "Stop work"}).last().waitFor();
     await page.getByRole("button", {name: "Stop work"}).last().click();
     await page.getByText("Planning stopped").first().waitFor();
+    assert.equal(await page.evaluate(() =>
+        JSON.parse(sessionStorage.getItem("katcha.goalReceipts")).length), 0);
+    goalId = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
+    goalPhase = "blocked";
+    await page.locator("#prompt").fill("Find the scene I requested");
+    await page.locator("#command-form").evaluate((form) => form.requestSubmit());
+    const retryButton = page.getByRole("button", {name: "Try request again"});
+    await retryButton.waitFor();
+    await page.waitForFunction(() => !document.getElementById("send").disabled);
+    await page.locator("#prompt").fill("Keep this unsent follow-up");
+    await retryButton.click();
+    await page.waitForFunction(() => document.querySelector("#status").textContent.includes("Your request is saved"));
+    assert.equal(await retryButton.isEnabled(), true);
+    assert.equal(await page.locator("#prompt").inputValue(), "Keep this unsent follow-up");
+    await retryButton.click();
+    await page.getByText("Retried request completed").first().waitFor();
+    assert.equal(await page.locator("#prompt").inputValue(), "Keep this unsent follow-up");
+    assert.equal(await retryButton.isDisabled(), true);
+    assert.equal(requests.filter(request => request.path === "/v1/ai/goals/" + goalId + "/retry").length, 2);
+    assert.equal(replacementGoal.request.prompt, "Find the scene I requested");
     assert.equal(await page.evaluate(() =>
         JSON.parse(sessionStorage.getItem("katcha.goalReceipts")).length), 0);
     durableMode = false;
