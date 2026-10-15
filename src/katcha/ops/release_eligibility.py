@@ -95,8 +95,8 @@ def verified_publications(
 ) -> list[dict[str, Any]]:
     """Select the most recent real publication; never fall back after a failed build."""
     matches = matching_runs(image_runs, sha, IMAGES_WORKFLOW, "workflow_run")
-    if not matches or len(matches) > 30:
-        raise ReleaseNotEligible("publication evidence absent or exceeds bounded review")
+    if not matches:
+        raise ReleaseNotEligible("publication evidence absent")
     # An unrelated scheduled CI run may repeat indefinitely while main stays
     # unchanged. Only runs near this actual push-CI completion can be candidates;
     # do not exhaust the anonymous API quota polling months of skipped runs.
