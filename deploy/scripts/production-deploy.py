@@ -260,6 +260,28 @@ def backup_and_restore() -> None:
             raise Blocked("fresh backup or restore verification exited nonzero")
 
 
+def atomic_env(content: bytes) -> None:
+    """Replace the root-owned secret file without a truncation window."""
+    stat = ENV.stat()
+    fd, tmp_name = tempfile.mkstemp(prefix=".katcha.env.", dir=ENV.parent)
+    try:
+        with os.fdopen(fd, "wb") as out:
+            out.write(content)
+            out.flush()
+            os.fsync(out.fileno())
+        os.chown(tmp_name, stat.st_uid, stat.st_gid)
+        os.chmod(tmp_name, stat.st_mode & 0o777)
+        os.replace(tmp_name, ENV)
+        directory_fd = os.open(ENV.parent, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
+    finally:
+        if os.path.exists(tmp_name):
+            os.unlink(tmp_name)
+
+
 def update_pin(target: str, backup: Path) -> None:
     original = ENV.read_bytes()
     backup.write_bytes(original)
@@ -272,20 +294,7 @@ def update_pin(target: str, backup: Path) -> None:
             count += 1
     if count != 1:
         raise Blocked("invalid release pin count")
-    stat = ENV.stat()
-    fd, tmp_name = tempfile.mkstemp(prefix=".katcha.env.", dir=ENV.parent)
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as out:
-            out.writelines(rows)
-            out.flush()
-            os.fsync(out.fileno())
-        os.chown(tmp_name, stat.st_uid, stat.st_gid)
-        os.chmod(tmp_name, stat.st_mode & 0o777)
-        os.replace(tmp_name, ENV)
-    finally:
-        if os.path.exists(tmp_name):
-            os.unlink(tmp_name)
-
+    atomic_env("".join(rows).encode("utf-8"))
 
 def healthy(target: str, seconds: int = 300,
             staged: dict[str, str] | None = None) -> None:
@@ -367,8 +376,7 @@ def deploy(target: str, policy: str) -> dict[str, Any]:
         if started_change:
             try:
                 run("systemctl", "stop", "katcha.service", timeout=180)
-                ENV.write_bytes(original)
-                ENV.chmod(0o600)
+                atomic_env(original)
                 if run("git", "-C", str(REPO), "rev-parse", "HEAD") != current:
                     run("git", "-C", str(REPO), "switch", "--detach", current)
                 run("systemctl", "start", "katcha.service", timeout=900)
