@@ -222,6 +222,24 @@ def _authenticate(
     credentials: HTTPAuthorizationCredentials | None,
     settings: Settings,
 ) -> None:
+    # This proof is an in-process Python object, never a request header.
+    # It can be introduced only by GoalDelegatedApp for an exact native route.
+    from katcha.api.goal_delegation import delegated_identity
+
+    delegated = delegated_identity(request.scope)
+    if delegated is not None:
+        _set_identity(
+            request,
+            actor=delegated.actor,
+            scopes=set(delegated.scopes),
+            channel_profile_ids={delegated.channel_id},
+            principal_name=delegated.principal_name,
+            credential_id=delegated.credential_id,
+            credential_fingerprint=delegated.credential_fingerprint,
+        )
+        request.state.control_authentication_mode = "goal_delegation"
+        return
+
     if credentials is None and request.headers.get("Cf-Access-Jwt-Assertion"):
         _authenticate_cloudflare_access(request, settings)
         return
