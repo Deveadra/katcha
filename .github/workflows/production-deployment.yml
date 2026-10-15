@@ -1,0 +1,120 @@
+name: Production deployment
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/production-deployment.yml
+      - deploy/scripts/production-deploy.py
+      - deploy/scripts/install-production-deployer.sh
+      - tests/test_production_deploy.py
+      - docs/PRODUCTION_DEPLOYMENT_RUNBOOK.md
+  workflow_dispatch:
+    inputs:
+      release_sha:
+        description: Exact, CI-and-GHCR-verified current main commit (40 lowercase hex)
+        required: true
+        type: string
+      running_workflows:
+        description: Pause ongoing Temporal workflows during bounded deployment?
+        required: true
+        default: refuse
+        type: choice
+        options:
+          - refuse
+          - approved-resume
+      confirmation:
+        description: Type DEPLOY KATCHA PRODUCTION to acknowledge service interruption
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: katcha-production-deployment
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Validate deployment contract and tests
+        run: |
+          python -m pip install pytest
+          python -m py_compile deploy/scripts/production-deploy.py
+          bash -n deploy/scripts/install-production-deployer.sh
+          python -m pytest -q tests/test_production_deploy.py
+
+  preflight:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    env:
+      TARGET_SHA: ${{ inputs.release_sha }}
+      CONFIRMATION: ${{ inputs.confirmation }}
+      GATE: ${{ vars.KATCHA_PRODUCTION_DEPLOY_ENABLED }}
+    steps:
+      - name: Enforce standalone production authorization
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$GATE" != "true" ]]; then
+            echo "Production promotion disabled. Set the dedicated KATCHA_PRODUCTION_DEPLOY_ENABLED repository variable only after review." >&2
+            exit 41
+          fi
+          if [[ ! "$TARGET_SHA" =~ ^[0-9a-f]{40}$ ]] || [[ "$CONFIRMATION" != "DEPLOY KATCHA PRODUCTION" ]]; then
+            echo "Invalid exact SHA or explicit production confirmation." >&2
+            exit 42
+          fi
+          if [[ "${{ github.ref }}" != "refs/heads/main" ]]; then
+            echo "Production dispatch is only permitted from main." >&2
+            exit 43
+          fi
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Require accepted current main and completed image publication
+        shell: bash
+        run: |
+          PYTHONPATH=src python scripts/check_production_release.py "$TARGET_SHA"
+      - name: Record deployment authorization scope
+        env:
+          POLICY: ${{ inputs.running_workflows }}
+        run: |
+          echo "Authorized candidate: $TARGET_SHA"
+          echo "Temporal interruption policy: $POLICY"
+          echo "Production environment review and a registered OCI runner are still required."
+
+  promote:
+    needs: preflight
+    if: github.event_name == 'workflow_dispatch'
+    environment: katcha-production
+    runs-on: [self-hosted, Linux, ARM64, katcha-production]
+    timeout-minutes: 120
+    env:
+      TARGET_SHA: ${{ inputs.release_sha }}
+      POLICY: ${{ inputs.running_workflows }}
+    steps:
+      - name: Recheck dedicated deployment authorization
+        shell: bash
+        env:
+          GATE: ${{ vars.KATCHA_PRODUCTION_DEPLOY_ENABLED }}
+        run: |
+          set -euo pipefail
+          test "$GATE" = true
+          [[ "$TARGET_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$POLICY" == refuse || "$POLICY" == approved-resume ]]
+      - name: Promote on the verified OCI host through root-owned, gated executor
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo -n /usr/local/sbin/katcha-production-deploy "$TARGET_SHA" "$POLICY"
