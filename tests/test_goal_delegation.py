@@ -19,6 +19,9 @@ def test_fake_external_header_cannot_delegate_access(monkeypatch):
         env="production",
         control_api_token=None,
         control_principals=[],
+        cloudflare_access_team_domain="https://katcha.cloudflareaccess.com",
+        cloudflare_access_audience="fixture-access-audience",
+        cloudflare_access_application_domain="app.katcha.stream",
         cloudflare_access_principals=[
             {
                 "name": "forescene",
