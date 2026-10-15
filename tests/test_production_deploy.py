@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import importlib.util
+import hashlib
+import hmac
 from pathlib import Path
 from types import ModuleType
 
@@ -179,16 +181,20 @@ def test_update_pin_preserves_other_secret_settings(
     assert target.stat().st_mode & 0o077 == 0
 
 
-def test_workflow_is_manual_gated_and_runner_is_environment_protected() -> None:
+def test_workflow_is_manual_approved_and_has_no_public_host_runner() -> None:
     source = (ROOT / ".github/workflows/production-deployment.yml").read_text()
     assert "workflow_dispatch:" in source
     assert "environment: katcha-production" in source
-    assert "runs-on: [self-hosted, Linux, ARM64, katcha-production]" in source
+    assert "runs-on: [self-hosted" not in source
+    assert "runs-on: ubuntu-latest" in source
+    assert "deployments: write" in source
+    assert "KATCHA_PRODUCTION_DEPLOY_HMAC_KEY" in source
+    assert "crypto.createHmac" in source
+    assert "github.rest.repos.createDeployment" in source
     assert "KATCHA_PRODUCTION_DEPLOY_ENABLED" in source
     assert "cancel-in-progress: false" in source
-    assert "sudo -n /usr/local/sbin/katcha-production-deploy" in source
-    assert "oci instance-agent" not in source
     assert "OCI_API_PRIVATE_KEY" not in source
+    assert "sudo -n" not in source
     assert "repository_dispatch" not in source
 
 def test_backup_does_not_accept_successful_skip_without_completion_proof(
@@ -257,3 +263,108 @@ def test_deployer_adopts_existing_attached_supervisor_kernel_lease() -> None:
     started = source.index('run("systemctl", "start", "katcha.service"')
     assert stopped < verified < leased < released < started
     assert 'docker", "compose", "up"' not in source
+
+POLLER = ROOT / "deploy/scripts/production-deploy-poll.py"
+
+
+def poller() -> ModuleType:
+    spec = importlib.util.spec_from_file_location("katcha_production_poll", POLLER)
+    assert spec and spec.loader
+    target = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(target)
+    return target
+
+
+def signed_request(now: int = 1500) -> tuple[dict, bytes]:
+    app = poller()
+    key = b"\x91" * 32
+    payload = {
+        "version": 1, "sha": NEW, "policy": "refuse",
+        "host": "katcha-prod-primary-001",
+        "issued_at": 1000, "expires_at": 2200,
+        "nonce": "c" * 32,
+    }
+    payload["signature"] = hmac.new(
+        key, app.canonical(payload), hashlib.sha256,
+    ).hexdigest()
+    deployment = {
+        "id": 101, "sha": NEW, "task": "deploy",
+        "environment": "katcha-production", "payload": payload,
+    }
+    return deployment, key
+
+
+def test_signed_production_request_accepts_only_verified_short_lived_payload() -> None:
+    app = poller()
+    request, key = signed_request()
+    proof = app.authorized_request(request, key, 1500)
+    assert proof == {"id": 101, "sha": NEW, "policy": "refuse",
+                     "nonce": "c" * 32}
+    assert app.authorized_request(request, key, 2200)["id"] == 101
+
+
+def test_tampering_with_release_or_policy_fails_signature() -> None:
+    app = poller()
+    request, key = signed_request()
+    request["payload"]["policy"] = "approved-resume"
+    with pytest.raises(app.RequestBlocked, match="signature"):
+        app.authorized_request(request, key, 1500)
+    request, key = signed_request()
+    request["sha"] = OLD
+    with pytest.raises(app.RequestBlocked, match="assertions"):
+        app.authorized_request(request, key, 1500)
+
+
+def test_expired_or_misaddressed_signed_request_fails() -> None:
+    app = poller()
+    request, key = signed_request()
+    with pytest.raises(app.RequestBlocked, match="expired"):
+        app.authorized_request(request, key, 2201)
+    request, key = signed_request()
+    request["payload"]["host"] = "other-host"
+    with pytest.raises(app.RequestBlocked, match="assertions"):
+        app.authorized_request(request, key, 1500)
+
+
+def test_signature_cannot_be_replayed_by_changing_github_deployment_id() -> None:
+    app = poller()
+    request, key = signed_request()
+    first = app.authorized_request(request, key, 1500)
+    request["id"] = 102
+    second = app.authorized_request(request, key, 1500)
+    assert first["nonce"] == second["nonce"]
+    # The protected consumed receipt is indexed by signed nonce, NOT the
+    # forgeable externally allocated GitHub deployment ID.
+    source = POLLER.read_text()
+    assert '("nonce-" + request["nonce"] + ".json")' in source
+    assert '("nonce-" + verified["nonce"] + ".json")' in source
+    assert "os.O_EXCL" in source
+
+
+def test_disabled_poller_does_not_contact_github(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = poller()
+    monkeypatch.setattr(app.os, "geteuid", lambda: 0)
+    monkeypatch.setattr(app.os, "uname", lambda: type(
+        "U", (), {"nodename": "katcha-prod-primary-001"})())
+    monkeypatch.setattr(app, "private_root_file", lambda p: (
+        (_ for _ in ()).throw(app.RequestBlocked("disabled"))
+    ))
+    monkeypatch.setattr(app, "fetch_requests", lambda: pytest.fail(
+        "disabled poller must never call GitHub"
+    ))
+    assert app.poll()["status"] == "DISABLED"
+
+
+def test_installer_never_changes_supervisor_or_enables_timer() -> None:
+    source = (ROOT / "deploy/scripts/install-production-deployer.sh").read_text()
+    assert "systemctl daemon-reload" in source
+    assert "systemctl enable" not in source
+    assert "systemctl restart" not in source
+    assert "useradd" not in source
+    assert "actions-runner" not in source
+    assert "sudoers" not in source
+    for unit in ("katcha-production-deploy-poll.service",
+                 "katcha-production-deploy-poll.timer"):
+        assert unit in source
