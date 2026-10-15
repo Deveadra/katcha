@@ -190,3 +190,56 @@ def test_workflow_is_manual_gated_and_runner_is_environment_protected() -> None:
     assert "oci instance-agent" not in source
     assert "OCI_API_PRIVATE_KEY" not in source
     assert "repository_dispatch" not in source
+
+def test_backup_does_not_accept_successful_skip_without_completion_proof(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = module()
+
+    def fake(*args: str, **kwargs: object) -> str:
+        if "ActiveState" in args:
+            return "inactive"
+        if "Result" in args:
+            return "success"
+        if "ExecMainStatus" in args:
+            return "0"
+        return ""  # Missing the fresh completion marker
+
+    monkeypatch.setattr(app, "run", fake)
+    with pytest.raises(app.Blocked, match="fresh backup"):
+        app.backup_and_restore()
+
+
+def test_staging_attests_architecture_revision_digest_and_local_image_id(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = module()
+    image_id = "sha256:" + "e" * 64
+
+    def fake(*args: str, **kwargs: object) -> str:
+        if args[:2] == ("docker", "pull"):
+            return ""
+        if args[-1].startswith("{{.Os}}"):
+            return "linux arm64 " + NEW
+        if args[-1] == "{{json .RepoDigests}}":
+            name = args[3].split("/")[-1].split(":")[0]
+            return '["ghcr.io/deveadra/' + name + '@sha256:' + "f" * 64 + '"]'
+        if args[-1] == "{{.Id}}":
+            return image_id
+        raise AssertionError(args)
+
+    monkeypatch.setattr(app, "run", fake)
+    staged = app.stage_images(NEW)
+    assert set(staged) == set(app.IMAGES)
+    assert set(staged.values()) == {image_id}
+
+
+def test_staging_rejects_wrong_oci_architecture(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = module()
+    monkeypatch.setattr(app, "run", lambda *args, **kw: (
+        "linux amd64 " + NEW if args and args[-1].startswith("{{.Os}}") else ""
+    ))
+    with pytest.raises(app.Blocked, match="platform"):
+        app.stage_images(NEW)
