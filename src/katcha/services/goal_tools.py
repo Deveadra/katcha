@@ -46,15 +46,70 @@ class GoalTool:
     action_type: str | None = None
     confirm: bool = False
     retry_safe: bool = False
+    read_only: bool = False
 
     @property
     def mutates(self) -> bool:
-        return self.action_type is not None or self.method not in {"GET", "CUSTOM"}
+        return self.action_type is not None or (
+            self.method not in {"GET", "CUSTOM"} and not self.read_only
+        )
 
 
 TOOLS = {
     tool.name: tool
     for tool in [
+        GoalTool(
+            "editorial_media_bin",
+            "List saved project media, clip identities, source links and current rights status. "
+            "Reference links are not acquired footage or permission to use it.",
+            "ai:read", "GET",
+            "/v1/channels/{channel_profile_id}/editorial-projects/{project_id}/media-bin",
+        ),
+        GoalTool(
+            "editorial_scene_index",
+            "Read measured shot boundaries and sampled frames for an observed project media "
+            "item. Color/brightness tags do not identify characters, actions or scenes.",
+            "ai:read", "GET",
+            "/v1/channels/{channel_profile_id}/editorial-projects/{project_id}"
+            "/media-bin/{item_id}/scene-index",
+        ),
+        GoalTool(
+            "index_editorial_media",
+            "Start bounded local indexing of already-acquired project footage with current "
+            "review permission. Poll editorial_scene_index for completion. Measures visual "
+            "changes only; does not download footage, recognize actions or grant rights.",
+            "production:create", "POST",
+            "/v1/channels/{channel_profile_id}/editorial-projects/{project_id}"
+            "/media-bin/{item_id}/scene-index",
+            retry_safe=True,
+        ),
+        GoalTool(
+            "search_editorial_shots",
+            "Search measured shot tags on observed project media items. Only red, green, "
+            "blue, dark, bright and mid-tone are supported. This is not character/action "
+            "search; an empty result cannot establish that a requested scene is absent.",
+            "ai:read", "POST",
+            "/v1/channels/{channel_profile_id}/editorial-projects/{project_id}"
+            "/media-bin/shot-search",
+            read_only=True,
+        ),
+        GoalTool(
+            "editorial_shot_package",
+            "Read an observed shot proposal package, evidence and missing coverage. "
+            "Measured matches are not verified semantic scene matches or rights approval.",
+            "ai:read", "GET",
+            "/v1/channels/{channel_profile_id}/editorial-projects/{project_id}"
+            "/shot-proposals/{package_id}",
+        ),
+        GoalTool(
+            "editorial_semantic_match",
+            "Read an existing semantic inspection result and its limitations. AI hypotheses "
+            "remain unverified; sampled stills do not prove a motion/action or grant rights. "
+            "Use an observed semantic_matching run from editorial_runs.",
+            "ai:read", "GET",
+            "/v1/channels/{channel_profile_id}/editorial-projects/{project_id}"
+            "/semantic-matches/{run_id}",
+        ),
         GoalTool(
             "editorial_storyboard",
             "Read the latest durable Storyboard workspace for an exact saved script revision. "
@@ -838,6 +893,8 @@ def validate_resource_arguments(goal: CommandGoal, arguments: dict) -> None:
                 "run_id",
                 "candidate_id",
                 "preview_id",
+                "item_id",
+                "package_id",
                 "proposal_id",
                 "goal_id",
                 "topic_watch_id",
@@ -1054,6 +1111,13 @@ async def run_native_tool(goal: CommandGoal, name: str, args: dict, step_id: uui
         client = await get_temporal_client()
         await client.get_workflow_handle(workflow_id).cancel()
         return {"workflow_id": workflow_id, "cancellation_requested": True}
+    unexpected = set(args) - {"path", "query", "body", "offset"}
+    if unexpected:
+        raise ValueError(
+            f"Native {name} received unsupported top-level arguments: "
+            f"{', '.join(sorted(unexpected))}. Use inspect_tool for the exact schema; "
+            "put route identities in path, filters in query, and request fields in body."
+        )
     path_args, query, body = (
         dict(args.get("path", {})),
         dict(args.get("query", {})),
@@ -1110,7 +1174,7 @@ async def run_native_tool(goal: CommandGoal, name: str, args: dict, step_id: uui
                 tool.method,
                 url,
                 params=query,
-                json=body if tool.mutates else None,
+                json=body if tool.method not in {"GET", "HEAD"} else None,
                 headers=headers,
                 timeout=90,
             ),
@@ -1146,16 +1210,19 @@ def require_native_resource_channels(request, tool: GoalTool) -> None:
     """Also guard direct scoped API access, not only goal callers."""
     from katcha.acquisition_models import TopicWatchVersion
     from katcha.api.control_auth import require_control_channel
-    from katcha.editorial_models import EditorialProject, EditorialRun
+    from katcha.editorial_models import EditorialProject, EditorialRun, ProjectMediaItem
     from katcha.intelligence_models import ChannelProfile
     from katcha.models import Clip
     from katcha.production_models import Production
     from katcha.publishing_models import Publication
     from katcha.services.clip_lifecycle import channel_ids_for_clip
     from katcha.short_episode_models import ShortEpisode
+    from katcha.shot_matching_models import RequirementShotPackage
 
     mapping = {
         "project_id": EditorialProject,
+        "item_id": ProjectMediaItem,
+        "package_id": RequirementShotPackage,
         "editorial_run_id": EditorialRun,
         "scout_run_id": EditorialRun,
         "asset_run_id": EditorialRun,
