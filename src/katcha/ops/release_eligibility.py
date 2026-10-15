@@ -14,7 +14,7 @@ import sys
 import urllib.error
 import urllib.parse
 import urllib.request
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 
 REPOSITORY = "Deveadra/katcha"
@@ -73,6 +73,96 @@ def matching_runs(
     return sorted(matches, key=lambda x: x["id"], reverse=True)
 
 
+
+# Only a completed publication with all six built images and independent
+# anonymous-pull verification is a deployable release. The image workflow
+# also runs on scheduled/manual CI; those legitimate no-op executions must
+# not invalidate the most recent verified push release of the same SHA.
+PUBLISHED_IMAGES = {
+    "katcha-control",
+    "katcha-ingest",
+    "katcha-analysis",
+    "katcha-renderer",
+    "katcha-production",
+    "katcha-minio",
+}
+PLAN_JOB = "Plan runtime image builds"
+VERIFY_JOB = "Verify anonymous runtime pulls"
+
+
+def verified_publications(
+    sha: str, image_runs: list[dict[str, Any]], after_ci: datetime
+) -> list[dict[str, Any]]:
+    """Select the most recent real publication; never fall back after a failed build."""
+    matches = matching_runs(image_runs, sha, IMAGES_WORKFLOW, "workflow_run")
+    if not matches:
+        raise ReleaseNotEligible("publication evidence absent")
+    # An unrelated scheduled CI run may repeat indefinitely while main stays
+    # unchanged. Only runs near this actual push-CI completion can be candidates;
+    # do not exhaust the anonymous API quota polling months of skipped runs.
+    attempts = 0
+    for run in matches:
+        started = evidence_timestamp(run.get("run_started_at"))
+        if started < after_ci or started > after_ci + timedelta(hours=24):
+            continue
+        attempts += 1
+        if attempts > 12:
+            raise ReleaseNotEligible("too many image publication attempts for one CI")
+        ident = run["id"]
+        result = api_get(f"/actions/runs/{ident}/jobs?per_page=100")
+        if not isinstance(result, dict):
+            raise ReleaseNotEligible("publication job evidence malformed")
+        jobs, total = result.get("jobs"), result.get("total_count")
+        if (
+            not isinstance(jobs, list) or not jobs or len(jobs) > 100
+            or type(total) is not int or total != len(jobs)
+        ):
+            raise ReleaseNotEligible("publication job evidence missing or truncated")
+        by_name: dict[str, dict[str, Any]] = {}
+        for job in jobs:
+            if not isinstance(job, dict) or not isinstance(job.get("name"), str):
+                raise ReleaseNotEligible("publication job identity malformed")
+            name = job["name"]
+            if name in by_name or job.get("status") != "completed":
+                raise ReleaseNotEligible("publication job incomplete or duplicated")
+            by_name[name] = job
+        plan, verify = by_name.get(PLAN_JOB), by_name.get(VERIFY_JOB)
+        if not plan or not verify:
+            raise ReleaseNotEligible("publication verification jobs missing")
+        if plan.get("conclusion") == "skipped":
+            # Only a fully inert workflow_run (e.g. scheduled CI) is ignored.
+            # A real build/verification failure must block; never fall back.
+            if (
+                run.get("status") == "completed"
+                and run.get("conclusion") in ("success", "skipped")
+                and all(job.get("conclusion") == "skipped" for job in jobs)
+            ):
+                continue
+            raise ReleaseNotEligible("skipped publication contains unexpected work")
+        if (
+            plan.get("conclusion") != "success"
+            or run.get("status") != "completed"
+            or run.get("conclusion") != "success"
+            or verify.get("conclusion") != "success"
+        ):
+            raise ReleaseNotEligible("latest image publication failed verification")
+        builds: set[str] = set()
+        for name, job in by_name.items():
+            if name in (PLAN_JOB, VERIFY_JOB):
+                continue
+            prefix = name.split(" (", 1)[0]
+            if (
+                prefix not in PUBLISHED_IMAGES or prefix in builds
+                or job.get("conclusion") != "success"
+                or not name.endswith(")")
+            ):
+                raise ReleaseNotEligible("production image build evidence incomplete")
+            builds.add(prefix)
+        if builds != PUBLISHED_IMAGES:
+            raise ReleaseNotEligible("not all six runtime images were verified")
+        return [run]
+    raise ReleaseNotEligible("no completed image publication for the current revision")
+
 def evidence_timestamp(value: object) -> datetime:
     if not isinstance(value, str):
         raise ReleaseNotEligible("workflow timestamp malformed")
@@ -100,19 +190,12 @@ def verify_evidence(
     images = matching_runs(image_runs, sha, IMAGES_WORKFLOW, "workflow_run")
     if not ci or not images:
         raise ReleaseNotEligible("matching CI and image publication runs not found")
-    # A scheduled CI can trigger the image workflow for the same SHA but its
-    # planner deliberately refuses non-push CI. A later rejected attempt does
-    # not erase a prior completed immutable image publication for that commit.
-    # Select completed successful proof, never a failed/cancelled/queued run.
-    successful_ci = [run for run in ci
-                     if run.get("status") == "completed"
-                     and run.get("conclusion") == "success"]
-    successful_images = [run for run in images
-                         if run.get("status") == "completed"
-                         and run.get("conclusion") == "success"]
-    if not successful_ci or not successful_images:
-        raise ReleaseNotEligible("matching successful CI and image publication absent")
-    last_ci, last_image = successful_ci[0], successful_images[0]
+    last_ci, last_image = ci[0], images[0]
+    if any(
+        run.get("status") != "completed" or run.get("conclusion") != "success"
+        for run in (last_ci, last_image)
+    ):
+        raise ReleaseNotEligible("latest matching run not successful")
     # A workflow_run normally starts after CI finishes. Reject unrelated or
     # reordered successes rather than inferring release authority.
     ci_finished = evidence_timestamp(last_ci.get("updated_at"))
@@ -156,8 +239,16 @@ def check_release(sha: str) -> dict[str, Any]:
             raise ReleaseNotEligible("workflow evidence count malformed")
         if count > len(runs):
             raise ReleaseNotEligible("workflow evidence truncated; refuse to infer approval")
+    matching_ci = matching_runs(ci_result["workflow_runs"], sha, CI_WORKFLOW, "push")
+    if not matching_ci or (
+        matching_ci[0].get("status") != "completed"
+        or matching_ci[0].get("conclusion") != "success"
+    ):
+        raise ReleaseNotEligible("latest push CI did not pass")
+    ci_finished = evidence_timestamp(matching_ci[0].get("updated_at"))
     return verify_evidence(
-        sha, current, ci_result["workflow_runs"], image_result["workflow_runs"]
+        sha, current, ci_result["workflow_runs"],
+        verified_publications(sha, image_result["workflow_runs"], ci_finished)
     )
 
 
