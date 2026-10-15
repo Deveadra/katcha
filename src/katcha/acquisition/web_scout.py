@@ -455,6 +455,14 @@ class WebScoutDiscoveryAdapter:
             except (CodexConnectionError, ChatGPTConnectionError, httpx.HTTPError) as exc:
                 plan_errors.append(f"{provider}: {exc}")
 
+        if getattr(settings, "gemini_api_key", None):
+            from katcha.acquisition.gemini_web_scout import discover_gemini
+
+            try:
+                return discover_gemini(query, cursor, settings, limit)
+            except Exception as exc:
+                plan_errors.append(f"gemini: {type(exc).__name__}")
+
         if not (
             settings.openai_api_key
             and getattr(settings, "allow_paid_openai_fallback", False)

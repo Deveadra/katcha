@@ -11,6 +11,7 @@ from katcha.editing.blueprints import (
     EditBlueprintContract,
     get_edit_blueprint,
     persona_commentary_v1,
+    source_original_v1,
 )
 from katcha.intelligence_models import ChannelProfile
 from katcha.models import DomainEvent
@@ -54,7 +55,7 @@ def _bootstrap_contract(profile: ChannelProfile) -> EditBlueprintContract:
             raise ValueError(
                 f"channel default edit blueprint is unknown: {key}@{contract_version}"
             ) from exc
-    return persona_commentary_v1()
+    return source_original_v1()
 
 
 def _active_family(
@@ -116,6 +117,21 @@ def _clear_default(session: Session, profile: ChannelProfile) -> None:
         row.is_default = False
 
 
+def _was_explicitly_activated(
+    session: Session, profile: ChannelProfile, row: ChannelEditBlueprintVersion,
+) -> bool:
+    # Activation events predate the explicit marker on saved blueprint metadata.
+    return session.scalar(
+        select(DomainEvent.id).where(
+            DomainEvent.aggregate_type == "channel_profile",
+            DomainEvent.aggregate_id == str(profile.id),
+            DomainEvent.event_type == "channel_profile.edit_blueprint_activated",
+            DomainEvent.payload["blueprint_key"].as_string() == row.blueprint_key,
+            DomainEvent.payload["blueprint_version"].as_integer() == row.version,
+        ).limit(1)
+    ) is not None
+
+
 def ensure_default_edit_blueprint(
     session: Session,
     profile: ChannelProfile,
@@ -125,8 +141,20 @@ def ensure_default_edit_blueprint(
     if existing is not None:
         if not existing.is_active:
             raise RuntimeError("channel default edit blueprint is not active")
-        edit_blueprint_contract(existing)
-        return existing
+        existing_contract = edit_blueprint_contract(existing)
+        # Replace only the untouched historical implicit default. Saved production
+        # snapshots and explicit operator choices keep their original contracts.
+        implicit_persona = (
+            not (profile.profile_metadata or {}).get("default_edit_blueprint_key")
+            and (existing.blueprint_metadata or {}).get("created_by") == "profile_bootstrap"
+            and not (existing.blueprint_metadata or {}).get("explicitly_activated")
+            and existing_contract == persona_commentary_v1()
+            and not _was_explicitly_activated(session, profile, existing)
+        )
+        if not implicit_persona:
+            return existing
+        existing.is_default = False
+        session.flush()
 
     contract = _bootstrap_contract(profile)
     active = _active_family(session, profile, contract.key)
@@ -181,16 +209,34 @@ def blueprint_for_channel(
             except KeyError as exc:
                 raise ValueError(f"unknown edit blueprint: {blueprint_key}") from exc
         else:
-            contract = persona_commentary_v1()
+            contract = source_original_v1()
         return contract, None
 
     profile = ensure_active_profile(session, channel_profile_id)
     if blueprint_key:
         row = _active_family(session, profile, blueprint_key.strip())
         if row is None:
-            raise ValueError(
-                f"channel has no active edit blueprint family: {blueprint_key}"
-            )
+            try:
+                contract = get_edit_blueprint(blueprint_key.strip(), "1.0.0")
+            except KeyError as exc:
+                raise ValueError(
+                    f"channel has no active edit blueprint family: {blueprint_key}"
+                ) from exc
+            profile = _lock_profile(session, profile)
+            row = _active_family(session, profile, contract.key)
+            if row is None:
+                row = ChannelEditBlueprintVersion(
+                    channel_profile_id=profile.id,
+                    blueprint_key=contract.key,
+                    version=_next_version(session, profile, contract.key),
+                    contract_version=contract.version,
+                    is_active=True,
+                    is_default=False,
+                    contract=contract.model_dump(mode="json"),
+                    blueprint_metadata={"created_by": "builtin_selection"},
+                )
+                session.add(row)
+                session.flush()
     else:
         row = ensure_default_edit_blueprint(session, profile)
     return edit_blueprint_contract(row), row.version
@@ -335,6 +381,11 @@ def activate_edit_blueprint_version(
             session.flush()
         target.is_active = True
         target.is_default = should_default
+        target.blueprint_metadata = {
+            **dict(target.blueprint_metadata or {}),
+            "explicitly_activated": True,
+            "activation_actor": actor,
+        }
         session.flush()
         session.add(
             DomainEvent(

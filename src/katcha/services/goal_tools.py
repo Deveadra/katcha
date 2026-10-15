@@ -361,7 +361,9 @@ TOOLS = {
         ),
         GoalTool(
             "make_short",
-            "Create production from one observed channel clip and recipe",
+            "Create production from one observed channel clip. Default source_original retains "
+            "source audio without commentary or AI scoring; persona_commentary is opt-in; "
+            "meme searches and adds reaction assets, without guaranteeing reach",
             "production:create",
             action_type="create_short_production",
             retry_safe=True,
@@ -1002,8 +1004,7 @@ def action_spec(goal: CommandGoal, name: str, args: dict, step_id: uuid.UUID) ->
                 "preserve_candidate_order": True,
             }
         )
-        if selection.edit_blueprint_key:
-            payload["edit_blueprint_key"] = selection.edit_blueprint_key
+        payload["edit_blueprint_key"] = selection.edit_blueprint_key or "source_original"
     elif name == "recover_render":
         payload = {"production_id": str(uuid.UUID(args["production_id"]))}
     elif name == "refresh_intelligence":

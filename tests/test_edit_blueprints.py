@@ -119,7 +119,6 @@ def test_frozen_blueprint_lineage_rejects_identity_tampering() -> None:
         type(manifest).model_validate(payload)
 
 
-
 def test_voice_blueprint_rejects_header_layout_until_renderer_supports_it() -> None:
     payload = persona_commentary_v1().model_dump(mode="json")
     payload["source_layout"]["mode"] = "header_panel"
@@ -149,12 +148,8 @@ def test_edit_blueprint_carries_reusable_ai_boundaries() -> None:
     contract = EditBlueprintContract.model_validate(payload)
 
     assert contract.ai_guidance.instruction_strength == "strict"
-    assert contract.ai_guidance.always_rules == [
-        "Open on the strongest native reaction."
-    ]
-    assert contract.ai_guidance.never_rules == [
-        "Do not cover the payoff with narration."
-    ]
+    assert contract.ai_guidance.always_rules == ["Open on the strongest native reaction."]
+    assert contract.ai_guidance.never_rules == ["Do not cover the payoff with narration."]
 
 
 def test_edit_blueprint_ai_boundaries_are_backward_compatible() -> None:
@@ -167,3 +162,66 @@ def test_edit_blueprint_ai_boundaries_are_backward_compatible() -> None:
 
     assert contract.ai_guidance.instruction_strength == "balanced"
     assert contract.ai_guidance.preserve_clip_order is True
+
+
+def test_source_original_renders_without_commentary_and_retains_original_audio():
+    from katcha.editing.blueprints import get_edit_blueprint
+
+    blueprint = get_edit_blueprint("source_original", "1.0.0")
+    manifest = build_blueprint_render_manifest(
+        render_id="native-moment",
+        channel_profile_id="channel-a",
+        brand=channel_01_brand_v1(),
+        blueprint=blueprint,
+        source_storage_key="clips/source.mp4",
+        source_duration_seconds=12.0,
+        output_key="renders/native.mp4",
+    )
+    assert manifest.narration is None
+    assert not manifest.header.enabled
+    assert manifest.source.audio_volume == 1.0
+    assert manifest.output_duration_seconds == 12.0
+    assert manifest.blueprint_key == "source_original"
+
+    with pytest.raises(ValueError, match="does not permit generated narration"):
+        build_blueprint_render_manifest(
+            render_id="native-moment",
+            channel_profile_id="channel-a",
+            brand=channel_01_brand_v1(),
+            blueprint=blueprint,
+            source_storage_key="clips/source.mp4",
+            source_duration_seconds=12.0,
+            output_key="renders/native.mp4",
+            narration_asset_key="audio/voice.wav",
+            narration_text="Unrequested commentary",
+            narration_duration_seconds=2.0,
+        )
+
+
+def test_meme_blueprint_is_opt_in_and_has_no_generated_commentary():
+    from katcha.editing.blueprints import get_edit_blueprint, source_original_v1
+
+    meme = get_edit_blueprint("meme", "1.0.0")
+    assert meme.meme.enabled
+    assert meme.narration.mode == "source_only"
+    assert not meme.narration.required
+    assert not source_original_v1().meme.enabled
+    meme.meme.enabled = False
+    assert get_edit_blueprint("meme", "1.0.0").meme.enabled
+
+
+def test_source_original_preserves_a_full_trailer_without_sixty_second_cut():
+    from katcha.editing.blueprints import source_original_v1
+
+    manifest = build_blueprint_render_manifest(
+        render_id="trailer",
+        channel_profile_id="channel",
+        brand=channel_01_brand_v1(),
+        blueprint=source_original_v1(),
+        source_storage_key="raw/trailer.mp4",
+        source_duration_seconds=125,
+        output_key="out/trailer.mp4",
+    )
+    assert manifest.output_duration_seconds == 125
+    assert manifest.source.audio_volume == 1
+    assert manifest.narration is None

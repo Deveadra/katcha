@@ -14,7 +14,6 @@ from katcha.acquisition.policy import evaluate_acquisition_policy
 from katcha.acquisition_models import (
     DiscoveryCandidate,
     DiscoveryRun,
-    IngestionSource,
     RightsAssessment,
     RightsEvidence,
 )
@@ -393,21 +392,9 @@ def promote_discovery_candidate(
         candidate = session.get(DiscoveryCandidate, candidate_id)
         if candidate is None:
             raise ValueError(f"discovery candidate not found: {candidate_id}")
-        source_id = (candidate.candidate_metadata or {}).get("ingestion_source_id")
-        if source_id:
-            ingestion_source = session.get(IngestionSource, uuid.UUID(str(source_id)))
-            if ingestion_source is not None and ingestion_source.usage_mode in {
-                "blocked",
-                "discovery_only",
-            }:
-                raise ValueError("this content source does not allow clip downloads")
+        # Acquisition is an operator-requested copy, not a rights assessment.
+        # Source usage preferences and publication qualification do not veto downloads.
         assessment = latest_rights_assessment(session, candidate.id)
-        if assessment is None and not for_review:
-            raise ValueError("candidate has no rights assessment")
-        if not for_review and not assessment.production_eligible:
-            raise ValueError(
-                "candidate cannot be promoted until rights, audio, and originality gates clear"
-            )
         if candidate.source_item_id is not None:
             source = session.get(SourceItem, candidate.source_item_id)
             if source is None:

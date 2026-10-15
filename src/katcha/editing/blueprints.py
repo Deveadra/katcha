@@ -49,6 +49,12 @@ class AIGuidancePolicy(BaseModel):
     operator_notes: str = Field(default="", max_length=2000)
 
 
+class MemePolicy(BaseModel):
+    enabled: bool = False
+    max_assets: int = Field(default=3, ge=0, le=8)
+    max_asset_seconds: float = Field(default=3.0, gt=0, le=10)
+
+
 class EditBlueprintContract(BaseModel):
     key: str = Field(min_length=1, max_length=96)
     version: str = Field(min_length=1, max_length=32)
@@ -59,6 +65,7 @@ class EditBlueprintContract(BaseModel):
     transition: Literal["cut", "punch_cut"] = "cut"
     quality: EditingQualityPolicy = Field(default_factory=EditingQualityPolicy)
     ai_guidance: AIGuidancePolicy = Field(default_factory=AIGuidancePolicy)
+    meme: MemePolicy = Field(default_factory=MemePolicy)
 
     @model_validator(mode="after")
     def validate_contract(self) -> EditBlueprintContract:
@@ -80,6 +87,24 @@ class EditBlueprintContract(BaseModel):
         if not voice_mode and self.narration.captions_enabled:
             raise ValueError("text/source-only blueprints cannot enable narration captions")
         return self
+
+
+_SOURCE_ORIGINAL_V1 = EditBlueprintContract(
+    key="source_original",
+    version="1.0.0",
+    source_layout=SourceLayoutPolicy(
+        mode="full_frame", fit="contain", background_mode="blurred_fill",
+    ),
+    narration=NarrationPolicy(
+        mode="source_only", required=False, captions_enabled=False,
+        source_audio_policy="retain", source_audio_volume=1.0,
+    ),
+    quality=EditingQualityPolicy(max_duration_seconds=180.0, max_narration_ratio=0.0),
+    ai_guidance=AIGuidancePolicy(
+        always_rules=["Preserve the source audio and the requested native moment."],
+        never_rules=["Do not add generated commentary or narration."],
+    ),
+)
 
 
 _PERSONA_COMMENTARY_V1 = EditBlueprintContract(
@@ -142,10 +167,32 @@ _HEADER_EXPLAINER_V1 = EditBlueprintContract(
     ),
 )
 
+_MEME_V1 = _SOURCE_ORIGINAL_V1.model_copy(deep=True)
+_MEME_V1.key = "meme"
+_MEME_V1.meme = MemePolicy(enabled=True)
+_MEME_V1.ai_guidance.always_rules.append(
+    "Find relevant meme sounds, reactions, and images to enhance the source moment."
+)
+
+
 _REGISTRY = {
+    (_MEME_V1.key, _MEME_V1.version): _MEME_V1,
+    (_SOURCE_ORIGINAL_V1.key, _SOURCE_ORIGINAL_V1.version): _SOURCE_ORIGINAL_V1,
     (_PERSONA_COMMENTARY_V1.key, _PERSONA_COMMENTARY_V1.version): _PERSONA_COMMENTARY_V1,
     (_HEADER_EXPLAINER_V1.key, _HEADER_EXPLAINER_V1.version): _HEADER_EXPLAINER_V1,
 }
+
+
+def meme_v1() -> EditBlueprintContract:
+    return EditBlueprintContract.model_validate(
+        deepcopy(_MEME_V1.model_dump(mode="json"))
+    )
+
+
+def source_original_v1() -> EditBlueprintContract:
+    return EditBlueprintContract.model_validate(
+        deepcopy(_SOURCE_ORIGINAL_V1.model_dump(mode="json"))
+    )
 
 
 def persona_commentary_v1() -> EditBlueprintContract:

@@ -273,8 +273,9 @@ def test_review_download_preserves_lineage_and_production_gate(research_db, monk
     source = promote_discovery_candidate(candidate_id, for_review=True)
     assert source.source_metadata["rights_basis"] == "unknown"
     assert promote_discovery_candidate(candidate_id, for_review=True).id == source.id
-    with pytest.raises(ValueError, match="no rights assessment"):
-        promote_discovery_candidate(candidate_id)
+    assert promote_discovery_candidate(candidate_id).id == source.id
+    # Acquisition does not fabricate a rights assessment or promote publication eligibility.
+    assert source.source_metadata["rights_basis"] == "unknown"
     directory = tmp_path / "isolated-download"
     directory.mkdir()
     path = directory / "video.mp4"

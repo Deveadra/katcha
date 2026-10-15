@@ -60,8 +60,27 @@ const Header = () => (
   />
 );
 
+const Original = () => (
+  <BlueprintVideo source={{...source, audio_volume: 1}}
+    header={{enabled: false, height_px: 0, text: null}} narration={null} brand={brand} />
+);
+const Meme = () => (
+  <BlueprintVideo source={{...source, audio_volume: 1}}
+    header={{enabled: false, height_px: 0, text: null}} narration={null} brand={brand}
+    meme_events={[
+      {id: 'reaction', kind: 'image', url: staticFile('reaction.png'),
+        start_seconds: 0.5, duration_seconds: 1.5, volume: 0},
+      {id: 'sound', kind: 'audio', url: staticFile('reaction.wav'),
+        start_seconds: 0.5, duration_seconds: 1, volume: 0.7},
+    ]} />
+);
+
 const Root = () => (
   <>
+    <Composition id="SyntheticSourceOriginal" component={Original} durationInFrames={81}
+      fps={30} width={540} height={960} defaultProps={{}} />
+    <Composition id="SyntheticMemeBlueprint" component={Meme} durationInFrames={81}
+      fps={30} width={540} height={960} defaultProps={{}} />
     <Composition
       id="SyntheticPersonaBlueprint"
       component={Persona}

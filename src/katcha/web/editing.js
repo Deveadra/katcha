@@ -249,7 +249,7 @@ function blueprintSummary(contract = {}) {
     const finalDetail = voiceMode
         ? (contract.narration?.captions_enabled ? "Captions on" : "Captions off")
         : (contract.quality?.max_duration_seconds ? `${contract.quality.max_duration_seconds}s max` : "Length not set");
-    return [layout, narration, audio, finalDetail];
+    return [layout, narration, audio, finalDetail, ...(contract.meme?.enabled ? ["Meme reactions enabled"] : [])];
 }
 function blueprintFamilies() {
     const families = new Map();
@@ -478,6 +478,7 @@ function editorContract() {
             max_duration_seconds: Number($("bp-max-duration").value),
             max_narration_ratio: Number($("bp-narration-ratio").value) / 100,
         },
+        meme: state.editorBaseContract?.meme || {enabled: false},
         ai_guidance: state.editorBaseContract?.ai_guidance || {
             instruction_strength: "balanced",
             preserve_clip_order: true,

@@ -388,7 +388,7 @@ def test_natural_discovery_prompt_keeps_only_topic_terms() -> None:
 def test_command_center_maps_plain_language_recipe_names() -> None:
     assert infer_edit_blueprint_key("use the commentary recipe") == "persona_commentary"
     assert infer_edit_blueprint_key("use the header explainer") == "header_explainer"
-    assert infer_edit_blueprint_key("use the channel default") is None
+    assert infer_edit_blueprint_key("use the channel default") == "source_original"
 
 
 def test_yesterday_resolves_to_a_closed_channel_local_day(monkeypatch) -> None:
