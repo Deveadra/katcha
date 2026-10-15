@@ -205,3 +205,19 @@ def test_publication_started_before_latest_push_ci_cannot_attest(
     mock_api(monkeypatch, [too_early], {})
     with pytest.raises(release.ReleaseNotEligible, match="no completed"):
         release.check_release(SHA)
+
+
+def test_months_of_out_of_window_schedule_events_still_allow_verified_release(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    verified = run(release.IMAGES_WORKFLOW, "workflow_run", 20)
+    inert_runs = [
+        run(
+            release.IMAGES_WORKFLOW, "workflow_run", number,
+            run_started_at="2026-11-16T11:00:00Z",
+        )
+        for number in range(21, 62)
+    ]
+    # Job evidence is required for real attempts only.
+    mock_api(monkeypatch, inert_runs + [verified], {20: jobs()})
+    assert release.check_release(SHA)["image_run_id"] == 20
