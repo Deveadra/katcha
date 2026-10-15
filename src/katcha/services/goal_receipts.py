@@ -108,7 +108,25 @@ def resolve_goal_authority(goal: CommandGoal) -> tuple[set[str], str | None]:
     fingerprint = captured.get("credential_fingerprint")
     token = None
     current_channels: set[str]
-    if captured.get("principal_name"):
+    if actor.startswith("control-principal:cloudflare-access:"):
+        name = captured.get("principal_name")
+        if not name or actor != f"control-principal:cloudflare-access:{name}":
+            raise ValueError("Saved Cloudflare Access request identity is inconsistent")
+        principal = next(
+            (p for p in settings.cloudflare_access_principals if p.name == name),
+            None,
+        )
+        if principal is None:
+            raise ValueError("The Cloudflare Access operator for this request was revoked")
+        # Require a verified-email binding: principal names can be reassigned.
+        # Historical unbound goals need explicit operator resubmission; never
+        # silently inherit the authority of a different Cloudflare user.
+        if fingerprint != hashlib.sha256(principal.email.encode()).hexdigest()[:12]:
+            raise ValueError("The Cloudflare Access operator identity has changed")
+        scopes = set(principal.scopes)
+        current_channels = set(principal.channel_profile_ids)
+        # Never persist an Access JWT or mint a long-lived token in a goal.
+    elif captured.get("principal_name"):
         principal = next(
             (p for p in settings.control_principals if p.name == captured["principal_name"]), None
         )
