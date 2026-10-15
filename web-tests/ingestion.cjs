@@ -530,7 +530,7 @@ function overview(source) {
         );
         await page.locator('input[name="after-save"][value="save"]').check();
         await page.locator("#next").click();
-        assert.match(await page.locator("#review").innerText(), /Research only/);
+        assert.match(await page.locator("#review").innerText(), /Research automatically/);
         assert.match(await page.locator("#review").innerText(), /No search starts/);
         assert.equal(await page.locator("#save").innerText(), "Save source");
 
@@ -552,7 +552,7 @@ function overview(source) {
             document.querySelector("#message")?.textContent.includes("No check was started")
         );
         assert.match(await page.locator("#message").innerText(), /No check was started/);
-        assert.match(await page.locator("#source-info").innerText(), /Research only/);
+        assert.match(await page.locator("#source-info").innerText(), /Research automatically/);
         assert.match(await page.locator("#source-info").innerText(), /Saving a source does not create a recurring schedule/);
 
         // Saved sources can be edited in place without losing their identity/history.
@@ -627,7 +627,11 @@ function overview(source) {
         assert.match(await page.locator("#finds-count").innerText(), /30 finds/);
         assert.equal(await page.locator("#all-finds .source-find").count(), 25);
         assert.equal(await page.locator("#finds-next").isDisabled(), false);
-        assert.equal(await page.locator("#all-finds [data-add-clip]").count(), 0);
+        assert.equal(await page.locator("#all-finds [data-add-clip]").count(), 25);
+
+        // Research-only preferences do not prevent an explicit download.
+        await page.locator("#all-finds [data-add-clip]").first().click();
+        assert(requests.some((row) => row.path.endsWith("/promote") && row.body.for_review === true));
 
         // An older find outside the former Recent Finds window is searchable and reachable.
         await page.locator("#finds-search").fill("VisionQuest");
@@ -705,7 +709,7 @@ function overview(source) {
         await page.waitForFunction(() => document.querySelectorAll(".source-row").length === 50);
         await page.locator("#source-purpose-filter").selectOption("discovery_only");
         await page.waitForFunction(() =>
-            [...document.querySelectorAll(".source-row em")].some((node) => node.textContent.includes("Research only"))
+            [...document.querySelectorAll(".source-row em")].some((node) => node.textContent.includes("Research automatically"))
         );
         assert(requests.some((row) =>
             row.path === "/v1/discovery/source-library" &&

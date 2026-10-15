@@ -748,7 +748,7 @@ function renderFinds(page, row) {
             '</p>';
         return;
     }
-    const canPromote = !['discovery_only', 'blocked'].includes(row.usage_mode);
+    const canPromote = true;
     $('all-finds').innerHTML = findings.map(item => {
         const candidate = item.candidate || {};
         const url = safeExternalUrl(candidate.source_url);
