@@ -14,11 +14,11 @@ import {
   GetObjectCommand,
   HeadObjectCommand,
   PutObjectCommand,
-  S3Client,
 } from '@aws-sdk/client-s3';
 import {getSignedUrl} from '@aws-sdk/s3-request-presigner';
 import {verifyExpectedAwsIdentity} from './aws-identity.mjs';
 import {createCloudAssetUrlResolver} from './cloud-media-staging.mjs';
+import {createRenderS3Client} from './s3-client.mjs';
 import {renderMediaViaLambda} from './lambda-renderer.mjs';
 import {resolveRenderSettings, validateLambdaSettings} from './render-config.mjs';
 
@@ -63,7 +63,7 @@ if (s3AccessKey && s3SecretKey) {
     secretAccessKey: s3SecretKey,
   };
 }
-const s3 = new S3Client(s3Options);
+const s3 = createRenderS3Client(s3Options);
 
 const entryPoint = path.resolve(__dirname, 'entry.jsx');
 let localServeUrlPromise = null;
