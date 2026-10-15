@@ -1,8 +1,8 @@
 """Provider readiness must reflect real generation, not saved credential metadata."""
 
+import uuid
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
-import uuid
 
 import pytest
 
@@ -12,7 +12,9 @@ from katcha.integrations import chatgpt, codex
 
 
 def test_openai_provider_probe_requires_real_inference(monkeypatch):
-    monkeypatch.setattr(api, "get_settings", lambda: Settings(_env_file=None, openai_api_key="test-only-key"))
+    monkeypatch.setattr(
+        api, "get_settings", lambda: Settings(_env_file=None, openai_api_key="test-only-key")
+    )
     calls = []
 
     class FakeOpenAI:
@@ -37,7 +39,9 @@ def test_openai_provider_probe_requires_real_inference(monkeypatch):
 
 
 def test_openai_provider_probe_rejects_wrong_response(monkeypatch):
-    monkeypatch.setattr(api, "get_settings", lambda: Settings(_env_file=None, openai_api_key="test-only-key"))
+    monkeypatch.setattr(
+        api, "get_settings", lambda: Settings(_env_file=None, openai_api_key="test-only-key")
+    )
 
     class FakeOpenAI:
         def __init__(self, **kwargs):
@@ -61,7 +65,9 @@ def test_openai_provider_probe_rejects_wrong_response(monkeypatch):
 
 
 @pytest.mark.parametrize("age_minutes,expected", [(-10, True), (10, False)])
-def test_codex_saved_status_reports_refresh_due_not_live_verified(monkeypatch, age_minutes, expected):
+def test_codex_saved_status_reports_refresh_due_not_live_verified(
+    monkeypatch, age_minutes, expected
+):
     monkeypatch.setattr(
         codex,
         "active_connection",
