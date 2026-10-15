@@ -243,3 +243,17 @@ def test_staging_rejects_wrong_oci_architecture(
     ))
     with pytest.raises(app.Blocked, match="platform"):
         app.stage_images(NEW)
+
+def test_deployer_adopts_existing_attached_supervisor_kernel_lease() -> None:
+    source = SOURCE.read_text()
+    assert 'SUPERVISOR_LEASE_DIR = Path("/run/katcha-production-supervisor")' in source
+    assert 'SUPERVISOR_LEASE_FILE = SUPERVISOR_LEASE_DIR / "compose.lock"' in source
+    assert "fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)" in source
+    assert "os.O_NOFOLLOW" in source
+    stopped = source.index('run("systemctl", "stop", "katcha.service"')
+    verified = source.index('raise Blocked("old Compose supervisor did not fully stop")')
+    leased = source.index("lease_fd = acquire_supervisor_lease()")
+    released = source.index("os.close(lease_fd)")
+    started = source.index('run("systemctl", "start", "katcha.service"')
+    assert stopped < verified < leased < released < started
+    assert 'docker", "compose", "up"' not in source
