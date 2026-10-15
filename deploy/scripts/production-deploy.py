@@ -35,6 +35,10 @@ EXPECTED = {
     "telegram-worker", "renderer", "postgres", "temporal", "cloudflared",
 }
 IMAGES = ("katcha-control", "katcha-ingest", "katcha-renderer", "katcha-production")
+MIGRATION_FILE = "migrations/versions/0064_application_ai_settings.py"
+MIGRATION_BLOB = "3d411641d625c772856142d6a8ce43447be7f2b5"
+BEFORE_REVISION = "0063_authoritative_search_ledger"
+AFTER_REVISION = "0064_application_ai_settings"
 IMAGE_FOR_SERVICE = {
     "api": "katcha-control", "intelligence-worker": "katcha-control",
     "telegram-worker": "katcha-control", "worker": "katcha-ingest",
@@ -108,7 +112,7 @@ def authorized() -> None:
     run("mountpoint", "-q", "/srv/katcha")
 
 
-def eligible(old: str, target: str) -> None:
+def eligible(old: str, target: str, migration_policy: str = "refuse") -> bool:
     # Deliberately re-check from the OCI host, independently of GitHub Actions.
     head = github("/branches/main")
     if head.get("commit", {}).get("sha") != target:
@@ -132,15 +136,32 @@ def eligible(old: str, target: str) -> None:
         or not isinstance(files, list) or not files or len(files) >= 300
         or not 0 < comparison.get("total_commits", 0) <= 250):
         raise Blocked("candidate ancestry or comparison is unverified")
+    migration_paths: list[str] = []
     for change in files:
         name = change.get("filename", "")
         if not isinstance(name, str) or not name or ".." in name.split("/"):
             raise Blocked("candidate changed-file list invalid")
-        if (name.startswith(("alembic/", "migrations/"))
-            or name in {"alembic.ini", "deploy/scripts/postgres-disaster-restore.sh"}):
-            raise Blocked("migration or disaster restore change needs separately supervised rollout")
+        if name == "deploy/scripts/postgres-disaster-restore.sh":
+            raise Blocked("disaster-restore code changed; separate review required")
+        if name.startswith(("alembic/", "migrations/")) or name == "alembic.ini":
+            if change.get("status") != "added" and name == MIGRATION_FILE:
+                raise Blocked("approved migration must be an added immutable file")
+            migration_paths.append(name)
+    if migration_policy not in {"refuse", "approve-additive-0064"}:
+        raise Blocked("unrecognized migration approval")
+    if migration_paths:
+        if migration_policy != "approve-additive-0064" or migration_paths != [MIGRATION_FILE]:
+            raise Blocked("unknown migration or migration approval missing")
+        proof = github("/contents/" + MIGRATION_FILE + "?ref=" + target)
+        if (not isinstance(proof, dict) or proof.get("sha") != MIGRATION_BLOB
+            or proof.get("path") != MIGRATION_FILE
+            or proof.get("type") != "file"):
+            raise Blocked("approved additive migration source differs from reviewed blob")
+    elif migration_policy != "refuse":
+        raise Blocked("migration approval supplied for release without reviewed migration")
     if github("/branches/main").get("commit", {}).get("sha") != target:
         raise Blocked("main advanced during deployment review")
+    return bool(migration_paths)
 
 
 def runtime(sha: str, staged: dict[str, str] | None = None) -> None:
