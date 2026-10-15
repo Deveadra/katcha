@@ -332,3 +332,90 @@ if (location.port === '8765') {
     window.addEventListener('error', event => report(event.message));
     window.addEventListener('unhandledrejection', event => report(event.reason?.stack || event.reason));
 }
+
+
+/*
+ * Hosted workspaces use the Cloudflare Access browser session. Local launcher
+ * workspaces still connect via /runtime/status; development servers retain
+ * explicit token submission. Never mark a page connected until its own API
+ * requests succeed.
+ */
+(async function connectHostedWorkspace() {
+    if (location.hostname !== 'app.katcha.stream') return;
+    const pages = new Set(['home', 'trends', 'clips', 'channel', 'production']);
+    const page = document.body?.dataset.katchaPage;
+    if (!pages.has(page)) return;
+    // Channel OAuth callbacks already reconnect in channels.js.
+    if (page === 'channel' && new URLSearchParams(location.search).has('youtube')) return;
+    const form = document.getElementById('connect-form');
+    if (!form) return;
+
+    const notice = document.createElement('p');
+    notice.className = 'muted hosted-auth-notice';
+    notice.setAttribute('role', 'status');
+    notice.hidden = true;
+    form.append(notice);
+
+    // An explicitly supplied bearer token remains a manual operator fallback.
+    // A normal hosted session never needs the token field to be populated.
+    if (sessionStorage.getItem('katcha.controlToken')) {
+        form.requestSubmit();
+        return;
+    }
+
+    try {
+        const response = await fetch('/v1/control/session', {
+            headers: { Accept: 'application/json' },
+            cache: 'no-store',
+            credentials: 'same-origin',
+        });
+        if (response.ok &&
+            (response.headers.get('content-type') || '').includes('application/json')) {
+            const session = await response.json();
+            if (session && typeof session.actor === 'string' && session.actor) {
+                form.requestSubmit();
+                return;
+            }
+        }
+
+        notice.hidden = false;
+        if (response.status === 403) {
+            notice.textContent =
+                'Your Cloudflare identity is not mapped to a Katcha operator. Ask the owner to grant access to this email.';
+        } else if (response.status === 401 || response.ok) {
+            notice.textContent = 'Sign in to Cloudflare Access to open your Katcha workspace.';
+        } else if (response.status === 404) {
+            notice.textContent =
+                'The deployed Katcha API does not support browser sign-in. The production release needs updating.';
+        } else {
+            notice.textContent =
+                'Katcha could not verify the hosted operator session (HTTP ' + response.status + '). Check the API and Access configuration.';
+        }
+        if (response.status === 401 || response.status === 403 || response.ok) {
+            const returnTo = location.pathname + location.search + location.hash;
+            const loginResponse = await fetch(
+                '/v1/control/access-login?return_to=' + encodeURIComponent(returnTo),
+                { headers: { Accept: 'application/json' }, cache: 'no-store' },
+            );
+            if (loginResponse.ok &&
+                (loginResponse.headers.get('content-type') || '').includes('application/json')) {
+                const info = await loginResponse.json();
+                if (info.enabled && typeof info.login_url === 'string') {
+                    const login = new URL(info.login_url, location.origin);
+                    if (login.protocol === 'https:' &&
+                        (login.hostname === location.hostname ||
+                         login.hostname.endsWith('.cloudflareaccess.com'))) {
+                        const link = document.createElement('a');
+                        link.href = login.href;
+                        link.textContent = 'Sign in with Cloudflare Access';
+                        notice.append(' ', link);
+                    }
+                }
+            }
+        }
+    } catch {
+        notice.hidden = false;
+        notice.textContent =
+            'Katcha cannot reach its authenticated API. Check the Cloudflare Tunnel and running OCI service.';
+    }
+})();
