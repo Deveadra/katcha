@@ -73,7 +73,9 @@ services:
     networks: [backend]
 
   api:
-    image: ${KATCHA_IMAGE_REGISTRY:-ghcr.io/deveadra}/katcha-control:${KATCHA_RELEASE_SHA:?Set KATCHA_RELEASE_SHA to the exact deployed git SHA}
+    # Optional, independently reviewed API-only promotion. All workers keep the
+    # original KATCHA_RELEASE_SHA until a separately approved full rollout.
+    image: ${KATCHA_IMAGE_REGISTRY:-ghcr.io/deveadra}/katcha-control:${KATCHA_API_RELEASE_SHA:-${KATCHA_RELEASE_SHA:?Set KATCHA_RELEASE_SHA to the exact deployed git SHA}}
     pull_policy: always
     restart: unless-stopped
     env_file: *control-env
@@ -83,6 +85,8 @@ services:
       temporal:
         condition: service_healthy
     environment:
+      # Keep public /v1/health/release tied to the actual API image revision.
+      KATCHA_RELEASE_SHA: ${KATCHA_API_RELEASE_SHA:-${KATCHA_RELEASE_SHA:?Set KATCHA_RELEASE_SHA to the exact deployed git SHA}}
       KATCHA_INTELLIGENCE_HANDOFF_DIR: /handoff
     volumes:
       - /srv/katcha/handoff:/handoff
