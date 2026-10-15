@@ -146,6 +146,9 @@ def _authenticate_cloudflare_access(request: Request, settings: Settings) -> Non
         scopes=set(principal.scopes),
         channel_profile_ids=set(principal.channel_profile_ids),
         principal_name=principal.name,
+        credential_id="cloudflare-access-identity",
+        # Bound to the verified Cloudflare Access email, without persisting a JWT.
+        credential_fingerprint=_credential_fingerprint(principal.email),
     )
     request.state.control_authentication_mode = "cloudflare_access"
 
