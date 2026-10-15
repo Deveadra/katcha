@@ -57,7 +57,8 @@ def key_from_file(path: Path = KEY_PATH) -> bytes:
 
 def canonical(payload: dict[str, Any]) -> bytes:
     return "\n".join((
-        "katcha-production-v1", payload["sha"], payload["policy"], payload["host"],
+        "katcha-production-v2", payload["sha"], payload["policy"],
+        payload["migration_policy"], payload["host"],
         str(payload["issued_at"]), str(payload["expires_at"]), payload["nonce"],
     )).encode("utf-8")
 
@@ -78,16 +79,19 @@ def authorized_request(
         raise RequestBlocked("deployment request identity invalid")
     payload = raw
     if set(payload) != {
-        "version", "sha", "policy", "host", "issued_at", "expires_at",
+        "version", "sha", "policy", "migration_policy", "host",
+        "issued_at", "expires_at",
         "nonce", "signature",
     }:
         raise RequestBlocked("deployment request fields unexpected")
     if (
-        type(payload["version"]) is not int or payload["version"] != 1
+        type(payload["version"]) is not int or payload["version"] != 2
         or not isinstance(payload["sha"], str) or not SHA.fullmatch(payload["sha"])
         or payload["sha"] != deployment.get("sha")
         or not isinstance(payload["policy"], str)
         or payload["policy"] not in {"refuse", "approved-resume"}
+        or not isinstance(payload["migration_policy"], str)
+        or payload["migration_policy"] not in {"refuse", "approve-additive-0064"}
         or payload["host"] != HOST
         or type(payload["issued_at"]) is not int
         or type(payload["expires_at"]) is not int
@@ -104,6 +108,7 @@ def authorized_request(
     if not hmac.compare_digest(signature, payload["signature"]):
         raise RequestBlocked("deployment signature invalid")
     return {"id": ident, "sha": payload["sha"], "policy": payload["policy"],
+            "migration_policy": payload["migration_policy"],
             "nonce": payload["nonce"]}
 
 
@@ -168,7 +173,8 @@ def attempt(request: dict[str, Any]) -> str:
         if stat.st_uid != 0 or stat.st_mode & 0o022:
             raise RequestBlocked("fixed production executor permissions unsafe")
         done = subprocess.run(
-            [str(EXECUTOR), request["sha"], request["policy"]],
+            [str(EXECUTOR), request["sha"], request["policy"],
+             request["migration_policy"]],
             capture_output=True, text=True, timeout=7200, check=False,
         )
         status = "SUCCEEDED" if done.returncode == 0 else "FAILED_REVIEW_REQUIRED"

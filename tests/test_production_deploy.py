@@ -252,6 +252,7 @@ def test_workflow_is_manual_approved_and_has_no_public_host_runner() -> None:
     assert "runs-on: ubuntu-latest" in source
     assert "deployments: write" in source
     assert "KATCHA_PRODUCTION_DEPLOY_HMAC_KEY" in source
+    assert "MIGRATION_POLICY: ${{ inputs.migration_policy }}" in source
     assert "crypto.createHmac" in source
     assert "github.rest.repos.createDeployment" in source
     assert "KATCHA_PRODUCTION_DEPLOY_ENABLED" in source
@@ -342,7 +343,8 @@ def signed_request() -> tuple[dict, bytes]:
     app = poller()
     key = b"\x91" * 32
     payload = {
-        "version": 1, "sha": NEW, "policy": "refuse",
+        "version": 2, "sha": NEW, "policy": "refuse",
+        "migration_policy": "refuse",
         "host": "katcha-prod-primary-001",
         "issued_at": 1000, "expires_at": 2200,
         "nonce": "c" * 32,
@@ -362,7 +364,7 @@ def test_signed_production_request_accepts_only_verified_short_lived_payload() -
     request, key = signed_request()
     proof = app.authorized_request(request, key, 1500)
     assert proof == {"id": 101, "sha": NEW, "policy": "refuse",
-                     "nonce": "c" * 32}
+                     "migration_policy": "refuse", "nonce": "c" * 32}
     assert app.authorized_request(request, key, 2200)["id"] == 101
 
 
@@ -375,6 +377,14 @@ def test_tampering_with_release_or_policy_fails_signature() -> None:
     request, key = signed_request()
     request["sha"] = OLD
     with pytest.raises(app.RequestBlocked, match="assertions"):
+        app.authorized_request(request, key, 1500)
+
+
+def test_migration_policy_tampering_fails_the_signature() -> None:
+    app = poller()
+    request, key = signed_request()
+    request["payload"]["migration_policy"] = "approve-additive-0064"
+    with pytest.raises(app.RequestBlocked, match="signature"):
         app.authorized_request(request, key, 1500)
 
 
@@ -431,3 +441,203 @@ def test_installer_never_changes_supervisor_or_enables_timer() -> None:
     for unit in ("katcha-production-deploy-poll.service",
                  "katcha-production-deploy-poll.timer"):
         assert unit in source
+
+def test_approved_additive_migration_requires_exact_immutable_blob(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = module()
+    fixture = responses()
+    fixture["/compare/" + OLD + "..." + NEW]["files"] = [
+        {"filename": app.MIGRATION_FILE, "status": "added"},
+    ]
+    fixture["/contents/" + app.MIGRATION_FILE + "?ref=" + NEW] = {
+        "path": app.MIGRATION_FILE, "sha": app.MIGRATION_BLOB, "type": "file",
+    }
+    monkeypatch.setattr(app, "github", lambda p: fixture[p])
+    monkeypatch.setattr(app, "run", lambda *a, **kw: json.dumps({
+        "status": "ELIGIBLE_FOR_PREDEPLOY_REVIEW", "sha": NEW,
+        "ci_run_id": 100, "image_run_id": 101,
+    }))
+    with pytest.raises(app.Blocked, match="approval missing"):
+        app.eligible(OLD, NEW, "refuse")
+    assert app.eligible(OLD, NEW, "approve-additive-0064") is True
+    fixture["/contents/" + app.MIGRATION_FILE + "?ref=" + NEW]["sha"] = OLD
+    with pytest.raises(app.Blocked, match="differs from reviewed blob"):
+        app.eligible(OLD, NEW, "approve-additive-0064")
+
+
+def test_approval_never_permits_unreviewed_migrations(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = module()
+    fixture = responses(migrations=True)
+    monkeypatch.setattr(app, "github", lambda p: fixture[p])
+    monkeypatch.setattr(app, "run", lambda *a, **kw: json.dumps({
+        "status": "ELIGIBLE_FOR_PREDEPLOY_REVIEW", "sha": NEW,
+        "ci_run_id": 100, "image_run_id": 101,
+    }))
+    with pytest.raises(app.Blocked, match="unknown migration"):
+        app.eligible(OLD, NEW, "approve-additive-0064")
+
+
+def test_additive_schema_preflight_and_postflight_require_exact_revision(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = module()
+    state = {
+        "revision": app.BEFORE_REVISION,
+        "table": "",
+        "columns": "",
+        "primary": "",
+    }
+    monkeypatch.setattr(app, "database_query", lambda k: state[k])
+    app.database_migration_preflight()
+    state["revision"] = app.AFTER_REVISION
+    state["table"] = "application_ai_settings"
+    state["columns"] = "key:character varying:NO:64\nvalue:text:NO:"
+    state["primary"] = "key"
+    app.database_migration_postflight()
+    state["primary"] = "other_key"
+    with pytest.raises(app.Blocked, match="schema differs"):
+        app.database_migration_postflight()
+    state["revision"] = "0065_unreviewed"
+    with pytest.raises(app.Blocked, match="reviewed target"):
+        app.database_migration_postflight()
+
+
+def test_database_observations_are_fixed_and_no_passwords_leave_container(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = module()
+    calls = []
+    def fake(*a: str, **kw: object) -> str:
+        calls.append(a)
+        return app.BEFORE_REVISION
+    monkeypatch.setattr(app, "run", fake)
+    assert app.database_query("revision") == app.BEFORE_REVISION
+    assert calls[0][:3] == ("docker", "exec", "katcha-production-postgres-1")
+    assert 'POSTGRES_USER' in calls[0][-1]
+    assert 'POSTGRES_DB' in calls[0][-1]
+    with pytest.raises(app.Blocked, match="unapproved database observation"):
+        app.database_query("SELECT * FROM private_credentials")
+
+
+def test_temporal_inventory_checks_each_execution_and_pending_activities(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = module()
+    item = {
+        "execution": {"workflowId": "katcha-automatic-research",
+                      "runId": "11111111-2222-3333-4444-555555555555"},
+        "type": {"name": "AutomaticResearchWorkflow"},
+    }
+    description = {
+        "workflowExecutionInfo": {"execution": item["execution"]},
+        "pendingActivities": [],
+    }
+    def fake(*a: str, **kw: object) -> str:
+        if "count" in a:
+            return "Total: 1"
+        if "list" in a:
+            return json.dumps([item])
+        if "describe" in a:
+            return json.dumps(description)
+        raise AssertionError(a)
+    monkeypatch.setattr(app, "run", fake)
+    assert app.temporal_inventory("approved-resume") == (
+        ("katcha-automatic-research", "11111111-2222-3333-4444-555555555555"),
+    )
+    description["pendingActivities"] = [{"activityId": "render-1"}]
+    with pytest.raises(app.Blocked, match="pending activities"):
+        app.temporal_inventory("approved-resume")
+    description["pendingActivities"] = []
+    with pytest.raises(app.Blocked, match="explicit approval"):
+        app.temporal_inventory("refuse")
+
+
+def test_temporal_inventory_blocks_missing_and_truncated_identity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = module()
+    monkeypatch.setattr(app, "run", lambda *a, **kw: (
+        "Total: 1" if "count" in a else "[]"
+    ))
+    with pytest.raises(app.Blocked, match="differs from live count"):
+        app.temporal_inventory("approved-resume")
+
+
+def test_migration_failure_blocks_unsafe_automatic_old_image_rollback() -> None:
+    source = SOURCE.read_text()
+    assert "if migration and started_change:" in source
+    assert "forward-only migration rollout failed; old image rollback prohibited" in source
+    assert source.index("if migration and started_change:") < source.index(
+        'run("systemctl", "start", "katcha.service", timeout=900)',
+        source.index("if migration and started_change:"),
+    )
+
+
+def test_readiness_is_read_only_without_deployment_flag(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = module()
+    monkeypatch.setattr(app.os, "geteuid", lambda: 0)
+    monkeypatch.setattr(app, "run", lambda *a, **kw: (
+        "katcha-prod-primary-001" if a == ("hostname",) else ""
+    ))
+    monkeypatch.setattr(app, "pinned", lambda path: (OLD, False))
+    monkeypatch.setattr(app, "runtime", lambda sha: None)
+    monkeypatch.setattr(app, "database_migration_preflight", lambda: None)
+    monkeypatch.setattr(app, "temporal_inventory", lambda policy: (
+        ("schedule-1", "run-1"),
+    ))
+    result = app.readiness()
+    assert result["status"] == "REVIEW_REQUIRED"
+    assert result["temporal_running_count"] == 1
+    assert result["database_start_revision"] == app.BEFORE_REVISION
+
+def test_temporal_recovery_checks_original_run_ids_not_just_counts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = module()
+    wid, rid = "ingest-example", "run-123"
+    description = {
+        "workflowExecutionInfo": {
+            "execution": {"workflowId": wid, "runId": rid},
+            "status": "WORKFLOW_EXECUTION_STATUS_RUNNING",
+        },
+    }
+    monkeypatch.setattr(app, "run", lambda *a, **kw: json.dumps(description))
+    assert app.verify_temporal_recovery(((wid, rid),)) == {
+        "running": 1, "completed": 0, "continued_as_new": 0,
+    }
+    description["workflowExecutionInfo"]["status"] = "Completed"
+    assert app.verify_temporal_recovery(((wid, rid),))["completed"] == 1
+    description["workflowExecutionInfo"]["status"] = "ContinuedAsNew"
+    assert app.verify_temporal_recovery(((wid, rid),))["continued_as_new"] == 1
+    description["workflowExecutionInfo"]["status"] = "Failed"
+    with pytest.raises(app.Blocked, match="failed or has unknown status"):
+        app.verify_temporal_recovery(((wid, rid),))
+    description["workflowExecutionInfo"]["status"] = "Running"
+    description["workflowExecutionInfo"]["execution"]["runId"] = "wrong"
+    with pytest.raises(app.Blocked, match="identity differs"):
+        app.verify_temporal_recovery(((wid, rid),))
+
+
+def test_deployer_checks_original_workflow_recovery_in_success_receipt() -> None:
+    source = SOURCE.read_text()
+    assert "recovered = verify_temporal_recovery(before)" in source
+    assert '"predeploy_workflow_recovery": recovered' in source
+
+def test_approved_migration_blob_matches_checked_in_additive_source() -> None:
+    app = module()
+    path = ROOT / app.MIGRATION_FILE
+    content = path.read_bytes()
+    git_blob = hashlib.sha1(
+        f"blob {len(content)}".encode() + bytes([0]) + content
+    ).hexdigest()
+    assert git_blob == app.MIGRATION_BLOB
+    source = content.decode()
+    assert 'revision = "0064_application_ai_settings"' in source
+    assert 'down_revision = "0063_authoritative_search_ledger"' in source
+    assert 'op.create_table(' in source
+    assert '"application_ai_settings"' in source

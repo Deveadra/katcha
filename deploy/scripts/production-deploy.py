@@ -35,6 +35,10 @@ EXPECTED = {
     "telegram-worker", "renderer", "postgres", "temporal", "cloudflared",
 }
 IMAGES = ("katcha-control", "katcha-ingest", "katcha-renderer", "katcha-production")
+MIGRATION_FILE = "migrations/versions/0064_application_ai_settings.py"
+MIGRATION_BLOB = "3d411641d625c772856142d6a8ce43447be7f2b5"
+BEFORE_REVISION = "0063_authoritative_search_ledger"
+AFTER_REVISION = "0064_application_ai_settings"
 IMAGE_FOR_SERVICE = {
     "api": "katcha-control", "intelligence-worker": "katcha-control",
     "telegram-worker": "katcha-control", "worker": "katcha-ingest",
@@ -108,7 +112,7 @@ def authorized() -> None:
     run("mountpoint", "-q", "/srv/katcha")
 
 
-def eligible(old: str, target: str) -> None:
+def eligible(old: str, target: str, migration_policy: str = "refuse") -> bool:
     # Deliberately re-check from the OCI host, independently of GitHub Actions.
     head = github("/branches/main")
     if head.get("commit", {}).get("sha") != target:
@@ -132,15 +136,32 @@ def eligible(old: str, target: str) -> None:
         or not isinstance(files, list) or not files or len(files) >= 300
         or not 0 < comparison.get("total_commits", 0) <= 250):
         raise Blocked("candidate ancestry or comparison is unverified")
+    migration_paths: list[str] = []
     for change in files:
         name = change.get("filename", "")
         if not isinstance(name, str) or not name or ".." in name.split("/"):
             raise Blocked("candidate changed-file list invalid")
-        if (name.startswith(("alembic/", "migrations/"))
-            or name in {"alembic.ini", "deploy/scripts/postgres-disaster-restore.sh"}):
-            raise Blocked("migration or disaster restore change needs separately supervised rollout")
+        if name == "deploy/scripts/postgres-disaster-restore.sh":
+            raise Blocked("disaster-restore code changed; separate review required")
+        if name.startswith(("alembic/", "migrations/")) or name == "alembic.ini":
+            if change.get("status") != "added" and name == MIGRATION_FILE:
+                raise Blocked("approved migration must be an added immutable file")
+            migration_paths.append(name)
+    if migration_policy not in {"refuse", "approve-additive-0064"}:
+        raise Blocked("unrecognized migration approval")
+    if migration_paths:
+        if migration_policy != "approve-additive-0064" or migration_paths != [MIGRATION_FILE]:
+            raise Blocked("unknown migration or migration approval missing")
+        proof = github("/contents/" + MIGRATION_FILE + "?ref=" + target)
+        if (not isinstance(proof, dict) or proof.get("sha") != MIGRATION_BLOB
+            or proof.get("path") != MIGRATION_FILE
+            or proof.get("type") != "file"):
+            raise Blocked("approved additive migration source differs from reviewed blob")
+    elif migration_policy != "refuse":
+        raise Blocked("migration approval supplied for release without reviewed migration")
     if github("/branches/main").get("commit", {}).get("sha") != target:
         raise Blocked("main advanced during deployment review")
+    return bool(migration_paths)
 
 
 def runtime(sha: str, staged: dict[str, str] | None = None) -> None:
@@ -206,6 +227,154 @@ def workflows(policy: str) -> int:
     if count and policy != "approved-resume":
         raise Blocked("Temporal workflows still running; explicit approval required")
     return count
+
+
+def temporal_inventory(policy: str) -> tuple[tuple[str, str], ...]:
+    """Inspect all open executions and forbid interrupted in-flight activities."""
+    count = workflows(policy)
+    if not count:
+        return ()
+    raw = run(
+        "docker", "exec", "katcha-production-temporal-1", "temporal",
+        "--output", "json", "workflow", "list",
+        "--address", "temporal:7233", "--namespace", "default",
+        "--query", 'ExecutionStatus="Running"', "--limit", "101",
+        timeout=30,
+    )
+    try:
+        executions = json.loads(raw)
+    except ValueError as exc:
+        raise Blocked("Temporal execution inventory is not machine-readable") from exc
+    if not isinstance(executions, list) or len(executions) != count:
+        raise Blocked("Temporal execution inventory differs from live count")
+    ids: set[tuple[str, str]] = set()
+    for item in executions:
+        if not isinstance(item, dict) or not isinstance(item.get("execution"), dict):
+            raise Blocked("Temporal workflow identity missing")
+        execution = item["execution"]
+        wid, rid = execution.get("workflowId"), execution.get("runId")
+        if (not isinstance(wid, str) or not wid or len(wid) > 255
+            or not isinstance(rid, str) or not rid or len(rid) > 128
+            or "\x00" in wid or "\x00" in rid):
+            raise Blocked("Temporal workflow identity malformed")
+        ident = (wid, rid)
+        if ident in ids:
+            raise Blocked("Temporal workflow inventory contains duplicate run")
+        ids.add(ident)
+        try:
+            details = json.loads(run(
+                "docker", "exec", "katcha-production-temporal-1", "temporal",
+                "--output", "json", "workflow", "describe",
+                "--address", "temporal:7233", "--namespace", "default",
+                "--workflow-id", wid, "--run-id", rid, timeout=30,
+            ))
+        except ValueError as exc:
+            raise Blocked("Temporal activity state is not machine-readable") from exc
+        if not isinstance(details, dict) or not isinstance(
+            details.get("workflowExecutionInfo"), dict
+        ):
+            raise Blocked("Temporal workflow description incomplete")
+        info = details["workflowExecutionInfo"]
+        observed = info.get("execution")
+        if (not isinstance(observed, dict)
+            or observed.get("workflowId") != wid or observed.get("runId") != rid):
+            raise Blocked("Temporal workflow description changed during inspection")
+        for field in ("pendingActivities", "pendingChildren",
+                      "pendingWorkflowTask", "pendingNexusOperations"):
+            pending = details.get(field, [])
+            if pending not in (None, False, [], {}):
+                raise Blocked("Temporal has pending activities or tasks; drain required")
+    return tuple(sorted(ids))
+
+
+def verify_temporal_recovery(
+    original: tuple[tuple[str, str], ...],
+) -> dict[str, int]:
+    """Find every pre-stop run in durable Temporal state after restart."""
+    statuses: dict[str, int] = {"running": 0, "completed": 0, "continued_as_new": 0}
+    for wid, rid in original:
+        try:
+            details = json.loads(run(
+                "docker", "exec", "katcha-production-temporal-1", "temporal",
+                "--output", "json", "workflow", "describe",
+                "--address", "temporal:7233", "--namespace", "default",
+                "--workflow-id", wid, "--run-id", rid, timeout=30,
+            ))
+        except ValueError as exc:
+            raise Blocked("previous Temporal execution could not be described") from exc
+        if not isinstance(details, dict) or not isinstance(
+            details.get("workflowExecutionInfo"), dict
+        ):
+            raise Blocked("previous Temporal execution history not observed")
+        info = details["workflowExecutionInfo"]
+        ident = info.get("execution")
+        if not isinstance(ident, dict) or (
+            ident.get("workflowId"), ident.get("runId")
+        ) != (wid, rid):
+            raise Blocked("previous Temporal workflow identity differs after restart")
+        status = info.get("status")
+        normalized = re.sub(r"[^a-z]", "", status.lower()) if isinstance(status, str) else ""
+        if normalized.endswith("continuedasnew"):
+            statuses["continued_as_new"] += 1
+        elif normalized.endswith("completed"):
+            statuses["completed"] += 1
+        elif normalized.endswith("running"):
+            statuses["running"] += 1
+        else:
+            raise Blocked("previous Temporal execution failed or has unknown status")
+    return statuses
+
+
+def database_query(sql: str) -> str:
+    """Static PostgreSQL observations in the already-running database container."""
+    statements = {
+        "revision": "SELECT version_num FROM alembic_version",
+        "table": "SELECT COALESCE(to_regclass('public.application_ai_settings')::text, '')",
+        "columns": (
+            "SELECT column_name || ':' || data_type || ':' || is_nullable || ':' "
+            "|| COALESCE(character_maximum_length::text, '') "
+            "FROM information_schema.columns "
+            "WHERE table_schema = 'public' AND table_name = 'application_ai_settings' "
+            "ORDER BY ordinal_position"
+        ),
+        "primary": (
+            "SELECT string_agg(kcu.column_name, ',' ORDER BY kcu.ordinal_position) "
+            "FROM information_schema.table_constraints tc "
+            "JOIN information_schema.key_column_usage kcu "
+            "ON tc.constraint_name = kcu.constraint_name "
+            "AND tc.table_schema = kcu.table_schema "
+            "WHERE tc.table_schema = 'public' AND tc.table_name = 'application_ai_settings' "
+            "AND tc.constraint_type = 'PRIMARY KEY'"
+        ),
+    }
+    if sql not in statements:
+        raise Blocked("unapproved database observation")
+    query = statements[sql].replace("'", "'\\''")
+    cmd = (
+        'psql -X -qAt -v ON_ERROR_STOP=1 '
+        '-U "${POSTGRES_USER:?}" -d "${POSTGRES_DB:?}" '
+        "-c '" + query + "'"
+    )
+    return run("docker", "exec", "katcha-production-postgres-1",
+               "sh", "-ec", cmd, timeout=20)
+
+
+def database_migration_preflight() -> None:
+    if database_query("revision") != BEFORE_REVISION:
+        raise Blocked("database revision differs from reviewed additive migration base")
+    if database_query("table"):
+        raise Blocked("application AI settings table already exists before migration")
+
+
+def database_migration_postflight() -> None:
+    if database_query("revision") != AFTER_REVISION:
+        raise Blocked("database was not upgraded to the reviewed target revision")
+    if database_query("table") != "application_ai_settings":
+        raise Blocked("approved AI settings table missing after migration")
+    if database_query("columns").splitlines() != [
+        "key:character varying:NO:64", "value:text:NO:",
+    ] or database_query("primary") != "key":
+        raise Blocked("approved AI settings table schema differs from reviewed migration")
 
 
 def stage_images(target: str) -> dict[str, str]:
@@ -341,8 +510,9 @@ def acquire_supervisor_lease() -> int:
         raise Blocked("production Compose ownership lease unavailable") from exc
     return fd
 
-def deploy(target: str, policy: str) -> dict[str, Any]:
-    if not SHA.fullmatch(target) or policy not in {"refuse", "approved-resume"}:
+def deploy(target: str, policy: str, migration_policy: str = "refuse") -> dict[str, Any]:
+    if (not SHA.fullmatch(target) or policy not in {"refuse", "approved-resume"}
+        or migration_policy not in {"refuse", "approve-additive-0064"}):
         raise Blocked("invalid deployment inputs")
     authorized()
     current, _ = pinned(ENV)
@@ -361,19 +531,29 @@ def deploy(target: str, policy: str) -> dict[str, Any]:
         raise Blocked("unrecognized production origin")
     runtime(current)
     authority()
-    eligible(current, target)
-    count = workflows(policy)
+    migration = eligible(current, target, migration_policy)
+    if migration:
+        database_migration_preflight()
+    before = temporal_inventory(policy)
     staged = stage_images(target)
     backup_and_restore()
     # All operations above are preparation-only. Recheck authority, workflow
     # policy and verified release immediately before the maintenance window.
     authority()
-    workflows(policy)
-    eligible(current, target)
+    if temporal_inventory(policy) != before:
+        raise Blocked("running Temporal executions changed during backup/preparation")
+    if eligible(current, target, migration_policy) != migration:
+        raise Blocked("migration classification changed during deployment review")
+    if migration:
+        database_migration_preflight()
     run("git", "-C", str(REPO), "fetch", "origin", "main", timeout=60)
     if run("git", "-C", str(REPO), "rev-parse", "origin/main") != target:
         raise Blocked("fetched main differs from approved candidate")
     run("git", "-C", str(REPO), "merge-base", "--is-ancestor", current, target)
+    if migration and run(
+        "git", "-C", str(REPO), "rev-parse", target + ":" + MIGRATION_FILE,
+    ) != MIGRATION_BLOB:
+        raise Blocked("fetched migration blob differs from approved implementation")
     STATE.mkdir(mode=0o700, parents=True, exist_ok=True)
     if STATE.is_symlink() or STATE.stat().st_uid != 0 or STATE.stat().st_mode & 0o077:
         raise Blocked("deployment audit directory ownership/permissions unsafe")
@@ -407,14 +587,29 @@ def deploy(target: str, policy: str) -> dict[str, Any]:
         # The successor must obtain the same private lease itself.
         run("systemctl", "start", "katcha.service", timeout=900)
         healthy(target, staged=staged)
+        if migration:
+            database_migration_postflight()
         resumed = workflows("approved-resume")
+        recovered = verify_temporal_recovery(before)
         outcome = {"status": "DEPLOYED", "sha": target, "previous_sha": current,
-                   "predeploy_running_workflows": count,
+                   "predeploy_running_workflows": len(before),
                    "postdeploy_running_workflows": resumed,
+                   "predeploy_workflow_recovery": recovered,
+                   "migration_revision": AFTER_REVISION if migration else "unchanged",
+                   "migration_rollback": "FORWARD_ONLY" if migration else "not_applicable",
                    "public_browser_acceptance": "REQUIRED"}
     except Exception as exc:
-        # No migration changes were allowed. Preserve DB, R2 and audit files.
-        # Attempt to return the old pinned app; never reset Git history.
+        # An upgraded database contains a revision unknown to the previous
+        # image. Never blindly restart an old image after a migration-bearing
+        # change; preserve data and require a supervised forward repair.
+        if migration and started_change:
+            outcome = {
+                "status": "RECOVERY_REQUIRED", "sha": target,
+                "previous_sha": current, "migration": AFTER_REVISION,
+                "reason": "forward-only migration release needs supervised repair",
+            }
+            (record_dir / "result.json").write_text(json.dumps(outcome) + "\n")
+            raise Blocked("forward-only migration rollout failed; old image rollback prohibited") from exc
         if started_change:
             try:
                 run("systemctl", "stop", "katcha.service", timeout=180)
@@ -449,9 +644,35 @@ def deploy(target: str, policy: str) -> dict[str, Any]:
     return outcome
 
 
+def readiness() -> dict[str, Any]:
+    """Read-only host-side rehearsal; does not require or create a deploy gate."""
+    if os.geteuid() != 0 or run("hostname") != "katcha-prod-primary-001":
+        raise Blocked("not the verified OCI production primary")
+    run("mountpoint", "-q", "/srv/katcha")
+    old, _ = pinned(ENV)
+    runtime(old)
+    database_migration_preflight()
+    open_executions = temporal_inventory("approved-resume")
+    return {
+        "status": "REVIEW_REQUIRED",
+        "migration": AFTER_REVISION,
+        "database_start_revision": BEFORE_REVISION,
+        "temporal_running_count": len(open_executions),
+        "temporal_pending_activity_check": "PASSED",
+        "note": "Read-only preflight. Not a deployment authorization.",
+    }
+
+
 def main() -> int:
-    if len(sys.argv) != 3:
-        print("BLOCKED: expected exact SHA and running-workflow policy", file=sys.stderr)
+    if sys.argv[1:] == ["--readiness"]:
+        try:
+            print(json.dumps(readiness(), sort_keys=True))
+            return 0
+        except (Blocked, OSError, ValueError, KeyError) as exc:
+            print(json.dumps({"status": "BLOCKED", "reason": str(exc)}))
+            return 2
+    if len(sys.argv) != 4:
+        print("BLOCKED: expected exact SHA, workflow and migration policies", file=sys.stderr)
         return 2
     try:
         fd = os.open(LOCK, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
@@ -460,7 +681,7 @@ def main() -> int:
                 fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
             except BlockingIOError as exc:
                 raise Blocked("another production deployment is active") from exc
-            result = deploy(sys.argv[1], sys.argv[2])
+            result = deploy(sys.argv[1], sys.argv[2], sys.argv[3])
     except (Blocked, OSError, ValueError, KeyError) as exc:
         print("DEPLOY_BLOCKED: " + str(exc), file=sys.stderr)
         return 2
