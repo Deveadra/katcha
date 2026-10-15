@@ -123,7 +123,7 @@ Actions → **Production deployment** → **Run workflow**:
 GitHub validates exact-main CI + image publication and requests approval for
 the `katcha-production` environment. The protected job signs a deployment
 request and exits **after requesting**, not after finishing, the OCI rollout.
-The registered host timer picks it up within the request's 20-minute window.
+The host timer checks every five minutes and can consume the request within its 20-minute window.
 No desktop session, admin reauthentication or SSH tunnel is needed **for
 subsequent deployments**.
 
