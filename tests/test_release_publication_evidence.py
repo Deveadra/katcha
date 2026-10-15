@@ -176,3 +176,28 @@ def test_workflow_skips_non_push_upstream_without_disabling_pr_build() -> None:
     assert "github.event.workflow_run.conclusion == 'success'" in workflow
     assert "github.event.workflow_run.head_repository.full_name == github.repository" in workflow
     assert "core.setFailed" in workflow
+
+
+def test_unrelated_scheduled_run_days_later_does_not_burn_api_quota(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    verified = run(release.IMAGES_WORKFLOW, "workflow_run", 20)
+    scheduled = run(
+        release.IMAGES_WORKFLOW, "workflow_run", 21,
+        run_started_at="2026-10-17T11:00:00Z",
+    )
+    # Deliberately no job evidence for the out-of-window scheduled run.
+    mock_api(monkeypatch, [scheduled, verified], {20: jobs()})
+    assert release.check_release(SHA)["image_run_id"] == 20
+
+
+def test_publication_started_before_latest_push_ci_cannot_attest(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    too_early = run(
+        release.IMAGES_WORKFLOW, "workflow_run", 20,
+        run_started_at="2026-10-15T09:58:00Z",
+    )
+    mock_api(monkeypatch, [too_early], {})
+    with pytest.raises(release.ReleaseNotEligible, match="no completed"):
+        release.check_release(SHA)
