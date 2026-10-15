@@ -26,6 +26,8 @@ ENV = Path("/etc/katcha/katcha.env")
 GATE = Path("/etc/katcha/production-deploy.enabled")
 STATE = Path("/srv/katcha/deployments")
 LOCK = Path("/run/lock/katcha-production-deployment.lock")
+SUPERVISOR_LEASE_DIR = Path("/run/katcha-production-supervisor")
+SUPERVISOR_LEASE_FILE = SUPERVISOR_LEASE_DIR / "compose.lock"
 API = "https://api.github.com/repos/Deveadra/katcha"
 SHA = re.compile(r"[0-9a-f]{40}\Z")
 EXPECTED = {
@@ -322,6 +324,33 @@ def healthy(target: str, seconds: int = 300,
     raise Blocked("deployed services failed bounded readiness/authority checks")
 
 
+
+def acquire_supervisor_lease() -> int:
+    """Serialize checkout/pin mutation with the active Compose owner's lease.
+
+    The existing pre-lease supervisor must first be stopped and its nine
+    containers confirmed stopped. Release before starting its successor.
+    """
+    path = SUPERVISOR_LEASE_DIR
+    if path.is_symlink() or (path.exists() and not path.is_dir()):
+        raise Blocked("unsafe shared production Compose lease directory")
+    path.mkdir(mode=0o700, exist_ok=True)
+    stat = path.stat()
+    if stat.st_uid != 0 or stat.st_mode & 0o777 != 0o700:
+        raise Blocked("shared production Compose lease directory not root-private")
+    if SUPERVISOR_LEASE_FILE.is_symlink():
+        raise Blocked("unsafe shared production Compose lease path")
+    fd = os.open(SUPERVISOR_LEASE_FILE, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+    try:
+        stat = os.fstat(fd)
+        if stat.st_uid != 0 or stat.st_mode & 0o777 != 0o600:
+            raise Blocked("shared production Compose lease file not root-private")
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except (OSError, Blocked) as exc:
+        os.close(fd)
+        raise Blocked("production Compose ownership lease unavailable") from exc
+    return fd
+
 def deploy(target: str, policy: str) -> dict[str, Any]:
     if not SHA.fullmatch(target) or policy not in {"refuse", "approved-resume"}:
         raise Blocked("invalid deployment inputs")
@@ -374,8 +403,16 @@ def deploy(target: str, policy: str) -> dict[str, Any]:
                         "--format", "{{.ID}}")
         if remaining:
             raise Blocked("old Compose supervisor did not fully stop")
-        run("git", "-C", str(REPO), "merge", "--ff-only", target, timeout=60)
-        update_pin(target, backup)
+        if run("systemctl", "show", "-p", "ActiveState", "--value",
+               "katcha.service") != "inactive":
+            raise Blocked("old Compose supervisor is still active")
+        lease_fd = acquire_supervisor_lease()
+        try:
+            run("git", "-C", str(REPO), "merge", "--ff-only", target, timeout=60)
+            update_pin(target, backup)
+        finally:
+            os.close(lease_fd)
+        # The successor must obtain the same private lease itself.
         run("systemctl", "start", "katcha.service", timeout=900)
         healthy(target, staged=staged)
         resumed = workflows("approved-resume")
