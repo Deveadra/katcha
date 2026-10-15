@@ -41,8 +41,12 @@ the `api` Compose service. When absent, `api` uses the global
 and the container's `KATCHA_RELEASE_SHA` environment value are both the API
 SHA, ensuring `/v1/health/release` attests the actual served release.
 Worker, scheduler, renderer, migration, PostgreSQL and Temporal services retain
-the global pin. This permits a narrowly scoped hosted UI/API hotfix without
-migrating the database or restarting the existing workflow workers.
+the global pin. Because the same production env file is injected into several
+runtime containers, Compose explicitly masks `KATCHA_API_RELEASE_SHA` to an
+empty value in every non-API env-file consumer. Setting the API pin therefore
+cannot change those service configurations or trigger worker recreation.
+This permits a narrowly scoped hosted UI/API hotfix without migrating the
+database or restarting the existing workflow workers.
 
 **This change only enables service selection; it does not deploy anything.**
 The production operator must independently verify accepted release CI, published

@@ -66,6 +66,9 @@ services:
     image: ${KATCHA_IMAGE_REGISTRY:-ghcr.io/deveadra}/katcha-control:${KATCHA_RELEASE_SHA:?Set KATCHA_RELEASE_SHA to the exact deployed git SHA}
     pull_policy: always
     env_file: *control-env
+    environment:
+      # This pin is Compose/API-only; never leak it into migration runtime config.
+      KATCHA_API_RELEASE_SHA: ""
     depends_on:
       postgres:
         condition: service_healthy
@@ -135,6 +138,8 @@ services:
     pull_policy: always
     restart: unless-stopped
     env_file: *control-env
+    environment:
+      KATCHA_API_RELEASE_SHA: ""
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -151,6 +156,8 @@ services:
     pull_policy: always
     restart: unless-stopped
     env_file: *control-env
+    environment:
+      KATCHA_API_RELEASE_SHA: ""
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -168,6 +175,8 @@ services:
     restart: unless-stopped
     profiles: ["local-heavy-analysis"]
     env_file: *control-env
+    environment:
+      KATCHA_API_RELEASE_SHA: ""
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -187,6 +196,7 @@ services:
     restart: unless-stopped
     env_file: *control-env
     environment:
+      KATCHA_API_RELEASE_SHA: ""
       HOME: /home/katcha
       AWS_PROFILE: ${KATCHA_AWS_PROFILE:-katcha-automation}
       REMOTION_AWS_PROFILE: ${KATCHA_AWS_PROFILE:-katcha-automation}
@@ -219,6 +229,8 @@ services:
     pull_policy: always
     restart: unless-stopped
     env_file: *control-env
+    environment:
+      KATCHA_API_RELEASE_SHA: ""
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -240,6 +252,7 @@ services:
     env_file:
       - ${KATCHA_BACKUP_ENV_FILE:-/etc/katcha/backup.env}
     environment:
+      KATCHA_API_RELEASE_SHA: ""
       KATCHA_ENV: production
       KATCHA_RELEASE_SHA: ${KATCHA_RELEASE_SHA:?Set KATCHA_RELEASE_SHA}
       KATCHA_LEADERSHIP_FENCE_MODE: ${KATCHA_LEADERSHIP_FENCE_MODE:?Set KATCHA_LEADERSHIP_FENCE_MODE}
@@ -263,6 +276,8 @@ services:
     user: "0:0"
     env_file:
       - ${KATCHA_RESTORE_ENV_FILE:-/etc/katcha/restore.env}
+    environment:
+      KATCHA_API_RELEASE_SHA: ""
     volumes:
       - /srv/katcha/backups-local:/backup
     command: ["python", "-m", "katcha.ops.disaster_backup", "--help"]
@@ -276,6 +291,8 @@ services:
     pull_policy: always
     restart: unless-stopped
     env_file: *control-env
+    environment:
+      KATCHA_API_RELEASE_SHA: ""
     depends_on:
       migrate:
         condition: service_completed_successfully

@@ -74,3 +74,12 @@ def test_api_override_only_changes_api_image_and_public_revision(
     for name in ("worker", "intelligence-worker", "production-worker",
                  "renderer", "migrate"):
         assert updated[name]["image"].endswith(":" + BASE_SHA)
+
+    # The production env file is also injected into runtime containers. Mask the
+    # API-only interpolation variable there so setting the pin cannot make
+    # Compose reconfigure non-API services.
+    for name in (
+        "worker", "intelligence-worker", "analysis-worker", "production-worker",
+        "renderer", "migrate", "backup-writer", "backup-reader", "telegram-worker",
+    ):
+        assert updated[name]["environment"]["KATCHA_API_RELEASE_SHA"] == ""
