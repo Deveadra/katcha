@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import importlib.util
+import json
 from pathlib import Path
 from types import ModuleType
 
@@ -111,6 +112,10 @@ def test_release_validation_accepts_exact_successful_publication(
     app = module()
     fixture = responses()
     monkeypatch.setattr(app, "github", lambda p: fixture[p])
+    monkeypatch.setattr(app, "run", lambda *a, **kw: json.dumps({
+        "status": "ELIGIBLE_FOR_PREDEPLOY_REVIEW", "sha": NEW,
+        "ci_run_id": 100, "image_run_id": 101,
+    }))
     app.eligible(OLD, NEW)
 
 
@@ -120,8 +125,34 @@ def test_deployer_fails_closed_on_migration_changes(
     app = module()
     fixture = responses(migrations=True)
     monkeypatch.setattr(app, "github", lambda p: fixture[p])
+    monkeypatch.setattr(app, "run", lambda *a, **kw: json.dumps({
+        "status": "ELIGIBLE_FOR_PREDEPLOY_REVIEW", "sha": NEW,
+        "ci_run_id": 100, "image_run_id": 101,
+    }))
     with pytest.raises(app.Blocked, match="migration"):
         app.eligible(OLD, NEW)
+
+
+
+def test_deployer_fails_closed_if_strong_image_provenance_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = module()
+    fixture = responses()
+    monkeypatch.setattr(app, "github", lambda p: fixture[p])
+    monkeypatch.setattr(app, "run", lambda *a, **kw: json.dumps({
+        "status": "BLOCKED", "sha": NEW,
+    }))
+    with pytest.raises(app.Blocked, match="provenance"):
+        app.eligible(OLD, NEW)
+
+
+def test_deployer_reuses_installed_accepted_provenance_checker() -> None:
+    source = SOURCE.read_text()
+    installer = (ROOT / "deploy/scripts/install-production-deployer.sh").read_text()
+    assert "/usr/local/lib/katcha-production-deploy/release_eligibility.py" in source
+    assert "src/katcha/ops/release_eligibility.py" in installer
+    assert "install -o root -g root -m 0600" in installer
 
 
 def test_temporal_gate_refuses_running_work_without_approval(
