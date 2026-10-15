@@ -704,8 +704,14 @@ def test_optional_api_release_pin_preserves_worker_release() -> None:
         "KATCHA_RELEASE_SHA: ${KATCHA_API_RELEASE_SHA:-${KATCHA_RELEASE_SHA:"
         "?Set KATCHA_RELEASE_SHA to the exact deployed git SHA}}"
     ) in api
-    assert "KATCHA_API_RELEASE_SHA" not in compose.split("\n  api:\n", 1)[0]
-    assert "KATCHA_API_RELEASE_SHA" not in compose.split("\n  cloudflared:\n", 1)[1]
+    before_api, after_api = compose.split("\n  api:\n", 1)
+    after_api = after_api.split("\n  cloudflared:\n", 1)[1]
+    non_api = before_api + after_api
+
+    # Non-API services may contain only the explicit empty mask. The real
+    # interpolation must remain confined to the API service.
+    assert "${KATCHA_API_RELEASE_SHA" not in non_api
+    assert non_api.count('KATCHA_API_RELEASE_SHA: ""') == 9
 
 
 def test_optional_api_release_pin_must_be_exact_sha() -> None:
