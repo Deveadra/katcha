@@ -472,8 +472,9 @@ def acquire_supervisor_lease() -> int:
         raise Blocked("production Compose ownership lease unavailable") from exc
     return fd
 
-def deploy(target: str, policy: str) -> dict[str, Any]:
-    if not SHA.fullmatch(target) or policy not in {"refuse", "approved-resume"}:
+def deploy(target: str, policy: str, migration_policy: str = "refuse") -> dict[str, Any]:
+    if (not SHA.fullmatch(target) or policy not in {"refuse", "approved-resume"}
+        or migration_policy not in {"refuse", "approve-additive-0064"}):
         raise Blocked("invalid deployment inputs")
     authorized()
     current, _ = pinned(ENV)
@@ -492,19 +493,29 @@ def deploy(target: str, policy: str) -> dict[str, Any]:
         raise Blocked("unrecognized production origin")
     runtime(current)
     authority()
-    eligible(current, target)
-    count = workflows(policy)
+    migration = eligible(current, target, migration_policy)
+    if migration:
+        database_migration_preflight()
+    before = temporal_inventory(policy)
     staged = stage_images(target)
     backup_and_restore()
     # All operations above are preparation-only. Recheck authority, workflow
     # policy and verified release immediately before the maintenance window.
     authority()
-    workflows(policy)
-    eligible(current, target)
+    if temporal_inventory(policy) != before:
+        raise Blocked("running Temporal executions changed during backup/preparation")
+    if eligible(current, target, migration_policy) != migration:
+        raise Blocked("migration classification changed during deployment review")
+    if migration:
+        database_migration_preflight()
     run("git", "-C", str(REPO), "fetch", "origin", "main", timeout=60)
     if run("git", "-C", str(REPO), "rev-parse", "origin/main") != target:
         raise Blocked("fetched main differs from approved candidate")
     run("git", "-C", str(REPO), "merge-base", "--is-ancestor", current, target)
+    if migration and run(
+        "git", "-C", str(REPO), "rev-parse", target + ":" + MIGRATION_FILE,
+    ) != MIGRATION_BLOB:
+        raise Blocked("fetched migration blob differs from approved implementation")
     STATE.mkdir(mode=0o700, parents=True, exist_ok=True)
     if STATE.is_symlink() or STATE.stat().st_uid != 0 or STATE.stat().st_mode & 0o077:
         raise Blocked("deployment audit directory ownership/permissions unsafe")
@@ -538,14 +549,27 @@ def deploy(target: str, policy: str) -> dict[str, Any]:
         # The successor must obtain the same private lease itself.
         run("systemctl", "start", "katcha.service", timeout=900)
         healthy(target, staged=staged)
+        if migration:
+            database_migration_postflight()
         resumed = workflows("approved-resume")
         outcome = {"status": "DEPLOYED", "sha": target, "previous_sha": current,
-                   "predeploy_running_workflows": count,
+                   "predeploy_running_workflows": len(before),
                    "postdeploy_running_workflows": resumed,
+                   "migration_revision": AFTER_REVISION if migration else "unchanged",
+                   "migration_rollback": "FORWARD_ONLY" if migration else "not_applicable",
                    "public_browser_acceptance": "REQUIRED"}
     except Exception as exc:
-        # No migration changes were allowed. Preserve DB, R2 and audit files.
-        # Attempt to return the old pinned app; never reset Git history.
+        # An upgraded database contains a revision unknown to the previous
+        # image. Never blindly restart an old image after a migration-bearing
+        # change; preserve data and require a supervised forward repair.
+        if migration and started_change:
+            outcome = {
+                "status": "RECOVERY_REQUIRED", "sha": target,
+                "previous_sha": current, "migration": AFTER_REVISION,
+                "reason": "forward-only migration release needs supervised repair",
+            }
+            (record_dir / "result.json").write_text(json.dumps(outcome) + "\n")
+            raise Blocked("forward-only migration rollout failed; old image rollback prohibited") from exc
         if started_change:
             try:
                 run("systemctl", "stop", "katcha.service", timeout=180)
@@ -581,8 +605,8 @@ def deploy(target: str, policy: str) -> dict[str, Any]:
 
 
 def main() -> int:
-    if len(sys.argv) != 3:
-        print("BLOCKED: expected exact SHA and running-workflow policy", file=sys.stderr)
+    if len(sys.argv) != 4:
+        print("BLOCKED: expected exact SHA, workflow and migration policies", file=sys.stderr)
         return 2
     try:
         fd = os.open(LOCK, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
@@ -591,7 +615,7 @@ def main() -> int:
                 fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
             except BlockingIOError as exc:
                 raise Blocked("another production deployment is active") from exc
-            result = deploy(sys.argv[1], sys.argv[2])
+            result = deploy(sys.argv[1], sys.argv[2], sys.argv[3])
     except (Blocked, OSError, ValueError, KeyError) as exc:
         print("DEPLOY_BLOCKED: " + str(exc), file=sys.stderr)
         return 2
