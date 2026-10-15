@@ -71,6 +71,18 @@ A full host restart will naturally restart workers (not duplicate them), with
 each service resolving its appropriate stored immutable release pin.
 The routine autonomous promotion stage below remains unimplemented.
 
+## Publication evidence correction (CD-105)
+
+The main CI workflow also runs on a schedule. Its completed events must never
+trigger GHCR publishing or masquerade as a new deployable release. The image
+job now skips those events at job level, while the release-eligibility checker
+requires **actual successful build jobs for all six images and a successful
+anonymous-pull verification job**, on an attempted publication associated with
+the accepted push CI. Fully skipped workflow runs are inert and do not supersede
+a validated publication; a later failed real build/verification blocks. The
+association window is bounded to avoid exhausting anonymous GitHub API limits
+when a main SHA stays unchanged. Image tags alone are not approval.
+
 ## Stage 2: verified production promotion (NOT implemented)
 
 Before automatic live deployment, implement **and independently review**:

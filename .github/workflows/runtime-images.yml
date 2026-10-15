@@ -25,12 +25,25 @@ permissions:
   pull-requests: read
 
 concurrency:
-  group: runtime-images-${{ github.ref }}
-  cancel-in-progress: true
+  # Unrelated scheduled CI must not cancel an already-running main image build.
+  # Serialize real main publications; cancel superseded PR-only builds.
+  group: runtime-images-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.event_name == 'workflow_run' && github.event.workflow_run.event == 'push' && 'main-publish' || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   plan:
     name: Plan runtime image builds
+    # Scheduled/manual/failed CI is never an image-publication attempt.
+    # Keep the in-step SHA and repository checks as a second independent gate.
+    if: >-
+      github.event_name == 'pull_request' ||
+      (
+        github.event_name == 'workflow_run' &&
+        github.event.workflow_run.event == 'push' &&
+        github.event.workflow_run.conclusion == 'success' &&
+        github.event.workflow_run.head_branch == 'main' &&
+        github.event.workflow_run.head_repository.full_name == github.repository
+      )
     runs-on: ubuntu-latest
     timeout-minutes: 3
     outputs:
