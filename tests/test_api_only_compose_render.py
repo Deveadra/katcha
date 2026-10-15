@@ -32,7 +32,7 @@ def _render(tmp_path: Path, api_sha: str | None) -> dict:
     )
     if api_sha is not None:
         fixture += f"\nKATCHA_API_RELEASE_SHA={api_sha}\n"
-    env_file = tmp_path / ("production-with-api.env" if api_sha else "production.env")
+    env_file = tmp_path / "production.env"
     env_file.write_text(fixture, encoding="utf-8")
 
     # The config command must never touch production; this fixture is isolated
