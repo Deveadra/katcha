@@ -118,11 +118,10 @@ def resolve_goal_authority(goal: CommandGoal) -> tuple[set[str], str | None]:
         )
         if principal is None:
             raise ValueError("The Cloudflare Access operator for this request was revoked")
-        # Receipts created before this fix have no email fingerprint. They are
-        # still bound to the stable principal name and exact actor identity.
-        if fingerprint is not None and fingerprint != (
-            hashlib.sha256(principal.email.encode()).hexdigest()[:12]
-        ):
+        # Require a verified-email binding: principal names can be reassigned.
+        # Historical unbound goals need explicit operator resubmission; never
+        # silently inherit the authority of a different Cloudflare user.
+        if fingerprint != hashlib.sha256(principal.email.encode()).hexdigest()[:12]:
             raise ValueError("The Cloudflare Access operator identity has changed")
         scopes = set(principal.scopes)
         current_channels = set(principal.channel_profile_ids)
