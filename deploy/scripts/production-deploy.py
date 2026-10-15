@@ -250,14 +250,25 @@ def stage_images(target: str) -> dict[str, str]:
 
 
 def backup_and_restore() -> None:
-    for name in ("katcha-backup.service", "katcha-restore-test.service"):
+    markers = {
+        "katcha-backup.service": "Katcha PostgreSQL backup completed:",
+        "katcha-restore-test.service": "Katcha disaster restore test passed for 3 databases.",
+    }
+    for name, marker in markers.items():
         if run("systemctl", "show", "-p", "ActiveState", "--value", name) != "inactive":
             raise Blocked("database safety job is not idle")
+        started = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
         run("systemctl", "start", name, timeout=6000)
         if run("systemctl", "show", "-p", "Result", "--value", name) != "success":
             raise Blocked("fresh backup or restore verification failed")
         if run("systemctl", "show", "-p", "ExecMainStatus", "--value", name) != "0":
             raise Blocked("fresh backup or restore verification exited nonzero")
+        # A oneshot script can return success when a lock is already held and
+        # work was skipped. Require positive *new* completion evidence.
+        log = run("journalctl", "-u", name, "--since", started,
+                  "--no-pager", "-o", "cat", timeout=30)
+        if marker not in log:
+            raise Blocked("fresh backup or three-database restore proof missing")
 
 
 def atomic_env(content: bytes) -> None:
