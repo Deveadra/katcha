@@ -151,6 +151,13 @@ def attempt(request: dict[str, Any]) -> str:
         out.write("\n")
         out.flush()
         os.fsync(out.fileno())
+    # Persist the nonce consumption before executing a privileged rollout.
+    # A power loss must never make the same signed request replayable.
+    directory_fd = os.open(RECEIPTS, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        os.fsync(directory_fd)
+    finally:
+        os.close(directory_fd)
 
     status = "BLOCKED"
     try:
@@ -174,6 +181,11 @@ def attempt(request: dict[str, Any]) -> str:
         out.flush()
         os.fsync(out.fileno())
     os.replace(temp, path)
+    directory_fd = os.open(RECEIPTS, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        os.fsync(directory_fd)
+    finally:
+        os.close(directory_fd)
     return status
 
 
