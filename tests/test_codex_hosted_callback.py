@@ -62,3 +62,35 @@ def test_callback_returns_to_current_origin_settings(monkeypatch, outcome):
         error=None if outcome == "connected" else "denied",
     )
     assert response.headers["location"] == f"/settings?codex={outcome}"
+
+
+@pytest.mark.parametrize("error", [None, "access_denied"])
+def test_foreign_callback_keeps_address_for_hosted_completion(monkeypatch, error):
+    monkeypatch.setattr(chatgpt, "is_codex_oauth_state", lambda state: False)
+    monkeypatch.setattr(chatgpt, "is_chatgpt_oauth_state", lambda state: False)
+    def must_not_exchange(**kwargs):
+        pytest.fail("A foreign sign-in must not exchange or consume credentials")
+    monkeypatch.setattr(chatgpt, "complete_chatgpt_oauth", must_not_exchange)
+    monkeypatch.setattr(chatgpt, "consume_failed_oauth", must_not_exchange)
+    response = chatgpt.chatgpt_oauth_callback(
+        state="foreign-state", code="private-code", error=error,
+    )
+    assert response.status_code == 200
+    assert "location" not in response.headers
+    assert "Sign-in return address" in response.body.decode()
+    assert "private-code" not in response.body.decode()
+    assert "foreign-state" not in response.body.decode()
+    assert response.headers["cache-control"] == "no-store"
+    assert response.headers["referrer-policy"] == "no-referrer"
+    assert "default-src 'none'" in response.headers["content-security-policy"]
+
+
+def test_local_chatgpt_callback_still_exchanges_known_state(monkeypatch):
+    monkeypatch.setattr(chatgpt, "is_codex_oauth_state", lambda state: False)
+    monkeypatch.setattr(chatgpt, "is_chatgpt_oauth_state", lambda state: True)
+    received = {}
+    monkeypatch.setattr(chatgpt, "complete_chatgpt_oauth", lambda **kw: received.update(kw))
+    response = chatgpt.chatgpt_oauth_callback(state="local-state", code="local-code")
+    assert response.headers["location"] == "/settings?chatgpt=connected"
+    assert received["state"] == "local-state"
+    assert received["code"] == "local-code"

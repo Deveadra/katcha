@@ -14,6 +14,13 @@ never in chat, logs, or support messages. Finish within ten minutes; restart
 Reconnect if the sign-in expires. An existing saved connection stays in place
 until the replacement sign-in completes.
 
+If a local Katcha instance also owns port 1457, it must preserve callbacks for
+sign-ins started by the hosted instance. Updated local versions show a completion
+page and keep the original address in the address bar without exchanging the
+code. Older versions redirect to `settings?chatgpt=error` and lose that address.
+Update the local API before starting a fresh hosted sign-in in that case; the
+final settings error address cannot complete sign-in.
+
 The completion API requires the existing operator authentication. It accepts
 only the registered loopback address and the state retained by the initiating
 tab. It never fetches the supplied address. The server exchanges the code with
