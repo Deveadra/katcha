@@ -148,14 +148,15 @@ def test_forged_http_header_cannot_delegate_native_goal(cf_goal):
     assert response.status_code == 401
 
 
-def test_historic_access_goal_without_email_digest_is_still_name_bound(cf_goal):
-    goal, settings, channel, _ = cf_goal
+def test_historic_access_goal_without_email_digest_must_be_resubmitted(cf_goal):
+    goal, settings, _, _ = cf_goal
     goal.authority = {
         **goal.authority,
         "credential_fingerprint": None,
         "credential_id": None,
     }
-    assert resolve_goal_authority(goal)[0] >= {"ai:read", "ai:command"}
+    with pytest.raises(ValueError, match="identity has changed"):
+        resolve_goal_authority(goal)
     settings.cloudflare_access_principals.clear()
     with pytest.raises(ValueError, match="revoked"):
         resolve_goal_authority(goal)
