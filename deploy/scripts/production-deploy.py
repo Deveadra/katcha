@@ -257,7 +257,7 @@ def backup_and_restore() -> None:
     for name, marker in markers.items():
         if run("systemctl", "show", "-p", "ActiveState", "--value", name) != "inactive":
             raise Blocked("database safety job is not idle")
-        started = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+        started = "@" + str(int(time.time()))
         run("systemctl", "start", name, timeout=6000)
         if run("systemctl", "show", "-p", "Result", "--value", name) != "success":
             raise Blocked("fresh backup or restore verification failed")
