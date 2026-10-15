@@ -7,6 +7,40 @@ BACKUP_ENV_FILE="${KATCHA_BACKUP_ENV_FILE:-/etc/katcha/backup.env}"
 RESTORE_ENV_FILE="${KATCHA_RESTORE_ENV_FILE:-/etc/katcha/restore.env}"
 DATA_ROOT="/srv/katcha"
 
+# Guard the complete lifetime of the attached docker compose process.
+# This does NOT authorize rollout: it only rejects multiple instances of this
+# supervisor after the host has explicitly adopted the revised service code.
+# /run is root-owned. Keep the lease directory private so other users cannot
+# replace the lock with a symlink or interfere with the primary.
+lease_dir=/run/katcha-production-supervisor
+if [[ -L "$lease_dir" || ( -e "$lease_dir" && ! -d "$lease_dir" ) ]]; then
+  echo "Unsafe production Compose lease directory; refusing to start." >&2
+  exit 23
+fi
+install -d -o 0 -g 0 -m 0700 "$lease_dir"
+if [[ "$(stat -c '%u:%a' "$lease_dir")" != "0:700" ]]; then
+  echo "Unsafe production Compose lease ownership; refusing to start." >&2
+  exit 23
+fi
+lease_file="$lease_dir/compose.lock"
+if [[ -L "$lease_file" || ( -e "$lease_file" && ! -f "$lease_file" ) ]]; then
+  echo "Unsafe production Compose lock path; refusing to start." >&2
+  exit 23
+fi
+umask 077
+exec 9>>"$lease_file"
+if [[ "$(stat -c '%u:%a' "$lease_file")" != "0:600" ]]; then
+  echo "Unsafe production Compose lock file; refusing to start." >&2
+  exit 23
+fi
+if ! flock --exclusive --nonblock 9; then
+  echo "Another production Compose owner holds the lease; refusing duplicate startup." >&2
+  exit 24
+fi
+# FD 9 remains open across the final exec of 'docker compose up --remove-orphans'.
+# The kernel automatically releases the lease if the attached owner exits.
+# No other rollout controller may invoke a competing Compose command.
+
 cd -- "${ROOT}"
 
 if ! mountpoint -q "${DATA_ROOT}"; then
