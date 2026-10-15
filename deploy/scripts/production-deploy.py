@@ -418,9 +418,23 @@ def deploy(target: str, policy: str) -> dict[str, Any]:
         if started_change:
             try:
                 run("systemctl", "stop", "katcha.service", timeout=180)
-                atomic_env(original)
-                if run("git", "-C", str(REPO), "rev-parse", "HEAD") != current:
-                    run("git", "-C", str(REPO), "switch", "--detach", current)
+                if run("systemctl", "show", "-p", "ActiveState", "--value",
+                       "katcha.service") != "inactive":
+                    raise Blocked("supervisor still active during rollback")
+                remaining = run(
+                    "docker", "ps", "--filter",
+                    "label=com.docker.compose.project=katcha-production",
+                    "--format", "{{.ID}}",
+                )
+                if remaining:
+                    raise Blocked("old containers still running during rollback")
+                lease_fd = acquire_supervisor_lease()
+                try:
+                    atomic_env(original)
+                    if run("git", "-C", str(REPO), "rev-parse", "HEAD") != current:
+                        run("git", "-C", str(REPO), "switch", "--detach", current)
+                finally:
+                    os.close(lease_fd)
                 run("systemctl", "start", "katcha.service", timeout=900)
                 healthy(current)
                 outcome = {"status": "ROLLED_BACK", "sha": current,
