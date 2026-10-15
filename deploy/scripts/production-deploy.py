@@ -33,6 +33,11 @@ EXPECTED = {
     "telegram-worker", "renderer", "postgres", "temporal", "cloudflared",
 }
 IMAGES = ("katcha-control", "katcha-ingest", "katcha-renderer", "katcha-production")
+IMAGE_FOR_SERVICE = {
+    "api": "katcha-control", "intelligence-worker": "katcha-control",
+    "telegram-worker": "katcha-control", "worker": "katcha-ingest",
+    "renderer": "katcha-renderer", "production-worker": "katcha-production",
+}
 
 
 class Blocked(RuntimeError):
@@ -155,7 +160,7 @@ def eligible(old: str, target: str) -> None:
         raise Blocked("main advanced during deployment review")
 
 
-def runtime(sha: str) -> None:
+def runtime(sha: str, staged: dict[str, str] | None = None) -> None:
     ids = run("docker", "ps", "--filter", "label=com.docker.compose.project=katcha-production",
               "--format", "{{.ID}}").splitlines()
     if len(ids) != 9 or len(set(ids)) != 9:
@@ -174,8 +179,11 @@ def runtime(sha: str) -> None:
                 raise Blocked("production container unhealthy")
         if service not in {"postgres", "temporal", "cloudflared"}:
             img = row["Config"]["Image"]
-            if not img.endswith(":" + sha):
+            name = IMAGE_FOR_SERVICE[service]
+            if img != "ghcr.io/deveadra/" + name + ":" + sha:
                 raise Blocked("running application image does not match release")
+            if staged is not None and row.get("Image") != staged[name]:
+                raise Blocked("running image differs from previously staged immutable image")
         services.add(service)
     if services != EXPECTED:
         raise Blocked("required production service absent")
@@ -217,7 +225,8 @@ def workflows(policy: str) -> int:
     return count
 
 
-def stage_images(target: str) -> None:
+def stage_images(target: str) -> dict[str, str]:
+    staged: dict[str, str] = {}
     for name in IMAGES:
         ref = "ghcr.io/deveadra/" + name + ":" + target
         run("docker", "pull", ref, timeout=900)
@@ -233,6 +242,11 @@ def stage_images(target: str) -> None:
             for x in values if isinstance(x, str)
         ):
             raise Blocked("pinned published image digest evidence missing")
+        image_id = run("docker", "image", "inspect", ref, "--format", "{{.Id}}")
+        if not re.fullmatch(r"sha256:[0-9a-f]{64}", image_id):
+            raise Blocked("staged image identity malformed")
+        staged[name] = image_id
+    return staged
 
 
 def backup_and_restore() -> None:
@@ -273,12 +287,13 @@ def update_pin(target: str, backup: Path) -> None:
             os.unlink(tmp_name)
 
 
-def healthy(target: str, seconds: int = 300) -> None:
+def healthy(target: str, seconds: int = 300,
+            staged: dict[str, str] | None = None) -> None:
     deadline = time.monotonic() + seconds
     while time.monotonic() < deadline:
         try:
             if run("systemctl", "is-active", "katcha.service") == "active":
-                runtime(target)
+                runtime(target, staged=staged)
                 authority()
                 return
         except Blocked:
@@ -309,7 +324,7 @@ def deploy(target: str, policy: str) -> dict[str, Any]:
     authority()
     eligible(current, target)
     count = workflows(policy)
-    stage_images(target)
+    staged = stage_images(target)
     backup_and_restore()
     # All operations above are preparation-only. Recheck authority, workflow
     # policy and verified release immediately before the maintenance window.
@@ -342,7 +357,7 @@ def deploy(target: str, policy: str) -> dict[str, Any]:
         run("git", "-C", str(REPO), "merge", "--ff-only", target, timeout=60)
         update_pin(target, backup)
         run("systemctl", "start", "katcha.service", timeout=900)
-        healthy(target)
+        healthy(target, staged=staged)
         outcome = {"status": "DEPLOYED", "sha": target, "previous_sha": current,
                    "paused_temporal_workflows": count,
                    "public_browser_acceptance": "REQUIRED"}
