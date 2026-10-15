@@ -77,6 +77,12 @@ def validate(values: dict[str, str]) -> list[str]:
     if release and not SHA.fullmatch(release):
         errors.append("KATCHA_RELEASE_SHA must be an exact 40-character lowercase git SHA")
 
+    # Independently deployed API revisions must be immutable too. This override
+    # never authorizes changing the worker release pin or bypassing deployment review.
+    api_release = values.get("KATCHA_API_RELEASE_SHA", "").strip()
+    if api_release and not SHA.fullmatch(api_release):
+        errors.append("KATCHA_API_RELEASE_SHA must be an exact 40-character lowercase git SHA")
+
     postgres_password = require(values, "KATCHA_POSTGRES_PASSWORD", errors)
     if postgres_password.casefold() in {"katcha", "password", "postgres"}:
         errors.append("KATCHA_POSTGRES_PASSWORD uses an unsafe development/default value")
