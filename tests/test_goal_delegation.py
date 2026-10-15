@@ -63,7 +63,10 @@ def test_fake_external_header_cannot_delegate_access(monkeypatch):
         assert allowed.json()["principal_name"] == identity.principal_name
         # Delegation cannot bleed into a different route, method or channel.
         assert client.get("/v1/channels").status_code == 401
-        assert client.post("/v1/control/session").status_code == 401
+        # FastAPI rejects an unregistered method before authentication.
+        assert client.post("/v1/control/session").status_code == 405
+        # An actual write route still gets no delegated authority.
+        assert client.post("/v1/ai/goals", json={}).status_code == 401
         assert client.get(
             "/v1/channels/22222222-2222-4222-8222-222222222222"
         ).status_code == 401
