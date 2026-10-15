@@ -604,7 +604,33 @@ def deploy(target: str, policy: str, migration_policy: str = "refuse") -> dict[s
     return outcome
 
 
+def readiness() -> dict[str, Any]:
+    """Read-only host-side rehearsal; does not require or create a deploy gate."""
+    if os.geteuid() != 0 or run("hostname") != "katcha-prod-primary-001":
+        raise Blocked("not the verified OCI production primary")
+    run("mountpoint", "-q", "/srv/katcha")
+    old, _ = pinned(ENV)
+    runtime(old)
+    database_migration_preflight()
+    open_executions = temporal_inventory("approved-resume")
+    return {
+        "status": "REVIEW_REQUIRED",
+        "migration": AFTER_REVISION,
+        "database_start_revision": BEFORE_REVISION,
+        "temporal_running_count": len(open_executions),
+        "temporal_pending_activity_check": "PASSED",
+        "note": "Read-only preflight. Not a deployment authorization.",
+    }
+
+
 def main() -> int:
+    if sys.argv[1:] == ["--readiness"]:
+        try:
+            print(json.dumps(readiness(), sort_keys=True))
+            return 0
+        except (Blocked, OSError, ValueError, KeyError) as exc:
+            print(json.dumps({"status": "BLOCKED", "reason": str(exc)}))
+            return 2
     if len(sys.argv) != 4:
         print("BLOCKED: expected exact SHA, workflow and migration policies", file=sys.stderr)
         return 2
