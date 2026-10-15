@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+from urllib.parse import parse_qs, urlsplit
+
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from katcha.integrations.codex import (
     CodexConnectionError,
     begin_codex_oauth,
+    complete_codex_callback_url,
     connection_status,
     disconnect,
     list_models,
@@ -19,6 +22,12 @@ router = APIRouter(tags=["codex"])
 
 class OAuthStartResponse(BaseModel):
     authorization_url: str
+    state: str
+
+
+class OAuthCompleteRequest(BaseModel):
+    callback_url: str = Field(min_length=1, max_length=8192)
+    expected_state: str = Field(min_length=20, max_length=255)
 
 
 class CodexModelResponse(BaseModel):
@@ -42,9 +51,22 @@ def codex_status() -> dict[str, object]:
 )
 def codex_oauth_start() -> OAuthStartResponse:
     try:
-        return OAuthStartResponse(authorization_url=begin_codex_oauth())
+        authorization_url = begin_codex_oauth()
+        state = parse_qs(urlsplit(authorization_url).query)["state"][0]
+        return OAuthStartResponse(authorization_url=authorization_url, state=state)
     except CodexConnectionError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@router.post("/v1/integrations/codex/oauth/complete")
+def codex_oauth_complete(request: OAuthCompleteRequest) -> dict[str, object]:
+    try:
+        complete_codex_callback_url(
+            callback_url=request.callback_url, expected_state=request.expected_state
+        )
+    except CodexConnectionError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"ok": True, "connected": True}
 
 
 @router.get(

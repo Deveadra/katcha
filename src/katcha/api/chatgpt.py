@@ -74,16 +74,16 @@ def chatgpt_oauth_callback(
                 consume_failed_codex_oauth(state)
             except CodexConnectionError:
                 return RedirectResponse(
-                    "http://127.0.0.1:8765/settings?codex=state_error"
+                    "/settings?codex=state_error"
                 )
-            return RedirectResponse("http://127.0.0.1:8765/settings?codex=error")
+            return RedirectResponse("/settings?codex=error")
         if not code:
-            return RedirectResponse("http://127.0.0.1:8765/settings?codex=error")
+            return RedirectResponse("/settings?codex=error")
         try:
             complete_codex_oauth(state=state, code=code)
         except CodexConnectionError:
-            return RedirectResponse("http://127.0.0.1:8765/settings?codex=error")
-        return RedirectResponse("http://127.0.0.1:8765/settings?codex=connected")
+            return RedirectResponse("/settings?codex=error")
+        return RedirectResponse("/settings?codex=connected")
 
     if error:
         try:

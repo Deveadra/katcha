@@ -297,3 +297,68 @@ def test_refresh_serializes_rotating_tokens_across_workers(monkeypatch):
         release.set()
         with session_scope() as session:
             session.execute(delete(CodexConnection).where(CodexConnection.id == connection_id))
+
+
+def test_hosted_callback_completes_registered_loopback_without_fetching(monkeypatch):
+    captured = {}
+    connection = SimpleNamespace(id=uuid.uuid4())
+
+    def complete(**kwargs):
+        captured.update(kwargs)
+        return connection
+
+    monkeypatch.setattr(codex, "complete_codex_oauth", complete)
+    result = codex.complete_codex_callback_url(
+        callback_url="http://localhost:1457/auth/callback?state=browser-state&code=one-use-code",
+        expected_state="browser-state",
+    )
+    assert result is connection
+    assert captured == {"state": "browser-state", "code": "one-use-code", "settings": None}
+
+
+@pytest.mark.parametrize("callback_url", [
+    "https://attacker.test/auth/callback?state=browser-state&code=secret",
+    "http://localhost:1457.attacker.test/auth/callback?state=browser-state&code=secret",
+    "http://user@localhost:1457/auth/callback?state=browser-state&code=secret",
+    "http://localhost:1457/other?state=browser-state&code=secret",
+    "http://localhost:1457/auth/callback?state=browser-state&code=secret#fragment",
+    "http://localhost:1457/auth/callback?state=other-browser&code=secret",
+    "http://localhost:1457/auth/callback?state=browser-state&state=browser-state&code=secret",
+    "http://localhost:1457/auth/callback?state=browser-state&code=secret&code=second",
+    "http://localhost:1457/auth/callback?state=browser-state&code=",
+    "http://localhost:1457/auth/callback?state=%E2%98%83&code=secret",
+])
+def test_hosted_callback_rejects_untrusted_or_ambiguous_address(monkeypatch, callback_url):
+    def must_not_complete(**kwargs):
+        pytest.fail("Invalid callback must never reach token exchange")
+
+    monkeypatch.setattr(codex, "complete_codex_oauth", must_not_complete)
+    with pytest.raises(codex.CodexConnectionError) as error:
+        codex.complete_codex_callback_url(
+            callback_url=callback_url, expected_state="browser-state"
+        )
+    assert "secret" not in str(error.value)
+    assert callback_url not in str(error.value)
+
+
+def test_hosted_callback_decline_consumes_only_matching_state(monkeypatch):
+    consumed = []
+    monkeypatch.setattr(codex, "consume_failed_codex_oauth", consumed.append)
+    with pytest.raises(codex.CodexConnectionError, match="cancelled or declined"):
+        codex.complete_codex_callback_url(
+            callback_url="http://localhost:1457/auth/callback?state=browser-state&error=denied",
+            expected_state="browser-state",
+        )
+    assert consumed == ["browser-state"]
+
+
+def test_hosted_callback_preserves_expiry_and_replay_validation(monkeypatch):
+    def expired(**kwargs):
+        raise codex.CodexConnectionError("Codex OAuth state is expired or already consumed")
+
+    monkeypatch.setattr(codex, "complete_codex_oauth", expired)
+    with pytest.raises(codex.CodexConnectionError, match="expired or already consumed"):
+        codex.complete_codex_callback_url(
+            callback_url="http://localhost:1457/auth/callback?state=browser-state&code=code",
+            expected_state="browser-state",
+        )
