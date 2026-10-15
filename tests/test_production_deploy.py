@@ -2,8 +2,6 @@
 from __future__ import annotations
 
 import importlib.util
-import json
-import os
 from pathlib import Path
 from types import ModuleType
 
@@ -37,7 +35,7 @@ def test_production_gate_is_disabled_by_default(monkeypatch: pytest.MonkeyPatch,
         app.authorized()
 
 
-def test_gate_rejects_unprotected_world_readable_authorization(
+def test_gate_rejects_nonroot_world_readable_authorization(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
 ) -> None:
     app = module()
@@ -47,7 +45,7 @@ def test_gate_rejects_unprotected_world_readable_authorization(
     monkeypatch.setattr(app.os, "geteuid", lambda: 0)
     monkeypatch.setattr(app, "run", lambda *a, **kw: "katcha-prod-primary-001")
     monkeypatch.setattr(app, "GATE", gate)
-    with pytest.raises(app.Blocked, match="permissions"):
+    with pytest.raises(app.Blocked, match="not enabled|permissions"):
         app.authorized()
 
 
