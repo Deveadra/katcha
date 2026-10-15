@@ -2,9 +2,10 @@ from __future__ import annotations
 
 from urllib.parse import parse_qs, urlsplit
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
+from katcha.api.control_auth import require_global_control_operator
 from katcha.integrations.codex import (
     CodexConnectionError,
     begin_codex_oauth,
@@ -58,7 +59,9 @@ def codex_oauth_start() -> OAuthStartResponse:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
-@router.post("/v1/integrations/codex/oauth/complete")
+@router.post(
+    "/v1/integrations/codex/oauth/complete", dependencies=[Depends(require_global_control_operator)]
+)
 def codex_oauth_complete(request: OAuthCompleteRequest) -> dict[str, object]:
     try:
         complete_codex_callback_url(

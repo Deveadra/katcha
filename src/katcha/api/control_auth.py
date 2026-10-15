@@ -698,3 +698,9 @@ async def require_native_channel_body(request: Request) -> None:
                 )
                 if source and source.channel_profile_id != uuid.UUID(channel):
                     raise HTTPException(403, "Cannot replace a shared or other channel source")
+
+
+def require_global_control_operator(request: Request) -> None:
+    """Global credentials may only be managed by an unrestricted operator."""
+    if "*" not in control_scopes(request) or control_allowed_channel_ids(request) is not None:
+        raise HTTPException(403, "A global operator is required to manage shared AI connections")

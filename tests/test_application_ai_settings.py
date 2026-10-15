@@ -122,3 +122,14 @@ def test_channel_scoped_principal_cannot_read_or_change_global_settings(
         assert (
             client.post("/v1/integrations/ai/settings", json={}, headers=headers).status_code == 403
         )
+        assert (
+            client.post(
+                "/v1/integrations/codex/oauth/complete",
+                headers=headers,
+                json={
+                    "callback_url": "http://localhost:1457/auth/callback?state=fixture-state-123456&code=code",
+                    "expected_state": "fixture-state-123456",
+                },
+            ).status_code
+            == 403
+        )
