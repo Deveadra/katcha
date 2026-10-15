@@ -627,3 +627,17 @@ def test_deployer_checks_original_workflow_recovery_in_success_receipt() -> None
     source = SOURCE.read_text()
     assert "recovered = verify_temporal_recovery(before)" in source
     assert '"predeploy_workflow_recovery": recovered' in source
+
+def test_approved_migration_blob_matches_checked_in_additive_source() -> None:
+    app = module()
+    path = ROOT / app.MIGRATION_FILE
+    content = path.read_bytes()
+    git_blob = hashlib.sha1(
+        f"blob {len(content)}\\0".encode().replace(b"\\0", b"\\x00") + content
+    ).hexdigest()
+    assert git_blob == app.MIGRATION_BLOB
+    source = content.decode()
+    assert 'revision = "0064_application_ai_settings"' in source
+    assert 'down_revision = "0063_authoritative_search_ledger"' in source
+    assert 'op.create_table(' in source
+    assert '"application_ai_settings"' in source
