@@ -33,6 +33,34 @@ the active OCI production primary.
    performed. Existing images may remain in GHCR. A successful image workflow
    is not evidence that production was upgraded.
 
+## Optional API-only pin (supervised; not automatic promotion)
+
+`KATCHA_API_RELEASE_SHA` is an optional **exact immutable commit SHA** for only
+the `api` Compose service. When absent, `api` uses the global
+`KATCHA_RELEASE_SHA` like all other services. When set, the API image tag
+and the container's `KATCHA_RELEASE_SHA` environment value are both the API
+SHA, ensuring `/v1/health/release` attests the actual served release.
+Worker, scheduler, renderer, migration, PostgreSQL and Temporal services retain
+the global pin. This permits a narrowly scoped hosted UI/API hotfix without
+migrating the database or restarting the existing workflow workers.
+
+**This change only enables service selection; it does not deploy anything.**
+The production operator must independently verify accepted release CI, published
+arm64 image digest/revision, unchanged database requirements, fresh backups,
+Temporal inventory, correct existing leadership, and a clean production checkout
+before making an explicit API-only change. The host must run this Compose source
+revision to recognize the new variable. Save the old environment and image
+identity for rollback; pin both SHAs, never `:main`. Using a separate API SHA
+does not bypass change review and is not authorization for autonomous rollout.
+
+The existing systemd supervisor owns an attached `docker compose up` process.
+A separate `docker compose up -d --no-deps api` may affect that attached
+process. **Do not improvise a concurrent Compose promotion or restart systemd**
+without verifying/controlling supervisor behavior, lock ownership, and rollback.
+A full host restart will naturally restart workers (not duplicate them), with
+each service resolving its appropriate stored immutable release pin.
+The routine autonomous promotion stage below remains unimplemented.
+
 ## Stage 2: verified production promotion (NOT implemented)
 
 Before automatic live deployment, implement **and independently review**:
