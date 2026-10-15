@@ -149,12 +149,16 @@ def test_backup_restoration_runs_before_service_stop(
             return "success"
         if "ExecMainStatus" in args:
             return "0"
+        if args[0] == "journalctl":
+            return ("Katcha PostgreSQL backup completed: fresh-id\n"
+                    "Katcha disaster restore test passed for 3 databases.")
         return ""
 
     monkeypatch.setattr(app, "run", fake)
     app.backup_and_restore()
     assert ("systemctl", "start", "katcha-backup.service") in operations
     assert ("systemctl", "start", "katcha-restore-test.service") in operations
+    assert any(args[0] == "journalctl" for args in operations)
     assert not any(args[:3] == ("systemctl", "stop", "katcha.service")
                    for args in operations)
 
