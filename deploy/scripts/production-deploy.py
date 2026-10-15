@@ -113,36 +113,17 @@ def eligible(old: str, target: str) -> None:
     head = github("/branches/main")
     if head.get("commit", {}).get("sha") != target:
         raise Blocked("candidate is not current accepted main")
-    ci = github("/actions/workflows/ci.yml/runs?head_sha=" + target + "&per_page=100")
-    images = github("/actions/workflows/runtime-images.yml/runs?head_sha=" + target +
-                    "&per_page=100")
-    for result in (ci, images):
-        runs = result.get("workflow_runs")
-        if not isinstance(runs, list) or result.get("total_count") != len(runs):
-            raise Blocked("release workflow evidence is missing or truncated")
-
-    def qualifying(result: dict[str, Any], path: str, event: str) -> list[dict[str, Any]]:
-        return [
-            x for x in result["workflow_runs"]
-            if x.get("path") == path and x.get("head_sha") == target
-            and x.get("head_branch") == "main" and x.get("event") == event
-            and x.get("status") == "completed" and x.get("conclusion") == "success"
-            and x.get("repository", {}).get("full_name") == "Deveadra/katcha"
-        ]
-
-    passed_ci = qualifying(ci, ".github/workflows/ci.yml", "push")
-    passed_images = qualifying(images, ".github/workflows/runtime-images.yml",
-                              "workflow_run")
-    if not passed_ci or not passed_images:
-        raise Blocked("successful exact-main CI and GHCR publication are required")
-    from datetime import datetime
-    def when(value: str) -> dt.datetime:
-        return datetime.fromisoformat(value.replace("Z", "+00:00"))
-    if not any(
-        when(build["run_started_at"]) >= when(check["updated_at"])
-        for build in passed_images for check in passed_ci
-    ):
-        raise Blocked("GHCR publication did not follow successful main CI")
+    # Invoke the *same* fail-closed, six-image, exact-head publication
+    # verifier as the CI release gate. Installed from accepted main by
+    # the root-only deployer installer, not from the mutable app checkout.
+    evidence_path = "/usr/local/lib/katcha-production-deploy/release_eligibility.py"
+    evidence = json.loads(run("python3", evidence_path, target, timeout=90))
+    if (not isinstance(evidence, dict)
+        or evidence.get("status") != "ELIGIBLE_FOR_PREDEPLOY_REVIEW"
+        or evidence.get("sha") != target
+        or type(evidence.get("ci_run_id")) is not int
+        or type(evidence.get("image_run_id")) is not int):
+        raise Blocked("independent full-image release provenance rejected")
     comparison = github("/compare/" + old + "..." + target)
     files = comparison.get("files")
     if (comparison.get("status") != "ahead"
