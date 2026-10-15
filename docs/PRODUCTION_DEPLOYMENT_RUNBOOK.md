@@ -42,7 +42,7 @@ is still required for installer and secret provisioning.
 - Settings → Secrets and variables → Actions → Variables → create
   `KATCHA_PRODUCTION_DEPLOY_ENABLED=false`.
 - Do not enable until a second operator has reviewed the workflow, scripts,
-  backup policy, Temportal workflow safety, and recovery implications.
+  backup policy, Temporal workflow safety, and recovery implications.
 
 **2. Generate the same signing key at both ends without posting it anywhere.**
 From trusted **WSL Ubuntu** (not Oracle Cloud Shell):
@@ -56,19 +56,21 @@ gh secret set KATCHA_PRODUCTION_DEPLOY_HMAC_KEY \
   < "$HOME/.config/katcha/production-deploy.key"
 ```
 
-Using the already verified OCI Bastion SSH connection, transfer the file to
-`/etc/katcha/production-deploy.key` without printing the secret. For example,
-use the same strict-host-key `ssh` options from
-[OCI Operator Access](OCI_OPERATOR_ACCESS.md) and append this fixed remote
-command, with stdin redirected from the WSL file:
+From the same **WSL terminal** with the existing managed OCI Bastion
+connection on port 22022, transfer the key without printing it:
 
 ```bash
-'sudo sh -c "umask 077; cat > /etc/katcha/production-deploy.key"' \
+ssh -F /dev/null -4 -i "$HOME/.ssh/katcha-oci" \
+  -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
+  -o "UserKnownHostsFile=$HOME/.config/katcha/production/bastion/target_known_hosts" \
+  -p 22022 ubuntu@127.0.0.1 \
+  'sudo sh -c "umask 077; cat > /etc/katcha/production-deploy.key"' \
   < "$HOME/.config/katcha/production-deploy.key"
 ```
 
-The last snippet is the **suffix of the SSH command**, not a standalone
-command. Never paste the signing key in ChatGPT, workflow inputs or logs.
+This never writes the signing key into GitHub logs or prints it to the chat.
+If the known-hosts file or tunnel is missing, stop and follow
+[OCI Operator Access](OCI_OPERATOR_ACCESS.md); never disable host verification.
 
 **3. Install the approved code on the existing OCI primary, without touching
 the running checkout or containers.** After this PR is merged and its main
