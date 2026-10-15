@@ -1,9 +1,9 @@
 """Fail-closed contracts for the production deployment executor."""
 from __future__ import annotations
 
-import importlib.util
 import hashlib
 import hmac
+import importlib.util
 from pathlib import Path
 from types import ModuleType
 
@@ -275,7 +275,7 @@ def poller() -> ModuleType:
     return target
 
 
-def signed_request(now: int = 1500) -> tuple[dict, bytes]:
+def signed_request() -> tuple[dict, bytes]:
     app = poller()
     key = b"\x91" * 32
     payload = {
