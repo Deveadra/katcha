@@ -1,6 +1,12 @@
 # Katcha production deployment pipeline
 
-Status: **stage 1 implemented; production promotion NOT enabled**.
+Status: **image publication, release observation, and read-only runtime attestation implemented; production promotion NOT enabled**.
+See [host observer](PRODUCTION_RELEASE_OBSERVER.md) for the opt-in,
+non-deploying hourly inspection path. The observer reports configured
+release drift and risk flags; it does not deploy or attest running images.
+See [runtime attestation](PRODUCTION_ROLLOUT_PREFLIGHT.md) for the separate
+read-only verification of running systemd, Docker, image revision/digest metadata,
+and local API SHA before attempting any supervised rollout.
 This document describes release publication separately from applying a release to
 the active OCI production primary.
 

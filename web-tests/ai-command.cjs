@@ -692,6 +692,14 @@ let browser;
         true,
     );
     assert.equal(await page.locator("#channel").inputValue(), channelId);
+    const bestClipsPrompt = await page.locator(".starter")
+        .filter({hasText: "Best clips today"}).getAttribute("data-prompt");
+    assert.equal(
+        bestClipsPrompt,
+        "Show me the best clips found today and explain why they scored highly.",
+        "The best-clips action must not be hardcoded to a console, game or channel",
+    );
+    assert.doesNotMatch(bestClipsPrompt, /xbox/i);
     assert.match(await page.locator("#principal-state").innerText(), /operator-ui/i);
     assert.match(await page.locator("#principal-state").innerText(), /all channels/i);
     assert.match(await page.locator("#ai-readiness").innerText(), /fixture mode/);

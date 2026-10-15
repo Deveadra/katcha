@@ -1,0 +1,11 @@
+[Unit]
+Description=Check eligible Katcha production releases hourly (read-only)
+
+[Timer]
+OnCalendar=hourly
+Persistent=true
+RandomizedDelaySec=5m
+Unit=katcha-release-observer.service
+
+[Install]
+WantedBy=timers.target

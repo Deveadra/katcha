@@ -1175,8 +1175,28 @@ async def run_native_tool(goal: CommandGoal, name: str, args: dict, step_id: uui
             raise ValueError("Invalid native resource path")
         url = url.replace("{" + key + "}", value)
     headers = {"Authorization": f"Bearer {token}"} if token else {}
+    transport_app = app
+    if goal.actor.startswith("control-principal:cloudflare-access:"):
+        from katcha.api.goal_delegation import DelegatedIdentity, GoalDelegatedApp
+
+        # The saved Access JWT is intentionally not available to background
+        # workers. Revalidate current scopes and identity above, then delegate
+        # only the exact method + path within the in-process ASGI transport.
+        transport_app = GoalDelegatedApp(
+            app,
+            identity=DelegatedIdentity(
+                actor=goal.actor,
+                principal_name=goal.authority["principal_name"],
+                scopes=frozenset(scopes),
+                channel_id=str(goal.channel_profile_id),
+                credential_id=goal.authority.get("credential_id"),
+                credential_fingerprint=goal.authority.get("credential_fingerprint"),
+            ),
+            method=tool.method,
+            path=url,
+        )
     async with httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=app), base_url="http://katcha-native"
+        transport=httpx.ASGITransport(app=transport_app), base_url="http://katcha-native"
     ) as client:
         response = await asyncio.wait_for(
             client.request(
