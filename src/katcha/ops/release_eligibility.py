@@ -100,12 +100,19 @@ def verify_evidence(
     images = matching_runs(image_runs, sha, IMAGES_WORKFLOW, "workflow_run")
     if not ci or not images:
         raise ReleaseNotEligible("matching CI and image publication runs not found")
-    last_ci, last_image = ci[0], images[0]
-    if any(
-        run.get("status") != "completed" or run.get("conclusion") != "success"
-        for run in (last_ci, last_image)
-    ):
-        raise ReleaseNotEligible("latest matching run not successful")
+    # A scheduled CI can trigger the image workflow for the same SHA but its
+    # planner deliberately refuses non-push CI. A later rejected attempt does
+    # not erase a prior completed immutable image publication for that commit.
+    # Select completed successful proof, never a failed/cancelled/queued run.
+    successful_ci = [run for run in ci
+                     if run.get("status") == "completed"
+                     and run.get("conclusion") == "success"]
+    successful_images = [run for run in images
+                         if run.get("status") == "completed"
+                         and run.get("conclusion") == "success"]
+    if not successful_ci or not successful_images:
+        raise ReleaseNotEligible("matching successful CI and image publication absent")
+    last_ci, last_image = successful_ci[0], successful_images[0]
     # A workflow_run normally starts after CI finishes. Reject unrelated or
     # reordered successes rather than inferring release authority.
     ci_finished = evidence_timestamp(last_ci.get("updated_at"))
