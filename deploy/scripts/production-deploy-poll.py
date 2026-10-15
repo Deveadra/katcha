@@ -86,6 +86,7 @@ def authorized_request(
         type(payload["version"]) is not int or payload["version"] != 1
         or not isinstance(payload["sha"], str) or not SHA.fullmatch(payload["sha"])
         or payload["sha"] != deployment.get("sha")
+        or not isinstance(payload["policy"], str)
         or payload["policy"] not in {"refuse", "approved-resume"}
         or payload["host"] != HOST
         or type(payload["issued_at"]) is not int
@@ -176,6 +177,7 @@ def attempt(request: dict[str, Any]) -> str:
     # Keep a sanitized and protected audit record; never print env or secrets.
     temp = RECEIPTS / ("nonce-" + request["nonce"] + ".tmp")
     with temp.open("x", encoding="utf-8") as out:
+        temp.chmod(0o600)
         json.dump({"status": status, "id": request["id"], "sha": request["sha"]}, out)
         out.write("\n")
         out.flush()
