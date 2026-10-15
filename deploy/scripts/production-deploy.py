@@ -12,7 +12,6 @@ import fcntl
 import json
 import os
 import re
-import shutil
 import subprocess
 import sys
 import tempfile
@@ -238,8 +237,8 @@ def stage_images(target: str) -> None:
 
 def backup_and_restore() -> None:
     for name in ("katcha-backup.service", "katcha-restore-test.service"):
-        if run("systemctl", "is-active", name) == "active":
-            raise Blocked("database safety job is already active")
+        if run("systemctl", "show", "-p", "ActiveState", "--value", name) != "inactive":
+            raise Blocked("database safety job is not idle")
         run("systemctl", "start", name, timeout=6000)
         if run("systemctl", "show", "-p", "Result", "--value", name) != "success":
             raise Blocked("fresh backup or restore verification failed")
