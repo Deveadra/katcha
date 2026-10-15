@@ -381,6 +381,20 @@ def disconnect_locked() -> None:
     print("bastion_tunnel: DISCONNECTED; only managed session deleted")
 
 
+
+def wait_for_forward_listener(child: subprocess.Popen, timeout: float = 15.0) -> bool:
+    """Allow SSH to negotiate before deciding whether the forward failed."""
+    deadline = time.monotonic() + timeout
+    while child.poll() is None:
+        if listening():
+            return child.poll() is None
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return False
+        time.sleep(min(0.25, remaining))
+    return False
+
+
 def connect() -> None:
     with lock():
         state = load()
@@ -464,8 +478,7 @@ def connect() -> None:
                         stderr=subprocess.STDOUT, start_new_session=True,
                     )
                 save({"session_id": sid, "pid": child.pid, "target_ip": ip})
-                time.sleep(2)
-                if child.poll() is None and listening():
+                if wait_for_forward_listener(child):
                     for _ in range(6):
                         if handshake():
                             print("bastion_tunnel: CONNECTED on 127.0.0.1:22022")

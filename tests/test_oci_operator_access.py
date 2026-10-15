@@ -569,3 +569,37 @@ def test_audit_valid_admin_with_failed_probe_prints_direct_command(monkeypatch, 
     out = capsys.readouterr().out
     assert "python3 scripts/audit-oci-recovery-readiness.py --iam-only" in out
     assert "python3 scripts/audit-oci-free-candidate-capacity.py" in out
+
+
+
+def test_ssh_negotiation_longer_than_two_seconds_keeps_same_child(monkeypatch):
+    clock = [0.0]
+    child = type("Child", (), {"poll": lambda self: None})()
+    monkeypatch.setattr(admin.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(
+        admin.time, "sleep", lambda seconds: clock.__setitem__(0, clock[0] + seconds)
+    )
+    monkeypatch.setattr(admin, "listening", lambda: clock[0] >= 3.0)
+    assert admin.wait_for_forward_listener(child)
+    assert clock[0] == 3.0
+
+
+def test_ssh_listener_wait_is_bounded(monkeypatch):
+    clock = [0.0]
+    child = type("Child", (), {"poll": lambda self: None})()
+    monkeypatch.setattr(admin.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(
+        admin.time, "sleep", lambda seconds: clock.__setitem__(0, clock[0] + seconds)
+    )
+    monkeypatch.setattr(admin, "listening", lambda: False)
+    assert not admin.wait_for_forward_listener(child, timeout=4.0)
+    assert clock[0] == 4.0
+
+
+def test_ssh_exit_stops_wait_without_accepting_unrelated_listener(monkeypatch):
+    child = type("Child", (), {"poll": lambda self: 255})()
+    monkeypatch.setattr(
+        admin, "listening", lambda: pytest.fail("exited child cannot own the tunnel")
+    )
+    monkeypatch.setattr(admin.time, "sleep", lambda seconds: pytest.fail("do not wait after exit"))
+    assert not admin.wait_for_forward_listener(child)
