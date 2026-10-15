@@ -633,7 +633,7 @@ def test_approved_migration_blob_matches_checked_in_additive_source() -> None:
     path = ROOT / app.MIGRATION_FILE
     content = path.read_bytes()
     git_blob = hashlib.sha1(
-        f"blob {len(content)}\\0".encode().replace(b"\\0", b"\\x00") + content
+        f"blob {len(content)}".encode() + bytes([0]) + content
     ).hexdigest()
     assert git_blob == app.MIGRATION_BLOB
     source = content.decode()
