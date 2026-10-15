@@ -168,6 +168,9 @@ def _extra_targets(
     task: AITask,
     channel_profile_id: uuid.UUID | None = None,
 ) -> list[ModelTarget]:
+    if task == AITask.COMMAND_PLANNING:
+        # Goal execution can pin a stronger planner without changing routine chat defaults.
+        return [ModelTarget("gemini", "gemini-3.8-flash")]
     if task == AITask.TTS:
         target = _elevenlabs_target(channel_profile_id)
         return [target] if target is not None else []

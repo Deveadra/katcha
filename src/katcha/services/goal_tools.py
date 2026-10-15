@@ -1071,6 +1071,8 @@ async def run_read_tool(goal: CommandGoal, name: str, args: dict) -> dict:
     if name == "find_clips":
         from katcha.services.command_center import best_clips
 
+        if set(args) - set(ClipLookup.model_fields):
+            raise ValueError("Unsupported clip lookup fields; use inspect_tool for find_clips")
         lookup = ClipLookup.model_validate(args)
         summary, evidence = best_clips(
             goal.channel_profile_id, goal.request["prompt"], lookup=lookup
@@ -1132,6 +1134,12 @@ async def run_native_tool(goal: CommandGoal, name: str, args: dict, step_id: uui
         tool,
     )
     schema = tool_schema(name)
+    unknown_filters = set(query) - set(schema["properties"]["query"]["properties"])
+    if unknown_filters:
+        raise ValueError(
+            f"Native {name} received unsupported query filters: "
+            f"{', '.join(sorted(unknown_filters))}. Use inspect_tool for supported filters."
+        )
     if "channel_profile_id" in schema["properties"]["query"]["properties"]:
         query["channel_profile_id"] = str(goal.channel_profile_id)
     properties = schema["properties"]["body"].get("properties", {})

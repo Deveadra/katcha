@@ -12,6 +12,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 from katcha.ai.command_planner import _record
+from katcha.ai.gemini_capacity import run_with_gemini_capacity_fallback
 from katcha.ai.provider_policy import planner_provider_order
 from katcha.ai.router import (
     BudgetExceeded,
@@ -65,6 +66,19 @@ class GoalDecision(BaseModel):
     allowed_mutations: list[str] = Field(default_factory=list, max_length=16)
     completion_criteria: str = Field(default="", max_length=1200)
     confidence: float = Field(ge=0, le=1)
+
+
+class PlannedGoalDecision(GoalDecision):
+    """Provider responses must explicitly classify intent; saved older rows retain defaults."""
+
+    mode: Literal["inspect", "propose", "run"] = Field(
+        description="Classify the ORIGINAL request: direct instructions are run, even before reads."
+    )
+    allowed_mutations: list[str] = Field(
+        max_length=16,
+        description="All supported mutations needed for the whole request, not only this step.",
+    )
+    completion_criteria: str = Field(min_length=1, max_length=1200)
 
 
 def decide_goal(
@@ -126,7 +140,7 @@ def decide_goal(
                 response = codex_json(
                     prompt=prompt,
                     schema_name="katcha_goal_decision",
-                    schema=GoalDecision.model_json_schema(),
+                    schema=PlannedGoalDecision.model_json_schema(),
                 )
                 target = ModelTarget("codex", response.model)
                 value, inputs, outputs = (
@@ -138,7 +152,7 @@ def decide_goal(
                 response = chatgpt_json(
                     prompt=prompt,
                     schema_name="katcha_goal_decision",
-                    schema=GoalDecision.model_json_schema(),
+                    schema=PlannedGoalDecision.model_json_schema(),
                 )
                 target = ModelTarget("chatgpt", response.model)
                 value, inputs, outputs = (
@@ -154,12 +168,12 @@ def decide_goal(
                 ):
                     continue
                 target = ModelTarget(
-                    provider, "gemini-3.5-flash-lite" if provider == "gemini" else "gpt-5.6-luna"
+                    provider, "gemini-3.8-flash" if provider == "gemini" else "gpt-5.6-luna"
                 )
                 route = route_for_channel(
                     AITask.COMMAND_PLANNING,
                     channel_id,
-                    estimated_increment_usd=Decimal("0.003"),
+                    estimated_increment_usd=Decimal("0.02"),
                     expected_value=0.5,
                     preferred_target=target,
                     reference_type="command_goal",
@@ -179,16 +193,19 @@ def decide_goal(
                         http_options={"timeout": 30000, "retry_options": {"attempts": 1}},
                     )
                     try:
-                        response = client.models.generate_content(
-                            model=target.model,
-                            contents=prompt,
-                            config={
-                                "response_mime_type": "application/json",
-                                # Native JSON Schema supports arbitrary tool argument
-                                # maps; the SDK's OpenAPI converter rejects them.
-                                "response_json_schema": GoalDecision.model_json_schema(),
-                            },
-                        )
+                        def invoke(candidate, client=client):
+                            response = client.models.generate_content(
+                                model=candidate.model,
+                                contents=prompt,
+                                config={
+                                    "response_mime_type": "application/json",
+                                    # Native JSON Schema supports arbitrary argument maps.
+                                    "response_json_schema": PlannedGoalDecision.model_json_schema(),
+                                },
+                            )
+                            return response, candidate
+
+                        response, target = run_with_gemini_capacity_fallback(target, invoke)
                     finally:
                         client.close()
                     usage = response.usage_metadata
@@ -216,7 +233,7 @@ def decide_goal(
                             "format": {
                                 "type": "json_schema",
                                 "name": "goal_decision",
-                                "schema": GoalDecision.model_json_schema(),
+                                "schema": PlannedGoalDecision.model_json_schema(),
                                 "strict": False,
                             }
                         },
@@ -232,7 +249,7 @@ def decide_goal(
                 request_id=goal_id,
                 reservation_id=reservation,
             )
-            result = GoalDecision.model_validate_json(value)
+            result = PlannedGoalDecision.model_validate_json(value)
             if result.confidence < 0.65:
                 raise ValueError("The model could not confidently bind a goal decision")
             return result

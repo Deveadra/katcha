@@ -5,14 +5,17 @@ import uuid
 from types import SimpleNamespace
 
 import pytest
-from google.genai import _api_client, types
+from google.genai import _api_client, errors, types
 
 from katcha.ai import goal_planner
 from katcha.integrations.codex import CodexConnectionError
 
 
 @pytest.mark.parametrize("arguments", [{}, {"path": "sources", "value": [{"enabled": True}]}])
-def test_gemini_goal_decision_serializes_arbitrary_tool_arguments(monkeypatch, arguments):
+@pytest.mark.parametrize("capacity_rejection", [False, True])
+def test_gemini_goal_decision_serializes_arbitrary_tool_arguments(
+    monkeypatch, arguments, capacity_rejection
+):
     settings = SimpleNamespace(
         ai_enabled=True,
         resolved_ai_execution_mode=lambda: "live",
@@ -38,6 +41,8 @@ def test_gemini_goal_decision_serializes_arbitrary_tool_arguments(monkeypatch, a
 
     def request(self, http_method, path, request_dict, http_options=None):
         requests.append(request_dict)
+        if capacity_rejection and len(requests) == 1:
+            raise errors.ServerError(503, {"error": {"message": "high demand", "code": 503}})
         return types.HttpResponse(
             body=json.dumps(
                 {
@@ -54,6 +59,9 @@ def test_gemini_goal_decision_serializes_arbitrary_tool_arguments(monkeypatch, a
                                                 "tool": "inspect_tool",
                                                 "arguments": arguments,
                                                 "confidence": 0.98,
+                                                "mode": "inspect",
+                                                "allowed_mutations": [],
+                                                "completion_criteria": "Inspect configuration",
                                             }
                                         )
                                     }
@@ -76,10 +84,13 @@ def test_gemini_goal_decision_serializes_arbitrary_tool_arguments(monkeypatch, a
         context={"prompt": "Inspect sources"},
     )
     assert result.arguments == arguments
-    assert len(requests) == 1
+    assert len(requests) == (2 if capacity_rejection else 1)
     config = requests[0]["generationConfig"]
     assert "responseSchema" not in config
     assert config["responseJsonSchema"]["properties"]["arguments"]["additionalProperties"] is True
+    assert records[0]["target"].model == (
+        "gemini-3.7-flash" if capacity_rejection else "gemini-3.8-flash"
+    )
     assert records[0]["reservation_id"] == reservation
     assert records[0]["input_tokens"] == 12
     assert records[0]["output_tokens"] == 34
@@ -128,3 +139,25 @@ def test_provider_failures_are_aggregated_without_secrets(monkeypatch, caplog):
 )
 def test_safe_failure_categories(failure, category):
     assert goal_planner._failure_category(failure) == category
+
+
+def test_provider_must_explicitly_classify_original_request():
+    from pydantic import ValidationError
+
+    incomplete = {"outcome": "tool", "reason": "Read the library", "confidence": 0.95}
+    # Older saved receipts remain readable, but omission from a fresh response is invalid.
+    assert goal_planner.GoalDecision.model_validate(incomplete).mode == "inspect"
+    with pytest.raises(ValidationError):
+        goal_planner.PlannedGoalDecision.model_validate(incomplete)
+    required = goal_planner.PlannedGoalDecision.model_json_schema()["required"]
+    assert {"mode", "allowed_mutations", "completion_criteria"} <= set(required)
+
+
+def test_goal_planning_supports_stronger_model_without_changing_chat_default():
+    from katcha.ai.router import ROUTES, ModelTarget, _eligible_targets
+    from katcha.domain import AITask
+
+    assert ROUTES[AITask.COMMAND_PLANNING].fallback.model == "gemini-3.5-flash-lite"
+    assert ModelTarget("gemini", "gemini-3.8-flash") in _eligible_targets(
+        AITask.COMMAND_PLANNING, floor=2, providers={"gemini"}
+    )

@@ -100,3 +100,22 @@ def test_http_tools_reject_flat_filters_instead_of_silently_ignoring_them(monkey
             SimpleNamespace(channel_profile_id=uuid.uuid4()), "clip_library",
             {"q": "Kate Bishop coin"}, uuid.uuid4(),
         ))
+
+
+def test_clip_lookup_rejects_ignored_query_envelope():
+    with pytest.raises(ValueError, match="Unsupported clip lookup fields"):
+        asyncio.run(goal_tools.run_read_tool(
+            SimpleNamespace(channel_profile_id=uuid.uuid4()), "find_clips",
+            {"query": {"q": "Kate Bishop coin"}},
+        ))
+
+
+def test_native_query_rejects_unknown_filters(monkeypatch):
+    monkeypatch.setattr(goal_tools, "resolve_goal_authority", lambda goal: ({"*"}, None))
+    monkeypatch.setattr(goal_tools, "validate_resource_arguments", lambda *a: None)
+    monkeypatch.setattr(goal_tools, "require_native_resource_channels", lambda *a: None)
+    with pytest.raises(ValueError, match="unsupported query filters: topic"):
+        asyncio.run(goal_tools.run_native_tool(
+            SimpleNamespace(channel_profile_id=uuid.uuid4()), "clip_library",
+            {"query": {"topic": "Hawkeye"}}, uuid.uuid4(),
+        ))
