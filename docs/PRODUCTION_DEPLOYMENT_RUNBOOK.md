@@ -17,7 +17,7 @@ privileged access. Instead:
 2. A protected GitHub Environment `katcha-production` requires operator review.
 3. The approved Actions job uses an environment-only 256-bit HMAC signing key
    to publish a short-lived, SHA-specific GitHub **Deployment request**.
-4. A one-minute, root-owned systemd timer on the existing OCI VM anonymously
+4. A five-minute, root-owned systemd timer on the existing OCI VM anonymously
    reads GitHub's public deployment feed, verifies the HMAC, exact target,
    host identity, UTC time window, and replay protection, and invokes only
    `/usr/local/sbin/katcha-production-deploy`. The signing key is kept in
