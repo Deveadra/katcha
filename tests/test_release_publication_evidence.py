@@ -176,6 +176,10 @@ def test_workflow_skips_non_push_upstream_without_disabling_pr_build() -> None:
     assert "github.event.workflow_run.conclusion == 'success'" in workflow
     assert "github.event.workflow_run.head_repository.full_name == github.repository" in workflow
     assert "core.setFailed" in workflow
+    assert "'main-publish'" in workflow
+    assert "github.event.workflow_run.event == 'push'" in workflow
+    assert "cancel-in-progress: ${{ github.event_name == 'pull_request' }}" in workflow
+    assert "group: runtime-images-${{ github.event_name == 'pull_request'" in workflow
 
 
 def test_unrelated_scheduled_run_days_later_does_not_burn_api_quota(
