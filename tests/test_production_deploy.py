@@ -594,3 +594,36 @@ def test_readiness_is_read_only_without_deployment_flag(
     assert result["status"] == "REVIEW_REQUIRED"
     assert result["temporal_running_count"] == 1
     assert result["database_start_revision"] == app.BEFORE_REVISION
+
+def test_temporal_recovery_checks_original_run_ids_not_just_counts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = module()
+    wid, rid = "ingest-example", "run-123"
+    description = {
+        "workflowExecutionInfo": {
+            "execution": {"workflowId": wid, "runId": rid},
+            "status": "WORKFLOW_EXECUTION_STATUS_RUNNING",
+        },
+    }
+    monkeypatch.setattr(app, "run", lambda *a, **kw: json.dumps(description))
+    assert app.verify_temporal_recovery(((wid, rid),)) == {
+        "running": 1, "completed": 0, "continued_as_new": 0,
+    }
+    description["workflowExecutionInfo"]["status"] = "Completed"
+    assert app.verify_temporal_recovery(((wid, rid),))["completed"] == 1
+    description["workflowExecutionInfo"]["status"] = "ContinuedAsNew"
+    assert app.verify_temporal_recovery(((wid, rid),))["continued_as_new"] == 1
+    description["workflowExecutionInfo"]["status"] = "Failed"
+    with pytest.raises(app.Blocked, match="failed or has unknown status"):
+        app.verify_temporal_recovery(((wid, rid),))
+    description["workflowExecutionInfo"]["status"] = "Running"
+    description["workflowExecutionInfo"]["execution"]["runId"] = "wrong"
+    with pytest.raises(app.Blocked, match="identity differs"):
+        app.verify_temporal_recovery(((wid, rid),))
+
+
+def test_deployer_checks_original_workflow_recovery_in_success_receipt() -> None:
+    source = SOURCE.read_text()
+    assert "recovered = verify_temporal_recovery(before)" in source
+    assert '"predeploy_workflow_recovery": recovered' in source
