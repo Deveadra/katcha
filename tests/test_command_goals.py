@@ -851,3 +851,109 @@ async def test_selected_clip_details_enter_first_decision_and_answer_evidence(sa
     assert evidence["title"] == "Xbox comeback"
     assert evidence["candidate_score"] == 80
     assert get_goal(goal.id).result["evidence"][0]["id"] == str(identity)
+
+
+def test_cloudflare_goal_identity_revalidates_scope_channel_and_email(saved):
+    from katcha.config import CloudflareAccessPrincipalSettings
+
+    channel, settings = saved
+    principal = CloudflareAccessPrincipalSettings(
+        name="forescene-editor",
+        email="editor@example.test",
+        scopes=["ai:read", "ai:command", "ai:write", "channels:read"],
+        channel_profile_ids=[str(channel)],
+    )
+    settings.cloudflare_access_principals = [principal]
+    goal = receipt(channel, "Rank the best clips today")
+    goal.actor = "control-principal:cloudflare-access:forescene-editor"
+    goal.authority = {
+        "actor": goal.actor,
+        "principal_name": principal.name,
+        "credential_id": "cloudflare-access-identity",
+        "credential_fingerprint": hashlib.sha256(principal.email.encode()).hexdigest()[:12],
+        "scopes": principal.scopes,
+        "channel_ids": [str(channel)],
+    }
+    scopes, token = resolve_goal_authority(goal)
+    assert token is None
+    assert {"ai:read", "ai:command", "channels:read"} <= scopes
+    principal.scopes = ["ai:read"]
+    with pytest.raises(ValueError, match="permissions"):
+        resolve_goal_authority(goal)
+    principal.scopes = goal.authority["scopes"]
+    principal.channel_profile_ids = [str(uuid.uuid4())]
+    with pytest.raises(ValueError, match="Channel access"):
+        resolve_goal_authority(goal)
+    principal.channel_profile_ids = [str(channel)]
+    principal.email = "replacement@example.test"
+    with pytest.raises(ValueError, match="identity has changed"):
+        resolve_goal_authority(goal)
+    principal.email = "editor@example.test"
+    goal.authority = {**goal.authority, "credential_fingerprint": None}
+    with pytest.raises(ValueError, match="identity has changed"):
+        resolve_goal_authority(goal)
+    goal.authority = {**goal.authority, "actor": "control-principal:cloudflare-access:other"}
+    with pytest.raises(ValueError, match="inconsistent"):
+        resolve_goal_authority(goal)
+    goal.authority = {**goal.authority, "actor": goal.actor}
+    settings.cloudflare_access_principals = []
+    with pytest.raises(ValueError, match="revoked"):
+        resolve_goal_authority(goal)
+
+
+async def test_cloudflare_goal_worker_can_complete_inspection(saved, monkeypatch):
+    from katcha.config import CloudflareAccessPrincipalSettings
+
+    channel, settings = saved
+    principal = CloudflareAccessPrincipalSettings(
+        name="forescene-editor", email="editor@example.test",
+        scopes=["ai:read", "ai:command", "channels:read"],
+        channel_profile_ids=[str(channel)],
+    )
+    settings.cloudflare_access_principals = [principal]
+    goal = receipt(channel, "Explain this channel's saved clip evidence")
+    with db.session_scope() as session:
+        row = session.get(CommandGoal, goal.id)
+        row.actor = "control-principal:cloudflare-access:forescene-editor"
+        row.authority = {
+            "actor": row.actor,
+            "principal_name": principal.name,
+            "credential_id": "cloudflare-access-identity",
+            "credential_fingerprint": hashlib.sha256(principal.email.encode()).hexdigest()[:12],
+            "scopes": principal.scopes,
+            "channel_ids": [str(channel)],
+        }
+    monkeypatch.setattr(
+        goal_runner,
+        "decide_goal",
+        lambda **kwargs: decision(outcome="complete", allowed=[], mode="inspect"),
+    )
+    assert await goal_runner.advance_goal(goal.id) == "completed"
+    assert get_goal(goal.id).status == "completed"
+
+
+async def test_cloudflare_native_channel_tool_is_authenticated_without_jwt(saved):
+    from katcha.config import CloudflareAccessPrincipalSettings
+    from katcha.services.goal_tools import run_native_tool
+
+    channel, settings = saved
+    principal = CloudflareAccessPrincipalSettings(
+        name="forescene-editor", email="editor@example.test",
+        scopes=["ai:read", "ai:command", "channels:read"],
+        channel_profile_ids=[str(channel)],
+    )
+    settings.cloudflare_access_principals = [principal]
+    goal = receipt(channel, "Show me the channel profile")
+    goal.actor = "control-principal:cloudflare-access:forescene-editor"
+    goal.authority = {
+        "actor": goal.actor, "principal_name": principal.name,
+        "credential_id": "cloudflare-access-identity",
+        "credential_fingerprint": hashlib.sha256(principal.email.encode()).hexdigest()[:12],
+        "scopes": principal.scopes, "channel_ids": [str(channel)],
+    }
+    details = await run_native_tool(goal, "channel_details", {}, uuid.uuid4())
+    assert isinstance(details, dict)
+    assert str(channel) in str(details)
+    principal.scopes = ["ai:read", "ai:command"]
+    with pytest.raises(ValueError, match="permission"):
+        await run_native_tool(goal, "channel_details", {}, uuid.uuid4())
