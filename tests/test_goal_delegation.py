@@ -17,6 +17,9 @@ def test_fake_external_header_cannot_delegate_access(monkeypatch):
     settings = Settings(
         _env_file=None,
         env="production",
+        cloudflare_access_team_domain="https://example.cloudflareaccess.com",
+        cloudflare_access_audience="fixture-access-audience",
+        cloudflare_access_application_domain="katcha.example.test",
         control_api_token=None,
         control_principals=[],
         cloudflare_access_team_domain="https://katcha.cloudflareaccess.com",
