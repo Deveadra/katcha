@@ -378,8 +378,10 @@ def deploy(target: str, policy: str) -> dict[str, Any]:
         update_pin(target, backup)
         run("systemctl", "start", "katcha.service", timeout=900)
         healthy(target, staged=staged)
+        resumed = workflows("approved-resume")
         outcome = {"status": "DEPLOYED", "sha": target, "previous_sha": current,
-                   "paused_temporal_workflows": count,
+                   "predeploy_running_workflows": count,
+                   "postdeploy_running_workflows": resumed,
                    "public_browser_acceptance": "REQUIRED"}
     except Exception as exc:
         # No migration changes were allowed. Preserve DB, R2 and audit files.
