@@ -320,12 +320,12 @@ def test_deployer_adopts_existing_attached_supervisor_kernel_lease() -> None:
     assert 'SUPERVISOR_LEASE_FILE = SUPERVISOR_LEASE_DIR / "compose.lock"' in source
     assert "fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)" in source
     assert "os.O_NOFOLLOW" in source
-    stopped = source.index('run("systemctl", "stop", "katcha.service"')
-    verified = source.index('raise Blocked("old Compose supervisor did not fully stop")')
+    stopped = source.index("stop_supervisor()", source.index("def deploy("))
     leased = source.index("lease_fd = acquire_supervisor_lease()")
     released = source.index("os.close(lease_fd)")
     started = source.index('run("systemctl", "start", "katcha.service"')
-    assert stopped < verified < leased < released < started
+    assert stopped < leased < released < started
+    assert source.count("                stop_supervisor()") == 1
     assert 'docker", "compose", "up"' not in source
 
 POLLER = ROOT / "deploy/scripts/production-deploy-poll.py"
@@ -641,3 +641,101 @@ def test_approved_migration_blob_matches_checked_in_additive_source() -> None:
     assert 'down_revision = "0063_authoritative_search_ledger"' in source
     assert 'op.create_table(' in source
     assert '"application_ai_settings"' in source
+
+
+@pytest.mark.parametrize("state", ["inactive", "failed"])
+def test_stop_supervisor_accepts_inactive_and_verified_compose_interrupt(
+    monkeypatch: pytest.MonkeyPatch, state: str,
+) -> None:
+    app = module()
+    calls: list[tuple[str, ...]] = []
+    states = iter([state, "inactive"])
+
+    def fake(*args: str, **kwargs: object) -> str:
+        calls.append(args)
+        if "ActiveState" in args:
+            return next(states)
+        if "MainPID" in args:
+            return "0"
+        if "Result" in args:
+            return "exit-code"
+        if "ExecMainStatus" in args:
+            return "130"
+        return ""
+
+    monkeypatch.setattr(app, "run", fake)
+    app.stop_supervisor()
+    reset = ("systemctl", "reset-failed", "katcha.service")
+    assert (reset in calls) == (state == "failed")
+    if state == "failed":
+        after = calls[calls.index(reset) + 1:]
+        assert any(args[:2] == ("docker", "ps") for args in after)
+        assert any("MainPID" in args for args in after)
+        assert any("ActiveState" in args for args in after)
+
+
+@pytest.mark.parametrize(("state", "result", "status", "pid", "containers"), [
+    ("failed", "exit-code", "1", "0", ""),
+    ("failed", "timeout", "130", "0", ""),
+    ("failed", "signal", "2", "0", ""),
+    ("active", "success", "0", "0", ""),
+    ("deactivating", "success", "0", "0", ""),
+    ("inactive", "success", "0", "4321", ""),
+    ("failed", "exit-code", "130", "4321", ""),
+    ("failed", "exit-code", "130", "0", "running-container"),
+])
+def test_stop_supervisor_preserves_unexpected_failure_and_live_stack(
+    monkeypatch: pytest.MonkeyPatch, state: str, result: str, status: str,
+    pid: str, containers: str,
+) -> None:
+    app = module()
+    calls: list[tuple[str, ...]] = []
+
+    def fake(*args: str, **kwargs: object) -> str:
+        calls.append(args)
+        if args[:2] == ("docker", "ps"):
+            return containers
+        for prop, value in (("ActiveState", state), ("MainPID", pid),
+                            ("Result", result), ("ExecMainStatus", status)):
+            if prop in args:
+                return value
+        return ""
+
+    monkeypatch.setattr(app, "run", fake)
+    with pytest.raises(app.Blocked):
+        app.stop_supervisor()
+    assert ("systemctl", "reset-failed", "katcha.service") not in calls
+
+
+@pytest.mark.parametrize(("state", "pid", "containers"), [
+    ("failed", "0", ""),
+    ("active", "0", ""),
+    ("inactive", "4321", ""),
+    ("inactive", "0", "restarted-container"),
+])
+def test_stop_supervisor_rejects_failed_reset_or_concurrent_restart(
+    monkeypatch: pytest.MonkeyPatch, state: str, pid: str, containers: str,
+) -> None:
+    app = module()
+    reset = False
+
+    def fake(*args: str, **kwargs: object) -> str:
+        nonlocal reset
+        if args[:2] == ("systemctl", "reset-failed"):
+            reset = True
+        if args[:2] == ("docker", "ps"):
+            return containers if reset else ""
+        if "MainPID" in args:
+            return pid if reset else "0"
+        if "ActiveState" in args:
+            return state if reset else "failed"
+        if "Result" in args:
+            return "exit-code"
+        if "ExecMainStatus" in args:
+            return "130"
+        return ""
+
+    monkeypatch.setattr(app, "run", fake)
+    with pytest.raises(app.Blocked):
+        app.stop_supervisor()
+    assert reset
