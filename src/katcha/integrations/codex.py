@@ -8,7 +8,7 @@ import threading
 import uuid
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
-from urllib.parse import urlencode
+from urllib.parse import parse_qs, urlencode, urlsplit
 
 import httpx
 from sqlalchemy import select
@@ -132,6 +132,48 @@ def begin_codex_oauth(settings: Settings | None = None) -> str:
         }
     )
     return f"{AUTHORIZATION_URL}?{query}"
+
+
+
+def complete_codex_callback_url(
+    *, callback_url: str, expected_state: str, settings: Settings | None = None
+) -> CodexConnection:
+    """Complete a hosted login using the registered loopback return address.
+
+    The browser retains the initiating state separately; neither the authorization
+    code nor the callback address is logged or fetched. PKCE and the single-use,
+    expiring database state remain authoritative during the token exchange.
+    """
+    invalid = "Paste the complete localhost return address from the sign-in tab."
+    try:
+        parsed = urlsplit(callback_url.strip())
+        registered = urlsplit(REDIRECT_URI)
+        if (
+            parsed.scheme != registered.scheme
+            or parsed.netloc != registered.netloc
+            or parsed.path != registered.path
+            or parsed.fragment
+        ):
+            raise CodexConnectionError(invalid)
+        params = parse_qs(parsed.query, keep_blank_values=True, max_num_fields=12)
+    except ValueError as exc:
+        raise CodexConnectionError(invalid) from exc
+    states = params.get("state", [])
+    if (
+        len(states) != 1
+        or not expected_state
+        or not secrets.compare_digest(states[0].encode(), expected_state.encode())
+    ):
+        raise CodexConnectionError(
+            "This return address belongs to another sign-in. Start Reconnect again."
+        )
+    if "error" in params:
+        consume_failed_codex_oauth(expected_state)
+        raise CodexConnectionError("Sign-in was cancelled or declined. Start Reconnect again.")
+    codes = params.get("code", [])
+    if len(codes) != 1 or not codes[0]:
+        raise CodexConnectionError(invalid)
+    return complete_codex_oauth(state=expected_state, code=codes[0], settings=settings)
 
 
 def is_codex_oauth_state(state: str) -> bool:
@@ -267,8 +309,8 @@ def complete_codex_oauth(
     )
     if response.is_error:
         raise CodexConnectionError(
-            f"Codex token exchange failed (HTTP {response.status_code}): "
-            + " ".join(response.text.split())[:500]
+            f"Codex token exchange failed (HTTP {response.status_code}). "
+            "Start Reconnect again."
         )
     payload = _json(response)
     access_token = str(payload.get("access_token") or "")

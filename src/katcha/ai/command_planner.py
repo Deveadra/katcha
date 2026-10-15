@@ -17,7 +17,8 @@ from katcha.ai.router import (
     release_budget_reservation,
     route_for_channel,
 )
-from katcha.config import Settings, get_settings
+from katcha.config import Settings
+from katcha.config import get_ai_settings as get_settings
 from katcha.domain import AITask
 from katcha.integrations.chatgpt import invoke_json as invoke_chatgpt_json
 from katcha.integrations.codex import invoke_json as invoke_codex_json

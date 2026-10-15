@@ -11,7 +11,7 @@ from datetime import UTC, datetime
 from sqlalchemy import select
 
 from katcha.acquisition_models import DiscoveryRun, IngestionSource, TopicWatchVersion
-from katcha.config import get_settings
+from katcha.config import get_ai_settings as get_settings
 from katcha.db import session_scope
 from katcha.domain import SourceUsageMode
 from katcha.intelligence_models import ChannelProfile

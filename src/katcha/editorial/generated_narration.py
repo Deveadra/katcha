@@ -24,7 +24,7 @@ from katcha.audio.tts import (
     choose_voice_profile,
     speech_request_rejected,
 )
-from katcha.config import get_settings
+from katcha.config import get_ai_settings as get_settings
 from katcha.db import session_scope
 from katcha.domain import AITask
 from katcha.editorial.narration import MAX_AUDIO_BYTES, import_narration, measure_wav, voice_enabled

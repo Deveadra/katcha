@@ -9,7 +9,7 @@ from typing import Any
 from temporalio import activity
 
 from katcha.ai.providers import analyze_contact_sheet, analyze_full_video
-from katcha.config import get_settings
+from katcha.config import get_ai_settings as get_settings
 from katcha.db import session_scope
 from katcha.domain import AnalysisStatus, ClipStatus, require_clip_transition
 from katcha.integrations.storage import ObjectStore

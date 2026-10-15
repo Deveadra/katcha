@@ -12,7 +12,7 @@ from katcha.acquisition.adapters import available_adapters
 from katcha.acquisition_models import IngestionSource, TopicWatchVersion
 from katcha.ai.command_planner import ClipLookup
 from katcha.command_center_models import CommandTurn
-from katcha.config import get_settings
+from katcha.config import get_ai_settings as get_settings
 from katcha.db import session_scope
 from katcha.edit_performance_models import EditBlueprintPerformanceSnapshot
 from katcha.editorial.rankings import get_ranking_format

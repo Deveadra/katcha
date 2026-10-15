@@ -7,7 +7,8 @@ from decimal import Decimal
 
 from sqlalchemy import func, select, update
 
-from katcha.config import get_settings
+from katcha.config import get_ai_settings as get_settings
+from katcha.config import get_settings as get_runtime_settings
 from katcha.db import session_scope
 from katcha.domain import AITask, ChannelStatus
 from katcha.intelligence_models import (
@@ -133,7 +134,7 @@ class BudgetReservationSettled(BudgetExceeded):
 
 def route_for(task: AITask) -> ModelRoute:
     route = ROUTES[task]
-    if get_settings().ai_live_routing_mode != "free_first":
+    if get_runtime_settings().ai_live_routing_mode != "free_first":
         return route
     targets = [route.primary]
     if route.fallback is not None:

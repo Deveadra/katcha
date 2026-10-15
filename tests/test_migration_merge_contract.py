@@ -4,7 +4,7 @@ from alembic.script import ScriptDirectory
 
 def test_ranked_trend_editing_activation_and_render_revisions_share_one_history() -> None:
     script = ScriptDirectory.from_config(Config("alembic.ini"))
-    assert script.get_heads() == ["0063_authoritative_search_ledger"]
+    assert script.get_heads() == ["0064_application_ai_settings"]
     assert script.get_revision("0063_authoritative_search_ledger").down_revision == (
         "0062_requirement_shot_matching"
     )

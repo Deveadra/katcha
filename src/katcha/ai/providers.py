@@ -13,7 +13,8 @@ from katcha.ai.pricing import estimate_token_cost
 from katcha.ai.router import ModelTarget, assert_ai_budget, record_usage, route_for
 from katcha.ai.schemas import ClipVisionResult, DeepVideoResult
 from katcha.ai.subscription import generate_subscription_json
-from katcha.config import Settings, get_settings
+from katcha.config import Settings
+from katcha.config import get_ai_settings as get_settings
 from katcha.domain import AITask
 from katcha.runtime_fence import assert_mutation_authority
 

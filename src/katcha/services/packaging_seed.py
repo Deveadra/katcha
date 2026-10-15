@@ -5,7 +5,7 @@ from typing import Any
 
 from sqlalchemy import select
 
-from katcha.config import get_settings
+from katcha.config import get_ai_settings as get_settings
 from katcha.db import session_scope
 from katcha.domain import ChannelStatus, PublicationStatus
 from katcha.intelligence_models import ChannelProfile

@@ -19,10 +19,17 @@ async function api(path, options = {}) {
     return payload;
 }
 
+let settingsBackend = null;
+
 async function runtimeStatus() {
     const response = await fetch("/runtime/status", { cache: "no-store" });
-    if (!response.ok) throw new Error("Open Settings through the Katcha launcher to change local runtime credentials.");
-    return response.json();
+    if (response.ok) {
+        settingsBackend = "launcher";
+        return response.json();
+    }
+    const hosted = await api("/v1/integrations/ai/settings");
+    settingsBackend = "hosted";
+    return hosted;
 }
 
 async function loadRuntime() {
@@ -52,7 +59,8 @@ async function loadRuntime() {
         $("gemini-state").textContent = settings.KATCHA_GEMINI_API_KEY
             ? "Configured as the preferred routine conversation provider."
             : "Add a Gemini API key from a free-tier AI Studio project for routine chat.";
-        $("settings-state").textContent = "LOCAL";
+        $("settings-state").textContent = settingsBackend === "hosted" ? "HOSTED" : "LOCAL";
+        $("save-ai").disabled = false;
         $("settings-state").className = "simulation connected";
     } catch (error) {
         $("settings-state").textContent = "READ ONLY";
@@ -157,7 +165,14 @@ async function startCodex() {
         method: "POST",
         body: "{}",
     });
-    location.href = result.authorization_url;
+    const state = result.state || new URL(result.authorization_url).searchParams.get("state");
+    sessionStorage.setItem("katcha.codex.oauth.state", state || "");
+    $("codex-finish").hidden = false;
+    $("codex-signin-link").href = result.authorization_url;
+    $("codex-signin-link").hidden = false;
+    // Open separately so the request state and recovery form survive sign-in.
+    window.open(result.authorization_url, "katcha-codex-signin", "noopener");
+    message("Complete sign-in in the new tab, then paste its final localhost return address below to finish connecting Katcha.");
 }
 
 async function loadChatGPT() {
@@ -224,7 +239,6 @@ $("codex-connect").onclick = async () => {
 };
 $("codex-reconnect").onclick = async () => {
     try {
-        await api("/v1/integrations/codex/disconnect", { method: "POST", body: "{}" });
         await startCodex();
     } catch (error) {
         message(error.message, "error");
@@ -368,13 +382,19 @@ $("ai-settings-form").onsubmit = async (event) => {
         };
         if ($("openai-key").value.trim()) changes.KATCHA_OPENAI_API_KEY = $("openai-key").value.trim();
         if ($("gemini-key").value.trim()) changes.KATCHA_GEMINI_API_KEY = $("gemini-key").value.trim();
-        await api("/runtime/settings", { method: "POST", body: JSON.stringify(changes) });
-        const applied = await api("/runtime/ai/apply", { method: "POST", body: "{}" });
+        if (!settingsBackend) await runtimeStatus();
+        let applied;
+        if (settingsBackend === "hosted") {
+            applied = await api("/v1/integrations/ai/settings", { method: "POST", body: JSON.stringify(changes) });
+        } else {
+            await api("/runtime/settings", { method: "POST", body: JSON.stringify(changes) });
+            applied = await api("/runtime/ai/apply", { method: "POST", body: "{}" });
+        }
         $("openai-key").value = "";
         $("gemini-key").value = "";
         message(
             applied.applied
-                ? "AI settings saved and live AI services restarted."
+                ? (settingsBackend === "hosted" ? "AI settings saved for the hosted app and workers. New requests use these settings." : "AI settings saved and live AI services restarted.")
                 : "AI settings saved. Start Katcha to apply them.",
             "good",
         );
@@ -398,6 +418,8 @@ $("ai-settings-form").onsubmit = async (event) => {
     if (query.get("chatgpt") === "connected") message("Direct ChatGPT sharing connected successfully.", "good");
     if (query.get("chatgpt") === "error") message("Direct ChatGPT sign-in did not complete. Try again from this page.", "error");
     if (query.get("chatgpt") === "state_error") message("Direct ChatGPT sign-in returned an invalid or expired session. Start a fresh sign-in from this page.", "error");
+    $("codex-finish").hidden = !sessionStorage.getItem("katcha.codex.oauth.state");
+    $("codex-signin-link").hidden = true;
     await Promise.allSettled([loadRuntime(), loadCodex(), loadChatGPT()]);
 })();
 
@@ -423,4 +445,28 @@ $("check-systems").onclick = async () => {
         output.append(copy);
     } catch (error) { output.textContent = error.message; }
     finally { button.disabled = false; }
+};
+
+
+$("codex-finish-form").onsubmit = async (event) => {
+    event.preventDefault();
+    const button = $("codex-finish-button");
+    button.disabled = true;
+    try {
+        await api("/v1/integrations/codex/oauth/complete", {
+            method: "POST",
+            body: JSON.stringify({
+                callback_url: $("codex-return-address").value.trim(),
+                expected_state: sessionStorage.getItem("katcha.codex.oauth.state") || "",
+            }),
+        });
+        $("codex-return-address").value = "";
+        sessionStorage.removeItem("katcha.codex.oauth.state");
+        $("codex-finish").hidden = true;
+        await loadCodex();
+        message("Codex connected to Katcha. Use Test response to verify it.", "good");
+    } catch (error) {
+        // Do not include the sensitive return address in diagnostics.
+        message(error.message, "error");
+    } finally { button.disabled = false; }
 };

@@ -36,7 +36,7 @@ from katcha.command_center_models import (
     CommandThread,
     CommandTurn,
 )
-from katcha.config import get_settings
+from katcha.config import get_ai_settings as get_settings
 from katcha.control_contract import COMMAND_ACTION_SCOPES, command_action_permissions
 from katcha.db import session_scope
 from katcha.domain import ProductionStatus
