@@ -53,9 +53,8 @@ def test_release_pin_blocks_mixed_api_without_mutation(tmp_path: Path) -> None:
     app = module()
     env = tmp_path / "app.env"
     env.write_text(f"KATCHA_RELEASE_SHA={OLD}\nKATCHA_API_RELEASE_SHA={NEW}\n")
-    assert app.pinned(env) == (OLD, True)
-    # The actual production deploy method independently blocks mixed revisions.
-    assert "mixed API pin" in SOURCE.read_text()
+    with pytest.raises(app.Blocked, match="mixed API pin"):
+        app.pinned(env)
 
 
 def test_release_pin_rejects_duplicate_or_mutable_tags(tmp_path: Path) -> None:
