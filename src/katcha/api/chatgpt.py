@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 
 from fastapi import APIRouter, HTTPException, Query
-from fastapi.responses import RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 from pydantic import BaseModel, Field
 
 from katcha.config import get_ai_settings as get_settings
@@ -14,6 +14,7 @@ from katcha.integrations.chatgpt import (
     connection_status,
     consume_failed_oauth,
     disconnect,
+    is_chatgpt_oauth_state,
     list_models,
     set_selected_model,
     test_connection,
@@ -61,13 +62,13 @@ def chatgpt_oauth_start(
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
-@router.get("/auth/callback", include_in_schema=False)
+@router.get("/auth/callback", include_in_schema=False, response_model=None)
 def chatgpt_oauth_callback(
     state: str,
     code: str | None = None,
     error: str | None = None,
     client_id: str | None = None,
-) -> RedirectResponse:
+) -> RedirectResponse | HTMLResponse:
     if is_codex_oauth_state(state):
         if error:
             try:
@@ -84,6 +85,29 @@ def chatgpt_oauth_callback(
         except CodexConnectionError:
             return RedirectResponse("/settings?codex=error")
         return RedirectResponse("/settings?codex=connected")
+
+    if not is_chatgpt_oauth_state(state):
+        return HTMLResponse(
+            "<!doctype html><html lang='en'><meta charset='utf-8'>"
+            "<meta name='viewport' content='width=device-width, initial-scale=1'>"
+            "<title>Finish connecting Katcha</title><main>"
+            "<h1>Finish connecting in the Katcha tab where you started</h1>"
+            "<p>This local Katcha instance did not start this sign-in. "
+            "Your hosted Katcha tab may still be waiting for it.</p>"
+            "<p>Copy the complete address from this tab's address bar. "
+            "Return to the original Katcha Settings tab, paste it into "
+            "Sign-in return address, and choose Finish connecting Codex.</p>"
+            "<p>Keep the address private. It may contain a single-use sign-in code. "
+            "If the sign-in has expired, start Reconnect again.</p></main></html>",
+            headers={
+                "Cache-Control": "no-store",
+                "Referrer-Policy": "no-referrer",
+                "Content-Security-Policy": (
+                    "default-src 'none'; frame-ancestors 'none'; base-uri 'none'"
+                ),
+                "X-Content-Type-Options": "nosniff",
+            },
+        )
 
     if error:
         try:

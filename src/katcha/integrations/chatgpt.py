@@ -205,6 +205,15 @@ def begin_chatgpt_oauth(
     return _authorization_url(**params)
 
 
+def is_chatgpt_oauth_state(state: str) -> bool:
+    with session_scope() as session:
+        return session.scalar(
+            select(ChatGPTOAuthState.id).where(
+                ChatGPTOAuthState.state_hash == _state_hash(state)
+            )
+        ) is not None
+
+
 def consume_failed_oauth(state: str) -> None:
     """Validate and consume an OAuth attempt that returned an authorization error."""
     now = datetime.now(UTC)
