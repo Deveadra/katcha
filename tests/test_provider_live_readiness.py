@@ -1,5 +1,6 @@
 """Provider readiness must reflect real generation, not saved credential metadata."""
 
+import sys
 import uuid
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
@@ -29,7 +30,7 @@ def test_openai_provider_probe_requires_real_inference(monkeypatch):
             calls.append(("inference", kwargs))
             return SimpleNamespace(output_text="KATCHA_OPENAI_CONNECTED")
 
-    monkeypatch.setattr("openai.OpenAI", FakeOpenAI)
+    monkeypatch.setitem(sys.modules, "openai", SimpleNamespace(OpenAI=FakeOpenAI))
     result = api.test_api_provider("openai")
     assert result["ok"] is True
     assert "Live OpenAI inference verified" in result["detail"]
@@ -54,7 +55,7 @@ def test_openai_provider_probe_rejects_wrong_response(monkeypatch):
         def create(self, **kwargs):
             return SimpleNamespace(output_text="")
 
-    monkeypatch.setattr("openai.OpenAI", FakeOpenAI)
+    monkeypatch.setitem(sys.modules, "openai", SimpleNamespace(OpenAI=FakeOpenAI))
     from fastapi import HTTPException
 
     with pytest.raises(HTTPException) as exc:
