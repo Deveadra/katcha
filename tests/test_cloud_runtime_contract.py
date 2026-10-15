@@ -687,3 +687,31 @@ def test_production_validator_requires_lambda_budget_fence() -> None:
     assert any("EXTERNAL_COMPUTE_TOKEN" in error for error in errors)
     assert any("MAX_RENDER_COST_USD must be positive" in error for error in errors)
     assert any("BUDGET_TTL_SECONDS" in error for error in errors)
+
+def test_optional_api_release_pin_preserves_worker_release() -> None:
+    values = valid_production_env()
+    values["KATCHA_API_RELEASE_SHA"] = "b" * 40
+    assert validate(values) == []
+
+    compose = (ROOT / "deploy/docker-compose.production.yml").read_text()
+    api = compose.split("\n  api:\n", 1)[1].split("\n  cloudflared:\n", 1)[0]
+    assert (
+        "image: ${KATCHA_IMAGE_REGISTRY:-ghcr.io/deveadra}/katcha-control:"
+        "${KATCHA_API_RELEASE_SHA:-${KATCHA_RELEASE_SHA:?Set KATCHA_RELEASE_SHA "
+        "to the exact deployed git SHA}}"
+    ) in api
+    assert (
+        "KATCHA_RELEASE_SHA: ${KATCHA_API_RELEASE_SHA:-${KATCHA_RELEASE_SHA:"
+        "?Set KATCHA_RELEASE_SHA to the exact deployed git SHA}}"
+    ) in api
+    assert "KATCHA_API_RELEASE_SHA" not in compose.split("\n  api:\n", 1)[0]
+    assert "KATCHA_API_RELEASE_SHA" not in compose.split("\n  cloudflared:\n", 1)[1]
+
+
+def test_optional_api_release_pin_must_be_exact_sha() -> None:
+    values = valid_production_env()
+    for bad in ("main", "CHANGE_ME", "f" * 39, "F" * 40, "f" * 41):
+        values["KATCHA_API_RELEASE_SHA"] = bad
+        errors = validate(values)
+        assert any("KATCHA_API_RELEASE_SHA must be an exact 40-character" in x
+                   for x in errors), bad
