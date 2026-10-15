@@ -14,7 +14,7 @@ import sys
 import urllib.error
 import urllib.parse
 import urllib.request
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 
 REPOSITORY = "Deveadra/katcha"
@@ -90,12 +90,24 @@ PLAN_JOB = "Plan runtime image builds"
 VERIFY_JOB = "Verify anonymous runtime pulls"
 
 
-def verified_publications(sha: str, image_runs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def verified_publications(
+    sha: str, image_runs: list[dict[str, Any]], after_ci: datetime
+) -> list[dict[str, Any]]:
     """Select the most recent real publication; never fall back after a failed build."""
     matches = matching_runs(image_runs, sha, IMAGES_WORKFLOW, "workflow_run")
     if not matches or len(matches) > 30:
         raise ReleaseNotEligible("publication evidence absent or exceeds bounded review")
+    # An unrelated scheduled CI run may repeat indefinitely while main stays
+    # unchanged. Only runs near this actual push-CI completion can be candidates;
+    # do not exhaust the anonymous API quota polling months of skipped runs.
+    attempts = 0
     for run in matches:
+        started = evidence_timestamp(run.get("run_started_at"))
+        if started < after_ci or started > after_ci + timedelta(hours=24):
+            continue
+        attempts += 1
+        if attempts > 12:
+            raise ReleaseNotEligible("too many image publication attempts for one CI")
         ident = run["id"]
         result = api_get(f"/actions/runs/{ident}/jobs?per_page=100")
         if not isinstance(result, dict):
@@ -227,9 +239,16 @@ def check_release(sha: str) -> dict[str, Any]:
             raise ReleaseNotEligible("workflow evidence count malformed")
         if count > len(runs):
             raise ReleaseNotEligible("workflow evidence truncated; refuse to infer approval")
+    matching_ci = matching_runs(ci_result["workflow_runs"], sha, CI_WORKFLOW, "push")
+    if not matching_ci or (
+        matching_ci[0].get("status") != "completed"
+        or matching_ci[0].get("conclusion") != "success"
+    ):
+        raise ReleaseNotEligible("latest push CI did not pass")
+    ci_finished = evidence_timestamp(matching_ci[0].get("updated_at"))
     return verify_evidence(
         sha, current, ci_result["workflow_runs"],
-        verified_publications(sha, image_result["workflow_runs"])
+        verified_publications(sha, image_result["workflow_runs"], ci_finished)
     )
 
 
