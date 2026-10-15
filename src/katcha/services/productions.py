@@ -8,6 +8,7 @@ from sqlalchemy import select
 
 from katcha.db import session_scope
 from katcha.domain import ChannelStatus, ProductionStatus, ReviewDecision
+from katcha.editing.blueprints import EditBlueprintContract
 from katcha.editorial.personas import get_persona
 from katcha.integrations.storage import ObjectStore
 from katcha.intelligence_models import ChannelProfile
@@ -508,8 +509,20 @@ def register_regeneration(
                 "production must be in review, rejected, or failed state to regenerate"
             )
         _validate_channel_scope(session, parent.channel_profile_id)
-        acquisition_state = assert_clip_production_eligible(parent.clip_id)
+        blueprint = (EditBlueprintContract.model_validate(parent.edit_blueprint_snapshot)
+                     if parent.edit_blueprint_snapshot else None)
+        source_only = blueprint is not None and blueprint.narration.mode == "source_only"
+        if source_only:
+            clip = session.get(Clip, parent.clip_id)
+            if (clip is None or not clip.storage_key or not clip.duration_seconds
+                    or clip.duration_seconds <= 0):
+                raise ValueError("source clip needs downloaded media and a measured duration")
+            acquisition_state = clip_acquisition_state(parent.clip_id)
+        else:
+            acquisition_state = assert_clip_production_eligible(parent.clip_id)
         child_snapshot = dict(parent.analysis_snapshot or {})
+        if source_only:
+            child_snapshot["source_only_preparation"] = True
         child_snapshot["acquisition"] = _acquisition_snapshot(acquisition_state)
         if note:
             feedback = list(child_snapshot.get("operator_feedback") or [])

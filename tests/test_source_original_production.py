@@ -16,7 +16,7 @@ from katcha.production_models import Production, ProductionScript
 from katcha.services.acquisition import clip_acquisition_state, promote_discovery_candidate
 from katcha.services.command_center import infer_edit_blueprint_key
 from katcha.services.ingestion_sources import upsert_ingestion_source
-from katcha.services.productions import register_short_production
+from katcha.services.productions import register_regeneration, register_short_production
 from katcha.services.publications import _approved_render_key
 
 research_db = runtime.research_db
@@ -142,3 +142,21 @@ def test_source_original_still_needs_actual_media_measurements(research_db):
 )
 def test_request_blueprint_defaults(prompt, key):
     assert infer_edit_blueprint_key(prompt) == key
+
+
+@pytest.mark.parametrize("blueprint", ["source_original", "meme"])
+def test_unqualified_source_only_draft_can_regenerate_after_failure(research_db, blueprint):
+    channel_id, _ = runtime.channel()
+    clip_id = make_clip(channel_id)
+    parent = register_short_production(
+        clip_id, channel_profile_id=channel_id, edit_blueprint_key=blueprint
+    )
+    with db.session_scope() as session:
+        session.get(Production, parent.id).status = "failed"
+    child = register_regeneration(parent.id, stage="script", idempotency_key="retry")
+    assert child.parent_production_id == parent.id
+    assert child.generation == parent.generation + 1
+    assert child.edit_blueprint_snapshot == parent.edit_blueprint_snapshot
+    assert child.analysis_snapshot["acquisition"]["eligible"] is False
+    assert child.analysis_snapshot["source_only_preparation"] is True
+    assert register_regeneration(parent.id, stage="script", idempotency_key="retry").id == child.id
