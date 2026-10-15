@@ -229,6 +229,58 @@ def workflows(policy: str) -> int:
     return count
 
 
+def database_query(sql: str) -> str:
+    """Static PostgreSQL observations in the already-running database container."""
+    statements = {
+        "revision": "SELECT version_num FROM alembic_version",
+        "table": "SELECT COALESCE(to_regclass('public.application_ai_settings')::text, '')",
+        "columns": (
+            "SELECT column_name || ':' || data_type || ':' || is_nullable || ':' "
+            "|| COALESCE(character_maximum_length::text, '') "
+            "FROM information_schema.columns "
+            "WHERE table_schema = 'public' AND table_name = 'application_ai_settings' "
+            "ORDER BY ordinal_position"
+        ),
+        "primary": (
+            "SELECT string_agg(kcu.column_name, ',' ORDER BY kcu.ordinal_position) "
+            "FROM information_schema.table_constraints tc "
+            "JOIN information_schema.key_column_usage kcu "
+            "ON tc.constraint_name = kcu.constraint_name "
+            "AND tc.table_schema = kcu.table_schema "
+            "WHERE tc.table_schema = 'public' AND tc.table_name = 'application_ai_settings' "
+            "AND tc.constraint_type = 'PRIMARY KEY'"
+        ),
+    }
+    if sql not in statements:
+        raise Blocked("unapproved database observation")
+    query = statements[sql].replace("'", "'\\''")
+    cmd = (
+        'psql -X -qAt -v ON_ERROR_STOP=1 '
+        '-U "${POSTGRES_USER:?}" -d "${POSTGRES_DB:?}" '
+        "-c '" + query + "'"
+    )
+    return run("docker", "exec", "katcha-production-postgres-1",
+               "sh", "-ec", cmd, timeout=20)
+
+
+def database_migration_preflight() -> None:
+    if database_query("revision") != BEFORE_REVISION:
+        raise Blocked("database revision differs from reviewed additive migration base")
+    if database_query("table"):
+        raise Blocked("application AI settings table already exists before migration")
+
+
+def database_migration_postflight() -> None:
+    if database_query("revision") != AFTER_REVISION:
+        raise Blocked("database was not upgraded to the reviewed target revision")
+    if database_query("table") != "application_ai_settings":
+        raise Blocked("approved AI settings table missing after migration")
+    if database_query("columns").splitlines() != [
+        "key:character varying:NO:64", "value:text:NO:",
+    ] or database_query("primary") != "key":
+        raise Blocked("approved AI settings table schema differs from reviewed migration")
+
+
 def stage_images(target: str) -> dict[str, str]:
     staged: dict[str, str] = {}
     for name in IMAGES:
