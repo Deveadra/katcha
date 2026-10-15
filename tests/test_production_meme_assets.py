@@ -213,3 +213,30 @@ def test_gemini_search_uses_grounded_sources_and_records_actual_usage(monkeypatc
     assert result.items[0].provenance_claims["discovered_via"] == "gemini_google_search"
     assert calls[0]["output_units"] == 50
     assert calls[0]["metadata"]["search_cost_usd"] == "0.014"
+
+
+def test_gemini_uncertain_search_is_not_repeated_through_paid_provider(monkeypatch):
+    import httpx
+
+    from katcha.acquisition import gemini_web_scout, web_scout
+    from katcha.acquisition.adapters import DiscoveryProviderError
+
+    settings = SimpleNamespace(
+        ai_enabled=True,
+        resolved_ai_execution_mode=lambda: "live",
+        codex_enabled=False,
+        chatgpt_host_id=None,
+        gemini_api_key="fixture",
+        openai_api_key="fixture",
+        allow_paid_openai_fallback=True,
+    )
+    monkeypatch.setattr(web_scout, "get_settings", lambda: settings)
+
+    def uncertain(*args):
+        raise httpx.ReadTimeout("uncertain accepted request")
+
+    monkeypatch.setattr(gemini_web_scout, "discover_gemini", uncertain)
+    monkeypatch.setattr(httpx, "post", lambda *a, **k: pytest.fail("Must not replay search"))
+    with pytest.raises(DiscoveryProviderError) as failure:
+        web_scout.WebScoutDiscoveryAdapter().discover({"operator_request": "reaction"}, {})
+    assert failure.value.kind == "provider_result_unknown"

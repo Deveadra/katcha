@@ -94,8 +94,11 @@ def _same_grounded_page(url: str, grounded: set[str]) -> bool:
         except ValueError:
             continue
         source_path = source.path.rstrip("/") or "/"
-        if (candidate.netloc == source.netloc and candidate_path == source_path
-                and candidate.query == source.query):
+        if (
+            candidate.netloc == source.netloc
+            and candidate_path == source_path
+            and candidate.query == source.query
+        ):
             return True
     return False
 
@@ -118,9 +121,7 @@ def _web_search_call_count(payload: dict[str, Any]) -> int:
     if not isinstance(raw_output, list):
         return 0
     return sum(
-        1
-        for item in raw_output
-        if isinstance(item, dict) and item.get("type") == "web_search_call"
+        1 for item in raw_output if isinstance(item, dict) and item.get("type") == "web_search_call"
     )
 
 
@@ -194,9 +195,7 @@ def parse_web_scout_output(
                 source_url=source_url,
                 title=str(raw.get("title") or "").strip() or None,
                 creator=str(raw.get("creator") or "").strip() or None,
-                creator_url=(
-                    _normalized_url(str(raw.get("creator_url") or "")) or None
-                ),
+                creator_url=(_normalized_url(str(raw.get("creator_url") or "")) or None),
                 provenance_confidence=0.86,
                 provenance_claims={
                     "discovered_via": "openai_web_search",
@@ -239,11 +238,7 @@ def _requested_platforms(query: dict[str, Any]) -> list[str]:
 def _web_search_tool(query: dict[str, Any]) -> dict[str, Any]:
     platforms = _requested_platforms(query)
     domains = sorted(
-        {
-            domain
-            for platform in platforms
-            for domain in _PLATFORM_DOMAINS.get(platform, ())
-        }
+        {domain for platform in platforms for domain in _PLATFORM_DOMAINS.get(platform, ())}
     )
     tool: dict[str, Any] = {"type": "web_search"}
     if domains:
@@ -298,11 +293,7 @@ def _search_prompt(
     recent_sources = _recent_scout_sources(cursor or {})
     cycle = max(int((cursor or {}).get("cycle") or 0), 0)
     domain_hints = sorted(
-        {
-            domain
-            for platform in platforms
-            for domain in _PLATFORM_DOMAINS.get(platform, ())
-        }
+        {domain for platform in platforms for domain in _PLATFORM_DOMAINS.get(platform, ())}
     )
     return (
         "Scout the public web for fresh content sources and individual posts that could feed "
@@ -379,9 +370,7 @@ class WebScoutDiscoveryAdapter:
         if not settings.ai_enabled:
             raise ValueError("Autonomous web scouting requires KATCHA_AI_ENABLED=true")
         if settings.resolved_ai_execution_mode() != "live":
-            raise ValueError(
-                "Autonomous web scouting requires KATCHA_AI_EXECUTION_MODE=live"
-            )
+            raise ValueError("Autonomous web scouting requires KATCHA_AI_EXECUTION_MODE=live")
         limit = min(max(int(query.get("limit", 40)), 1), 100)
 
         schema = {
@@ -461,17 +450,23 @@ class WebScoutDiscoveryAdapter:
             try:
                 return discover_gemini(query, cursor, settings, limit)
             except Exception as exc:
+                from katcha.ai.failover import safe_to_fail_over
+
+                if not safe_to_fail_over(exc):
+                    raise DiscoveryProviderError(
+                        "Gemini web research stopped with an uncertain or invalid result; "
+                        "the search was not repeated through another provider.",
+                        kind="provider_result_unknown",
+                        transient=False,
+                        provider_usage={"gemini.web_search": 1},
+                    ) from None
                 plan_errors.append(f"gemini: {type(exc).__name__}")
 
-        if not (
-            settings.openai_api_key
-            and getattr(settings, "allow_paid_openai_fallback", False)
-        ):
+        if not (settings.openai_api_key and getattr(settings, "allow_paid_openai_fallback", False)):
             if plan_errors:
                 raise DiscoveryProviderError(
                     "Subscription web research is unavailable and paid OpenAI API "
-                    "fallback is disabled or not configured. "
-                    + " | ".join(plan_errors)[:1500],
+                    "fallback is disabled or not configured. " + " | ".join(plan_errors)[:1500],
                     kind="provider_unavailable",
                     transient=False,
                     provider_usage={"openai.web_search": 0},
