@@ -39,17 +39,28 @@ def test_release_requires_two_ordered_successful_runs() -> None:
 
 
 @pytest.mark.parametrize("change", ["cancelled", "failure", "skipped", None])
-def test_latest_ci_non_success_blocks(change: str | None) -> None:
+def test_later_invalid_ci_does_not_erase_prior_exact_sha_success(change: str | None) -> None:
     ci, images = success()
     ci.append(run(release.CI_WORKFLOW, "push", 3, conclusion=change))
-    with pytest.raises(release.ReleaseNotEligible):
-        release.verify_evidence(SHA, SHA, ci, images)
+    assert release.verify_evidence(SHA, SHA, ci, images)["ci_run_id"] == 1
 
 
 @pytest.mark.parametrize("change", ["cancelled", "failure", None])
-def test_latest_image_non_success_blocks(change: str | None) -> None:
+def test_later_rejected_image_attempt_does_not_erase_published_sha(
+    change: str | None,
+) -> None:
     ci, images = success()
     images.append(run(release.IMAGES_WORKFLOW, "workflow_run", 4, conclusion=change))
+    assert release.verify_evidence(SHA, SHA, ci, images)["image_run_id"] == 2
+
+
+def test_rejected_runs_cannot_make_release_eligible() -> None:
+    ci, images = success()
+    ci[0]["conclusion"] = "failure"
+    with pytest.raises(release.ReleaseNotEligible):
+        release.verify_evidence(SHA, SHA, ci, images)
+    ci[0]["conclusion"] = "success"
+    images[0]["conclusion"] = "failure"
     with pytest.raises(release.ReleaseNotEligible):
         release.verify_evidence(SHA, SHA, ci, images)
 
