@@ -951,9 +951,13 @@ async def test_cloudflare_native_channel_tool_is_authenticated_without_jwt(saved
         "credential_fingerprint": hashlib.sha256(principal.email.encode()).hexdigest()[:12],
         "scopes": principal.scopes, "channel_ids": [str(channel)],
     }
-    details = await run_native_tool(goal, "channel_details", {}, uuid.uuid4())
+    details = await run_native_tool(
+        goal, "list_editorial_projects", {"path": {}, "query": {}}, uuid.uuid4()
+    )
     assert isinstance(details, dict)
-    assert str(channel) in str(details)
-    principal.scopes = ["ai:read", "ai:command"]
-    with pytest.raises(ValueError, match="permission"):
-        await run_native_tool(goal, "channel_details", {}, uuid.uuid4())
+    assert "items" in details
+    principal.scopes = ["ai:command"]
+    with pytest.raises(ValueError, match="permissions"):
+        await run_native_tool(
+            goal, "list_editorial_projects", {"path": {}, "query": {}}, uuid.uuid4()
+        )
