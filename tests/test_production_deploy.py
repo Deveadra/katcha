@@ -252,6 +252,7 @@ def test_workflow_is_manual_approved_and_has_no_public_host_runner() -> None:
     assert "runs-on: ubuntu-latest" in source
     assert "deployments: write" in source
     assert "KATCHA_PRODUCTION_DEPLOY_HMAC_KEY" in source
+    assert "MIGRATION_POLICY: ${{ inputs.migration_policy }}" in source
     assert "crypto.createHmac" in source
     assert "github.rest.repos.createDeployment" in source
     assert "KATCHA_PRODUCTION_DEPLOY_ENABLED" in source
@@ -342,7 +343,8 @@ def signed_request() -> tuple[dict, bytes]:
     app = poller()
     key = b"\x91" * 32
     payload = {
-        "version": 1, "sha": NEW, "policy": "refuse",
+        "version": 2, "sha": NEW, "policy": "refuse",
+        "migration_policy": "refuse",
         "host": "katcha-prod-primary-001",
         "issued_at": 1000, "expires_at": 2200,
         "nonce": "c" * 32,
@@ -362,7 +364,7 @@ def test_signed_production_request_accepts_only_verified_short_lived_payload() -
     request, key = signed_request()
     proof = app.authorized_request(request, key, 1500)
     assert proof == {"id": 101, "sha": NEW, "policy": "refuse",
-                     "nonce": "c" * 32}
+                     "migration_policy": "refuse", "nonce": "c" * 32}
     assert app.authorized_request(request, key, 2200)["id"] == 101
 
 
@@ -375,6 +377,14 @@ def test_tampering_with_release_or_policy_fails_signature() -> None:
     request, key = signed_request()
     request["sha"] = OLD
     with pytest.raises(app.RequestBlocked, match="assertions"):
+        app.authorized_request(request, key, 1500)
+
+
+def test_migration_policy_tampering_fails_the_signature() -> None:
+    app = poller()
+    request, key = signed_request()
+    request["payload"]["migration_policy"] = "approve-additive-0064"
+    with pytest.raises(app.RequestBlocked, match="signature"):
         app.authorized_request(request, key, 1500)
 
 
