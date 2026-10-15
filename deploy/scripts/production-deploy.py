@@ -282,9 +282,47 @@ def temporal_inventory(policy: str) -> tuple[tuple[str, str], ...]:
         for field in ("pendingActivities", "pendingChildren",
                       "pendingWorkflowTask", "pendingNexusOperations"):
             pending = details.get(field, [])
-            if pending not in (None, [], {}):
+            if pending not in (None, False, [], {}):
                 raise Blocked("Temporal has pending activities or tasks; drain required")
     return tuple(sorted(ids))
+
+
+def verify_temporal_recovery(
+    original: tuple[tuple[str, str], ...],
+) -> dict[str, int]:
+    """Find every pre-stop run in durable Temporal state after restart."""
+    statuses: dict[str, int] = {"running": 0, "completed": 0, "continued_as_new": 0}
+    for wid, rid in original:
+        try:
+            details = json.loads(run(
+                "docker", "exec", "katcha-production-temporal-1", "temporal",
+                "--output", "json", "workflow", "describe",
+                "--address", "temporal:7233", "--namespace", "default",
+                "--workflow-id", wid, "--run-id", rid, timeout=30,
+            ))
+        except ValueError as exc:
+            raise Blocked("previous Temporal execution could not be described") from exc
+        if not isinstance(details, dict) or not isinstance(
+            details.get("workflowExecutionInfo"), dict
+        ):
+            raise Blocked("previous Temporal execution history not observed")
+        info = details["workflowExecutionInfo"]
+        ident = info.get("execution")
+        if not isinstance(ident, dict) or (
+            ident.get("workflowId"), ident.get("runId")
+        ) != (wid, rid):
+            raise Blocked("previous Temporal workflow identity differs after restart")
+        status = info.get("status")
+        normalized = re.sub(r"[^a-z]", "", status.lower()) if isinstance(status, str) else ""
+        if normalized.endswith("continuedasnew"):
+            statuses["continued_as_new"] += 1
+        elif normalized.endswith("completed"):
+            statuses["completed"] += 1
+        elif normalized.endswith("running"):
+            statuses["running"] += 1
+        else:
+            raise Blocked("previous Temporal execution failed or has unknown status")
+    return statuses
 
 
 def database_query(sql: str) -> str:
@@ -552,9 +590,11 @@ def deploy(target: str, policy: str, migration_policy: str = "refuse") -> dict[s
         if migration:
             database_migration_postflight()
         resumed = workflows("approved-resume")
+        recovered = verify_temporal_recovery(before)
         outcome = {"status": "DEPLOYED", "sha": target, "previous_sha": current,
                    "predeploy_running_workflows": len(before),
                    "postdeploy_running_workflows": resumed,
+                   "predeploy_workflow_recovery": recovered,
                    "migration_revision": AFTER_REVISION if migration else "unchanged",
                    "migration_rollback": "FORWARD_ONLY" if migration else "not_applicable",
                    "public_browser_acceptance": "REQUIRED"}
