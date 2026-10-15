@@ -102,7 +102,8 @@ def authorized_request(
     signature = hmac.new(key, canonical(payload), hashlib.sha256).hexdigest()
     if not hmac.compare_digest(signature, payload["signature"]):
         raise RequestBlocked("deployment signature invalid")
-    return {"id": ident, "sha": payload["sha"], "policy": payload["policy"]}
+    return {"id": ident, "sha": payload["sha"], "policy": payload["policy"],
+            "nonce": payload["nonce"]}
 
 
 def fetch_requests() -> list[dict[str, Any]]:
@@ -137,7 +138,7 @@ def secure_receipts() -> None:
 
 def attempt(request: dict[str, Any]) -> str:
     secure_receipts()
-    path = RECEIPTS / (str(request["id"]) + ".json")
+    path = RECEIPTS / ("nonce-" + request["nonce"] + ".json")
     # One signed request produces at most one attempt even after a crash or a
     # service restart. An unsuccessful attempt requires a NEW reviewed request.
     try:
@@ -166,7 +167,7 @@ def attempt(request: dict[str, Any]) -> str:
     except (OSError, subprocess.TimeoutExpired, RequestBlocked):
         status = "FAILED_REVIEW_REQUIRED"
     # Keep a sanitized and protected audit record; never print env or secrets.
-    temp = RECEIPTS / (str(request["id"]) + ".tmp")
+    temp = RECEIPTS / ("nonce-" + request["nonce"] + ".tmp")
     with temp.open("x", encoding="utf-8") as out:
         json.dump({"status": status, "id": request["id"], "sha": request["sha"]}, out)
         out.write("\n")
@@ -196,7 +197,7 @@ def poll(now: int | None = None) -> dict[str, Any]:
         except RequestBlocked:
             continue
         secure_receipts()
-        if (RECEIPTS / (str(verified["id"]) + ".json")).exists():
+        if (RECEIPTS / ("nonce-" + verified["nonce"] + ".json")).exists():
             continue
         result = attempt(verified)
         return {"status": result, "deployment_request_id": verified["id"],
