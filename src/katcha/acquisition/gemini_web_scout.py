@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import uuid
+from dataclasses import replace
 from decimal import Decimal
 
-from katcha.acquisition.adapters import DiscoveryBatch
+from katcha.acquisition.adapters import DiscoveryBatch, DiscoveryProviderError
 from katcha.ai.gemini_capacity import run_with_gemini_capacity_fallback
 from katcha.ai.pricing import estimate_token_cost
 from katcha.ai.router import (
@@ -104,7 +105,14 @@ def discover_gemini(query, cursor, settings, limit):
                 "search_count_estimated": bool(sources and not search_queries),
             },
         )
-        items = parse_web_scout_output(response.text or "", grounded_urls=set(sources), limit=limit)
+        try:
+            items = parse_web_scout_output(
+                response.text or "", grounded_urls=set(sources), limit=limit
+            )
+        except DiscoveryProviderError:
+            if not sources:
+                raise
+            items = ()
         if not items and sources:
             # Grounding URIs may be provider redirects absent from the answer JSON.
             # Keep those observed URIs instead of accepting ungrounded model URLs.
@@ -121,6 +129,16 @@ def discover_gemini(query, cursor, settings, limit):
                 grounded_urls=set(sources),
                 limit=limit,
             )
+        items = tuple(
+            replace(
+                item,
+                provenance_claims={
+                    **item.provenance_claims,
+                    "discovered_via": "gemini_google_search",
+                },
+            )
+            for item in items
+        )
         return DiscoveryBatch(
             items=items,
             next_cursor=_next_scout_cursor(cursor, items),

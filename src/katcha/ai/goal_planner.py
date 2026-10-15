@@ -113,7 +113,7 @@ def decide_goal(
         "example. Use find_clips with an empty terms filter, and separate "
         "scored evidence from unscored media in clip_library. "
         "An ingested but unscored clip is not missing or rejected: inspect its "
-        "saved status and explain the exact scoring prerequisite before production. "
+        "saved status; source_original preparation can use unscored downloads. "
         "Ingestion is not evidence of rights clearance, but read-only discovery "
         "should not be blocked by absent production clearance. "
         "Preserve the operator's source, media and channel constraints. "

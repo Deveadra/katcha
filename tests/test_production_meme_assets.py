@@ -166,14 +166,19 @@ def test_meme_manifest_requires_actual_assets_and_rejects_cross_production():
     assert not build_blueprint_render_manifest(**kwargs).meme_events
 
 
-def test_gemini_search_uses_grounded_sources_and_records_actual_usage(monkeypatch):
+@pytest.mark.parametrize("plain_text", [False, True])
+def test_gemini_search_uses_grounded_sources_and_records_actual_usage(monkeypatch, plain_text):
     from google import genai
 
     from katcha.acquisition import gemini_web_scout as scout
 
     calls = []
     response = SimpleNamespace(
-        text=json.dumps({"items": [{"source_url": "https://invented.invalid/a"}]}),
+        text=(
+            "Observed grounded result"
+            if plain_text
+            else json.dumps({"items": [{"source_url": "https://invented.invalid/a"}]})
+        ),
         usage_metadata=SimpleNamespace(
             prompt_token_count=100, candidates_token_count=40, thoughts_token_count=10
         ),
@@ -205,5 +210,6 @@ def test_gemini_search_uses_grounded_sources_and_records_actual_usage(monkeypatc
         {"operator_request": "reaction image"}, {}, SimpleNamespace(gemini_api_key="fixture"), 3
     )
     assert [item.source_url for item in result.items] == ["https://example.com/observed"]
+    assert result.items[0].provenance_claims["discovered_via"] == "gemini_google_search"
     assert calls[0]["output_units"] == 50
     assert calls[0]["metadata"]["search_cost_usd"] == "0.014"
