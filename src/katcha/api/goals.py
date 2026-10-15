@@ -18,8 +18,9 @@ from katcha.api.control_auth import (
     require_control_channel,
     require_control_scope,
 )
+from katcha.command_center_models import CommandActionProposal
 from katcha.db import session_scope
-from katcha.goal_models import CommandGoal
+from katcha.goal_models import CommandGoal, CommandGoalStep
 from katcha.intelligence.runtime import INTELLIGENCE_TASK_QUEUE
 from katcha.orchestration.client import get_temporal_client
 from katcha.orchestration.goal_workflows import CommandGoalWorkflow
@@ -30,6 +31,25 @@ router = APIRouter(prefix="/v1/ai/goals", tags=["command goals"])
 
 class GoalRequest(CommandRequest):
     command_id: uuid.UUID
+
+
+def retryable(goal: CommandGoal) -> bool:
+    """Retry only receipts that stopped before any decision or action was saved."""
+    if (
+        goal.status not in {"blocked", "failed"}
+        or goal.step_count != 0
+        or goal.observations != []
+        or goal.authorization != {}
+    ):
+        return False
+    with session_scope() as session:
+        step = session.scalar(select(CommandGoalStep.id).where(CommandGoalStep.goal_id == goal.id))
+        proposal = session.scalar(
+            select(CommandActionProposal.id).where(
+                CommandActionProposal.request_id == goal.command_id
+            )
+        )
+        return step is None and proposal is None
 
 
 def snapshot(goal: CommandGoal) -> dict:
@@ -45,6 +65,7 @@ def snapshot(goal: CommandGoal) -> dict:
         "deadline": goal.deadline.isoformat(),
         "result": goal.result,
         "error": goal.error,
+        "retryable": retryable(goal),
     }
 
 
@@ -103,6 +124,21 @@ async def submit_goal(http_request: Request, request: GoalRequest) -> dict:
                 current.status = "running"
                 current.summary = "Request saved; deciding the first step."
     return snapshot(get_goal(goal.id))
+
+
+@router.post("/{goal_id}/retry", status_code=202)
+async def retry_goal(http_request: Request, goal_id: uuid.UUID) -> dict:
+    goal = accessible_goal(http_request, goal_id)
+    if not retryable(goal):
+        raise HTTPException(409, "This request has saved work and cannot be restarted safely")
+    request = GoalRequest.model_validate(
+        {
+            **goal.request,
+            "thread_id": str(goal.thread_id),
+            "command_id": str(uuid.uuid5(goal.id, "retry")),
+        }
+    )
+    return await submit_goal(http_request, request)
 
 
 @router.get("")

@@ -934,10 +934,33 @@ async function followGoal(receipt, { background = false } = {}) {
             };
         }
         progress.querySelector("p").textContent = goal.summary;
-        progress.querySelector("button").disabled = !capability("ai_write") || finishedGoals.has(goal.status);
+        const stopButton = progress.querySelector(".goal-stop-button");
+        if (stopButton) stopButton.disabled = !capability("ai_write") || finishedGoals.has(goal.status);
         if (finishedGoals.has(goal.status)) {
             forgetGoal(receipt.request.command_id);
-            progress.querySelector("button").remove();
+            progress.querySelector(".message-author").textContent = "Katcha AI · finished";
+            progress.querySelector(".goal-progress-indicator").hidden = true;
+            if (stopButton) stopButton.remove();
+            if (goal.retryable && capability("ai_command") && !progress.querySelector(".goal-retry-button")) {
+                const retry = document.createElement("button");
+                retry.type = "button";
+                retry.className = "goal-retry-button";
+                retry.textContent = "Try request again";
+                retry.onclick = async () => {
+                    retry.disabled = true;
+                    try {
+                        const replacement = await api("/v1/ai/goals/" + goal.goal_id + "/retry", {method: "POST"});
+                        const next = {...receipt, goalId: replacement.goal_id,
+                            request: {...replacement.request, command_id: replacement.command_id}};
+                        saveGoal(next);
+                        await followGoal(next, {background: true});
+                    } catch (error) {
+                        retry.disabled = false;
+                        status("Your request is saved. " + error.message, true);
+                    }
+                };
+                progress.querySelector(".goal-progress-body").append(retry);
+            }
             const result = Object.keys(goal.result || {}).length ? goal.result : {
                 answer: goal.summary, thread_id: goal.thread_id, evidence: [], actions: [],
             };

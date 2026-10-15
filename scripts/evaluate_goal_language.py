@@ -21,6 +21,15 @@ from katcha.services.goal_tools import tool_catalog
 
 # Each case checks semantic authorization, including paraphrase and negation.
 CASES = [
+    (
+        "retrieve_two_scenes",
+        "Grab the clip of Kate Bishop throwing the coin from the show Hawkeye episode 5, "
+        "and grab the clip of Ultron throwing the coin at the late door dasher "
+        "from episode 1 of VisionQuest.",
+        "run",
+        {"search_source", "scout_web"},
+        {"make_short", "make_ranking", "publish_production", "publish_episode"},
+    ),
     ("inspect", "What should I focus on for this channel?", "inspect", set(), set()),
     ("hypothetical", "Would an ongoing Xbox watch help us?", "inspect", set(), {"save_watch"}),
     ("watch", "Keep an eye on Xbox releases for this channel.", "run", {"save_watch"}, set()),
