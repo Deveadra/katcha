@@ -137,6 +137,7 @@ jobs:
               owner: context.repo.owner,
               repo: context.repo.repo,
               ref: sha,
+              task: "deploy",
               auto_merge: false,
               required_contexts: [],
               environment: "katcha-production",
