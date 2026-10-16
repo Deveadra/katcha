@@ -197,6 +197,7 @@ services:
     env_file: *control-env
     environment:
       KATCHA_API_RELEASE_SHA: ""
+      KATCHA_REMOTION_LAMBDA_MAX_WORKER_FUNCTIONS: ${KATCHA_REMOTION_LAMBDA_MAX_WORKER_FUNCTIONS:-4}
       HOME: /home/katcha
       AWS_PROFILE: ${KATCHA_AWS_PROFILE:-katcha-automation}
       REMOTION_AWS_PROFILE: ${KATCHA_AWS_PROFILE:-katcha-automation}
