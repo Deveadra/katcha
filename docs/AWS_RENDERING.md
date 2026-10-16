@@ -39,8 +39,11 @@ following [`AWS_AUTHENTICATION.md`](AWS_AUTHENTICATION.md). That path uses
 short-lived credentials obtained through `credential_process` and keeps long-lived
 AWS access keys out of Katcha.
 
-The interactive `katcha` profile remains appropriate for initial bootstrap,
-reviewed infrastructure changes, and break-glass administration.
+The interactive `katcha-admin` IAM Identity Center profile is used for
+reviewed infrastructure changes. Root-backed AWS CLI profiles are rejected by
+Katcha scripts; migrate via
+[`AWS_BOOTSTRAP_IDENTITY_MIGRATION.md`](AWS_BOOTSTRAP_IDENTITY_MIGRATION.md).
+Do not use root for ordinary bootstrap or break-glass automation.
 
 ## Phase 0: inspect the pinned Remotion policies
 
