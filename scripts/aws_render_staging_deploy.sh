@@ -131,6 +131,9 @@ if [[ "${ACTUAL_ACCOUNT}" != "${EXPECTED_ACCOUNT}" ]]; then
     exit 3
 fi
 
+# Never run AWS bootstrap or workload operations with account-root credentials.
+bash "${SCRIPT_DIR}/aws_nonroot_caller_guard.sh" "${CALLER_ARN}"
+
 if ! aws s3api head-bucket     --profile "${BOOTSTRAP_PROFILE}"     --region "${REGION}"     --bucket "${STATE_BUCKET}" >/dev/null 2>&1; then
     echo "ERROR: Terraform state bucket is missing or unreachable: ${STATE_BUCKET}" >&2
     echo "Run scripts/aws_tf_state_bootstrap.sh first." >&2
