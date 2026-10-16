@@ -18,6 +18,9 @@ build/
 .local/
 media/
 
+# Agents
+.worktress/
+
 # Lockfiles
 infra/aws-render-staging/.terraform.lock.hcl
 infra/cloudflare-recovery/.wrangler/
