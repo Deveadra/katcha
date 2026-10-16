@@ -48,36 +48,55 @@ const props = {
 };
 
 const partitionCases = [
-  // The previously failing full trailer: 4746 frames would spawn 238 workers.
-  {seconds: 158.181, fps: 30, configuredFrames: 20, expected: 24},
-  {seconds: 180, fps: 30, configuredFrames: 20, expected: 27},
-  {seconds: 1800, fps: 30, configuredFrames: 20, expected: 270},
-  {seconds: 180, fps: 60, configuredFrames: 20, expected: 54},
-  {seconds: 30, fps: 30, configuredFrames: 20, expected: 20},
-  {seconds: 158.181, fps: 30, configuredFrames: 300, expected: 300},
-  {seconds: 100, fps: 40, configuredFrames: 20, expected: 20},
-  {seconds: 100.025, fps: 40, configuredFrames: 20, expected: 21},
-  {seconds: 1, fps: 30, configuredFrames: 4, expected: 5},
+  // 4746 frames previously spawned 198 workers and exceeded AWS capacity.
+  {seconds: 158.181, fps: 30, configuredFrames: 20, expected: 1187},
+  {seconds: 180, fps: 30, configuredFrames: 20, expected: 1350},
+  {seconds: 1800, fps: 30, configuredFrames: 20, expected: 13500},
+  {seconds: 180, fps: 60, configuredFrames: 20, expected: 2700},
+  {seconds: 30, fps: 30, configuredFrames: 20, expected: 225},
+  {seconds: 158.181, fps: 30, configuredFrames: 2000, expected: 2000},
+  {seconds: 1, fps: 30, configuredFrames: 4, expected: 8},
   {seconds: 0.05, fps: 30, configuredFrames: 4, expected: 4},
+  {seconds: 158.181, fps: 30, configuredFrames: 20, maxWorkerFunctions: 1, expected: 4746},
+  {seconds: 158.181, fps: 30, configuredFrames: 20, maxWorkerFunctions: 10, expected: 475},
+  {seconds: 158.181, fps: 30, configuredFrames: 20, maxWorkerFunctions: 200, expected: 24},
 ];
-for (const {seconds, fps, configuredFrames, expected} of partitionCases) {
+for (const {seconds, fps, configuredFrames, maxWorkerFunctions = 4, expected} of partitionCases) {
   const effective = resolveLambdaFramesPerFunction({
-    inputProps: {output_duration_seconds: seconds, fps}, configuredFrames,
+    inputProps: {output_duration_seconds: seconds, fps}, configuredFrames, maxWorkerFunctions,
   });
   assert.equal(effective, expected);
   assert.ok(effective >= configuredFrames);
-  assert.ok(Math.ceil(Math.ceil(seconds * fps) / effective) <= 200);
+  assert.ok(Math.ceil(Math.ceil(seconds * fps) / effective) <= maxWorkerFunctions);
+}
+
+for (const cap of [1, 2, 4, 10, 200]) {
+  const effective = resolveLambdaFramesPerFunction({
+    inputProps: {...props, output_duration_seconds: 158.181},
+    configuredFrames: 20, maxWorkerFunctions: cap,
+  });
+  assert.ok(Math.ceil(4746 / effective) <= cap);
+}
+for (const cap of [0, -1, 201, 1.5, NaN, Infinity]) {
+  let budgetCalled = false;
+  await assert.rejects(renderMediaViaLambda({
+    compositionId: 'BlueprintVideo', inputProps: props,
+    outputPath: '/tmp/invalid-fanout.mp4',
+    renderSettings: {...settings, lambda: {...settings.lambda, maxWorkerFunctions: cap}},
+    dependencies: {fetch: async () => {budgetCalled = true;}},
+  }), /max worker functions/);
+  assert.equal(budgetCalled, false);
 }
 
 // Verify the actual SDK launch receives the partition, while budget reservations
 // and retry/concurrency limits retain their existing values. No AWS calls occur.
-for (const {seconds, fps, configuredFrames, expected} of partitionCases.slice(0, 6)) {
+for (const {seconds, fps, configuredFrames, maxWorkerFunctions = 4, expected} of partitionCases) {
   const requests = [];
   await renderMediaViaLambda({
     compositionId: seconds >= 1800 ? 'Longform' : 'BlueprintVideo',
     inputProps: {...props, output_duration_seconds: seconds, fps},
     outputPath: '/tmp/partition-fixture.mp4',
-    renderSettings: {...settings, lambda: {...settings.lambda, framesPerLambda: configuredFrames}},
+    renderSettings: {...settings, lambda: {...settings.lambda, framesPerLambda: configuredFrames, maxWorkerFunctions}},
     dependencies: {
       fetch: async (url, options) => {
         const body = JSON.parse(options.body);
