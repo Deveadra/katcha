@@ -168,6 +168,8 @@ services:
       context: .
       dockerfile: Dockerfile.renderer
     env_file: ${KATCHA_ENV_FILE:-.env}
+    environment:
+      KATCHA_REMOTION_LAMBDA_MAX_WORKER_FUNCTIONS: ${KATCHA_REMOTION_LAMBDA_MAX_WORKER_FUNCTIONS:-4}
     depends_on:
       minio-init:
         condition: service_completed_successfully

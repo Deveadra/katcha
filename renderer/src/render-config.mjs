@@ -104,6 +104,9 @@ export const resolveRenderSettings = (env = process.env) => ({
       20,
       4,
     ),
+    maxWorkerFunctions: env.KATCHA_REMOTION_LAMBDA_MAX_WORKER_FUNCTIONS == null
+      ? 4
+      : Number(env.KATCHA_REMOTION_LAMBDA_MAX_WORKER_FUNCTIONS),
     concurrencyPerLambda: positiveInteger(
       env.KATCHA_REMOTION_LAMBDA_CONCURRENCY_PER_LAMBDA,
       1,
@@ -124,6 +127,10 @@ export const resolveRenderSettings = (env = process.env) => ({
 export const validateLambdaSettings = (settings) => {
   if (settings.backend !== 'lambda') {
     return;
+  }
+  if (!Number.isSafeInteger(settings.lambda.maxWorkerFunctions)
+    || settings.lambda.maxWorkerFunctions < 1 || settings.lambda.maxWorkerFunctions > 200) {
+    throw new Error('KATCHA_REMOTION_LAMBDA_MAX_WORKER_FUNCTIONS must be an integer between 1 and 200');
   }
   if (!/^\d{12}$/.test(String(settings.lambda.expectedAccountId || ''))) {
     throw new Error(

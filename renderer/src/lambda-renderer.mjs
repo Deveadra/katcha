@@ -66,7 +66,9 @@ const errorSummary = (errors) =>
     .map((item) => item?.message || item?.stack || JSON.stringify(item))
     .join(' | ');
 
-export const resolveLambdaFramesPerFunction = ({inputProps, configuredFrames}) => {
+export const resolveLambdaFramesPerFunction = ({
+  inputProps, configuredFrames, maxWorkerFunctions = 4,
+}) => {
   const seconds = Number(inputProps?.output_duration_seconds);
   const fps = Number(inputProps?.fps);
   const totalFrames = Math.ceil(seconds * fps);
@@ -80,10 +82,20 @@ export const resolveLambdaFramesPerFunction = ({inputProps, configuredFrames}) =
   if (!Number.isSafeInteger(configuredFrames) || configuredFrames <= 0) {
     throw new Error('Lambda frames per function must be a positive safe integer');
   }
-  // Remotion 4.0.529 caps each render at 200 worker functions and requires
+  if (
+    !Number.isSafeInteger(maxWorkerFunctions)
+    || maxWorkerFunctions < 1 || maxWorkerFunctions > 200
+  ) {
+    throw new Error('Lambda max worker functions must be an integer between 1 and 200');
+  }
+  // Keep fanout within configured account capacity; the orchestrator uses another
+  // slot. Remotion 4.0.529 caps renders at 200 worker functions and requires
   // at least five frames per worker (or the entire shorter composition).
   // Match root.jsx's ceil(duration * fps), retaining the operator's lower bound.
-  return Math.max(configuredFrames, Math.min(5, totalFrames), Math.ceil(totalFrames / 200));
+  return Math.max(
+    configuredFrames, Math.min(5, totalFrames),
+    Math.ceil(totalFrames / maxWorkerFunctions),
+  );
 };
 
 
@@ -235,6 +247,7 @@ export const renderMediaViaLambda = async ({
   const framesPerLambda = resolveLambdaFramesPerFunction({
     inputProps,
     configuredFrames: renderSettings.lambda.framesPerLambda,
+    maxWorkerFunctions: renderSettings.lambda.maxWorkerFunctions,
   });
 
   const remotionClient = dependencies.renderMediaOnLambda

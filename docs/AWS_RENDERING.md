@@ -369,6 +369,24 @@ rejects local/private media URLs before invoking AWS. With staging enabled, loca
 are copied into private AWS S3 objects first and only the temporary HTTPS presigned URLs are
 sent to Remotion Lambda.
 
+## Worker fanout
+
+`KATCHA_REMOTION_LAMBDA_MAX_WORKER_FUNCTIONS` limits each render to four worker
+functions by default, with an explicit range of 1 through 200. The orchestrator
+uses another concurrent Lambda slot. This default is a conservative application
+limit, not a verified AWS account quota; leave capacity for other account work
+and measure a successful render before choosing a higher limit. Both development
+and production Compose pass the setting into the renderer.
+
+The renderer increases frames per worker to honor this cap while retaining
+`KATCHA_REMOTION_LAMBDA_FRAMES_PER_LAMBDA` as a minimum. For example, 158.181 seconds
+at 30 fps produces 4,746 frames split into four chunks of at most 1,187 frames.
+Short compositions may need fewer workers. Lower fanout takes longer; large
+compositions can reach the deployed function's timeout, so choose measured capacity
+within the account's quota before using larger workloads. Invalid caps fail before
+budget reservation. This setting changes neither AWS quotas nor per-worker browser
+concurrency, application render concurrency, retry limits or spending ceilings.
+
 ## Acceptance order
 
 Do not start with a live YouTube production.

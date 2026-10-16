@@ -25,6 +25,7 @@ assert.deepEqual(defaults, {
     maxWaitMs: 1500000,
     maxRetries: 2,
     framesPerLambda: 20,
+    maxWorkerFunctions: 4,
     concurrencyPerLambda: 1,
     stagingBucket: null,
     stagingPrefix: 'katcha-render-staging',
@@ -166,3 +167,16 @@ assert.throws(
 );
 
 console.log('PASS: renderer runtime settings are conservative, explicit, and budget-safe.');
+
+for (const raw of ['0', '-1', '201', '1.5', 'invalid', '']) {
+  assert.throws(() => validateLambdaSettings(resolveRenderSettings({
+    ...lambdaEnv, KATCHA_REMOTION_LAMBDA_MAX_WORKER_FUNCTIONS: raw,
+  })), /MAX_WORKER_FUNCTIONS/);
+}
+for (const raw of ['1', '4', '200']) {
+  const configured = resolveRenderSettings({
+    ...lambdaEnv, KATCHA_REMOTION_LAMBDA_MAX_WORKER_FUNCTIONS: raw,
+  });
+  assert.equal(configured.lambda.maxWorkerFunctions, Number(raw));
+  assert.doesNotThrow(() => validateLambdaSettings(configured));
+}
