@@ -79,7 +79,8 @@ class CloudWatchIAMTests(unittest.TestCase):
         self.assertIn("PASS: CloudWatch Logs and Metrics", self.run_mode(["--apply"], fake))
         self.assertEqual(1, sum(call[3] == "put-role-policy" for call in fake.calls))
         self.assertTrue({("logs", "get-log-events"), ("logs", "filter-log-events"),
-                         ("cloudwatch", "get-metric-statistics")}.issubset({(c[2], c[3]) for c in fake.calls}))
+                         ("cloudwatch", "get-metric-statistics"),
+                         ("cloudwatch", "get-metric-data")}.issubset({(c[2], c[3]) for c in fake.calls}))
 
     def test_mismatched_bootstrap_account_fails_closed(self):
         fake = FakeAWS(account="999999999999")
