@@ -23,7 +23,7 @@ class CodexConnection(Base):
     encrypted_access_token: Mapped[str] = mapped_column(Text)
     encrypted_refresh_token: Mapped[str] = mapped_column(Text)
     access_token_expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
-    selected_model: Mapped[str] = mapped_column(String(255), default="gpt-5.5")
+    selected_model: Mapped[str] = mapped_column(String(255), default="")
     active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
     connection_metadata: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     created_at: Mapped[datetime] = mapped_column(

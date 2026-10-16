@@ -6,7 +6,7 @@ import json
 import secrets
 import threading
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from urllib.parse import parse_qs, urlencode, urlsplit
 
@@ -28,7 +28,7 @@ REDIRECT_URI = "http://localhost:1457/auth/callback"
 CODEX_BASE_URL = "https://chatgpt.com/backend-api/codex"
 WHAM_USAGE_URL = "https://chatgpt.com/backend-api/wham/usage"
 MODEL_CATALOG_VERSION = "99.99.99"
-DEFAULT_MODEL = "gpt-5.5"
+DEFAULT_MODEL = ""  # Resolve new connections from their account catalog.
 SCOPES = "openid profile email offline_access"
 
 _refresh_lock = threading.Lock()
@@ -132,7 +132,6 @@ def begin_codex_oauth(settings: Settings | None = None) -> str:
         }
     )
     return f"{AUTHORIZATION_URL}?{query}"
-
 
 
 def complete_codex_callback_url(
@@ -309,8 +308,7 @@ def complete_codex_oauth(
     )
     if response.is_error:
         raise CodexConnectionError(
-            f"Codex token exchange failed (HTTP {response.status_code}). "
-            "Start Reconnect again."
+            f"Codex token exchange failed (HTTP {response.status_code}). Start Reconnect again."
         )
     payload = _json(response)
     access_token = str(payload.get("access_token") or "")
@@ -352,7 +350,21 @@ def complete_codex_oauth(
         connection.encrypted_access_token = encrypt_secret(access_token, settings)
         connection.encrypted_refresh_token = encrypt_secret(refresh_token, settings)
         connection.access_token_expires_at = now + timedelta(seconds=expires_in)
-        connection.selected_model = connection.selected_model or DEFAULT_MODEL
+        # Catalog discovery must not discard newly rotated OAuth credentials.
+        candidate = CodexSession(
+            connection.id,
+            access_token,
+            account_id,
+            connection.selected_model or "",
+            email,
+            plan_type,
+        )
+        try:
+            models = _catalog_models(candidate)
+            connection.selected_model = _catalog_choice(candidate.model, models)
+        except CodexConnectionError:
+            connection.selected_model = candidate.model  # Retain saved choice and login.
+
         connection.active = True
         connection.connection_metadata = {"provider": "codex", "originator": "katcha"}
         session.flush()
@@ -421,7 +433,7 @@ def active_session(settings: Settings | None = None) -> CodexSession | None:
         return None
     if row.access_token_expires_at <= datetime.now(UTC) + timedelta(minutes=5):
         row = _refresh(row.id, settings)
-    return CodexSession(
+    result = CodexSession(
         connection_id=row.id,
         access_token=decrypt_secret(row.encrypted_access_token, settings),
         account_id=row.account_id,
@@ -429,6 +441,7 @@ def active_session(settings: Settings | None = None) -> CodexSession | None:
         email=row.email,
         plan_type=row.plan_type,
     )
+    return _resolve_model(result) if not result.model else result
 
 
 def _headers(session: CodexSession) -> dict[str, str]:
@@ -449,6 +462,10 @@ def list_models(settings: Settings | None = None) -> list[CodexModel]:
     session = active_session(settings)
     if session is None:
         raise CodexConnectionError("No Codex ChatGPT account is connected")
+    return _catalog_models(session)
+
+
+def _catalog_models(session: CodexSession) -> list[CodexModel]:
     headers = _headers(session)
     headers["Accept"] = "application/json"
     response = _request(
@@ -459,12 +476,10 @@ def list_models(settings: Settings | None = None) -> list[CodexModel]:
         timeout=20.0,
     )
     if response.is_error:
-        return [
-            CodexModel("gpt-5.6-sol", "GPT-5.6 Sol", "High-capability Codex model"),
-            CodexModel("gpt-5.6-terra", "GPT-5.6 Terra", "Balanced Codex model"),
-            CodexModel("gpt-5.6-luna", "GPT-5.6 Luna", "Fast Codex model"),
-            CodexModel("gpt-5.5", "GPT-5.5", "General ChatGPT subscription model"),
-        ]
+        raise CodexConnectionError(
+            f"Codex model catalog is unavailable (HTTP {response.status_code}). "
+            "Try again, or reconnect Codex in Settings if access has expired."
+        )
     payload = _json(response)
     result: list[CodexModel] = []
     for raw in payload.get("models") or []:
@@ -481,13 +496,53 @@ def list_models(settings: Settings | None = None) -> list[CodexModel]:
             )
         )
     if not result:
-        return [
-            CodexModel("gpt-5.6-sol", "GPT-5.6 Sol", "High-capability Codex model"),
-            CodexModel("gpt-5.6-terra", "GPT-5.6 Terra", "Balanced Codex model"),
-            CodexModel("gpt-5.6-luna", "GPT-5.6 Luna", "Fast Codex model"),
-            CodexModel("gpt-5.5", "GPT-5.5", "General ChatGPT subscription model"),
-        ]
+        raise CodexConnectionError(
+            "Codex returned no available models for this account. "
+            "Check the connected account in Settings and try again."
+        )
     return result
+
+
+def _catalog_choice(current: str, models: list[CodexModel]) -> str:
+    return current if any(item.slug == current for item in models) else models[0].slug
+
+
+def _resolve_model(info: CodexSession) -> CodexSession:
+    models = _catalog_models(info)
+    replacement = _catalog_choice(info.model, models)
+    with session_scope() as db:
+        row = db.scalar(
+            select(CodexConnection)
+            .where(CodexConnection.id == info.connection_id)
+            .with_for_update()
+        )
+        if row is None or not row.active:
+            raise CodexConnectionError("Codex connection is no longer active")
+        # Preserve an operator selection made while catalog discovery was in flight.
+        if row.selected_model and row.selected_model != info.model:
+            replacement = _catalog_choice(row.selected_model, models)
+        row.selected_model = replacement
+    return replace(info, model=replacement)
+
+
+def _unsupported_model_response(status: int, raw: str) -> bool:
+    # Only a synchronous rejection before any stream starts is safe to retry.
+    if status != 400:
+        return False
+    try:
+        error = json.loads(raw)
+    except ValueError:
+        return False
+    if not isinstance(error, dict):
+        return False
+    error = error.get("error", error)
+    if not isinstance(error, dict):
+        return False
+    code = str(error.get("code") or "").lower()
+    message = str(error.get("message") or error.get("detail") or "").lower()
+    return code in {"model_not_found", "unsupported_model", "model_not_supported"} or (
+        "model" in message and ("not supported" in message or "does not exist" in message)
+    )
 
 
 def set_selected_model(model: str) -> CodexConnection:
@@ -560,6 +615,7 @@ def _stream(
     *,
     tool: dict[str, object] | None = None,
     image_bytes: bytes | None = None,
+    _model_retry: bool = True,
 ) -> CodexInference:
     assert_mutation_authority("ai.codex_plan_inference")
     body = {
@@ -606,6 +662,12 @@ def _stream(
         ) as response:
             if response.status_code >= 400:
                 raw = response.read().decode("utf-8", errors="replace")
+                if _model_retry and _unsupported_model_response(response.status_code, raw):
+                    resolved = _resolve_model(session)
+                    if resolved.model != session.model:
+                        return _stream(
+                            resolved, prompt, tool=tool, image_bytes=image_bytes, _model_retry=False
+                        )
                 raise CodexConnectionError(
                     f"Codex request failed (HTTP {response.status_code}): "
                     + " ".join(raw.split())[:700]
@@ -731,7 +793,7 @@ def test_connection(settings: Settings | None = None) -> dict[str, object]:
         "ok": True,
         "model_count": len(models),
         "models_error": models_error,
-        "selected_model": session.model,
+        "selected_model": result.model,
         "email": session.email,
         "plan_type": session.plan_type,
         "usage": usage_result,
