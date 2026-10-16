@@ -104,6 +104,9 @@ if [[ "${ACTUAL_ACCOUNT}" != "${EXPECTED_ACCOUNT}" ]]; then
     exit 3
 fi
 
+# Never run AWS bootstrap or workload operations with account-root credentials.
+bash "${SCRIPT_DIR}/aws_nonroot_caller_guard.sh" "${CALLER_ARN}"
+
 echo "AWS identity verified:"
 echo "  account: ${ACTUAL_ACCOUNT}"
 echo "  caller:  ${CALLER_ARN}"
