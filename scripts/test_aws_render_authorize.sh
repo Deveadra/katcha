@@ -91,15 +91,19 @@ arg_value() {
 if [[ "${service} ${operation}" == "sts get-caller-identity" ]]; then
     query="$(arg_value --query "$@" || true)"
     account="${AWS_TEST_ACCOUNT:-123456789012}"
+    caller_arn="arn:aws:iam::${account}:user/bootstrap"
+    if [[ "${AWS_TEST_ROOT:-false}" == "true" ]]; then
+        caller_arn="arn:aws:iam::${account}:root"
+    fi
     case "${query}" in
         Account)
             printf '%s\n' "${account}"
             ;;
         Arn)
-            printf 'arn:aws:iam::%s:user/bootstrap\n' "${account}"
+            printf '%s\n' "${caller_arn}"
             ;;
         *)
-            printf '{"Account":"%s","Arn":"arn:aws:iam::%s:user/bootstrap"}\n' "${account}" "${account}"
+            printf '{"Account":"%s","Arn":"%s"}\n' "${account}" "${caller_arn}"
             ;;
     esac
     exit 0
@@ -283,5 +287,22 @@ if grep -Eq 'iam (create-role|update-assume-role-policy|put-role-policy)' "${LOG
     exit 1
 fi
 grep -q 'AWS account mismatch' <<<"${wrong_output}"
+
+: >"${LOG}"
+export AWS_TEST_ROOT=true
+set +e
+root_output="$(bash "${SCRIPT}" --apply 2>&1)"
+root_rc=$?
+set -e
+unset AWS_TEST_ROOT
+if [[ "${root_rc}" -eq 0 ]]; then
+    echo "FAIL: root identity was accepted for IAM administration" >&2
+    exit 1
+fi
+grep -q 'BLOCKED: Katcha AWS operations cannot run as the AWS account root user' <<<"${root_output}"
+if grep -Eq 'iam (create-role|update-assume-role-policy|put-role-policy)' "${LOG}"; then
+    echo "FAIL: root identity triggered an IAM write" >&2
+    exit 1
+fi
 
 echo "PASS: render authorization provisions the exact Remotion execution role, is idempotent, review-first, and account-guarded."
