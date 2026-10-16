@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import timedelta
+from typing import Any
 
 from temporalio import workflow
 from temporalio.common import RetryPolicy
@@ -9,7 +10,7 @@ from temporalio.common import RetryPolicy
 @workflow.defn
 class ClipIngestWorkflow:
     @workflow.run
-    async def run(self, source_id: str) -> dict[str, str | bool]:
+    async def run(self, source_id: str) -> dict[str, Any]:
         retry_policy = RetryPolicy(
             initial_interval=timedelta(seconds=10),
             backoff_coefficient=2.0,
@@ -47,7 +48,7 @@ class ClipIngestWorkflow:
                 source_id,
                 start_to_close_timeout=timedelta(minutes=5),
                 retry_policy=RetryPolicy(maximum_attempts=2),
-                result_type=dict[str, object],
+                result_type=dict[str, Any],
             )
             result = {**result, "post_ingest": prepared}
         return result
