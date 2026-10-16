@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import {
   assertCloudReachableInputProps,
   renderMediaViaLambda,
+  resolveLambdaFramesPerFunction,
 } from '../src/lambda-renderer.mjs';
 
 assert.doesNotThrow(() => assertCloudReachableInputProps({
@@ -42,8 +43,85 @@ const settings = {
 const props = {
   output_key: 'renders/example.mp4',
   output_duration_seconds: 30,
+  fps: 30,
   source: {url: 'https://cdn.example.test/source.mp4'},
 };
+
+const partitionCases = [
+  // The previously failing full trailer: 4746 frames would spawn 238 workers.
+  {seconds: 158.181, fps: 30, configuredFrames: 20, expected: 24},
+  {seconds: 180, fps: 30, configuredFrames: 20, expected: 27},
+  {seconds: 1800, fps: 30, configuredFrames: 20, expected: 270},
+  {seconds: 180, fps: 60, configuredFrames: 20, expected: 54},
+  {seconds: 30, fps: 30, configuredFrames: 20, expected: 20},
+  {seconds: 158.181, fps: 30, configuredFrames: 300, expected: 300},
+  {seconds: 100, fps: 40, configuredFrames: 20, expected: 20},
+  {seconds: 100.025, fps: 40, configuredFrames: 20, expected: 21},
+  {seconds: 1, fps: 30, configuredFrames: 4, expected: 5},
+  {seconds: 0.05, fps: 30, configuredFrames: 4, expected: 4},
+];
+for (const {seconds, fps, configuredFrames, expected} of partitionCases) {
+  const effective = resolveLambdaFramesPerFunction({
+    inputProps: {output_duration_seconds: seconds, fps}, configuredFrames,
+  });
+  assert.equal(effective, expected);
+  assert.ok(effective >= configuredFrames);
+  assert.ok(Math.ceil(Math.ceil(seconds * fps) / effective) <= 200);
+}
+
+// Verify the actual SDK launch receives the partition, while budget reservations
+// and retry/concurrency limits retain their existing values. No AWS calls occur.
+for (const {seconds, fps, configuredFrames, expected} of partitionCases.slice(0, 6)) {
+  const requests = [];
+  await renderMediaViaLambda({
+    compositionId: seconds >= 1800 ? 'Longform' : 'BlueprintVideo',
+    inputProps: {...props, output_duration_seconds: seconds, fps},
+    outputPath: '/tmp/partition-fixture.mp4',
+    renderSettings: {...settings, lambda: {...settings.lambda, framesPerLambda: configuredFrames}},
+    dependencies: {
+      fetch: async (url, options) => {
+        const body = JSON.parse(options.body);
+        requests.push({url, body});
+        return {ok: true, status: 200, json: async () => ({reservation: {
+          id: 'partition-fixture', status: url.endsWith('/reserve') ? 'reserved' : 'settled',
+          estimated_cost_microusd: 500000,
+        }})};
+      },
+      renderMediaOnLambda: async (options) => {
+        assert.equal(options.framesPerLambda, expected);
+        assert.equal(options.maxRetries, settings.lambda.maxRetries);
+        assert.equal(options.concurrencyPerLambda, settings.lambda.concurrencyPerLambda);
+        assert.equal(Object.hasOwn(options, 'concurrency'), false);
+        return {renderId: 'partition-fixture', bucketName: 'fixture'};
+      },
+      getRenderProgress: async () => ({done: true, overallProgress: 1}),
+      downloadMedia: async () => ({sizeInBytes: 10}),
+    },
+  });
+  assert.equal(requests.length, 2);
+  assert.equal(requests[0].body.estimated_cost_microusd, 500000);
+  assert.equal(requests[1].body.actual_cost_microusd, 500000);
+}
+
+for (const configuredFrames of [0, -1, 1.5, NaN, Infinity, Number.MAX_SAFE_INTEGER + 1]) {
+  assert.throws(() => resolveLambdaFramesPerFunction({
+    inputProps: props, configuredFrames,
+  }), /positive safe integer/);
+}
+
+for (const invalidProps of [
+  {...props, fps: undefined}, {...props, fps: 0}, {...props, fps: Infinity},
+  {...props, output_duration_seconds: -1}, {...props, output_duration_seconds: NaN},
+  {...props, output_duration_seconds: Number.MAX_SAFE_INTEGER},
+]) {
+  let budgetCalled = false;
+  await assert.rejects(renderMediaViaLambda({
+    compositionId: 'BlueprintVideo', inputProps: invalidProps,
+    outputPath: '/tmp/invalid-partition.mp4', renderSettings: settings,
+    dependencies: {fetch: async () => {budgetCalled = true;}},
+  }), /positive duration and frame rate/);
+  assert.equal(budgetCalled, false);
+}
 
 {
   const order = [];

@@ -66,6 +66,26 @@ const errorSummary = (errors) =>
     .map((item) => item?.message || item?.stack || JSON.stringify(item))
     .join(' | ');
 
+export const resolveLambdaFramesPerFunction = ({inputProps, configuredFrames}) => {
+  const seconds = Number(inputProps?.output_duration_seconds);
+  const fps = Number(inputProps?.fps);
+  const totalFrames = Math.ceil(seconds * fps);
+  if (
+    !Number.isFinite(seconds) || seconds <= 0
+    || !Number.isFinite(fps) || fps <= 0
+    || !Number.isSafeInteger(totalFrames) || totalFrames <= 0
+  ) {
+    throw new Error('Lambda rendering requires a positive duration and frame rate');
+  }
+  if (!Number.isSafeInteger(configuredFrames) || configuredFrames <= 0) {
+    throw new Error('Lambda frames per function must be a positive safe integer');
+  }
+  // Remotion 4.0.529 caps each render at 200 worker functions and requires
+  // at least five frames per worker (or the entire shorter composition).
+  // Match root.jsx's ceil(duration * fps), retaining the operator's lower bound.
+  return Math.max(configuredFrames, Math.min(5, totalFrames), Math.ceil(totalFrames / 200));
+};
+
 
 const outputIdentity = (inputProps) => {
   const outputKey = String(inputProps?.output_key || '').trim();
@@ -212,6 +232,10 @@ export const renderMediaViaLambda = async ({
   dependencies = {},
 }) => {
   assertCloudReachableInputProps(inputProps);
+  const framesPerLambda = resolveLambdaFramesPerFunction({
+    inputProps,
+    configuredFrames: renderSettings.lambda.framesPerLambda,
+  });
 
   const remotionClient = dependencies.renderMediaOnLambda
     ? dependencies
@@ -244,7 +268,7 @@ export const renderMediaViaLambda = async ({
       imageFormat: 'jpeg',
       privacy: 'private',
       maxRetries: lambda.maxRetries,
-      framesPerLambda: lambda.framesPerLambda,
+      framesPerLambda,
       concurrencyPerLambda: lambda.concurrencyPerLambda,
       timeoutInMilliseconds: renderSettings.timeoutInMilliseconds,
       logLevel: 'info',
