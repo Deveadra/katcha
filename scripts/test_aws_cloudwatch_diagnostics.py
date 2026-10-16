@@ -22,10 +22,11 @@ ENV = {"KATCHA_AWS_EXPECTED_ACCOUNT_ID": ACCOUNT, "KATCHA_REMOTION_LAMBDA_REGION
 
 
 class FakeAWS:
-    def __init__(self, account=ACCOUNT, runtime_role=ROLE, bad_readback=False, deny=None):
+    def __init__(self, account=ACCOUNT, runtime_role=ROLE, bad_readback=False, deny=None, bootstrap_root=False):
         self.calls = []
         self.account, self.runtime_role = account, runtime_role
         self.bad_readback, self.deny = bad_readback, deny
+        self.bootstrap_root = bootstrap_root
 
     def __call__(self, profile, region, service, action, *args, **kwargs):
         self.calls.append((profile, region, service, action, args))
@@ -33,7 +34,9 @@ class FakeAWS:
             raise RuntimeError(f"AccessDenied: {service}:{action}")
         if (service, action) == ("sts", "get-caller-identity"):
             arn = (f"arn:aws:sts::{self.account}:assumed-role/{self.runtime_role}/test"
-                   if profile == "katcha-automation" else f"arn:aws:iam::{self.account}:user/bootstrap")
+                   if profile == "katcha-automation" else (
+                       f"arn:aws:iam::{self.account}:root" if self.bootstrap_root
+                       else f"arn:aws:iam::{self.account}:user/bootstrap"))
             return {"Account": self.account, "Arn": arn}
         if (service, action) == ("iam", "get-role"):
             return {"Role": {"Arn": f"arn:aws:iam::{ACCOUNT}:role/{ROLE}"}}
@@ -81,6 +84,14 @@ class CloudWatchIAMTests(unittest.TestCase):
         self.assertTrue({("logs", "get-log-events"), ("logs", "filter-log-events"),
                          ("cloudwatch", "get-metric-statistics"),
                          ("cloudwatch", "get-metric-data")}.issubset({(c[2], c[3]) for c in fake.calls}))
+
+    def test_root_bootstrap_cannot_inspect_or_write_iam(self):
+        for mode in ([], ["--apply"]):
+            with self.subTest(mode=mode):
+                fake = FakeAWS(bootstrap_root=True)
+                with self.assertRaisesRegex(RuntimeError, "root credentials"):
+                    self.run_mode(mode, fake)
+                self.assertEqual(["get-caller-identity"], [call[3] for call in fake.calls])
 
     def test_mismatched_bootstrap_account_fails_closed(self):
         fake = FakeAWS(account="999999999999")
