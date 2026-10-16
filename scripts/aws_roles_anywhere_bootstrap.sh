@@ -22,14 +22,14 @@ Required environment:
 
 Optional environment:
   KATCHA_AWS_BOOTSTRAP_PROFILE     Interactive/admin profile used once for setup.
-                                   Default: katcha
+                                   Default: katcha-admin
   KATCHA_AWS_AUTOMATION_PROFILE    Durable local profile to create.
-                                   Default: katcha-automation
+                                   Default: katcha-admin-automation
   KATCHA_REMOTION_LAMBDA_REGION    AWS region. Default: us-east-1
   KATCHA_AWS_ROLES_ANYWHERE_DIR    Local certificate directory.
                                    Default: ~/.aws/katcha-roles-anywhere
   KATCHA_AWS_ROLES_ANYWHERE_CN     Workload certificate common name.
-                                   Default: katcha-chronos
+                                   Default: katcha-admin-chronos
 EOF
         exit 0
         ;;
@@ -40,7 +40,7 @@ EOF
 esac
 
 EXPECTED_ACCOUNT="${KATCHA_AWS_EXPECTED_ACCOUNT_ID:-}"
-BOOTSTRAP_PROFILE="${KATCHA_AWS_BOOTSTRAP_PROFILE:-katcha}"
+BOOTSTRAP_PROFILE="${KATCHA_AWS_BOOTSTRAP_PROFILE:-katcha-admin}"
 AUTOMATION_PROFILE="${KATCHA_AWS_AUTOMATION_PROFILE:-katcha-automation}"
 REGION="${KATCHA_REMOTION_LAMBDA_REGION:-us-east-1}"
 ROLES_DIR="${KATCHA_AWS_ROLES_ANYWHERE_DIR:-$HOME/.aws/katcha-roles-anywhere}"
