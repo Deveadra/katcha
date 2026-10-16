@@ -19,7 +19,7 @@ build/
 media/
 
 # Agents
-.worktress/
+.worktrees/
 
 # Lockfiles
 infra/aws-render-staging/.terraform.lock.hcl
