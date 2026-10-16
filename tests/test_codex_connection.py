@@ -362,3 +362,270 @@ def test_hosted_callback_preserves_expiry_and_replay_validation(monkeypatch):
             callback_url="http://localhost:1457/auth/callback?state=browser-state&code=code",
             expected_state="browser-state",
         )
+
+
+@pytest.mark.parametrize(
+    "status,payload",
+    [
+        (503, {}),
+        (200, {"models": []}),
+        (200, {"models": [{"slug": "hidden", "visibility": "hide"}]}),
+    ],
+)
+def test_catalog_never_fabricates_available_models(monkeypatch, status, payload):
+    monkeypatch.setattr(codex, "active_session", lambda settings=None: _session())
+    monkeypatch.setattr(
+        codex.httpx, "get", lambda *args, **kwargs: httpx.Response(status, json=payload)
+    )
+    with pytest.raises(
+        codex.CodexConnectionError, match="catalog is unavailable|no available models"
+    ):
+        codex.list_models()
+
+
+def _model_resolution_db(monkeypatch, selected="gpt-5.5"):
+    row = SimpleNamespace(selected_model=selected, active=True)
+
+    @contextmanager
+    def scope():
+        yield SimpleNamespace(scalar=lambda query: row)
+
+    monkeypatch.setattr(codex, "session_scope", scope)
+    return row
+
+
+@pytest.mark.parametrize(
+    "selected,expected", [("gpt-5.5", "account-first"), ("operator-choice", "operator-choice")]
+)
+def test_catalog_resolution_preserves_supported_operator_choice(monkeypatch, selected, expected):
+    from dataclasses import replace
+
+    row = _model_resolution_db(monkeypatch, selected)
+    monkeypatch.setattr(
+        codex,
+        "_catalog_models",
+        lambda info: [
+            codex.CodexModel("account-first", "First"),
+            codex.CodexModel("operator-choice", "Chosen"),
+        ],
+    )
+    result = codex._resolve_model(replace(_session(), model=selected))
+    assert result.model == row.selected_model == expected
+
+
+def test_catalog_resolution_preserves_concurrent_operator_choice(monkeypatch):
+    row = _model_resolution_db(monkeypatch, "operator-choice")
+    monkeypatch.setattr(
+        codex,
+        "_catalog_models",
+        lambda info: [
+            codex.CodexModel("account-first", "First"),
+            codex.CodexModel("operator-choice", "Chosen"),
+        ],
+    )
+    assert codex._resolve_model(_session()).model == row.selected_model == "operator-choice"
+
+
+def test_retired_model_retries_only_after_explicit_rejection(monkeypatch):
+    row = _model_resolution_db(monkeypatch)
+    catalogs = []
+    calls = []
+    monkeypatch.setattr(
+        codex,
+        "_catalog_models",
+        lambda info: catalogs.append(info.model) or [codex.CodexModel("account-first", "First")],
+    )
+
+    def stream(method, url, **kwargs):
+        calls.append(kwargs["json"])
+        if len(calls) == 1:
+            return _StreamContext(
+                httpx.Response(
+                    400,
+                    json={
+                        "detail": "The 'gpt-5.5' model is not supported when using Codex "
+                        "with a ChatGPT account."
+                    },
+                )
+            )
+        body = (
+            'data: {"type":"response.completed","response":{"output":'
+            '[{"type":"output_text","text":"done"}]}}\n\n'
+        )
+        return _StreamContext(httpx.Response(200, content=body.encode()))
+
+    monkeypatch.setattr(codex.httpx, "stream", stream)
+    result = codex._stream(_session(), "request", tool={"type": "web_search"}, image_bytes=b"image")
+    assert result.model == row.selected_model == "account-first"
+    assert catalogs == ["gpt-5.5"]
+    assert len(calls) == 2
+    assert calls[0] | {"model": "account-first"} == calls[1]
+
+
+@pytest.mark.parametrize(
+    "status,payload",
+    [
+        (429, {"error": {"code": "unsupported_model"}}),
+        (500, {"error": {"code": "unsupported_model"}}),
+        (400, {"error": {"message": "Invalid request"}}),
+    ],
+)
+def test_other_http_failures_never_retry_inference(monkeypatch, status, payload):
+    calls = []
+    monkeypatch.setattr(codex, "_catalog_models", lambda info: pytest.fail("No catalog retry"))
+    monkeypatch.setattr(
+        codex.httpx,
+        "stream",
+        lambda *args, **kwargs: (
+            calls.append(kwargs) or _StreamContext(httpx.Response(status, json=payload))
+        ),
+    )
+    with pytest.raises(codex.CodexConnectionError):
+        codex._stream(_session(), "request")
+    assert len(calls) == 1
+
+
+def test_catalog_failure_after_model_rejection_does_not_retry(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        codex,
+        "_catalog_models",
+        lambda info: (_ for _ in ()).throw(codex.CodexConnectionError("catalog unavailable")),
+    )
+    monkeypatch.setattr(
+        codex.httpx,
+        "stream",
+        lambda *args, **kwargs: (
+            calls.append(kwargs)
+            or _StreamContext(httpx.Response(400, json={"error": {"code": "unsupported_model"}}))
+        ),
+    )
+    with pytest.raises(codex.CodexConnectionError, match="catalog unavailable"):
+        codex._stream(_session(), "request")
+    assert len(calls) == 1
+
+
+def test_transport_failure_never_replays_inference(monkeypatch):
+    calls = []
+    monkeypatch.setattr(codex, "_catalog_models", lambda info: pytest.fail("No catalog retry"))
+
+    def stream(*args, **kwargs):
+        calls.append(kwargs)
+        raise httpx.ReadTimeout("uncertain response")
+
+    monkeypatch.setattr(codex.httpx, "stream", stream)
+    with pytest.raises(codex.CodexConnectionError, match="transport failed"):
+        codex._stream(_session(), "request")
+    assert len(calls) == 1
+
+
+@pytest.mark.parametrize(
+    "saved,available,expected",
+    [
+        ("retired", ["new-first", "valid"], "new-first"),
+        (None, ["new-first", "valid"], "new-first"),
+        (None, None, ""),
+        ("valid", ["new-first", "valid"], "valid"),
+        ("retired", None, "retired"),
+    ],
+)
+def test_reconnect_uses_catalog_but_retains_credentials_during_outage(
+    monkeypatch, saved, available, expected
+):
+    from datetime import UTC, datetime, timedelta
+
+    oauth = SimpleNamespace(
+        id=uuid.uuid4(),
+        consumed_at=None,
+        expires_at=datetime.now(UTC) + timedelta(minutes=5),
+        encrypted_code_verifier="verifier",
+        redirect_uri=codex.REDIRECT_URI,
+    )
+    connection = SimpleNamespace(id=uuid.uuid4(), selected_model=saved)
+    lookups = iter([oauth, connection])
+
+    @contextmanager
+    def scope():
+        yield SimpleNamespace(
+            scalar=lambda query: next(lookups),
+            get=lambda *args: oauth,
+            scalars=lambda query: [],
+            flush=lambda: None,
+            refresh=lambda row: None,
+            expunge=lambda row: None,
+        )
+
+    monkeypatch.setattr(codex, "session_scope", scope)
+    monkeypatch.setattr(codex, "decrypt_secret", lambda value, settings: value)
+    monkeypatch.setattr(codex, "encrypt_secret", lambda value, settings: "encrypted:" + value)
+    monkeypatch.setattr(codex, "_jwt_claims", lambda token: {"sub": "subject"})
+    monkeypatch.setattr(
+        codex.httpx,
+        "post",
+        lambda *args, **kwargs: httpx.Response(
+            200, json={"access_token": "renewed-access", "refresh_token": "renewed-refresh"}
+        ),
+    )
+
+    def catalog(info):
+        assert info.access_token == "renewed-access"
+        if available is None:
+            raise codex.CodexConnectionError("catalog unavailable")
+        return [codex.CodexModel(slug, slug) for slug in available]
+
+    monkeypatch.setattr(codex, "_catalog_models", catalog)
+    result = codex.complete_codex_oauth(state="state", code="code", settings=_settings())
+    assert result.selected_model == expected
+    assert result.encrypted_access_token == "encrypted:renewed-access"
+    assert result.encrypted_refresh_token == "encrypted:renewed-refresh"
+    assert result.active is True
+    assert oauth.consumed_at is not None
+
+
+def test_rejected_replacement_is_not_retried_again(monkeypatch):
+    row = _model_resolution_db(monkeypatch)
+    calls = []
+    monkeypatch.setattr(
+        codex, "_catalog_models", lambda info: [codex.CodexModel("account-first", "First")]
+    )
+    monkeypatch.setattr(
+        codex.httpx,
+        "stream",
+        lambda *args, **kwargs: (
+            calls.append(kwargs)
+            or _StreamContext(httpx.Response(400, json={"error": {"code": "unsupported_model"}}))
+        ),
+    )
+    with pytest.raises(codex.CodexConnectionError, match="HTTP 400"):
+        codex._stream(_session(), "request")
+    assert len(calls) == 2
+    assert row.selected_model == "account-first"
+
+
+@pytest.mark.parametrize("selected", ["", "valid"])
+def test_session_resolves_only_when_no_model_is_saved(monkeypatch, selected):
+    from datetime import UTC, datetime, timedelta
+
+    row = SimpleNamespace(
+        id=uuid.uuid4(),
+        selected_model=selected,
+        active=True,
+        encrypted_access_token="token",
+        account_id="account",
+        email=None,
+        plan_type=None,
+        access_token_expires_at=datetime.now(UTC) + timedelta(hours=1),
+    )
+    monkeypatch.setattr(codex, "active_connection", lambda: row)
+    monkeypatch.setattr(codex, "decrypt_secret", lambda value, settings: value)
+    resolved = []
+
+    def resolve(info):
+        from dataclasses import replace
+
+        resolved.append(info)
+        return replace(info, model="catalog-first")
+
+    monkeypatch.setattr(codex, "_resolve_model", resolve)
+    assert codex.active_session(_settings()).model == (selected or "catalog-first")
+    assert len(resolved) == (0 if selected else 1)
