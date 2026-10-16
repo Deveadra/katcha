@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import re
 import subprocess
 import tempfile
 import uuid
@@ -43,22 +44,92 @@ class _PublicDownloadDestination:
 
 
 class _MediaLinks(HTMLParser):
+    """Read static download declarations; never execute page JavaScript."""
+
     def __init__(self):
         super().__init__()
-        self.links: list[str] = []
+        self.links: list[tuple[str, str]] = []
+        self._json_ld: list[str] | None = None
+
+    def _add(self, url, medium=""):
+        if isinstance(url, str) and url.strip() and len(self.links) < 256:
+            self.links.append((url.strip(), medium))
 
     def handle_starttag(self, tag, attrs):
         values = dict(attrs)
-        if tag == "meta" and values.get("property", "") in {
-            "og:image",
-            "og:image:url",
-            "og:video",
-            "og:video:url",
-            "og:audio",
-        }:
-            self.links.append(values.get("content", ""))
-        if tag in {"audio", "video", "source"} and values.get("src"):
-            self.links.append(values["src"])
+        if tag == "meta":
+            name = values.get("property", values.get("name", "")).lower()
+            match = re.fullmatch(r"(?:og:|twitter:)(image|audio|video)(?::url|:secure_url)?", name)
+            if match:
+                self._add(values.get("content"), match[1])
+        if tag in {"audio", "video", "source"}:
+            mime = values.get("type", "").split("/")[0]
+            self._add(values.get("src"), tag if tag != "source" else mime)
+        if tag == "a":
+            href = values.get("href", "")
+            if _media_extension(href) or "download" in values:
+                self._add(href, values.get("type", "").split("/")[0])
+        # Soundboard buttons commonly expose a literal first play() argument.
+        # Only copy that URL. Expressions, concatenation and all other code are ignored.
+        onclick = values.get("onclick", "")
+        match = re.match(r"^\s*(?:return\s+)?play\(\s*(['\"])([^'\"\\]+)\1\s*[,)]", onclick)
+        if match and _media_extension(match[2]):
+            self._add(match[2])
+        if tag == "script" and values.get("type", "").lower() == "application/ld+json":
+            self._json_ld = []
+
+    def handle_data(self, data):
+        if self._json_ld is not None:
+            self._json_ld.append(data)
+
+    def handle_endtag(self, tag):
+        if tag != "script" or self._json_ld is None:
+            return
+        encoded = "".join(self._json_ld)
+        self._json_ld = None
+        try:
+            document = json.loads(encoded)
+        except (ValueError, RecursionError):
+            return
+        self._structured_links(document)
+
+    def _structured_links(self, value, depth=0):
+        if depth > 12:
+            return
+        if isinstance(value, list):
+            for child in value[:64]:
+                self._structured_links(child, depth + 1)
+        elif isinstance(value, dict):
+            kind = value.get("@type", "")
+            medium = {"AudioObject": "audio", "VideoObject": "video", "ImageObject": "image"}.get(
+                kind if isinstance(kind, str) else "", ""
+            )
+            self._add(value.get("contentUrl"), medium)
+            for child in list(value.values())[:64]:
+                if isinstance(child, (dict, list)):
+                    self._structured_links(child, depth + 1)
+
+    def candidates(self, medium):
+        # Artwork must not consume the eight attempts intended for a sound/video.
+        preferred, unknown = [], []
+        for url, declared in self.links:
+            kind = declared or _media_extension(url)
+            if kind == medium:
+                preferred.append(url)
+            elif not kind or (medium == "audio" and kind == "video"):
+                unknown.append(url)
+        return list(dict.fromkeys([*preferred, *unknown]))[:8]
+
+
+def _media_extension(url):
+    suffix = Path(urlsplit(url).path).suffix.lower()
+    if suffix in {".mp3", ".wav", ".ogg", ".m4a", ".aac", ".flac"}:
+        return "audio"
+    if suffix in {".mp4", ".webm", ".mov", ".m4v"}:
+        return "video"
+    if suffix in {".jpg", ".jpeg", ".png", ".gif", ".webp", ".avif"}:
+        return "image"
+    return ""
 
 
 def _fetch(url: str) -> tuple[bytes, str, str]:
@@ -76,6 +147,7 @@ def _fetch(url: str) -> tuple[bytes, str, str]:
         with (
             httpx.Client(
                 transport=PublicDestinationTransport(permission),
+                headers={"User-Agent": "KatchaMediaIntake/1.0 (+https://katcha.stream)"},
                 timeout=20,
                 follow_redirects=False,
                 trust_env=False,
@@ -102,7 +174,7 @@ def download_meme(url: str, medium: str, max_seconds: float) -> tuple[bytes, str
         parser = _MediaLinks()
         parser.feed(data[:1_000_000].decode("utf-8", errors="replace"))
         errors = []
-        for candidate in dict.fromkeys(parser.links[:8]):
+        for candidate in parser.candidates(medium):
             try:
                 body, mime, media_url = _fetch(urljoin(resolved, candidate))
                 return _normalize(body, mime, medium, max_seconds, media_url)

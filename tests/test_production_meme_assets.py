@@ -240,3 +240,98 @@ def test_gemini_uncertain_search_is_not_repeated_through_paid_provider(monkeypat
     with pytest.raises(DiscoveryProviderError) as failure:
         web_scout.WebScoutDiscoveryAdapter().discover({"operator_request": "reaction"}, {})
     assert failure.value.kind == "provider_result_unknown"
+
+
+@pytest.mark.parametrize(
+    "declaration",
+    [
+        '<a href="/media/fail.mp3?download=1">Download sound</a>',
+        "<button onclick=\"play('/media/fail.mp3', this)\">Play</button>",
+        '<script type="application/ld+json">'
+        '{"@graph":[{"@type":"AudioObject","contentUrl":"/media/fail.mp3"}]}'
+        "</script>",
+        '<source src="/media/fail.mp3" type="audio/mpeg">',
+    ],
+)
+def test_sound_page_static_downloads_take_priority_over_artwork(monkeypatch, declaration):
+    html = '<meta property="og:image" content="/artwork.png">' * 12 + declaration
+    visited = []
+
+    def fetch(url):
+        visited.append(url)
+        if url.endswith("page"):
+            return html.encode(), "text/html", url
+        return b"actual downloaded audio", "audio/mpeg", url
+
+    monkeypatch.setattr(memes, "_fetch", fetch)
+    monkeypatch.setattr(
+        memes, "_normalize", lambda data, mime, medium, seconds, url: (data, mime, seconds, url)
+    )
+    result = memes.download_meme("https://example.com/page", "audio", 2)
+    assert result[0] == b"actual downloaded audio"
+    assert visited == ["https://example.com/page", result[3]]
+    assert result[3].startswith("https://example.com/media/fail.mp3")
+
+
+def test_static_parser_does_not_execute_or_interpret_expressions():
+    parser = memes._MediaLinks()
+    parser.feed("""
+        <button onclick="play('/sound.mp3' + token)">No expression</button>
+        <button onclick="evil('/sound.mp3')">No other function</button>
+        <script>fetch('/sound.mp3')</script>
+        <script type="application/ld+json">not JSON</script>
+        <a href="/login">Not media</a>
+    """)
+    assert parser.candidates("audio") == []
+
+
+def test_candidate_limit_deduplicates_and_filters_before_bounding():
+    parser = memes._MediaLinks()
+    parser.feed('<meta property="og:image" content="/art.png">' * 20)
+    parser.feed('<a href="/sound.mp3">sound</a>' * 20)
+    for index in range(12):
+        parser.feed(f'<a href="/sound-{index}.mp3">sound</a>')
+    assert parser.candidates("audio") == ["/sound.mp3", *[f"/sound-{i}.mp3" for i in range(7)]]
+
+
+def test_public_transport_and_identified_client_are_used_for_each_redirect(monkeypatch):
+    import httpx
+
+    permissions = []
+
+    def transport(permission):
+        permissions.append(permission)
+
+        def respond(request):
+            assert request.headers["user-agent"] == "KatchaMediaIntake/1.0 (+https://katcha.stream)"
+            if request.url.host == "example.com":
+                return httpx.Response(302, headers={"location": "https://cdn.example.com/a.mp3"})
+            return httpx.Response(200, content=b"sound", headers={"content-type": "audio/mpeg"})
+
+        return httpx.MockTransport(respond)
+
+    monkeypatch.setattr(memes, "PublicDestinationTransport", transport)
+    assert memes._fetch("https://example.com/page") == (
+        b"sound",
+        "audio/mpeg",
+        "https://cdn.example.com/a.mp3",
+    )
+    assert [permission.host for permission in permissions] == ["example.com", "cdn.example.com"]
+    assert all(not permission.allows_host("127.0.0.1") for permission in permissions)
+
+
+def test_access_denied_is_not_retried_or_bypassed(monkeypatch):
+    import httpx
+
+    requests = []
+
+    def respond(request):
+        requests.append(request)
+        return httpx.Response(403)
+
+    monkeypatch.setattr(
+        memes, "PublicDestinationTransport", lambda permission: httpx.MockTransport(respond)
+    )
+    with pytest.raises(httpx.HTTPStatusError):
+        memes._fetch("https://example.com/blocked")
+    assert len(requests) == 1
