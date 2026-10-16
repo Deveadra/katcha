@@ -136,7 +136,7 @@ def main():
     account = configured("KATCHA_AWS_EXPECTED_ACCOUNT_ID")
     region = configured("KATCHA_REMOTION_LAMBDA_REGION", "us-east-1")
     role = configured("KATCHA_AWS_AUTOMATION_ROLE", "KatchaChronosAutomation")
-    admin = configured("KATCHA_AWS_BOOTSTRAP_PROFILE", "katcha")
+    admin = configured("KATCHA_AWS_BOOTSTRAP_PROFILE", "katcha-admin")
     runtime = configured("KATCHA_AWS_AUTOMATION_PROFILE", "katcha-automation")
     function = configured("KATCHA_REMOTION_LAMBDA_FUNCTION_NAME")
     if not re.fullmatch(r"\d{12}", account):
