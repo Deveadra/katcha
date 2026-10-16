@@ -27,8 +27,10 @@ still be denied by permissions boundaries, session policies, or AWS SCPs.
 
 ## Inspect, apply, verify
 
-Run from your Katcha checkout after reauthenticating the `katcha` bootstrap
-profile. The script reads the expected account and region from environment
+Run from your Katcha checkout after authenticating the non-root `katcha-admin`
+bootstrap profile through AWS IAM Identity Center (`aws sso login --profile
+katcha-admin`). Root-backed profiles are now rejected. See
+[`AWS_BOOTSTRAP_IDENTITY_MIGRATION.md`](AWS_BOOTSTRAP_IDENTITY_MIGRATION.md). The script reads the expected account and region from environment
 variables or the ignored local `.env`; it never requests or prints credentials.
 
 ```bash
