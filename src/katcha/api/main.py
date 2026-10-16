@@ -584,6 +584,7 @@ def list_productions(
     offset: int = Query(default=0, ge=0),
     production_status: str | None = Query(default=None, alias="status"),
     channel_profile_id: uuid.UUID | None = Query(default=None),
+    clip_id: uuid.UUID | None = Query(default=None),
 ) -> list[Production]:
     with session_scope() as session:
         stmt = (
@@ -596,6 +597,8 @@ def list_productions(
             stmt = stmt.where(Production.status == production_status)
         if channel_profile_id:
             stmt = stmt.where(Production.channel_profile_id == channel_profile_id)
+        if clip_id:
+            stmt = stmt.where(Production.clip_id == clip_id)
         return list(session.scalars(stmt))
 
 

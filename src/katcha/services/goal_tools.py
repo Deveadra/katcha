@@ -617,6 +617,14 @@ TOOLS = {
             "/v1/channels/{channel_profile_id}/brands/{version}/activate",
         ),
         GoalTool(
+            "productions",
+            "Find saved productions and render status for an observed clip in this channel. "
+            "Use clip_id to find production IDs before reading exact production details.",
+            "ai:read",
+            "GET",
+            "/v1/productions",
+        ),
+        GoalTool(
             "production",
             "Read exact production status and review evidence",
             "ai:read",
