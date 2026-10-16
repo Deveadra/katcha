@@ -270,6 +270,8 @@ jobs:
 
       - name: Validate AWS render scripts
         run: |
+          bash -n scripts/aws_nonroot_caller_guard.sh
+          bash -n scripts/test_aws_nonroot_caller_guard.sh
           bash -n scripts/aws_render_preflight.sh
           bash -n scripts/aws_lambda_render_acceptance.sh
           bash -n scripts/aws_lambda_backend_enable.sh
@@ -295,6 +297,7 @@ jobs:
           bash scripts/aws_roles_anywhere_bootstrap.sh --help >/dev/null
           bash scripts/aws_tf_state_bootstrap.sh --help >/dev/null
           bash scripts/aws_render_staging_deploy.sh --help >/dev/null
+          bash scripts/test_aws_nonroot_caller_guard.sh
           bash scripts/test_aws_render_preflight.sh
           bash scripts/test_aws_render_staging_deploy.sh
           bash scripts/test_aws_render_authorize.sh
