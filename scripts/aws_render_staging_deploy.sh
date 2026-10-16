@@ -24,11 +24,11 @@ Required configuration (environment or local .env):
 
 Optional configuration:
   KATCHA_REMOTION_LAMBDA_REGION       Default: us-east-1
-  KATCHA_AWS_BOOTSTRAP_PROFILE        Default: katcha
+  KATCHA_AWS_BOOTSTRAP_PROFILE        Default: katcha-admin
   KATCHA_AWS_AUTOMATION_ROLE          Default: KatchaChronosAutomation
-  KATCHA_TERRAFORM_STATE_BUCKET       Default: katcha-tfstate-<account>-<region>
+  KATCHA_TERRAFORM_STATE_BUCKET       Default: katcha-admin-tfstate-<account>-<region>
   KATCHA_REMOTION_STAGING_BUCKET      Optional explicit bucket name
-  KATCHA_REMOTION_STAGING_PREFIX      Default: katcha-render-staging
+  KATCHA_REMOTION_STAGING_PREFIX      Default: katcha-admin-render-staging
   KATCHA_ENV_FILE                     Default: .env
 EOF
         exit 0
@@ -78,7 +78,7 @@ PY
 
 EXPECTED_ACCOUNT="${KATCHA_AWS_EXPECTED_ACCOUNT_ID:-$(read_env_key KATCHA_AWS_EXPECTED_ACCOUNT_ID)}"
 REGION="${KATCHA_REMOTION_LAMBDA_REGION:-$(read_env_key KATCHA_REMOTION_LAMBDA_REGION)}"
-BOOTSTRAP_PROFILE="${KATCHA_AWS_BOOTSTRAP_PROFILE:-katcha}"
+BOOTSTRAP_PROFILE="${KATCHA_AWS_BOOTSTRAP_PROFILE:-katcha-admin}"
 AUTOMATION_ROLE="${KATCHA_AWS_AUTOMATION_ROLE:-KatchaChronosAutomation}"
 STAGING_BUCKET="${KATCHA_REMOTION_STAGING_BUCKET:-$(read_env_key KATCHA_REMOTION_STAGING_BUCKET)}"
 STAGING_PREFIX="${KATCHA_REMOTION_STAGING_PREFIX:-$(read_env_key KATCHA_REMOTION_STAGING_PREFIX)}"
