@@ -151,6 +151,9 @@ if [[ "${ACTUAL_ACCOUNT}" != "${EXPECTED_ACCOUNT}" ]]; then
     exit 3
 fi
 
+# Never run AWS bootstrap or workload operations with account-root credentials.
+bash "${SCRIPT_DIR}/aws_nonroot_caller_guard.sh" "${CALLER_ARN}"
+
 STATE_BUCKET="katcha-tfstate-${EXPECTED_ACCOUNT}-${REGION}"
 EXPECTED_STAGING_BUCKET="katcha-render-staging-${EXPECTED_ACCOUNT}-${REGION}"
 
