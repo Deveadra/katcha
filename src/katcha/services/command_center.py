@@ -1247,7 +1247,7 @@ def failures(channel_profile_id: uuid.UUID) -> tuple[str, list[dict[str, object]
                     "status": render.status,
                     "stage": render.stage,
                     "error": render.error,
-                    "updated_at": render.updated_at,
+                    "updated_at": render.updated_at.isoformat() if render.updated_at else None,
                     "source_type": kind,
                     "production_id": (
                         str(row.id) if kind == "production" else None
@@ -1268,7 +1268,7 @@ def failures(channel_profile_id: uuid.UUID) -> tuple[str, list[dict[str, object]
                     "status": row.status,
                     "stage": row.stage,
                     "error": getattr(row, "error", None),
-                    "updated_at": row.updated_at,
+                    "updated_at": row.updated_at.isoformat() if row.updated_at else None,
                     "generation": getattr(row, "generation", 1),
                 }
             )
@@ -1287,7 +1287,7 @@ def failures(channel_profile_id: uuid.UUID) -> tuple[str, list[dict[str, object]
                 "status": row.status,
                 "stage": row.stage,
                 "error": row.error or row.failure_reason,
-                "updated_at": row.updated_at,
+                "updated_at": row.updated_at.isoformat() if row.updated_at else None,
             }
         )
 
