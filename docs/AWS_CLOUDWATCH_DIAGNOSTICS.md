@@ -46,9 +46,13 @@ python3 scripts/aws_cloudwatch_diagnostics.py --verify
 
 The apply step writes exactly one named inline IAM policy, reads it back and
 checks the durable role using bounded CloudWatch Logs and metrics queries.
-IAM propagation can take time. If the policy readback passes but a runtime
-query returns `AccessDenied`, re-run **only** `--verify` before assuming more
-permissions are required.
+IAM propagation can take time. After `--apply`, the script retries only
+runtime `AccessDenied` failures with bounded delays (2, 4, 8, 16 seconds),
+without writing the policy again. Other failures stop immediately. If access
+is still denied after 30 seconds, `--apply` exits nonzero and preserves the
+last AWS error. The explicit read-only `--verify` command does not retry.
+If needed, re-run **only** `--verify` before assuming more permissions are
+required; investigate persistent failures rather than broadening IAM blindly.
 
 If no log group exists yet, successful discovery is not evidence that Lambda
 has emitted logs. After a Remotion invocation, repeat `--verify` so the
@@ -62,6 +66,14 @@ Do not attach `CloudWatchFullAccess` or `CloudWatchLogsFullAccess` to work
 around the failure. Do not add logs write permissions to the operator role:
 if Lambda cannot **emit** logs, inspect the separate pinned Remotion Lambda
 execution role policy.
+
+
+**Security note:** Check the bootstrap caller printed during inspection. If its
+ARN ends with `:root`, the AWS root identity is being used for an ordinary IAM
+change. This should be replaced with a designated, least-privilege administrative
+profile using temporary credentials (prefer IAM Identity Center); do not
+revoke existing credentials until replacement access has been tested. Never
+share root access keys, or save them in the repository.
 
 ## No-cloud tests
 
