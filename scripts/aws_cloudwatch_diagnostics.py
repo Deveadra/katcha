@@ -10,6 +10,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import time
 
 ROOT = Path(__file__).resolve().parents[1]
 POLICY_NAME = "KatchaCloudWatchReadDiagnostics"
@@ -96,6 +97,36 @@ def verify(account: str, region: str, role: str, profile: str, function: str):
     print(f"PASS: CloudWatch Logs and Metrics read checks for {group}.")
 
 
+
+def verify_after_apply(account: str, region: str, role: str, profile: str, function: str):
+    """Allow a bounded IAM propagation window without masking permanent denies."""
+    retry_delays = (2, 4, 8, 16)  # At most 30 seconds, five read attempts.
+    for attempt in range(len(retry_delays) + 1):
+        try:
+            verify(account, region, role, profile, function)
+            return
+        except RuntimeError as exc:
+            error = str(exc).lower()
+            # Caller/role mismatch and unrelated API failures must fail immediately.
+            if "accessdenied" not in error and "not authorized" not in error:
+                raise
+            if attempt == len(retry_delays):
+                raise RuntimeError(
+                    "BLOCKED: CloudWatch runtime read access still denied after "
+                    "bounded IAM propagation retries (30s). "
+                    "The policy remains attached; check the underlying AccessDenied "
+                    f"and the role's boundaries/SCPs/session policies. Last error: {exc}"
+                ) from exc
+            delay = retry_delays[attempt]
+            print(
+                f"NOTICE: CloudWatch read denied after IAM update; "
+                f"propagation retry {attempt + 1}/{len(retry_delays)} in {delay}s.",
+                file=sys.stderr,
+            )
+            time.sleep(delay)
+
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
     modes = ap.add_mutually_exclusive_group()
@@ -142,7 +173,7 @@ def main():
     if got.get("PolicyDocument") != document:
         raise RuntimeError("BLOCKED: IAM readback differs from reviewed policy")
     print("PASS: IAM role policy attached and read back; verifying runtime reads...")
-    verify(account, region, role, runtime, function)
+    verify_after_apply(account, region, role, runtime, function)
 
 
 if __name__ == "__main__":

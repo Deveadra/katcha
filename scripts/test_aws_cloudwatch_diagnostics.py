@@ -99,6 +99,48 @@ class CloudWatchIAMTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "AccessDenied"):
             self.run_mode(["--verify"], fake)
 
+    def test_apply_retries_only_transient_denial(self):
+        fake = FakeAWS()
+        state = {"denied": False}
+
+        def briefly_denied(profile, region, service, action, *args, **kwargs):
+            if (service, action) == ("logs", "describe-log-groups") and not state["denied"]:
+                state["denied"] = True
+                raise RuntimeError("AccessDeniedException: no identity-based policy allows DescribeLogGroups")
+            return fake(profile, region, service, action, *args, **kwargs)
+
+        with patch.object(mod.time, "sleep") as sleep:
+            self.assertIn("PASS: CloudWatch Logs and Metrics", self.run_mode(["--apply"], briefly_denied))
+        sleep.assert_called_once_with(2)
+        self.assertEqual(1, sum(call[3] == "put-role-policy" for call in fake.calls))
+
+    def test_apply_exhausted_retry_still_fails(self):
+        fake = FakeAWS(deny=("logs", "describe-log-groups"))
+        with patch.object(mod.time, "sleep") as sleep:
+            with self.assertRaisesRegex(RuntimeError, "still denied after bounded IAM propagation retries"):
+                self.run_mode(["--apply"], fake)
+        self.assertEqual([2, 4, 8, 16], [call.args[0] for call in sleep.call_args_list])
+        self.assertEqual(5, sum(call[3] == "describe-log-groups" for call in fake.calls))
+        self.assertEqual(1, sum(call[3] == "put-role-policy" for call in fake.calls))
+
+    def test_apply_role_mismatch_never_retries(self):
+        fake = FakeAWS(runtime_role="OtherRole")
+        with patch.object(mod.time, "sleep") as sleep:
+            with self.assertRaisesRegex(RuntimeError, "not the intended role"):
+                self.run_mode(["--apply"], fake)
+        sleep.assert_not_called()
+
+    def test_apply_non_permission_error_does_not_retry(self):
+        fake = FakeAWS()
+        def invalid_request(profile, region, service, action, *args, **kwargs):
+            if (service, action) == ("logs", "describe-log-groups"):
+                raise RuntimeError("ValidationException: invalid log group prefix")
+            return fake(profile, region, service, action, *args, **kwargs)
+        with patch.object(mod.time, "sleep") as sleep:
+            with self.assertRaisesRegex(RuntimeError, "ValidationException"):
+                self.run_mode(["--apply"], invalid_request)
+        sleep.assert_not_called()
+
     def test_readback_mismatch_fails(self):
         fake = FakeAWS(bad_readback=True)
         with self.assertRaisesRegex(RuntimeError, "IAM readback differs"):
