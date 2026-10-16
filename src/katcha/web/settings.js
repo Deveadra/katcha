@@ -120,7 +120,9 @@ async function loadCodexUsage() {
 async function loadCodex() {
     const status = await api("/v1/integrations/codex/status");
     const connected = Boolean(status.connected);
-    $("codex-badge").textContent = connected ? "CONNECTED" : "NOT CONNECTED";
+    $("codex-badge").textContent = connected
+        ? (status.refresh_due ? "REFRESH DUE" : "SAVED SESSION")
+        : "NOT CONNECTED";
     $("codex-badge").className = "status-pill" + (connected ? "" : " muted");
     $("codex-connect").hidden = connected;
     $("codex-reconnect").hidden = !connected;
@@ -133,7 +135,8 @@ async function loadCodex() {
     $("codex-identity").textContent = status.email || "Connected ChatGPT account";
     $("codex-expiry").textContent =
         (status.selected_model ? "Using " + status.selected_model : "Model pending") +
-        (status.plan_type ? " · " + status.plan_type : "");
+        (status.plan_type ? " · " + status.plan_type : "") +
+        (status.refresh_due ? " · Session token expired; use Test inference to refresh and verify" : " · Test inference to verify access");
 
     const results = await Promise.allSettled([
         api("/v1/integrations/codex/models"),
@@ -178,7 +181,9 @@ async function startCodex() {
 async function loadChatGPT() {
     const status = await api("/v1/integrations/chatgpt/status");
     const connected = Boolean(status.connected);
-    $("chatgpt-badge").textContent = connected ? "CONNECTED" : "NOT CONNECTED";
+    $("chatgpt-badge").textContent = connected
+        ? (status.refresh_due ? "REFRESH DUE" : "SAVED SESSION")
+        : "NOT CONNECTED";
     $("chatgpt-badge").className = "status-pill" + (connected ? "" : " muted");
     $("chatgpt-connect").hidden = connected;
     $("chatgpt-connect").dataset.connectionId = status.saved_connection_id || "";
@@ -190,11 +195,19 @@ async function loadChatGPT() {
 
     $("chatgpt-identity").textContent =
         status.display_name || status.email || "Connected ChatGPT account";
-    $("chatgpt-expiry").textContent = status.selected_model
-        ? "Using " + status.selected_model
-        : "Model selection pending";
+    $("chatgpt-expiry").textContent =
+        (status.selected_model ? "Using " + status.selected_model : "Model selection pending") +
+        (status.refresh_due ? " · Token expired; use Test direct sharing to refresh" : " · Test direct sharing to verify access");
 
-    const models = await api("/v1/integrations/chatgpt/models");
+    // Failure to refresh an old token must not hide the saved connection,
+    // reconnect controls, or the rest of the Settings page.
+    let models;
+    try {
+        models = await api("/v1/integrations/chatgpt/models");
+    } catch (error) {
+        $("chatgpt-expiry").textContent += " · Model catalog unavailable: " + error.message;
+        return;
+    }
     $("chatgpt-model").replaceChildren(
         ...models.map((model) => {
             const option = document.createElement("option");

@@ -405,7 +405,9 @@ def register_source_passthrough_production(
         return production
 
 
-def _clone_scripts(session: object, parent: Production, child: Production) -> None:
+def _clone_scripts(
+    session: object, parent: Production, child: Production, *, expected_count: int = 3,
+) -> None:
     scripts = list(
         session.scalars(
             select(ProductionScript)
@@ -413,8 +415,11 @@ def _clone_scripts(session: object, parent: Production, child: Production) -> No
             .order_by(ProductionScript.candidate_index)
         )
     )
-    if len(scripts) != 3:
+    if len(scripts) != expected_count:
         raise ValueError("parent production does not have a complete script set")
+    selected = [script for script in scripts if script.selected]
+    if len(selected) != 1 or parent.selected_script_id != selected[0].id:
+        raise ValueError("parent production has no unique selected script")
 
     selected_child: ProductionScript | None = None
     for source in scripts:
@@ -567,7 +572,7 @@ def register_regeneration(
         session.flush()
 
         if stage in {"voice", "render"}:
-            _clone_scripts(session, parent, child)
+            _clone_scripts(session, parent, child, expected_count=1 if source_only else 3)
             child.status = ProductionStatus.SCRIPTED.value
             child.stage = "script_selected"
         if stage == "render":
@@ -611,6 +616,7 @@ def register_regeneration(
                 },
             )
         )
+        session.flush()
         session.refresh(child)
         session.expunge(child)
         return child
