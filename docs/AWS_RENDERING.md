@@ -68,6 +68,11 @@ The **user/control-plane policy** is the permission set the durable
 The **role policy** is the execution policy Remotion uses for the Lambda function role;
 do not attach the execution policy to the Chronos automation role.
 
+CloudWatch Logs and metric **read** permissions for the durable role are granted
+through a separate, review-gated policy. See
+[`AWS_CLOUDWATCH_DIAGNOSTICS.md`](AWS_CLOUDWATCH_DIAGNOSTICS.md); do not widen the
+Remotion execution or staging policies for operator diagnostics.
+
 ## Phase 0.25: authorize the durable renderer role
 
 From the repository root, use the review-first helper. It regenerates the pinned

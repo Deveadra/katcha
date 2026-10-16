@@ -301,6 +301,8 @@ jobs:
           bash scripts/test_aws_remotion_deploy.sh
           bash scripts/test_aws_render_staging.sh
           bash scripts/test_aws_tf_state_bootstrap.sh
+          python3 -m py_compile scripts/aws_cloudwatch_diagnostics.py
+          python3 scripts/test_aws_cloudwatch_diagnostics.py
 
       - name: Validate OCI production operator tooling
         run: |
