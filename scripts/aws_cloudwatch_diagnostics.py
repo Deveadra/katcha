@@ -71,6 +71,12 @@ def verify(account: str, region: str, role: str, profile: str, function: str):
     aws(profile, region, "cloudwatch", "get-metric-statistics", "--namespace", "AWS/Lambda",
         "--metric-name", "Errors", "--dimensions", f"Name=FunctionName,Value={function or 'remotion-render-not-deployed'}",
         "--statistics", "Sum", "--period", "300", "--start-time", iso(start), "--end-time", iso(stop), as_json=True)
+    query = json.dumps([{"Id": "errors", "MetricStat": {"Metric": {"Namespace": "AWS/Lambda",
+        "MetricName": "Errors", "Dimensions": [{"Name": "FunctionName",
+        "Value": function or "remotion-render-not-deployed"}]}, "Period": 300, "Stat": "Sum"},
+        "ReturnData": True}])
+    aws(profile, region, "cloudwatch", "get-metric-data", "--metric-data-queries", query,
+        "--start-time", iso(start), "--end-time", iso(stop), as_json=True)
     names = [x.get("logGroupName", "") for x in groups.get("logGroups", [])]
     names = [name for name in names if name.startswith("/aws/lambda/remotion-render-")]
     if not names:
