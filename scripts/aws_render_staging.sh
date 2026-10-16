@@ -93,7 +93,7 @@ PY
 
 EXPECTED_ACCOUNT="${KATCHA_AWS_EXPECTED_ACCOUNT_ID:-$(read_env_key KATCHA_AWS_EXPECTED_ACCOUNT_ID)}"
 REGION="${KATCHA_REMOTION_LAMBDA_REGION:-$(read_env_key KATCHA_REMOTION_LAMBDA_REGION)}"
-BOOTSTRAP_PROFILE="${KATCHA_AWS_BOOTSTRAP_PROFILE:-katcha}"
+BOOTSTRAP_PROFILE="${KATCHA_AWS_BOOTSTRAP_PROFILE:-katcha-admin}"
 DURABLE_PROFILE="${KATCHA_AWS_PROFILE:-$(read_env_key KATCHA_AWS_PROFILE)}"
 RENDERER_ROLE="${KATCHA_AWS_AUTOMATION_ROLE:-KatchaChronosAutomation}"
 STAGING_PREFIX="${KATCHA_REMOTION_STAGING_PREFIX:-$(read_env_key KATCHA_REMOTION_STAGING_PREFIX)}"
@@ -150,6 +150,9 @@ if [[ "${ACTUAL_ACCOUNT}" != "${EXPECTED_ACCOUNT}" ]]; then
     echo "  caller:   ${CALLER_ARN}" >&2
     exit 3
 fi
+
+# Never run AWS bootstrap or workload operations with account-root credentials.
+bash "${SCRIPT_DIR}/aws_nonroot_caller_guard.sh" "${CALLER_ARN}"
 
 STATE_BUCKET="katcha-tfstate-${EXPECTED_ACCOUNT}-${REGION}"
 EXPECTED_STAGING_BUCKET="katcha-render-staging-${EXPECTED_ACCOUNT}-${REGION}"

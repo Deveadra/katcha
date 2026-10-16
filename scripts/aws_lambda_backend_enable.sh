@@ -131,6 +131,9 @@ if [[ "${ACTUAL_ACCOUNT}" != "${EXPECTED_ACCOUNT}" ]]; then
     exit 4
 fi
 
+# Never run AWS bootstrap or workload operations with account-root credentials.
+bash "${SCRIPT_DIR}/aws_nonroot_caller_guard.sh" "${CALLER_ARN}"
+
 DEPLOYED_FUNCTION="$(
     aws lambda get-function         --profile "${PROFILE}"         --region "${REGION}"         --function-name "${FUNCTION_NAME}"         --query Configuration.FunctionName         --output text
 )"

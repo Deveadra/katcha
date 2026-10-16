@@ -136,7 +136,7 @@ def main():
     account = configured("KATCHA_AWS_EXPECTED_ACCOUNT_ID")
     region = configured("KATCHA_REMOTION_LAMBDA_REGION", "us-east-1")
     role = configured("KATCHA_AWS_AUTOMATION_ROLE", "KatchaChronosAutomation")
-    admin = configured("KATCHA_AWS_BOOTSTRAP_PROFILE", "katcha")
+    admin = configured("KATCHA_AWS_BOOTSTRAP_PROFILE", "katcha-admin")
     runtime = configured("KATCHA_AWS_AUTOMATION_PROFILE", "katcha-automation")
     function = configured("KATCHA_REMOTION_LAMBDA_FUNCTION_NAME")
     if not re.fullmatch(r"\d{12}", account):
@@ -151,6 +151,16 @@ def main():
     identity = aws(admin, region, "sts", "get-caller-identity", as_json=True)
     if identity.get("Account") != account:
         raise RuntimeError(f"BLOCKED: bootstrap account mismatch: {identity.get('Arn')}")
+    bootstrap_arn = identity.get("Arn", "")
+    if not re.fullmatch(r"arn:[a-z0-9-]+:(?:iam|sts)::[0-9]{12}:.+", bootstrap_arn):
+        raise RuntimeError("BLOCKED: unrecognized AWS bootstrap caller ARN")
+    if re.fullmatch(r"arn:[a-z0-9-]+:iam::[0-9]{12}:root", bootstrap_arn):
+        raise RuntimeError(
+            "BLOCKED: AWS root credentials are not permitted for Katcha administration. "
+            "Use an MFA-protected administrator session with temporary credentials, "
+            "set KATCHA_AWS_BOOTSTRAP_PROFILE, and consult "
+            "docs/AWS_BOOTSTRAP_IDENTITY_MIGRATION.md"
+        )
     target = aws(admin, region, "iam", "get-role", "--role-name", role, as_json=True)["Role"]["Arn"]
     if not (target == f"arn:aws:iam::{account}:role/{role}" or
             target.startswith(f"arn:aws:iam::{account}:role/") and target.endswith("/" + role)):

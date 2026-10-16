@@ -23,7 +23,7 @@ Required configuration:
 
 Optional configuration:
   KATCHA_AWS_BOOTSTRAP_PROFILE     Authorized bootstrap/admin profile.
-                                   Default: katcha
+                                   Default: katcha-admin
   KATCHA_ENV_FILE                  Local env file. Default: .env
   KATCHA_REMOTION_LAMBDA_REGION    AWS region. Default: us-east-1
   KATCHA_AWS_AUTOMATION_ROLE       Dedicated durable renderer role.
@@ -88,7 +88,7 @@ PY
 }
 
 EXPECTED_ACCOUNT="${KATCHA_AWS_EXPECTED_ACCOUNT_ID:-$(read_env_key KATCHA_AWS_EXPECTED_ACCOUNT_ID)}"
-BOOTSTRAP_PROFILE="${KATCHA_AWS_BOOTSTRAP_PROFILE:-katcha}"
+BOOTSTRAP_PROFILE="${KATCHA_AWS_BOOTSTRAP_PROFILE:-katcha-admin}"
 REGION="${KATCHA_REMOTION_LAMBDA_REGION:-$(read_env_key KATCHA_REMOTION_LAMBDA_REGION)}"
 AUTOMATION_ROLE="${KATCHA_AWS_AUTOMATION_ROLE:-KatchaChronosAutomation}"
 IAM_PROPAGATION_WAIT_SECONDS="${KATCHA_IAM_PROPAGATION_WAIT_SECONDS:-10}"
@@ -212,6 +212,9 @@ if [[ "${ACTUAL_ACCOUNT}" != "${EXPECTED_ACCOUNT}" ]]; then
     echo "  caller:   ${CALLER_ARN}" >&2
     exit 3
 fi
+
+# Never run AWS bootstrap or workload operations with account-root credentials.
+bash "${SCRIPT_DIR}/aws_nonroot_caller_guard.sh" "${CALLER_ARN}"
 
 ROLE_ARN="$(
     aws iam get-role         --profile "${BOOTSTRAP_PROFILE}"         --role-name "${AUTOMATION_ROLE}"         --query Role.Arn         --output text
