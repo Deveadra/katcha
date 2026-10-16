@@ -98,6 +98,16 @@ inventory identifies consumers of the old root-backed `katcha` profile.
 2. Inspect the **root user's access keys** in AWS Console -> account menu ->
    Security credentials -> Root user access keys, and review AWS CloudTrail
    for recent root API activity. Never paste/print key IDs or secret material.
+   If the administrator has `iam:GetAccountSummary`, check the root key
+   indicator without printing key material:
+
+   ```bash
+   aws iam get-account-summary --profile katcha-admin \
+     --query 'SummaryMap.AccountAccessKeysPresent' --output text
+   ```
+
+   A result of `0` indicates no root access keys; nonzero requires investigation.
+   Verify MFA separately in the account security console.
 3. If root API keys exist, identify any remaining callers; **deactivate** the
    root keys via the console after the replacement is proven. Monitor for
    failures before **deleting** them using AWS's documented root security flow.
