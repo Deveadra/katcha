@@ -213,6 +213,9 @@ if [[ "${ACTUAL_ACCOUNT}" != "${EXPECTED_ACCOUNT}" ]]; then
     exit 3
 fi
 
+# Never run AWS bootstrap or workload operations with account-root credentials.
+bash "${SCRIPT_DIR}/aws_nonroot_caller_guard.sh" "${CALLER_ARN}"
+
 ROLE_ARN="$(
     aws iam get-role         --profile "${BOOTSTRAP_PROFILE}"         --role-name "${AUTOMATION_ROLE}"         --query Role.Arn         --output text
 )"
