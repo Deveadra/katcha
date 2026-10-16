@@ -24,8 +24,11 @@ The AWS CLI and SDKs consume the temporary credentials through
 `credential_process`. No AWS access key, secret key, or session token is stored in
 Katcha's `.env`.
 
-The interactive `katcha` profile remains useful only for initial bootstrap,
-break-glass administration, and deliberate infrastructure changes.
+The interactive AWS administrator now uses a **non-root**, MFA-protected
+`katcha-admin` profile with temporary credentials. The old root-backed `katcha`
+profile must be retired after a verified migration, not used for bootstrap or
+break-glass automation. See
+[`AWS_BOOTSTRAP_IDENTITY_MIGRATION.md`](AWS_BOOTSTRAP_IDENTITY_MIGRATION.md).
 
 ## Security model
 
@@ -60,7 +63,7 @@ From the repository root:
 ```bash
 cd ~/src/katcha
 
-aws sts get-caller-identity --profile katcha
+aws sts get-caller-identity --profile katcha-admin
 ```
 
 Copy the exact 12-digit account ID from that output, then set it explicitly:
@@ -68,7 +71,7 @@ Copy the exact 12-digit account ID from that output, then set it explicitly:
 ```bash
 export KATCHA_AWS_EXPECTED_ACCOUNT_ID=<exact-12-digit-account-id>
 export KATCHA_REMOTION_LAMBDA_REGION=us-east-1
-export KATCHA_AWS_BOOTSTRAP_PROFILE=katcha
+export KATCHA_AWS_BOOTSTRAP_PROFILE=katcha-admin
 ```
 
 Do not derive the expected account ID automatically inside the same command that
@@ -231,11 +234,11 @@ aws sts get-caller-identity --profile katcha-automation
 
 To stop using durable authentication for the renderer, switch the local
 `KATCHA_AWS_PROFILE` value in `.env` only as part of a deliberate operator
-change, or omit the Roles Anywhere Compose overlay. The interactive bootstrap
+change, or omit the Roles Anywhere Compose overlay. The MFA-protected bootstrap
 profile remains available explicitly when needed:
 
 ```bash
-aws sts get-caller-identity --profile katcha
+aws sts get-caller-identity --profile katcha-admin
 ```
 
 Do not replace the durable profile with static access keys.
