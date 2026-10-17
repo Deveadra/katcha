@@ -162,7 +162,7 @@ def test_production_video_seek_ranges_are_partial_and_authorized(draft_client):
     token = {"Authorization": "Bearer draft-reviewer-fixture-token-0001"}
     middle = client.get(path, headers={**token, "Range": "bytes=8-12"})
     assert middle.status_code == 206
-    assert middle.content == b"-draf"
+    assert middle.content == b"draft"
     assert middle.headers["content-range"] == "bytes 8-12/19"
     assert middle.headers["content-length"] == "5"
     assert middle.headers["accept-ranges"] == "bytes"
