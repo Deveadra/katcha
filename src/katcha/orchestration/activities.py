@@ -70,7 +70,9 @@ def ingest_source(source_id: str) -> dict[str, str | bool]:
                 source_id, type(diagnostic_error).__name__,
             )
         raise ApplicationError(
-            detail["message"], {"stage": detail["stage"]}, type="MediaIngestionFailure"
+            detail["message"],
+            {key: detail[key] for key in ("stage", "code", "retryable", "recovery")},
+            type="MediaIngestionFailure", non_retryable=detail["retryable"] is False,
         ) from exc
 
 

@@ -16,6 +16,8 @@ from katcha.orchestration.failure_details import safe_failure_text
 
 
 def retrieval_capabilities() -> dict:
+    from katcha.config import get_settings
+
     return {
         "observed_at": datetime.now(UTC).isoformat(),
         "execution_location": "Katcha server; independent of the browser running Katcha",
@@ -30,6 +32,11 @@ def retrieval_capabilities() -> dict:
         },
         "media_download": {
             "engine": "yt-dlp",
+            "youtube_server_session_configured": get_settings().youtube_download_cookie_file
+            is not None,
+            "authentication_help": "A YouTube bot/sign-in challenge requires a server "
+            "download session or an authorized upload; client-browser "
+            "choice does not authenticate the server.",
             "ffprobe_available": shutil.which("ffprobe") is not None,
             "ffmpeg_available": shutil.which("ffmpeg") is not None,
             "live_download_verified": False,

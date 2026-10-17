@@ -4,6 +4,12 @@ from __future__ import annotations
 
 import re
 
+YOUTUBE_DOWNLOAD_AUTH_RECOVERY = (
+    "YouTube requires a signed-in download session on the Katcha server. "
+    "Configure the operator-managed YouTube download session or upload an authorized "
+    "media file. Changing the browser running Katcha does not change this session."
+)
+
 _GENERIC = {
     "activity task failed",
     "child workflow execution failed",
@@ -40,13 +46,25 @@ def failure_details(exc: BaseException) -> dict:
     best = ""
     chain = []
     stage = None
+    classification = {"code": None, "retryable": None, "recovery": None}
     while current is not None and id(current) not in seen and len(chain) < 16:
         seen.add(id(current))
         stage = getattr(current, "diagnostic_stage", None) or stage
+        for key, attribute in (
+            ("code", "diagnostic_code"),
+            ("retryable", "diagnostic_retryable"),
+            ("recovery", "diagnostic_recovery"),
+        ):
+            value = getattr(current, attribute, None)
+            if value is not None:
+                classification[key] = value
         if getattr(current, "type", None) == "MediaIngestionFailure":
             for detail in getattr(current, "details", ()):
                 if isinstance(detail, dict) and isinstance(detail.get("stage"), str):
                     stage = detail["stage"]
+                    for key in classification:
+                        if detail.get(key) is not None:
+                            classification[key] = detail[key]
         message = str(current).strip()
         chain.append({"type": type(current).__name__, "message": safe_failure_text(message)})
         if message and message.casefold() not in _GENERIC:
@@ -55,6 +73,15 @@ def failure_details(exc: BaseException) -> dict:
         if not isinstance(nested, BaseException):
             nested = current.__cause__
         current = nested if isinstance(nested, BaseException) else None
+    if classification["code"] is None and "[youtube]" in best.casefold() and (
+        "sign in to confirm" in best.casefold() or "sign in to view" in best.casefold()
+    ):
+        # Older saved failures predate typed downloader errors. Their explicit
+        # extractor challenge still supplies evidence for the same recovery.
+        classification = {
+            "code": "youtube_authentication_required", "retryable": False,
+            "recovery": YOUTUBE_DOWNLOAD_AUTH_RECOVERY,
+        }
     if stage and best.startswith(f"{stage}: "):
         best = best[len(stage) + 2 :]
     return {
@@ -62,5 +89,6 @@ def failure_details(exc: BaseException) -> dict:
             (f"{stage}: " if stage else "") + (best or str(exc).strip() or type(exc).__name__)
         ),
         "stage": stage,
+        **classification,
         "causes": chain,
     }

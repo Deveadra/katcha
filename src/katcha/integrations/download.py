@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import shutil
 import subprocess
 import uuid
@@ -12,11 +13,20 @@ from urllib.parse import urlsplit, urlunsplit
 from yt_dlp import YoutubeDL
 
 from katcha.config import Settings, get_settings
-from katcha.orchestration.failure_details import MediaPreparationError
+from katcha.orchestration.failure_details import (
+    YOUTUBE_DOWNLOAD_AUTH_RECOVERY,
+    MediaPreparationError,
+)
 
 
 class MediaDownloadError(MediaPreparationError):
     pass
+
+
+class DownloadAuthenticationRequired(MediaDownloadError):
+    diagnostic_code = "youtube_authentication_required"
+    diagnostic_retryable = False
+    diagnostic_recovery = YOUTUBE_DOWNLOAD_AUTH_RECOVERY
 
 
 @dataclass(slots=True)
@@ -39,17 +49,14 @@ def canonicalize_url(url: str) -> str:
 
 
 def detect_platform(url: str) -> str:
-    host = urlsplit(url).netloc.lower().removeprefix("www.")
-    if "tiktok.com" in host:
-        return "tiktok"
-    if "instagram.com" in host:
-        return "instagram"
-    if "facebook.com" in host or "fb.watch" in host:
-        return "facebook"
-    if "reddit.com" in host or "redd.it" in host:
-        return "reddit"
-    if "youtube.com" in host or "youtu.be" in host:
-        return "youtube"
+    host = (urlsplit(url).hostname or "").lower().removeprefix("www.")
+    for platform, domains in {
+        "tiktok": ("tiktok.com",), "instagram": ("instagram.com",),
+        "facebook": ("facebook.com", "fb.watch"), "reddit": ("reddit.com", "redd.it"),
+        "youtube": ("youtube.com", "youtu.be"),
+    }.items():
+        if any(host == domain or host.endswith("." + domain) for domain in domains):
+            return platform
     return "generic"
 
 
@@ -86,7 +93,7 @@ def download(url: str, settings: Settings | None = None) -> DownloadedMedia:
     canonical = canonicalize_url(url)
     platform = detect_platform(canonical)
     job_dir = settings.work_dir / f"ingest-{uuid.uuid4().hex}"
-    job_dir.mkdir(parents=True, exist_ok=False)
+    job_dir.mkdir(mode=0o700, parents=True, exist_ok=False)
 
     options = {
         "outtmpl": str(job_dir / "%(id)s.%(ext)s"),
@@ -100,13 +107,25 @@ def download(url: str, settings: Settings | None = None) -> DownloadedMedia:
     }
 
     stage = "download"
+    cookie_copy = job_dir / "server-session.cookies"
     try:
+        if platform == "youtube" and settings.youtube_download_cookie_file is not None:
+            stage = "download authentication configuration"
+            # yt-dlp saves its cookie jar on exit. Copy into a private per-job
+            # file so a read-only secret mount stays untouched and parallel
+            # attempts cannot overwrite the shared server session.
+            fd = os.open(cookie_copy, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            os.close(fd)
+            shutil.copyfile(settings.youtube_download_cookie_file, cookie_copy)
+            options["cookiefile"] = str(cookie_copy)
+        stage = "download"
         with YoutubeDL(options) as ydl:
             info = ydl.extract_info(canonical, download=True)
 
         stage = "download output"
         candidates = [
-            p for p in job_dir.iterdir() if p.is_file() and not p.name.endswith(".part")
+            p for p in job_dir.iterdir()
+            if p.is_file() and p != cookie_copy and not p.name.endswith(".part")
         ]
         if not candidates:
             raise RuntimeError(f"yt-dlp produced no media file for {canonical}")
@@ -142,4 +161,9 @@ def download(url: str, settings: Settings | None = None) -> DownloadedMedia:
         )
     except Exception as exc:
         shutil.rmtree(job_dir, ignore_errors=True)
+        message = str(exc).casefold()
+        if platform == "youtube" and stage == "download" and (
+            "sign in to confirm" in message or "sign in to view" in message
+        ):
+            raise DownloadAuthenticationRequired(stage, exc) from exc
         raise MediaDownloadError(stage, exc) from exc

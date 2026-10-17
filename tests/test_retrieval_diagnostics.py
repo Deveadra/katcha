@@ -293,3 +293,35 @@ def test_acquired_candidate_cannot_complete_exact_scene_request(saved):
     # Downloading a whole source does not require proving a scene match.
     goal.authorization["retrieval_targets"][0]["scene_specific"] = False
     assert _retrieval_completion_error(goal, decision) is None
+
+
+async def test_youtube_challenge_does_not_schedule_futile_activity_retries(saved, monkeypatch):
+    from temporalio.api.failure.v1 import Failure
+    from temporalio.converter import DataConverter
+    from temporalio.exceptions import ApplicationError
+
+    from katcha.integrations.download import DownloadAuthenticationRequired
+    from katcha.orchestration import activities
+
+    def challenge(source_id):
+        raise DownloadAuthenticationRequired("download", RuntimeError("Sign in to confirm"))
+
+    monkeypatch.setattr(activities, "_ingest_source", challenge)
+    with pytest.raises(ApplicationError) as caught:
+        activities.ingest_source(str(uuid.uuid4()))
+    assert caught.value.non_retryable is True
+    encoded = Failure()
+    await DataConverter.default.encode_failure(caught.value, encoded)
+    restored = await DataConverter.default.decode_failure(encoded)
+    detail = failure_details(restored)
+    assert detail["code"] == "youtube_authentication_required"
+    assert detail["retryable"] is False
+    assert "server" in detail["recovery"]
+
+
+def test_historical_youtube_failure_gets_same_server_recovery():
+    legacy = RuntimeError("ERROR: [youtube] fixture: Sign in to confirm you’re not a bot")
+    detail = failure_details(legacy)
+    assert detail["code"] == "youtube_authentication_required"
+    assert detail["retryable"] is False
+    assert "server" in detail["recovery"]

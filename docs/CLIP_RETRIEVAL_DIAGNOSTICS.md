@@ -46,20 +46,66 @@ to ingestion `ingest-8c94f87960f1aae5956348901475d326`.
 
 ## Evidence boundaries and remaining live work
 
-The exact downloader failure in the supplied production histories is **not yet
-established**. The existing verified SSH tunnel initially listed production
-containers, then refused connections on localhost port 22022 before those histories
-could be read. No new Bastion session, credentials, provider calls, downloads,
-production configuration changes or restart were performed for this investigation.
-Code inspection establishes the diagnostic defects above; it does not establish
-whether the incident's download failed because of authentication, region, video
-availability, network, media inspection or storage.
+Read-only inspection of all three production histories on 2026-10-17 established
+that YouTube rejected the downloads with “Sign in to confirm you’re not a bot.”
+The Kate Bishop preparation attempted videos `PRBwFwZC6kU` and `wkqOBZnrsQY`;
+both failed in `ingest_source` with that challenge. The Ultron preparation used
+`PRBwFwZC6kU` again and failed the same way. Its media source
+`9c4de52a-4d47-4787-97a3-3c8172df60ab` retained only “Activity task failed” and
+had no acquired clip. This proves an acquisition authentication challenge, not a
+verified scene match or a problem caused by the operator's browser.
 
-After an operator restores the approved production access path, inspect all three
-histories and their nested failures, source diagnostic events, and exact deployed
-release/worker revisions. Do not silently retry unknown acquisition outcomes.
-If desired, rerun acquisition only with authorized source access and budget.
-A configuration snapshot or successful page read is not a successful media download.
+The API, intelligence worker and ingestion worker reported the same deployed
+release `ae861124cf8747680c5fb70540e547415023095a`, no legacy named control
+principals, and the configured Cloudflare principal `operator-ui`. The three
+historical revoked-error goals were actually bound to
+`control-principal:cloudflare-access:operator-ui`. They predate accepted commit
+`b18cdbc6` (Cloudflare goal-authority binding, 2026-10-15), supporting the historical
+authority-routing defect rather than a finding of deliberate operator revocation.
+Current Cloudflare authority handling has dedicated regression coverage. The
+original 2026-10-14 generic planning failure has no specific provider cause saved
+in its goal receipt; current planner tests cover categorized provider errors.
+
+The existing tunnel initially closed. After explicit operator authorization, the
+guarded access command created one temporary session on the existing OCI Bastion.
+Production queries were read-only. No credential contents, browser cookies,
+provider calls, downloads, production configuration changes or service restart
+were used for this investigation.
+
+Recognized YouTube sign-in challenges now carry a stable
+`youtube_authentication_required` code, a server-session/upload recovery explanation,
+and non-retryable Temporal application failures. A separate explicit retry remains
+possible after authentication changes. Other download errors retain their normal
+retry behavior.
+
+An optional `KATCHA_YOUTUBE_DOWNLOAD_COOKIE_FILE` accepts an operator-managed
+Netscape cookie jar on the server. It never extracts a session from the browser
+running Katcha. Mount the file read-only into the ingestion worker outside the
+checkout, set that environment variable to its container path, and keep the file
+out of Git and chat. For example, an operator-reviewed Compose override may add:
+
+```yaml
+services:
+  worker:
+    environment:
+      KATCHA_YOUTUBE_DOWNLOAD_COOKIE_FILE: /run/secrets/youtube-download.cookies
+    volumes:
+      - type: bind
+        source: /etc/katcha/youtube-download.cookies
+        target: /run/secrets/youtube-download.cookies
+        read_only: true
+        bind:
+          create_host_path: false
+```
+
+That is a configuration example, not a production change performed by this task.
+Use a session the operator is authorized to use. The downloader copies it into a
+private per-job directory/file (0700/0600), allows yt-dlp to update only that
+copy, excludes it from media detection, and removes it on success or failure.
+A configured cookie jar does not guarantee acceptance of a particular video,
+server IP, region or session. An authorized direct file upload is another
+existing intake path. Provisioning/replacing a session and a supervised rollout
+still need their own operator action; no such credentials were provided here.
 
 Automatic verification of characters performing an action through time is still
 unavailable. Sampled-still semantic hypotheses and web metadata do not supply that
