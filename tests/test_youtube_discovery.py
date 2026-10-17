@@ -152,6 +152,85 @@ def test_youtube_auth_falls_back_to_active_oauth_for_shared_source(
     assert headers == {"Authorization": "Bearer shared-oauth-token"}
 
 
+def test_expired_youtube_oauth_reports_precise_refresh_failure(monkeypatch):
+    from katcha.acquisition import youtube_discovery as module
+    from katcha.integrations.youtube.tokens import YouTubeCredentialError
+
+    connection_id = uuid.uuid4()
+    monkeypatch.setattr(
+        module, "get_settings",
+        lambda: SimpleNamespace(youtube_data_api_key=None),
+    )
+    monkeypatch.setattr(
+        module, "get_valid_access_token",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            YouTubeCredentialError("YouTube OAuth client is not configured")
+        ),
+    )
+    with pytest.raises(ValueError, match="OAuth client is not configured"):
+        _youtube_request_auth({"youtube_connection_id": str(connection_id)})
+
+
+def test_discovery_falls_back_to_key_when_explicit_oauth_cannot_refresh(monkeypatch):
+    from katcha.acquisition import youtube_discovery as module
+    from katcha.integrations.youtube.tokens import YouTubeCredentialError
+
+    monkeypatch.setattr(
+        module, "get_settings",
+        lambda: SimpleNamespace(youtube_data_api_key="safe-public-key"),
+    )
+    monkeypatch.setattr(
+        module, "get_valid_access_token",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            YouTubeCredentialError("YouTube OAuth revoked")
+        ),
+    )
+    assert _youtube_request_auth({"youtube_connection_id": str(uuid.uuid4())}) == (
+        {"key": "safe-public-key"}, {}
+    )
+
+
+@pytest.mark.parametrize("selector", ["@marvel", "https://www.youtube.com/@marvel/videos"])
+def test_youtube_verification_uses_one_unit_and_never_searches(monkeypatch, selector):
+    from katcha.acquisition import youtube_discovery as module
+
+    calls = []
+    monkeypatch.setattr(
+        module, "_youtube_request_auth",
+        lambda query: ({"key": "test-secret"}, {}),
+    )
+
+    class FakeClient:
+        def __init__(self, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return None
+
+    monkeypatch.setattr(module.httpx, "Client", FakeClient)
+
+    def fake_get(client, url, *, params, operation, headers=None, provider_usage=None):
+        calls.append((url, params, operation, provider_usage))
+        return {"items": [{"id": "UC" + "a" * 22}]}
+
+    monkeypatch.setattr(module, "_provider_get_json", fake_get)
+    outcome = module.verify_youtube_discovery({"channel_reference": selector})
+    assert outcome == {
+        "status": "verified",
+        "authentication": "api_key",
+        "operation": "channels.list",
+        "quota_units": 1,
+        "channel_found": True,
+    }
+    assert len(calls) == 1
+    assert calls[0][0] == module._CHANNELS_URL
+    assert calls[0][1]["forHandle"] == "@marvel"
+    assert calls[0][3] == {"youtube.core": 1}
+
+
 def test_youtube_provider_error_does_not_expose_api_key() -> None:
     api_key = "secret-youtube-key"
 
