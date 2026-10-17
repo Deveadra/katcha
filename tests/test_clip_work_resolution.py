@@ -7,7 +7,7 @@ from temporalio.client import WorkflowExecutionStatus
 
 from katcha import db
 from katcha.models import DomainEvent
-from katcha.production_models import Production
+from katcha.production_models import Production, ProductionReview
 from katcha.services import clip_work_resolution as resolution
 from katcha.services.clip_lifecycle import active_clip_references
 from katcha.short_episode_models import ShortEpisode
@@ -90,6 +90,12 @@ async def test_review_rejection_requires_completed_workflow(fixture_work, monkey
     )
     assert finished.state == "resolved"
     assert finished.status == "rejected"
+    with db.session_scope() as session:
+        saved = session.query(ProductionReview).filter_by(
+            production_id=ids["production"], decision="reject"
+        ).one()
+        assert saved.actor == "test-operator"
+        assert saved.review_metadata["clip_id"] == str(clip_id)
 
 
 @pytest.mark.asyncio
