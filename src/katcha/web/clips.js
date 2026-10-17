@@ -80,7 +80,7 @@ async function apiBlob(path) {
 }
 
 function clearPreview() {
-    if (state.previewUrl) URL.revokeObjectURL(state.previewUrl);
+    if (state.previewUrl?.startsWith("blob:")) URL.revokeObjectURL(state.previewUrl);
     state.previewUrl = null;
 }
 
@@ -547,12 +547,58 @@ async function loadPreview(id, button) {
     const host = $("clip-preview");
     host.innerHTML = '<div class="empty">Loading stored video…</div>';
     try {
-        const blob = await apiBlob(`/v1/clips/${encodeURIComponent(id)}/media`);
+        const session = await api(`/v1/clips/${encodeURIComponent(id)}/media-session`, {
+            method: "POST",
+        });
         clearPreview();
-        state.previewUrl = URL.createObjectURL(blob);
-        host.innerHTML = `<video controls playsinline preload="metadata" src="${escapeHTML(state.previewUrl)}"></video>`;
+        state.previewUrl = session.media_url;
+        host.replaceChildren();
+        const video = document.createElement("video");
+        video.controls = true;
+        video.playsInline = true;
+        video.preload = "metadata";
+        video.src = state.previewUrl;
+        const feedback = document.createElement("p");
+        feedback.setAttribute("role", "status");
+        feedback.textContent = "Loading video metadata…";
+        video.addEventListener("loadedmetadata", () => {
+            feedback.textContent = "Drag the video timeline or use the seek controls.";
+        });
+        video.addEventListener("seeking", () => {
+            feedback.textContent = "Seeking…";
+        });
+        video.addEventListener("seeked", () => {
+            feedback.textContent = "Moved to " + Math.round(video.currentTime) + "s.";
+        });
+        video.addEventListener("error", () => {
+            feedback.textContent = "Video playback failed. Reload the preview to renew access.";
+            button.disabled = false;
+            button.textContent = "Reload preview";
+        });
+        const actions = document.createElement("div");
+        actions.className = "clip-seek-actions";
+        for (const [label, offset] of [["Back 10s", -10], ["Forward 10s", 10]]) {
+            const step = document.createElement("button");
+            step.type = "button";
+            step.className = "mini";
+            step.textContent = label;
+            step.addEventListener("click", () => {
+                if (!Number.isFinite(video.duration)) {
+                    feedback.textContent = "Waiting for video duration before seeking.";
+                    return;
+                }
+                video.currentTime = Math.max(0, Math.min(
+                    video.duration, video.currentTime + offset,
+                ));
+            });
+            actions.append(step);
+        }
+        host.append(video, actions, feedback);
     } catch (error) {
         host.innerHTML = `<div class="empty error">${escapeHTML(error.message)}</div>`;
+    } finally {
+        // A review can outlast a signed media session. Keep the same control
+        // available to renew playback rather than leaving it disabled forever.
         button.disabled = false;
     }
 }

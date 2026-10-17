@@ -1991,7 +1991,7 @@ function clearProductionPreviews() {
         video.pause();
         video.removeAttribute("src");
         video.load();
-        URL.revokeObjectURL(url);
+        if (url?.startsWith("blob:")) URL.revokeObjectURL(url);
     }
     state.productionPreviews.clear();
 }
@@ -2011,9 +2011,15 @@ async function loadProductionDraft(button) {
     button.disabled = true;
     status.textContent = "Loading your draft…";
     try {
-        const blob = await audioBlob("/v1/productions/" + encodeURIComponent(id) + "/media");
+        // Native video requests its own byte ranges. A short-lived,
+        // HttpOnly, exact-resource cookie avoids a multi-GB Blob download
+        // and does not expose the operator bearer token in the media URL.
+        const session = await api(
+            "/v1/productions/" + encodeURIComponent(id) + "/media-session",
+            {method: "POST"},
+        );
         if (state.channelId !== channelId || !button.isConnected) return;
-        const url = URL.createObjectURL(blob);
+        const url = session.media_url;
         const video = document.createElement("video");
         video.controls = true;
         video.tabIndex = 0;
@@ -2023,10 +2029,45 @@ async function loadProductionDraft(button) {
         video.style.maxHeight = "70vh";
         video.setAttribute("aria-label", "Finished production draft");
         video.src = url;
-        state.productionPreviews.set(id, {video, url, generation: card.dataset.generation});
-        preview.replaceChildren(video);
+        video.addEventListener("loadedmetadata", () => {
+            status.textContent = "Draft ready. Drag the timeline or use the seek controls.";
+        });
+        video.addEventListener("seeking", () => {
+            status.textContent = "Seeking to the requested time…";
+        });
+        video.addEventListener("seeked", () => {
+            status.textContent = "Moved to " + Math.round(video.currentTime) + "s.";
+        });
+        video.addEventListener("error", () => {
+            status.textContent = "Playback or seeking failed. Reload the draft to renew the private media session.";
+            button.hidden = false;
+            button.disabled = false;
+            button.textContent = "Reload draft";
+        });
+        const seek = document.createElement("div");
+        seek.className = "production-seek-controls";
+        for (const [label, offset] of [["Back 10s", -10], ["Forward 10s", 10]]) {
+            const action = document.createElement("button");
+            action.type = "button";
+            action.className = "studio-button secondary small";
+            action.textContent = label;
+            action.addEventListener("click", () => {
+                if (!Number.isFinite(video.duration)) {
+                    status.textContent = "Wait for video duration before seeking.";
+                    return;
+                }
+                video.currentTime = Math.max(0, Math.min(
+                    video.duration, video.currentTime + offset,
+                ));
+            });
+            seek.append(action);
+        }
+        state.productionPreviews.set(id, {
+            video, url, seek, generation: card.dataset.generation,
+        });
+        preview.replaceChildren(video, seek);
         video.focus();
-        status.textContent = "Draft loaded. Use the player to review it.";
+        status.textContent = "Loading seekable video metadata…";
         button.hidden = true;
     } catch (error) {
         if (state.channelId === channelId && button.isConnected) {
@@ -2072,7 +2113,8 @@ function renderProductions() {
         const current = state.productions.find((item) => item.id === id);
         if (!current || String(current.generation) !== saved.generation) {
             saved.video.pause(); saved.video.removeAttribute("src"); saved.video.load();
-            URL.revokeObjectURL(saved.url); state.productionPreviews.delete(id);
+            if (saved.url?.startsWith("blob:")) URL.revokeObjectURL(saved.url);
+            state.productionPreviews.delete(id);
             if (state.openedLinkedProduction === id) state.openedLinkedProduction = "";
         }
     }
@@ -2125,7 +2167,7 @@ function renderProductions() {
     for (const region of container.querySelectorAll("[data-draft-preview]")) {
         const saved = state.productionPreviews.get(region.dataset.draftPreview);
         if (!saved) continue;
-        region.append(saved.video);
+        region.append(saved.video, saved.seek);
         region.closest(".production-card").querySelector("[data-watch-production]").hidden = true;
     }
 }

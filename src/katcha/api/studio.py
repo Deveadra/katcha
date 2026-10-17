@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+import mimetypes
 import re
 import uuid
 from typing import Literal
@@ -69,19 +70,29 @@ def _workflow_id(base: str) -> str:
     return f"{base}-editorial-render"
 
 
-def _stream_object(request: Request, key: str, filename: str) -> StreamingResponse:
+def _stream_object(
+    request: Request,
+    key: str,
+    filename: str,
+    *,
+    cache_control: str = "private, max-age=60",
+    missing_detail: str = "media object is missing",
+) -> StreamingResponse:
     store = ObjectStore()
     if not store.exists(key):
-        raise HTTPException(status_code=404, detail="media object is missing")
+        raise HTTPException(status_code=404, detail=missing_detail)
     metadata = store.stat(key)
     size = int(metadata["size_bytes"])
     if size <= 0:
         raise HTTPException(status_code=409, detail="media object is empty")
     content_type = str(metadata.get("content_type") or "application/octet-stream")
+    if content_type == "application/octet-stream":
+        content_type = mimetypes.guess_type(filename)[0] or content_type
     range_header = request.headers.get("range")
     headers = {
         "Accept-Ranges": "bytes",
-        "Cache-Control": "private, max-age=60",
+        "Cache-Control": cache_control,
+        "X-Content-Type-Options": "nosniff",
         "Content-Disposition": f'inline; filename="{filename}"',
     }
     if not range_header:
