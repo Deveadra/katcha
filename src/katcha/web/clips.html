@@ -182,20 +182,16 @@
         </form>
     </dialog>
 
-    <dialog id="purge-dialog" class="vault-dialog compact-dialog">
+    <dialog id="purge-dialog" class="vault-dialog compact-dialog" aria-labelledby="purge-title">
         <div class="dialog-head">
-            <div><div class="danger-kicker">DELETE STORED MEDIA</div><h2>Keep the record, remove the bytes</h2></div>
-            <button type="button" class="mini" data-close-dialog="purge-dialog">Close</button>
+            <div><div class="danger-kicker">DELETE STORED MEDIA</div><h2 id="purge-title">Permanently delete stored video</h2></div>
+            <button type="button" class="mini" data-close-dialog="purge-dialog">Cancel</button>
         </div>
-        <section id="purge-step1">
-            <p class="dialog-copy">Katcha will retain metadata, tags, source lineage, transcript, AI analysis, and audit history. The source video itself will be permanently removed.</p>
-            <button id="purge-continue" class="button danger-button" type="button">Continue</button>
-        </section>
-        <section id="purge-step2" hidden>
-            <p>Type <code id="purge-phrase"></code> exactly:</p>
-            <input id="purge-confirm-input" autocomplete="off">
-            <div class="dialog-actions"><button id="purge-confirm" class="button danger-button" type="button">Delete media permanently</button></div>
-        </section>
+        <p class="dialog-copy">This removes the source video bytes but keeps the searchable record, tags, source lineage, transcript, AI analysis, and audit history. Videos in active productions cannot be deleted until that work finishes or is cancelled.</p>
+        <label for="purge-confirm-input">To confirm, type <code id="purge-phrase"></code> exactly:</label>
+        <input id="purge-confirm-input" type="text" autocomplete="off" spellcheck="false" aria-describedby="purge-feedback">
+        <p id="purge-feedback" role="status" aria-live="polite">Enter the confirmation phrase to enable deletion.</p>
+        <div class="dialog-actions"><button id="purge-confirm" class="button danger-button" type="button" disabled>Delete stored video</button></div>
     </dialog>
 </body>
 </html>
