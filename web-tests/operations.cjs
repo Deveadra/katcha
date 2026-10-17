@@ -374,6 +374,11 @@ function payload(selected = "") {
             false,
         );
         assert.deepEqual(errors, []);
+        const openCard = page.locator("#opportunity-list .ops-row[data-card-href]").first();
+        assert.equal(await openCard.getAttribute("role"), "link");
+        assert.equal(await openCard.getAttribute("tabindex"), "0");
+        await openCard.locator(".ops-row-main").click();
+        await page.waitForURL(/\/explorer\?channel=/);
         console.log(
             "PASS: Operations prioritization, safe resume/restart controls, channel drill-down, performance evidence, stale-view recovery, secure auth and mobile width",
         );
