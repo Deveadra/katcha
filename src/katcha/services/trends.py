@@ -414,7 +414,10 @@ def _signals_for_topic(
                             TrendSignal.signal_metadata["channel_profile_id"].as_string().is_(None),
                             or_(
                                 TrendSignal.signal_metadata["source_scope"].as_string().is_(None),
-                                TrendSignal.signal_metadata["source_scope"].as_string() != "channel",
+                                (
+                                    TrendSignal.signal_metadata["source_scope"].as_string()
+                                    != "channel"
+                                ),
                             ),
                         ),
                     ),
