@@ -7,7 +7,7 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import func, select
+from sqlalchemy import and_, func, or_, select
 
 from katcha.db import session_scope
 from katcha.intelligence_models import ChannelProfile
@@ -388,6 +388,7 @@ def list_signals(
 def _signals_for_topic(
     topic_id: uuid.UUID,
     *,
+    channel_profile_id: uuid.UUID,
     cutoff: datetime,
     source_weights: dict[str, float],
     platforms: list[str],
@@ -402,6 +403,21 @@ def _signals_for_topic(
                 .where(
                     TrendTopicSignal.trend_topic_id == topic_id,
                     TrendSignal.observed_at >= cutoff,
+                    # A channel-scoped discovery signal cannot contribute to
+                    # another channel's score/evidence, even if its topic title
+                    # happens to match. Legacy and explicitly shared signals
+                    # remain visible to channel scoring.
+                    or_(
+                        TrendSignal.signal_metadata["channel_profile_id"].as_string()
+                        == str(channel_profile_id),
+                        and_(
+                            TrendSignal.signal_metadata["channel_profile_id"].as_string().is_(None),
+                            or_(
+                                TrendSignal.signal_metadata["source_scope"].as_string().is_(None),
+                                TrendSignal.signal_metadata["source_scope"].as_string() != "channel",
+                            ),
+                        ),
+                    ),
                 )
                 .order_by(TrendSignal.observed_at.desc())
                 .limit(MAX_SIGNALS_PER_TOPIC)
@@ -613,6 +629,7 @@ def refresh_channel_trends(
     for topic in topics:
         signals, samples = _signals_for_topic(
             topic.id,
+            channel_profile_id=channel_profile_id,
             cutoff=cutoff,
             source_weights=config["source_weights"],
             platforms=config["platforms"],
