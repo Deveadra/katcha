@@ -24,6 +24,7 @@ from katcha.orchestration.discovery_activities import (
     execute_discovery_page_activity,
     finalize_topic_watch_execution_activity,
 )
+from katcha.orchestration.research_activities import reconcile_completed_source_handoffs
 from katcha.publishing_models import YouTubeConnection
 from katcha.services.ingestion_sources import (
     create_discovery_run_from_source,
@@ -238,6 +239,108 @@ def test_source_dossier_handoff_exposes_missing_watch_profile(research_db, monke
     assert result["evidence_packets_built"] == 0
     with db.session_scope() as session:
         assert session.get(DiscoveryRun, run.id).status == "completed"
+
+
+def test_historical_completed_source_reconciles_without_new_discovery(
+    research_db, monkeypatch,
+):
+    profile, _ = channel()
+    create_watch_profile(profile, interests=["Gaming"], opportunity_threshold=0.99)
+    source = upsert_ingestion_source(
+        source_key="historical-source",
+        name="Historical gaming feed",
+        adapter_key="rss_atom",
+        adapter_version="v1",
+        platform="web",
+        channel_profile_id=profile,
+        query_template={"feed_url": "https://example.com/old-feed"},
+        source_metadata={"automatic_research": False},
+    )
+    requests = []
+    def discover(query, cursor):
+        requests.append(1)
+        return DiscoveryBatch(items=(
+            DiscoveredCandidate(
+                source_url="https://example.com/game-update",
+                title="Gaming update",
+                creator="Fixture newsroom",
+                provenance_confidence=0.9,
+                metadata={"published_at": datetime.now(UTC).isoformat()},
+            ),
+        ))
+    monkeypatch.setattr(get_adapter("rss_atom", "v1"), "discover", discover)
+    run = create_discovery_run_from_source(source.id, idempotency_key="historical-1")
+    execute_discovery_page_activity(str(run.id))
+    now = datetime.now(UTC)
+    with db.session_scope() as session:
+        stored = session.get(DiscoveryRun, run.id)
+        stored.completed_at = now - timedelta(minutes=15)
+        assert "opportunity_handoff" not in stored.run_metadata
+
+    result = reconcile_completed_source_handoffs(now=now, limit=2)
+    assert result == {
+        "status": "completed",
+        "processed": 1,
+        "failures": 0,
+        "outcomes": {"completed": 1},
+    }
+    assert requests == [1]  # backfill cannot call provider a second time
+    assert reconcile_completed_source_handoffs(now=now, limit=2)["processed"] == 0
+    with db.session_scope() as session:
+        row = session.get(DiscoveryRun, run.id)
+        assert row.status == "completed"
+        assert row.run_metadata["opportunity_handoff"]["evidence_packets_built"] == 1
+        assert len(list(session.scalars(select(TrendOpportunity)))) == 1
+        assert session.scalar(select(TrendEvidencePacket)) is not None
+
+
+def test_historical_reconciliation_cannot_reassign_an_old_source(
+    research_db, monkeypatch,
+):
+    original, _ = channel()
+    other, _ = channel()
+    create_watch_profile(other, interests=["Gaming"])
+    source_args = dict(
+        source_key="historical-reassigned",
+        name="Historical feed",
+        adapter_key="rss_atom",
+        adapter_version="v1",
+        platform="web",
+        query_template={"feed_url": "https://example.com/reassigned"},
+        source_metadata={"automatic_research": False},
+    )
+    source = upsert_ingestion_source(**source_args, channel_profile_id=original)
+    monkeypatch.setattr(
+        get_adapter("rss_atom", "v1"), "discover",
+        lambda query, cursor: DiscoveryBatch(items=(
+            DiscoveredCandidate(
+                source_url="https://example.com/old-clip", title="Gaming clip",
+                provenance_confidence=0.9,
+            ),
+        )),
+    )
+    run = create_discovery_run_from_source(source.id, idempotency_key="reassigned")
+    execute_discovery_page_activity(str(run.id))
+    now = datetime.now(UTC)
+    with db.session_scope() as session:
+        session.get(DiscoveryRun, run.id).completed_at = now - timedelta(minutes=15)
+    upsert_ingestion_source(**source_args, channel_profile_id=other)
+    first = reconcile_completed_source_handoffs(now=now, limit=2)
+    assert first["outcomes"] == {"unassigned_or_changed": 1}
+    assert reconcile_completed_source_handoffs(now=now, limit=2)["processed"] == 0
+    with db.session_scope() as session:
+        stored = session.get(DiscoveryRun, run.id)
+        assert stored.run_metadata["opportunity_handoff"]["status"] == "unassigned_or_changed"
+        assert session.scalar(select(TrendSignal)) is None
+        assert session.scalar(select(TrendOpportunity)) is None
+
+
+def test_completed_source_backfill_obeys_research_pause(research_db, monkeypatch):
+    monkeypatch.setattr(
+        "katcha.orchestration.research_activities.get_settings",
+        lambda: Settings(research_enabled=False),
+    )
+    assert reconcile_completed_source_handoffs()["status"] == "disabled"
 
 
 def test_channel_observation_keys_preserve_shared_identity(research_db):
