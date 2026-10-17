@@ -70,7 +70,10 @@ class ShortProductionWorkflow:
             rendered = await workflow.execute_activity(
                 "render_short_activity",
                 production_id,
-                start_to_close_timeout=timedelta(minutes=20),
+                # Cold source preparation and Lambda rendering share the existing
+                # 30-minute HTTP request. Let it finish/report errors before the
+                # workflow times out, rather than orphaning a paid render.
+                start_to_close_timeout=timedelta(minutes=35),
                 retry_policy=local_retry,
 
             )
