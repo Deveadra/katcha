@@ -93,7 +93,7 @@ from katcha.api.schemas import (
     YouTubeOAuthStartResponse,
 )
 from katcha.api.short_episodes import router as short_episodes_router
-from katcha.api.studio import router as studio_router
+from katcha.api.studio import _stream_object, router as studio_router
 from katcha.api.telegram import router as telegram_router
 from katcha.api.trends import router as trends_router
 from katcha.clip_lifecycle_models import ClipLifecycle
@@ -646,14 +646,11 @@ def get_production(production_id: uuid.UUID) -> ProductionDetailResponse:
         )
 
 
-@app.get("/v1/productions/{production_id}/media")
-def get_production_media(production_id: uuid.UUID, request: Request) -> StreamingResponse:
-    require_control_scope(request, "channels:read")
+def _production_review_asset(production_id: uuid.UUID) -> tuple[str, uuid.UUID]:
     with session_scope() as session:
         production = session.get(Production, production_id)
         if production is None:
             raise HTTPException(404, "Production not found")
-        require_control_channel(request, production.channel_profile_id)
         asset = session.scalar(
             select(ProductionAsset)
             .where(
@@ -668,18 +665,85 @@ def get_production_media(production_id: uuid.UUID, request: Request) -> Streamin
             raise HTTPException(
                 409, "This draft has no finished video yet. Check its render status."
             )
-        key = asset.storage_key
-    store = ObjectStore()
-    if not store.exists(key):
-        raise HTTPException(404, "The finished draft video is unavailable. Retry loading it.")
-    return StreamingResponse(
-        store.iter_bytes(key),
-        media_type="video/mp4",
-        headers={
-            "Cache-Control": "private, no-store",
-            "Content-Disposition": 'inline; filename="katcha-draft.mp4"',
-            "X-Content-Type-Options": "nosniff",
-        },
+        return asset.storage_key, production.channel_profile_id
+
+
+def _review_ticket_scope(kind: str, object_id: uuid.UUID, key: str) -> dict[str, str]:
+    return {"kind": kind, "id": str(object_id), "storage_key": key}
+
+
+def _verify_review_cookie(request: Request, scope: dict[str, str]) -> bool:
+    from katcha.security.media_tickets import (
+        REVIEW_MEDIA_COOKIE,
+        verify_media_ticket,
+    )
+    from katcha.security.secrets import SecretConfigurationError
+
+    token = request.cookies.get(REVIEW_MEDIA_COOKIE)
+    if not token:
+        return False
+    try:
+        verify_media_ticket(token, scope)
+    except SecretConfigurationError as exc:
+        raise HTTPException(503, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(403, detail=str(exc)) from exc
+    return True
+
+
+def _make_review_session(
+    response: Response,
+    path: str,
+    scope: dict[str, str],
+) -> dict[str, object]:
+    from katcha.security.media_tickets import (
+        REVIEW_MEDIA_COOKIE,
+        REVIEW_MEDIA_TICKET_TTL_SECONDS,
+        issue_media_ticket,
+    )
+    from katcha.security.secrets import SecretConfigurationError
+
+    try:
+        ticket = issue_media_ticket(
+            scope, ttl_seconds=REVIEW_MEDIA_TICKET_TTL_SECONDS
+        )
+    except SecretConfigurationError as exc:
+        raise HTTPException(503, detail=str(exc)) from exc
+    response.headers["Cache-Control"] = "no-store"
+    response.set_cookie(
+        REVIEW_MEDIA_COOKIE,
+        ticket,
+        max_age=REVIEW_MEDIA_TICKET_TTL_SECONDS,
+        httponly=True,
+        secure=get_settings().env == "production",
+        samesite="strict",
+        path=path,
+    )
+    return {"media_url": path, "expires_in_seconds": REVIEW_MEDIA_TICKET_TTL_SECONDS}
+
+
+@app.post("/v1/productions/{production_id}/media-session")
+def create_production_media_session(
+    production_id: uuid.UUID, request: Request, response: Response,
+) -> dict[str, object]:
+    require_control_scope(request, "channels:read")
+    key, owner = _production_review_asset(production_id)
+    require_control_channel(request, owner)
+    path = f"/v1/productions/{production_id}/media"
+    return _make_review_session(
+        response, path, _review_ticket_scope("production", production_id, key)
+    )
+
+
+@app.get("/v1/productions/{production_id}/media")
+def get_production_media(production_id: uuid.UUID, request: Request) -> StreamingResponse:
+    key, owner = _production_review_asset(production_id)
+    ticket_scope = _review_ticket_scope("production", production_id, key)
+    if not _verify_review_cookie(request, ticket_scope):
+        require_control_scope(request, "channels:read")
+        require_control_channel(request, owner)
+    return _stream_object(
+        request, key, "katcha-draft.mp4", cache_control="private, no-store"
     )
 
 
@@ -1180,8 +1244,7 @@ def list_sources(
         return list(session.scalars(stmt))
 
 
-@app.get("/v1/clips/{clip_id}/media")
-def get_clip_media(clip_id: uuid.UUID) -> StreamingResponse:
+def _clip_review_asset(clip_id: uuid.UUID) -> tuple[str, str]:
     with session_scope() as session:
         clip = session.get(Clip, clip_id)
         if clip is None:
@@ -1192,27 +1255,36 @@ def get_clip_media(clip_id: uuid.UUID) -> StreamingResponse:
                 status_code=410,
                 detail="clip media was permanently purged; metadata is still retained",
             )
-        storage_key = (
+        key = (
             lifecycle.archive_key
             if lifecycle is not None
             and lifecycle.lifecycle_state == "archived"
             and lifecycle.archive_key
             else clip.storage_key
         )
-        extension = clip.extension or "mp4"
+        return key, (clip.extension or "mp4").lstrip(".")
 
-    store = ObjectStore()
-    if not store.exists(storage_key):
-        raise HTTPException(status_code=404, detail="stored clip media is missing")
-    media_type = mimetypes.guess_type(f"clip.{extension.lstrip('.')}")[0]
-    return StreamingResponse(
-        store.iter_bytes(storage_key),
-        media_type=media_type or "application/octet-stream",
-        headers={
-            "Cache-Control": "private, max-age=60",
-            "Content-Disposition": 'inline; filename="clip-preview"',
-        },
+
+@app.post("/v1/clips/{clip_id}/media-session")
+def create_clip_media_session(
+    clip_id: uuid.UUID, request: Request, response: Response,
+) -> dict[str, object]:
+    require_control_scope(request, "channels:read")
+    key, _ = _clip_review_asset(clip_id)
+    path = f"/v1/clips/{clip_id}/media"
+    return _make_review_session(
+        response, path, _review_ticket_scope("clip", clip_id, key)
     )
+
+
+@app.get("/v1/clips/{clip_id}/media")
+def get_clip_media(clip_id: uuid.UUID, request: Request) -> StreamingResponse:
+    key, extension = _clip_review_asset(clip_id)
+    if not _verify_review_cookie(
+        request, _review_ticket_scope("clip", clip_id, key)
+    ):
+        require_control_scope(request, "channels:read")
+    return _stream_object(request, key, f"clip-preview.{extension}")
 
 
 @app.get("/v1/clips/{clip_id}", response_model=ClipResponse)
