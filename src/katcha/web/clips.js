@@ -572,6 +572,8 @@ async function loadPreview(id, button) {
         });
         video.addEventListener("error", () => {
             feedback.textContent = "Video playback failed. Reload the preview to renew access.";
+            button.disabled = false;
+            button.textContent = "Reload preview";
         });
         const actions = document.createElement("div");
         actions.className = "clip-seek-actions";
