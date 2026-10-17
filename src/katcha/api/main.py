@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import mimetypes
 import os
 import re
 import uuid
@@ -106,7 +105,6 @@ from katcha.domain import (
     ReviewDecision,
     SourceStatus,
 )
-from katcha.integrations.storage import ObjectStore
 from katcha.integrations.youtube.oauth import (
     YouTubeOAuthError,
     begin_youtube_oauth,
