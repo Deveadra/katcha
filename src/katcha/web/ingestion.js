@@ -863,6 +863,7 @@ function renderSourceOverview() {
     $('source-inspector-content').hidden = false;
     $('source-name').textContent = row.name;
     const pollingEnabled=row.source_metadata?.automatic_research !== false;
+    $('youtube-verification').hidden = row.adapter_key !== 'youtube';
     $('source-polling').hidden=!['youtube','reddit','rss_atom','web_scout'].includes(row.adapter_key);
     $('polling-enabled').checked=pollingEnabled;
     $('polling-interval').value=row.poll_interval_minutes || 60;
@@ -1416,6 +1417,32 @@ bind('setup', 'submit', async () => {
     message('“' + saved.name + '” is saved and its first check has started.');
 }, true);
 
+bind('youtube-verify', 'click', async () => {
+    const selected = source();
+    if (!selected || selected.adapter_key !== 'youtube') return;
+    const id = selected.id;
+    const result = $('youtube-verify-result');
+    const button = $('youtube-verify');
+    result.textContent = 'Checking live public YouTube API access…';
+    button.textContent = 'Checking…';
+    try {
+        const verified = await api(
+            'discovery/sources/' + encodeURIComponent(id) + '/youtube/verify',
+            {},
+        );
+        if (source()?.id !== id) return;
+        result.textContent = 'Verified public YouTube API access via ' +
+            (verified.authentication === 'oauth' ? 'channel OAuth' : 'API key') +
+            '. Channel lookup succeeded (1 quota unit). This verifies credentials, not scheduled discovery.';
+        message('YouTube discovery credentials verified for this Source.');
+    } catch (error) {
+        if (source()?.id !== id) return;
+        result.textContent = 'YouTube discovery unavailable: ' + error.message;
+        message('YouTube discovery check failed: ' + error.message, true);
+    } finally {
+        button.textContent = 'Test YouTube discovery';
+    }
+});
 bind('run', 'click', runSelectedSource);
 
 bind('import', 'submit', async () => {
