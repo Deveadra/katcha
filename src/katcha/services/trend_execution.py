@@ -120,11 +120,9 @@ def prepare_topic_watch_execution(
             if channel_profile_id:
                 with session_scope() as session:
                     profile = session.get(ChannelProfile, channel_profile_id)
-                    if profile is None or profile.youtube_connection_id is None:
-                        raise ValueError(
-                            "The watch channel has no YouTube OAuth connection"
-                        )
-                    query["youtube_connection_id"] = str(profile.youtube_connection_id)
+                    query.pop("youtube_connection_id", None)
+                    if profile is not None and profile.youtube_connection_id is not None:
+                        query["youtube_connection_id"] = str(profile.youtube_connection_id)
             else:
                 query.pop("youtube_connection_id", None)
         query["include_terms"] = include_terms
