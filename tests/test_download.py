@@ -243,3 +243,47 @@ def test_youtube_challenge_tries_session_at_most_once(tmp_path, monkeypatch):
     assert failure_details(caught.value)["retryable"] is False
     assert cookie.read_text() == "fixture session"
     assert not list((tmp_path / "work").iterdir())
+
+
+def test_session_success_removes_cookie_before_returning_media(tmp_path, monkeypatch):
+    from pathlib import Path
+
+    from katcha.config import Settings
+    from katcha.integrations import download as downloader
+
+    cookie = tmp_path / "operator.cookies"
+    cookie.write_text("fixture-only session")
+    copies = []
+
+    class SessionVideo:
+        def __init__(self, options):
+            self.cookie = options.get("cookiefile")
+            self.path = Path(options["outtmpl"]).parent / "video.mp4"
+            assert options["js_runtimes"]["node"] == {}
+            assert options["socket_timeout"] == 30
+            if self.cookie:
+                copies.append(Path(self.cookie))
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            if self.cookie:
+                Path(self.cookie).write_text("updated fixture session")
+
+        def extract_info(self, *args, **kwargs):
+            if not self.cookie:
+                raise RuntimeError("Sign in to confirm you're not a bot")
+            self.path.write_bytes(b"fixture media")
+            return {"id": "video"}
+
+    monkeypatch.setattr(downloader, "YoutubeDL", SessionVideo)
+    monkeypatch.setattr(downloader, "ffprobe", lambda path: {"duration": 1})
+    result = downloader.download("https://youtu.be/fixture", Settings(
+        _env_file=None, work_dir=tmp_path / "work", youtube_download_cookie_file=cookie,
+    ))
+    assert result.source_metadata["youtube_access_mode"] == "session_fallback"
+    assert result.path.read_bytes() == b"fixture media"
+    assert copies and all(not path.exists() for path in copies)
+    assert cookie.read_text() == "fixture-only session"
+    assert list(result.path.parent.iterdir()) == [result.path]
