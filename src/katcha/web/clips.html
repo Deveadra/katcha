@@ -196,6 +196,17 @@
             <p>Open the linked work to inspect its status. Katcha will not cancel a running workflow automatically. Once it has completed or been resolved, return here and select Check again.</p>
             <div id="purge-blockers-list" class="purge-blockers-list"></div>
         </section>
+        <section id="purge-stop-panel" class="purge-blockers" hidden aria-labelledby="purge-stop-title">
+            <strong id="purge-stop-title">Stop linked work</strong>
+            <p id="purge-stop-desc">Stopping this work will not delete the video. Running tasks must reach a verified terminal state before deletion becomes available.</p>
+            <label for="purge-stop-input">Type <code id="purge-stop-phrase"></code> to confirm stopping only this work:</label>
+            <input id="purge-stop-input" type="text" autocomplete="off" spellcheck="false" aria-describedby="purge-stop-feedback">
+            <p id="purge-stop-feedback" role="status" aria-live="polite">Nothing has been stopped.</p>
+            <div class="dialog-actions">
+                <button id="purge-stop-close" class="mini" type="button">Back to dependencies</button>
+                <button id="purge-stop-confirm" class="button danger-button" type="button" disabled>Request safe stop</button>
+            </div>
+        </section>
         <label for="purge-confirm-input">To confirm, type <code id="purge-phrase"></code> exactly:</label>
         <input id="purge-confirm-input" type="text" autocomplete="off" spellcheck="false" aria-describedby="purge-feedback">
         <p id="purge-feedback" role="status" aria-live="polite">Enter the confirmation phrase to enable deletion.</p>
