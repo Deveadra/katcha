@@ -5,9 +5,11 @@ from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
-from test_editorial_projects import root, saved
+from test_editorial_projects import root, saved as _saved
 
 from katcha.api import main, studio
+
+saved = _saved
 
 DATA = b"private-editorial-render-payload"
 
