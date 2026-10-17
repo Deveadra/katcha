@@ -517,7 +517,7 @@ function overview(source) {
         );
         await page.locator("#next").click();
         assert.match(await page.locator("#review").innerText(), /Find content for review/);
-        assert.match(await page.locator("#review").innerText(), /Save the source and run one check/);
+        assert.match(await page.locator("#review").innerText(), /Save and run one check immediately/);
         assert.equal(await page.locator("#save").innerText(), "Save & check now");
         const savedSourceCheck = page.waitForResponse((response) =>
             response.url().includes("/v1/discovery/runs/") &&
