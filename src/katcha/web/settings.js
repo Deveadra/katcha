@@ -191,32 +191,37 @@ async function loadChatGPT() {
     $("chatgpt-disconnect").hidden = !connected;
     $("chatgpt-account").hidden = !connected;
     $("chatgpt-model-field").hidden = !connected;
+    const select = $("chatgpt-model");
+    const catalogStatus = $("chatgpt-model-feedback");
+    select.disabled = true;
+    select.replaceChildren(new Option(connected ? "Loading available models…" : "Connect to choose a model", ""));
+    catalogStatus.textContent = "";
     if (!connected) return;
 
     $("chatgpt-identity").textContent =
         status.display_name || status.email || "Connected ChatGPT account";
     $("chatgpt-expiry").textContent =
         (status.selected_model ? "Using " + status.selected_model : "Model selection pending") +
-        (status.refresh_due ? " · Token expired; use Test direct sharing to refresh" : " · Test direct sharing to verify access");
+        (status.refresh_due ? " · Session requires renewal" : " · Test direct sharing to verify access");
 
-    // Failure to refresh an old token must not hide the saved connection,
-    // reconnect controls, or the rest of the Settings page.
-    let models;
     try {
-        models = await api("/v1/integrations/chatgpt/models");
-    } catch (error) {
-        $("chatgpt-expiry").textContent += " · Model catalog unavailable: " + error.message;
-        return;
-    }
-    $("chatgpt-model").replaceChildren(
-        ...models.map((model) => {
+        const models = await api("/v1/integrations/chatgpt/models");
+        if (!Array.isArray(models) || !models.length) throw new Error("No usable models were returned.");
+        select.replaceChildren(...models.map((model) => {
             const option = document.createElement("option");
             option.value = model.slug;
             option.textContent = model.display_name + " · " + model.slug;
             option.selected = model.slug === status.selected_model;
             return option;
-        }),
-    );
+        }));
+        select.disabled = false;
+        catalogStatus.textContent = models.length + " models available. Test direct sharing to verify inference.";
+    } catch (error) {
+        select.replaceChildren(new Option("Model catalog unavailable", ""));
+        catalogStatus.textContent = "Cannot load models: " + error.message +
+            ". Use Reconnect to renew the account, or Test direct sharing for a detailed check.";
+        message("Direct ChatGPT model list unavailable: " + error.message, "error");
+    }
 }
 
 async function ensureLiveMode() {
@@ -326,21 +331,35 @@ $("chatgpt-connect").onclick = async () => {
     }
 };
 $("chatgpt-reconnect").onclick = async () => {
+    const button = $("chatgpt-reconnect");
+    button.disabled = true;
+    button.textContent = "Connecting…";
+    message("Preparing a fresh direct-sharing sign-in session…");
     try {
         const status = await api("/v1/integrations/chatgpt/status");
         await startChatGPT(status.saved_connection_id || status.connection_id || null);
-    } catch (error) { message(error.message, "error"); }
+    } catch (error) {
+        message("Direct ChatGPT reconnect failed: " + error.message, "error");
+    } finally {
+        button.disabled = false;
+        button.textContent = "Reconnect";
+    }
 };
 $("chatgpt-test").onclick = async () => {
     const button = $("chatgpt-test");
     button.disabled = true;
+    button.textContent = "Testing…";
+    message("Testing direct ChatGPT sharing with a real provider request…");
     try {
         const result = await api("/v1/integrations/chatgpt/test", { method: "POST", body: "{}" });
-        message("ChatGPT plan is live · " + result.selected_model + " · " + result.model_count + " models available.", "good");
         await loadChatGPT();
+        message("Direct ChatGPT inference verified · " + result.selected_model + " · " + result.model_count + " models available.", "good");
     } catch (error) {
-        message(error.message, "error");
-    } finally { button.disabled = false; }
+        message("Direct ChatGPT test failed: " + error.message + ". Reconnect if your session expired.", "error");
+    } finally {
+        button.disabled = false;
+        button.textContent = "Test direct sharing";
+    }
 };
 $("chatgpt-model").onchange = async () => {
     try {
