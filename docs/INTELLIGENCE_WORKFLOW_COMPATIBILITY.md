@@ -12,9 +12,10 @@ October 1 and recorded both. This is a recovery boundary between verified
 histories, not a claim about the exact deployment time. Do not replace it with
 the current date or move it without replaying the affected histories.
 
-For older executions, patch markers skip the added commands during historical
-replay and enable them for new work. Executions that already recorded the added
-activities keep their sequence. New executions include both activities.
+For older executions, patch markers preserve the recorded command sequence. The
+SDK memoizes that decision, so a legacy execution can retain its old sequence
+until continue-as-new. Executions that already recorded the added activities keep
+them, and newly started executions include both activities.
 
 Before rollout, offline replay passed against both complete running scheduler
 histories (584 and 4671 events), with zero activity or provider calls. The two
