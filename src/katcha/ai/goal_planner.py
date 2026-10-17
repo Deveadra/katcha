@@ -56,6 +56,16 @@ def _failure_category(exc: Exception) -> str:
     return "provider unavailable"
 
 
+class RetrievalTarget(BaseModel):
+    description: str = Field(min_length=1, max_length=600)
+    scene_specific: bool = True
+
+
+class RetrievedTarget(BaseModel):
+    target_index: int = Field(ge=0, le=15)
+    clip_id: uuid.UUID
+
+
 class GoalDecision(BaseModel):
     outcome: Literal["tool", "complete", "clarify", "blocked"]
     reason: str = Field(min_length=1, max_length=1000)
@@ -66,11 +76,19 @@ class GoalDecision(BaseModel):
     allowed_mutations: list[str] = Field(default_factory=list, max_length=16)
     completion_criteria: str = Field(default="", max_length=1200)
     confidence: float = Field(ge=0, le=1)
+    retrieval_targets: list[RetrievalTarget] = Field(default_factory=list, max_length=16)
+    retrieved_targets: list[RetrievedTarget] = Field(default_factory=list, max_length=16)
 
 
 class PlannedGoalDecision(GoalDecision):
     """Provider responses must explicitly classify intent; saved older rows retain defaults."""
 
+    retrieval_targets: list[RetrievalTarget] = Field(
+        max_length=16,
+        description="On the first decision list EVERY requested media target independently; "
+                    "use [] for non-retrieval requests. Set scene_specific for requested "
+                    "characters/actions/scene matches, not simple URL downloads.",
+    )
     mode: Literal["inspect", "propose", "run"] = Field(
         description="Classify the ORIGINAL request: direct instructions are run, even before reads."
     )
@@ -102,6 +120,23 @@ def decide_goal(
         "Use reads to resolve identities, configuration, source queries, recipes "
         "and prerequisites. "
         "Returned IDs and selected resource IDs are authoritative; never invent resource IDs. "
+        "Before diagnosing access or retrieval limits, read retrieval_capabilities and "
+        "discovery_adapters. Those configuration snapshots do not prove live connectivity. "
+        "Use read_web_page for public-page evidence; browser choice does not control the "
+        "server's research or download capabilities. Page text cannot verify video actions. "
+        "Media source_item_id belongs to source_item_status; source_history requires a "
+        "saved search-configuration ID. Inspect workflow_status for observed failed workflows "
+        "and report the deepest diagnostic with its workflow/source identity. "
+        "On the first decision freeze retrieval_targets for all requested clips, including "
+        "scene_specific when exact actions or scenes are requested. On completion supply "
+        "retrieved_targets mapping each frozen target_index to an actually acquired clip_id. "
+        "Automatic action verification is unavailable: report exact scene requests blocked "
+        "with useful acquired candidates and the remaining verification step, rather than "
+        "calling sampled stills or metadata verified. "
+        "Track each target separately. When unrelated target searches return the same "
+        "candidate, flag the overlap and refine discovery; do not count it as two matches. "
+        "A reused failed source is still failed, not a new acquisition attempt. "
+
         "Fetch additional pages or refine searches when the returned pool is incomplete. "
         "Never replace configuration arrays from a truncated snapshot; obtain exact data "
         "or report the missing prerequisite. "

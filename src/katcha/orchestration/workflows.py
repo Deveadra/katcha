@@ -6,6 +6,8 @@ from typing import Any
 from temporalio import workflow
 from temporalio.common import RetryPolicy
 
+from katcha.orchestration.failure_details import failure_details
+
 
 @workflow.defn
 class ClipIngestWorkflow:
@@ -28,7 +30,7 @@ class ClipIngestWorkflow:
         except Exception as exc:
             await workflow.execute_activity(
                 "mark_source_failed",
-                args=[source_id, str(exc)],
+                args=[source_id, failure_details(exc)["message"]],
                 start_to_close_timeout=timedelta(seconds=30),
                 retry_policy=RetryPolicy(maximum_attempts=3),
             )

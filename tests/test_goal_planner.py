@@ -61,6 +61,7 @@ def test_gemini_goal_decision_serializes_arbitrary_tool_arguments(
                                                 "confidence": 0.98,
                                                 "mode": "inspect",
                                                 "allowed_mutations": [],
+                                                "retrieval_targets": [],
                                                 "completion_criteria": "Inspect configuration",
                                             }
                                         )
@@ -150,7 +151,9 @@ def test_provider_must_explicitly_classify_original_request():
     with pytest.raises(ValidationError):
         goal_planner.PlannedGoalDecision.model_validate(incomplete)
     required = goal_planner.PlannedGoalDecision.model_json_schema()["required"]
-    assert {"mode", "allowed_mutations", "completion_criteria"} <= set(required)
+    assert {"mode", "allowed_mutations", "completion_criteria", "retrieval_targets"} <= (
+        set(required)
+    )
 
 
 def test_goal_planning_supports_stronger_model_without_changing_chat_default():

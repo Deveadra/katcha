@@ -12,6 +12,11 @@ from urllib.parse import urlsplit, urlunsplit
 from yt_dlp import YoutubeDL
 
 from katcha.config import Settings, get_settings
+from katcha.orchestration.failure_details import MediaPreparationError
+
+
+class MediaDownloadError(MediaPreparationError):
+    pass
 
 
 @dataclass(slots=True)
@@ -94,10 +99,12 @@ def download(url: str, settings: Settings | None = None) -> DownloadedMedia:
         "fragment_retries": 3,
     }
 
+    stage = "download"
     try:
         with YoutubeDL(options) as ydl:
             info = ydl.extract_info(canonical, download=True)
 
+        stage = "download output"
         candidates = [
             p for p in job_dir.iterdir() if p.is_file() and not p.name.endswith(".part")
         ]
@@ -105,7 +112,9 @@ def download(url: str, settings: Settings | None = None) -> DownloadedMedia:
             raise RuntimeError(f"yt-dlp produced no media file for {canonical}")
         media_path = max(candidates, key=lambda p: p.stat().st_size)
 
+        stage = "file integrity"
         digest = sha256_file(media_path)
+        stage = "media inspection (ffprobe)"
         probe = ffprobe(media_path)
         safe_info = {
             "id": info.get("id"),
@@ -131,6 +140,6 @@ def download(url: str, settings: Settings | None = None) -> DownloadedMedia:
             source_metadata={k: v for k, v in safe_info.items() if v is not None},
             media_metadata=probe,
         )
-    except Exception:
+    except Exception as exc:
         shutil.rmtree(job_dir, ignore_errors=True)
-        raise
+        raise MediaDownloadError(stage, exc) from exc

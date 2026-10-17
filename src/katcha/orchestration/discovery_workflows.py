@@ -7,9 +7,10 @@ from datetime import timedelta
 from typing import Any
 
 from temporalio import workflow
-from temporalio.common import RetryPolicy
+from temporalio.common import RetryPolicy, WorkflowIDReusePolicy
 
 from katcha.acquisition.runtime import DISCOVERY_TASK_QUEUE, MAX_DISCOVERY_PAGES
+from katcha.orchestration.failure_details import failure_details
 from katcha.orchestration.trend_workflows import ChannelTrendRefreshWorkflow
 from katcha.orchestration.workflows import ClipIngestWorkflow
 from katcha.trends.runtime import TREND_TASK_QUEUE
@@ -28,30 +29,8 @@ _COMMAND_CYCLE_LIFECYCLE_RETRY = RetryPolicy(
     maximum_attempts=10,
 )
 
-_GENERIC_FAILURE_MESSAGES = {
-    "activity task failed",
-    "child workflow execution failed",
-    "workflow execution failed",
-}
-
-
 def _specific_failure_message(exc: BaseException) -> str:
-    """Prefer the deepest actionable Temporal/provider message over wrappers."""
-    seen: set[int] = set()
-    current: BaseException | None = exc
-    best = ""
-    fallback = str(exc).strip()
-    while current is not None and id(current) not in seen:
-        seen.add(id(current))
-        message = str(current).strip()
-        normalized = message.casefold()
-        if message and normalized not in _GENERIC_FAILURE_MESSAGES:
-            best = message
-        nested = getattr(current, "cause", None)
-        if not isinstance(nested, BaseException):
-            nested = current.__cause__
-        current = nested if isinstance(nested, BaseException) else None
-    return (best or fallback or type(exc).__name__)[:8000]
+    return failure_details(exc)["message"]
 
 
 def _cycle_lifecycle_detail(
@@ -145,6 +124,8 @@ class CommandSourcePrepareWorkflow:
                     ingests.append(
                         {
                             "source_id": source_id,
+                            "source_item_id": source_id,
+                            "candidate_id": item.get("candidate_id"),
                             "workflow_id": ingest_workflow_id,
                             "success": True,
                             "reused": True,
@@ -153,6 +134,13 @@ class CommandSourcePrepareWorkflow:
                     )
                     continue
                 if not source_id or not ingest_workflow_id:
+                    ingests.append({
+                        "source_item_id": source_id or None,
+                        "candidate_id": item.get("candidate_id"),
+                        "workflow_id": ingest_workflow_id or None,
+                        "success": False,
+                        "error": "Prepared candidate lacks a media source or ingestion workflow ID",
+                    })
                     continue
                 try:
                     result = await workflow.execute_child_workflow(
@@ -160,12 +148,17 @@ class CommandSourcePrepareWorkflow:
                         source_id,
                         id=ingest_workflow_id,
                         task_queue=ingest_task_queue,
+                        id_reuse_policy=WorkflowIDReusePolicy.ALLOW_DUPLICATE_FAILED_ONLY,
                     )
+                    acquired = isinstance(result, dict) and bool(result.get("clip_id"))
                     ingests.append(
                         {
                             "source_id": source_id,
+                            "source_item_id": source_id,
+                            "candidate_id": item.get("candidate_id"),
                             "workflow_id": ingest_workflow_id,
-                            "success": True,
+                            "success": acquired,
+                            "error": None if acquired else "Ingestion returned no acquired clip",
                             "result": result,
                         }
                     )
@@ -173,9 +166,12 @@ class CommandSourcePrepareWorkflow:
                     ingests.append(
                         {
                             "source_id": source_id,
+                            "source_item_id": source_id,
+                            "candidate_id": item.get("candidate_id"),
                             "workflow_id": ingest_workflow_id,
                             "success": False,
-                            "error": str(exc)[:1000],
+                            "error": _specific_failure_message(exc)[:1000],
+                            "diagnostic": failure_details(exc),
                         }
                     )
 
@@ -222,6 +218,9 @@ class CommandSourcePrepareWorkflow:
                 "discovery": discovery_result,
                 "preparation": prepared,
                 "ingests": ingests,
+                "status": lifecycle_state,
+                "error": error,
+                "scene_verified": False,
             }
         except Exception as exc:
             with suppress(Exception):
