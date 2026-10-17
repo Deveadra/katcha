@@ -453,3 +453,8 @@ time, output dimensions, and preparation version. Conditional reads prevent an
 object replacement during preparation. Cache or upload verification failures stop
 the render before a paid Lambda invocation. Originals remain available for future
 edits; render copies do not change source ownership or publication eligibility.
+
+The Short Production render activity allows 35 minutes so the existing 30-minute
+renderer HTTP request can finish preparation and rendering, or report its own
+failure, before Temporal expires the activity. This does not extend Lambda
+function timeouts or raise compute limits.
