@@ -553,7 +553,32 @@ function overview(source) {
         );
         assert.match(await page.locator("#message").innerText(), /No check was started/);
         assert.match(await page.locator("#source-info").innerText(), /Research automatically/);
-        assert.match(await page.locator("#source-info").innerText(), /Saving a source does not create a recurring schedule/);
+        assert.match(await page.locator("#source-info").innerText(), /Automatic, every 60 minutes/);
+        assert.match(await page.locator("#source-info").innerText(), /research worker must be healthy/);
+
+        // A completed source check must disclose the separate downstream
+        // opportunity outcome; not passing activation thresholds is not a
+        // missing dossier or a failed source check.
+        await page.evaluate(() => {
+            renderHistory({
+                recent_runs: [{
+                    id: "handoff-fixture",
+                    status: "completed",
+                    created_at: "2026-10-01T12:00:00Z",
+                    run_metadata: {
+                        opportunity_handoff: {
+                            status: "completed",
+                            topics_scored: 4,
+                            evidence_packets_built: 3,
+                            qualified_opportunities: 0,
+                        },
+                    },
+                }],
+            }, source());
+        });
+        assert.match(await page.locator("#history").innerText(), /4 topics scored/);
+        assert.match(await page.locator("#history").innerText(), /3 dossiers/);
+        assert.match(await page.locator("#history").innerText(), /0 qualify/);
 
         // Saved sources can be edited in place without losing their identity/history.
         const marvelSourceKey = marvel.source_key;
