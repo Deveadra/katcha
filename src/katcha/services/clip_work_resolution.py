@@ -38,7 +38,7 @@ _ACTIVE = {
     "compilation": _ACTIVE_COMPILATION_STATUSES,
 }
 _STOPPED = {
-    WorkflowExecutionStatus.CANCELLED,
+    WorkflowExecutionStatus.CANCELED,
     WorkflowExecutionStatus.TERMINATED,
     WorkflowExecutionStatus.FAILED,
     WorkflowExecutionStatus.TIMED_OUT,
