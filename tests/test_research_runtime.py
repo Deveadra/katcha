@@ -1,6 +1,8 @@
 """Synthetic provider acceptance for the real saved-source -> trend handoff."""
 
 import ast
+import hashlib
+import json
 import uuid
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -29,6 +31,7 @@ from katcha.services.ingestion_sources import (
 )
 from katcha.services.research import prepare_research_jobs
 from katcha.services.trend_execution import prepare_topic_watch_execution
+from katcha.services.trend_signal_bridge import _observation_key
 from katcha.services.trends import create_watch_profile, refresh_channel_trends
 from katcha.trend_models import TrendEvidencePacket, TrendOpportunity, TrendSignal
 
@@ -235,6 +238,34 @@ def test_source_dossier_handoff_exposes_missing_watch_profile(research_db, monke
     assert result["evidence_packets_built"] == 0
     with db.session_scope() as session:
         assert session.get(DiscoveryRun, run.id).status == "completed"
+
+
+def test_channel_observation_keys_preserve_shared_identity(research_db):
+    from katcha.config import get_settings
+
+    moment = datetime(2026, 10, 17, 12, tzinfo=UTC)
+    data = {
+        "provider_key": "youtube",
+        "external_id": "fixture-video",
+        "bucket": int(moment.timestamp()) // get_settings().trend_observation_bucket_seconds,
+        "metrics": {"views": 100.0},
+        "canonical_url": "https://example.com/video",
+    }
+    expected_shared = hashlib.sha256(
+        json.dumps(data, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()[:32]
+    kwargs = {
+        "provider_key": "youtube",
+        "external_id": "fixture-video",
+        "observed_at": moment,
+        "metrics": {"views": 100.0},
+        "canonical_url": "https://example.com/video",
+    }
+    shared = _observation_key(**kwargs)
+    assert shared == expected_shared
+    first = _observation_key(**kwargs, channel_profile_id=uuid.uuid4())
+    second = _observation_key(**kwargs, channel_profile_id=uuid.uuid4())
+    assert len({shared, first, second}) == 3
 
 
 def test_interests_create_independent_channel_scoped_research(research_db):
