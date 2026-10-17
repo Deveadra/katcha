@@ -121,7 +121,8 @@ const clips = [
                 contentType: "application/json",
                 body: JSON.stringify(data),
             });
-            if (request.headers().authorization !== "Bearer clip-token") {
+            if (request.headers().authorization !== "Bearer clip-token" &&
+                !(url.pathname === `/v1/clips/${clipA}/media` && request.method() === "GET")) {
                 return json({ detail: "Unauthorized" }, 401);
             }
 
@@ -225,6 +226,12 @@ const clips = [
                     creator: "Creator A",
                     discovered_at: "2026-09-28T09:00:00Z",
                 }]);
+            }
+            if (url.pathname === `/v1/clips/${clipA}/media-session`) {
+                return json({
+                    media_url: `/v1/clips/${clipA}/media`,
+                    expires_in_seconds: 3600,
+                });
             }
             if (url.pathname === `/v1/clips/${clipA}/media`) {
                 return route.fulfill({
@@ -420,6 +427,16 @@ const clips = [
         );
 
         await page.locator(`[data-clip-id="${clipA}"]`).click();
+        await page.locator(`[data-load-preview="${clipA}"]`).click();
+        await page.locator("#clip-preview video").waitFor();
+        assert.equal(
+            await page.locator("#clip-preview video").getAttribute("src"),
+            `/v1/clips/${clipA}/media`,
+        );
+        assert.equal(await page.locator("#clip-preview .clip-seek-actions button").count(), 2);
+        assert(
+            requests.some(row => row.path === `/v1/clips/${clipA}/media-session` && row.method === "POST"),
+        );
         await page.locator('[data-clip-detail-tab="analysis"]').click();
         await page.getByText(/surprising gameplay moment/).waitFor();
         assert.match(await page.locator("#clip-detail").innerText(), /stored transcript/);
