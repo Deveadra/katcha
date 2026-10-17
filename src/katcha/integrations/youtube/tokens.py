@@ -41,16 +41,21 @@ def get_valid_access_token(
     if not settings.youtube_client_id or not settings.youtube_client_secret:
         raise YouTubeCredentialError("YouTube OAuth client is not configured")
 
-    response = httpx.post(
-        GOOGLE_TOKEN_URL,
-        data={
-            "client_id": settings.youtube_client_id,
-            "client_secret": settings.youtube_client_secret,
-            "refresh_token": refresh_token,
-            "grant_type": "refresh_token",
-        },
-        timeout=30,
-    )
+    try:
+        response = httpx.post(
+            GOOGLE_TOKEN_URL,
+            data={
+                "client_id": settings.youtube_client_id,
+                "client_secret": settings.youtube_client_secret,
+                "refresh_token": refresh_token,
+                "grant_type": "refresh_token",
+            },
+            timeout=30,
+        )
+    except httpx.HTTPError as exc:
+        raise YouTubeCredentialError(
+            "Google OAuth token refresh could not connect. Retry the discovery check."
+        ) from exc
     if response.is_error:
         error_code = ""
         with suppress(ValueError):
@@ -68,7 +73,15 @@ def get_valid_access_token(
                             payload={"connection_id": str(connection_id)},
                         )
                     )
-        raise YouTubeCredentialError(f"YouTube token refresh failed: {response.text[:1000]}")
+        safe_code = error_code if error_code in {
+            "invalid_grant", "invalid_client", "unauthorized_client",
+            "access_denied", "temporarily_unavailable",
+        } else "unknown"
+        raise YouTubeCredentialError(
+            f"YouTube OAuth refresh failed (HTTP {response.status_code}, {safe_code}). "
+            "Reconnect the YouTube channel if the grant was revoked, "
+            "or verify the OAuth client configuration."
+        )
 
     payload = response.json()
     access_token = str(payload.get("access_token") or "")
