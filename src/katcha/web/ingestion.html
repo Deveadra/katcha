@@ -328,6 +328,12 @@
                                     </header>
 
                                     <div id="source-alert" class="source-alert" hidden></div>
+                                    <div id="youtube-verification" class="source-inspector-section" hidden>
+                                        <h3>YouTube discovery connection</h3>
+                                        <p>Verify this Source can actually read the public YouTube Data API. One provider quota unit; no search or download starts.</p>
+                                        <button id="youtube-verify" type="button" class="button secondary">Test YouTube discovery</button>
+                                        <p id="youtube-verify-result" role="status" aria-live="polite"></p>
+                                    </div>
 
                                     <div class="source-stats" aria-label="Source statistics">
                                         <div><span>Finds</span><strong id="stat-finds">—</strong><small id="stat-finds-note">unique discoveries</small></div>
