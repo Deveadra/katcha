@@ -563,6 +563,9 @@ function overview(source) {
         const marvel = sources.find((row) => row.name === "Marvel Entertainment");
         assert(marvel);
         assert.equal(marvel.usage_mode, "discovery_only");
+        assert.equal(marvel.source_metadata.automatic_research, true);
+        assert.equal(marvel.source_metadata.execution_mode, "recurring");
+        assert.equal(marvel.poll_interval_minutes, 60);
         assert.equal(marvel.query_template.channel_reference, "https://www.youtube.com/@marvel");
         assert.equal(runs.filter((row) => row.sourceId === marvel.id).length, 0);
         await page.waitForFunction(() =>
@@ -570,8 +573,9 @@ function overview(source) {
         );
         assert.match(await page.locator("#message").innerText(), /No check was started/);
         assert.match(await page.locator("#source-info").innerText(), /Research automatically/);
-        assert.match(await page.locator("#source-info").innerText(), /Manual only/);
-        assert.match(await page.locator("#source-info").innerText(), /Choose a check action above/);
+        assert.match(await page.locator("#source-info").innerText(), /Automatic, every 60 minutes/);
+        assert.match(await page.locator("#source-info").innerText(), /research worker must be healthy/);
+        assert.equal(await page.locator("#polling-enabled").isChecked(), true);
         await page.locator("#youtube-verify").click();
         await page.waitForFunction(() =>
             document.querySelector("#youtube-verify-result").textContent.includes("invalid_grant")
