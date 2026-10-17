@@ -1,11 +1,24 @@
 from __future__ import annotations
 
 from contextlib import suppress
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from temporalio import workflow
 from temporalio.common import RetryPolicy
+
+# Both deployed activity sequences predate patch markers. This frozen recovery
+# epoch separates the audited legacy schedules from schedules already recording
+# growth and lifecycle activities. Never substitute the current wall clock.
+_UNMARKED_REFRESH_EXTENSION_EPOCH = datetime(2026, 9, 29, tzinfo=UTC)
+
+
+def _include_refresh_extension(marker: str) -> bool:
+    return (
+        workflow.info().start_time >= _UNMARKED_REFRESH_EXTENSION_EPOCH
+        or workflow.patched(marker)
+    )
+
 
 _COMMAND_PROPOSAL_RUN_PREFIX = "command-proposal-"
 _COMMAND_LIFECYCLE_RETRY = RetryPolicy(
@@ -52,15 +65,17 @@ async def _run_refresh(channel_profile_id: str, run_key: str) -> dict[str, objec
         )
     except Exception:
         reach_sync = {"status": "unavailable", "reason": "reach_sync_scheduling_failed"}
-    try:
-        growth = await workflow.execute_activity(
-            "refresh_channel_growth_activity",
-            channel_profile_id,
-            start_to_close_timeout=timedelta(minutes=3),
-            retry_policy=RetryPolicy(maximum_attempts=1),
-        )
-    except Exception:
-        growth = {"status": "unavailable", "reason": "growth_refresh_failed"}
+    growth = {"status": "unavailable", "reason": "growth_refresh_not_in_history"}
+    if _include_refresh_extension("channel-intelligence-growth-refresh-v1"):
+        try:
+            growth = await workflow.execute_activity(
+                "refresh_channel_growth_activity",
+                channel_profile_id,
+                start_to_close_timeout=timedelta(minutes=3),
+                retry_policy=RetryPolicy(maximum_attempts=1),
+            )
+        except Exception:
+            growth = {"status": "unavailable", "reason": "growth_refresh_failed"}
 
     observations = await workflow.execute_activity(
         "derive_channel_observations_activity",
@@ -118,15 +133,17 @@ async def _run_refresh(channel_profile_id: str, run_key: str) -> dict[str, objec
         retry_policy=retry,
 
     )
-    try:
-        clip_lifecycle = await workflow.execute_activity(
-            "run_clip_lifecycle_maintenance_activity",
-            channel_profile_id,
-            start_to_close_timeout=timedelta(minutes=10),
-            retry_policy=RetryPolicy(maximum_attempts=1),
-        )
-    except Exception:
-        clip_lifecycle = {"status": "unavailable"}
+    clip_lifecycle = {"status": "unavailable"}
+    if _include_refresh_extension("channel-intelligence-clip-lifecycle-v1"):
+        try:
+            clip_lifecycle = await workflow.execute_activity(
+                "run_clip_lifecycle_maintenance_activity",
+                channel_profile_id,
+                start_to_close_timeout=timedelta(minutes=10),
+                retry_policy=RetryPolicy(maximum_attempts=1),
+            )
+        except Exception:
+            clip_lifecycle = {"status": "unavailable"}
 
     try:
         packaging_seed = await workflow.execute_activity(
