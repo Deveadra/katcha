@@ -116,15 +116,15 @@ def prepare_topic_watch_execution(
                 if source.channel_profile_id != channel_profile_id:
                     continue
                 source_metadata = _source_run_metadata(source, {})
-        if (
-            adapter_key == "youtube"
-            and channel_profile_id
-            and not query.get("youtube_connection_id")
-        ):
-            with session_scope() as session:
-                profile = session.get(ChannelProfile, channel_profile_id)
-                if profile is not None:
-                    query["youtube_connection_id"] = str(profile.youtube_connection_id)
+        if adapter_key == "youtube":
+            if channel_profile_id:
+                with session_scope() as session:
+                    profile = session.get(ChannelProfile, channel_profile_id)
+                    query.pop("youtube_connection_id", None)
+                    if profile is not None and profile.youtube_connection_id is not None:
+                        query["youtube_connection_id"] = str(profile.youtube_connection_id)
+            else:
+                query.pop("youtube_connection_id", None)
         query["include_terms"] = include_terms
         query["exclude_terms"] = exclude_terms
         query["freshness_horizon_hours"] = freshness_horizon_hours

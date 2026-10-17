@@ -57,6 +57,7 @@ let handoffItems = [];
 let handoffArchived = 0;
 let loseSaveResponse = false;
 let executeFails = false;
+let youtubeVerifyFailOnce = true;
 let delayedFinds = null;
 
 function clone(value) {
@@ -246,6 +247,22 @@ function overview(source) {
         const sourceMatch = url.pathname.match(/^\/v1\/discovery\/sources\/([^/]+)/);
         const sourceId = sourceMatch?.[1];
         const source = sourceId ? sourceById(sourceId) : null;
+
+        if (source && url.pathname.endsWith("/youtube/verify") && req.method() === "POST") {
+            if (youtubeVerifyFailOnce) {
+                youtubeVerifyFailOnce = false;
+                return reply({
+                    detail: "YouTube OAuth refresh failed (HTTP 400, invalid_grant). Reconnect the channel.",
+                }, 409);
+            }
+            return reply({
+                status: "verified",
+                authentication: "oauth",
+                operation: "channels.list",
+                quota_units: 1,
+                channel_found: true,
+            });
+        }
 
         if (source && url.pathname.endsWith("/overview") && req.method() === "GET") {
             return reply(overview(source));
@@ -555,6 +572,17 @@ function overview(source) {
         assert.match(await page.locator("#source-info").innerText(), /Research automatically/);
         assert.match(await page.locator("#source-info").innerText(), /Manual only/);
         assert.match(await page.locator("#source-info").innerText(), /Choose a check action above/);
+        await page.locator("#youtube-verify").click();
+        await page.waitForFunction(() =>
+            document.querySelector("#youtube-verify-result").textContent.includes("invalid_grant")
+        );
+        assert.match(await page.locator("#youtube-verify-result").innerText(), /Reconnect the channel/);
+        await page.locator("#youtube-verify").click();
+        await page.waitForFunction(() =>
+            document.querySelector("#youtube-verify-result").textContent.includes("Verified public YouTube API access")
+        );
+        assert.match(await page.locator("#youtube-verify-result").innerText(), /1 quota unit/);
+        assert.equal(runs.filter((row) => row.sourceId === marvel.id).length, 0);
 
         // A completed source check must disclose the separate downstream
         // opportunity outcome; not passing activation thresholds is not a

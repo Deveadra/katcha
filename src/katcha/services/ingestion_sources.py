@@ -544,14 +544,17 @@ def create_discovery_run_from_source(
             **dict(source.query_template or {}),
             **dict(query_overrides or {}),
         }
-        if (
-            source.adapter_key == "youtube"
-            and source.channel_profile_id is not None
-            and not query.get("youtube_connection_id")
-        ):
-            profile = session.get(ChannelProfile, source.channel_profile_id)
-            if profile is not None and profile.youtube_connection_id is not None:
-                query["youtube_connection_id"] = str(profile.youtube_connection_id)
+        if source.adapter_key == "youtube":
+            if source.channel_profile_id is not None:
+                profile = session.get(ChannelProfile, source.channel_profile_id)
+                # Never honour template-supplied account IDs. If this
+                # profile has no OAuth token, discovery may still use the
+                # configured public YouTube Data API key.
+                query.pop("youtube_connection_id", None)
+                if profile is not None and profile.youtube_connection_id is not None:
+                    query["youtube_connection_id"] = str(profile.youtube_connection_id)
+            else:
+                query.pop("youtube_connection_id", None)
         run_metadata = _source_run_metadata(source, metadata)
         adapter_key = source.adapter_key
         adapter_version = source.adapter_version

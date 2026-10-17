@@ -101,24 +101,66 @@ def _youtube_request_auth(
                 .limit(1)
             )
 
+    failure: str | None = None
     if connection_id is not None:
         try:
             access_token = get_valid_access_token(
                 connection_id,
                 settings=settings,
             )
-        except YouTubeCredentialError:
-            access_token = ""
-        if access_token:
-            return {}, {"Authorization": f"Bearer {access_token}"}
+        except YouTubeCredentialError as exc:
+            # Keep the provider-specific reason without dumping access or
+            # refresh tokens. A saved account is not a verified live session.
+            failure = str(exc)
+        else:
+            if access_token:
+                return {}, {"Authorization": f"Bearer {access_token}"}
+            failure = "The saved YouTube connection returned an empty access token"
 
     if api_key:
         return {"key": api_key}, {}
 
+    if failure:
+        raise ValueError(
+            f"YouTube discovery cannot use the saved connection: {failure} "
+            "Reconnect the channel or configure a YouTube Data API key."
+        )
     raise ValueError(
-        "YouTube discovery is not configured. Connect a YouTube channel "
-        "or add a YouTube Data API key, then try again."
+        "YouTube discovery has no active connection or Data API key. "
+        "Connect a YouTube channel or configure a YouTube Data API key."
     )
+
+
+def verify_youtube_discovery(query: dict[str, Any]) -> dict[str, object]:
+    """Probe actual public Data API access with one inexpensive channels.list.
+
+    This is an explicit operator action, not a background health-check that
+    consumes search quota or silently uses another channel's credentials.
+    """
+    auth_params, auth_headers = _youtube_request_auth(query)
+    reference = str(query.get("channel_reference") or "").strip()
+    selector = youtube_channel_selector(reference) if reference else {"forHandle": "@YouTube"}
+    with httpx.Client(timeout=15.0) as client:
+        payload = _provider_get_json(
+            client, _CHANNELS_URL,
+            params={**auth_params, "part": "id", **selector},
+            headers=auth_headers,
+            operation="discovery credential check",
+            provider_usage={"youtube.core": 1},
+        )
+    if not isinstance(payload.get("items"), list) or not payload["items"]:
+        raise ValueError(
+            "YouTube authenticated, but the requested channel could not be found. "
+            "Check the source @handle or channel ID."
+        )
+    return {
+        "status": "verified",
+        "authentication": "oauth" if auth_headers else "api_key",
+        "operation": "channels.list",
+        "quota_units": 1,
+        "channel_found": True,
+    }
+
 
 def parse_youtube_candidates(
     search_payload: dict[str, Any],
