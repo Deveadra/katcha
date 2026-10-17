@@ -178,9 +178,66 @@ async def test_unverified_render_attempt_prevents_cancellation(
     def unsafe(*args):
         raise resolution.WorkStopConflict("render attempts are not terminal")
 
+    async def get_client():
+        return FakeTemporal({"purge-prod": WorkflowExecutionStatus.CANCELED})
+
+    monkeypatch.setattr(resolution, "get_temporal_client", get_client)
     monkeypatch.setattr(resolution, "_no_media_consumers", unsafe)
     with pytest.raises(resolution.WorkStopConflict, match="render attempts"):
         await resolution.stop_clip_work(
             clip_id, "production", ids["production"], expected_status="review",
             actor="test-operator",
         )
+
+
+@pytest.mark.asyncio
+async def test_active_render_can_be_cancelled_but_not_released(
+    fixture_work, monkeypatch,
+):
+    from katcha.render_models import RenderAttempt
+
+    clip_id, _, _, ids = fixture_work
+    with db.session_scope() as session:
+        session.add(RenderAttempt(
+            production_id=ids["production"],
+            attempt_key="stop-fixture-render",
+            source_generation=1,
+            attempt_number=1,
+            status="rendering",
+            stage="rendering",
+            output_key="renders/fixture.mp4",
+            manifest_version="short-render-v1",
+            failure_count=0,
+        ))
+
+    client = FakeTemporal({"purge-prod": WorkflowExecutionStatus.RUNNING})
+
+    async def get_client():
+        return client
+
+    monkeypatch.setattr(resolution, "get_temporal_client", get_client)
+    pending = await resolution.stop_clip_work(
+        clip_id, "production", ids["production"], expected_status="review",
+        actor="test-operator",
+    )
+    assert pending.state == "cancellation_requested"
+    assert client.handles["purge-prod"].cancel_count == 1
+
+    client.handles["purge-prod"].status = WorkflowExecutionStatus.CANCELED
+    with pytest.raises(resolution.WorkStopConflict, match="render attempts"):
+        await resolution.stop_clip_work(
+            clip_id, "production", ids["production"], expected_status="review",
+            actor="test-operator",
+        )
+    with db.session_scope() as session:
+        assert session.get(Production, ids["production"]).status == "review"
+        attempt = session.query(RenderAttempt).filter_by(
+            attempt_key="stop-fixture-render"
+        ).one()
+        attempt.status = "dead_letter"
+
+    resolved = await resolution.stop_clip_work(
+        clip_id, "production", ids["production"], expected_status="review",
+        actor="test-operator",
+    )
+    assert resolved.status == "cancelled"
