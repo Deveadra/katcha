@@ -7,6 +7,7 @@ from typing import Any
 
 from sqlalchemy import func, select
 from temporalio import activity
+from temporalio.exceptions import ApplicationError
 
 from katcha.audio.tts import VoiceProfile, get_voice_profile, synthesize_speech
 from katcha.config import Settings
@@ -23,7 +24,7 @@ from katcha.rendering.blueprint_manifest import (
     BlueprintRenderManifest,
     build_blueprint_render_manifest,
 )
-from katcha.rendering.client import render_blueprint, render_short
+from katcha.rendering.client import RenderBudgetDenied, render_blueprint, render_short
 from katcha.rendering.manifest import (
     ShortBrandSpec,
     ShortRenderManifest,
@@ -846,6 +847,10 @@ def render_short_activity(production_id: str) -> dict[str, object]:
             failure_class=type(exc).__name__,
             error=str(exc),
         )
+        if isinstance(exc, RenderBudgetDenied):
+            raise ApplicationError(
+                str(exc), type="RenderBudgetDenied", non_retryable=True
+            ) from exc
         raise
 
     verification = {

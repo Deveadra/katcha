@@ -27,6 +27,10 @@ class RendererRequestError(RuntimeError):
     pass
 
 
+class RenderBudgetDenied(RendererRequestError):
+    """The compute coordinator rejected dispatch within the configured budget."""
+
+
 class EditorialRenderRejected(RendererRequestError):
     """Renderer confirmed validation/config rejection before any compute was dispatched."""
 
@@ -43,7 +47,14 @@ def _raise_for_renderer_error(response: httpx.Response) -> None:
         detail = str(payload["error"]).strip()
     if not detail:
         detail = response.reason_phrase or "renderer request failed"
-    raise RendererRequestError(f"renderer HTTP {response.status_code}: {detail}")
+    error_type = (
+        RenderBudgetDenied
+        if response.status_code == 402
+        and isinstance(payload, dict)
+        and payload.get("code") == "render_budget_denied"
+        else RendererRequestError
+    )
+    raise error_type(f"renderer HTTP {response.status_code}: {detail}")
 
 
 @dataclass(frozen=True, slots=True)

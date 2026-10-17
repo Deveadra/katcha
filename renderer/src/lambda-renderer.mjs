@@ -149,7 +149,10 @@ const budgetRequest = async ({
   }
   if (!response.ok) {
     const detail = String(data?.error || response.statusText || 'request denied');
-    throw new Error(
+    const ErrorClass = path === '/v1/external-compute/reserve' && response.status === 402
+      ? RenderBudgetDenied
+      : Error;
+    throw new ErrorClass(
       `external-compute budget ${path} returned HTTP ${response.status}: ${detail}`,
     );
   }
@@ -158,6 +161,10 @@ const budgetRequest = async ({
   }
   return data;
 };
+
+export class RenderBudgetDenied extends Error {}
+
+export const rendererErrorStatus = (error) => error instanceof RenderBudgetDenied ? 402 : 500;
 
 export const reserveLambdaBudget = async ({
   compositionId,

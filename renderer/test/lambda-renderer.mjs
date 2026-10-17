@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import {
   assertCloudReachableInputProps,
+  RenderBudgetDenied,
+  rendererErrorStatus,
   renderMediaViaLambda,
   resolveLambdaFramesPerFunction,
 } from '../src/lambda-renderer.mjs';
@@ -221,7 +223,12 @@ for (const invalidProps of [
         downloadMedia: async () => ({}),
       },
     }),
-    /monthly budget exceeded/,
+    (error) => {
+      assert.ok(error instanceof RenderBudgetDenied);
+      assert.equal(rendererErrorStatus(error), 402);
+      assert.match(error.message, /monthly budget exceeded/);
+      return true;
+    },
   );
   assert.equal(awsCalled, false);
 }
@@ -349,3 +356,5 @@ console.log('PASS: Lambda budget authorization precedes AWS invocation.');
   assert.ok(!JSON.stringify(settlement).includes('PRIVATESESSION'));
   assert.ok(!JSON.stringify(settlement).includes('PRIVATESIGNATURE'));
 }
+
+assert.equal(rendererErrorStatus(new Error('generic failure')), 500);
