@@ -459,7 +459,9 @@ const clips = [
         await page.locator("#purge-confirm-input").fill(`DELETE ${clipA}`);
         assert.equal(await page.locator("#purge-confirm").isEnabled(), true);
         await page.locator("#purge-confirm").click();
-        await page.locator("#purge-feedback").getByText(/still required by an active production/).waitFor();
+        await page.waitForFunction(() =>
+            document.querySelector("#purge-feedback").textContent.includes("still required by an active production"),
+        );
         assert.equal(await page.locator("#purge-dialog").isVisible(), true);
         assert.equal(await page.locator("#purge-confirm").isEnabled(), true);
         assert.equal(clips[0].lifecycle_state, "archived");
