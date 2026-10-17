@@ -76,10 +76,11 @@ def _stream_object(
     filename: str,
     *,
     cache_control: str = "private, max-age=60",
+    missing_detail: str = "media object is missing",
 ) -> StreamingResponse:
     store = ObjectStore()
     if not store.exists(key):
-        raise HTTPException(status_code=404, detail="media object is missing")
+        raise HTTPException(status_code=404, detail=missing_detail)
     metadata = store.stat(key)
     size = int(metadata["size_bytes"])
     if size <= 0:
