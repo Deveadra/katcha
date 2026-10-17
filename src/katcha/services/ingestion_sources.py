@@ -544,14 +544,18 @@ def create_discovery_run_from_source(
             **dict(source.query_template or {}),
             **dict(query_overrides or {}),
         }
-        if (
-            source.adapter_key == "youtube"
-            and source.channel_profile_id is not None
-            and not query.get("youtube_connection_id")
-        ):
-            profile = session.get(ChannelProfile, source.channel_profile_id)
-            if profile is not None and profile.youtube_connection_id is not None:
+        if source.adapter_key == "youtube":
+            if source.channel_profile_id is not None:
+                profile = session.get(ChannelProfile, source.channel_profile_id)
+                if profile is None or profile.youtube_connection_id is None:
+                    raise ValueError(
+                        "Assigned channel has no YouTube OAuth connection; reconnect the channel"
+                    )
+                # Ignore any stale or user-supplied connection in a Source
+                # template. The assigned channel owns the OAuth identity.
                 query["youtube_connection_id"] = str(profile.youtube_connection_id)
+            else:
+                query.pop("youtube_connection_id", None)
         run_metadata = _source_run_metadata(source, metadata)
         adapter_key = source.adapter_key
         adapter_version = source.adapter_version
