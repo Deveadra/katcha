@@ -363,6 +363,18 @@ function payload(selected = "") {
             requests.every((request) => request.auth === "Bearer fixture-token"),
             "all operations API calls should carry the in-memory control token",
         );
+        // A dependency link from Clip Library must focus its exact work row.
+        const requestedWork = "55555555-5555-4555-8555-555555555555";
+        await page.goto(
+            "http://127.0.0.1:" + port +
+            "/operations.html?channel=" + channelOne + "&work=" + requestedWork,
+        );
+        const linkedWork = page.locator("#active-list .ops-row.linked-work");
+        await linkedWork.waitFor();
+        assert.equal(await linkedWork.getAttribute("data-work-id"), requestedWork);
+        assert.equal(await linkedWork.evaluate((node) => document.activeElement === node), true);
+        assert.match(await linkedWork.innerText(), /Ranking clips/);
+
         assert.equal(await page.locator("#token").inputValue(), "");
         assert.equal(await page.evaluate(() => localStorage.length), 0);
 
