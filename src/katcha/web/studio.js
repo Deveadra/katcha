@@ -285,16 +285,25 @@ function updatePlayhead() {
     const video=$("monitor-video"), canvas=$("timeline-canvas"), head=$("playhead"); if (!head) return;
     const lane=canvas.querySelector(".track-lane"); if (!lane) return;
     let seconds=video.currentTime;
+    let timecode=formatTime(seconds);
     if (state.monitorMode==="source") {
         const item=selectedBaseItem()?draftItem(selectedBaseItem()):null;
-        if (item) seconds=Number(item.timeline_start_seconds)+(video.currentTime-Number(item.source.source_start_seconds));
+        if (item) {
+            const start=Number(item.source.source_start_seconds);
+            const end=Number(item.source.source_end_seconds);
+            const segmentStart=Number(item.timeline_start_seconds);
+            const segmentEnd=Number(item.timeline_end_seconds);
+            const outside=video.currentTime<start || video.currentTime>end;
+            // The playhead visualizes the selected edit. The source player
+            // itself must remain freely seekable beyond that segment.
+            seconds=Math.max(segmentStart,Math.min(segmentEnd,
+                segmentStart+(video.currentTime-start)));
+            if (outside) timecode=formatTime(video.currentTime)+" · source (outside edit)";
+            else timecode=formatTime(seconds);
+        }
     }
     const x=lane.offsetLeft+Math.max(0,Math.min(1,seconds/timeline.duration))*lane.clientWidth;
-    head.style.left=`${x}px`; $("timecode").textContent=formatTime(seconds);
-    if (state.monitorMode==="source") {
-        const item=selectedBaseItem()?draftItem(selectedBaseItem()):null;
-        if (item && video.currentTime>Number(item.source.source_end_seconds)) { video.pause(); video.currentTime=Number(item.source.source_start_seconds); }
-    }
+    head.style.left=`${x}px`; $("timecode").textContent=timecode;
 }
 function activeBlueprint() {
     const key=state.detail?.episode?.edit_blueprint_key;
