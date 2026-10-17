@@ -18,15 +18,16 @@ from katcha.config import Settings
 from katcha.domain import SourceUsageMode
 from katcha.intelligence_models import ChannelProfile
 from katcha.orchestration.discovery_activities import (
+    bridge_source_opportunities_activity,
     execute_discovery_page_activity,
     finalize_topic_watch_execution_activity,
 )
 from katcha.publishing_models import YouTubeConnection
-from katcha.services.ingestion_sources import upsert_ingestion_source
+from katcha.services.ingestion_sources import create_discovery_run_from_source, upsert_ingestion_source
 from katcha.services.research import prepare_research_jobs
 from katcha.services.trend_execution import prepare_topic_watch_execution
-from katcha.services.trends import create_watch_profile
-from katcha.trend_models import TrendSignal
+from katcha.services.trends import create_watch_profile, refresh_channel_trends
+from katcha.trend_models import TrendEvidencePacket, TrendOpportunity, TrendSignal
 
 
 @pytest.fixture
@@ -116,6 +117,121 @@ def test_saved_source_collects_persists_and_bridges_to_trends(research_db, monke
         assert session.scalar(select(TrendSignal)) is not None
         assert session.scalar(select(DiscoveryRun)).status == "completed"
     assert prepare_research_jobs() == []  # restart does not repeat this window
+
+
+def test_manual_source_check_creates_reviewable_dossier_without_handoff(
+    research_db, monkeypatch,
+):
+    first, _ = channel()
+    second, _ = channel()
+    create_watch_profile(first, interests=["Gaming"], opportunity_threshold=0.99)
+    create_watch_profile(second, interests=["Gaming"])
+    source = upsert_ingestion_source(
+        source_key="manual-gaming-source",
+        name="Manual gaming updates",
+        adapter_key="rss_atom",
+        adapter_version="v1",
+        platform="web",
+        channel_profile_id=first,
+        query_template={"feed_url": "https://example.com/game-feed"},
+    )
+    monkeypatch.setattr(
+        get_adapter("rss_atom", "v1"),
+        "discover",
+        lambda query, cursor: DiscoveryBatch(
+            items=(
+                DiscoveredCandidate(
+                    source_url="https://example.com/gaming-update",
+                    title="Gaming update",
+                    creator="Newsroom",
+                    provenance_confidence=0.9,
+                    metadata={"published_at": datetime.now(UTC).isoformat(),
+                              "source_metrics": {"mentions": 10}},
+                ),
+            ),
+        ),
+    )
+    run = create_discovery_run_from_source(source.id, idempotency_key="manual-1")
+    assert execute_discovery_page_activity(str(run.id))["done"]
+    result = bridge_source_opportunities_activity(str(run.id))
+    assert result["status"] == "completed"
+    assert result["signals_bridged"] == 1
+    assert result["topics_scored"] == 1
+    # Low-scoring sources still have inspectable provenance without being
+    # made eligible for autonomous video production.
+    assert result["qualified_opportunities"] == 0
+    assert result["evidence_packets_built"] == 1
+    assert bridge_source_opportunities_activity(str(run.id)) == result
+
+    with db.session_scope() as session:
+        stored = session.get(DiscoveryRun, run.id)
+        assert stored.status == "completed"
+        assert stored.run_metadata["opportunity_handoff"] == result
+        signals = list(session.scalars(select(TrendSignal)))
+        assert len(signals) == 1
+        assert signals[0].signal_metadata["channel_profile_id"] == str(first)
+        assert len(list(session.scalars(select(TrendOpportunity)))) == 1
+        packet = session.scalar(select(TrendEvidencePacket))
+        assert packet is not None and packet.sources[0]["title"] == "Gaming update"
+
+    other_refresh = refresh_channel_trends(second, run_key="separate-channel")
+    assert other_refresh["topics_scored"] == 0
+
+
+def test_manual_unassigned_source_cannot_target_another_channel(research_db, monkeypatch):
+    profile, _ = channel()
+    create_watch_profile(profile, interests=["Gaming"])
+    source = upsert_ingestion_source(
+        source_key="unassigned-manual",
+        name="Shared source",
+        adapter_key="rss_atom",
+        adapter_version="v1",
+        platform="web",
+        query_template={"feed_url": "https://example.com/shared-feed"},
+    )
+    monkeypatch.setattr(
+        get_adapter("rss_atom", "v1"),
+        "discover",
+        lambda query, cursor: DiscoveryBatch(items=(
+            DiscoveredCandidate(source_url="https://example.com/gaming-news",
+                                title="Gaming story", provenance_confidence=0.9),
+        )),
+    )
+    run = create_discovery_run_from_source(source.id, idempotency_key="shared-manual")
+    execute_discovery_page_activity(str(run.id))
+    assert bridge_source_opportunities_activity(str(run.id))["status"] == "unassigned_or_changed"
+    with db.session_scope() as session:
+        assert session.scalar(select(TrendSignal)) is None
+        assert session.scalar(select(TrendOpportunity)) is None
+
+
+def test_source_dossier_handoff_exposes_missing_watch_profile(research_db, monkeypatch):
+    profile, _ = channel()
+    source = upsert_ingestion_source(
+        source_key="no-watch-manual",
+        name="Unconfigured channel source",
+        adapter_key="rss_atom",
+        adapter_version="v1",
+        platform="web",
+        channel_profile_id=profile,
+        query_template={"feed_url": "https://example.com/no-watch"},
+    )
+    monkeypatch.setattr(
+        get_adapter("rss_atom", "v1"),
+        "discover",
+        lambda query, cursor: DiscoveryBatch(items=(
+            DiscoveredCandidate(source_url="https://example.com/feature",
+                                title="New game feature", provenance_confidence=0.9),
+        )),
+    )
+    run = create_discovery_run_from_source(source.id, idempotency_key="no-watch")
+    execute_discovery_page_activity(str(run.id))
+    result = bridge_source_opportunities_activity(str(run.id))
+    assert result["status"] == "awaiting_configuration"
+    assert result["signals_bridged"] == 1
+    assert result["evidence_packets_built"] == 0
+    with db.session_scope() as session:
+        assert session.get(DiscoveryRun, run.id).status == "completed"
 
 
 def test_interests_create_independent_channel_scoped_research(research_db):
