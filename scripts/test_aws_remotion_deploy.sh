@@ -250,8 +250,29 @@ if ! grep -q 'memory:        2048 MB' <<<"${override_output}"; then
     echo "FAIL: Lambda memory override was not honored" >&2
     exit 1
 fi
-if ! grep -q 'remotion-render-4-0-529-mem2048mb-disk4096mb-900sec' <<<"${override_output}"; then
+if ! grep -q 'remotion-render-4-0-529-mem2048mb-disk6144mb-900sec' <<<"${override_output}"; then
     echo "FAIL: Lambda memory override did not change deterministic function name" >&2
+    exit 1
+fi
+
+for disk in 0 511 10241 invalid; do
+    : >"${LOG}"
+    if KATCHA_REMOTION_LAMBDA_DISK_MB="${disk}" bash "${SCRIPT}" --apply >"${TMP}/invalid-disk.log" 2>&1; then
+        echo "FAIL: invalid disk size accepted: ${disk}" >&2
+        exit 1
+    fi
+    grep -q 'KATCHA_REMOTION_LAMBDA_DISK_MB must be an integer' "${TMP}/invalid-disk.log"
+    if [[ -s "${LOG}" ]]; then
+        echo "FAIL: invalid disk size reached dependency or AWS calls" >&2
+        exit 1
+    fi
+done
+
+: >"${LOG}"
+disk_output="$(KATCHA_REMOTION_LAMBDA_DISK_MB=8192 bash "${SCRIPT}")"
+grep -q 'mem3008mb-disk8192mb-900sec' <<<"${disk_output}"
+if grep -q 'remotion lambda functions deploy' "${LOG}"; then
+    echo "FAIL: disk override inspection deployed a function" >&2
     exit 1
 fi
 
@@ -296,7 +317,9 @@ if [[ "${composition_count}" -ne 1 ]]; then
 fi
 
 grep -q '^KATCHA_REMOTION_LAMBDA_MEMORY_MB=3008$' "${ENV_FILE}"
-grep -q '^KATCHA_REMOTION_LAMBDA_FUNCTION_NAME=remotion-render-4-0-529-mem3008mb-disk4096mb-900sec$' "${ENV_FILE}"
+grep -q '^KATCHA_REMOTION_LAMBDA_DISK_MB=6144$' "${ENV_FILE}"
+grep -q -- '--disk=6144' "${LOG}"
+grep -q '^KATCHA_REMOTION_LAMBDA_FUNCTION_NAME=remotion-render-4-0-529-mem3008mb-disk6144mb-900sec$' "${ENV_FILE}"
 grep -q '^KATCHA_REMOTION_LAMBDA_SERVE_URL=https://remotionlambda-test.s3.us-east-1.amazonaws.com/sites/katcha-production/index.html$' "${ENV_FILE}"
 grep -q '^KATCHA_RENDER_BACKEND=local$' "${ENV_FILE}"
 

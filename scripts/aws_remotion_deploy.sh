@@ -30,6 +30,7 @@ Optional configuration:
   KATCHA_ENV_FILE                 Default: .env
   KATCHA_REMOTION_LAMBDA_MEMORY_MB
                                    Default: 3008; valid Lambda range: 128-10240
+  KATCHA_REMOTION_LAMBDA_DISK_MB  Default: 6144; valid Lambda range: 512-10240
   KATCHA_REMOTION_SITE_NAME       Default: katcha-production
   KATCHA_AWS_ROLES_ANYWHERE_DIR   Default: ~/.aws/katcha-roles-anywhere
 EOF
@@ -95,7 +96,8 @@ REGION="${REGION:-us-east-1}"
 PROFILE="${PROFILE:-katcha-automation}"
 
 FUNCTION_MEMORY_MB="${FUNCTION_MEMORY_MB:-3008}"
-FUNCTION_DISK_MB=4096
+FUNCTION_DISK_MB="${KATCHA_REMOTION_LAMBDA_DISK_MB:-$(read_env_key KATCHA_REMOTION_LAMBDA_DISK_MB)}"
+FUNCTION_DISK_MB="${FUNCTION_DISK_MB:-6144}"
 FUNCTION_TIMEOUT_SECONDS=900
 FUNCTION_RETENTION_DAYS=14
 
@@ -106,6 +108,11 @@ fi
 
 if [[ -z "${REGION}" ]]; then
     echo "ERROR: KATCHA_REMOTION_LAMBDA_REGION must not be empty." >&2
+    exit 2
+fi
+
+if [[ ! "${FUNCTION_DISK_MB}" =~ ^[0-9]+$ ]] || (( FUNCTION_DISK_MB < 512 || FUNCTION_DISK_MB > 10240 )); then
+    echo "ERROR: KATCHA_REMOTION_LAMBDA_DISK_MB must be an integer from 512 through 10240." >&2
     exit 2
 fi
 
@@ -204,7 +211,7 @@ FUNCTION_NAME="$(
     node src/lambda-deployment-state.mjs function-name         "${FUNCTION_MEMORY_MB}"         "${FUNCTION_DISK_MB}"         "${FUNCTION_TIMEOUT_SECONDS}"
 )"
 
-EXPECTED_FUNCTION_NAME="remotion-render-4-0-529-mem${FUNCTION_MEMORY_MB}mb-disk4096mb-900sec"
+EXPECTED_FUNCTION_NAME="remotion-render-4-0-529-mem${FUNCTION_MEMORY_MB}mb-disk${FUNCTION_DISK_MB}mb-900sec"
 if [[ "${FUNCTION_NAME}" != "${EXPECTED_FUNCTION_NAME}" ]]; then
     echo "ERROR: unexpected Remotion function name: ${FUNCTION_NAME}" >&2
     echo "  expected: ${EXPECTED_FUNCTION_NAME}" >&2
@@ -361,7 +368,7 @@ if [[ "${env_existed}" == "true" ]]; then
     echo "Backed up Katcha env file outside the repository: ${env_backup}"
 fi
 
-python3 - "${ENV_FILE}"     "KATCHA_REMOTION_LAMBDA_MEMORY_MB=${FUNCTION_MEMORY_MB}"     "KATCHA_REMOTION_LAMBDA_FUNCTION_NAME=${FUNCTION_NAME}"     "KATCHA_REMOTION_LAMBDA_SERVE_URL=${SERVE_URL}" <<'PY'
+python3 - "${ENV_FILE}"     "KATCHA_REMOTION_LAMBDA_MEMORY_MB=${FUNCTION_MEMORY_MB}"     "KATCHA_REMOTION_LAMBDA_DISK_MB=${FUNCTION_DISK_MB}"     "KATCHA_REMOTION_LAMBDA_FUNCTION_NAME=${FUNCTION_NAME}"     "KATCHA_REMOTION_LAMBDA_SERVE_URL=${SERVE_URL}" <<'PY'
 from pathlib import Path
 import sys
 
