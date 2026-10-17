@@ -75,6 +75,7 @@ def _observation_key(
     observed_at: datetime,
     metrics: dict[str, float],
     canonical_url: str,
+    channel_profile_id: uuid.UUID | None = None,
 ) -> str:
     settings = get_settings()
     bucket = int(observed_at.timestamp()) // settings.trend_observation_bucket_seconds
@@ -85,6 +86,10 @@ def _observation_key(
             "bucket": bucket,
             "metrics": metrics,
             "canonical_url": canonical_url,
+            # Same public video may be observed independently by multiple
+            # channels. Scope signal identity so the first writer does not
+            # silently claim every other channel's evidence.
+            "channel_profile_id": str(channel_profile_id) if channel_profile_id else None,
         },
         sort_keys=True,
         separators=(",", ":"),
@@ -196,6 +201,7 @@ def bridge_topic_watch_queue_to_trend_signals(
                 observed_at=observation.observed_at,
                 metrics=metrics,
                 canonical_url=candidate.canonical_url,
+                channel_profile_id=channel_profile_id,
             ),
             canonical_url=candidate.canonical_url,
             source_name=candidate.creator,
@@ -216,6 +222,8 @@ def bridge_topic_watch_queue_to_trend_signals(
                 "discovery_run_id": str(run.id),
                 "provenance_confidence": float(candidate.provenance_confidence),
                 "provenance_claims": dict(candidate.provenance_claims or {}),
+                "source_scope": "channel" if channel_profile_id else "shared",
+                "channel_profile_id": str(channel_profile_id) if channel_profile_id else None,
             },
             match_confidence=float(candidate.provenance_confidence),
             match_reasons=["deterministic_story_cluster", "discovery_observation"],
