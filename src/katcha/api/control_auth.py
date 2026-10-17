@@ -386,6 +386,14 @@ def _require_named_principal_route_access(request: Request) -> None:
     if path == "/v1/control/session":
         return
 
+    if method == "POST" and re.fullmatch(
+        r"/v1/clips/[^/]+/references/(?:production|short_episode|compilation)/[^/]+/stop",
+        path,
+    ):
+        # The endpoint independently verifies the specific clip, work and channel.
+        require_control_scope(request, "production:create")
+        return
+
     if path == "/v1/operations/overview":
         require_control_scope(request, "channels:read")
         return
