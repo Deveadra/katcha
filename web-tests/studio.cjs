@@ -201,6 +201,26 @@ const detail = {
         await page.locator("#render-version").selectOption("2");
 
         await page.locator(".clip-row").first().click();
+        // Source review can jump beyond the selected six-second edit without
+        // rewinding the original media or involuntarily pausing playback.
+        const manualSeek = await page.evaluate(() => {
+            const player = document.getElementById("monitor-video");
+            let pauses = 0;
+            player.pause = () => { pauses++; };
+            Object.defineProperty(player, "currentTime", {
+                configurable: true, writable: true, value: 14.5,
+            });
+            state.monitorMode = "source";
+            updatePlayhead();
+            return {
+                pauses, currentTime: player.currentTime,
+                label: document.getElementById("timecode").textContent,
+            };
+        });
+        assert.equal(manualSeek.pauses, 0);
+        assert.equal(manualSeek.currentTime, 14.5);
+        assert.match(manualSeek.label, /source \(outside edit\)/);
+
         await page.locator("#clip-duration").fill("5.25");
         await page.locator("#clip-duration").dispatchEvent("input");
         assert.match(await page.locator("#save-state").innerText(),/1 CLIP EDIT/);
