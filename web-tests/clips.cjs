@@ -81,6 +81,7 @@ const clips = [
 (async () => {
     let browser;
     let savedRetention = null;
+    let rejectPurgeOnce = true;
     try {
         for (let i = 0; i < 50; i++) {
             try {
@@ -278,6 +279,10 @@ const clips = [
                 if (body.confirmation_text !== `DELETE ${clipA}`) {
                     return json({ detail: "confirmation mismatch" }, 400);
                 }
+                if (rejectPurgeOnce) {
+                    rejectPurgeOnce = false;
+                    return json({ detail: "clip is still required by an active production; finish or cancel that work first" }, 409);
+                }
                 clips[0].lifecycle_state = "purged";
                 clips[0].purged_at = "2026-09-28T10:05:00Z";
                 return json({
@@ -447,12 +452,22 @@ const clips = [
 
         await page.getByRole("button", { name: "Delete media", exact: true }).click();
         await page.locator("#purge-dialog").waitFor({ state: "visible" });
-        await page.locator("#purge-continue").click();
+        assert.equal(await page.locator("#purge-confirm").isDisabled(), true);
+        assert.equal(await page.locator('[data-close-dialog="purge-dialog"]').innerText(), "Cancel");
+        await page.locator("#purge-confirm-input").fill("wrong phrase");
+        assert.equal(await page.locator("#purge-confirm").isDisabled(), true);
         await page.locator("#purge-confirm-input").fill(`DELETE ${clipA}`);
+        assert.equal(await page.locator("#purge-confirm").isEnabled(), true);
+        await page.locator("#purge-confirm").click();
+        await page.locator("#purge-feedback").getByText(/still required by an active production/).waitFor();
+        assert.equal(await page.locator("#purge-dialog").isVisible(), true);
+        assert.equal(await page.locator("#purge-confirm").isEnabled(), true);
+        assert.equal(clips[0].lifecycle_state, "archived");
         await page.locator("#purge-confirm").click();
         await page.waitForFunction(
             () => document.querySelector("#message").textContent.includes("Source media deleted"),
         );
+        assert.equal(await page.locator("#purge-dialog").isVisible(), false);
         assert.equal(clips[0].lifecycle_state, "purged");
 
         await page.locator("#retention-settings").click();
