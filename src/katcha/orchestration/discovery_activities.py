@@ -70,6 +70,47 @@ def _poll_attempt_id(metadata: dict[str, object]) -> uuid.UUID | None:
         raise ValueError("discovery run has an invalid poll_attempt_id") from exc
 
 
+def _record_source_handoff(
+    run_uuid: uuid.UUID,
+    summary: dict[str, object],
+    channel_id: uuid.UUID | str | None,
+    *,
+    session=None,
+) -> dict[str, object]:
+    """Persist even terminal skips so historical reconciliation cannot starve."""
+    if session is None:
+        with session_scope() as owned_session:
+            return _record_source_handoff(
+                run_uuid, summary, channel_id, session=owned_session
+            )
+    row = session.get(DiscoveryRun, run_uuid)
+    if row is None:
+        return summary
+    existing = dict(row.run_metadata or {}).get("opportunity_handoff")
+    if isinstance(existing, dict) and existing == summary:
+        return summary
+    row.run_metadata = {
+        **dict(row.run_metadata or {}),
+        "opportunity_handoff": summary,
+    }
+    session.add(
+        DomainEvent(
+            aggregate_type="discovery_run",
+            aggregate_id=str(run_uuid),
+            event_type="source.opportunity_handoff." + str(summary["status"]),
+            payload={
+                "discovery_run_id": str(run_uuid),
+                "channel_profile_id": str(channel_id) if channel_id else None,
+                "signals_bridged": int(summary.get("signals_bridged") or 0),
+                "qualified_opportunities": int(
+                    summary.get("qualified_opportunities") or 0
+                ),
+            },
+        )
+    )
+    return summary
+
+
 @activity.defn
 def bridge_source_opportunities_activity(run_id: str) -> dict[str, object]:
     """Turn a manually checked saved Source into a channel-scoped trend update.
@@ -95,11 +136,15 @@ def bridge_source_opportunities_activity(run_id: str) -> dict[str, object]:
             return dict(previous)
         try:
             source_id = uuid.UUID(str(metadata["ingestion_source_id"]))
-        except (ValueError, TypeError) as exc:
-            raise ValueError("discovery run has an invalid source identity") from exc
+        except (ValueError, TypeError):
+            return _record_source_handoff(
+                run_uuid, {"status": "invalid_source_identity"}, None, session=session
+            )
         source = session.get(IngestionSource, source_id)
         if source is None:
-            return {"status": "source_unavailable"}
+            return _record_source_handoff(
+                run_uuid, {"status": "source_unavailable"}, None, session=session
+            )
         channel_id = source.channel_profile_id
         if (
             channel_id is None
@@ -108,10 +153,14 @@ def bridge_source_opportunities_activity(run_id: str) -> dict[str, object]:
         ):
             # Reassignment or deleted channel binding cannot transfer stored
             # results to another channel.
-            return {"status": "unassigned_or_changed"}
+            return _record_source_handoff(
+                run_uuid, {"status": "unassigned_or_changed"}, channel_id, session=session
+            )
         channel = session.get(ChannelProfile, channel_id)
         if channel is None or channel.status != "active":
-            return {"status": "channel_inactive"}
+            return _record_source_handoff(
+                run_uuid, {"status": "channel_inactive"}, channel_id, session=session
+            )
 
     run_key = f"source:{run_uuid}"
     try:
@@ -151,27 +200,7 @@ def bridge_source_opportunities_activity(run_id: str) -> dict[str, object]:
             "reason": "Opportunity evaluation failed. The saved source results remain available.",
         }
 
-    with session_scope() as session:
-        row = session.get(DiscoveryRun, run_uuid)
-        if row is not None:
-            row.run_metadata = {
-                **dict(row.run_metadata or {}),
-                "opportunity_handoff": summary,
-            }
-            session.add(
-                DomainEvent(
-                    aggregate_type="discovery_run",
-                    aggregate_id=str(run_uuid),
-                    event_type="source.opportunity_handoff." + str(summary["status"]),
-                    payload={
-                        "discovery_run_id": str(run_uuid),
-                        "channel_profile_id": str(channel_id),
-                        "signals_bridged": summary["signals_bridged"],
-                        "qualified_opportunities": summary["qualified_opportunities"],
-                    },
-                )
-            )
-    return summary
+    return _record_source_handoff(run_uuid, summary, channel_id)
 
 
 @activity.defn

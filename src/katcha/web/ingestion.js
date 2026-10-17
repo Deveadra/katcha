@@ -824,7 +824,13 @@ function renderHistory(overview, row) {
                         ? 'Check finished. No new source signals to evaluate.'
                         : handoffStatus === 'failed'
                             ? 'Source results saved, but opportunity evaluation failed. Check worker health and retry safely.'
-                            : '';
+                            : handoffStatus === 'unassigned_or_changed'
+                                ? 'Historical results retained. This Source was reassigned or unassigned after the check; no automatic channel transfer occurred.'
+                                : handoffStatus === 'channel_inactive'
+                                    ? 'Historical results retained. The assigned channel is inactive.'
+                                    : ['source_unavailable', 'invalid_source_identity'].includes(handoffStatus)
+                                        ? 'Historical results retained, but the original Source record cannot be verified.'
+                                        : '';
         return '<article class="source-run is-' + esc(run.status || 'unknown') + '">' +
             '<div class="source-run-head"><div><strong>' + esc(labels[run.status] || 'Status unavailable') + '</strong><small>' + esc(formatWhen(run.created_at)) + '</small></div>' +
             '<span>' + esc(run.status || 'unknown') + '</span></div>' +
