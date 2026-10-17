@@ -193,6 +193,7 @@ class ProductionDetailResponse(BaseModel):
     scripts: list[ProductionScriptResponse]
     assets: list[ProductionAssetResponse]
     reviews: list[ProductionReviewResponse]
+    review_url: str | None = None
 
 
 class ReviewProductionRequest(BaseModel):

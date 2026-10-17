@@ -8,6 +8,7 @@ const state = {
     operations: null,
     publications: [],
     productions: [],
+    productionPreviews: new Map(),
     brands: [],
     analytics: new Map(),
     packagingVariants: new Map(),
@@ -836,6 +837,7 @@ async function loadChannel() {
     const epoch = ++state.loadEpoch;
     const channelId = state.channelId;
     if (state.loadedChannelId !== channelId) {
+        clearProductionPreviews();
         state.summary = null; state.operations = null; state.publications=[];state.productions=[];state.brands=[];
         state.analytics.clear();state.packagingVariants.clear();state.loadedChannelId=channelId;
     }
@@ -1905,6 +1907,53 @@ function renderGrowth() {
     }
 }
 
+function clearProductionPreviews() {
+    for (const {video, url} of state.productionPreviews.values()) {
+        video.pause();
+        video.removeAttribute("src");
+        video.load();
+        URL.revokeObjectURL(url);
+    }
+    state.productionPreviews.clear();
+}
+
+async function watchProductionDraft(event) {
+    const button = event.target.closest("[data-watch-production]");
+    if (!button || button.disabled) return;
+    const id = button.dataset.watchProduction;
+    const channelId = state.channelId;
+    const card = button.closest(".production-card");
+    const status = card.querySelector("[data-draft-status]");
+    const preview = card.querySelector("[data-draft-preview]");
+    button.disabled = true;
+    status.textContent = "Loading your draft…";
+    try {
+        const blob = await audioBlob("/v1/productions/" + encodeURIComponent(id) + "/media");
+        if (state.channelId !== channelId || !button.isConnected) return;
+        const url = URL.createObjectURL(blob);
+        const video = document.createElement("video");
+        video.controls = true;
+        video.tabIndex = 0;
+        video.playsInline = true;
+        video.preload = "metadata";
+        video.style.width = "100%";
+        video.style.maxHeight = "70vh";
+        video.setAttribute("aria-label", "Finished production draft");
+        video.src = url;
+        state.productionPreviews.set(id, {video, url});
+        preview.replaceChildren(video);
+        video.focus();
+        status.textContent = "Draft loaded. Use the player to review it.";
+        button.hidden = true;
+    } catch (error) {
+        if (state.channelId === channelId && button.isConnected) {
+            status.textContent = "Could not load this draft. " + error.message + " Try again.";
+        }
+    } finally {
+        button.disabled = false;
+    }
+}
+
 function renderProductions() {
     const container = $("production-list");
     if (!state.productions.length) {
@@ -1925,7 +1974,7 @@ function renderProductions() {
                 "</span></div>" +
                 issue +
                 '<div class="prod-foot"><span>' +
-                escapeHtml(item.edit_blueprint_key || "default recipe") +
+                escapeHtml(({source_original: "Original audio", meme: "Meme remix", persona_commentary: "Commentary"})[item.edit_blueprint_key] || item.edit_blueprint_key || "Default edit") +
                 "</span><span>" +
                 escapeHtml(dateText(item.created_at)) +
                 '</span><a class="studio-button secondary small" href="' +
@@ -1936,10 +1985,21 @@ function renderProductions() {
                         "Explain this production’s state, any failure evidence, and what should happen next.",
                     ),
                 ) +
-                '">Ask Katcha ✦</a></div></article>'
+                '">Ask Katcha ✦</a></div>' +
+                (["review", "approved"].includes(item.status)
+                    ? '<button type="button" class="studio-button secondary small" data-watch-production="' +
+                      escapeHtml(item.id) + '">Watch draft</button><p role="status" aria-live="polite" data-draft-status></p>' +
+                      '<div data-draft-preview="' + escapeHtml(item.id) + '"></div>'
+                    : '') + '</article>'
             );
         })
         .join("");
+    for (const region of container.querySelectorAll("[data-draft-preview]")) {
+        const saved = state.productionPreviews.get(region.dataset.draftPreview);
+        if (!saved) continue;
+        region.append(saved.video);
+        region.closest(".production-card").querySelector("[data-watch-production]").hidden = true;
+    }
 }
 
 function kv(label, value) {
@@ -2181,6 +2241,8 @@ for (const id of [
     $(id).addEventListener("change", updateProviderActionState);
 }
 window.addEventListener("beforeunload", revokeProviderPreview);
+window.addEventListener("beforeunload", clearProductionPreviews);
+$("production-list").addEventListener("click", watchProductionDraft);
 $("growth-goals-form").addEventListener("submit", saveGrowthGoals);
 $("add-custom-goal").addEventListener("click", addCustomGoal);
 $("growth-pace").addEventListener("change", (event) => {

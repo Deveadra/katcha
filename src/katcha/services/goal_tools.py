@@ -626,7 +626,7 @@ TOOLS = {
         ),
         GoalTool(
             "production",
-            "Read exact production status and review evidence",
+            "Read exact production status, review evidence, and its private draft review page",
             "ai:read",
             "GET",
             "/v1/productions/{production_id}",

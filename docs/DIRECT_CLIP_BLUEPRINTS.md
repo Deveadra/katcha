@@ -27,3 +27,9 @@ Synthetic validation includes discovery/download/storage/manifest fixtures and a
 local render with a visible reaction image and audible soundbit. These tests do
 not establish live provider availability, particular third-party asset availability,
 or production deployment.
+
+Finished drafts can be watched in **Channel Studio → Content → Watch draft**.
+Video loads only when requested. A failed preview can be retried without losing
+the current search. Playback uses the existing authenticated control connection
+and checks the production's channel before accessing private media. Production
+details include a review-page link so Katcha AI can direct the user to the result.
