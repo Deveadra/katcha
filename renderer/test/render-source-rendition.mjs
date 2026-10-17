@@ -23,7 +23,9 @@ try {
     const {Key} = command.input;
     if (command.constructor.name === 'PutObjectCommand') {
       puts++;
-      objects.set(Key, {...command.input, ETag: 'prepared-v1'});
+      const chunks = [];
+      for await (const chunk of command.input.Body) chunks.push(chunk);
+      objects.set(Key, {...command.input, Body: Buffer.concat(chunks), ETag: 'prepared-v1'});
       return {};
     }
     const value = objects.get(Key);

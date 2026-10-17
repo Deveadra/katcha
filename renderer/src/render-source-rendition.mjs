@@ -1,7 +1,7 @@
 import {createHash} from 'node:crypto';
 import {execFile} from 'node:child_process';
 import fs from 'node:fs';
-import {mkdtemp, readFile, rm, stat} from 'node:fs/promises';
+import {mkdtemp, rm, stat} from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import {pipeline} from 'node:stream/promises';
@@ -62,9 +62,11 @@ export const createRenderSourceResolver = ({sourceClient, sourceBucket, resolveA
     if (video.codec_name === 'h264' && video.width <= width && video.height <= height) {
       return resolveAssetUrl(key);
     }
+    const targetWidth = Math.min(width, video.width);
+    const targetHeight = Math.min(height, video.height);
     await exec('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-nostdin', '-threads', '1', '-filter_threads', '1',
       '-i', input, '-map', '0:v:0', '-map', '0:a?', '-vf',
-      `scale=w=${width}:h=${height}:force_original_aspect_ratio=decrease:force_divisible_by=2`,
+      `scale=w=${targetWidth}:h=${targetHeight}:force_original_aspect_ratio=decrease:force_divisible_by=2`,
       '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '18', '-pix_fmt', 'yuv420p',
       '-threads', '1', '-fps_mode', 'passthrough', '-c:a', 'copy', '-map_metadata', '-1',
       '-movflags', '+faststart', output], {timeout: 600000, maxBuffer: 1024 * 1024});
@@ -82,14 +84,18 @@ export const createRenderSourceResolver = ({sourceClient, sourceBucket, resolveA
       || (video.nb_frames && prepared.nb_frames !== video.nb_frames)) {
       throw new Error('Prepared render source failed duration, frame, or audio verification');
     }
-    const bytes = await readFile(output);
+    const outputSize = (await stat(output)).size;
+    const digest = createHash('sha256');
+    for await (const chunk of fs.createReadStream(output)) digest.update(chunk);
+    const contentHash = digest.digest('hex');
     await sourceClient.send(new PutObjectCommand({Bucket: sourceBucket, Key: preparedKey,
-      Body: bytes, ContentLength: bytes.length, ContentType: 'video/mp4',
+      Body: fs.createReadStream(output), ContentLength: outputSize, ContentType: 'video/mp4',
       Metadata: {'katcha-source-identity': identity,
-        'katcha-content-sha256': createHash('sha256').update(bytes).digest('hex')}}));
+        'katcha-content-sha256': contentHash}}));
     const uploaded = await sourceClient.send(new HeadObjectCommand({Bucket: sourceBucket, Key: preparedKey}));
-    if (Number(uploaded.ContentLength) !== bytes.length
-      || uploaded.Metadata?.['katcha-source-identity'] !== identity) {
+    if (Number(uploaded.ContentLength) !== outputSize
+      || uploaded.Metadata?.['katcha-source-identity'] !== identity
+      || uploaded.Metadata?.['katcha-content-sha256'] !== contentHash) {
       throw new Error('Prepared render source upload could not be verified');
     }
     console.log(`render source prepared codec=h264 width=${prepared.width} height=${prepared.height} audio=copy`);

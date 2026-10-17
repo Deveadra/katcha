@@ -507,6 +507,14 @@ jobs:
       - name: Install renderer dependencies
         run: npm install --ignore-scripts
 
+      - name: Ensure headless browser and FFmpeg
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ffmpeg
+          ffmpeg -version | head -n 1
+          ffprobe -version | head -n 1
+          npx remotion browser ensure
+
       - name: Validate renderer runtime and cloud safety settings
         run: npm run test:config
 
@@ -522,14 +530,6 @@ jobs:
           if (!serveUrl) process.exit(1);
           console.log(serveUrl);
           "
-
-      - name: Ensure headless browser and FFmpeg
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq ffmpeg
-          ffmpeg -version | head -n 1
-          ffprobe -version | head -n 1
-          npx remotion browser ensure
 
       - name: Encode and verify both reaction overlays
         run: node test/reaction-smoke.mjs
