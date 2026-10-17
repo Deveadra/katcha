@@ -755,13 +755,19 @@ const analytics = [
             if (url.searchParams.get("channel_profile_id") === "channel-1") {
                 data.push({...data[0], id: "production-draft", status: "review", stage: "render_verified"});
             }
-        } else if (url.pathname === "/v1/productions/production-draft/media") {
+        } else if (url.pathname === "/v1/productions/production-draft/media-session") {
             draftPreviewAttempts++;
             if (draftPreviewAttempts === 1) {
                 await route.fulfill({status: 503, contentType: "application/json", body: JSON.stringify({detail: "Preview temporarily unavailable"})});
             } else {
-                await route.fulfill({status: 200, contentType: "video/mp4", body: Buffer.from("fixture-draft-bytes")});
+                await route.fulfill({status: 200, contentType: "application/json", body: JSON.stringify({
+                    media_url: "/v1/productions/production-draft/media",
+                    expires_in_seconds: 3600,
+                })});
             }
+            return;
+        } else if (url.pathname === "/v1/productions/production-draft/media") {
+            await route.fulfill({status: 200, contentType: "video/mp4", body: Buffer.from("fixture-draft-bytes")});
             return;
         } else if (
             url.pathname === "/v1/channels/channel-1/brands" ||
@@ -1182,7 +1188,14 @@ const analytics = [
     assert.equal(await watchDraft.isEnabled(), true, "failed preview must remain retryable");
     await watchDraft.click();
     await page.locator('[data-draft-preview="production-draft"] video').waitFor();
-    assert.match(await page.locator('[data-draft-preview="production-draft"] video').getAttribute("src"), /^blob:/);
+    assert.equal(
+        await page.locator('[data-draft-preview="production-draft"] video').getAttribute("src"),
+        "/v1/productions/production-draft/media",
+    );
+    assert.equal(
+        await page.locator('[data-draft-preview="production-draft"] button').count(),
+        2, "review playback offers visible ten-second seek controls",
+    );
     assert.equal(draftPreviewAttempts, 2);
     await page.locator("#content-search").fill(originalSearch);
     assert.equal(await page.locator("#monetization").isHidden(), true);
