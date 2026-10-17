@@ -121,7 +121,8 @@ const clips = [
                 contentType: "application/json",
                 body: JSON.stringify(data),
             });
-            if (request.headers().authorization !== "Bearer clip-token") {
+            if (request.headers().authorization !== "Bearer clip-token" &&
+                !(url.pathname === `/v1/clips/${clipA}/media` && request.method() === "GET")) {
                 return json({ detail: "Unauthorized" }, 401);
             }
 
