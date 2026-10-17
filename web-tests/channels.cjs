@@ -20,6 +20,7 @@ const server = spawn(
 const now = "2026-09-28T10:00:00Z";
 const requests = [];
 let draftPreviewAttempts = 0;
+let failActivityOverviewOnce = false;
 let browser;
 let savedGrowthGoals = {
     objective: "ads_revenue",
@@ -403,6 +404,7 @@ const analytics = [
         } catch {}
         requests.push({
             path: url.pathname,
+            query: url.searchParams.toString(),
             method: req.method(),
             auth: req.headers().authorization,
             body,
@@ -652,6 +654,23 @@ const analytics = [
                 },
             };
         } else if (url.pathname === "/v1/operations/overview") {
+            const limit = Number(url.searchParams.get("limit"));
+            // Model FastAPI's actual contract (limit <= 50) and its structured
+            // 422 response; the previous 8-second refresh requested 100.
+            if (limit > 50 || failActivityOverviewOnce) {
+                failActivityOverviewOnce = false;
+                await route.fulfill({
+                    status: 422,
+                    json: { detail: [{
+                        type: "less_than_equal",
+                        loc: ["query", "limit"],
+                        msg: "Input should be less than or equal to 50",
+                        input: limit,
+                        ctx: {le: 50},
+                    }] },
+                });
+                return;
+            }
             data = {
                 generated_at: now,
                 summary: {
@@ -870,6 +889,31 @@ const analytics = [
     assert.equal(await page.locator("#channel-activity").isHidden(), false);
     assert.match(await page.locator("#channel-activity-list").innerText(), /VisionQuest Final Trailer/);
     assert.match(await page.locator("#channel-activity-list").innerText(), /downloading/i);
+
+    // The UI must explain a structured API error, retain the last good
+    // activity cards, and recover when the operator presses Refresh.
+    failActivityOverviewOnce = true;
+    await page.locator("#reload").click();
+    await page.getByText(/operations: limit: Input should be less than or equal to 50/).waitFor();
+    assert.doesNotMatch(await page.locator("#status").innerText(), /\\[object Object\\]/);
+    assert.match(await page.locator("#channel-activity-list").innerText(), /VisionQuest Final Trailer/);
+    await page.locator("#reload").click();
+    await page.getByText(/Loaded Fixture Gaming/).waitFor();
+
+    // Invoke the same function installed on the eight-second interval. Its
+    // request must be valid, unlike the old limit=100 that always returned 422.
+    const activityCallsBefore = requests.filter(
+        (request) => request.path === "/v1/operations/overview",
+    ).length;
+    await page.evaluate(() => refreshChannelActivity());
+    const activityCalls = requests.filter(
+        (request) => request.path === "/v1/operations/overview",
+    );
+    assert.equal(activityCalls.length, activityCallsBefore + 1);
+    assert.equal(new URLSearchParams(activityCalls.at(-1).query).get("limit"), "50");
+    assert.equal(await page.locator("#status").innerText().then((message) =>
+        message.includes("[object Object]")), false);
+    assert.match(await page.locator("#channel-activity-list").innerText(), /VisionQuest Final Trailer/);
     const firstActivity = page.locator("#channel-activity-list .channel-activity-item[data-card-href]").first();
     assert.equal(await firstActivity.getAttribute("role"), "link");
     assert.equal(await firstActivity.getAttribute("tabindex"), "0");
