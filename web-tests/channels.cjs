@@ -900,6 +900,15 @@ const analytics = [
     await page.locator("#reload").click();
     await page.getByText(/Loaded Fixture Gaming/).waitFor();
 
+    // An intermittent background 422 should not erase valid cards or stick
+    // around after the next successful poll.
+    failActivityOverviewOnce = true;
+    await page.evaluate(() => refreshChannelActivity());
+    await page.getByText(/Activity refresh failed: limit: Input should be less than or equal to 50/).waitFor();
+    assert.match(await page.locator("#channel-activity-list").innerText(), /VisionQuest Final Trailer/);
+    await page.evaluate(() => refreshChannelActivity());
+    await page.getByText("Channel activity updated.").waitFor();
+
     // Invoke the same function installed on the eight-second interval. Its
     // request must be valid, unlike the old limit=100 that always returned 422.
     const activityCallsBefore = requests.filter(
