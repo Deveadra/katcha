@@ -256,8 +256,6 @@ def test_clip_review_uses_scoped_seekable_session(draft_client):
 def test_clip_delete_invalidates_prior_private_playback_cookie(
     draft_client, monkeypatch,
 ):
-    from katcha.clip_lifecycle_models import ClipLifecycle
-
     client, _, _ = draft_client
     clip_id = client.app.state.clip_id
     session = client.post(
