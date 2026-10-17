@@ -530,6 +530,10 @@ function details() {
         if (!query || Array.isArray(query) || typeof query !== 'object') throw new Error('Custom connection settings must be a JSON object.');
         platform = a.supported_platforms[0] || 'custom';
     }
+    // New pull-based Sources participate in autonomous discovery by default.
+    // Existing Sources retain their explicit recurring/manual choice.
+    const recurring = editingSource?.source_metadata?.automatic_research ??
+        ['youtube', 'reddit', 'rss_atom', 'web_scout'].includes(a.key);
     const payload = {
         create_only: !editingSource,
         name,
@@ -545,8 +549,8 @@ function details() {
         poll_interval_minutes: editingSource?.poll_interval_minutes || 60,
         source_metadata: {
             ...(editingSource?.source_metadata || {}),
-            automatic_research: editingSource?.source_metadata?.automatic_research ?? (editingSource ? true : false),
-            execution_mode: 'manual',
+            automatic_research: recurring,
+            execution_mode: recurring ? 'recurring' : 'manual',
         },
         enabled: editingSource?.enabled ?? true,
     };
@@ -567,7 +571,14 @@ function review() {
     if (d.query_template.platforms) rows.push(['Search area', d.query_template.platforms.join(', ')]);
     if (d.query_template.subreddit) rows.push(['Community', 'r/' + d.query_template.subreddit]);
     if (d.query_template.feed_url) rows.push(['Website feed', d.query_template.feed_url]);
-    rows.push(['After saving', selectedMethod === 'links' ? 'Save the collection, then paste links.' : immediate ? 'Save the source and run one check immediately.' : 'Save the source only. No search starts.']);
+    rows.push(['Checking', d.source_metadata.automatic_research
+        ? 'Recurring checks every ' + d.poll_interval_minutes + ' minutes when automatic research is running.'
+        : 'Manual only. Katcha will not check this source automatically.']);
+    rows.push(['After saving', selectedMethod === 'links'
+        ? 'Save the collection, then paste links.'
+        : immediate
+            ? 'Save and run one check immediately; recurring checks follow the schedule above.'
+            : 'Save the source. No search starts immediately; recurring checks follow the schedule above.']);
     $('review').innerHTML = rows.map(([label, value]) => '<dt>' + esc(label) + '</dt><dd>' + esc(value) + '</dd>').join('');
     $('save').textContent = editingSource
         ? 'Save changes'
@@ -579,8 +590,8 @@ function review() {
         : selectedMethod === 'links'
             ? 'Saving creates the source only. Add links from the Source Library when you are ready.'
             : immediate
-                ? 'Katcha will save this source, then start one check. This does not create a recurring schedule.'
-                : 'Katcha will save this source without starting a search or recurring schedule.';
+                ? 'Katcha will save this source and start one check. Recurring collection remains independently configured.'
+                : 'No immediate search starts. Pull-based sources request recurring checks by default; they run only when automatic research is healthy. You can turn them off in Recurring checks.';
     if (selectedMethod === 'scout') $('save-explanation').textContent += ' Web scouting can use live AI and public web search; provider charges may apply when API fallback is used.';
     showStep(3);
 }
@@ -1409,7 +1420,11 @@ bind('setup', 'submit', async () => {
     }
 
     if (!shouldRun) {
-        message('“' + saved.name + '” is saved. No check was started.');
+        message('“' + saved.name + '” is saved. No check was started immediately. ' +
+            (saved.source_metadata?.automatic_research
+                ? 'Automatic checks are requested every ' + Number(saved.poll_interval_minutes || 60) +
+                    ' minutes; confirm the research worker is healthy in Sources.'
+                : 'Automatic checks are off.'));
         return;
     }
 
