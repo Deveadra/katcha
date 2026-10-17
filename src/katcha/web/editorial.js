@@ -67,7 +67,8 @@ window.KatchaEditorial = (() => {
         const status = el("editorial-program-monitor-status");
         loadButton.hidden = !ready || Boolean(state.previewUrl);
         if (state.previewUrl) {
-            video.src = state.previewUrl;
+            // Reapplying src on every render would restart video playback.
+            if (video.getAttribute("src") !== state.previewUrl) video.src = state.previewUrl;
             video.hidden = false;
             empty.hidden = true;
             meta.textContent = `Loaded · revision ${state.run?.input_revision ?? state.project?.revision ?? "?"} · ${state.programMap?.fps || 30} fps`;
@@ -92,7 +93,7 @@ window.KatchaEditorial = (() => {
         }
     }
     function clearPreview() {
-        if (state.previewUrl) URL.revokeObjectURL(state.previewUrl);
+        if (state.previewUrl?.startsWith("blob:")) URL.revokeObjectURL(state.previewUrl);
         state.previewUrl = null;
         state.programMap = null;
         el("editorial-preview").pause();
@@ -105,19 +106,19 @@ window.KatchaEditorial = (() => {
         if (!previewReady()) throw new Error("Create a completed private preview before loading the program monitor.");
         const epoch = state.epoch;
         const base = path(state.channel, `/${state.project.id}/runs/${state.run.editorial_run_id}`);
-        const [blob, programMap] = await Promise.all([
-            apiBlob(`${base}/preview`),
+        const [session, programMap] = await Promise.all([
+            api(`${base}/preview-session`, {method: "POST"}),
             api(`${base}/program-map`),
         ]);
         if (epoch !== state.epoch) return;
         clearPreview();
         state.programMap = programMap;
-        state.previewUrl = URL.createObjectURL(blob);
+        state.previewUrl = session.media_url;
         el("editorial-preview").src = state.previewUrl;
         el("editorial-preview").hidden = false;
         syncProgramMonitor();
         if (advance) advanceStage("preview");
-        feedback("Preview loaded. Review the evidence, timing and media before publication.");
+        feedback("Private preview is ready to stream. Drag the timeline to review any moment before publication.");
         renderActions();
     }
     function clearSourceMonitor(message = "Choose acquired footage to inspect sampled source frames.") {
