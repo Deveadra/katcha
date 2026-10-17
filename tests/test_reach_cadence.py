@@ -95,6 +95,7 @@ async def test_reach_scheduling_failure_does_not_block_intelligence(monkeypatch)
             raise RuntimeError("publishing queue unavailable")
         return {"activity": name}
 
+    monkeypatch.setattr(workflows.workflow, "patched", lambda marker: True)
     monkeypatch.setattr(workflows.workflow, "execute_activity", fake_activity)
     monkeypatch.setattr(workflows.workflow, "now", lambda: datetime(2026, 9, 24, tzinfo=UTC))
     result = await workflows._run_refresh(str(uuid.uuid4()), "scheduled-cycle")

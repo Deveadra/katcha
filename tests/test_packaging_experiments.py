@@ -352,6 +352,7 @@ async def test_experiment_cadence_failure_does_not_stop_intelligence(monkeypatch
             raise RuntimeError("publishing task queue unavailable")
         return {"activity": name}
 
+    monkeypatch.setattr(intelligence_workflows.workflow, "patched", lambda marker: True)
     monkeypatch.setattr(intelligence_workflows.workflow, "execute_activity", activity)
     monkeypatch.setattr(intelligence_workflows.workflow, "now", lambda: datetime.now(UTC))
     result = await intelligence_workflows._run_refresh(str(uuid.uuid4()), "cycle")
