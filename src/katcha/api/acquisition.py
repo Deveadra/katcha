@@ -614,13 +614,9 @@ def verify_source_youtube_discovery(
         query = dict(source.query_template or {})
         if source.channel_profile_id is not None:
             profile = session.get(ChannelProfile, source.channel_profile_id)
-            if profile is None or profile.youtube_connection_id is None:
-                raise HTTPException(
-                    status_code=409,
-                    detail="The assigned channel has no YouTube OAuth connection. "
-                    "Reconnect the channel or configure a YouTube Data API key.",
-                )
-            query["youtube_connection_id"] = str(profile.youtube_connection_id)
+            query.pop("youtube_connection_id", None)
+            if profile is not None and profile.youtube_connection_id is not None:
+                query["youtube_connection_id"] = str(profile.youtube_connection_id)
         else:
             # A shared source cannot nominate another channel's private OAuth.
             query.pop("youtube_connection_id", None)
@@ -631,7 +627,9 @@ def verify_source_youtube_discovery(
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except DiscoveryProviderError as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+        # Known provider denials are operator-correctable and should remain
+        # visible through the Source UI's normal conflict/error path.
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 @router.post(
