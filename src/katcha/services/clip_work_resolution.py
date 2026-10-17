@@ -19,12 +19,12 @@ from katcha.orchestration.client import get_temporal_client
 from katcha.production_models import Production
 from katcha.publishing_models import Publication
 from katcha.render_models import RenderAttempt
-from katcha.short_episode_models import ShortEpisode, ShortEpisodeItem
 from katcha.services.clip_lifecycle import (
     _ACTIVE_COMPILATION_STATUSES,
     _ACTIVE_EPISODE_STATUSES,
     _ACTIVE_PRODUCTION_STATUSES,
 )
+from katcha.short_episode_models import ShortEpisode, ShortEpisodeItem
 
 WorkKind = Literal["production", "short_episode", "compilation"]
 _MODELS = {
