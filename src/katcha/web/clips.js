@@ -596,6 +596,9 @@ async function loadPreview(id, button) {
         host.append(video, actions, feedback);
     } catch (error) {
         host.innerHTML = `<div class="empty error">${escapeHTML(error.message)}</div>`;
+    } finally {
+        // A review can outlast a signed media session. Keep the same control
+        // available to renew playback rather than leaving it disabled forever.
         button.disabled = false;
     }
 }
