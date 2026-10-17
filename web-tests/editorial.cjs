@@ -1304,7 +1304,9 @@ const draft = {
         await page.locator('[data-editorial-stage="script"]').click();
         // Independent history must preserve edits and current review/preview identity.
         await page.locator('[data-beat-narration="0"]').fill('Unsaved current script stays here.');
-        const writesBeforeHistory = calls.filter(call => call.method === 'POST').length;
+        const writesBeforeHistory = calls.filter(call =>
+            call.method === 'POST' && !call.path.endsWith('/preview-session')
+        ).length;
         await page.locator('#editorial-history > summary').click();
         await page.locator('#editorial-history-status').filter({hasText: 'History page 1'}).waitFor();
         assert.equal(await page.locator('[data-history-run]').count(), 20);
@@ -1324,6 +1326,10 @@ const draft = {
         assert.equal(await page.locator('#editorial-history-preview').isHidden(), true);
         await page.locator('#editorial-history-play').click();
         await page.locator('#editorial-history-preview').waitFor({state: 'visible'});
+        assert.match(
+            await page.locator('#editorial-history-preview').getAttribute('src'),
+            /\/runs\/past-0\/preview$/,
+        );
         await page.locator('#editorial-history-next').click();
         await page.locator('#editorial-history-status').filter({hasText: 'History connection interrupted'}).waitFor();
         assert.equal(await page.locator('[data-history-run]').count(), 20);
@@ -1332,7 +1338,9 @@ const draft = {
         assert.equal(await page.locator('[data-history-run]').count(), 3);
         await page.locator('#editorial-history-back').click();
         await page.locator('#editorial-history-status').filter({hasText: 'History page 1'}).waitFor();
-        assert.equal(calls.filter(call => call.method === 'POST').length, writesBeforeHistory);
+        assert.equal(calls.filter(call =>
+            call.method === 'POST' && !call.path.endsWith('/preview-session')
+        ).length, writesBeforeHistory);
         await page.screenshot({ path: path.resolve(__dirname, "test-results/editorial-desktop.png"), fullPage: true });
         await page.setViewportSize({ width: 390, height: 844 });
         assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
