@@ -1055,6 +1055,27 @@ async function assertGoalSummaryReadable(goal, shouldBeFinished) {
     );
     assert.match(await page.locator("#status").innerText(), /Read-only access/i);
 
+    // Saved AI answers expose each observed draft directly, with safe Markdown.
+    const originalDraft = "aa9819a1-26d3-43c5-b3fb-64750b632673";
+    const memeDraft = "caf65c87-a067-471c-8464-406e87aa0fe6";
+    storedTurns.push({role: "assistant", turn_id: "direct-link-fixture", content:
+        "**Drafts ready**: `" + originalDraft + "` and `" + memeDraft + "`. " +
+        "[Open original](/channels?channel=" + channelId + "&production=" + originalDraft + "#content). " +
+        "<img src=x onerror=window.__linkPwned=true>",
+        evidence: [originalDraft, memeDraft].map((id, index) => ({kind: "goal_step", tool: "production",
+            result: {production: {id, channel_profile_id: channelId,
+                edit_blueprint_key: index ? "meme" : "source_original"}}}))});
+    await page.evaluate((id) => openThread(id), threadId);
+    const linkedAnswer = page.locator("#thread .message").last();
+    assert.equal(await linkedAnswer.locator('p a[href*="production=' + originalDraft + '"]').count(), 2);
+    assert.equal(await linkedAnswer.getByRole("link", {name: "Watch draft · Original audio", exact: true}).count(), 1);
+    assert.equal(await linkedAnswer.getByRole("link", {name: "Watch draft · Meme remix", exact: true}).count(), 1);
+    assert.equal(await linkedAnswer.locator("img").count(), 0);
+    assert.equal(await page.evaluate(() => window.__linkPwned), undefined);
+    await page.setViewportSize({width: 390, height: 844});
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
+    await page.screenshot({path: path.join(__dirname, "test-results/ai-direct-draft-links-mobile.png")});
+
     assert.deepEqual(errors, []);
     console.log(
         "PASS: Aerith Katcha AI bounded workspace, mobile Evidence panel, control-session identity, capability-aware read-only mode, typed context, observability, grounded conversation, durable history, live action status, confirmation safety, auth, and mobile width",

@@ -634,15 +634,13 @@ def get_production(production_id: uuid.UUID) -> ProductionDetailResponse:
                 .order_by(ProductionReview.created_at)
             )
         )
+        response = ProductionResponse.model_validate(production)
         return ProductionDetailResponse(
-            production=ProductionResponse.model_validate(production),
+            production=response,
             scripts=[ProductionScriptResponse.model_validate(item) for item in scripts],
             assets=[ProductionAssetResponse.model_validate(item) for item in assets],
             reviews=[ProductionReviewResponse.model_validate(item) for item in reviews],
-            review_url=(
-                f"/channels?channel={production.channel_profile_id}#content"
-                if production.channel_profile_id else None
-            ),
+            review_url=response.review_url,
         )
 
 

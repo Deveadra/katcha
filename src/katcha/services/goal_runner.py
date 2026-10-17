@@ -140,8 +140,9 @@ def _workflow_id(result):
 def _saved_draft_summary(goal) -> str:
     """Report verified outputs when planning stops, without inferring task completion."""
     from katcha.production_models import Production, ProductionAsset
+    from katcha.resource_links import production_review_url
 
-    drafts = []
+    drafts = {}
     with session_scope() as session:
         for observation in goal.observations:
             if observation.get("error") or observation.get("tool") not in {
@@ -171,13 +172,21 @@ def _saved_draft_summary(goal) -> str:
                 ProductionAsset.storage_key == output_key,
             )) if output_key else None
             if asset and production.id not in drafts:
-                drafts.append(production.id)
+                label = {
+                    "source_original": "original audio", "meme": "meme remix",
+                    "persona_commentary": "commentary",
+                }.get(production.edit_blueprint_key, "video")
+                drafts[production.id] = (label, production.generation)
     if not drafts:
         return ""
-    link = f"/channels?channel={goal.channel_profile_id}#content"
+    links = "\n".join(
+        f"- [Watch {label} draft (generation {generation})]"
+        f"({production_review_url(identifier, goal.channel_profile_id)})"
+        for identifier, (label, generation) in drafts.items()
+    )
+    intro = "Your rendered draft is" if len(drafts) == 1 else "Your rendered drafts are"
     return (
-        "Your rendered draft is saved and ready to watch in Channel Studio → Content. "
-        f"[Review saved drafts]({link}).\n\n"
+        f"{intro} saved and ready to watch.\n{links}\n\n"
         "I could not finish checking the rest of this request. "
         "Completed work is retained; do not render it again.\n\n"
     )

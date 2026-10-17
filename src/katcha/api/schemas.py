@@ -5,7 +5,9 @@ from decimal import Decimal
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, HttpUrl
+from pydantic import BaseModel, ConfigDict, Field, HttpUrl, computed_field
+
+from katcha.resource_links import production_review_url
 
 
 class IngestRequest(BaseModel):
@@ -104,6 +106,11 @@ class ProductionResponse(BaseModel):
     error: str | None
     created_at: datetime
     updated_at: datetime
+
+    @computed_field
+    @property
+    def review_url(self) -> str | None:
+        return production_review_url(self.id, self.channel_profile_id)
 
 
 class ProductionScriptResponse(BaseModel):
