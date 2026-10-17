@@ -173,7 +173,7 @@ bash scripts/aws_remotion_deploy.sh --apply
 ```
 
 The apply path first reruns the no-write permission/quota preflight, then deploys the
-pinned function with **3008 MB memory by default**, 4096 MB disk, a 900-second timeout,
+pinned function with **3008 MB memory by default**, 6144 MB disk by default, a 900-second timeout,
 and 14-day retention. AWS can impose a reduced per-function memory ceiling on some
 accounts even when billing is active; 3008 MB keeps initial deployment compatible with
 that restriction. The memory value is configurable through
@@ -187,6 +187,7 @@ Only after those checks pass does the helper persist:
 
 ```env
 KATCHA_REMOTION_LAMBDA_MEMORY_MB=<verified deployed memory>
+KATCHA_REMOTION_LAMBDA_DISK_MB=<verified deployed temporary disk size>
 KATCHA_REMOTION_LAMBDA_FUNCTION_NAME=<verified function name>
 KATCHA_REMOTION_LAMBDA_SERVE_URL=<verified HTTPS serve URL>
 ```
@@ -421,3 +422,18 @@ Restart only the renderer service. Existing verified render objects remain reusa
 
 Do not delete Remotion functions, buckets, or Katcha media objects during incident response.
 Resource teardown is a separate, explicit operation.
+
+### Temporary disk for decoded video frames
+
+`KATCHA_REMOTION_LAMBDA_DISK_MB` selects 512–10240 MB of temporary storage
+for newly deployed functions (default 6144 MB). The helper includes this size
+in the function name and saves it with verified deployment metadata. Existing
+functions and production pins are unchanged until an explicit rollout.
+
+Chrome can reject large frame responses even after the source downloads
+successfully. Its [blob storage design](https://chromium.googlesource.com/chromium/src/+/HEAD/storage/browser/blob/README.md)
+reserves free disk space; a 4096 MB filesystem leaves no headroom above the
+documented 4 GB reserve on desktop 64-bit builds. A 6144 MB default provides
+headroom, but does not establish that every `ERR_FAILED` is a disk problem.
+Check Lambda logs, decoded frame size, and an actual bounded render. Keep
+existing render budget gates active; increasing disk does not authorize spending.
