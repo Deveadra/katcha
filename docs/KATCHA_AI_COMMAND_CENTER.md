@@ -51,6 +51,11 @@ Provider narration is instructed not to invent missing metrics, failures, causes
 executed actions. Evidence is returned alongside the answer so the operator can inspect what
 the narrative was based on.
 
+If goal planning becomes unavailable after a draft finishes, the saved response includes
+its Channel Studio review link. This fallback checks the observed production, channel,
+verified render stage and current output asset. It retains the planning failure and does
+not declare the entire request completed or start another render.
+
 ## Actions
 
 Actions are separate from narration. Katcha persists every executable suggestion as a

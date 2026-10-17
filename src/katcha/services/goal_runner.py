@@ -137,6 +137,52 @@ def _workflow_id(result):
     return result.get("workflow_id") or _workflow_id(result.get("result"))
 
 
+def _saved_draft_summary(goal) -> str:
+    """Report verified outputs when planning stops, without inferring task completion."""
+    from katcha.production_models import Production, ProductionAsset
+
+    drafts = []
+    with session_scope() as session:
+        for observation in goal.observations:
+            if observation.get("error") or observation.get("tool") not in {
+                "make_short", "recover_render",
+            }:
+                continue
+            result = observation.get("result") or {}
+            if not isinstance(result, dict):
+                continue
+            identifier = result.get("child_production_id") or result.get("production_id")
+            try:
+                production_id = uuid.UUID(str(identifier))
+            except (ValueError, TypeError):
+                continue
+            production = session.get(Production, production_id)
+            if (
+                not production
+                or production.channel_profile_id != goal.channel_profile_id
+                or production.status not in {"review", "approved"}
+                or production.stage != "render_verified"
+            ):
+                continue
+            output_key = (production.render_manifest or {}).get("output_key")
+            asset = session.scalar(select(ProductionAsset.id).where(
+                ProductionAsset.production_id == production.id,
+                ProductionAsset.kind == "render",
+                ProductionAsset.storage_key == output_key,
+            )) if output_key else None
+            if asset and production.id not in drafts:
+                drafts.append(production.id)
+    if not drafts:
+        return ""
+    link = f"/channels?channel={goal.channel_profile_id}#content"
+    return (
+        "Your rendered draft is saved and ready to watch in Channel Studio → Content. "
+        f"[Review saved drafts]({link}).\n\n"
+        "I could not finish checking the rest of this request. "
+        "Completed work is retained; do not render it again.\n\n"
+    )
+
+
 async def _observe_background(goal, step):
     workflow_id = _workflow_id(step.result)
     if not workflow_id:
@@ -378,13 +424,17 @@ async def advance_goal(goal_id: uuid.UUID) -> str:
                 "max_steps": MAX_GOAL_STEPS,
                 "observations": goal.observations[-16:],
             }
-            decision = await run_in_threadpool(
-                decide_goal,
-                goal_id=goal.id,
-                channel_id=goal.channel_profile_id,
-                number=goal.step_count,
-                context=context,
-            )
+            try:
+                decision = await run_in_threadpool(
+                    decide_goal,
+                    goal_id=goal.id,
+                    channel_id=goal.channel_profile_id,
+                    number=goal.step_count,
+                    context=context,
+                )
+            except ValueError as exc:
+                _finish(goal.id, "blocked", _saved_draft_summary(goal) + str(exc), str(exc))
+                return "blocked"
             with session_scope() as session:
                 current = session.scalar(
                     select(CommandGoal).where(CommandGoal.id == goal.id).with_for_update()
