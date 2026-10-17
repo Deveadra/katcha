@@ -35,6 +35,21 @@ _EDITORIAL_SOURCE_MEDIA_PATH = re.compile(
 )
 
 
+_REVIEW_MEDIA_PATH = re.compile(
+    r"/v1/(?:productions/[^/]+|clips/[^/]+)/media$"
+)
+
+
+def _uses_review_media_ticket(request: Request) -> bool:
+    from katcha.security.media_tickets import REVIEW_MEDIA_COOKIE
+
+    return (
+        request.method.upper() == "GET"
+        and bool(_REVIEW_MEDIA_PATH.fullmatch(request.url.path))
+        and bool(request.cookies.get(REVIEW_MEDIA_COOKIE))
+    )
+
+
 def _uses_editorial_media_ticket(request: Request) -> bool:
     return request.method.upper() == "GET" and bool(
         _EDITORIAL_SOURCE_MEDIA_PATH.fullmatch(request.url.path)
@@ -446,6 +461,14 @@ def _require_named_principal_route_access(request: Request) -> None:
         return
 
     if method == "POST" and re.fullmatch(
+        r"/v1/(?:productions|clips)/[^/]+/media-session", path
+    ):
+        # Ticket minting still requires an authenticated channel-read principal;
+        # each endpoint rechecks the particular resource before issuing.
+        require_control_scope(request, "channels:read")
+        return
+
+    if method == "POST" and re.fullmatch(
         r"/v1/channels/[^/]+/editorial-projects/[^/]+/runs/[^/]+/assets/[^/]+/"
         r"source-media-session",
         path,
@@ -546,6 +569,7 @@ def require_control_token(
         not request.url.path.startswith("/v1/")
         or request.url.path in _PUBLIC_PATHS
         or _uses_editorial_media_ticket(request)
+        or _uses_review_media_ticket(request)
     ):
         return
 
