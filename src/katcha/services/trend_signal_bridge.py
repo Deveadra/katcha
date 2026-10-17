@@ -89,7 +89,7 @@ def _observation_key(
             # Same public video may be observed independently by multiple
             # channels. Scope signal identity so the first writer does not
             # silently claim every other channel's evidence.
-            "channel_profile_id": str(channel_profile_id) if channel_profile_id else None,
+            **({"channel_profile_id": str(channel_profile_id)} if channel_profile_id else {}),
         },
         sort_keys=True,
         separators=(",", ":"),
