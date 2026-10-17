@@ -4,14 +4,25 @@ import uuid
 from datetime import datetime
 from typing import Any, Literal
 
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field
 from sqlalchemy import String, cast, func, or_, select
 
+from katcha.api.control_auth import (
+    control_actor,
+    require_control_channel,
+    require_control_scope,
+    require_global_control_operator,
+)
 from katcha.clip_lifecycle_models import ClipLifecycle, ClipRetentionPolicy
 from katcha.db import session_scope
 from katcha.intelligence_models import ChannelProfile
 from katcha.models import Clip, ClipAnalysisRun, ClipFeature, SourceItem
+from katcha.services.clip_work_resolution import (
+    WorkStopConflict,
+    _load_work,
+    stop_clip_work,
+)
 from katcha.services.clip_lifecycle import (
     active_clip_references,
     archive_clip,
@@ -81,6 +92,19 @@ class ClipReferencesResponse(BaseModel):
     clip_id: uuid.UUID
     active: list[ClipBlockingReference]
     active_count: int
+
+
+class ClipWorkStopRequest(BaseModel):
+    expected_status: str = Field(min_length=1, max_length=32)
+    confirmation_text: str = Field(min_length=1, max_length=160)
+
+
+class ClipWorkStopResponse(BaseModel):
+    kind: Literal["production", "short_episode", "compilation"]
+    id: uuid.UUID
+    state: Literal["cancellation_requested", "resolved", "already_resolved"]
+    status: str
+    detail: str
 
 
 class ClipLibrarySummary(BaseModel):
@@ -550,6 +574,45 @@ def get_clip_blocking_references(clip_id: uuid.UUID) -> ClipReferencesResponse:
             active=[ClipBlockingReference.model_validate(row) for row in rows],
             active_count=len(rows),
         )
+
+
+@router.post(
+    "/clips/{clip_id}/references/{kind}/{work_id}/stop",
+    response_model=ClipWorkStopResponse,
+)
+async def stop_clip_blocking_work(
+    clip_id: uuid.UUID,
+    kind: Literal["production", "short_episode", "compilation"],
+    work_id: uuid.UUID,
+    payload: ClipWorkStopRequest,
+    http_request: Request,
+) -> ClipWorkStopResponse:
+    # A typed confirmation and resource-level channel check are required even
+    # when the API's authentication middleware accepts a scoped principal.
+    require_control_scope(http_request, "production:create")
+    expected = f"STOP {work_id}"
+    if payload.confirmation_text != expected:
+        raise HTTPException(400, f'Type "{expected}" to confirm stopping this work')
+    try:
+        with session_scope() as session:
+            row = _load_work(session, clip_id, kind, work_id)
+            if row.channel_profile_id is None:
+                require_global_control_operator(http_request)
+            else:
+                require_control_channel(http_request, row.channel_profile_id)
+        result = await stop_clip_work(
+            clip_id, kind, work_id,
+            expected_status=payload.expected_status,
+            actor=control_actor(http_request),
+        )
+    except LookupError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    except WorkStopConflict as exc:
+        raise HTTPException(409, str(exc)) from exc
+    return ClipWorkStopResponse(
+        kind=result.kind, id=result.id, state=result.state,
+        status=result.status, detail=result.detail,
+    )
 
 
 @router.post(
