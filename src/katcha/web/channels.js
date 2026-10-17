@@ -2040,6 +2040,9 @@ async function loadProductionDraft(button) {
         });
         video.addEventListener("error", () => {
             status.textContent = "Playback or seeking failed. Reload the draft to renew the private media session.";
+            button.hidden = false;
+            button.disabled = false;
+            button.textContent = "Reload draft";
         });
         const seek = document.createElement("div");
         seek.className = "production-seek-controls";
