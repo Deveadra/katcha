@@ -5,11 +5,11 @@ window.KatchaEditorialHistory = (() => {
     const labels = {direction: "Visual direction", narration: "Narration generation", analysis: "Source analysis", script: "Research and script", assets: "Asset search", acquire_assets: "Asset download", render: "Video preview"};
     const date = value => value && Number.isFinite(Date.parse(value)) ? new Date(value).toLocaleString() : "Date unavailable";
     const readable = value => String(value || "Unknown").replaceAll("_", " ");
-    let api, apiBlob, channel = "", project = "", generation = 0, request = 0;
+    let api, channel = "", project = "", generation = 0, request = 0;
     let pages = [null], rows = [], more = false, loaded = false, busy = false, selected = null, previewUrl = null;
     const base = () => `/v1/channels/${encodeURIComponent(channel)}/editorial-projects/${encodeURIComponent(project)}`;
     function clearPreview() {
-        if (previewUrl) URL.revokeObjectURL(previewUrl);
+        if (previewUrl?.startsWith("blob:")) URL.revokeObjectURL(previewUrl);
         previewUrl = null; el("preview").removeAttribute("src"); el("preview").hidden = true;
     }
     function controls() {
@@ -109,9 +109,14 @@ window.KatchaEditorialHistory = (() => {
         const fence = generation, ticket = ++request;
         busy = true; controls(); clearPreview(); status("Checking access and loading selected preview…");
         try {
-            const blob = await apiBlob(`${base()}/runs/${encodeURIComponent(selected.editorial_run_id)}/preview`);
+            const session = await api(
+                `${base()}/runs/${encodeURIComponent(selected.editorial_run_id)}/preview-session`,
+                {method: "POST"},
+            );
             if (fence !== generation || ticket !== request) return;
-            previewUrl = URL.createObjectURL(blob); el("preview").src = previewUrl; el("preview").hidden = false;
+            previewUrl = session.media_url;
+            el("preview").src = previewUrl;
+            el("preview").hidden = false;
             status("Selected preview loaded. Historical review receipts do not authorize publication.");
         } catch (error) {
             if (fence === generation && ticket === request) status(`Preview unavailable: ${error.message}. Saved work and current edits are retained.`);
@@ -119,8 +124,13 @@ window.KatchaEditorialHistory = (() => {
             if (fence === generation && ticket === request) { busy = false; controls(); }
         }
     }
-    function init(transport, blobTransport) {
-        api = transport; apiBlob = blobTransport;
+    function init(transport) {
+        api = transport;
+        el("preview").addEventListener("error", () => {
+            if (previewUrl) status(
+                "Playback failed or access expired. Select Load preview again to renew the private session."
+            );
+        });
         el("").addEventListener("toggle", () => { if (el("").open && !loaded) void list(); });
         el("refresh").addEventListener("click", () => void list([null]));
         el("back").addEventListener("click", () => void list(pages.slice(0, -1)));
