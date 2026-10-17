@@ -858,6 +858,10 @@ const analytics = [
     assert.equal(await page.locator("#channel-activity").isHidden(), false);
     assert.match(await page.locator("#channel-activity-list").innerText(), /VisionQuest Final Trailer/);
     assert.match(await page.locator("#channel-activity-list").innerText(), /downloading/i);
+    const firstActivity = page.locator("#channel-activity-list .channel-activity-item[data-card-href]").first();
+    assert.equal(await firstActivity.getAttribute("role"), "link");
+    assert.equal(await firstActivity.getAttribute("tabindex"), "0");
+    assert.match(await firstActivity.getAttribute("data-card-href"), /\/channels\?channel=channel-1/);
 
     // Appearance regression: the four KPI panels and activity cards must be
     // laid out by their real page CSS, not native unstyled document flow.
