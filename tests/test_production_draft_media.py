@@ -74,7 +74,6 @@ def draft_client(monkeypatch):
             yield self.data[start:end + 1]
 
     monkeypatch.setattr(main, "session_scope", sessions)
-    monkeypatch.setattr(main, "ObjectStore", Store)
     monkeypatch.setattr(studio, "ObjectStore", Store)
     settings = Settings(
         _env_file=None,
@@ -147,7 +146,7 @@ def test_detail_exposes_the_channel_review_page(draft_client):
 
 def test_missing_stored_video_returns_recovery_message(draft_client, monkeypatch):
     client, ids, _ = draft_client
-    monkeypatch.setattr(main.ObjectStore, "exists", lambda self, key: False)
+    monkeypatch.setattr(studio.ObjectStore, "exists", lambda self, key: False)
     result = client.get(
         f"/v1/productions/{ids[0]}/media",
         headers={"Authorization": "Bearer draft-reviewer-fixture-token-0001"},
