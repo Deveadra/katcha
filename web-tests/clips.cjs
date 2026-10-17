@@ -82,6 +82,31 @@ const clips = [
     let browser;
     let savedRetention = null;
     let rejectPurgeOnce = true;
+    let failDependencyLookupOnce = false;
+    const productionId = "dddddddd-dddd-4ddd-8ddd-dddddddddddd01";
+    const episodeId = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeee02";
+    const compilationId = "ffffffff-ffff-4fff-8fff-ffffffffff03";
+    const dependencies = [
+        {
+            kind: "production", id: productionId, channel_profile_id: channelA,
+            channel_name: "RankSnaxx", title: "Standalone production · generation 1",
+            status: "review", stage: "review",
+            href: `/channels?channel=${channelA}&production=${productionId}#content`,
+        },
+        {
+            kind: "short_episode", id: episodeId, channel_profile_id: channelA,
+            channel_name: "RankSnaxx", title: "Ranked episode for Friday",
+            status: "planned", stage: "planned",
+            href: `/studio?channel=${channelA}&episode=${episodeId}`,
+        },
+        {
+            kind: "compilation", id: compilationId, channel_profile_id: channelB,
+            channel_name: "NewsWire", title: "Autumn compilation",
+            status: "rendering", stage: "rendering",
+            href: `/operations?channel=${channelB}&work=${compilationId}`,
+        },
+    ];
+    let activeDependencies = [...dependencies];
     try {
         for (let i = 0; i < 50; i++) {
             try {
@@ -279,6 +304,17 @@ const clips = [
                     purged_at: null,
                 });
             }
+            if (url.pathname === `/v1/clips/${clipA}/references` &&
+                request.method() === "GET") {
+                if (failDependencyLookupOnce) {
+                    failDependencyLookupOnce = false;
+                    return json({detail: "Dependency lookup temporarily unavailable"}, 503);
+                }
+                return json({
+                    clip_id: clipA, active: activeDependencies,
+                    active_count: activeDependencies.length,
+                });
+            }
             if (
                 url.pathname === `/v1/clips/${clipA}/purge`
                 && request.method() === "POST"
@@ -288,6 +324,7 @@ const clips = [
                 }
                 if (rejectPurgeOnce) {
                     rejectPurgeOnce = false;
+                    activeDependencies = [dependencies[0]];
                     return json({ detail: "clip is still required by an active production; finish or cancel that work first" }, 409);
                 }
                 clips[0].lifecycle_state = "purged";
@@ -469,19 +506,43 @@ const clips = [
 
         await page.getByRole("button", { name: "Delete media", exact: true }).click();
         await page.locator("#purge-dialog").waitFor({ state: "visible" });
+        await page.getByText("3 unfinished items need this video").waitFor();
         assert.equal(await page.locator("#purge-confirm").isDisabled(), true);
         assert.equal(await page.locator('[data-close-dialog="purge-dialog"]').innerText(), "Cancel");
-        await page.locator("#purge-confirm-input").fill("wrong phrase");
-        assert.equal(await page.locator("#purge-confirm").isDisabled(), true);
-        await page.locator("#purge-confirm-input").fill(`DELETE ${clipA}`);
-        assert.equal(await page.locator("#purge-confirm").isEnabled(), true);
-        await page.locator("#purge-confirm").click();
-        await page.waitForFunction(() =>
-            document.querySelector("#purge-feedback").textContent.includes("still required by an active production"),
+        assert.equal(await page.locator(".purge-blocker").count(), 3);
+        assert.match(await page.locator("#purge-blockers-list").innerText(), /Ranked episode for Friday/);
+        assert.match(await page.locator("#purge-blockers-list").innerText(), /Autumn compilation/);
+        assert.equal(
+            await page.locator('.purge-blocker-link').first().getAttribute("href"),
+            `/channels?channel=${channelA}&production=${productionId}#content`,
         );
+        await page.locator("#purge-confirm-input").fill(`DELETE ${clipA}`);
+        assert.equal(await page.locator("#purge-confirm").isDisabled(), true);
+        assert.equal(requests.filter((row) => row.path === `/v1/clips/${clipA}/purge`).length, 0);
+
+        // A failed dependency lookup must not silently unlock deletion.
+        failDependencyLookupOnce = true;
+        await page.locator("#purge-blockers-refresh").click();
+        await page.getByText(/Cannot verify active work: Dependency lookup temporarily unavailable/).waitFor();
+        assert.equal(await page.locator("#purge-confirm").isDisabled(), true);
+        assert.equal(await page.locator("#purge-blockers-refresh").isVisible(), true);
+
+        activeDependencies = [];
+        await page.locator("#purge-blockers-refresh").click();
+        await page.waitForFunction(() => document.querySelector("#purge-confirm").disabled === false);
+        assert.equal(await page.locator("#purge-blockers").isHidden(), true);
+
+        // Between preflight and purge, work may start: 409 rechecks blockers.
+        await page.locator("#purge-confirm").click();
+        await page.getByText("1 unfinished item needs this video").waitFor();
         assert.equal(await page.locator("#purge-dialog").isVisible(), true);
-        assert.equal(await page.locator("#purge-confirm").isEnabled(), true);
+        assert.equal(await page.locator("#purge-confirm").isDisabled(), true);
         assert.equal(clips[0].lifecycle_state, "archived");
+        assert.match(await page.locator("#purge-blockers-list").innerText(), /Standalone production/);
+
+        activeDependencies = [];
+        await page.locator("#purge-blockers-refresh").click();
+        await page.waitForFunction(() => document.querySelector("#purge-confirm").disabled === false);
         await page.locator("#purge-confirm").click();
         await page.waitForFunction(
             () => document.querySelector("#message").textContent.includes("Source media deleted"),

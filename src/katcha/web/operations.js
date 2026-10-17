@@ -157,7 +157,8 @@ function renderWork(items, hostId, stateClass) {
     }
     host.innerHTML = items.map((row) => {
         const channel = channelName(row.channel_profile_id);
-        return '<article class="ops-row" role="link" tabindex="0" data-card-href="' + escapeHTML(row.href) + '">' +
+        return '<article class="ops-row" role="link" tabindex="0" data-work-id="' +
+            escapeHTML(row.id) + '" data-card-href="' + escapeHTML(row.href) + '">' +
             '<div class="ops-row-main">' +
                 '<div class="ops-row-title"><span class="ops-pill ' + stateClass + '">' +
                     escapeHTML(stateClass === "attention" ? "Needs attention" : "Active") +
@@ -310,6 +311,19 @@ async function loadAiReadiness() {
     }
 }
 
+function focusLinkedWork() {
+    const workId = new URLSearchParams(location.search).get("work");
+    if (!workId) return;
+    const row = [...document.querySelectorAll(
+        "#attention-list .ops-row[data-work-id], #active-list .ops-row[data-work-id]",
+    )].find((item) => item.dataset.workId === workId);
+    if (row) {
+        row.classList.add("linked-work");
+        row.scrollIntoView({ block: "center" });
+        row.focus({ preventScroll: true });
+    }
+}
+
 function renderOverview(payload) {
     state.overview = payload;
     renderBriefing(payload);
@@ -325,6 +339,7 @@ function renderOverview(payload) {
 
     renderWork(payload.attention, "attention-list", "attention");
     renderWork(payload.active, "active-list", "active");
+    focusLinkedWork();
     renderOpportunities(payload.opportunities);
     renderPublications(payload.publications);
     renderChannels(payload.channels);
@@ -348,7 +363,9 @@ async function loadOverview(channelId = "", { preserveStatus = false } = {}) {
     $("refresh").disabled = true;
     if (!preserveStatus) setStatus("Loading live operations…");
     try {
-        const query = new URLSearchParams({ limit: "12" });
+        const query = new URLSearchParams({
+            limit: new URLSearchParams(location.search).has("work") ? "50" : "12",
+        });
         if (channelId) query.set("channel_profile_id", channelId);
         const payload = await api("/v1/operations/overview?" + query.toString());
         if (!channelId || !state.allChannels.length) syncChannelFilter(payload.channels, channelId);

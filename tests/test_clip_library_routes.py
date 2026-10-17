@@ -13,6 +13,7 @@ def test_clip_library_lifecycle_routes_are_registered() -> None:
         "/v1/clips/{clip_id}/archive",
         "/v1/clips/{clip_id}/restore",
         "/v1/clips/{clip_id}/purge",
+        "/v1/clips/{clip_id}/references",
         "/v1/channels/{channel_profile_id}/clip-retention",
         "/v1/channels/{channel_profile_id}/clip-retention/preview",
         "/v1/channels/{channel_profile_id}/clip-retention/run",
@@ -22,3 +23,4 @@ def test_clip_library_lifecycle_routes_are_registered() -> None:
     assert "patch" in paths["/v1/clips/{clip_id}/library-metadata"]
     assert "post" in paths["/v1/clips/{clip_id}/purge"]
     assert "put" in paths["/v1/channels/{channel_profile_id}/clip-retention"]
+    assert "get" in paths["/v1/clips/{clip_id}/references"]

@@ -187,7 +187,15 @@
             <div><div class="danger-kicker">DELETE STORED MEDIA</div><h2 id="purge-title">Permanently delete stored video</h2></div>
             <button type="button" class="mini" data-close-dialog="purge-dialog">Cancel</button>
         </div>
-        <p class="dialog-copy">This removes the source video bytes but keeps the searchable record, tags, source lineage, transcript, AI analysis, and audit history. Videos in active productions cannot be deleted until that work finishes or is cancelled.</p>
+        <p class="dialog-copy">This permanently removes the source video bytes while keeping the searchable record and audit history. Footage still required by unfinished work cannot be deleted.</p>
+        <section id="purge-blockers" class="purge-blockers" hidden aria-labelledby="purge-blockers-title">
+            <div class="purge-blockers-head">
+                <strong id="purge-blockers-title">Unfinished work using this video</strong>
+                <button id="purge-blockers-refresh" class="mini" type="button">Check again</button>
+            </div>
+            <p>Open the linked work to inspect its status. Katcha will not cancel a running workflow automatically. Once it has completed or been resolved, return here and select Check again.</p>
+            <div id="purge-blockers-list" class="purge-blockers-list"></div>
+        </section>
         <label for="purge-confirm-input">To confirm, type <code id="purge-phrase"></code> exactly:</label>
         <input id="purge-confirm-input" type="text" autocomplete="off" spellcheck="false" aria-describedby="purge-feedback">
         <p id="purge-feedback" role="status" aria-live="polite">Enter the confirmation phrase to enable deletion.</p>

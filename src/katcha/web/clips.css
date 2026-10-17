@@ -147,3 +147,18 @@ code{overflow-wrap:anywhere}
 .check-card { cursor: pointer; }
 .check-card:has(input:checked) { border-color: var(--cyan); }
 .check-card:has(input:disabled) { opacity: .6; cursor: not-allowed; }
+
+
+/* Identify the exact workflows protecting stored bytes before destructive action. */
+#purge-dialog .purge-blockers{margin:14px 0;padding:14px;border:1px solid #73628c;border-radius:10px;background:rgba(112,90,148,.12)}
+#purge-dialog .purge-blockers-head{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap}
+#purge-dialog .purge-blockers-head strong{font-size:13px;line-height:1.45;color:#f6eaff}
+#purge-dialog .purge-blockers-head .mini{min-height:34px}
+#purge-dialog .purge-blockers p{font-size:12px;line-height:1.55;color:#c8c0d7;margin:10px 0}
+#purge-dialog .purge-blockers-list{display:grid;gap:8px}
+#purge-dialog .purge-blocker{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;padding:11px;border:1px solid #4c415f;border-radius:8px;background:#181526;min-width:0}
+#purge-dialog .purge-blocker-main{min-width:0;flex:1 1 220px;overflow-wrap:anywhere}
+#purge-dialog .purge-blocker-main strong{display:block;font-size:13px;color:#f6f2ff}
+#purge-dialog .purge-blocker-main small{display:block;margin-top:4px;font-size:11px;line-height:1.5;color:#a9a0bd}
+#purge-dialog .purge-blocker-link{display:inline-flex;align-items:center;justify-content:center;min-height:34px;padding:7px 11px;border-radius:6px;background:#322847;border:1px solid #706189;color:#f4efff;text-decoration:none;font-size:12px;font-weight:700}
+#purge-dialog .purge-blocker-link:focus-visible{outline:2px solid #b9dfff;outline-offset:2px}

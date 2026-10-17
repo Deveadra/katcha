@@ -645,3 +645,11 @@ body[data-katcha-page="operations"] .event-name span {
 .ops-row[data-card-href]{cursor:pointer}
 .ops-row[data-card-href]:hover{border-color:var(--ae-violet, #b7a5ff)}
 .ops-row[data-card-href]:focus-visible{outline:2px solid var(--ae-cyan, #84e7ff);outline-offset:3px}
+
+/* Make a Clip Library dependency deep link visibly locate the requested work. */
+body[data-katcha-page="operations"] .ops-row.linked-work{
+    border-color:var(--ae-cyan, #84e7ff);
+    outline:2px solid var(--ae-cyan, #84e7ff);
+    outline-offset:2px;
+    scroll-margin:90px;
+}
