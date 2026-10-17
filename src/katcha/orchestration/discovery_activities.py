@@ -37,17 +37,17 @@ from katcha.services.discovery_polling import (
     reserve_provider_page,
 )
 from katcha.services.discovery_trends import compute_candidate_trend_score
+from katcha.services.trend_bridge import bridge_discovery_run
 from katcha.services.trend_execution import prepare_topic_watch_execution
 from katcha.services.trend_queue import materialize_trend_review_queue
 from katcha.services.trend_signal_bridge import bridge_topic_watch_queue_to_trend_signals
-from katcha.services.trend_bridge import bridge_discovery_run
-from katcha.services.trends import refresh_channel_trends
 from katcha.services.trend_source_reliability import (
     record_discovery_run_failure,
     record_discovery_run_success,
     source_health_allows_refresh,
     topic_watch_source_health,
 )
+from katcha.services.trends import refresh_channel_trends
 
 
 def _remember_unmanaged_run_error(
