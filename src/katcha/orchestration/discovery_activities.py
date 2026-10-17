@@ -108,7 +108,7 @@ def _record_source_handoff(
             },
         )
     )
-return summary
+    return summary
 
 
 @activity.defn
