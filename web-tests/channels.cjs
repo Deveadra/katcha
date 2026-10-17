@@ -19,6 +19,7 @@ const server = spawn(
 
 const now = "2026-09-28T10:00:00Z";
 const requests = [];
+let draftPreviewAttempts = 0;
 let browser;
 let savedGrowthGoals = {
     objective: "ads_revenue",
@@ -732,6 +733,17 @@ const analytics = [
                     updated_at: now,
                 },
             ];
+            if (url.searchParams.get("channel_profile_id") === "channel-1") {
+                data.push({...data[0], id: "production-draft", status: "review", stage: "render_verified"});
+            }
+        } else if (url.pathname === "/v1/productions/production-draft/media") {
+            draftPreviewAttempts++;
+            if (draftPreviewAttempts === 1) {
+                await route.fulfill({status: 503, contentType: "application/json", body: JSON.stringify({detail: "Preview temporarily unavailable"})});
+            } else {
+                await route.fulfill({status: 200, contentType: "video/mp4", body: Buffer.from("fixture-draft-bytes")});
+            }
+            return;
         } else if (
             url.pathname === "/v1/channels/channel-1/brands" ||
             url.pathname === "/v1/channels/channel-2/brands"
@@ -1103,6 +1115,19 @@ const analytics = [
     await page.locator('[data-channel-tab="content"]').click();
     assert.equal(await page.locator("#content").isHidden(), false);
     assert.equal(await page.locator("#production").isHidden(), false);
+    assert.equal(draftPreviewAttempts, 0, "browsing must not download draft videos");
+    const originalSearch = await page.locator("#content-search").inputValue();
+    await page.locator("#content-search").fill("keep my current search");
+    const watchDraft = page.locator('[data-watch-production="production-draft"]');
+    await watchDraft.click();
+    await page.getByText(/Could not load this draft/).waitFor();
+    assert.equal(await page.locator("#content-search").inputValue(), "keep my current search");
+    assert.equal(await watchDraft.isEnabled(), true, "failed preview must remain retryable");
+    await watchDraft.click();
+    await page.locator('[data-draft-preview="production-draft"] video').waitFor();
+    assert.match(await page.locator('[data-draft-preview="production-draft"] video').getAttribute("src"), /^blob:/);
+    assert.equal(draftPreviewAttempts, 2);
+    await page.locator("#content-search").fill(originalSearch);
     assert.equal(await page.locator("#monetization").isHidden(), true);
     await page.locator("#refresh-video-analytics").click();
     await page.getByText(/Analytics refresh queued/).waitFor();

@@ -27,7 +27,12 @@ from katcha.api.codex import router as codex_router
 from katcha.api.command_center import router as command_center_router
 from katcha.api.content import router as content_router
 from katcha.api.control import router as control_router
-from katcha.api.control_auth import require_control_token, require_native_channel_body
+from katcha.api.control_auth import (
+    require_control_channel,
+    require_control_scope,
+    require_control_token,
+    require_native_channel_body,
+)
 from katcha.api.edit_blueprints import router as edit_blueprints_router
 from katcha.api.editorial_media_preparation import router as editorial_media_preparation_router
 from katcha.api.editorial_projects import router as editorial_projects_router
@@ -634,7 +639,48 @@ def get_production(production_id: uuid.UUID) -> ProductionDetailResponse:
             scripts=[ProductionScriptResponse.model_validate(item) for item in scripts],
             assets=[ProductionAssetResponse.model_validate(item) for item in assets],
             reviews=[ProductionReviewResponse.model_validate(item) for item in reviews],
+            review_url=(
+                f"/channels?channel={production.channel_profile_id}#content"
+                if production.channel_profile_id else None
+            ),
         )
+
+
+@app.get("/v1/productions/{production_id}/media")
+def get_production_media(production_id: uuid.UUID, request: Request) -> StreamingResponse:
+    require_control_scope(request, "channels:read")
+    with session_scope() as session:
+        production = session.get(Production, production_id)
+        if production is None:
+            raise HTTPException(404, "Production not found")
+        require_control_channel(request, production.channel_profile_id)
+        asset = session.scalar(
+            select(ProductionAsset)
+            .where(
+                ProductionAsset.production_id == production_id,
+                ProductionAsset.kind == "render",
+                ProductionAsset.storage_key == (production.render_manifest or {}).get("output_key"),
+            )
+            .order_by(ProductionAsset.generation.desc())
+            .limit(1)
+        )
+        if asset is None:
+            raise HTTPException(
+                409, "This draft has no finished video yet. Check its render status."
+            )
+        key = asset.storage_key
+    store = ObjectStore()
+    if not store.exists(key):
+        raise HTTPException(404, "The finished draft video is unavailable. Retry loading it.")
+    return StreamingResponse(
+        store.iter_bytes(key),
+        media_type="video/mp4",
+        headers={
+            "Cache-Control": "private, no-store",
+            "Content-Disposition": 'inline; filename="katcha-draft.mp4"',
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
 
 
 @app.get(

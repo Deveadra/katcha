@@ -329,6 +329,12 @@ def _require_named_principal_route_access(request: Request) -> None:
     path = request.url.path
     method = request.method.upper()
 
+    if path.startswith("/v1/productions/") and path.endswith("/media") and method == "GET":
+        # The endpoint resolves the production and enforces its channel before
+        # reading any private media bytes.
+        require_control_scope(request, "channels:read")
+        return
+
     if path.startswith("/v1/ai/actions/") and path.endswith("/execute"):
         # The action endpoint resolves the proposal first and enforces the
         # action-specific scope before claiming or executing it.
@@ -667,6 +673,14 @@ def require_control_channel(
 async def require_native_channel_body(request: Request) -> None:
     """Scoped native tools enforce channel ownership for path, query and body."""
     if control_principal_name(request) is None or "*" in control_scopes(request):
+        return
+    if (
+        request.method == "GET"
+        and request.url.path.startswith("/v1/productions/")
+        and request.url.path.endswith("/media")
+    ):
+        # This binary route is not an AI tool. Its endpoint checks the bound
+        # production channel before accessing object storage.
         return
     from katcha.services.goal_tools import native_route_tool
 
