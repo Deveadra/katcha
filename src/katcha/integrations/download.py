@@ -118,6 +118,9 @@ def download(url: str, settings: Settings | None = None) -> DownloadedMedia:
         "no_warnings": True,
         "retries": 3,
         "fragment_retries": 3,
+        # Node is bundled in the ingestion image; Deno remains supported locally.
+        "js_runtimes": {"deno": {}, "node": {}},
+        "socket_timeout": 30,
     }
 
     stage = "download"
@@ -218,3 +221,7 @@ def download(url: str, settings: Settings | None = None) -> DownloadedMedia:
         if platform == "youtube" and stage == "download" and _is_youtube_auth_challenge(exc):
             raise DownloadAuthenticationRequired(stage, exc) from exc
         raise MediaDownloadError(stage, exc) from exc
+
+    finally:
+        # Successful media remains for ingestion, but its session must not.
+        cookie_copy.unlink(missing_ok=True)

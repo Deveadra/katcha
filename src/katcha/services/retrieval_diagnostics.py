@@ -34,9 +34,10 @@ def retrieval_capabilities() -> dict:
             "engine": "yt-dlp",
             "youtube_server_session_configured": get_settings().youtube_download_cookie_file
             is not None,
-            "authentication_help": "A YouTube bot/sign-in challenge requires a server "
-            "download session or an authorized upload; client-browser "
-            "choice does not authenticate the server.",
+            "authentication_help": "Public videos normally need no sign-in. YouTube can "
+            "still challenge the server request. An authorized server session may help "
+            "but cannot guarantee access; try another accessible approved source. "
+            "Client-browser sign-in does not authenticate the worker.",
             "ffprobe_available": shutil.which("ffprobe") is not None,
             "ffmpeg_available": shutil.which("ffmpeg") is not None,
             "live_download_verified": False,

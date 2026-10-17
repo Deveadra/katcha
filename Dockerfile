@@ -1,5 +1,9 @@
 # syntax=docker/dockerfile:1.7
+FROM node:22-bookworm-slim AS youtube-js
 FROM python:3.12-slim
+
+# yt-dlp needs a supported JS runtime to extract current YouTube formats.
+COPY --from=youtube-js /usr/local/bin/node /usr/local/bin/node
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -17,6 +21,9 @@ WORKDIR /app
 COPY pyproject.toml ./
 RUN --mount=type=cache,target=/root/.cache/pip \
     python -c 'import subprocess,tomllib; data=tomllib.load(open("pyproject.toml","rb")); deps=data["project"]["dependencies"]+data["project"]["optional-dependencies"]["ai"]; subprocess.check_call(["python","-m","pip","install",*deps])'
+
+# Fail the image build if the bundled extractor runtime cannot execute.
+RUN node --version && python -c "import yt_dlp_ejs"
 
 RUN useradd --create-home --uid 10001 katcha \
     && mkdir -p /tmp/katcha \

@@ -120,3 +120,24 @@ proof. A future temporal-video inspection capability needs explicit coverage,
 evidence coordinates, uncertainty and authorized external inspection. This change
 prevents false completion; it does not claim to implement that capability or clear
 media rights. A merged PR is not evidence of production deployment.
+
+## Downloader runtime repair (2026-10-17)
+
+Read-only inspection of the deployed ingestion container at release
+`36d1e30e0e870736cfa7a02f8e13c307df92876c` found yt-dlp 2026.8.19,
+no EJS distribution, no Node/Deno executable and no configured download session.
+One fresh metadata-only request for `PRBwFwZC6kU` reproduced the bot challenge.
+These observations establish two separate facts: the packaged extractor runtime
+is incomplete, and YouTube currently challenges that server request. Installing
+runtime dependencies does not by itself prove the challenge is resolved.
+
+The ingestion image now includes Node 22, enables Node alongside Deno in the
+Python downloader, and installs yt-dlp's `default` dependencies so its compatible
+EJS package is included. Socket waits are bounded. Public acquisition remains the
+first attempt. Session copies are deleted before returning successful media as
+well as on failures; previously successful downloads retained the copy until
+later ingestion cleanup. Capability guidance no longer says a session is required
+for public media or guarantees that one will solve a challenge.
+
+Upstream requirements: https://github.com/yt-dlp/yt-dlp/wiki/EJS and
+https://github.com/yt-dlp/yt-dlp/wiki/Extractors#youtube.
