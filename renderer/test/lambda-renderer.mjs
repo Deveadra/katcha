@@ -321,3 +321,31 @@ for (const invalidProps of [
 }
 
 console.log('PASS: Lambda budget authorization precedes AWS invocation.');
+
+// Fatal provider diagnostics must not persist presigned credentials into either
+// the returned Error or the budget settlement receipt.
+{
+  const secretUrl = 'https://media.example.test/source.mp4?X-Amz-Security-Token=PRIVATESESSION&X-Amz-Signature=PRIVATESIGNATURE';
+  let settlement;
+  await assert.rejects(renderMediaViaLambda({
+    compositionId: 'Short', inputProps: props, outputPath: '/tmp/out.mp4', renderSettings: settings,
+    dependencies: {
+      fetch: async (url, options) => {
+        if (url.endsWith('/reserve')) return {ok: true, json: async () => ({reservation: {id: 'r-redacted', status: 'reserved'}})};
+        settlement = JSON.parse(options.body);
+        return {ok: true, json: async () => ({reservation: {status: 'settled'}})};
+      },
+      renderMediaOnLambda: async () => ({renderId: 'render-redacted', bucketName: 'bucket', cloudWatchLogs: 'logs'}),
+      getRenderProgress: async () => ({fatalErrorEncountered: true, errors: [{message: `decode failed ${encodeURIComponent(encodeURIComponent(secretUrl))}`}]}),
+      downloadMedia: async () => { throw new Error('must not download after fatal error'); },
+    },
+  }), (error) => {
+    assert.match(error.message, /decode failed.*media.example.test\/source.mp4/);
+    assert.match(error.message, /render_id=render-redacted/);
+    assert.ok(!error.stack.includes('PRIVATESESSION'));
+    assert.ok(!error.stack.includes('PRIVATESIGNATURE'));
+    return true;
+  });
+  assert.ok(!JSON.stringify(settlement).includes('PRIVATESESSION'));
+  assert.ok(!JSON.stringify(settlement).includes('PRIVATESIGNATURE'));
+}

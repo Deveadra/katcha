@@ -1,3 +1,4 @@
+import {redactDiagnostic} from './diagnostics.mjs';
 import {createHash} from 'node:crypto';
 import {isEditorialManifestVersion, validateEditorialManifest} from './editorial-contract.mjs';
 import {verifyNarrationBytes, verifyImageBytes} from './editorial-media.mjs';
@@ -406,8 +407,8 @@ app.post('/thumbnail', async (request, response) => {
       await fs.promises.rm(tempDir, {recursive: true, force: true});
     }
   } catch (error) {
-    console.error('thumbnail render failed', error);
-    return response.status(500).json({error: String(error?.message || error)});
+    console.error('thumbnail render failed', redactDiagnostic(error));
+    return response.status(500).json({error: redactDiagnostic(error)});
   }
 });
 
@@ -423,7 +424,7 @@ app.post('/editorial-output', async (request, response) => {
     return response.json({output_key: manifest.output_key, duration_seconds: manifest.output_duration_seconds,
       metadata: {verified: true, reused: true, composition: 'Editorial', verification_mode: 'object-head+manifest-digest', object_size_bytes: Number(stored.ContentLength)}});
   } catch (error) {
-    return response.status(400).json({error: String(error.message)});
+    return response.status(400).json({error: redactDiagnostic(error)});
   }
 });
 
@@ -440,7 +441,7 @@ app.post('/render', async (request, response) => {
       if (renderSettings.backend !== 'local') throw new Error('Editorial rendering requires the local backend');
       editorialDigest = createHash('sha256').update(JSON.stringify(manifest)).digest('hex');
     } catch (error) {
-      return response.status(400).json({error: error.message});
+      return response.status(400).json({error: redactDiagnostic(error)});
     }
   }
   const isLongform = manifest?.version === 'longform-render-v1';
@@ -614,8 +615,8 @@ app.post('/render', async (request, response) => {
       },
     });
   } catch (error) {
-    console.error('render failed', error);
-    return response.status(500).json({error: String(error?.message || error)});
+    console.error('render failed', redactDiagnostic(error));
+    return response.status(500).json({error: redactDiagnostic(error)});
   } finally {
     if (isEditorial) activeEditorialOutputs.delete(manifest.output_key);
   }

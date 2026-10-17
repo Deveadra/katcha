@@ -1,3 +1,4 @@
+import {redactDiagnostic, sanitizedError} from './diagnostics.mjs';
 import {createHash, randomUUID} from 'node:crypto';
 import net from 'node:net';
 
@@ -63,7 +64,7 @@ const sleep = (milliseconds) =>
 const errorSummary = (errors) =>
   (errors || [])
     .slice(0, 3)
-    .map((item) => item?.message || item?.stack || JSON.stringify(item))
+    .map((item) => redactDiagnostic(item?.message || item?.stack || JSON.stringify(item)))
     .join(' | ');
 
 export const resolveLambdaFramesPerFunction = ({
@@ -218,7 +219,7 @@ export const settleLambdaBudget = async ({
     reservation_id: reservation.id,
     actual_cost_microusd: reservation.estimatedCostMicrousd,
     metadata: {
-      settlement_reason: String(reason || '').slice(0, 500),
+      settlement_reason: redactDiagnostic(reason || '').slice(0, 500),
     },
   },
 });
@@ -230,7 +231,7 @@ const settleLambdaBudgetBestEffort = async (args) => {
   } catch (error) {
     console.error(
       'Lambda budget settlement failed; reservation remains held',
-      error,
+      redactDiagnostic(error),
     );
     return false;
   }
@@ -379,7 +380,7 @@ export const renderMediaViaLambda = async ({
       reason: `Remotion Lambda render failed or became uncertain: ${error?.message || error}`,
       fetchImpl,
     });
-    throw error;
+    throw sanitizedError(error);
   }
 };
 
