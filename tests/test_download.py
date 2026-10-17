@@ -92,3 +92,30 @@ def test_server_cookies_use_private_copy_and_never_become_media(tmp_path, monkey
         )
     assert source.read_text() == "fixture session; not a real credential"
     assert not copies[0].exists()
+
+
+def test_cookie_parse_error_does_not_expose_cookie_rows(tmp_path, monkeypatch):
+    import pytest
+
+    from katcha.config import Settings
+    from katcha.integrations import download as downloader
+    from katcha.orchestration.failure_details import failure_details
+
+    class CookieLoadError(RuntimeError):
+        pass
+    class InvalidSession:
+        def __init__(self, options):
+            raise CookieLoadError(
+                "invalid Netscape row: .youtube.com TRUE / FALSE bad SID secretvalue"
+            )
+    cookie = tmp_path / "session.cookies"
+    cookie.write_text("offline malformed fixture")
+    monkeypatch.setattr(downloader, "YoutubeDL", InvalidSession)
+    with pytest.raises(downloader.DownloadSessionConfigurationError) as caught:
+        downloader.download("https://youtu.be/fixture", Settings(
+            _env_file=None, work_dir=tmp_path / "work", youtube_download_cookie_file=cookie))
+    detail = failure_details(caught.value)
+    assert "secretvalue" not in str(detail)
+    assert detail["code"] == "youtube_download_session_invalid"
+    assert detail["retryable"] is False
+    assert caught.value.__suppress_context__ is True

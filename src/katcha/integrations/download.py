@@ -29,6 +29,15 @@ class DownloadAuthenticationRequired(MediaDownloadError):
     diagnostic_recovery = YOUTUBE_DOWNLOAD_AUTH_RECOVERY
 
 
+class DownloadSessionConfigurationError(MediaDownloadError):
+    diagnostic_code = "youtube_download_session_invalid"
+    diagnostic_retryable = False
+    diagnostic_recovery = (
+        "The operator-managed YouTube session file could not be loaded. "
+        "Check its format and permissions, or supply a replacement authorized session."
+    )
+
+
 @dataclass(slots=True)
 class DownloadedMedia:
     path: Path
@@ -162,6 +171,15 @@ def download(url: str, settings: Settings | None = None) -> DownloadedMedia:
     except Exception as exc:
         shutil.rmtree(job_dir, ignore_errors=True)
         message = str(exc).casefold()
+        if platform == "youtube" and settings.youtube_download_cookie_file is not None and (
+            "cookie" in type(exc).__name__.casefold() or "netscape" in message
+        ):
+            # Cookie parsers can include a complete secret-bearing row in their
+            # error and nested cause. Do not retain that chain in receipts/logs.
+            raise DownloadSessionConfigurationError(
+                "download authentication configuration",
+                RuntimeError("The configured server session file could not be loaded"),
+            ) from None
         if platform == "youtube" and stage == "download" and (
             "sign in to confirm" in message or "sign in to view" in message
         ):
