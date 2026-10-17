@@ -91,11 +91,29 @@ class DiscoveryRunWorkflow:
                 )
                 total_candidates += int(result.get("candidate_count") or 0)
                 if bool(result.get("done")):
+                    try:
+                        handoff = await workflow.execute_activity(
+                            "bridge_source_opportunities_activity",
+                            run_id,
+                            start_to_close_timeout=timedelta(minutes=5),
+                            retry_policy=_ACTIVITY_RETRY,
+                        )
+                    except Exception:
+                        # A trend-evaluation outage must not turn a completed
+                        # provider discovery run into a false failed source.
+                        workflow.logger.exception(
+                            "Post-discovery opportunity evaluation failed for %s", run_id
+                        )
+                        handoff = {
+                            "status": "failed",
+                            "reason": "Opportunity evaluation unavailable; saved discoveries are intact.",
+                        }
                     return {
                         "run_id": run_id,
                         "candidate_count": total_candidates,
                         "pages": page + 1,
                         "done": True,
+                        "opportunity_handoff": handoff,
                     }
             raise RuntimeError(
                 f"discovery run exceeded {MAX_DISCOVERY_PAGES} pages without completion"
