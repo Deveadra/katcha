@@ -1244,7 +1244,11 @@ const analytics = [
                 request.method === "POST",
         ),
     );
-    assert(requests.every((request) => request.auth === "Bearer fixture-token"));
+    assert(requests.every((request) =>
+        (request.path === "/v1/productions/production-draft/media" &&
+            request.method === "GET" && !request.auth) ||
+        request.auth === "Bearer fixture-token"
+    ), "only the exact short-lived playback URL may omit bearer authentication");
 
     await page.setViewportSize({ width: 390, height: 844 });
     assert.equal(
