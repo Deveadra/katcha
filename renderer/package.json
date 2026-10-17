@@ -4,7 +4,7 @@
   "type": "module",
   "scripts": {
     "start": "node src/index.mjs",
-    "test:config": "node test/diagnostics.mjs && node test/render-config.mjs && node test/aws-identity.mjs && node test/lambda-renderer.mjs && node test/cloud-media-staging.mjs && node test/s3-stream-upload.mjs && node test/remotion-versions.mjs && node test/lambda-deployment-state.mjs && node test/editorial.mjs",
+    "test:config": "node test/diagnostics.mjs && node test/render-config.mjs && node test/aws-identity.mjs && node test/lambda-renderer.mjs && node test/cloud-media-staging.mjs && node test/render-source-rendition.mjs && node test/s3-stream-upload.mjs && node test/remotion-versions.mjs && node test/lambda-deployment-state.mjs && node test/editorial.mjs",
     "lambda:policy:user": "remotion lambda policies user",
     "lambda:policy:role": "remotion lambda policies role",
     "lambda:policy:validate": "remotion lambda policies validate",

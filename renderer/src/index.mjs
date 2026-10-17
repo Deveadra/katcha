@@ -19,6 +19,7 @@ import {
 import {getSignedUrl} from '@aws-sdk/s3-request-presigner';
 import {verifyExpectedAwsIdentity} from './aws-identity.mjs';
 import {createCloudAssetUrlResolver} from './cloud-media-staging.mjs';
+import {createRenderSourceResolver} from './render-source-rendition.mjs';
 import {createRenderS3Client} from './s3-client.mjs';
 import {renderMediaViaLambda, rendererErrorStatus} from './lambda-renderer.mjs';
 import {resolveRenderSettings, validateLambdaSettings} from './render-config.mjs';
@@ -195,10 +196,15 @@ const hydrateShortManifest = async (manifest) => {
   };
 };
 
+const resolveBlueprintSource = createRenderSourceResolver({
+  sourceClient: s3, sourceBucket: bucket, resolveAssetUrl: renderAssetUrl,
+  enabled: renderSettings.backend === 'lambda',
+});
+
 const hydrateBlueprintManifest = async (manifest) => {
   const source = {
     ...manifest.source,
-    url: await renderAssetUrl(manifest.source.storage_key),
+    url: await resolveBlueprintSource(manifest.source, manifest.width, manifest.height),
   };
   const narration = manifest.narration?.asset_key
     ? {...manifest.narration, url: await renderAssetUrl(manifest.narration.asset_key)}

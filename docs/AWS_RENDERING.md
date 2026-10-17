@@ -437,3 +437,19 @@ documented 4 GB reserve on desktop 64-bit builds. A 6144 MB default provides
 headroom, but does not establish that every `ERR_FAILED` is a disk problem.
 Check Lambda logs, decoded frame size, and an actual bounded render. Keep
 existing render budget gates active; increasing disk does not authorize spending.
+
+### Preparing large Blueprint sources
+
+Lambda Blueprint renders retain the original media and frozen edit manifest. Before
+cloud staging, the renderer prepares oversized or non-H.264 sources once as an
+H.264 transport copy bounded by the output dimensions. It copies every audio
+stream without re-encoding, retains source frame timing, and checks duration,
+frame count when available, and audio codecs before storing the copy. Preparation
+uses one decoder/encoder thread and a ten-minute deadline. Local rendering is
+unchanged.
+
+The cache identity includes the original object key, ETag, length, modification
+time, output dimensions, and preparation version. Conditional reads prevent an
+object replacement during preparation. Cache or upload verification failures stop
+the render before a paid Lambda invocation. Originals remain available for future
+edits; render copies do not change source ownership or publication eligibility.
