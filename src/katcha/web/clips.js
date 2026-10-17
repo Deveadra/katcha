@@ -635,23 +635,42 @@ async function restoreClip(id) {
     }
 }
 
+function updatePurgeConfirmation() {
+    const valid = Boolean(state.purgeId) &&
+        $("purge-confirm-input").value === `DELETE ${state.purgeId}`;
+    $("purge-confirm").disabled = !valid || Boolean(state.purgeBusy);
+    if (!state.purgeBusy) {
+        $("purge-feedback").textContent = valid
+            ? "Ready to delete this video. This cannot be undone."
+            : "Enter the exact confirmation phrase to enable deletion.";
+        $("purge-feedback").classList.remove("error");
+    }
+}
+
 function openPurgeDialog(id) {
     state.purgeId = id;
-    $("purge-step1").hidden = false;
-    $("purge-step2").hidden = true;
+    state.purgeBusy = false;
     $("purge-confirm-input").value = "";
     $("purge-phrase").textContent = `DELETE ${id}`;
+    updatePurgeConfirmation();
     $("purge-dialog").showModal();
+    $("purge-confirm-input").focus();
 }
 
 async function confirmPurge() {
     const id = state.purgeId;
-    if (!id) return;
+    if (!id || state.purgeBusy) return;
     const phrase = `DELETE ${id}`;
-    if ($("purge-confirm-input").value.trim() !== phrase) {
-        message("Deletion phrase does not match.", true);
+    if ($("purge-confirm-input").value !== phrase) {
+        updatePurgeConfirmation();
         return;
     }
+    state.purgeBusy = true;
+    const button = $("purge-confirm");
+    button.disabled = true;
+    button.textContent = "Deleting stored video…";
+    $("purge-feedback").classList.remove("error");
+    $("purge-feedback").textContent = "Requesting permanent deletion. Please wait…";
     try {
         await api(`/v1/clips/${encodeURIComponent(id)}/purge`, {
             method: "POST",
@@ -661,12 +680,24 @@ async function confirmPurge() {
                 confirmation_text: phrase,
             }),
         });
+        state.purgeId = null;
         $("purge-dialog").close();
         clearPreview();
-        await refreshLibrary();
         message("Source media deleted. Searchable metadata and lineage were retained.");
+        try {
+            await refreshLibrary();
+        } catch (error) {
+            message("Video was deleted, but the library did not refresh: " + error.message, true);
+        }
     } catch (error) {
-        message(error.message, true);
+        $("purge-feedback").textContent = "Deletion failed: " + error.message +
+            ". The dialog remains open; correct the issue or select Cancel.";
+        $("purge-feedback").classList.add("error");
+        message("Deletion failed: " + error.message, true);
+    } finally {
+        state.purgeBusy = false;
+        button.textContent = "Delete stored video";
+        if ($("purge-dialog").open) button.disabled = false;
     }
 }
 
@@ -904,17 +935,19 @@ $("retention-confirm-continue").addEventListener("click", () => {
 });
 $("retention-confirm-save").addEventListener("click", confirmAutoDelete);
 
-$("purge-continue").addEventListener("click", () => {
-    $("purge-step1").hidden = true;
-    $("purge-step2").hidden = false;
-    $("purge-confirm-input").focus();
-});
+$("purge-confirm-input").addEventListener("input", updatePurgeConfirmation);
 $("purge-confirm").addEventListener("click", confirmPurge);
+$("purge-dialog").addEventListener("cancel", (event) => {
+    if (state.purgeBusy) event.preventDefault();
+});
+$("purge-dialog").addEventListener("close", () => {
+    if (!state.purgeBusy) state.purgeId = null;
+});
 
 document.querySelectorAll("[data-close-dialog]").forEach((button) => {
     button.addEventListener("click", () => {
         const dialog = $(button.dataset.closeDialog);
-        if (dialog?.open) dialog.close();
+        if (dialog?.open && !(dialog.id === "purge-dialog" && state.purgeBusy)) dialog.close();
     });
 });
 
