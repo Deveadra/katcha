@@ -907,12 +907,36 @@ def program_map(
         raise _error(exc) from exc
 
 
-@router.get("/{project_id}/runs/{run_id}/preview")
-def preview_render(
-    channel_profile_id: uuid.UUID, project_id: uuid.UUID, run_id: uuid.UUID, request: Request
-):
-    """Authenticated review playback; clearance is checked again at access time."""
-    from katcha.api.studio import _stream_object
+def _preview_ticket_scope(
+    channel_profile_id: uuid.UUID,
+    project_id: uuid.UUID,
+    run_id: uuid.UUID,
+    output_key: str,
+) -> dict[str, str]:
+    return {
+        "kind": "editorial_preview",
+        "channel_profile_id": str(channel_profile_id),
+        "project_id": str(project_id),
+        "run_id": str(run_id),
+        "storage_key": output_key,
+    }
+
+
+@router.post("/{project_id}/runs/{run_id}/preview-session")
+def editorial_preview_session(
+    channel_profile_id: uuid.UUID,
+    project_id: uuid.UUID,
+    run_id: uuid.UUID,
+    request: Request,
+    response: Response,
+) -> dict[str, object]:
+    """Create an exact-path, short-lived playback session for native seeking."""
+    from katcha.security.media_tickets import (
+        REVIEW_MEDIA_COOKIE,
+        REVIEW_MEDIA_TICKET_TTL_SECONDS,
+        issue_media_ticket,
+    )
+    from katcha.security.secrets import SecretConfigurationError
     from katcha.services.editorial_reviews import verified_manifest
     from katcha.services.editorial_runs import get_run
 
@@ -920,6 +944,70 @@ def preview_render(
     try:
         row = get_run(channel_profile_id, project_id, run_id)
         manifest = verified_manifest(row)
-        return _stream_object(request, manifest.output_key, f"editorial-{project_id}.mp4")
     except ValueError as exc:
         raise _error(exc) from exc
+    scope = _preview_ticket_scope(
+        channel_profile_id, project_id, run_id, manifest.output_key
+    )
+    try:
+        token = issue_media_ticket(
+            scope, ttl_seconds=REVIEW_MEDIA_TICKET_TTL_SECONDS
+        )
+    except SecretConfigurationError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    preview_path = (
+        f"/v1/channels/{channel_profile_id}/editorial-projects/{project_id}"
+        f"/runs/{run_id}/preview"
+    )
+    response.headers["Cache-Control"] = "no-store"
+    response.set_cookie(
+        REVIEW_MEDIA_COOKIE,
+        token,
+        max_age=REVIEW_MEDIA_TICKET_TTL_SECONDS,
+        httponly=True,
+        secure=get_settings().env == "production",
+        samesite="strict",
+        path=preview_path,
+    )
+    return {
+        "media_url": preview_path,
+        "expires_in_seconds": REVIEW_MEDIA_TICKET_TTL_SECONDS,
+    }
+
+
+@router.get("/{project_id}/runs/{run_id}/preview")
+def preview_render(
+    channel_profile_id: uuid.UUID, project_id: uuid.UUID, run_id: uuid.UUID, request: Request
+):
+    """Authenticated review playback; clearance is checked again at access time."""
+    from katcha.api.studio import _stream_object
+    from katcha.security.media_tickets import REVIEW_MEDIA_COOKIE, verify_media_ticket
+    from katcha.security.secrets import SecretConfigurationError
+    from katcha.services.editorial_reviews import verified_manifest
+    from katcha.services.editorial_runs import get_run
+
+    token = request.cookies.get(REVIEW_MEDIA_COOKIE)
+    if not token:
+        _authorize(request, channel_profile_id)
+    try:
+        row = get_run(channel_profile_id, project_id, run_id)
+        manifest = verified_manifest(row)
+        if token:
+            verify_media_ticket(
+                token,
+                _preview_ticket_scope(
+                    channel_profile_id, project_id, run_id, manifest.output_key
+                ),
+            )
+    except SecretConfigurationError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except ValueError as exc:
+        if token and "private media ticket" in str(exc):
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
+        raise _error(exc) from exc
+    return _stream_object(
+        request,
+        manifest.output_key,
+        f"editorial-{project_id}.mp4",
+        cache_control="private, no-store",
+    )

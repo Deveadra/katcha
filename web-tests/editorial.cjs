@@ -262,8 +262,14 @@ const draft = {
                 if (url.pathname.endsWith('/revisions/1')) return send({revision: 1, draft, created_at: '2026-10-01T12:00:00Z'});
                 if (url.pathname.includes('/runs/past-')) {
                     if (url.pathname.endsWith('/review')) return send({status: 'invalidated', blocker: 'Script revision changed; rebuild the render', reviews: [{decision: 'approve', actor: 'editor', note: 'Historical approval', created_at: '2026-10-01'}]});
-                    if (url.pathname.endsWith('/preview')) {
+                    if (url.pathname.endsWith('/preview-session')) {
                         if (failHistoryPreview) { failHistoryPreview = false; return send({detail: 'Preview clearance changed'}, 409); }
+                        return send({
+                            media_url: url.pathname.slice(0, -'-session'.length),
+                            expires_in_seconds: 3600,
+                        });
+                    }
+                    if (url.pathname.endsWith('/preview')) {
                         return route.fulfill({status: 200, contentType: 'video/mp4', body: 'synthetic history transport'});
                     }
                     if (url.pathname.endsWith('/past-22')) { delayedHistory = () => send(historyRows[22]); historyRequestStarted(); return; }
@@ -392,6 +398,10 @@ const draft = {
                         start_seconds: 1.5,
                         end_seconds: 3.5,
                     }],
+                });
+                if (url.pathname.endsWith("/preview-session")) return send({
+                    media_url: url.pathname.slice(0, -"-session".length),
+                    expires_in_seconds: 3600,
                 });
                 if (url.pathname.endsWith("/preview")) return route.fulfill({status: 200, contentType: "video/mp4", body: "synthetic-media-transport-only"});
                 if (url.pathname.endsWith("/publication")) {
@@ -923,6 +933,12 @@ const draft = {
         await page.getByRole('button', {name: 'Load current preview', exact: true}).click();
         await page.getByText(/Preview loaded/).waitFor();
         assert.equal(await page.locator('#editorial-program-monitor-video').isVisible(), true);
+        assert.match(
+            await page.locator('#editorial-program-monitor-video').getAttribute('src'),
+            /\/preview$/,
+        );
+        assert(calls.some(call => call.path.endsWith('/preview-session') &&
+            call.method === 'POST' && call.auth === 'Bearer fixture-token'));
         assert.match(await page.locator('#editorial-program-monitor-meta').innerText(), /Loaded · revision 3/);
         await page.evaluate(() => {
             const video = document.querySelector('#editorial-program-monitor-video');
@@ -963,10 +979,17 @@ const draft = {
             '00:01.500 / 00:12.000',
         );
         await page.getByText(/rendered beat start 00:01.500 · frame 45/i).waitFor();
+        // Synthetic fixture bytes are deliberately not a decodable MP4.
+        // The UI must preserve time navigation and offer explicit renewal if
+        // Chromium reports that invalid fixture as a playback error.
+        const playbackStatus = await page.locator('#editorial-program-monitor-status').innerText();
         assert.match(
-            await page.locator('#editorial-program-monitor-status').innerText(),
-            /verified frozen render manifest/i,
+            playbackStatus,
+            /verified frozen render manifest|Playback failed or private access expired/i,
         );
+        if (/Playback failed/i.test(playbackStatus)) {
+            assert.equal(await page.locator('#editorial-program-load').isHidden(), false);
+        }
         assert.equal(
             calls.some(call => call.path.endsWith('/runs/render/program-map')),
             true,
@@ -1281,7 +1304,9 @@ const draft = {
         await page.locator('[data-editorial-stage="script"]').click();
         // Independent history must preserve edits and current review/preview identity.
         await page.locator('[data-beat-narration="0"]').fill('Unsaved current script stays here.');
-        const writesBeforeHistory = calls.filter(call => call.method === 'POST').length;
+        const writesBeforeHistory = calls.filter(call =>
+            call.method === 'POST' && !call.path.endsWith('/preview-session')
+        ).length;
         await page.locator('#editorial-history > summary').click();
         await page.locator('#editorial-history-status').filter({hasText: 'History page 1'}).waitFor();
         assert.equal(await page.locator('[data-history-run]').count(), 20);
@@ -1301,6 +1326,10 @@ const draft = {
         assert.equal(await page.locator('#editorial-history-preview').isHidden(), true);
         await page.locator('#editorial-history-play').click();
         await page.locator('#editorial-history-preview').waitFor({state: 'visible'});
+        assert.match(
+            await page.locator('#editorial-history-preview').getAttribute('src'),
+            /\/runs\/past-0\/preview$/,
+        );
         await page.locator('#editorial-history-next').click();
         await page.locator('#editorial-history-status').filter({hasText: 'History connection interrupted'}).waitFor();
         assert.equal(await page.locator('[data-history-run]').count(), 20);
@@ -1309,7 +1338,9 @@ const draft = {
         assert.equal(await page.locator('[data-history-run]').count(), 3);
         await page.locator('#editorial-history-back').click();
         await page.locator('#editorial-history-status').filter({hasText: 'History page 1'}).waitFor();
-        assert.equal(calls.filter(call => call.method === 'POST').length, writesBeforeHistory);
+        assert.equal(calls.filter(call =>
+            call.method === 'POST' && !call.path.endsWith('/preview-session')
+        ).length, writesBeforeHistory);
         await page.screenshot({ path: path.resolve(__dirname, "test-results/editorial-desktop.png"), fullPage: true });
         await page.setViewportSize({ width: 390, height: 844 });
         assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
@@ -1359,13 +1390,17 @@ const draft = {
             calls
                 .filter(
                     call => call.path.includes("editorial-projects")
-                        && !call.path.endsWith("/source-media"),
+                        && !call.path.endsWith("/source-media")
+                        && !call.path.endsWith("/preview"),
                 )
                 .every(call => call.auth === "Bearer fixture-token"),
         );
         const nativeSourceReads = calls.filter(call => call.path.endsWith("/source-media"));
         assert(nativeSourceReads.length >= 1);
         assert(nativeSourceReads.every(call => !call.auth));
+        const nativePreviewReads = calls.filter(call => call.path.endsWith('/preview'));
+        assert(nativePreviewReads.length >= 1);
+        assert(nativePreviewReads.every(call => !call.auth));
         assert.deepEqual(errors, []);
         console.log("Editorial project recovery, evidence, script editing, channel isolation and 390px checks passed.");
     } catch (error) {

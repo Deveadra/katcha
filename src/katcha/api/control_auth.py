@@ -38,6 +38,9 @@ _EDITORIAL_SOURCE_MEDIA_PATH = re.compile(
 _REVIEW_MEDIA_PATH = re.compile(
     r"/v1/(?:productions/[^/]+|clips/[^/]+)/media$"
 )
+_EDITORIAL_REVIEW_MEDIA_PATH = re.compile(
+    r"/v1/channels/[^/]+/editorial-projects/[^/]+/runs/[^/]+/preview$"
+)
 
 
 def _uses_review_media_ticket(request: Request) -> bool:
@@ -45,7 +48,10 @@ def _uses_review_media_ticket(request: Request) -> bool:
 
     return (
         request.method.upper() == "GET"
-        and bool(_REVIEW_MEDIA_PATH.fullmatch(request.url.path))
+        and bool(
+            _REVIEW_MEDIA_PATH.fullmatch(request.url.path)
+            or _EDITORIAL_REVIEW_MEDIA_PATH.fullmatch(request.url.path)
+        )
         and bool(request.cookies.get(REVIEW_MEDIA_COOKIE))
     )
 
@@ -458,6 +464,15 @@ def _require_named_principal_route_access(request: Request) -> None:
             request,
             "ai:read" if method in {"GET", "HEAD"} else "production:create",
         )
+        return
+
+    if method == "POST" and re.fullmatch(
+        r"/v1/channels/[^/]+/editorial-projects/[^/]+/runs/[^/]+/preview-session",
+        path,
+    ):
+        # Session is minted only to an authenticated, channel-authorized
+        # editorial reader after current frozen-render clearance.
+        require_control_scope(request, "ai:read")
         return
 
     if method == "POST" and re.fullmatch(

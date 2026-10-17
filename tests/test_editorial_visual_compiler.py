@@ -353,7 +353,7 @@ def test_project_compiler_checks_current_rights_not_old_scout_flags(saved, monke
     assert render_project(str(rendering.id), 1)["status"] == "completed"
     monkeypatch.setattr(
         "katcha.api.studio._stream_object",
-        lambda request, key, filename: Response(key, media_type="video/mp4"),
+        lambda request, key, filename, **kwargs: Response(key, media_type="video/mp4"),
     )
     preview_url = url.replace("/storyboard/preflight", f"/runs/{rendering.id}/preview")
     preview = client.get(preview_url)
