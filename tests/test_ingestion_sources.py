@@ -122,7 +122,11 @@ def test_channel_youtube_source_freezes_profile_connection(source_scope) -> None
         adapter_version="v1",
         platform="youtube",
         channel_profile_id=profile_id,
-        query_template={"channel_reference": "@creator", "limit": 25},
+        query_template={
+            "channel_reference": "@creator",
+            "limit": 25,
+            "youtube_connection_id": str(uuid.uuid4()),
+        },
     )
 
     run = create_discovery_run_from_source(source.id)
@@ -189,6 +193,77 @@ def test_channel_youtube_source_without_profile_connection_uses_provider_fallbac
 
     run = create_discovery_run_from_source(source.id)
 
+    assert run.query["channel_reference"] == "@marvel"
+    assert "youtube_connection_id" not in run.query
+
+
+def test_youtube_verification_uses_assigned_account_not_template(
+    source_scope, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import uuid
+    from datetime import UTC, datetime, timedelta
+
+    from katcha.api import acquisition as acquisition_api
+    from katcha.intelligence_models import ChannelProfile
+    from katcha.publishing_models import YouTubeConnection
+
+    connection_id = uuid.uuid4()
+    profile_id = uuid.uuid4()
+    with source_scope() as session:
+        session.add(YouTubeConnection(
+            id=connection_id,
+            channel_id="UC" + "y" * 22,
+            channel_title="Channel owner",
+            status="active",
+            scopes=["https://www.googleapis.com/auth/youtube"],
+            encrypted_access_token="access",
+            encrypted_refresh_token="refresh",
+            token_expires_at=datetime.now(UTC) + timedelta(hours=1),
+        ))
+        session.add(ChannelProfile(
+            id=profile_id, youtube_connection_id=connection_id,
+            status="active", timezone="UTC",
+        ))
+    source = upsert_ingestion_source(
+        source_key="verified-youtube-source",
+        name="Verified YouTube",
+        adapter_key="youtube",
+        adapter_version="v1",
+        platform="youtube",
+        channel_profile_id=profile_id,
+        query_template={
+            "channel_reference": "@marvel",
+            "youtube_connection_id": str(uuid.uuid4()),
+        },
+    )
+    recorded = []
+    def check(query):
+        recorded.append(query)
+        return {
+            "status": "verified", "authentication": "oauth",
+            "operation": "channels.list", "quota_units": 1,
+            "channel_found": True,
+        }
+    monkeypatch.setattr(acquisition_api, "verify_youtube_discovery", check)
+    result = acquisition_api.verify_source_youtube_discovery(source.id)
+    assert result.status == "verified"
+    assert recorded[0]["youtube_connection_id"] == str(connection_id)
+    assert recorded[0]["channel_reference"] == "@marvel"
+
+
+def test_shared_youtube_source_does_not_use_template_supplied_account(source_scope):
+    import uuid
+
+    source = upsert_ingestion_source(
+        source_key="shared-oauth-spoof",
+        name="Shared YouTube Watch",
+        adapter_key="youtube", adapter_version="v1", platform="youtube",
+        query_template={
+            "channel_reference": "@marvel",
+            "youtube_connection_id": str(uuid.uuid4()),
+        },
+    )
+    run = create_discovery_run_from_source(source.id)
     assert run.query["channel_reference"] == "@marvel"
     assert "youtube_connection_id" not in run.query
 
