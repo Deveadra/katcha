@@ -15,7 +15,7 @@ the current date or move it without replaying the affected histories.
 For older executions, patch markers preserve the recorded command sequence. The
 SDK memoizes that decision, so a legacy execution can retain its old sequence
 until continue-as-new. Executions that already recorded the added activities keep
-them, and newly started executions include both activities.
+them, and newly started executions record patch markers and include both activities.
 
 Before rollout, offline replay passed against both complete running scheduler
 histories (584 and 4671 events), with zero activity or provider calls. The two

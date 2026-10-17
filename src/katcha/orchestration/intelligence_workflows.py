@@ -14,9 +14,12 @@ _UNMARKED_REFRESH_EXTENSION_EPOCH = datetime(2026, 9, 29, tzinfo=UTC)
 
 
 def _include_refresh_extension(marker: str) -> bool:
+    # Always consult patched() so genuinely new executions record markers.
+    # The epoch also accepts newer histories that already contain the activity
+    # but were written before markers were added.
     return (
-        workflow.info().start_time >= _UNMARKED_REFRESH_EXTENSION_EPOCH
-        or workflow.patched(marker)
+        workflow.patched(marker)
+        or workflow.info().start_time >= _UNMARKED_REFRESH_EXTENSION_EPOCH
     )
 
 
