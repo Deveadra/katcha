@@ -92,7 +92,7 @@ from katcha.api.schemas import (
     YouTubeOAuthStartResponse,
 )
 from katcha.api.short_episodes import router as short_episodes_router
-from katcha.api.studio import _stream_object, router as studio_router
+from katcha.api.studio import router as studio_router
 from katcha.api.telegram import router as telegram_router
 from katcha.api.trends import router as trends_router
 from katcha.clip_lifecycle_models import ClipLifecycle
@@ -740,6 +740,8 @@ def get_production_media(production_id: uuid.UUID, request: Request) -> Streamin
     if not _verify_review_cookie(request, ticket_scope):
         require_control_scope(request, "channels:read")
         require_control_channel(request, owner)
+    from katcha.api.studio import _stream_object
+
     return _stream_object(
         request, key, "katcha-draft.mp4", cache_control="private, no-store"
     )
@@ -1282,6 +1284,8 @@ def get_clip_media(clip_id: uuid.UUID, request: Request) -> StreamingResponse:
         request, _review_ticket_scope("clip", clip_id, key)
     ):
         require_control_scope(request, "channels:read")
+    from katcha.api.studio import _stream_object
+
     return _stream_object(request, key, f"clip-preview.{extension}")
 
 
