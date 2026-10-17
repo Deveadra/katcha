@@ -20,7 +20,7 @@ import {getSignedUrl} from '@aws-sdk/s3-request-presigner';
 import {verifyExpectedAwsIdentity} from './aws-identity.mjs';
 import {createCloudAssetUrlResolver} from './cloud-media-staging.mjs';
 import {createRenderS3Client} from './s3-client.mjs';
-import {renderMediaViaLambda} from './lambda-renderer.mjs';
+import {renderMediaViaLambda, rendererErrorStatus} from './lambda-renderer.mjs';
 import {resolveRenderSettings, validateLambdaSettings} from './render-config.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -616,7 +616,11 @@ app.post('/render', async (request, response) => {
     });
   } catch (error) {
     console.error('render failed', redactDiagnostic(error));
-    return response.status(500).json({error: redactDiagnostic(error)});
+    const status = rendererErrorStatus(error);
+    return response.status(status).json({
+      error: redactDiagnostic(error),
+      ...(status === 402 ? {code: 'render_budget_denied'} : {}),
+    });
   } finally {
     if (isEditorial) activeEditorialOutputs.delete(manifest.output_key);
   }
