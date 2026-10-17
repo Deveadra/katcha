@@ -97,6 +97,11 @@ def ffprobe(path: Path) -> dict[str, object]:
     return json.loads(result.stdout)
 
 
+def _is_youtube_auth_challenge(exc: Exception) -> bool:
+    message = str(exc).casefold()
+    return "sign in to confirm" in message or "sign in to view" in message
+
+
 def download(url: str, settings: Settings | None = None) -> DownloadedMedia:
     settings = settings or get_settings()
     canonical = canonicalize_url(url)
@@ -117,19 +122,43 @@ def download(url: str, settings: Settings | None = None) -> DownloadedMedia:
 
     stage = "download"
     cookie_copy = job_dir / "server-session.cookies"
+    session_attempted = False
     try:
-        if platform == "youtube" and settings.youtube_download_cookie_file is not None:
+        # Public videos commonly work without a login. Never expose the
+        # operator-managed session unless anonymous access actually fails
+        # with a recognized YouTube authentication challenge.
+        try:
+            with YoutubeDL(options) as ydl:
+                info = ydl.extract_info(canonical, download=True)
+        except Exception as first_error:
+            if (
+                platform != "youtube"
+                or settings.youtube_download_cookie_file is None
+                or not _is_youtube_auth_challenge(first_error)
+            ):
+                raise
+
+            # A failed extractor may leave fragments or partial outputs.
+            # Retry in a clean private directory, not against those files.
+            shutil.rmtree(job_dir)
+            job_dir.mkdir(mode=0o700)
             stage = "download authentication configuration"
-            # yt-dlp saves its cookie jar on exit. Copy into a private per-job
-            # file so a read-only secret mount stays untouched and parallel
-            # attempts cannot overwrite the shared server session.
-            fd = os.open(cookie_copy, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-            os.close(fd)
-            shutil.copyfile(settings.youtube_download_cookie_file, cookie_copy)
+            try:
+                # yt-dlp may rewrite cookies on exit; isolate every job from
+                # the read-only operator secret and other concurrent jobs.
+                fd = os.open(cookie_copy, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+                os.close(fd)
+                shutil.copyfile(settings.youtube_download_cookie_file, cookie_copy)
+            except OSError:
+                raise DownloadSessionConfigurationError(
+                    stage,
+                    RuntimeError("The configured server session file could not be loaded"),
+                ) from None
             options["cookiefile"] = str(cookie_copy)
-        stage = "download"
-        with YoutubeDL(options) as ydl:
-            info = ydl.extract_info(canonical, download=True)
+            session_attempted = True
+            stage = "download"
+            with YoutubeDL(options) as ydl:
+                info = ydl.extract_info(canonical, download=True)
 
         stage = "download output"
         candidates = [
@@ -165,13 +194,19 @@ def download(url: str, settings: Settings | None = None) -> DownloadedMedia:
             creator=info.get("uploader") or info.get("channel"),
             platform=platform,
             canonical_url=canonical,
-            source_metadata={k: v for k, v in safe_info.items() if v is not None},
+            source_metadata={
+                **{k: v for k, v in safe_info.items() if v is not None},
+                **({"youtube_access_mode": "session_fallback" if session_attempted else "public"}
+                   if platform == "youtube" else {}),
+            },
             media_metadata=probe,
         )
     except Exception as exc:
         shutil.rmtree(job_dir, ignore_errors=True)
+        if isinstance(exc, DownloadSessionConfigurationError):
+            raise
         message = str(exc).casefold()
-        if platform == "youtube" and settings.youtube_download_cookie_file is not None and (
+        if platform == "youtube" and session_attempted and (
             "cookie" in type(exc).__name__.casefold() or "netscape" in message
         ):
             # Cookie parsers can include a complete secret-bearing row in their
@@ -180,8 +215,6 @@ def download(url: str, settings: Settings | None = None) -> DownloadedMedia:
                 "download authentication configuration",
                 RuntimeError("The configured server session file could not be loaded"),
             ) from None
-        if platform == "youtube" and stage == "download" and (
-            "sign in to confirm" in message or "sign in to view" in message
-        ):
+        if platform == "youtube" and stage == "download" and _is_youtube_auth_challenge(exc):
             raise DownloadAuthenticationRequired(stage, exc) from exc
         raise MediaDownloadError(stage, exc) from exc

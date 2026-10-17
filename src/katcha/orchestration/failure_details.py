@@ -5,9 +5,11 @@ from __future__ import annotations
 import re
 
 YOUTUBE_DOWNLOAD_AUTH_RECOVERY = (
-    "YouTube requires a signed-in download session on the Katcha server. "
-    "Configure the operator-managed YouTube download session or upload an authorized "
-    "media file. Changing the browser running Katcha does not change this session."
+    "YouTube challenged the download request from the Katcha server. A public "
+    "watch link does not guarantee access to the underlying media streams. "
+    "An optional authorized server session may help but is not guaranteed to work; "
+    "use an approved direct media source or upload if the challenge persists. "
+    "Signing in on your browser does not authenticate Katcha's worker."
 )
 
 _GENERIC = {
