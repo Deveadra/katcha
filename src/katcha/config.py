@@ -378,6 +378,8 @@ class Settings(BaseSettings):
     source_search_recovery_generation: int = Field(default=0, ge=0)
 
     work_dir: Path = Path("/tmp/katcha")
+    # Operator-managed server session; never extract cookies from a client browser.
+    youtube_download_cookie_file: Path | None = None
     intelligence_handoff_dir: Path = Path("/tmp/katcha/handoff")
     analysis_frame_count: int = Field(default=6, ge=3, le=12)
     whisper_model: str = "base.en"

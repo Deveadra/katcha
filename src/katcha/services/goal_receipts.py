@@ -131,7 +131,12 @@ def resolve_goal_authority(goal: CommandGoal) -> tuple[set[str], str | None]:
             (p for p in settings.control_principals if p.name == captured["principal_name"]), None
         )
         if principal is None:
-            raise ValueError("The control principal for this request was revoked")
+            raise ValueError(
+                "This request cannot continue because its saved operator is unavailable "
+                "to the worker. "
+                "The operator may have been removed or worker configuration may differ. "
+                "Reconnect and retry the saved request after checking operator configuration"
+            )
         credential = next(
             (
                 c

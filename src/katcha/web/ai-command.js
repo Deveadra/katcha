@@ -1256,4 +1256,6 @@ $("archive-thread").onclick = async () => {
 document.querySelectorAll("[data-prompt]").forEach((button) => {
     button.onclick = () => sendPrompt(button.dataset.prompt);
 });
-if (location.port !== "8765") connect();
+// The shared hosted bootstrap owns Access sign-in/recovery on the public app.
+// The local launcher and explicit development-token connection keep their paths.
+if (location.port !== "8765" && location.hostname !== "app.katcha.stream") connect();

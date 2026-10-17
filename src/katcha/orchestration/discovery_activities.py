@@ -21,6 +21,7 @@ from katcha.db import session_scope
 from katcha.domain import DiscoveryRunStatus
 from katcha.intelligence_models import ChannelProfile
 from katcha.models import DomainEvent
+from katcha.orchestration.failure_details import safe_failure_text
 from katcha.services.acquisition import promote_discovery_candidate
 from katcha.services.command_workflow_lifecycle import (
     record_command_source_prepare_lifecycle,
@@ -546,7 +547,10 @@ def prepare_command_discovery_candidates_activity(
             prepared.append(
                 {
                     "candidate_id": str(candidate_id),
-                    "source_id": str(source.id),
+                    "source_id": str(source.id),  # compatibility for existing histories
+                    "source_item_id": str(source.id),
+                    "source_status": source.status,
+                    "source_error": safe_failure_text(source.error) if source.error else None,
                     "workflow_id": source.workflow_id,
                     "clip_id": str(source.clip_id) if source.clip_id else None,
                 }

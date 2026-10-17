@@ -342,7 +342,7 @@ if (location.port === '8765') {
  */
 (async function connectHostedWorkspace() {
     if (location.hostname !== 'app.katcha.stream') return;
-    const pages = new Set(['home', 'trends', 'clips', 'channel', 'production']);
+    const pages = new Set(['home', 'trends', 'clips', 'channel', 'production', 'ai']);
     const page = document.body?.dataset.katchaPage;
     if (!pages.has(page)) return;
     // Channel OAuth callbacks already reconnect in channels.js.

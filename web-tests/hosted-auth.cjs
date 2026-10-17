@@ -1,4 +1,4 @@
-const { chromium } = require("playwright");
+const { launch } = require("./browser.cjs");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
@@ -7,6 +7,7 @@ const origin = "https://app.katcha.stream";
 const webDir = path.resolve(__dirname, "../src/katcha/web");
 const pages = [
     ["home.html", "home"],
+    ["ai.html", "ai"],
     ["index.html", "trends"],
     ["clips.html", "clips"],
     ["channels.html", "channel"],
@@ -30,7 +31,8 @@ async function openHosted(page, routeName, sessionStatus = 200) {
                 return route.fulfill({
                     status: sessionStatus,
                     json: sessionStatus === 200
-                        ? { actor: "control-principal:cloudflare-access:operator" }
+                        ? { actor: "control-principal:cloudflare-access:operator", scopes: ["*"],
+                            channel_access: { all_channels: true } }
                         : { detail: sessionStatus === 403 ? "email not mapped" : "authorization required" },
                 });
             }
@@ -69,11 +71,7 @@ async function openHosted(page, routeName, sessionStatus = 200) {
 }
 
 (async () => {
-    const browser = await chromium.launch({
-        headless: true,
-        executablePath: process.env.CHROMIUM_PATH || undefined,
-        args: process.env.CHROMIUM_PATH ? ["--no-sandbox"] : [],
-    });
+    const browser = await launch();
     try {
         for (const [file, pageName] of pages) {
             const page = await browser.newPage();
@@ -100,10 +98,11 @@ async function openHosted(page, routeName, sessionStatus = 200) {
             }
         }
 
-        for (const denied of [401, 403]) {
+        for (const [denied, deniedPage] of [401, 403].flatMap((status) =>
+            ["index.html", "ai.html"].map((file) => [status, file]))) {
             const page = await browser.newPage();
             try {
-                const result = await openHosted(page, "index.html", denied);
+                const result = await openHosted(page, deniedPage, denied);
                 const notice = page.locator(".hosted-auth-notice");
                 await notice.waitFor({ state: "visible" });
                 await page.getByText("Sign in with Cloudflare Access").waitFor();

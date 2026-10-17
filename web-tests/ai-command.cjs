@@ -1,4 +1,4 @@
-const { chromium } = require("playwright");
+const { launch } = require("./browser.cjs");
 const assert = require("node:assert/strict");
 const { spawn } = require("node:child_process");
 const fs = require("node:fs");
@@ -74,11 +74,7 @@ async function assertGoalSummaryReadable(goal, shouldBeFinished) {
         }
     }
 
-    browser = await chromium.launch({
-        headless: true,
-        executablePath: process.env.CHROMIUM_PATH || undefined,
-        args: process.env.CHROMIUM_PATH ? ["--no-sandbox"] : [],
-    });
+    browser = await launch();
     const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
     const errors = [];
     page.on("pageerror", (error) => errors.push(error.message));

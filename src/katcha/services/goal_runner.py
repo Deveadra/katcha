@@ -13,6 +13,7 @@ from katcha.ai.goal_planner import GoalDecision, decide_goal
 from katcha.command_center_models import CommandActionProposal
 from katcha.db import session_scope
 from katcha.goal_models import CommandGoal, CommandGoalStep
+from katcha.orchestration.failure_details import failure_details
 from katcha.services.command_environment import command_environment
 from katcha.services.command_history import (
     list_command_turns,
@@ -205,8 +206,9 @@ async def _observe_background(goal, step):
         _save_result(
             goal.id,
             step.id,
-            {**step.result, "workflow_state": description.status.name},
-            f"Background work did not complete: {str(exc)[:2000]}",
+            {**step.result, "workflow_state": description.status.name,
+             "diagnostic": failure_details(exc)},
+            f"Background work did not complete: {failure_details(exc)["message"][:2000]}",
         )
 
 
@@ -273,6 +275,51 @@ def _proposal_for_step(goal, step):
         session.flush()
         session.expunge(proposal)
         return proposal
+
+
+def _retrieval_completion_error(goal, decision) -> str | None:
+    targets = goal.authorization.get("retrieval_targets") or []
+    if not targets:
+        return None
+    # Only acquired-media keys count, never candidate/discovery IDs. A clip in
+    # the selected library is equally valid; do not require another download.
+    observed: set[str] = set(goal.request.get("selected_clip_ids") or [])
+
+    def visit(value):
+        if isinstance(value, dict):
+            if value.get("success") is False or value.get("status") in {"failed", "blocked"}:
+                return
+            if value.get("clip_id") and not value.get("error"):
+                observed.add(str(value["clip_id"]))
+            for child in value.values():
+                visit(child)
+        elif isinstance(value, list):
+            for child in value:
+                visit(child)
+
+    visit(goal.observations)
+    supplied = {result.target_index: str(result.clip_id) for result in decision.retrieved_targets}
+    if len(supplied) != len(targets) or set(supplied) != set(range(len(targets))):
+        return "Every requested clip needs its own acquired-media result; discovery alone " \
+               "does not complete this request."
+    if len(set(supplied.values())) != len(targets):
+        return "Multiple requested clips resolve to the same media. Their separate scene " \
+               "matches have not been established."
+    from katcha.models import Clip
+    from katcha.services.clip_lifecycle import channel_ids_for_clip
+
+    with session_scope() as session:
+        for value in supplied.values():
+            identity = uuid.UUID(value)
+            if value not in observed or session.get(Clip, identity) is None or (
+                goal.channel_profile_id not in channel_ids_for_clip(session, identity)
+            ):
+                return "A requested clip has no observed acquired media in this channel."
+    if any(target.get("scene_specific", True) for target in targets):
+        return "Candidate media was acquired, but the requested scene matches remain " \
+               "unverified. Search text and sampled stills cannot confirm the requested " \
+               "actions or episode details. Review the footage before treating these as matches."
+    return None
 
 
 async def advance_goal(goal_id: uuid.UUID) -> str:
@@ -354,6 +401,8 @@ async def advance_goal(goal_id: uuid.UUID) -> str:
                         "mode": decision.mode,
                         "allowed_mutations": decision.allowed_mutations,
                         "completion_criteria": decision.completion_criteria,
+                        "retrieval_targets": [target.model_dump() for target in
+                                              decision.retrieval_targets],
                     }
                 step = CommandGoalStep(
                     id=uuid.uuid5(goal.id, f"step:{goal.step_count}"),
@@ -376,6 +425,11 @@ async def advance_goal(goal_id: uuid.UUID) -> str:
             await _observe_background(goal, step)
             return get_goal(goal.id).status
         if decision.outcome != "tool":
+            if decision.outcome == "complete":
+                retrieval_error = _retrieval_completion_error(goal, decision)
+                if retrieval_error:
+                    _finish(goal.id, "blocked", retrieval_error, retrieval_error)
+                    return "blocked"
             if (
                 decision.outcome == "complete"
                 and goal.authorization.get("mode") == "run"

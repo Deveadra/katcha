@@ -647,10 +647,16 @@ jobs:
           key: playwright-chromium-${{ runner.os }}-${{ hashFiles('web-tests/package-lock.json') }}
       - name: Install browser test dependencies
         run: npm ci --ignore-scripts
-      - name: Install Chromium
-        run: npx playwright install --with-deps chromium
+      - name: Install browser engines
+        run: npx playwright install --with-deps chromium firefox webkit
       - name: Validate explorer interactions and responsive layout
         run: npm test
+      - name: Validate hosted sign-in and AI recovery across browser engines
+        run: |
+          for engine in firefox webkit; do
+            KATCHA_TEST_BROWSER="$engine" node hosted-auth.cjs
+            KATCHA_TEST_BROWSER="$engine" node ai-command.cjs
+          done
       - name: Upload explorer screenshots
         if: always()
         uses: actions/upload-artifact@v4

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import shutil
 import uuid
 from decimal import Decimal
@@ -8,12 +9,16 @@ from pathlib import Path
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from temporalio import activity
+from temporalio.exceptions import ApplicationError
 
 from katcha.db import session_scope
 from katcha.domain import ClipStatus, SourceStatus
 from katcha.integrations.download import download
 from katcha.integrations.storage import ObjectStore
 from katcha.models import Clip, DomainEvent, SourceItem
+from katcha.orchestration.failure_details import MediaPreparationError, failure_details
+
+logger = logging.getLogger(__name__)
 
 
 def _extract_video_shape(
@@ -40,6 +45,38 @@ def _extract_video_shape(
 
 @activity.defn
 def ingest_source(source_id: str) -> dict[str, str | bool]:
+    try:
+        return _ingest_source(source_id)
+    except Exception as exc:
+        detail = failure_details(exc)
+        # Retain each attempt before Temporal wraps it. The final workflow
+        # failure still owns FAILED status; a retry may subsequently succeed.
+        try:
+            with session_scope() as session:
+                source = session.get(SourceItem, uuid.UUID(source_id))
+                if source is not None and source.status != SourceStatus.READY.value:
+                    source.error = detail["message"]
+                    source.source_metadata = {
+                        **dict(source.source_metadata or {}), "ingestion_diagnostic": detail,
+                    }
+                    session.add(DomainEvent(
+                        aggregate_type="source", aggregate_id=str(source.id),
+                        event_type="source.ingest_attempt_failed",
+                        payload={"source_item_id": str(source.id), "diagnostic": detail},
+                    ))
+        except Exception as diagnostic_error:
+            logger.warning(
+                "Could not persist ingestion diagnostic source=%s failure_type=%s",
+                source_id, type(diagnostic_error).__name__,
+            )
+        raise ApplicationError(
+            detail["message"],
+            {key: detail[key] for key in ("stage", "code", "retryable", "recovery")},
+            type="MediaIngestionFailure", non_retryable=detail["retryable"] is False,
+        ) from exc
+
+
+def _ingest_source(source_id: str) -> dict[str, str | bool]:
     source_uuid = uuid.UUID(source_id)
     with session_scope() as session:
         source = session.get(SourceItem, source_uuid)
@@ -52,21 +89,25 @@ def ingest_source(source_id: str) -> dict[str, str | bool]:
         source_url = source.source_url
 
     media = download(source_url)
+    stage = "object storage setup"
     try:
         store = ObjectStore()
         store.ensure_bucket()
         duration, width, height = _extract_video_shape(media.media_metadata)
         storage_key = store.raw_key(media.sha256, media.extension)
 
+        stage = "clip deduplication lookup"
         with session_scope() as session:
             existing = session.scalar(select(Clip).where(Clip.sha256 == media.sha256))
             deduped = existing is not None
             if deduped and existing is not None:
                 storage_key = existing.storage_key
 
+        stage = "object storage upload"
         if not deduped and not store.exists(storage_key):
             store.put_file(media.path, storage_key)
 
+        stage = "clip persistence"
         with session_scope() as session:
             stmt = (
                 pg_insert(Clip)
@@ -111,6 +152,9 @@ def ingest_source(source_id: str) -> dict[str, str | bool]:
                 **dict(source.source_metadata or {}),
             }
             source.error = None
+            source.source_metadata = {
+                k: v for k, v in source.source_metadata.items() if k != "ingestion_diagnostic"
+            }
 
             session.add(
                 DomainEvent(
@@ -126,6 +170,8 @@ def ingest_source(source_id: str) -> dict[str, str | bool]:
                 )
             )
             return {"source_id": str(source.id), "clip_id": str(clip.id), "deduped": deduped}
+    except Exception as exc:
+        raise MediaPreparationError(stage, exc) from exc
     finally:
         shutil.rmtree(Path(media.path).parent, ignore_errors=True)
 
