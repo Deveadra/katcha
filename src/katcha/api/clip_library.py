@@ -18,11 +18,6 @@ from katcha.clip_lifecycle_models import ClipLifecycle, ClipRetentionPolicy
 from katcha.db import session_scope
 from katcha.intelligence_models import ChannelProfile
 from katcha.models import Clip, ClipAnalysisRun, ClipFeature, SourceItem
-from katcha.services.clip_work_resolution import (
-    WorkStopConflict,
-    _load_work,
-    stop_clip_work,
-)
 from katcha.services.clip_lifecycle import (
     active_clip_references,
     archive_clip,
@@ -38,6 +33,11 @@ from katcha.services.clip_lifecycle import (
     run_channel_maintenance,
     update_library_metadata,
     upsert_retention_policy,
+)
+from katcha.services.clip_work_resolution import (
+    WorkStopConflict,
+    _load_work,
+    stop_clip_work,
 )
 
 router = APIRouter(prefix="/v1", tags=["clip-library"])
