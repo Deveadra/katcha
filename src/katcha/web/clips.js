@@ -16,6 +16,10 @@ const state = {
     limit: 80,
     searchTimer: null,
     purgeId: null,
+    purgeBlockers: null,
+    purgeBlockersLoading: false,
+    purgeBlockersError: "",
+    purgeInspectionEpoch: 0,
     detailView: "overview",
 };
 
@@ -635,31 +639,99 @@ async function restoreClip(id) {
     }
 }
 
+function renderPurgeBlockers() {
+    const rows = state.purgeBlockers || [];
+    const panel = $("purge-blockers");
+    panel.hidden = !rows.length;
+    $("purge-blockers-title").textContent = rows.length === 1
+        ? "1 unfinished item needs this video"
+        : `${rows.length} unfinished items need this video`;
+    $("purge-blockers-list").innerHTML = rows.map((row) => {
+        const kind = {
+            production: "Standalone production",
+            short_episode: "Ranked episode",
+            compilation: "Long-form compilation",
+        }[row.kind] || "Production work";
+        const href = String(row.href || "");
+        const safeHref = href.startsWith("/") && !href.startsWith("//") ? href : "";
+        return `<article class="purge-blocker">
+            <div class="purge-blocker-main">
+                <strong>${escapeHTML(row.title || kind)}</strong>
+                <small>${escapeHTML(kind)} · ${escapeHTML(row.channel_name || "Unassigned")} ·
+                    ${escapeHTML(String(row.status || "unknown").replaceAll("_", " "))} /
+                    ${escapeHTML(String(row.stage || "unknown").replaceAll("_", " "))}</small>
+                <small>Work ID: ${escapeHTML(row.id)}</small>
+            </div>
+            ${safeHref ? `<a class="purge-blocker-link" href="${escapeHTML(safeHref)}"
+                target="_blank" rel="noopener noreferrer">Open work ↗</a>` : ""}
+        </article>`;
+    }).join("");
+}
+
 function updatePurgeConfirmation() {
     const valid = Boolean(state.purgeId) &&
         $("purge-confirm-input").value === `DELETE ${state.purgeId}`;
-    $("purge-confirm").disabled = !valid || Boolean(state.purgeBusy);
-    if (!state.purgeBusy) {
-        $("purge-feedback").textContent = valid
-            ? "Ready to delete this video. This cannot be undone."
-            : "Enter the exact confirmation phrase to enable deletion.";
-        $("purge-feedback").classList.remove("error");
+    const blocked = state.purgeBlockers === null || state.purgeBlockers.length > 0;
+    $("purge-confirm").disabled = !valid || Boolean(state.purgeBusy) ||
+        Boolean(state.purgeBlockersLoading) || blocked;
+    if (state.purgeBusy) return;
+    const feedback = $("purge-feedback");
+    feedback.classList.toggle("error", Boolean(state.purgeBlockersError));
+    feedback.textContent = state.purgeBlockersLoading
+        ? "Checking which work still needs this video…"
+        : state.purgeBlockersError
+            ? "Cannot verify active work: " + state.purgeBlockersError +
+                ". Select Check again before deleting."
+            : blocked
+                ? "Deletion is blocked until the linked work is completed or resolved."
+                : valid
+                    ? "Ready to delete this video. This cannot be undone."
+                    : "Enter the exact confirmation phrase to enable deletion.";
+}
+
+async function loadPurgeBlockers(id) {
+    if (!id || state.purgeId !== id) return;
+    const epoch = ++state.purgeInspectionEpoch;
+    state.purgeBlockersLoading = true;
+    state.purgeBlockersError = "";
+    state.purgeBlockers = null;
+    $("purge-blockers-refresh").disabled = true;
+    updatePurgeConfirmation();
+    try {
+        const result = await api(`/v1/clips/${encodeURIComponent(id)}/references`);
+        if (epoch !== state.purgeInspectionEpoch || state.purgeId !== id) return;
+        state.purgeBlockers = result.active || [];
+    } catch (error) {
+        if (epoch !== state.purgeInspectionEpoch || state.purgeId !== id) return;
+        state.purgeBlockersError = error.message;
+    } finally {
+        if (epoch === state.purgeInspectionEpoch && state.purgeId === id) {
+            state.purgeBlockersLoading = false;
+            $("purge-blockers-refresh").disabled = false;
+            renderPurgeBlockers();
+            updatePurgeConfirmation();
+        }
     }
 }
 
 function openPurgeDialog(id) {
     state.purgeId = id;
     state.purgeBusy = false;
+    state.purgeBlockers = null;
+    state.purgeBlockersError = "";
     $("purge-confirm-input").value = "";
     $("purge-phrase").textContent = `DELETE ${id}`;
+    renderPurgeBlockers();
     updatePurgeConfirmation();
     $("purge-dialog").showModal();
     $("purge-confirm-input").focus();
+    void loadPurgeBlockers(id);
 }
 
 async function confirmPurge() {
     const id = state.purgeId;
-    if (!id || state.purgeBusy) return;
+    if (!id || state.purgeBusy || state.purgeBlockersLoading ||
+        state.purgeBlockers === null || state.purgeBlockers.length) return;
     const phrase = `DELETE ${id}`;
     if ($("purge-confirm-input").value !== phrase) {
         updatePurgeConfirmation();
@@ -694,10 +766,14 @@ async function confirmPurge() {
             ". The dialog remains open; correct the issue or select Cancel.";
         $("purge-feedback").classList.add("error");
         message("Deletion failed: " + error.message, true);
+        if (error.status === 409 && state.purgeId === id) {
+            // Work may have begun since the initial preflight; recheck before retrying.
+            await loadPurgeBlockers(id);
+        }
     } finally {
         state.purgeBusy = false;
         button.textContent = "Delete stored video";
-        if ($("purge-dialog").open) button.disabled = false;
+        if ($("purge-dialog").open) updatePurgeConfirmation();
     }
 }
 
@@ -936,11 +1012,15 @@ $("retention-confirm-continue").addEventListener("click", () => {
 $("retention-confirm-save").addEventListener("click", confirmAutoDelete);
 
 $("purge-confirm-input").addEventListener("input", updatePurgeConfirmation);
+$("purge-blockers-refresh").addEventListener("click", () => {
+    if (state.purgeId && !state.purgeBusy) void loadPurgeBlockers(state.purgeId);
+});
 $("purge-confirm").addEventListener("click", confirmPurge);
 $("purge-dialog").addEventListener("cancel", (event) => {
     if (state.purgeBusy) event.preventDefault();
 });
 $("purge-dialog").addEventListener("close", () => {
+    ++state.purgeInspectionEpoch;
     if (!state.purgeBusy) state.purgeId = null;
 });
 
