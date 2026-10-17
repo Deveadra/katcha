@@ -162,3 +162,11 @@ code{overflow-wrap:anywhere}
 #purge-dialog .purge-blocker-main small{display:block;margin-top:4px;font-size:11px;line-height:1.5;color:#a9a0bd}
 #purge-dialog .purge-blocker-link{display:inline-flex;align-items:center;justify-content:center;min-height:34px;padding:7px 11px;border-radius:6px;background:#322847;border:1px solid #706189;color:#f4efff;text-decoration:none;font-size:12px;font-weight:700}
 #purge-dialog .purge-blocker-link:focus-visible{outline:2px solid #b9dfff;outline-offset:2px}
+
+#purge-dialog .purge-blocker-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+#purge-dialog .purge-blocker-actions button{cursor:pointer;font-family:inherit}
+#purge-dialog #purge-stop-panel{margin:12px 0}
+#purge-dialog #purge-stop-panel>strong{color:#f6eaff;font-size:14px}
+#purge-dialog #purge-stop-input{width:100%;min-height:40px}
+#purge-dialog #purge-stop-feedback{font-size:12px;line-height:1.5}
+#purge-dialog #purge-stop-panel .dialog-actions{align-items:center;flex-wrap:wrap}
