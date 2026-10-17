@@ -13,6 +13,7 @@ from katcha.db import session_scope
 from katcha.intelligence_models import ChannelProfile
 from katcha.models import Clip, ClipAnalysisRun, ClipFeature, SourceItem
 from katcha.services.clip_lifecycle import (
+    active_clip_references,
     archive_clip,
     channel_info_for_clip,
     clip_ids_for_channel,
@@ -63,6 +64,23 @@ class ClipLibraryItem(BaseModel):
     channels: list[ClipChannelRef]
     active_reference_count: int
     reference_count: int
+
+
+class ClipBlockingReference(BaseModel):
+    kind: Literal["production", "short_episode", "compilation"]
+    id: uuid.UUID
+    channel_profile_id: uuid.UUID | None
+    channel_name: str
+    title: str
+    status: str
+    stage: str
+    href: str
+
+
+class ClipReferencesResponse(BaseModel):
+    clip_id: uuid.UUID
+    active: list[ClipBlockingReference]
+    active_count: int
 
 
 class ClipLibrarySummary(BaseModel):
@@ -516,6 +534,22 @@ def restore_clip_media(
         )
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.get(
+    "/clips/{clip_id}/references",
+    response_model=ClipReferencesResponse,
+)
+def get_clip_blocking_references(clip_id: uuid.UUID) -> ClipReferencesResponse:
+    with session_scope() as session:
+        if session.get(Clip, clip_id) is None:
+            raise HTTPException(status_code=404, detail="clip not found")
+        rows = active_clip_references(session, clip_id)
+        return ClipReferencesResponse(
+            clip_id=clip_id,
+            active=[ClipBlockingReference.model_validate(row) for row in rows],
+            active_count=len(rows),
+        )
 
 
 @router.post(
