@@ -246,3 +246,34 @@ async def test_active_render_can_be_cancelled_but_not_released(
         actor="test-operator",
     )
     assert resolved.status == "cancelled"
+
+
+@pytest.mark.asyncio
+async def test_longform_compilation_stops_only_after_terminal_execution(
+    fixture_work, monkeypatch,
+):
+    from katcha.longform_models import Compilation
+
+    clip_id, _, _, ids = fixture_work
+    client = FakeTemporal({"purge-compilation": WorkflowExecutionStatus.RUNNING})
+
+    async def get_client():
+        return client
+
+    monkeypatch.setattr(resolution, "get_temporal_client", get_client)
+    pending = await resolution.stop_clip_work(
+        clip_id, "compilation", ids["compilation"],
+        expected_status="rendering", actor="test-operator",
+    )
+    assert pending.state == "cancellation_requested"
+    with db.session_scope() as session:
+        assert session.get(Compilation, ids["compilation"]).status == "rendering"
+
+    client.handles["purge-compilation"].status = WorkflowExecutionStatus.TERMINATED
+    resolved = await resolution.stop_clip_work(
+        clip_id, "compilation", ids["compilation"],
+        expected_status="rendering", actor="test-operator",
+    )
+    assert resolved.status == "cancelled"
+    with db.session_scope() as session:
+        assert session.get(Compilation, ids["compilation"]).status == "cancelled"
