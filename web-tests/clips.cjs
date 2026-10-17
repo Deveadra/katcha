@@ -83,6 +83,7 @@ const clips = [
     let savedRetention = null;
     let rejectPurgeOnce = true;
     let failDependencyLookupOnce = false;
+    let stopRequests = 0;
     const productionId = "dddddddd-dddd-4ddd-8ddd-dddddddddddd01";
     const episodeId = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeee02";
     const compilationId = "ffffffff-ffff-4fff-8fff-ffffffffff03";
@@ -304,6 +305,28 @@ const clips = [
                     purged_at: null,
                 });
             }
+            const stopPrefix = `/v1/clips/${clipA}/references/production/${productionId}/stop`;
+            if (url.pathname === stopPrefix && request.method() === "POST") {
+                if (body.confirmation_text !== `STOP ${productionId}` ||
+                    body.expected_status !== "review") {
+                    return json({detail: "incorrect confirmation"}, 400);
+                }
+                stopRequests += 1;
+                if (stopRequests === 1) {
+                    return json({
+                        kind: "production", id: productionId,
+                        state: "cancellation_requested", status: "review",
+                        detail: "Temporal cancellation requested.",
+                    });
+                }
+                activeDependencies = activeDependencies.filter((item) =>
+                    item.id !== productionId);
+                return json({
+                    kind: "production", id: productionId,
+                    state: "resolved", status: "cancelled",
+                    detail: "Confirmed terminal; media still protected by other work.",
+                });
+            }
             if (url.pathname === `/v1/clips/${clipA}/references` &&
                 request.method() === "GET") {
                 if (failDependencyLookupOnce) {
@@ -519,6 +542,22 @@ const clips = [
         await page.locator("#purge-confirm-input").fill(`DELETE ${clipA}`);
         assert.equal(await page.locator("#purge-confirm").isDisabled(), true);
         assert.equal(requests.filter((row) => row.path === `/v1/clips/${clipA}/purge`).length, 0);
+
+        // Resolve exactly one blocker with a separate typed STOP confirmation.
+        await page.locator(`[data-stop-id="${productionId}"]`).click();
+        await page.locator("#purge-stop-input").fill("STOP wrong");
+        assert.equal(await page.locator("#purge-stop-confirm").isDisabled(), true);
+        await page.locator("#purge-stop-input").fill(`STOP ${productionId}`);
+        await page.locator("#purge-stop-confirm").click();
+        await page.getByText(/Temporal cancellation requested/).waitFor();
+        assert.equal(await page.locator("#purge-confirm").isDisabled(), true);
+        assert.equal(stopRequests, 1);
+        assert.equal(await page.locator("#purge-blockers-list .purge-blocker").count(), 3);
+        await page.locator("#purge-stop-confirm").click();
+        await page.getByText("2 unfinished items need this video").waitFor();
+        assert.equal(stopRequests, 2);
+        assert.equal(await page.locator("#purge-confirm").isDisabled(), true);
+        assert.equal(await page.locator("#purge-stop-panel").isHidden(), true);
 
         // A failed dependency lookup must not silently unlock deletion.
         failDependencyLookupOnce = true;
