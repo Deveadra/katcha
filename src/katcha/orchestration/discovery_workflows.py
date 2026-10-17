@@ -106,7 +106,10 @@ class DiscoveryRunWorkflow:
                         )
                         handoff = {
                             "status": "failed",
-                            "reason": "Opportunity evaluation unavailable; saved discoveries are intact.",
+                            "reason": (
+                                "Opportunity evaluation unavailable; "
+                                "saved discoveries are intact."
+                            ),
                         }
                     return {
                         "run_id": run_id,
