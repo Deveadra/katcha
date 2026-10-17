@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import importlib.util
+import io
 import json
 from pathlib import Path
 from types import ModuleType
@@ -24,6 +25,36 @@ def module() -> ModuleType:
 
 OLD = "a" * 40
 NEW = "b" * 40
+
+
+@pytest.mark.parametrize("path", ["/branches/main", f"/compare/{OLD}...{NEW}"])
+def test_github_accepts_canonical_release_evidence_paths(monkeypatch, path):
+    app = module()
+    seen = []
+
+    def open_response(request, timeout):
+        seen.append(request.full_url)
+        return io.StringIO("{}")
+
+    monkeypatch.setattr(app.urllib.request, "urlopen", open_response)
+    assert app.github(path) == {}
+    assert seen == [app.API + path]
+
+
+@pytest.mark.parametrize("path", [
+    "../x", "/../x", "//other-host", "https://other-host",
+    f"/compare/{OLD[:-1]}...{NEW}", f"/compare/{OLD}...{NEW}/../x",
+    f"/compare/{OLD}...{NEW}?extra=1", "/contents/a..b",
+])
+def test_github_rejects_unsafe_paths_before_network(monkeypatch, path):
+    app = module()
+
+    def unexpected_network(*args, **kwargs):
+        pytest.fail("Invalid evidence path reached the network")
+
+    monkeypatch.setattr(app.urllib.request, "urlopen", unexpected_network)
+    with pytest.raises(app.Blocked, match="invalid GitHub path"):
+        app.github(path)
 
 
 def test_production_gate_is_disabled_by_default(monkeypatch: pytest.MonkeyPatch,
