@@ -771,17 +771,29 @@ const analytics = [
                 status: "review", stage: "render_verified", kind: "short", generation: 6,
                 edit_blueprint_key: "source_original", created_at: now,
             }};
+        } else if (url.pathname === "/v1/productions/production-linked-older/media-session") {
+            await route.fulfill({status: 200, json: {
+                media_url: "/v1/productions/production-linked-older/media",
+                expires_in_seconds: 3600,
+            }});
+            return;
         } else if (url.pathname === "/v1/productions/production-linked-older/media") {
             await route.fulfill({status: 200, contentType: "video/mp4",
                 body: Buffer.from("offline-linked-draft-fixture")});
             return;
-        } else if (url.pathname === "/v1/productions/production-draft/media") {
+        } else if (url.pathname === "/v1/productions/production-draft/media-session") {
             draftPreviewAttempts++;
             if (draftPreviewAttempts === 1) {
                 await route.fulfill({status: 503, contentType: "application/json", body: JSON.stringify({detail: "Preview temporarily unavailable"})});
             } else {
-                await route.fulfill({status: 200, contentType: "video/mp4", body: Buffer.from("fixture-draft-bytes")});
+                await route.fulfill({status: 200, json: {
+                    media_url: "/v1/productions/production-draft/media",
+                    expires_in_seconds: 3600,
+                }});
             }
+            return;
+        } else if (url.pathname === "/v1/productions/production-draft/media") {
+            await route.fulfill({status: 200, contentType: "video/mp4", body: Buffer.from("fixture-draft-bytes")});
             return;
         } else if (
             url.pathname === "/v1/channels/channel-1/brands" ||
@@ -1202,7 +1214,14 @@ const analytics = [
     assert.equal(await watchDraft.isEnabled(), true, "failed preview must remain retryable");
     await watchDraft.click();
     await page.locator('[data-draft-preview="production-draft"] video').waitFor();
-    assert.match(await page.locator('[data-draft-preview="production-draft"] video').getAttribute("src"), /^blob:/);
+    assert.equal(
+        await page.locator('[data-draft-preview="production-draft"] video').getAttribute("src"),
+        "/v1/productions/production-draft/media",
+    );
+    assert.equal(
+        await page.locator('[data-draft-preview="production-draft"] button').count(),
+        2, "review playback provides ten-second seek controls",
+    );
     assert.equal(draftPreviewAttempts, 2);
     await page.locator("#content-search").fill(originalSearch);
     assert.equal(await page.locator("#monetization").isHidden(), true);
@@ -1279,7 +1298,12 @@ const analytics = [
                 request.method === "POST",
         ),
     );
-    assert(requests.every((request) => request.auth === "Bearer fixture-token"));
+    assert(requests.every((request) =>
+        (["/v1/productions/production-draft/media",
+            "/v1/productions/production-linked-older/media"].includes(request.path) &&
+            request.method === "GET" && !request.auth) ||
+        request.auth === "Bearer fixture-token"
+    ), "only exact ticket-protected native video GETs may omit bearer authentication");
 
     await page.setViewportSize({ width: 390, height: 844 });
     assert.equal(
