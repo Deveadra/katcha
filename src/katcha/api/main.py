@@ -666,8 +666,17 @@ def _production_review_asset(production_id: uuid.UUID) -> tuple[str, uuid.UUID]:
         return asset.storage_key, production.channel_profile_id
 
 
-def _review_ticket_scope(kind: str, object_id: uuid.UUID, key: str) -> dict[str, str]:
-    return {"kind": kind, "id": str(object_id), "storage_key": key}
+def _review_ticket_scope(
+    kind: str,
+    object_id: uuid.UUID,
+    key: str,
+    *,
+    channel_profile_id: uuid.UUID | None = None,
+) -> dict[str, str]:
+    scope = {"kind": kind, "id": str(object_id), "storage_key": key}
+    if channel_profile_id is not None:
+        scope["channel_profile_id"] = str(channel_profile_id)
+    return scope
 
 
 def _verify_review_cookie(request: Request, scope: dict[str, str]) -> bool:
@@ -729,14 +738,18 @@ def create_production_media_session(
     require_control_channel(request, owner)
     path = f"/v1/productions/{production_id}/media"
     return _make_review_session(
-        response, path, _review_ticket_scope("production", production_id, key)
+        response, path, _review_ticket_scope(
+            "production", production_id, key, channel_profile_id=owner
+        )
     )
 
 
 @app.get("/v1/productions/{production_id}/media")
 def get_production_media(production_id: uuid.UUID, request: Request) -> StreamingResponse:
     key, owner = _production_review_asset(production_id)
-    ticket_scope = _review_ticket_scope("production", production_id, key)
+    ticket_scope = _review_ticket_scope(
+            "production", production_id, key, channel_profile_id=owner
+        )
     if not _verify_review_cookie(request, ticket_scope):
         require_control_scope(request, "channels:read")
         require_control_channel(request, owner)
