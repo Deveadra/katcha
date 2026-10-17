@@ -12,7 +12,6 @@ from katcha.api.clip_library import (
     stop_clip_blocking_work,
 )
 from katcha.services import clip_work_resolution as resolution
-from test_clip_dependencies import fixture_work
 
 
 def operator_request(channel_id, *, scopes=None, allowed=None):
