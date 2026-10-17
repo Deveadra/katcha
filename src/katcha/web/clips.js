@@ -20,6 +20,8 @@ const state = {
     purgeBlockersLoading: false,
     purgeBlockersError: "",
     purgeInspectionEpoch: 0,
+    stopWork: null,
+    stopBusy: false,
     detailView: "overview",
 };
 
@@ -713,8 +715,12 @@ function renderPurgeBlockers() {
                     ${escapeHTML(String(row.stage || "unknown").replaceAll("_", " "))}</small>
                 <small>Work ID: ${escapeHTML(row.id)}</small>
             </div>
-            ${safeHref ? `<a class="purge-blocker-link" href="${escapeHTML(safeHref)}"
-                target="_blank" rel="noopener noreferrer">Open work ↗</a>` : ""}
+            <div class="purge-blocker-actions">
+                ${safeHref ? `<a class="purge-blocker-link" href="${escapeHTML(safeHref)}"
+                    target="_blank" rel="noopener noreferrer">Open work ↗</a>` : ""}
+                <button class="purge-blocker-link" type="button"
+                    data-stop-id="${escapeHTML(row.id)}">Stop this work</button>
+            </div>
         </article>`;
     }).join("");
 }
@@ -771,6 +777,10 @@ function openPurgeDialog(id) {
     state.purgeBusy = false;
     state.purgeBlockers = null;
     state.purgeBlockersError = "";
+    state.stopWork = null;
+    state.stopBusy = false;
+    $("purge-stop-panel").hidden = true;
+    $("purge-stop-input").value = "";
     $("purge-confirm-input").value = "";
     $("purge-phrase").textContent = `DELETE ${id}`;
     renderPurgeBlockers();
@@ -778,6 +788,72 @@ function openPurgeDialog(id) {
     $("purge-dialog").showModal();
     $("purge-confirm-input").focus();
     void loadPurgeBlockers(id);
+}
+
+function updateStopConfirmation() {
+    const row = state.stopWork;
+    const phrase = row ? `STOP ${row.id}` : "";
+    $("purge-stop-confirm").disabled = !row || state.stopBusy ||
+        $("purge-stop-input").value !== phrase;
+}
+
+function chooseStopWork(id) {
+    const row = state.purgeBlockers?.find((item) => item.id === id);
+    if (!row || state.purgeBusy || state.stopBusy) return;
+    state.stopWork = row;
+    $("purge-stop-input").value = "";
+    $("purge-stop-phrase").textContent = `STOP ${row.id}`;
+    $("purge-stop-desc").textContent =
+        `${row.title} · ${row.channel_name} · ${row.status}. ` +
+        "Stopping this work does not delete the clip. If Temporal is still running, " +
+        "the first request only asks it to cancel. Confirm shutdown before retrying.";
+    $("purge-stop-feedback").textContent =
+        "No work has been stopped. Confirm the exact work ID before proceeding.";
+    $("purge-stop-panel").hidden = false;
+    updateStopConfirmation();
+    $("purge-stop-input").focus();
+}
+
+async function confirmStopWork() {
+    const row = state.stopWork;
+    const clipId = state.purgeId;
+    if (!row || !clipId || state.stopBusy || state.purgeBusy ||
+        !state.purgeBlockers?.some((item) =>
+            item.id === row.id && item.status === row.status)) return;
+    const phrase = `STOP ${row.id}`;
+    if ($("purge-stop-input").value !== phrase) return;
+    state.stopBusy = true;
+    updateStopConfirmation();
+    $("purge-stop-feedback").textContent = "Verifying Temporal and active media consumers…";
+    try {
+        const result = await api(
+            `/v1/clips/${encodeURIComponent(clipId)}/references/` +
+                `${encodeURIComponent(row.kind)}/${encodeURIComponent(row.id)}/stop`,
+            {
+                method: "POST",
+                body: JSON.stringify({
+                    expected_status: row.status,
+                    confirmation_text: phrase,
+                }),
+            },
+        );
+        $("purge-stop-feedback").textContent = result.detail +
+            (result.state === "cancellation_requested"
+                ? " Select Request safe stop again after the workflow has closed."
+                : "");
+        await loadPurgeBlockers(clipId);
+        if (result.state === "resolved" || result.state === "already_resolved") {
+            state.stopWork = null;
+            $("purge-stop-panel").hidden = true;
+        }
+    } catch (error) {
+        $("purge-stop-feedback").textContent =
+            "Stop not confirmed: " + error.message +
+            ". No media was deleted. Check work status before retrying.";
+    } finally {
+        state.stopBusy = false;
+        updateStopConfirmation();
+    }
 }
 
 async function confirmPurge() {
@@ -1065,21 +1141,37 @@ $("retention-confirm-save").addEventListener("click", confirmAutoDelete);
 
 $("purge-confirm-input").addEventListener("input", updatePurgeConfirmation);
 $("purge-blockers-refresh").addEventListener("click", () => {
-    if (state.purgeId && !state.purgeBusy) void loadPurgeBlockers(state.purgeId);
+    if (state.purgeId && !state.purgeBusy && !state.stopBusy) {
+        void loadPurgeBlockers(state.purgeId);
+    }
+});
+$("purge-blockers-list").addEventListener("click", (event) => {
+    const button = event.target.closest("[data-stop-id]");
+    if (button) chooseStopWork(button.dataset.stopId);
+});
+$("purge-stop-input").addEventListener("input", updateStopConfirmation);
+$("purge-stop-confirm").addEventListener("click", confirmStopWork);
+$("purge-stop-close").addEventListener("click", () => {
+    if (!state.stopBusy) {
+        state.stopWork = null;
+        $("purge-stop-panel").hidden = true;
+    }
 });
 $("purge-confirm").addEventListener("click", confirmPurge);
 $("purge-dialog").addEventListener("cancel", (event) => {
-    if (state.purgeBusy) event.preventDefault();
+    if (state.purgeBusy || state.stopBusy) event.preventDefault();
 });
 $("purge-dialog").addEventListener("close", () => {
     ++state.purgeInspectionEpoch;
-    if (!state.purgeBusy) state.purgeId = null;
+    if (!state.purgeBusy && !state.stopBusy) state.purgeId = null;
+    state.stopWork = null;
 });
 
 document.querySelectorAll("[data-close-dialog]").forEach((button) => {
     button.addEventListener("click", () => {
         const dialog = $(button.dataset.closeDialog);
-        if (dialog?.open && !(dialog.id === "purge-dialog" && state.purgeBusy)) dialog.close();
+        if (dialog?.open && !(dialog.id === "purge-dialog" &&
+            (state.purgeBusy || state.stopBusy))) dialog.close();
     });
 });
 
