@@ -44,6 +44,32 @@ function headers(extra = {}) {
     };
 }
 
+function readableApiError(detail, fallback) {
+    if (typeof detail === "string" && detail.trim()) return detail;
+    if (Array.isArray(detail)) {
+        const messages = detail.slice(0, 3).map((issue) => {
+            if (typeof issue === "string") return issue;
+            if (!issue || typeof issue !== "object") return "";
+            const field = Array.isArray(issue.loc)
+                ? issue.loc.filter((part) => typeof part === "string" &&
+                    !["query", "body", "path"].includes(part)).join(".")
+                : "";
+            const message = typeof issue.msg === "string" ? issue.msg :
+                (typeof issue.message === "string" ? issue.message : "");
+            return [field, message].filter(Boolean).join(": ");
+        }).filter(Boolean);
+        if (messages.length) return messages.join("; ");
+    }
+    if (detail && typeof detail === "object") {
+        for (const field of ["message", "error", "detail"]) {
+            if (typeof detail[field] === "string" && detail[field].trim()) {
+                return detail[field];
+            }
+        }
+    }
+    return fallback;
+}
+
 async function api(path, options = {}) {
     const response = await fetch(path, {
         ...options,
@@ -53,7 +79,7 @@ async function api(path, options = {}) {
         let message = response.status + " " + response.statusText;
         try {
             const payload = await response.json();
-            message = payload.detail || message;
+            message = readableApiError(payload.detail, message);
         } catch {}
         throw new Error(message);
     }
@@ -70,7 +96,7 @@ async function audioBlob(path, options = {}) {
         let message = response.status + " " + response.statusText;
         try {
             const payload = await response.json();
-            message = payload.detail || message;
+            message = readableApiError(payload.detail, message);
         } catch {}
         throw new Error(message);
     }
@@ -2285,23 +2311,54 @@ if (state.oauthResult) {
     connect();
 }
 
-setInterval(async () => {
-    if (document.hidden || !state.channelId) return;
-    const channelId=state.channelId;
+let channelActivityRefreshBusy = false;
+async function refreshChannelActivity() {
+    if (document.hidden || !state.channelId || channelActivityRefreshBusy) return;
+    channelActivityRefreshBusy = true;
+    const channelId = state.channelId;
+    const epoch = state.loadEpoch;
     try {
-        const operations=await api('/v1/operations/overview?channel_profile_id='+encodeURIComponent(channelId)+'&limit=100');
-        if (channelId!==state.channelId) return;
-        state.operations=operations;renderChannelActivity();
-        const publicationId=state.selectedPublicationId;
-        if (publicationId) {
-            const updated=await api('/v1/publications/'+publicationId);
-            if(channelId!==state.channelId || publicationId!==state.selectedPublicationId)return;
-            const index=state.publications.findIndex(p=>p.id===publicationId);
-            if(index>=0)state.publications[index]=updated;
-            if(!state.publicationDrafts.has(publicationId))renderPublications();
+        // The overview API accepts 3–50 records. A limit of 100 always returns
+        // HTTP 422, even when a manual/browser refresh initially succeeds.
+        const operations = await api(
+            '/v1/operations/overview?channel_profile_id=' +
+            encodeURIComponent(channelId) + '&limit=50',
+        );
+        if (channelId !== state.channelId || epoch !== state.loadEpoch) return;
+        state.operations = operations;
+        renderChannelActivity();
+        if ($("status").textContent.startsWith("Activity refresh failed:")) {
+            setStatus("Channel activity updated.", "success");
         }
-    } catch(error) { setStatus('Activity refresh failed: '+error.message+'. Use Refresh to retry.', 'error'); }
-},8000);
+    } catch (error) {
+        if (channelId === state.channelId && epoch === state.loadEpoch) {
+            // Do not erase the most recent valid activity cards on transient errors.
+            setStatus("Activity refresh failed: " + error.message +
+                ". Select Refresh to retry.", "error");
+        }
+    } finally {
+        channelActivityRefreshBusy = false;
+    }
+
+    const publicationId = state.selectedPublicationId;
+    if (!publicationId || channelId !== state.channelId ||
+        epoch !== state.loadEpoch) return;
+    try {
+        const updated = await api('/v1/publications/' + encodeURIComponent(publicationId));
+        if (channelId !== state.channelId || epoch !== state.loadEpoch ||
+            publicationId !== state.selectedPublicationId) return;
+        const index = state.publications.findIndex((item) => item.id === publicationId);
+        if (index >= 0) state.publications[index] = updated;
+        if (!state.publicationDrafts.has(publicationId)) renderPublications();
+    } catch (error) {
+        if (channelId === state.channelId && epoch === state.loadEpoch &&
+            publicationId === state.selectedPublicationId) {
+            setStatus("Publication status refresh failed: " + error.message +
+                ". Select Refresh to retry.", "error");
+        }
+    }
+}
+setInterval(refreshChannelActivity, 8000);
 
 for(const kind of ['publications','productions']){
     $('more-'+kind).onclick=async()=>{
