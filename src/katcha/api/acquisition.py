@@ -8,7 +8,8 @@ from fastapi import APIRouter, HTTPException, Query, Request, UploadFile, status
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import and_, func, select
 
-from katcha.acquisition.adapters import available_adapters, get_adapter
+from katcha.acquisition.adapters import DiscoveryProviderError, available_adapters, get_adapter
+from katcha.acquisition.youtube_discovery import verify_youtube_discovery
 from katcha.acquisition_models import (
     DiscoveryCandidate,
     DiscoveryObservation,
@@ -31,6 +32,7 @@ from katcha.domain import (
     SourceUsageMode,
 )
 from katcha.intelligence_ingest_contract import IngestIntelligenceBatchRequest
+from katcha.intelligence_models import ChannelProfile
 from katcha.orchestration.client import (
     start_discovery_workflow,
     start_ingest_workflow,
@@ -327,6 +329,14 @@ class SourceOverviewResponse(BaseModel):
     recent_finds: list[SourceRecentFindResponse]
 
 
+class YouTubeDiscoveryVerificationResponse(BaseModel):
+    status: str
+    authentication: str
+    operation: str
+    quota_units: int
+    channel_found: bool
+
+
 class SourceRunResultsResponse(BaseModel):
     total: int
     candidates: list[DiscoveryCandidateResponse]
@@ -585,6 +595,43 @@ def get_source_overview(source_id: uuid.UUID) -> SourceOverviewResponse:
             for item in overview.recent_finds
         ],
     )
+
+
+@router.post(
+    "/discovery/sources/{source_id}/youtube/verify",
+    response_model=YouTubeDiscoveryVerificationResponse,
+)
+def verify_source_youtube_discovery(
+    source_id: uuid.UUID,
+) -> YouTubeDiscoveryVerificationResponse:
+    """Explicit live public-read probe. Never creates a discovery run."""
+    with session_scope() as session:
+        source = session.get(IngestionSource, source_id)
+        if source is None:
+            raise HTTPException(status_code=404, detail="Source not found")
+        if source.adapter_key != "youtube":
+            raise HTTPException(status_code=409, detail="This Source is not YouTube")
+        query = dict(source.query_template or {})
+        if source.channel_profile_id is not None:
+            profile = session.get(ChannelProfile, source.channel_profile_id)
+            if profile is None or profile.youtube_connection_id is None:
+                raise HTTPException(
+                    status_code=409,
+                    detail="The assigned channel has no YouTube OAuth connection. "
+                    "Reconnect the channel or configure a YouTube Data API key.",
+                )
+            query["youtube_connection_id"] = str(profile.youtube_connection_id)
+        else:
+            # A shared source cannot nominate another channel's private OAuth.
+            query.pop("youtube_connection_id", None)
+    try:
+        return YouTubeDiscoveryVerificationResponse.model_validate(
+            verify_youtube_discovery(query)
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except DiscoveryProviderError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
 @router.post(
