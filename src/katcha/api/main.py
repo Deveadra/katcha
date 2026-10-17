@@ -754,7 +754,11 @@ def get_production_media(production_id: uuid.UUID, request: Request) -> Streamin
     from katcha.api.studio import _stream_object
 
     return _stream_object(
-        request, key, "katcha-draft.mp4", cache_control="private, no-store"
+        request,
+        key,
+        "katcha-draft.mp4",
+        cache_control="private, no-store",
+        missing_detail="The finished draft video is unavailable. Retry loading it.",
     )
 
 
