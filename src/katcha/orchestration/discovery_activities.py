@@ -74,35 +74,41 @@ def _record_source_handoff(
     run_uuid: uuid.UUID,
     summary: dict[str, object],
     channel_id: uuid.UUID | str | None,
+    *,
+    session=None,
 ) -> dict[str, object]:
     """Persist even terminal skips so historical reconciliation cannot starve."""
-    with session_scope() as session:
-        row = session.get(DiscoveryRun, run_uuid)
-        if row is None:
-            return summary
-        existing = dict(row.run_metadata or {}).get("opportunity_handoff")
-        if isinstance(existing, dict) and existing == summary:
-            return summary
-        row.run_metadata = {
-            **dict(row.run_metadata or {}),
-            "opportunity_handoff": summary,
-        }
-        session.add(
-            DomainEvent(
-                aggregate_type="discovery_run",
-                aggregate_id=str(run_uuid),
-                event_type="source.opportunity_handoff." + str(summary["status"]),
-                payload={
-                    "discovery_run_id": str(run_uuid),
-                    "channel_profile_id": str(channel_id) if channel_id else None,
-                    "signals_bridged": int(summary.get("signals_bridged") or 0),
-                    "qualified_opportunities": int(
-                        summary.get("qualified_opportunities") or 0
-                    ),
-                },
+    if session is None:
+        with session_scope() as owned_session:
+            return _record_source_handoff(
+                run_uuid, summary, channel_id, session=owned_session
             )
+    row = session.get(DiscoveryRun, run_uuid)
+    if row is None:
+        return summary
+    existing = dict(row.run_metadata or {}).get("opportunity_handoff")
+    if isinstance(existing, dict) and existing == summary:
+        return summary
+    row.run_metadata = {
+        **dict(row.run_metadata or {}),
+        "opportunity_handoff": summary,
+    }
+    session.add(
+        DomainEvent(
+            aggregate_type="discovery_run",
+            aggregate_id=str(run_uuid),
+            event_type="source.opportunity_handoff." + str(summary["status"]),
+            payload={
+                "discovery_run_id": str(run_uuid),
+                "channel_profile_id": str(channel_id) if channel_id else None,
+                "signals_bridged": int(summary.get("signals_bridged") or 0),
+                "qualified_opportunities": int(
+                    summary.get("qualified_opportunities") or 0
+                ),
+            },
         )
-    return summary
+    )
+return summary
 
 
 @activity.defn
@@ -132,12 +138,12 @@ def bridge_source_opportunities_activity(run_id: str) -> dict[str, object]:
             source_id = uuid.UUID(str(metadata["ingestion_source_id"]))
         except (ValueError, TypeError):
             return _record_source_handoff(
-                run_uuid, {"status": "invalid_source_identity"}, None
+                run_uuid, {"status": "invalid_source_identity"}, None, session=session
             )
         source = session.get(IngestionSource, source_id)
         if source is None:
             return _record_source_handoff(
-                run_uuid, {"status": "source_unavailable"}, None
+                run_uuid, {"status": "source_unavailable"}, None, session=session
             )
         channel_id = source.channel_profile_id
         if (
@@ -148,12 +154,12 @@ def bridge_source_opportunities_activity(run_id: str) -> dict[str, object]:
             # Reassignment or deleted channel binding cannot transfer stored
             # results to another channel.
             return _record_source_handoff(
-                run_uuid, {"status": "unassigned_or_changed"}, channel_id
+                run_uuid, {"status": "unassigned_or_changed"}, channel_id, session=session
             )
         channel = session.get(ChannelProfile, channel_id)
         if channel is None or channel.status != "active":
             return _record_source_handoff(
-                run_uuid, {"status": "channel_inactive"}, channel_id
+                run_uuid, {"status": "channel_inactive"}, channel_id, session=session
             )
 
     run_key = f"source:{run_uuid}"
