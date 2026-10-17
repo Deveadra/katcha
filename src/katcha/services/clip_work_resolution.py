@@ -13,10 +13,10 @@ from sqlalchemy import select
 from temporalio.client import RPCError, RPCStatusCode, WorkflowExecutionStatus
 
 from katcha.db import session_scope
-from katcha.longform_models import Compilation, CompilationSegment
+from katcha.longform_models import Compilation, CompilationReview, CompilationSegment
 from katcha.models import Clip, DomainEvent
 from katcha.orchestration.client import get_temporal_client
-from katcha.production_models import Production
+from katcha.production_models import Production, ProductionReview
 from katcha.publishing_models import Publication
 from katcha.render_models import RenderAttempt
 from katcha.services.clip_lifecycle import (
@@ -24,7 +24,7 @@ from katcha.services.clip_lifecycle import (
     _ACTIVE_EPISODE_STATUSES,
     _ACTIVE_PRODUCTION_STATUSES,
 )
-from katcha.short_episode_models import ShortEpisode, ShortEpisodeItem
+from katcha.short_episode_models import ShortEpisode, ShortEpisodeItem, ShortEpisodeReview
 
 WorkKind = Literal["production", "short_episode", "compilation"]
 _MODELS = {
@@ -196,6 +196,19 @@ async def stop_clip_work(
         _no_media_consumers(session, kind, work_id)
         row.status = new_status
         row.stage = new_status
+        if new_status == "rejected":
+            review_model, key = {
+                "production": (ProductionReview, "production_id"),
+                "short_episode": (ShortEpisodeReview, "short_episode_id"),
+                "compilation": (CompilationReview, "compilation_id"),
+            }[kind]
+            session.add(review_model(
+                **{key: work_id},
+                decision="reject",
+                actor=actor,
+                note="Operator stopped this draft from Clip Library.",
+                review_metadata={"clip_id": str(clip_id), "workflow_verified": True},
+            ))
         session.add(DomainEvent(
             aggregate_type=kind,
             aggregate_id=str(work_id),
