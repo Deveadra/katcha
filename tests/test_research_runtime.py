@@ -23,7 +23,10 @@ from katcha.orchestration.discovery_activities import (
     finalize_topic_watch_execution_activity,
 )
 from katcha.publishing_models import YouTubeConnection
-from katcha.services.ingestion_sources import create_discovery_run_from_source, upsert_ingestion_source
+from katcha.services.ingestion_sources import (
+    create_discovery_run_from_source,
+    upsert_ingestion_source,
+)
 from katcha.services.research import prepare_research_jobs
 from katcha.services.trend_execution import prepare_topic_watch_execution
 from katcha.services.trends import create_watch_profile, refresh_channel_trends
