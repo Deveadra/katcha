@@ -99,12 +99,18 @@ def _execution_ids(kind: WorkKind, workflow_id: str) -> list[str]:
     return [workflow_id]
 
 
-def _no_media_consumers(session, kind: WorkKind, work_id: uuid.UUID) -> None:
-    # Publication handoffs run independently of the parent Temporal workflow.
+def _no_publication_consumers(session, kind: WorkKind, work_id: uuid.UUID) -> None:
+    # Publication handoffs execute independently and must be resolved first.
     column = getattr(Publication, f"{kind}_id")
     publications = session.scalars(select(Publication).where(column == work_id))
     if any(row.status not in {"failed", "rejected", "cancelled"} for row in publications):
         raise WorkStopConflict("a publication still references this work; resolve it first")
+
+
+def _no_media_consumers(session, kind: WorkKind, work_id: uuid.UUID) -> None:
+    _no_publication_consumers(session, kind, work_id)
+    # Rendering may still be active when an operator *requests* cancellation.
+    # Block release, not the cancellation request itself, until it is terminal.
     if kind in {"production", "short_episode"}:
         render_column = getattr(RenderAttempt, f"{kind}_id")
         render_attempts = session.scalars(
@@ -133,7 +139,7 @@ async def stop_clip_work(
         if row.status != expected_status:
             raise WorkStopConflict("work changed since inspection; refresh before stopping")
         workflow_ids = _execution_ids(kind, row.workflow_id)
-        _no_media_consumers(session, kind, work_id)
+        _no_publication_consumers(session, kind, work_id)
 
     client = await get_temporal_client()
     observed = []
