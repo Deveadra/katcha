@@ -187,6 +187,7 @@ Only after those checks pass does the helper persist:
 
 ```env
 KATCHA_REMOTION_LAMBDA_MEMORY_MB=<verified deployed memory>
+KATCHA_REMOTION_LAMBDA_DISK_MB=<verified deployed temporary disk size>
 KATCHA_REMOTION_LAMBDA_FUNCTION_NAME=<verified function name>
 KATCHA_REMOTION_LAMBDA_SERVE_URL=<verified HTTPS serve URL>
 ```
