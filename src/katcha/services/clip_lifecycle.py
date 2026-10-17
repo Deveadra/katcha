@@ -364,7 +364,10 @@ def active_clip_references(
         elif kind == "short_episode" and channel:
             href = f"/studio?channel={channel}&episode={reference_id}"
         else:
-            query = f"?channel={channel}&work={reference_id}" if channel else f"?work={reference_id}"
+            query = (
+                f"?channel={channel}&work={reference_id}"
+                if channel else f"?work={reference_id}"
+            )
             href = "/operations" + query
         references.append({
             "kind": kind,
