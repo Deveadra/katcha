@@ -393,13 +393,14 @@ body[data-katcha-page="ai"] .goal-progress-message .goal-progress-body {
 }
 
 body[data-katcha-page="ai"] .goal-progress-line {
-    display: grid;
-    grid-template-columns: 10px minmax(0, 1fr);
-    align-items: start;
+    /* A finished task hides its indicator; flex keeps the summary full-width. */
+    display: flex;
+    align-items: flex-start;
     gap: 9px;
 }
 
 body[data-katcha-page="ai"] .goal-progress-line p {
+    flex: 1 1 auto;
     min-width: 0;
     overflow-wrap: anywhere;
 }

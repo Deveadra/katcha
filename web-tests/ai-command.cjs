@@ -38,6 +38,32 @@ const goalBodies = [];
 let goalId = "88888888-8888-4888-8888-888888888888";
 let browser;
 
+// Regression: terminal goals hide their indicator but must retain normal text width.
+async function assertGoalSummaryReadable(goal, shouldBeFinished) {
+    const metrics = await goal.evaluate((element) => {
+        const line = element.querySelector(".goal-progress-line");
+        const text = line.querySelector("p");
+        const indicator = line.querySelector(".goal-progress-indicator");
+        const lineHeight = parseFloat(getComputedStyle(text).lineHeight);
+        return {
+            lineWidth: line.getBoundingClientRect().width,
+            textWidth: text.getBoundingClientRect().width,
+            textLines: text.getBoundingClientRect().height / lineHeight,
+            indicatorVisible: indicator.getClientRects().length > 0,
+        };
+    });
+    assert.equal(metrics.indicatorVisible, !shouldBeFinished);
+    assert(
+        metrics.textWidth >= metrics.lineWidth * 0.7,
+        "AI goal summary is squeezed instead of using available width: " +
+            JSON.stringify(metrics),
+    );
+    assert(
+        metrics.textLines <= 3,
+        "AI goal summary wraps into too many lines: " + JSON.stringify(metrics),
+    );
+}
+
 (async () => {
     for (let i = 0; i < 50; i++) {
         try {
@@ -901,6 +927,7 @@ let browser;
         "Please keep looking until the saved result arrives");
     await page.locator("#command-form").evaluate((form) => form.requestSubmit());
     await page.getByText("Durable goal completed from its saved result").waitFor();
+    await assertGoalSummaryReadable(page.locator(".goal-progress-message").last(), true);
     assert.equal(goalBodies[0].command_id, goalBodies[1].command_id);
     assert.deepEqual(goalBodies[0], goalBodies[1]);
     await page.waitForFunction(() => !document.getElementById("send").disabled);
@@ -911,6 +938,7 @@ let browser;
     await page.getByRole("button", {name: "Stop work"}).last().waitFor();
     const goalProgress = page.locator(".goal-progress-message").last();
     assert.equal(await goalProgress.locator(".message-avatar").innerText(), "K");
+    await assertGoalSummaryReadable(goalProgress, false);
     assert.equal(
         await goalProgress.locator(".goal-progress-body").evaluate(
             (element) => element.getBoundingClientRect().width > 240,
@@ -921,6 +949,7 @@ let browser;
     await page.getByRole("button", {name: "Stop work"}).last().waitFor();
     await page.getByRole("button", {name: "Stop work"}).last().click();
     await page.getByText("Planning stopped").first().waitFor();
+    await assertGoalSummaryReadable(page.locator(".goal-progress-message").last(), true);
     assert.equal(await page.evaluate(() =>
         JSON.parse(sessionStorage.getItem("katcha.goalReceipts")).length), 0);
     goalId = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
@@ -929,6 +958,7 @@ let browser;
     await page.locator("#command-form").evaluate((form) => form.requestSubmit());
     const retryButton = page.getByRole("button", {name: "Try request again"});
     await retryButton.waitFor();
+    await assertGoalSummaryReadable(page.locator(".goal-progress-message").last(), true);
     await page.waitForFunction(() => !document.getElementById("send").disabled);
     await page.locator("#prompt").fill("Keep this unsent follow-up");
     await retryButton.click();
@@ -952,6 +982,7 @@ let browser;
     });
 
     await page.setViewportSize({ width: 390, height: 844 });
+    await assertGoalSummaryReadable(page.locator(".goal-progress-message").last(), true);
     assert.equal(
         await page.evaluate(() => document.documentElement.scrollWidth > innerWidth),
         false,
