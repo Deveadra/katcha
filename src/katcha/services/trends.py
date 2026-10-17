@@ -776,7 +776,12 @@ def refresh_channel_trends(
                     )
                 )
 
-    for opportunity_id, signals in qualified:
+    # The dossier explains *why* something did or did not qualify; it is not
+    # a publication approval. Preserve evidence for top scored candidates even
+    # when a single-source story is below automatic activation thresholds.
+    # Bound per-refresh packet materialization to the visible top of the board.
+    inspectable = [(item.id, signals) for item, signals in rows[:50]]
+    for opportunity_id, signals in inspectable:
         build_evidence_packet(opportunity_id, signals=signals)
     return {
         "channel_profile_id": str(channel_profile_id),
@@ -784,7 +789,7 @@ def refresh_channel_trends(
         "watch_version": config["version"],
         "topics_scored": len(rows),
         "qualified_opportunities": len(qualified),
-        "evidence_packets_built": len(qualified),
+        "evidence_packets_built": len(inspectable),
     }
 
 
