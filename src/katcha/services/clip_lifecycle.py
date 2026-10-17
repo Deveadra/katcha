@@ -304,6 +304,81 @@ def clip_reference_summary(
     )
 
 
+def active_clip_references(
+    session: Session, clip_id: uuid.UUID
+) -> list[dict[str, str | None]]:
+    """Return the exact unfinished work that prevents deleting this clip's bytes.
+
+    These status sets also power clip_reference_summary/_assert_not_active.
+    No workflow is cancelled or mutated when dependencies are inspected.
+    """
+    rows: list[tuple[str, uuid.UUID, uuid.UUID | None, str, str, str]] = []
+    for production in session.scalars(
+        select(Production).where(
+            Production.clip_id == clip_id,
+            Production.status.in_(_ACTIVE_PRODUCTION_STATUSES),
+        )
+    ):
+        rows.append((
+            "production", production.id, production.channel_profile_id,
+            f"Standalone production · generation {production.generation}",
+            production.status, production.stage,
+        ))
+    for episode in session.scalars(
+        select(ShortEpisode)
+        .join(ShortEpisodeItem, ShortEpisodeItem.short_episode_id == ShortEpisode.id)
+        .where(
+            ShortEpisodeItem.clip_id == clip_id,
+            ShortEpisode.status.in_(_ACTIVE_EPISODE_STATUSES),
+        )
+    ):
+        rows.append((
+            "short_episode", episode.id, episode.channel_profile_id,
+            episode.premise, episode.status, episode.stage,
+        ))
+    for compilation in session.scalars(
+        select(Compilation)
+        .join(CompilationSegment, CompilationSegment.compilation_id == Compilation.id)
+        .where(
+            CompilationSegment.clip_id == clip_id,
+            Compilation.status.in_(_ACTIVE_COMPILATION_STATUSES),
+        )
+    ):
+        rows.append((
+            "compilation", compilation.id, compilation.channel_profile_id,
+            compilation.theme, compilation.status, compilation.stage,
+        ))
+
+    channel_ids = {row[2] for row in rows if row[2] is not None}
+    channel_names = {
+        profile.id: _channel_name(profile)
+        for profile in session.scalars(
+            select(ChannelProfile).where(ChannelProfile.id.in_(channel_ids))
+        )
+    } if channel_ids else {}
+    references: list[dict[str, str | None]] = []
+    for kind, reference_id, channel_id, title, status, stage in rows:
+        channel = str(channel_id) if channel_id else None
+        if kind == "production" and channel:
+            href = f"/channels?channel={channel}&production={reference_id}#content"
+        elif kind == "short_episode" and channel:
+            href = f"/studio?channel={channel}&episode={reference_id}"
+        else:
+            query = f"?channel={channel}&work={reference_id}" if channel else f"?work={reference_id}"
+            href = "/operations" + query
+        references.append({
+            "kind": kind,
+            "id": str(reference_id),
+            "channel_profile_id": channel,
+            "channel_name": channel_names.get(channel_id, "Unassigned"),
+            "title": title,
+            "status": status,
+            "stage": stage,
+            "href": href,
+        })
+    return sorted(references, key=lambda row: (str(row["kind"]), str(row["id"])))
+
+
 def ensure_lifecycle(session: Session, clip: Clip) -> ClipLifecycle:
     lifecycle = session.get(ClipLifecycle, clip.id)
     if lifecycle is None:
