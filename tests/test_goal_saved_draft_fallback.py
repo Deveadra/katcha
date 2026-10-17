@@ -7,6 +7,7 @@ from test_command_goals import receipt
 from test_command_goals import saved as saved_fixture
 
 from katcha import db
+from katcha.api.goals import snapshot
 from katcha.goal_models import CommandGoal
 from katcha.production_models import Production, ProductionAsset
 from katcha.services import goal_runner
@@ -55,6 +56,19 @@ async def test_planner_outage_keeps_verified_draft_link_and_does_not_claim_compl
     assert current.step_count == 1
     assert current.result['actions'] == []
     assert await goal_runner.advance_goal(goal.id) == 'blocked'
+    assert snapshot(current)['summary'].count('ready to watch') == 1
+    # Historical terminal receipts gain a live verified link without rewriting saved history.
+    with db.session_scope() as session:
+        historical = session.get(CommandGoal, goal.id)
+        historical.summary = 'Provider unavailable'
+        historical.result = {'answer': 'Provider unavailable', 'evidence': []}
+    historical = get_goal(goal.id)
+    response = snapshot(historical)
+    assert 'ready to watch' in response['summary']
+    assert 'ready to watch' in response['result']['answer']
+    assert response['error'] == current.error
+    assert get_goal(goal.id).summary == 'Provider unavailable'
+    assert get_goal(goal.id).result['answer'] == 'Provider unavailable'
 
 
 @pytest.mark.parametrize('case', [

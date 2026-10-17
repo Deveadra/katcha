@@ -53,6 +53,14 @@ def retryable(goal: CommandGoal) -> bool:
 
 
 def snapshot(goal: CommandGoal) -> dict:
+    summary, result = goal.summary, goal.result
+    if goal.status == "blocked":
+        from katcha.services.goal_runner import _saved_draft_summary
+
+        saved_draft = _saved_draft_summary(goal)
+        if saved_draft and not (summary or "").startswith(saved_draft):
+            summary = saved_draft + (summary or "")
+            result = {**(result or {}), "answer": saved_draft + (result or {}).get("answer", "")}
     return {
         "goal_id": str(goal.id),
         "command_id": str(goal.command_id),
@@ -60,10 +68,10 @@ def snapshot(goal: CommandGoal) -> dict:
         "channel_profile_id": str(goal.channel_profile_id),
         "request": goal.request,
         "status": goal.status,
-        "summary": goal.summary,
+        "summary": summary,
         "step_count": goal.step_count,
         "deadline": goal.deadline.isoformat(),
-        "result": goal.result,
+        "result": result,
         "error": goal.error,
         "retryable": retryable(goal),
     }
