@@ -79,10 +79,17 @@ possible after authentication changes. Other download errors retain their normal
 retry behavior.
 
 An optional `KATCHA_YOUTUBE_DOWNLOAD_COOKIE_FILE` accepts an operator-managed
-Netscape cookie jar on the server. It never extracts a session from the browser
-running Katcha. Mount the file read-only into the ingestion worker outside the
-checkout, set that environment variable to its container path, and keep the file
-out of Git and chat. For example, an operator-reviewed Compose override may add:
+Netscape cookie jar on the server. yt-dlp first attempts the ordinary public
+URL **without cookies**. Only an explicit YouTube sign-in challenge triggers one
+fallback attempt with the configured session; other errors never access the
+cookie file. Unfinished public-attempt output is discarded before that retry.
+The successful ingestion records whether public or session fallback was used.
+A configured session is optional, not a prerequisite for public videos.
+
+The downloader never extracts a session from the browser running Katcha.
+Mount the file read-only into the ingestion worker outside the checkout, set
+that environment variable to its container path, and keep the file out of Git
+and chat. For example, an operator-reviewed Compose override may add:
 
 ```yaml
 services:
