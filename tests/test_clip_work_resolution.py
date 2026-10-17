@@ -11,6 +11,7 @@ from katcha.production_models import Production
 from katcha.services import clip_work_resolution as resolution
 from katcha.services.clip_lifecycle import active_clip_references
 from katcha.short_episode_models import ShortEpisode
+from test_clip_dependencies import fixture_work  # shared real SQLite work graph
 
 
 class FakeHandle:
