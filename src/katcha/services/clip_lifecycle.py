@@ -35,7 +35,11 @@ _ACTIVE_EPISODE_STATUSES = {
     "scripted",
     "voicing",
     "voiced",
+    "editorial_approved",
     "rendering",
+    "rendered",
+    "render_review",
+    "render_failed",
     "review",
 }
 _ACTIVE_COMPILATION_STATUSES = {
