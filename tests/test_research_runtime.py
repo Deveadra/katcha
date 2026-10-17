@@ -1,6 +1,8 @@
 """Synthetic provider acceptance for the real saved-source -> trend handoff."""
 
 import ast
+import hashlib
+import json
 import uuid
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -18,15 +20,21 @@ from katcha.config import Settings
 from katcha.domain import SourceUsageMode
 from katcha.intelligence_models import ChannelProfile
 from katcha.orchestration.discovery_activities import (
+    bridge_source_opportunities_activity,
     execute_discovery_page_activity,
     finalize_topic_watch_execution_activity,
 )
+from katcha.orchestration.research_activities import reconcile_completed_source_handoffs
 from katcha.publishing_models import YouTubeConnection
-from katcha.services.ingestion_sources import upsert_ingestion_source
+from katcha.services.ingestion_sources import (
+    create_discovery_run_from_source,
+    upsert_ingestion_source,
+)
 from katcha.services.research import prepare_research_jobs
 from katcha.services.trend_execution import prepare_topic_watch_execution
-from katcha.services.trends import create_watch_profile
-from katcha.trend_models import TrendSignal
+from katcha.services.trend_signal_bridge import _observation_key
+from katcha.services.trends import create_watch_profile, refresh_channel_trends
+from katcha.trend_models import TrendEvidencePacket, TrendOpportunity, TrendSignal
 
 
 @pytest.fixture
@@ -116,6 +124,251 @@ def test_saved_source_collects_persists_and_bridges_to_trends(research_db, monke
         assert session.scalar(select(TrendSignal)) is not None
         assert session.scalar(select(DiscoveryRun)).status == "completed"
     assert prepare_research_jobs() == []  # restart does not repeat this window
+
+
+def test_manual_source_check_creates_reviewable_dossier_without_handoff(
+    research_db, monkeypatch,
+):
+    first, _ = channel()
+    second, _ = channel()
+    create_watch_profile(first, interests=["Gaming"], opportunity_threshold=0.99)
+    create_watch_profile(second, interests=["Gaming"])
+    source = upsert_ingestion_source(
+        source_key="manual-gaming-source",
+        name="Manual gaming updates",
+        adapter_key="rss_atom",
+        adapter_version="v1",
+        platform="web",
+        channel_profile_id=first,
+        query_template={"feed_url": "https://example.com/game-feed"},
+    )
+    monkeypatch.setattr(
+        get_adapter("rss_atom", "v1"),
+        "discover",
+        lambda query, cursor: DiscoveryBatch(
+            items=(
+                DiscoveredCandidate(
+                    source_url="https://example.com/gaming-update",
+                    title="Gaming update",
+                    creator="Newsroom",
+                    provenance_confidence=0.9,
+                    metadata={"published_at": datetime.now(UTC).isoformat(),
+                              "source_metrics": {"mentions": 10}},
+                ),
+            ),
+        ),
+    )
+    run = create_discovery_run_from_source(source.id, idempotency_key="manual-1")
+    assert execute_discovery_page_activity(str(run.id))["done"]
+    result = bridge_source_opportunities_activity(str(run.id))
+    assert result["status"] == "completed"
+    assert result["signals_bridged"] == 1
+    assert result["topics_scored"] == 1
+    # Low-scoring sources still have inspectable provenance without being
+    # made eligible for autonomous video production.
+    assert result["qualified_opportunities"] == 0
+    assert result["evidence_packets_built"] == 1
+    assert bridge_source_opportunities_activity(str(run.id)) == result
+
+    with db.session_scope() as session:
+        stored = session.get(DiscoveryRun, run.id)
+        assert stored.status == "completed"
+        assert stored.run_metadata["opportunity_handoff"] == result
+        signals = list(session.scalars(select(TrendSignal)))
+        assert len(signals) == 1
+        assert signals[0].signal_metadata["channel_profile_id"] == str(first)
+        assert len(list(session.scalars(select(TrendOpportunity)))) == 1
+        packet = session.scalar(select(TrendEvidencePacket))
+        assert packet is not None and packet.sources[0]["title"] == "Gaming update"
+
+    other_refresh = refresh_channel_trends(second, run_key="separate-channel")
+    assert other_refresh["topics_scored"] == 0
+
+
+def test_manual_unassigned_source_cannot_target_another_channel(research_db, monkeypatch):
+    profile, _ = channel()
+    create_watch_profile(profile, interests=["Gaming"])
+    source = upsert_ingestion_source(
+        source_key="unassigned-manual",
+        name="Shared source",
+        adapter_key="rss_atom",
+        adapter_version="v1",
+        platform="web",
+        query_template={"feed_url": "https://example.com/shared-feed"},
+    )
+    monkeypatch.setattr(
+        get_adapter("rss_atom", "v1"),
+        "discover",
+        lambda query, cursor: DiscoveryBatch(items=(
+            DiscoveredCandidate(source_url="https://example.com/gaming-news",
+                                title="Gaming story", provenance_confidence=0.9),
+        )),
+    )
+    run = create_discovery_run_from_source(source.id, idempotency_key="shared-manual")
+    execute_discovery_page_activity(str(run.id))
+    assert bridge_source_opportunities_activity(str(run.id))["status"] == "unassigned_or_changed"
+    with db.session_scope() as session:
+        assert session.scalar(select(TrendSignal)) is None
+        assert session.scalar(select(TrendOpportunity)) is None
+
+
+def test_source_dossier_handoff_exposes_missing_watch_profile(research_db, monkeypatch):
+    profile, _ = channel()
+    source = upsert_ingestion_source(
+        source_key="no-watch-manual",
+        name="Unconfigured channel source",
+        adapter_key="rss_atom",
+        adapter_version="v1",
+        platform="web",
+        channel_profile_id=profile,
+        query_template={"feed_url": "https://example.com/no-watch"},
+    )
+    monkeypatch.setattr(
+        get_adapter("rss_atom", "v1"),
+        "discover",
+        lambda query, cursor: DiscoveryBatch(items=(
+            DiscoveredCandidate(source_url="https://example.com/feature",
+                                title="New game feature", provenance_confidence=0.9),
+        )),
+    )
+    run = create_discovery_run_from_source(source.id, idempotency_key="no-watch")
+    execute_discovery_page_activity(str(run.id))
+    result = bridge_source_opportunities_activity(str(run.id))
+    assert result["status"] == "awaiting_configuration"
+    assert result["signals_bridged"] == 1
+    assert result["evidence_packets_built"] == 0
+    with db.session_scope() as session:
+        assert session.get(DiscoveryRun, run.id).status == "completed"
+
+
+def test_historical_completed_source_reconciles_without_new_discovery(
+    research_db, monkeypatch,
+):
+    profile, _ = channel()
+    create_watch_profile(profile, interests=["Gaming"], opportunity_threshold=0.99)
+    source = upsert_ingestion_source(
+        source_key="historical-source",
+        name="Historical gaming feed",
+        adapter_key="rss_atom",
+        adapter_version="v1",
+        platform="web",
+        channel_profile_id=profile,
+        query_template={"feed_url": "https://example.com/old-feed"},
+        source_metadata={"automatic_research": False},
+    )
+    requests = []
+    def discover(query, cursor):
+        requests.append(1)
+        return DiscoveryBatch(items=(
+            DiscoveredCandidate(
+                source_url="https://example.com/game-update",
+                title="Gaming update",
+                creator="Fixture newsroom",
+                provenance_confidence=0.9,
+                metadata={"published_at": datetime.now(UTC).isoformat()},
+            ),
+        ))
+    monkeypatch.setattr(get_adapter("rss_atom", "v1"), "discover", discover)
+    run = create_discovery_run_from_source(source.id, idempotency_key="historical-1")
+    execute_discovery_page_activity(str(run.id))
+    now = datetime.now(UTC)
+    with db.session_scope() as session:
+        stored = session.get(DiscoveryRun, run.id)
+        stored.completed_at = now - timedelta(minutes=15)
+        assert "opportunity_handoff" not in stored.run_metadata
+
+    result = reconcile_completed_source_handoffs(now=now, limit=2)
+    assert result == {
+        "status": "completed",
+        "processed": 1,
+        "failures": 0,
+        "outcomes": {"completed": 1},
+    }
+    assert requests == [1]  # backfill cannot call provider a second time
+    assert reconcile_completed_source_handoffs(now=now, limit=2)["processed"] == 0
+    with db.session_scope() as session:
+        row = session.get(DiscoveryRun, run.id)
+        assert row.status == "completed"
+        assert row.run_metadata["opportunity_handoff"]["evidence_packets_built"] == 1
+        assert len(list(session.scalars(select(TrendOpportunity)))) == 1
+        assert session.scalar(select(TrendEvidencePacket)) is not None
+
+
+def test_historical_reconciliation_cannot_reassign_an_old_source(
+    research_db, monkeypatch,
+):
+    original, _ = channel()
+    other, _ = channel()
+    create_watch_profile(other, interests=["Gaming"])
+    source_args = dict(
+        source_key="historical-reassigned",
+        name="Historical feed",
+        adapter_key="rss_atom",
+        adapter_version="v1",
+        platform="web",
+        query_template={"feed_url": "https://example.com/reassigned"},
+        source_metadata={"automatic_research": False},
+    )
+    source = upsert_ingestion_source(**source_args, channel_profile_id=original)
+    monkeypatch.setattr(
+        get_adapter("rss_atom", "v1"), "discover",
+        lambda query, cursor: DiscoveryBatch(items=(
+            DiscoveredCandidate(
+                source_url="https://example.com/old-clip", title="Gaming clip",
+                provenance_confidence=0.9,
+            ),
+        )),
+    )
+    run = create_discovery_run_from_source(source.id, idempotency_key="reassigned")
+    execute_discovery_page_activity(str(run.id))
+    now = datetime.now(UTC)
+    with db.session_scope() as session:
+        session.get(DiscoveryRun, run.id).completed_at = now - timedelta(minutes=15)
+    upsert_ingestion_source(**source_args, channel_profile_id=other)
+    first = reconcile_completed_source_handoffs(now=now, limit=2)
+    assert first["outcomes"] == {"unassigned_or_changed": 1}
+    assert reconcile_completed_source_handoffs(now=now, limit=2)["processed"] == 0
+    with db.session_scope() as session:
+        stored = session.get(DiscoveryRun, run.id)
+        assert stored.run_metadata["opportunity_handoff"]["status"] == "unassigned_or_changed"
+        assert session.scalar(select(TrendSignal)) is None
+        assert session.scalar(select(TrendOpportunity)) is None
+
+
+def test_completed_source_backfill_obeys_research_pause(research_db, monkeypatch):
+    monkeypatch.setattr(
+        "katcha.orchestration.research_activities.get_settings",
+        lambda: Settings(research_enabled=False),
+    )
+    assert reconcile_completed_source_handoffs()["status"] == "disabled"
+
+
+def test_channel_observation_keys_preserve_shared_identity(research_db):
+    from katcha.config import get_settings
+
+    moment = datetime(2026, 10, 17, 12, tzinfo=UTC)
+    data = {
+        "provider_key": "youtube",
+        "external_id": "fixture-video",
+        "bucket": int(moment.timestamp()) // get_settings().trend_observation_bucket_seconds,
+        "metrics": {"views": 100.0},
+        "canonical_url": "https://example.com/video",
+    }
+    expected_shared = hashlib.sha256(
+        json.dumps(data, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()[:32]
+    kwargs = {
+        "provider_key": "youtube",
+        "external_id": "fixture-video",
+        "observed_at": moment,
+        "metrics": {"views": 100.0},
+        "canonical_url": "https://example.com/video",
+    }
+    shared = _observation_key(**kwargs)
+    assert shared == expected_shared
+    first = _observation_key(**kwargs, channel_profile_id=uuid.uuid4())
+    second = _observation_key(**kwargs, channel_profile_id=uuid.uuid4())
+    assert len({shared, first, second}) == 3
 
 
 def test_interests_create_independent_channel_scoped_research(research_db):

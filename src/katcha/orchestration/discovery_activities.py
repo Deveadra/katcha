@@ -14,10 +14,12 @@ from katcha.acquisition_models import (
     DiscoveryCandidate,
     DiscoveryObservation,
     DiscoveryRun,
+    IngestionSource,
 )
 from katcha.config import get_settings
 from katcha.db import session_scope
 from katcha.domain import DiscoveryRunStatus
+from katcha.intelligence_models import ChannelProfile
 from katcha.models import DomainEvent
 from katcha.orchestration.failure_details import safe_failure_text
 from katcha.services.acquisition import promote_discovery_candidate
@@ -36,6 +38,7 @@ from katcha.services.discovery_polling import (
     reserve_provider_page,
 )
 from katcha.services.discovery_trends import compute_candidate_trend_score
+from katcha.services.trend_bridge import bridge_discovery_run
 from katcha.services.trend_execution import prepare_topic_watch_execution
 from katcha.services.trend_queue import materialize_trend_review_queue
 from katcha.services.trend_signal_bridge import bridge_topic_watch_queue_to_trend_signals
@@ -45,6 +48,7 @@ from katcha.services.trend_source_reliability import (
     source_health_allows_refresh,
     topic_watch_source_health,
 )
+from katcha.services.trends import refresh_channel_trends
 
 
 def _remember_unmanaged_run_error(
@@ -65,6 +69,139 @@ def _poll_attempt_id(metadata: dict[str, object]) -> uuid.UUID | None:
         return uuid.UUID(str(raw))
     except ValueError as exc:
         raise ValueError("discovery run has an invalid poll_attempt_id") from exc
+
+
+def _record_source_handoff(
+    run_uuid: uuid.UUID,
+    summary: dict[str, object],
+    channel_id: uuid.UUID | str | None,
+    *,
+    session=None,
+) -> dict[str, object]:
+    """Persist even terminal skips so historical reconciliation cannot starve."""
+    if session is None:
+        with session_scope() as owned_session:
+            return _record_source_handoff(
+                run_uuid, summary, channel_id, session=owned_session
+            )
+    row = session.get(DiscoveryRun, run_uuid)
+    if row is None:
+        return summary
+    existing = dict(row.run_metadata or {}).get("opportunity_handoff")
+    if isinstance(existing, dict) and existing == summary:
+        return summary
+    row.run_metadata = {
+        **dict(row.run_metadata or {}),
+        "opportunity_handoff": summary,
+    }
+    session.add(
+        DomainEvent(
+            aggregate_type="discovery_run",
+            aggregate_id=str(run_uuid),
+            event_type="source.opportunity_handoff." + str(summary["status"]),
+            payload={
+                "discovery_run_id": str(run_uuid),
+                "channel_profile_id": str(channel_id) if channel_id else None,
+                "signals_bridged": int(summary.get("signals_bridged") or 0),
+                "qualified_opportunities": int(
+                    summary.get("qualified_opportunities") or 0
+                ),
+            },
+        )
+    )
+    return summary
+
+
+@activity.defn
+def bridge_source_opportunities_activity(run_id: str) -> dict[str, object]:
+    """Turn a manually checked saved Source into a channel-scoped trend update.
+
+    Topic-watch research already bridges its ranked queue; do not do that work
+    twice. A shared/unassigned source never targets an arbitrary channel.
+    The summary is stored on the completed discovery run for honest UI feedback.
+    """
+    run_uuid = uuid.UUID(run_id)
+    with session_scope() as session:
+        run = session.get(DiscoveryRun, run_uuid)
+        if run is None:
+            raise ValueError("discovery run was not found")
+        if run.status != DiscoveryRunStatus.COMPLETED.value:
+            raise ValueError("source handoff requires completed discovery")
+        metadata = dict(run.run_metadata or {})
+        if metadata.get("topic_watch_id") or not metadata.get("ingestion_source_id"):
+            return {"status": "handled_elsewhere"}
+        previous = metadata.get("opportunity_handoff")
+        if isinstance(previous, dict) and previous.get("status") in {
+            "completed", "awaiting_configuration", "no_evidence",
+        }:
+            return dict(previous)
+        try:
+            source_id = uuid.UUID(str(metadata["ingestion_source_id"]))
+        except (ValueError, TypeError):
+            return _record_source_handoff(
+                run_uuid, {"status": "invalid_source_identity"}, None, session=session
+            )
+        source = session.get(IngestionSource, source_id)
+        if source is None:
+            return _record_source_handoff(
+                run_uuid, {"status": "source_unavailable"}, None, session=session
+            )
+        channel_id = source.channel_profile_id
+        if (
+            channel_id is None
+            or metadata.get("source_scope") != "channel"
+            or str(channel_id) != str(metadata.get("channel_profile_id") or "")
+        ):
+            # Reassignment or deleted channel binding cannot transfer stored
+            # results to another channel.
+            return _record_source_handoff(
+                run_uuid, {"status": "unassigned_or_changed"}, channel_id, session=session
+            )
+        channel = session.get(ChannelProfile, channel_id)
+        if channel is None or channel.status != "active":
+            return _record_source_handoff(
+                run_uuid, {"status": "channel_inactive"}, channel_id, session=session
+            )
+
+    run_key = f"source:{run_uuid}"
+    try:
+        bridge = bridge_discovery_run(run_uuid)
+        if bridge.signal_count:
+            refreshed = refresh_channel_trends(channel_id, run_key=run_key)
+            status = str(refreshed.get("status") or "completed")
+        else:
+            refreshed = {}
+            status = "no_evidence"
+        summary: dict[str, object] = {
+            "status": status,
+            "channel_profile_id": str(channel_id),
+            "signals_bridged": bridge.signal_count,
+            "topics_scored": int(refreshed.get("topics_scored") or 0),
+            "qualified_opportunities": int(
+                refreshed.get("qualified_opportunities") or 0
+            ),
+            "evidence_packets_built": int(
+                refreshed.get("evidence_packets_built") or 0
+            ),
+            "run_key": run_key,
+        }
+    except Exception:
+        # Discovery has completed and its provider results must remain
+        # inspectable when a downstream ranking dependency fails.
+        import logging
+
+        logging.getLogger(__name__).exception(
+            "Source opportunity handoff failed for discovery run %s", run_uuid
+        )
+        summary = {
+            "status": "failed",
+            "channel_profile_id": str(channel_id),
+            "signals_bridged": 0,
+            "qualified_opportunities": 0,
+            "reason": "Opportunity evaluation failed. The saved source results remain available.",
+        }
+
+    return _record_source_handoff(run_uuid, summary, channel_id)
 
 
 @activity.defn
