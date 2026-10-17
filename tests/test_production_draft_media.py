@@ -8,7 +8,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
-from katcha.api import control_auth, main
+from katcha.api import control_auth, main, studio
 from katcha.config import Settings
 from katcha.production_models import Production, ProductionAsset, ProductionReview, ProductionScript
 
@@ -58,15 +58,24 @@ def draft_client(monkeypatch):
     storage_reads = []
 
     class Store:
+        data = b"private-draft-bytes"
+
         def exists(self, key):
             storage_reads.append(key)
             return True
 
+        def stat(self, key):
+            return {"size_bytes": len(self.data), "content_type": "video/mp4"}
+
         def iter_bytes(self, key):
-            yield b"private-draft-bytes"
+            yield self.data
+
+        def iter_range(self, key, start, end):
+            yield self.data[start:end + 1]
 
     monkeypatch.setattr(main, "session_scope", sessions)
     monkeypatch.setattr(main, "ObjectStore", Store)
+    monkeypatch.setattr(studio, "ObjectStore", Store)
     settings = Settings(
         _env_file=None,
         control_principals=[
@@ -86,6 +95,11 @@ def draft_client(monkeypatch):
         ]
     )
     app.add_api_route("/v1/productions/{production_id}/media", main.get_production_media)
+    app.add_api_route(
+        "/v1/productions/{production_id}/media-session",
+        main.create_production_media_session,
+        methods=["POST"],
+    )
     with TestClient(app) as client:
         yield client, ids, storage_reads
     engine.dispose()
@@ -140,3 +154,65 @@ def test_missing_stored_video_returns_recovery_message(draft_client, monkeypatch
     )
     assert result.status_code == 404
     assert "Retry loading" in result.json()["detail"]
+
+
+def test_production_video_seek_ranges_are_partial_and_authorized(draft_client):
+    client, ids, reads = draft_client
+    path = f"/v1/productions/{ids[0]}/media"
+    token = {"Authorization": "Bearer draft-reviewer-fixture-token-0001"}
+    middle = client.get(path, headers={**token, "Range": "bytes=8-12"})
+    assert middle.status_code == 206
+    assert middle.content == b"-draf"
+    assert middle.headers["content-range"] == "bytes 8-12/19"
+    assert middle.headers["content-length"] == "5"
+    assert middle.headers["accept-ranges"] == "bytes"
+    tail = client.get(path, headers={**token, "Range": "bytes=-5"})
+    assert tail.status_code == 206
+    assert tail.content == b"bytes"
+    assert tail.headers["content-range"] == "bytes 14-18/19"
+    outside = client.get(path, headers={**token, "Range": "bytes=99-"})
+    assert outside.status_code == 416
+    assert outside.headers["content-range"] == "bytes */19"
+    assert len(reads) == 3
+
+
+def test_production_review_session_allows_native_seek_without_bearer(draft_client):
+    client, ids, _ = draft_client
+    path = f"/v1/productions/{ids[0]}/media"
+    issue = client.post(
+        f"/v1/productions/{ids[0]}/media-session",
+        headers={"Authorization": "Bearer draft-reviewer-fixture-token-0001"},
+    )
+    assert issue.status_code == 200
+    assert issue.json()["media_url"] == path
+    assert "httponly" in issue.headers["set-cookie"].lower()
+    assert "samesite=strict" in issue.headers["set-cookie"].lower()
+    assert f"path={path}" in issue.headers["set-cookie"].lower()
+    seek = client.get(path, headers={"Range": "bytes=5-7"})
+    assert seek.status_code == 206
+    assert seek.content == b"te-"
+    assert seek.headers["content-range"] == "bytes 5-7/19"
+
+
+def test_forged_private_review_cookie_is_denied_before_storage(draft_client):
+    client, ids, reads = draft_client
+    client.cookies.set(
+        "katcha_review_media", "forged",
+        path=f"/v1/productions/{ids[0]}/media",
+    )
+    response = client.get(
+        f"/v1/productions/{ids[0]}/media",
+        headers={"Range": "bytes=2-3"},
+    )
+    assert response.status_code == 403
+    assert reads == []
+
+
+def test_review_media_session_cannot_cross_channel(draft_client):
+    client, ids, reads = draft_client
+    response = client.post(
+        f"/v1/productions/{ids[1]}/media-session",
+        headers={"Authorization": "Bearer draft-reviewer-fixture-token-0001"},
+    )
+    assert response.status_code == 403
+    assert reads == []
