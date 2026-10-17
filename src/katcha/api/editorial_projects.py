@@ -981,11 +981,10 @@ def preview_render(
 ):
     """Authenticated review playback; clearance is checked again at access time."""
     from katcha.api.studio import _stream_object
-    from katcha.services.editorial_reviews import verified_manifest
-    from katcha.services.editorial_runs import get_run
-
     from katcha.security.media_tickets import REVIEW_MEDIA_COOKIE, verify_media_ticket
     from katcha.security.secrets import SecretConfigurationError
+    from katcha.services.editorial_reviews import verified_manifest
+    from katcha.services.editorial_runs import get_run
 
     token = request.cookies.get(REVIEW_MEDIA_COOKIE)
     if not token:
