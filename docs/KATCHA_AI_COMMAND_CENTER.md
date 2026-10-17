@@ -425,3 +425,9 @@ read model across production, ranked-episode, intelligence-refresh and source-sc
 actions. Aerith can also consume the same normalized lifecycle events from
 `/v1/control/events` without inferring completion from chat text or Temporal IDs
 alone.
+
+Schema discovery advertises its own canonical `name` argument in the tool catalog,
+so the planner can inspect other tools without first guessing the discovery
+contract. The recorded `tool_name` spelling is also accepted and normalized.
+Conflicting, unknown, and unsupported discovery inputs return specific errors
+before schema lookup. Execution capabilities and authorization stay unchanged.

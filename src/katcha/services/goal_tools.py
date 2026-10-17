@@ -726,6 +726,7 @@ def tool_catalog(scopes: set[str]) -> list[dict]:
             "mutates": t.mutates,
             "requires_confirmation": t.confirm,
             "allowed": "*" in scopes or t.scope in scopes,
+            **({"argument_schema": tool_schema(t.name)} if t.name == "inspect_tool" else {}),
         }
         for t in TOOLS.values()
     ]
@@ -1074,7 +1075,16 @@ async def run_read_tool(goal: CommandGoal, name: str, args: dict) -> dict:
         description = await client.get_workflow_handle(workflow_id).describe()
         return {"workflow_id": workflow_id, "workflow_state": description.status.name}
     if name == "inspect_tool":
-        return {"name": args["name"], "schema": tool_schema(args["name"])}
+        if set(args) - {"name", "tool_name"}:
+            raise ValueError("Use inspect_tool with {'name': '<registered capability>'}")
+        if "name" in args and "tool_name" in args and args["name"] != args["tool_name"]:
+            raise ValueError("inspect_tool received conflicting capability names")
+        capability = args.get("name", args.get("tool_name"))
+        if not isinstance(capability, str) or capability not in TOOLS:
+            raise ValueError("inspect_tool requires the name of a registered capability")
+        # Existing planner receipts use both spellings. Normalize discovery
+        # arguments without changing any execution or authorization rules.
+        return {"name": capability, "schema": tool_schema(capability)}
     if name == "channel_state":
         return command_environment(goal.channel_profile_id)
     if name == "find_clips":
