@@ -12,6 +12,8 @@ from katcha.security.secrets import SecretConfigurationError
 _EPHEMERAL_DEVELOPMENT_KEY = Fernet.generate_key()
 SOURCE_MEDIA_COOKIE = "katcha_editorial_source_media"
 SOURCE_MEDIA_TICKET_TTL_SECONDS = 15 * 60
+REVIEW_MEDIA_COOKIE = "katcha_review_media"
+REVIEW_MEDIA_TICKET_TTL_SECONDS = 60 * 60
 
 
 def _cipher(settings: Settings | None = None) -> Fernet:
