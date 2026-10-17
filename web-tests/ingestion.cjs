@@ -764,7 +764,14 @@ function overview(source) {
         // Filtering is server-driven and the list stays bounded.
         await page.locator("#source-search").fill("");
         await page.waitForFunction(() => document.querySelectorAll(".source-row").length === 50);
+        const purposeResponse = page.waitForResponse((response) => {
+            const url = new URL(response.url());
+            return url.pathname === "/v1/discovery/source-library" &&
+                url.searchParams.get("usage_mode") === "discovery_only" &&
+                response.status() === 200;
+        });
         await page.locator("#source-purpose-filter").selectOption("discovery_only");
+        await purposeResponse;
         await page.waitForFunction(() =>
             [...document.querySelectorAll(".source-row em")].some((node) => node.textContent.includes("Research automatically"))
         );
