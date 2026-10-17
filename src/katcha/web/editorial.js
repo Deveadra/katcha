@@ -118,7 +118,7 @@ window.KatchaEditorial = (() => {
         el("editorial-preview").hidden = false;
         syncProgramMonitor();
         if (advance) advanceStage("preview");
-        feedback("Private preview is ready to stream. Drag the timeline to review any moment before publication.");
+        feedback("Preview loaded for private streaming. Drag the timeline to review any moment before publication.");
         renderActions();
     }
     function clearSourceMonitor(message = "Choose acquired footage to inspect sampled source frames.") {
@@ -2252,6 +2252,12 @@ window.KatchaEditorial = (() => {
         const programVideo = el("editorial-program-monitor-video");
         programVideo.addEventListener("loadedmetadata", updateProgramTransport);
         programVideo.addEventListener("timeupdate", updateProgramTransport);
+        programVideo.addEventListener("error", () => {
+            if (!state.previewUrl) return;
+            el("editorial-program-load").hidden = false;
+            el("editorial-program-monitor-status").textContent =
+                "Playback failed or private access expired. Select Load current preview to renew the session.";
+        });
         el("editorial-program-scrub").addEventListener("input", event => {
             if (!state.previewUrl || !Number.isFinite(programVideo.duration)) return;
             programVideo.currentTime = clampMediaTime(
