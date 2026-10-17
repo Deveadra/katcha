@@ -238,7 +238,7 @@ function appendUser(text) {
     article.className = "message user-message";
     article.innerHTML =
         '<div class="message-body"><span class="message-author">YOU</span><p>' +
-        esc(text) +
+        KatchaResourceLinks.format(text) +
         "</p></div>";
     $("thread").append(article);
     scrollThread();
@@ -256,13 +256,15 @@ function appendThinking() {
 
 function appendKatcha(result) {
     $("thinking-message")?.remove();
+    const links = KatchaResourceLinks.resources(result.evidence || [], state.channelId);
     const article = document.createElement("article");
     article.className = "message katcha-message";
     article.innerHTML =
         '<div class="message-avatar">K</div><div class="message-body"><span class="message-author">KATCHA AI</span><p>' +
         (result.ai_notice ? '<span class="ai-answer-notice">' + esc(result.ai_notice) + '</span>' : '') +
-        esc(result.answer) +
-        '</p><div class="message-meta">' +
+        KatchaResourceLinks.format(result.answer, links) +
+        '</p>' + KatchaResourceLinks.actions(result.answer, links) +
+        '<div class="message-meta">' +
         esc(String(result.intent || "grounded_answer").replaceAll("_", " ")) +
         " · " +
         esc((result.evidence || []).length) +
@@ -598,6 +600,7 @@ function renderContext(result) {
                 "</strong><p>" +
                 esc(evidenceSummary(record)) +
                 "</p>" +
+                KatchaResourceLinks.actions("", KatchaResourceLinks.resources([record], state.channelId)) +
                 (selectable
                     ? '<button type="button" data-select-clip="' +
                       esc(record.id) +
@@ -933,7 +936,8 @@ async function followGoal(receipt, { background = false } = {}) {
                 catch (error) { status(error.message, true); }
             };
         }
-        progress.querySelector("p").textContent = goal.summary;
+        const goalLinks = KatchaResourceLinks.resources(goal.result?.evidence || [], state.channelId);
+        progress.querySelector("p").innerHTML = KatchaResourceLinks.format(goal.summary, goalLinks);
         const stopButton = progress.querySelector(".goal-stop-button");
         if (stopButton) stopButton.disabled = !capability("ai_write") || finishedGoals.has(goal.status);
         if (finishedGoals.has(goal.status)) {

@@ -13,8 +13,13 @@ const state = {
     analytics: new Map(),
     packagingVariants: new Map(),
     selectedPublicationId: launchParams.get("publication") || "",
+    selectedProductionId: launchParams.get("production") || "",
+    openedLinkedProduction: "",
+    linkedProductionError: "",
+    linkedPublicationError: "",
     publicationDrafts: new Map(),
     loadEpoch: 0,
+    pageOffsets: {publications: 0, productions: 0},
     goalDraft: [],
     goalChannelId: "",
     providerStatus: [],
@@ -741,14 +746,6 @@ async function setElevenLabsEnabled(enabled) {
                 }),
             },
         );
-        $("more-publications").hidden = state.publications.length < 250;
-        $("more-productions").hidden = state.productions.length < 100;
-        if (state.selectedPublicationId && !state.publications.some(p=>p.id===state.selectedPublicationId)) {
-            try {
-                const selected=await api('/v1/publications/'+state.selectedPublicationId);
-                if(selected.youtube_connection_id===channel.youtube_connection_id) state.publications.push(selected);
-            }catch(error){setStatus('Selected video could not load: '+error.message,'error');}
-        }
         await loadProviderData();
         setStatus(
             "Voice " +
@@ -890,6 +887,46 @@ async function loadChannel() {
             if (result.status === "fulfilled") state[names[index]] = result.value;
             else failures.push(names[index] + ": " + result.reason.message);
         });
+        state.pageOffsets.publications = state.publications.length;
+        state.pageOffsets.productions = state.productions.length;
+        $("more-publications").hidden = state.publications.length < 250;
+        $("more-productions").hidden = state.productions.length < 100;
+        state.linkedPublicationError = "";
+        if (state.selectedPublicationId && !state.publications.some(
+            (item) => item.id === state.selectedPublicationId)) {
+            try {
+                const selected = await api("/v1/publications/" +
+                    encodeURIComponent(state.selectedPublicationId));
+                if (epoch !== state.loadEpoch || channelId !== state.channelId) return;
+                if (selected.youtube_connection_id !== channel.youtube_connection_id) {
+                    throw new Error("This video does not belong to the selected channel.");
+                }
+                state.publications.push(selected);
+            } catch (error) {
+                if (epoch !== state.loadEpoch || channelId !== state.channelId) return;
+                state.linkedPublicationError = "The linked video could not be opened. " +
+                    error.message + " Select Refresh to retry.";
+                failures.push(state.linkedPublicationError);
+            }
+        }
+        state.linkedProductionError = "";
+        if (state.selectedProductionId && !state.productions.some(
+            (item) => item.id === state.selectedProductionId)) {
+            try {
+                const detail = await api("/v1/productions/" +
+                    encodeURIComponent(state.selectedProductionId));
+                if (epoch !== state.loadEpoch || channelId !== state.channelId) return;
+                if (detail.production?.channel_profile_id !== channelId) {
+                    throw new Error("This draft does not belong to the selected channel.");
+                }
+                state.productions.unshift(detail.production);
+            } catch (error) {
+                if (epoch !== state.loadEpoch || channelId !== state.channelId) return;
+                state.linkedProductionError = "The linked draft could not be opened. " +
+                    error.message + " Select Refresh to retry.";
+            }
+        }
+        if (epoch !== state.loadEpoch || channelId !== state.channelId) return;
         await loadProviderData();
 
         const measurable = state.publications
@@ -908,6 +945,12 @@ async function loadChannel() {
 
         if (epoch !== state.loadEpoch || channelId !== state.channelId) return;
         renderAll();
+        if (state.linkedProductionError) {
+            setStatus(state.linkedProductionError, "error");
+            return;
+        }
+        await openLinkedProduction(epoch, channelId);
+        if (epoch !== state.loadEpoch || channelId !== state.channelId) return;
         if (failures.length) { setStatus("Some panels could not refresh: " + failures.join("; "), "error"); return; }
         setStatus(
             "Loaded " +
@@ -1490,8 +1533,8 @@ function renderPublications() {
     const container = $("publication-list");
     if (!rows.length) {
         container.innerHTML = '<div class="empty-state" style="padding:18px">No videos match this view.</div>';
-        $("video-detail").innerHTML =
-            '<div class="empty-state">Select a video to inspect its details.</div>';
+        $("video-detail").textContent = state.linkedPublicationError ||
+            "Select a video to inspect its details.";
         return;
     }
     container.innerHTML = rows
@@ -1517,16 +1560,20 @@ function renderPublications() {
             );
         })
         .join("");
-    if (!state.selectedPublicationId || !rows.some((item) => item.id === state.selectedPublicationId)) {
+    if (!state.linkedPublicationError && (!state.selectedPublicationId ||
+        !rows.some((item) => item.id === state.selectedPublicationId))) {
         state.selectedPublicationId = rows[0].id;
     }
     container.querySelectorAll("[data-publication]").forEach((button) => {
         button.addEventListener("click", () => selectPublication(button.dataset.publication));
     });
-    renderVideoDetail();
+    if (state.linkedPublicationError) {
+        $("video-detail").textContent = state.linkedPublicationError;
+    } else renderVideoDetail();
 }
 
 async function selectPublication(id) {
+    state.linkedPublicationError = "";
     state.selectedPublicationId = id;
     renderPublications();
     if (!state.analytics.has(id)) {
@@ -1952,6 +1999,10 @@ function clearProductionPreviews() {
 async function watchProductionDraft(event) {
     const button = event.target.closest("[data-watch-production]");
     if (!button || button.disabled) return;
+    await loadProductionDraft(button);
+}
+
+async function loadProductionDraft(button) {
     const id = button.dataset.watchProduction;
     const channelId = state.channelId;
     const card = button.closest(".production-card");
@@ -1972,7 +2023,7 @@ async function watchProductionDraft(event) {
         video.style.maxHeight = "70vh";
         video.setAttribute("aria-label", "Finished production draft");
         video.src = url;
-        state.productionPreviews.set(id, {video, url});
+        state.productionPreviews.set(id, {video, url, generation: card.dataset.generation});
         preview.replaceChildren(video);
         video.focus();
         status.textContent = "Draft loaded. Use the player to review it.";
@@ -1986,25 +2037,70 @@ async function watchProductionDraft(event) {
     }
 }
 
+async function openLinkedProduction(epoch, channelId) {
+    const id = state.selectedProductionId;
+    if (!id || state.openedLinkedProduction === id || epoch !== state.loadEpoch ||
+        channelId !== state.channelId) return;
+    const card = [...$("production-list").querySelectorAll("[data-production-id]")]
+        .find((element) => element.dataset.productionId === id);
+    if (!card) return;
+    state.openedLinkedProduction = id;
+    setChannelStudioTab("content", { updateHash: false });
+    card.scrollIntoView({ block: "center" });
+    card.focus({ preventScroll: true });
+    const watch = card.querySelector("[data-watch-production]");
+    if (watch && !state.productionPreviews.has(id)) await loadProductionDraft(watch);
+}
+
+function productionReviewHref(id) {
+    return "/channels?channel=" + encodeURIComponent(state.channelId) +
+        "&production=" + encodeURIComponent(id) + "#content";
+}
+
 function renderProductions() {
     const container = $("production-list");
+    if (state.linkedProductionError && !state.productions.length) {
+        container.textContent = state.linkedProductionError;
+        return;
+    }
     if (!state.productions.length) {
         container.innerHTML =
             '<div class="studio-card empty-state" style="padding:16px">No channel-scoped productions yet.</div>';
         return;
     }
+    for (const [id, saved] of state.productionPreviews) {
+        const current = state.productions.find((item) => item.id === id);
+        if (!current || String(current.generation) !== saved.generation) {
+            saved.video.pause(); saved.video.removeAttribute("src"); saved.video.load();
+            URL.revokeObjectURL(saved.url); state.productionPreviews.delete(id);
+            if (state.openedLinkedProduction === id) state.openedLinkedProduction = "";
+        }
+    }
     container.innerHTML = state.productions
         .map((item) => {
-            const issue = item.error ? '<p>' + escapeHtml(item.error) + "</p>" : '<p>' + escapeHtml(friendly(item.kind || "short")) + " · generation " + escapeHtml(item.generation) + "</p>";
+            const issue = item.error ? '<p>' + escapeHtml(item.error) + "</p>" :
+                '<p>Version ' + escapeHtml(item.generation) + '</p>';
+            const statusLabel = item.status === "review" ? "Awaiting review" : friendly(item.status);
             return (
-                '<article class="studio-card production-card"><div class="prod-top"><strong>' +
-                escapeHtml(friendly(item.stage || item.status)) +
+                '<article class="studio-card production-card' +
+                (item.id === state.selectedProductionId ? ' linked-production' : '') +
+                '" data-production-id="' + escapeHtml(item.id) + '" data-generation="' +
+                escapeHtml(item.generation) + '" tabindex="-1">' +
+                '<div class="prod-top"><strong>' +
+                escapeHtml(item.title || ({source_original: "Original audio draft", meme: "Meme remix draft",
+                    persona_commentary: "Commentary draft"})[item.edit_blueprint_key] || "Production draft") +
                 '</strong><span class="status-pill ' +
                 escapeHtml(item.status) +
                 '">' +
-                escapeHtml(friendly(item.status)) +
+                escapeHtml(statusLabel) +
                 "</span></div>" +
-                issue +
+                '<p>' + (item.id === state.selectedProductionId ? 'Linked draft · ' : '') +
+                escapeHtml(statusLabel) + '</p>' + issue +
+                '<details class="ae-help"><summary>Production details</summary><p>' +
+                escapeHtml(item.id) + ' · ' + escapeHtml(friendly(item.stage || item.status)) +
+                '</p></details>' +
+                '<a class="studio-button secondary small" href="' +
+                escapeHtml(productionReviewHref(item.id)) + '">Open this draft</a>' +
                 '<div class="prod-foot"><span>' +
                 escapeHtml(({source_original: "Original audio", meme: "Meme remix", persona_commentary: "Commentary"})[item.edit_blueprint_key] || item.edit_blueprint_key || "Default edit") +
                 "</span><span>" +
@@ -2131,7 +2227,7 @@ const CHANNEL_STUDIO_HASH_GROUPS = {
 
 function channelStudioTabFromHash() {
     const hash = window.location.hash.replace(/^#/, "");
-    return CHANNEL_STUDIO_HASH_GROUPS[hash] || (launchParams.get("publication") ? "content" : "overview");
+    return CHANNEL_STUDIO_HASH_GROUPS[hash] || ((launchParams.get("publication") || launchParams.get("production")) ? "content" : "overview");
 }
 
 function setChannelStudioTab(tab, { updateHash = true, focus = false } = {}) {
@@ -2200,6 +2296,10 @@ $("channel").addEventListener("change", async (event) => {
     revokeProviderPreview();
     state.channelId = event.target.value;
     state.selectedPublicationId = "";
+    state.selectedProductionId = "";
+    state.openedLinkedProduction = "";
+    state.linkedProductionError = "";
+    state.linkedPublicationError = "";
     await loadChannel();
 });
 function openChannelActivityCard(event) {
@@ -2307,7 +2407,8 @@ $("open-channel-manager-inline").addEventListener("click", openChannelManager);
 $("close-channel-manager").addEventListener("click", closeChannelManager);
 $("connect-another-youtube").addEventListener("click", beginYouTubeOAuth);
 
-if (state.oauthResult) {
+if (state.oauthResult || (state.token && location.port !== "8765" &&
+    location.hostname !== "app.katcha.stream")) {
     connect();
 }
 
@@ -2364,11 +2465,13 @@ for(const kind of ['publications','productions']){
     $('more-'+kind).onclick=async()=>{
         const button=$('more-'+kind);button.disabled=true;
         const channelId=state.channelId;
+        const epoch=state.loadEpoch;
         const size=kind==='publications'?250:100;
         try{
             const scope=kind==='publications'?'youtube_connection_id='+encodeURIComponent(activeChannel().youtube_connection_id):'channel_profile_id='+encodeURIComponent(channelId);
-            const rows=await api('/v1/'+kind+'?'+scope+'&limit='+size+'&offset='+state[kind].length);
-            if(channelId!==state.channelId)return;
+            const rows=await api('/v1/'+kind+'?'+scope+'&limit='+size+'&offset='+state.pageOffsets[kind]);
+            if(channelId!==state.channelId || epoch!==state.loadEpoch)return;
+            state.pageOffsets[kind] += rows.length;
             for(const row of rows)if(!state[kind].some(p=>p.id===row.id))state[kind].push(row);
             button.hidden=rows.length<size;
             if(kind==='publications')renderPublications();else renderProductions();

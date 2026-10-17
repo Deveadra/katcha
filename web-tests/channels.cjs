@@ -20,6 +20,7 @@ const server = spawn(
 const now = "2026-09-28T10:00:00Z";
 const requests = [];
 let draftPreviewAttempts = 0;
+let linkedPaginationFixture = false;
 let failActivityOverviewOnce = false;
 let browser;
 let savedGrowthGoals = {
@@ -755,6 +756,25 @@ const analytics = [
             if (url.searchParams.get("channel_profile_id") === "channel-1") {
                 data.push({...data[0], id: "production-draft", status: "review", stage: "render_verified"});
             }
+            if (linkedPaginationFixture) {
+                data = Number(url.searchParams.get("offset") || 0) > 0 ? [] :
+                    Array.from({length: 100}, (_, index) => ({...data[0], id: "production-page-" + index}));
+            }
+        } else if (url.pathname === "/v1/productions/production-missing") {
+            await route.fulfill({status: 404, json: {detail: "Production not found"}});
+            return;
+        } else if (url.pathname === "/v1/productions/production-linked-older" ||
+                   url.pathname === "/v1/productions/production-foreign") {
+            data = {production: {
+                id: url.pathname.split("/").at(-1), channel_profile_id:
+                    url.pathname.endsWith("production-foreign") ? "channel-2" : "channel-1",
+                status: "review", stage: "render_verified", kind: "short", generation: 6,
+                edit_blueprint_key: "source_original", created_at: now,
+            }};
+        } else if (url.pathname === "/v1/productions/production-linked-older/media") {
+            await route.fulfill({status: 200, contentType: "video/mp4",
+                body: Buffer.from("offline-linked-draft-fixture")});
+            return;
         } else if (url.pathname === "/v1/productions/production-draft/media") {
             draftPreviewAttempts++;
             if (draftPreviewAttempts === 1) {
@@ -1190,6 +1210,34 @@ const analytics = [
     await page.getByText(/Analytics refresh queued/).waitFor();
     await page.locator("#refresh-intelligence").click();
     await page.getByText(/Intelligence refresh queued/).waitFor();
+
+    // Direct links fetch the selected production even outside the first page.
+    linkedPaginationFixture = true;
+    await page.goto("http://127.0.0.1:8768/channels.html?channel=channel-1&production=production-linked-older#content");
+    await page.locator('[data-draft-preview="production-linked-older"] video').waitFor();
+    const linkedCard = page.locator('[data-production-id="production-linked-older"]');
+    assert.equal(await linkedCard.evaluate((card) => card.classList.contains("linked-production")), true);
+    assert.match(await linkedCard.innerText(), /Linked draft/);
+    assert.equal(await page.locator('[data-channel-tab="content"]').getAttribute("aria-selected"), "true");
+    assert.match(await linkedCard.locator('a').first().getAttribute("href"), /production=production-linked-older/);
+    await page.locator("#more-productions").click();
+    await page.waitForFunction(() => document.getElementById("more-productions").hidden);
+    assert(requests.some((request) => request.path === "/v1/productions" &&
+        new URLSearchParams(request.query).get("offset") === "100"), "injected deep-link record must not shift pagination");
+    await page.setViewportSize({width: 390, height: 844});
+    assert(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth));
+    await linkedCard.scrollIntoViewIfNeeded();
+    await page.screenshot({path: path.join(__dirname, "test-results/channel-direct-draft-mobile.png")});
+    await page.setViewportSize({width: 1440, height: 1000});
+    await page.goto("http://127.0.0.1:8768/channels.html?channel=channel-1&production=production-foreign#content");
+    await page.getByText(/linked draft could not be opened/).waitFor();
+    assert.equal(await page.locator('[data-production-id="production-foreign"]').count(), 0);
+    assert(!requests.some((request) => request.path === '/v1/productions/production-foreign/media'));
+
+    await page.goto("http://127.0.0.1:8768/channels.html?channel=channel-1&production=production-missing#content");
+    await page.getByText(/linked draft could not be opened/).waitFor();
+    assert.equal(await page.locator(".linked-production").count(), 0);
+    linkedPaginationFixture = false;
 
     await page.goto(
         "http://127.0.0.1:8768/channels.html?setup=1&youtube=connected&connection=youtube-2",

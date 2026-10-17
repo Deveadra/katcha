@@ -863,3 +863,28 @@ body[data-katcha-page="ai"] .control-plane-note a {
         scroll-behavior: auto !important;
     }
 }
+
+/* Resource references remain usable in saved answers, goals and narrow layouts. */
+body[data-katcha-page="ai"] .message-body a {
+    color: var(--ae-ice);
+    text-decoration: underline;
+    overflow-wrap: anywhere;
+}
+body[data-katcha-page="ai"] .message-resource-links {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--ae-space-2);
+    margin-block: var(--ae-space-3);
+}
+body[data-katcha-page="ai"] .message-resource-links a {
+    display: inline-flex;
+    align-items: center;
+    color: var(--ae-ice);
+    overflow-wrap: anywhere;
+    min-width: 0;
+    max-width: 100%;
+    min-height: 40px;
+    padding: var(--ae-space-1) var(--ae-space-2);
+    border: 1px solid var(--ae-line-strong);
+    border-radius: var(--ae-radius-control);
+}

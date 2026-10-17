@@ -49,7 +49,7 @@ async def test_planner_outage_keeps_verified_draft_link_and_does_not_claim_compl
     monkeypatch.setattr(goal_runner, 'decide_goal', unavailable)
     assert await goal_runner.advance_goal(goal.id) == 'blocked'
     current = get_goal(goal.id)
-    assert f'/channels?channel={saved[0]}#content' in current.summary
+    assert f'/channels?channel={saved[0]}&production={production_id}#content' in current.summary
     assert 'ready to watch' in current.result['answer']
     assert 'could not finish checking the rest' in current.summary
     assert current.error == 'Live goal planning is unavailable. codex: rate limit'
@@ -98,3 +98,26 @@ def test_fallback_does_not_invent_ready_or_cross_channel_outputs(saved, case):
         'result': {'production_id': 'bad' if case == 'invalid_id' else str(production_id)},
     }]
     assert goal_runner._saved_draft_summary(goal) == ''
+
+
+def test_multiple_saved_drafts_have_distinct_direct_links(saved):
+    goal = receipt(saved[0])
+    ids = [uuid.uuid4(), uuid.uuid4()]
+    with db.session_scope() as session:
+        for index, identifier in enumerate(ids):
+            session.add(Production(
+                id=identifier, clip_id=uuid.uuid4(), channel_profile_id=saved[0],
+                workflow_id=str(uuid.uuid4()), persona_key="host", persona_version="1",
+                prompt_version="1", status="review", stage="render_verified",
+                generation=6 if index == 0 else 1,
+                edit_blueprint_key="source_original" if index == 0 else "meme",
+                render_manifest={"output_key": str(identifier)},
+            ))
+            session.add(ProductionAsset(production_id=identifier, kind="render",
+                                        storage_key=str(identifier)))
+    goal.observations = [{"tool": "make_short", "result": {"production_id": str(i)}} for i in ids]
+    summary = goal_runner._saved_draft_summary(goal)
+    assert "Watch original audio draft (generation 6)" in summary
+    assert "Watch meme remix draft (generation 1)" in summary
+    for identifier in ids:
+        assert f"&production={identifier}#content" in summary

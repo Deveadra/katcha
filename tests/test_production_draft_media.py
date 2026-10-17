@@ -128,7 +128,11 @@ def test_unfinished_draft_returns_recovery_state_without_reading_storage(draft_c
 def test_detail_exposes_the_channel_review_page(draft_client):
     _, ids, _ = draft_client
     detail = main.get_production(ids[0])
-    assert detail.review_url == f"/channels?channel={detail.production.channel_profile_id}#content"
+    assert detail.review_url == (
+        f"/channels?channel={detail.production.channel_profile_id}&production={ids[0]}#content"
+    )
+    assert detail.production.review_url == detail.review_url
+    assert main.get_production(ids[1]).review_url != detail.review_url
 
 
 def test_missing_stored_video_returns_recovery_message(draft_client, monkeypatch):
