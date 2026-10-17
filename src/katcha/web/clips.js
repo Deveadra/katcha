@@ -642,7 +642,8 @@ async function restoreClip(id) {
 function renderPurgeBlockers() {
     const rows = state.purgeBlockers || [];
     const panel = $("purge-blockers");
-    panel.hidden = !rows.length;
+    panel.hidden = !rows.length && !state.purgeBlockersLoading &&
+        !state.purgeBlockersError;
     $("purge-blockers-title").textContent = rows.length === 1
         ? "1 unfinished item needs this video"
         : `${rows.length} unfinished items need this video`;
@@ -696,6 +697,7 @@ async function loadPurgeBlockers(id) {
     state.purgeBlockersError = "";
     state.purgeBlockers = null;
     $("purge-blockers-refresh").disabled = true;
+    renderPurgeBlockers();
     updatePurgeConfirmation();
     try {
         const result = await api(`/v1/clips/${encodeURIComponent(id)}/references`);
