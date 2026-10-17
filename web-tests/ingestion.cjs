@@ -553,8 +553,8 @@ function overview(source) {
         );
         assert.match(await page.locator("#message").innerText(), /No check was started/);
         assert.match(await page.locator("#source-info").innerText(), /Research automatically/);
-        assert.match(await page.locator("#source-info").innerText(), /Automatic, every 60 minutes/);
-        assert.match(await page.locator("#source-info").innerText(), /research worker must be healthy/);
+        assert.match(await page.locator("#source-info").innerText(), /Manual only/);
+        assert.match(await page.locator("#source-info").innerText(), /Choose a check action above/);
 
         // A completed source check must disclose the separate downstream
         // opportunity outcome; not passing activation thresholds is not a
