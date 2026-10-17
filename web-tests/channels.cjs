@@ -895,7 +895,7 @@ const analytics = [
     failActivityOverviewOnce = true;
     await page.locator("#reload").click();
     await page.getByText(/operations: limit: Input should be less than or equal to 50/).waitFor();
-    assert.doesNotMatch(await page.locator("#status").innerText(), /\\[object Object\\]/);
+    assert.equal((await page.locator("#status").innerText()).includes("[object Object]"), false);
     assert.match(await page.locator("#channel-activity-list").innerText(), /VisionQuest Final Trailer/);
     await page.locator("#reload").click();
     await page.getByText(/Loaded Fixture Gaming/).waitFor();
