@@ -267,6 +267,19 @@ def build_discovery_signal_spec(
         "provenance_claims": dict(candidate.provenance_claims or {}),
         "rights_inferred": False,
     }
+    # Preserve immutable channel attribution from the discovery run. A shared
+    # collection must never silently acquire an operator's channel.
+    run_metadata = dict(run.run_metadata or {}) if run is not None else {}
+    scope = str(run_metadata.get("source_scope") or "").strip()
+    channel_id = run_metadata.get("channel_profile_id")
+    if watch is not None and watch.channel_profile_id is not None:
+        scope = "channel"
+        channel_id = str(watch.channel_profile_id)
+    if scope == "channel" and channel_id:
+        lineage["source_scope"] = "channel"
+        lineage["channel_profile_id"] = str(channel_id)
+    elif scope == "shared":
+        lineage["source_scope"] = "shared"
     if watch is not None:
         lineage["topic_watch_id"] = str(watch.id)
         lineage["topic_watch_key"] = watch.watch_key

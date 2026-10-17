@@ -810,10 +810,26 @@ function renderHistory(overview, row) {
     };
     $('history').innerHTML = rows.length ? rows.map(run => {
         const diagnostics = runDiagnostics(run, row);
+        const handoff = run.run_metadata?.opportunity_handoff;
+        const handoffStatus = handoff?.status || '';
+        const dossierMessage = !handoff ? ''
+            : handoffStatus === 'completed'
+                ? 'Opportunity evaluation: ' + Number(handoff.topics_scored || 0) +
+                    ' topics scored · ' + Number(handoff.evidence_packets_built || 0) +
+                    ' dossiers · ' + Number(handoff.qualified_opportunities || 0) +
+                    ' qualify for automatic activation.'
+                : handoffStatus === 'awaiting_configuration'
+                    ? 'Source results saved. This channel needs a trend watch profile before dossiers can be scored.'
+                    : handoffStatus === 'no_evidence'
+                        ? 'Check finished. No new source signals to evaluate.'
+                        : handoffStatus === 'failed'
+                            ? 'Source results saved, but opportunity evaluation failed. Check worker health and retry safely.'
+                            : '';
         return '<article class="source-run is-' + esc(run.status || 'unknown') + '">' +
             '<div class="source-run-head"><div><strong>' + esc(labels[run.status] || 'Status unavailable') + '</strong><small>' + esc(formatWhen(run.created_at)) + '</small></div>' +
             '<span>' + esc(run.status || 'unknown') + '</span></div>' +
             (run.status === 'failed' && run.error ? '<p class="source-run-error">' + esc(run.error) + '</p>' : '') +
+            (dossierMessage ? '<p class="source-run-handoff" role="status">' + esc(dossierMessage) + '</p>' : '') +
             (run.status === 'completed' ? '<button type="button" class="text-button" data-results="' + esc(run.id) + '">Finds from this check</button><div class="run-results" role="status"></div>' : '') +
             (['queued', 'running'].includes(run.status) && row.enabled && row.usage_mode !== 'blocked'
                 ? '<button type="button" class="button secondary" data-execute="' + esc(run.id) + '">' +
@@ -885,13 +901,21 @@ function renderSourceOverview() {
         '<dt>Purpose</dt><dd><strong>' + esc(purpose) + '</strong><small>' + esc(purposeHelp) + '</small></dd>' +
         '<dt>Watches</dt><dd>' + esc(targetSummary(row)) + '</dd>' +
         '<dt>Source type</dt><dd>' + esc(connectionName(row)) + '</dd>' +
-        '<dt>Checking</dt><dd>Manual checks<small>Saving a source does not create a recurring schedule.</small></dd>';
+        '<dt>Checking</dt><dd>' +
+            (pollingEnabled && usable && overview.automatic_checks_available !== false
+                ? 'Automatic, every ' + Number(row.poll_interval_minutes || 60) + ' minutes'
+                : pollingEnabled && overview.automatic_checks_available === false
+                    ? 'Automatic checks unavailable'
+                    : 'Manual only') +
+            '<small>' + (pollingEnabled ? 'The research worker must be healthy; check history for actual results.' : 'Choose a check action above to discover new content.') + '</small></dd>';
 
     $('operation-help').textContent = !usable
         ? 'This source is paused or blocked.'
         : canImport
             ? 'Paste known links below when you want Katcha to inspect them.'
-            : 'This source checks only when you choose the action above. Recurring source schedules are configured separately.';
+            : pollingEnabled && overview.automatic_checks_available !== false
+                ? 'Automatic checks are enabled. You may also check now; inspect history for new findings, dossiers and errors.'
+                : 'This source checks manually until automatic research is enabled. See the recurring checks control above.';
 
     renderHistory(overview, row);
 }
