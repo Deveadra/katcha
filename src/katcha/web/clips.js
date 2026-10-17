@@ -683,9 +683,9 @@ async function confirmPurge() {
         state.purgeId = null;
         $("purge-dialog").close();
         clearPreview();
-        message("Source media deleted. Searchable metadata and lineage were retained.");
         try {
             await refreshLibrary();
+            message("Source media deleted. Searchable metadata and lineage were retained.");
         } catch (error) {
             message("Video was deleted, but the library did not refresh: " + error.message, true);
         }
