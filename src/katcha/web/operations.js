@@ -157,7 +157,7 @@ function renderWork(items, hostId, stateClass) {
     }
     host.innerHTML = items.map((row) => {
         const channel = channelName(row.channel_profile_id);
-        return '<article class="ops-row">' +
+        return '<article class="ops-row" role="link" tabindex="0" data-card-href="' + escapeHTML(row.href) + '">' +
             '<div class="ops-row-main">' +
                 '<div class="ops-row-title"><span class="ops-pill ' + stateClass + '">' +
                     escapeHTML(stateClass === "attention" ? "Needs attention" : "Active") +
@@ -192,7 +192,7 @@ function renderOpportunities(rows) {
     }
     host.innerHTML = rows.map((row) => {
         const reason = row.reasons?.[0] || friendly(row.lifecycle);
-        return '<article class="ops-row">' +
+        return '<article class="ops-row" role="link" tabindex="0" data-card-href="' + escapeHTML(row.href) + '">' +
             '<div class="ops-row-main">' +
                 '<div class="ops-row-title"><span class="ops-pill opportunity">' +
                     Math.round(Number(row.opportunity_score) * 100) + '</span>' +
@@ -220,7 +220,7 @@ function renderPublications(rows) {
             row.average_view_percentage == null ? "Retention pending" : percent(row.average_view_percentage) + " avg viewed",
             row.estimated_revenue == null ? "Revenue pending" : currency(row.estimated_revenue),
         ];
-        return '<article class="ops-row">' +
+        return '<article class="ops-row" role="link" tabindex="0" data-card-href="' + escapeHTML(row.href) + '">' +
             '<div class="ops-row-main">' +
                 '<div class="ops-row-title"><span class="ops-pill">' + escapeHTML(friendly(row.status)) +
                     '</span><strong>' + escapeHTML(row.title) + '</strong></div>' +
@@ -462,6 +462,18 @@ $("connect-form").addEventListener("submit", connect);
 $("refresh").addEventListener("click", () => loadOverview($("channel-filter").value));
 $("attention-list").addEventListener("click", recoverWork);
 $("active-list").addEventListener("click", recoverWork);
+function navigateCard(event) {
+    const card = event.target.closest(".ops-row[data-card-href]");
+    if (!card || event.target.closest("a, button, input, select, textarea")) return;
+    if (event.type === "keydown" && (event.target !== card || !["Enter", " "].includes(event.key))) return;
+    if (event.type === "keydown") event.preventDefault();
+    const href = card.dataset.cardHref;
+    if (href && href.startsWith("/") && !href.startsWith("//")) location.assign(href);
+}
+for (const id of ["attention-list", "active-list", "opportunity-list", "publication-list"]) {
+    $(id).addEventListener("click", navigateCard);
+    $(id).addEventListener("keydown", navigateCard);
+}
 $("channel-filter").addEventListener("change", async (event) => {
     const channel = event.target.value;
     const url = new URL(location.href);
