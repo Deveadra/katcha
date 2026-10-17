@@ -644,9 +644,13 @@ function renderPurgeBlockers() {
     const panel = $("purge-blockers");
     panel.hidden = !rows.length && !state.purgeBlockersLoading &&
         !state.purgeBlockersError;
-    $("purge-blockers-title").textContent = state.purgeBlockersLoading\n        ? "Checking unfinished work"\n        : state.purgeBlockersError\n            ? "Cannot inspect unfinished work"\n            : rows.length === 1
-        ? "1 unfinished item needs this video"
-        : `${rows.length} unfinished items need this video`;
+    $("purge-blockers-title").textContent = state.purgeBlockersLoading
+        ? "Checking unfinished work"
+        : state.purgeBlockersError
+            ? "Cannot inspect unfinished work"
+            : rows.length === 1
+                ? "1 unfinished item needs this video"
+                : `${rows.length} unfinished items need this video`;
     $("purge-blockers-list").innerHTML = rows.map((row) => {
         const kind = {
             production: "Standalone production",
