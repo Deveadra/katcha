@@ -16,6 +16,7 @@ const server = spawn('python3', ['-m', 'http.server', String(port), '--bind', '1
         const page = await browser.newPage({viewport: {width: 390, height: 844}});
         const errors = [];
         let failCheck = false, hosted = false, failSave = false, failComplete = false;
+        let directConnected = false, modelsFail = false, reconnectFail = false;
         const saves = [], completions = [], disconnects = [];
         page.on('pageerror', error => errors.push(error.message));
         await page.route('**/settings/assets/settings.js', route => route.fulfill({path: path.resolve(__dirname, '../src/katcha/web/settings.js'), contentType: 'application/javascript'}));
@@ -50,7 +51,16 @@ const server = spawn('python3', ['-m', 'http.server', String(port), '--bind', '1
             if (url.pathname.endsWith('/codex/models')) return route.fulfill({json: [{slug: 'fixture', display_name: 'Fixture'}]});
             if (url.pathname.endsWith('/codex/usage')) return route.fulfill({status: 503, json: {detail: 'Usage telemetry unavailable'}});
             if (url.pathname.endsWith('/codex/test')) return route.fulfill({json: {selected_model: 'fixture', response: 'OK', usage_error: 'Unavailable'}});
-            if (url.pathname.endsWith('/chatgpt/status')) return route.fulfill({json: {connected: false}});
+            if (url.pathname.endsWith('/chatgpt/status')) return route.fulfill({json: directConnected
+                ? {connected: true, saved_connection_id: '11111111-1111-4111-8111-111111111111', selected_model: 'fixture', refresh_due: true}
+                : {connected: false}});
+            if (url.pathname.endsWith('/chatgpt/models')) return route.fulfill(modelsFail
+                ? {status: 503, json: {detail: 'Saved app-sharing token expired'}}
+                : {json: [{slug: 'fixture', display_name: 'Fixture model'}]});
+            if (url.pathname.endsWith('/chatgpt/oauth/start')) return route.fulfill(reconnectFail
+                ? {status: 503, json: {detail: 'OAuth provider unavailable'}}
+                : {json: {authorization_url: 'https://auth.example/direct-signin'}});
+            if (url.pathname.endsWith('/chatgpt/test')) return route.fulfill({json: {ok: true, selected_model: 'fixture', model_count: 1}});
             return route.fulfill({json: {}});
         });
         await page.goto(`http://127.0.0.1:${port}/settings.html`);
@@ -101,7 +111,28 @@ const server = spawn('python3', ['-m', 'http.server', String(port), '--bind', '1
         assert.equal(completions.at(-1).callback_url, returnAddress);
         assert.equal(await page.evaluate(() => sessionStorage.getItem('katcha.codex.oauth.state')), null);
         assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), true);
+        directConnected = true;
+        modelsFail = true;
+        reconnectFail = true;
+        await page.reload();
+        await page.waitForFunction(() =>
+            document.querySelector('#chatgpt-model-feedback').textContent.includes('Saved app-sharing token expired'),
+        );
+        assert.equal(await page.locator('#chatgpt-model').isDisabled(), true);
+        assert.match(await page.locator('#chatgpt-model').innerText(), /Model catalog unavailable/);
+        await page.locator('#chatgpt-reconnect').click();
+        await page.waitForFunction(() =>
+            document.querySelector('#settings-message').textContent.includes('OAuth provider unavailable'),
+        );
+        assert.equal(await page.locator('#chatgpt-reconnect').isEnabled(), true);
+        modelsFail = false;
+        await page.locator('#chatgpt-test').click();
+        await page.waitForFunction(() =>
+            document.querySelector('#settings-message').textContent.includes('Direct ChatGPT inference verified'),
+        );
+        assert.equal(await page.locator('#chatgpt-model').isEnabled(), true);
+        assert.equal(await page.locator('#chatgpt-model').inputValue(), 'fixture');
         assert.deepEqual(errors, []);
-        console.log('Settings recovery, telemetry outage, keyboard and mobile tests passed (fixtures).');
+        console.log('Settings recovery, direct-sharing reconnect/test/model outage, keyboard and mobile tests passed (fixtures).');
     } finally {if (browser) await browser.close(); server.kill();}
 })().catch(error => {console.error(error); process.exitCode = 1;});

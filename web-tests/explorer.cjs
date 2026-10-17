@@ -294,7 +294,7 @@ let browser;
     await page.waitForFunction(() =>
         document
             .getElementById("interest-feedback")
-            .textContent.includes("Refresh started for gaming, xbox, fails"),
+            .textContent.includes("Trend refresh requested for this channel."),
     );
     assert.match(await page.locator("#interest-chips").innerText(), /fails/i);
     const saves = requests.filter(

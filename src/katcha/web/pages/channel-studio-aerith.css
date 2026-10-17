@@ -492,3 +492,8 @@ body[data-katcha-page="channel"] .channel-activity-older-grid {
         grid-template-columns: minmax(0, 1fr);
     }
 }
+
+/* Activity cards are links when a destination is available. */
+.channel-activity-item[data-card-href]{cursor:pointer}
+.channel-activity-item[data-card-href]:hover{border-color:var(--ae-violet, #b7a5ff)!important}
+.channel-activity-item[data-card-href]:focus-visible{outline:2px solid var(--ae-cyan, #84e7ff);outline-offset:3px}

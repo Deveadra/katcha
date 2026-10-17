@@ -112,6 +112,12 @@
 .check-line input{width:auto;min-height:auto;margin-top:2px}
 .compact-dialog{width:min(600px,calc(100vw - 28px))}
 .compact-dialog input{width:100%}
+.compact-dialog .dialog-head .mini{flex:0 0 auto;align-self:flex-start;width:auto;min-width:84px;min-height:36px}
+#purge-dialog label{display:block;font-size:12px;margin:10px 0 4px}
+#purge-dialog #purge-feedback{min-height:20px;font-size:11px;line-height:1.5;color:var(--muted);margin:8px 0}
+#purge-dialog #purge-feedback.error{color:#ffb4bc}
+#purge-dialog .dialog-actions .danger-button:disabled{opacity:.55;cursor:not-allowed}
+
 code{overflow-wrap:anywhere}
 [hidden]{display:none!important}
 @media(max-width:1180px){

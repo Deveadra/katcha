@@ -656,8 +656,7 @@ async function refreshIntelligence({ automatic = false } = {}) {
             method: "POST",
             body: JSON.stringify({ idempotency_key: crypto.randomUUID() }),
         });
-        const interests = normalizeInterests(state.watch?.interests || []);
-        const message = `Refresh started for ${interests.join(", ") || "this channel"}. Katcha is rescoring stored signals while discovery continues collecting new sources.`;
+        const message = "Trend refresh requested for this channel. Katcha will rescore stored signals; new discoveries require healthy, scheduled Sources. Check Opportunities and Sources for results or failures.";
         status(message);
         feedback(message, "success");
         return result;

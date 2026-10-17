@@ -1384,6 +1384,12 @@ function renderChannelActivity() {
         return;
     }
     const renderCards = (items) => items.map((item) => {
+        const cardHref = item.href || item.source_url || "";
+        const safeCardHref = (cardHref.startsWith("/") && !cardHref.startsWith("//")) ||
+            /^https?:\/\//i.test(cardHref) ? cardHref : "";
+        const cardLinkAttrs = safeCardHref
+            ? ' role="link" tabindex="0" data-card-href="' + escapeHtml(safeCardHref) + '"'
+            : "";
         const link = item.source_url
             ? '<a target="_blank" rel="noopener noreferrer" href="' +
                 escapeHtml(item.source_url) +
@@ -1397,7 +1403,7 @@ function renderChannelActivity() {
         return (
             '<article class="studio-card channel-activity-item ' +
             (item.state === "attention" ? "is-attention" : "") +
-            '"><div class="channel-activity-head"><span class="eyebrow">' +
+            '"' + cardLinkAttrs + '><div class="channel-activity-head"><span class="eyebrow">' +
             escapeHtml(item.lane || "Activity") +
             '</span><span class="status-pill ' +
             escapeHtml(item.status || "active") +
@@ -2170,6 +2176,17 @@ $("channel").addEventListener("change", async (event) => {
     state.selectedPublicationId = "";
     await loadChannel();
 });
+function openChannelActivityCard(event) {
+    const card = event.target.closest(".channel-activity-item[data-card-href]");
+    if (!card || event.target.closest("a, button, summary, input, select")) return;
+    if (event.type === "keydown" && (event.target !== card || !["Enter", " "].includes(event.key))) return;
+    if (event.type === "keydown") event.preventDefault();
+    const href = card.dataset.cardHref;
+    if (href.startsWith("/") && !href.startsWith("//")) location.assign(href);
+    else if (/^https?:\/\//i.test(href)) window.open(href, "_blank", "noopener,noreferrer");
+}
+$("channel-activity-list").addEventListener("click", openChannelActivityCard);
+$("channel-activity-list").addEventListener("keydown", openChannelActivityCard);
 $("reload").addEventListener("click", loadChannel);
 $("refresh-intelligence").addEventListener("click", refreshIntelligence);
 $("elevenlabs-enabled").addEventListener("change", async (event) => {

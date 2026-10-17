@@ -640,3 +640,8 @@ body[data-katcha-page="operations"] .event-name span {
         max-height: none;
     }
 }
+
+/* Whole-card navigation complements the explicit Open links and recovery controls. */
+.ops-row[data-card-href]{cursor:pointer}
+.ops-row[data-card-href]:hover{border-color:var(--ae-violet, #b7a5ff)}
+.ops-row[data-card-href]:focus-visible{outline:2px solid var(--ae-cyan, #84e7ff);outline-offset:3px}
