@@ -63,7 +63,8 @@ def run(*args: str, timeout: int = 30) -> str:
 
 
 def github(path: str) -> Any:
-    if not path.startswith("/") or ".." in path or "//" in path:
+    canonical_compare = re.fullmatch(r"/compare/[0-9a-f]{40}\.\.\.[0-9a-f]{40}", path)
+    if not path.startswith("/") or (".." in path and not canonical_compare) or "//" in path:
         raise Blocked("invalid GitHub path")
     req = urllib.request.Request(
         API + path,
