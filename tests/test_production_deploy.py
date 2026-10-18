@@ -523,11 +523,16 @@ def test_additive_schema_preflight_and_postflight_require_exact_revision(
     }
     monkeypatch.setattr(app, "database_query", lambda k: state[k])
     app.database_migration_preflight()
+    with pytest.raises(app.Blocked, match="reviewed target revision"):
+        app.database_release_preflight(migration=False)
     state["revision"] = app.AFTER_REVISION
     state["table"] = "application_ai_settings"
     state["columns"] = "key:character varying:NO:64\nvalue:text:NO:"
     state["primary"] = "key"
     app.database_migration_postflight()
+    app.database_release_preflight(migration=False)
+    with pytest.raises(app.Blocked, match="reviewed additive migration base"):
+        app.database_release_preflight(migration=True)
     state["primary"] = "other_key"
     with pytest.raises(app.Blocked, match="schema differs"):
         app.database_migration_postflight()
@@ -617,14 +622,40 @@ def test_readiness_is_read_only_without_deployment_flag(
     ))
     monkeypatch.setattr(app, "pinned", lambda path: (OLD, False))
     monkeypatch.setattr(app, "runtime", lambda sha: None)
-    monkeypatch.setattr(app, "database_migration_preflight", lambda: None)
+    observations = {
+        "revision": app.AFTER_REVISION,
+        "table": "application_ai_settings",
+        "columns": "key:character varying:NO:64\nvalue:text:NO:",
+        "primary": "key",
+    }
+    monkeypatch.setattr(app, "database_query", lambda key: observations[key])
     monkeypatch.setattr(app, "temporal_inventory", lambda policy: (
         ("schedule-1", "run-1"),
     ))
     result = app.readiness()
     assert result["status"] == "REVIEW_REQUIRED"
     assert result["temporal_running_count"] == 1
+    assert result["database_start_revision"] == app.AFTER_REVISION
+    assert result["database_schema_state"] == "0064_already_applied_and_verified"
+
+    # The 0063→0064 path remains eligible only for separately approved
+    # migration releases. Readiness alone must not authorize any migration.
+    observations.update(revision=app.BEFORE_REVISION, table="", columns="", primary="")
+    result = app.readiness()
     assert result["database_start_revision"] == app.BEFORE_REVISION
+    assert result["database_schema_state"].startswith("requires_approved_")
+
+    # Neither unknown/future revisions nor schema drift are accepted.
+    observations["revision"] = "0065_unreviewed"
+    with pytest.raises(app.Blocked, match="outside the reviewed"):
+        app.readiness()
+    observations.update(
+        revision=app.AFTER_REVISION, table="application_ai_settings",
+        columns="key:character varying:NO:64\nvalue:text:NO:",
+        primary="not_key",
+    )
+    with pytest.raises(app.Blocked, match="schema differs"):
+        app.readiness()
 
 def test_temporal_recovery_checks_original_run_ids_not_just_counts(
     monkeypatch: pytest.MonkeyPatch,
