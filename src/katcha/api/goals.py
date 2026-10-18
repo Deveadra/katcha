@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import uuid
 
 from fastapi import APIRouter, HTTPException, Request
@@ -23,10 +24,12 @@ from katcha.db import session_scope
 from katcha.goal_models import CommandGoal, CommandGoalStep
 from katcha.intelligence.runtime import INTELLIGENCE_TASK_QUEUE
 from katcha.orchestration.client import get_temporal_client
+from katcha.orchestration.failure_details import failure_details, safe_failure_text
 from katcha.orchestration.goal_workflows import CommandGoalWorkflow
 from katcha.services.goal_receipts import TERMINAL_GOAL_STATES, get_goal, register_goal
 
 router = APIRouter(prefix="/v1/ai/goals", tags=["command goals"])
+logger = logging.getLogger(__name__)
 
 
 class GoalRequest(CommandRequest):
@@ -52,6 +55,22 @@ def retryable(goal: CommandGoal) -> bool:
         return step is None and proposal is None
 
 
+def workflow_diagnostic(goal: CommandGoal, *, code: str, stage: str, error_type: str | None = None) -> dict:
+    """Stable, actor-scoped workflow diagnostics without exposing transport credentials."""
+    return {
+        "code": code,
+        "stage": stage,
+        "workflow_id": f"command-goal-{goal.id}",
+        "error_type": error_type,
+        "next_action": (
+            "The request is saved. Retry the same request identity after checking "
+            "Temporal connectivity; do not create a new request."
+            if stage == "workflow_dispatch"
+            else "Check Temporal service and worker health; retain the saved goal ID."
+        ),
+    }
+
+
 def snapshot(goal: CommandGoal) -> dict:
     summary, result = goal.summary, goal.result
     if goal.status == "blocked":
@@ -61,7 +80,7 @@ def snapshot(goal: CommandGoal) -> dict:
         if saved_draft and not (summary or "").startswith(saved_draft):
             summary = saved_draft + (summary or "")
             result = {**(result or {}), "answer": saved_draft + (result or {}).get("answer", "")}
-    return {
+    response = {
         "goal_id": str(goal.id),
         "command_id": str(goal.command_id),
         "thread_id": str(goal.thread_id),
@@ -75,6 +94,19 @@ def snapshot(goal: CommandGoal) -> dict:
         "error": goal.error,
         "retryable": retryable(goal),
     }
+    if goal.status == "queued" and (goal.error or "").startswith("goal_dispatch_unavailable"):
+        response["dispatch_pending"] = True
+        response["diagnostic"] = workflow_diagnostic(
+            goal, code="goal_dispatch_unavailable", stage="workflow_dispatch"
+        )
+    elif goal.status in {"blocked", "failed"}:
+        response["diagnostic"] = {
+            "code": f"goal_{goal.status}",
+            "stage": "goal_execution",
+            "workflow_id": f"command-goal-{goal.id}",
+            "message": safe_failure_text(goal.error) if goal.error else None,
+        }
+    return response
 
 
 def accessible_goal(request: Request, goal_id: uuid.UUID) -> CommandGoal:
@@ -120,16 +152,33 @@ async def submit_goal(http_request: Request, request: GoalRequest) -> dict:
             )
         except WorkflowAlreadyStartedError:
             pass
-        except Exception:
-            # The receipt already exists. Retry the identical command_id to dispatch safely.
+        except Exception as exc:
+            # No new receipt or replay: the same command identity is safe to retry.
+            # Persist only a stable code/type; exception strings may contain credentials.
+            logger.warning(
+                "Goal workflow dispatch unconfirmed goal_id=%s error_type=%s",
+                goal.id, type(exc).__name__,
+            )
+            with session_scope() as session:
+                current = session.get(CommandGoal, goal.id)
+                if current.status == "queued":
+                    current.error = f"goal_dispatch_unavailable ({type(exc).__name__})"
             response = snapshot(get_goal(goal.id))
             response["dispatch_pending"] = True
-            response["summary"] = "Request saved. Reconnect and retry to start it."
+            response["diagnostic"] = workflow_diagnostic(
+                goal, code="goal_dispatch_unavailable",
+                stage="workflow_dispatch", error_type=type(exc).__name__,
+            )
+            response["summary"] = (
+                "Request saved, but Temporal could not confirm workflow start. "
+                "Katcha can retry using the same request identity."
+            )
             return response
         with session_scope() as session:
             current = session.get(CommandGoal, goal.id)
             if current.status == "queued":
                 current.status = "running"
+                current.error = None
                 current.summary = "Request saved; deciding the first step."
     return snapshot(get_goal(goal.id))
 
@@ -177,8 +226,20 @@ async def read_goal(http_request: Request, goal_id: uuid.UUID) -> dict:
 
         try:
             description = await asyncio.wait_for(describe(), timeout=5)
-        except Exception:
-            return snapshot(goal)
+        except Exception as exc:
+            # A missing/unreachable Temporal status is NOT proof of completion,
+            # cancellation or a revoked identity. Never silently show "working".
+            logger.warning(
+                "Goal workflow status unverified goal_id=%s error_type=%s",
+                goal.id, type(exc).__name__,
+            )
+            response = snapshot(goal)
+            response["workflow_status_unverified"] = True
+            response["diagnostic"] = workflow_diagnostic(
+                goal, code="goal_workflow_status_unverified",
+                stage="workflow_status", error_type=type(exc).__name__,
+            )
+            return response
         if description.status in {
             WorkflowExecutionStatus.FAILED,
             WorkflowExecutionStatus.TIMED_OUT,
@@ -187,11 +248,24 @@ async def read_goal(http_request: Request, goal_id: uuid.UUID) -> dict:
         }:
             from katcha.services.goal_runner import _finish
 
+            error = description.status.name
+            if description.status == WorkflowExecutionStatus.FAILED:
+                try:
+                    async def failed_result():
+                        client = await get_temporal_client()
+                        return await client.get_workflow_handle(
+                            f"command-goal-{goal.id}"
+                        ).result()
+
+                    await asyncio.wait_for(failed_result(), timeout=3)
+                except Exception as exc:
+                    # Actual child cause instead of a generic Temporal wrapper.
+                    error = failure_details(exc)["message"]
             _finish(
                 goal.id,
                 "failed",
                 "The goal runner stopped. Its saved work remains available.",
-                description.status.name,
+                error,
             )
             goal = get_goal(goal.id)
     return snapshot(goal)
