@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import io
-import subprocess
+import wave
 from types import SimpleNamespace
 
 import pytest
@@ -177,14 +177,18 @@ def test_reader_rejects_wrong_range_and_different_stored_hash():
 
 def test_pyav_reads_real_non_faststart_mp4_from_ranged_r2_fixture(tmp_path):
     sample = tmp_path / "fixture.mp4"
-    subprocess.run(
-        [
-            "ffmpeg", "-nostdin", "-v", "error", "-f", "lavfi",
-            "-i", "color=c=blue:s=160x90:r=12:d=0.5", "-an",
-            "-c:v", "mpeg4", "-y", str(sample),
-        ],
-        check=True, timeout=30,
-    )
+    import av
+    from PIL import Image
+
+    with av.open(str(sample), mode="w") as output:
+        video = output.add_stream("mpeg4", rate=12)
+        video.width, video.height = 160, 90
+        video.pix_fmt = "yuv420p"
+        frame = av.VideoFrame.from_image(Image.new("RGB", (160, 90), color="blue"))
+        for packet in video.encode(frame):
+            output.mux(packet)
+        for packet in video.encode():
+            output.mux(packet)
     data = sample.read_bytes()
     assert data.index(b"moov") > data.index(b"mdat")
     fake = FakeClient()
@@ -199,14 +203,11 @@ def test_pyav_reads_real_non_faststart_mp4_from_ranged_r2_fixture(tmp_path):
 
 def test_pyav_rejects_audio_only_stream(tmp_path):
     sample = tmp_path / "audio.wav"
-    subprocess.run(
-        [
-            "ffmpeg", "-nostdin", "-v", "error", "-f", "lavfi",
-            "-i", "sine=frequency=500:duration=0.15",
-            "-y", str(sample),
-        ],
-        check=True, timeout=30,
-    )
+    with wave.open(str(sample), "wb") as audio:
+        audio.setnchannels(1)
+        audio.setsampwidth(2)
+        audio.setframerate(8000)
+        audio.writeframes(b"\\x00\\x00" * 800)
     data = sample.read_bytes()
     fake = FakeClient()
     fake.objects["audio.wav"] = data
