@@ -121,7 +121,7 @@ async def dispatch_planned_trend_editorial(
                     ShortEpisode.stage == "planned",
                 )
                 .order_by(ShortEpisode.created_at.asc(), ShortEpisode.id.asc())
-                .limit(_safe_limit(policy))
+                .limit(_safe_limit(policy) * 10)
             )
         )
         selected = []
@@ -143,7 +143,11 @@ async def dispatch_planned_trend_editorial(
                     "reason": "frozen_source_rights_not_eligible",
                 })
                 continue
-            selected.append((episode.id, episode.workflow_id, tuple(item.clip_id for item in items)))
+            selected.append(
+                (episode.id, episode.workflow_id, tuple(item.clip_id for item in items))
+            )
+            if len(selected) >= _safe_limit(policy):
+                break
 
     started: list[dict[str, str]] = []
     failed: list[dict[str, str]] = []
