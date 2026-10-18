@@ -10,6 +10,7 @@ from temporalio.worker import Worker
 from katcha.config import get_settings
 from katcha.orchestration.trend_activities import (
     refresh_channel_trends_activity,
+    refresh_scheduled_channel_trends_activity,
     refresh_trend_calibration_activity,
 )
 from katcha.orchestration.trend_workflows import (
@@ -39,6 +40,7 @@ async def main() -> None:
             ],
             activities=[
                 refresh_channel_trends_activity,
+                refresh_scheduled_channel_trends_activity,
                 refresh_trend_calibration_activity,
             ],
             activity_executor=activity_executor,

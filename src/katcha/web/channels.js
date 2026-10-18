@@ -2362,6 +2362,21 @@ function renderTrendAutomation() {
             dispatch.status === "partial_failure" ? "Dispatch retry needed; " + (dispatch.failed?.length || 0) + " failed" :
             "No new eligible editorial work";
         if ((dispatch?.skipped || []).length) detail += " · " + dispatch.skipped.length + " plan(s) skipped";
+        const refresh = run.run_metadata?.trend_refresh;
+        if (refresh) {
+            const status = refresh.status;
+            const scored = Number(refresh.topics_scored || 0);
+            const qualified = Number(refresh.qualified_opportunities || 0);
+            const scoredLabel = status === "completed"
+                ? (scored ? "Trend scoring: " + scored + " topic(s), " + qualified + " qualified" :
+                    "Trend scoring: no stored topics or signals scored")
+                : status === "awaiting_configuration" ? "Trend scoring blocked: no channel watch configured"
+                : status === "withheld_source_coverage" ? "Trend scoring blocked: insufficient source coverage"
+                : status === "planning_disabled" ? "Trend scoring skipped: planning policy disabled"
+                : status === "refresh_failed" ? "Trend scoring failed: trend worker unavailable or errored"
+                : "Trend scoring outcome: " + trendStatusReason(status);
+            detail = scoredLabel + " · " + detail;
+        }
         return '<div class="trend-automation-run"><strong>' +
             escapeHtml(friendly(run.status)) + '</strong> <small>' +
             escapeHtml(dateText(run.completed_at || run.started_at)) +
