@@ -895,6 +895,46 @@ function renderContext(result) {
     });
 }
 
+function showGoalDiagnostics(progress, goal) {
+    const diagnostic = goal.diagnostic;
+    if (!diagnostic) return;
+    let details = progress.querySelector(".goal-diagnostics");
+    if (!details) {
+        details = document.createElement("details");
+        details.className = "goal-diagnostics";
+        const heading = document.createElement("summary");
+        heading.textContent = "Technical details for troubleshooting";
+        const output = document.createElement("pre");
+        const copy = document.createElement("button");
+        copy.type = "button";
+        copy.textContent = "Copy diagnostics";
+        copy.onclick = async () => {
+            try {
+                await navigator.clipboard.writeText(output.textContent);
+                copy.textContent = "Copied";
+            } catch {
+                status("Clipboard unavailable; select the diagnostic text to copy.", true);
+            }
+        };
+        details.append(heading, output, copy);
+        progress.querySelector(".goal-progress-body").append(details);
+    }
+    // Server-side diagnostics deliberately exclude credentials. Never include
+    // the prompt, a bearer token, cookies, or unsanitized browser request headers.
+    details.querySelector("pre").textContent = JSON.stringify({
+        goal_id: goal.goal_id,
+        channel_profile_id: goal.channel_profile_id,
+        status: goal.status,
+        step_count: goal.step_count,
+        code: diagnostic.code,
+        stage: diagnostic.stage,
+        workflow_id: diagnostic.workflow_id,
+        error_type: diagnostic.error_type,
+        message: diagnostic.message,
+        next_action: diagnostic.next_action,
+    }, null, 2);
+}
+
 function savedGoals() {
     try { return JSON.parse(sessionStorage.getItem("katcha.goalReceipts") || "[]"); }
     catch { return []; }
@@ -910,6 +950,8 @@ function forgetGoal(commandId) {
 const finishedGoals = new Set(["completed", "blocked", "needs_input", "failed", "cancelled"]);
 async function followGoal(receipt, { background = false } = {}) {
     let shownConfirmation = false;
+    let nextDispatchAttemptAt = 0;
+    let dispatchBackoffMs = 2000;
     while (true) {
         const goal = await api("/v1/ai/goals/" + receipt.goalId);
         if (state.channelId !== goal.channel_profile_id ||
@@ -937,7 +979,13 @@ async function followGoal(receipt, { background = false } = {}) {
             };
         }
         const goalLinks = KatchaResourceLinks.resources(goal.result?.evidence || [], state.channelId);
-        progress.querySelector("p").innerHTML = KatchaResourceLinks.format(goal.summary, goalLinks);
+        const displaySummary = goal.workflow_status_unverified
+            ? "The goal is saved, but Temporal workflow status cannot be verified. Checking again."
+            : goal.dispatch_pending
+                ? "The goal is saved, but workflow start has not been confirmed. Retrying safely."
+                : goal.summary;
+        progress.querySelector("p").innerHTML = KatchaResourceLinks.format(displaySummary, goalLinks);
+        showGoalDiagnostics(progress, goal);
         const stopButton = progress.querySelector(".goal-stop-button");
         if (stopButton) stopButton.disabled = !capability("ai_write") || finishedGoals.has(goal.status);
         if (finishedGoals.has(goal.status)) {
@@ -983,8 +1031,19 @@ async function followGoal(receipt, { background = false } = {}) {
             }
             appendKatcha(goal.result); renderContext(goal.result);
         }
-        if (goal.status === "queued") {
-            await api("/v1/ai/goals", {method: "POST", body: JSON.stringify(receipt.request)});
+        if (goal.status === "queued" && Date.now() >= nextDispatchAttemptAt) {
+            nextDispatchAttemptAt = Date.now() + dispatchBackoffMs;
+            try {
+                const retry = await api("/v1/ai/goals", {
+                    method: "POST", body: JSON.stringify(receipt.request),
+                });
+                dispatchBackoffMs = retry.dispatch_pending
+                    ? Math.min(dispatchBackoffMs * 2, 30000) : 2000;
+            } catch (error) {
+                dispatchBackoffMs = Math.min(dispatchBackoffMs * 2, 30000);
+                status("Goal remains saved; workflow dispatch could not be confirmed. " +
+                    error.message, true);
+            }
         }
         await new Promise((resolve) => setTimeout(resolve, 2000));
     }
