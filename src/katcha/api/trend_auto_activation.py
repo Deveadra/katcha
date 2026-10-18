@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Any
 
@@ -112,6 +112,14 @@ class TrendActivationScheduleStatusResponse(BaseModel):
     reconcile_pending: bool = False
     # Registration is persisted evidence, NOT proof Temporal is healthy.
     runtime_verified: bool = False
+    # A persisted, channel-scoped scheduled scan is proof of work, not a
+    # heartbeat or proof that the worker is currently available.
+    last_scheduled_scan_run_id: uuid.UUID | None = None
+    last_scheduled_scan_started_at: datetime | None = None
+    last_scheduled_scan_completed_at: datetime | None = None
+    last_scheduled_scan_status: str | None = None
+    scan_health: str = "not_registered"
+    scan_overdue: bool = False
 
 
 class TrendActivationRunResponse(BaseModel):
@@ -243,6 +251,12 @@ async def scan_trend_activation(
     )
 
 
+def _utc_schedule_time(value: datetime | None) -> datetime | None:
+    if value is None:
+        return None
+    return value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
+
+
 @router.get(
     "/channels/{channel_profile_id}/trends/activation-schedule",
     response_model=TrendActivationScheduleStatusResponse,
@@ -250,12 +264,12 @@ async def scan_trend_activation(
 def get_trend_activation_schedule(
     channel_profile_id: uuid.UUID,
 ) -> TrendActivationScheduleStatusResponse:
-    """Read the durable registration without implying live Temporal availability."""
+    """Report persisted scheduled work separately from live worker availability."""
     with session_scope() as session:
         schedule = session.scalar(
             select(AutomationSchedule).where(
-                AutomationSchedule.schedule_key ==
-                f"channel_trend_activation:{channel_profile_id}"
+                AutomationSchedule.schedule_key
+                == f"channel_trend_activation:{channel_profile_id}"
             )
         )
         if schedule is None:
@@ -264,14 +278,59 @@ def get_trend_activation_schedule(
                 registered=False,
                 enabled=False,
             )
+        latest_scan = session.scalar(
+            select(TrendActivationRun)
+            .where(
+                TrendActivationRun.channel_profile_id == channel_profile_id,
+                TrendActivationRun.run_key.like("scheduled-%"),
+            )
+            .order_by(TrendActivationRun.started_at.desc())
+            .limit(1)
+        )
+        interval = int((schedule.schedule_config or {}).get("interval_hours") or 0)
+        # Allow a scan to finish and a reconciliation cycle to run before
+        # reporting a breach. This is an observation SLA, not a promise
+        # about the exact next Temporal wake-up.
+        reference = _utc_schedule_time(
+            latest_scan.started_at if latest_scan else schedule.updated_at or schedule.created_at
+        )
+        overdue = bool(
+            schedule.enabled
+            and interval > 0
+            and reference is not None
+            and datetime.now(UTC) - reference > timedelta(hours=2 * interval, minutes=30)
+        )
+        if not schedule.enabled:
+            scan_health = "disabled"
+        elif schedule.supersedes_workflow_id is not None:
+            scan_health = "reconcile_pending"
+        elif latest_scan is None:
+            scan_health = "first_scan_overdue" if overdue else "awaiting_first_scan"
+        elif latest_scan.status == "running":
+            scan_health = (
+                "scan_stalled"
+                if datetime.now(UTC) - _utc_schedule_time(latest_scan.started_at)
+                > timedelta(minutes=30)
+                else "scan_in_progress"
+            )
+        elif latest_scan.status != "completed":
+            scan_health = "last_scan_not_completed"
+        else:
+            scan_health = "scan_overdue" if overdue else "recent_scan"
         return TrendActivationScheduleStatusResponse(
             channel_profile_id=channel_profile_id,
             registered=True,
             enabled=schedule.enabled,
-            interval_hours=int((schedule.schedule_config or {}).get("interval_hours") or 0) or None,
+            interval_hours=interval or None,
             workflow_id=schedule.workflow_id,
             generation=schedule.generation,
             reconcile_pending=schedule.supersedes_workflow_id is not None,
+            last_scheduled_scan_run_id=latest_scan.id if latest_scan else None,
+            last_scheduled_scan_started_at=latest_scan.started_at if latest_scan else None,
+            last_scheduled_scan_completed_at=latest_scan.completed_at if latest_scan else None,
+            last_scheduled_scan_status=latest_scan.status if latest_scan else None,
+            scan_health=scan_health,
+            scan_overdue=overdue,
         )
 
 
