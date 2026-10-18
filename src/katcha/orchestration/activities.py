@@ -4,9 +4,9 @@ import logging
 import shutil
 import uuid
 from contextlib import suppress
-from urllib.parse import urlsplit
 from decimal import Decimal
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
