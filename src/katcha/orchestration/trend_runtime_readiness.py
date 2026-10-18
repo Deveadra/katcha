@@ -16,6 +16,7 @@ from katcha.orchestration.client import get_temporal_client
 # Read-only Temporal diagnostics. A recent poll is evidence that some worker
 # polled the queue; it does not certify the code/version or downstream render.
 _MAX_POLL_AGE = timedelta(minutes=3)
+_MAX_CLOCK_SKEW = timedelta(seconds=10)
 _PROBE_TIMEOUT_SECONDS = 5
 
 
@@ -31,7 +32,7 @@ def _recent_poller_present(pollers: Any, *, now: datetime) -> bool:
         if last.tzinfo is None:
             last = last.replace(tzinfo=UTC)
         age = now - last.astimezone(UTC)
-        if timedelta(0) <= age <= _MAX_POLL_AGE:
+        if -_MAX_CLOCK_SKEW <= age <= _MAX_POLL_AGE:
             return True
     return False
 
