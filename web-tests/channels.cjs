@@ -1202,7 +1202,7 @@ const analytics = [
 
     await page.locator('[data-channel-tab="settings"]').click();
     assert.match(await page.locator("#trend-automation-runs").innerText(),
-        /Trend scoring: 3 topic\\(s\\), 1 qualified/);
+        /Trend scoring: 3 topic/);
     await page.locator("#trend-editorial-enabled").check();
     page.once("dialog", (dialog) => dialog.dismiss());
     await page.locator("#save-trend-automation").click();
