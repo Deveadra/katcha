@@ -214,13 +214,33 @@ let browser;
     assert.equal(await page.locator(".intro").count(), 0);
     assert.match(await page.locator(".trends-title").innerText(), /Trends/);
     assert.equal(await page.locator(".watchlist-popover").getAttribute("open"), null);
-    assert.equal(
-        await page.evaluate(() => document.documentElement.scrollHeight <= innerHeight + 2),
-        true,
-    );
+    // Desktop must allow the page to scroll rather than clip lower controls.
+    await page.setViewportSize({ width: 1440, height: 650 });
+    const scrollState = await page.evaluate(() => {
+        window.scrollTo(0, document.documentElement.scrollHeight);
+        return {
+            scrollY: window.scrollY,
+            overflow: getComputedStyle(document.body).overflowY,
+            visible: document.querySelector(".trends-support-strip")
+                .getBoundingClientRect().bottom <= innerHeight + 2,
+        };
+    });
+    assert(scrollState.scrollY > 0, "Trends page was locked to the viewport");
+    assert.notEqual(scrollState.overflow, "hidden");
+    assert.equal(scrollState.visible, true);
+    const toolbar = await page.locator("#search").evaluate((input) => {
+        const r = input.getBoundingClientRect();
+        const p = input.closest(".search-wrap").getBoundingClientRect();
+        return {inside: r.left >= p.left && r.right <= p.right + 1,
+            height: r.height, width: r.width};
+    });
+    assert(toolbar.inside && toolbar.height <= 44 && toolbar.width > 80,
+        "Search input must fit its toolbar field");
+    await page.setViewportSize({ width: 1440, height: 1000 });
     await page.locator("#token").fill("fixture-token");
     await page.locator("#connect-form button").click();
     await page.locator("#detail-panel h3").waitFor();
+    assert.equal(await page.locator("#connection-tools").getAttribute("open"), null);
     assert.equal(await page.locator(".topic-row").count(), 2);
     await page.locator("#edit-performance > summary").waitFor();
     assert.equal(await page.locator("#edit-performance").getAttribute("open"), null);
