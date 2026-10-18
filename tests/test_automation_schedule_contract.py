@@ -4,11 +4,11 @@ from sqlalchemy import CheckConstraint, UniqueConstraint
 
 from katcha.api.trend_auto_activation import get_trend_activation_schedule
 from katcha.automation_schedule_models import AutomationSchedule
-from katcha.services.automation_schedules import register_channel_trend_activation_schedule
 from katcha.orchestration.recovery_registry import (
     WORKFLOW_RECOVERY_CONTRACTS,
     RecoveryMode,
 )
+from katcha.services.automation_schedules import register_channel_trend_activation_schedule
 
 
 def _unique_columns() -> set[tuple[str, ...]]:
