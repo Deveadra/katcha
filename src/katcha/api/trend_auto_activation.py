@@ -50,6 +50,10 @@ class TrendActivationPolicyRequest(BaseModel):
     max_backlog: int = Field(default=5, ge=0, le=1000)
     min_budget_headroom_usd: Decimal = Field(default=Decimal("2.00"), ge=0)
     max_opportunities_per_run: int = Field(default=25, ge=1, le=250)
+    # Explicit permission to start paid script/TTS work; enabling a trend
+    # planning policy alone never grants this permission.
+    auto_start_editorial: bool | None = None
+    editorial_max_starts_per_scan: int | None = Field(default=None, ge=1, le=2)
     metadata: dict[str, Any] = Field(default_factory=dict)
     actor: str = Field(default="operator", min_length=1, max_length=128)
 
@@ -154,6 +158,13 @@ def update_trend_activation_policy(
     channel_profile_id: uuid.UUID,
     request: TrendActivationPolicyRequest,
 ) -> TrendActivationPolicyVersion:
+    metadata = dict(request.metadata)
+    if request.auto_start_editorial is not None:
+        metadata["auto_start_editorial"] = request.auto_start_editorial
+    if request.editorial_max_starts_per_scan is not None:
+        metadata["editorial_max_starts_per_scan"] = (
+            request.editorial_max_starts_per_scan
+        )
     try:
         return create_activation_policy(
             channel_profile_id,
@@ -168,7 +179,7 @@ def update_trend_activation_policy(
             max_backlog=request.max_backlog,
             min_budget_headroom_usd=request.min_budget_headroom_usd,
             max_opportunities_per_run=request.max_opportunities_per_run,
-            metadata=request.metadata,
+            metadata=metadata,
             actor=request.actor,
         )
     except ValueError as exc:
