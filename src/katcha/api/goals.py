@@ -55,7 +55,9 @@ def retryable(goal: CommandGoal) -> bool:
         return step is None and proposal is None
 
 
-def workflow_diagnostic(\n    goal: CommandGoal, *, code: str, stage: str, error_type: str | None = None\n) -> dict:
+def workflow_diagnostic(
+    goal: CommandGoal, *, code: str, stage: str, error_type: str | None = None
+) -> dict:
     """Stable, actor-scoped workflow diagnostics without exposing transport credentials."""
     return {
         "code": code,
