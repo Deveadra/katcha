@@ -143,6 +143,7 @@ async function connect(event) {
                 .join("");
         $("channel").disabled = false;
         $("connection-state").textContent = "CONNECTED";
+        $("connection-tools").open = false;
         if (channels.length) {
             const preferred = state.channel && channels.some((row) => row.id === state.channel)
                 ? state.channel
@@ -155,6 +156,7 @@ async function connect(event) {
             );
     } catch (error) {
         $("connection-state").textContent = "CONNECTION FAILED";
+        $("connection-tools").open = true;
         status(error.message);
     }
 }
