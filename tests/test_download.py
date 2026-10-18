@@ -287,3 +287,138 @@ def test_session_success_removes_cookie_before_returning_media(tmp_path, monkeyp
     assert copies and all(not path.exists() for path in copies)
     assert cookie.read_text() == "fixture-only session"
     assert list(result.path.parent.iterdir()) == [result.path]
+
+
+def test_approved_route_is_anonymous_and_cleans_public_fragments(tmp_path, monkeypatch):
+    from pathlib import Path
+
+    from katcha.config import Settings
+    from katcha.integrations import download as downloader
+
+    attempts = []
+
+    class RoutedVideo:
+        def __init__(self, options):
+            attempts.append(dict(options))
+            self.route = options.get("proxy")
+            self.directory = Path(options["outtmpl"]).parent
+            assert "cookiefile" not in options
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            pass
+
+        def extract_info(self, *args, **kwargs):
+            if not self.route:
+                (self.directory / "failed.part").write_text("partial")
+                raise RuntimeError("Sign in to confirm you're not a bot")
+            assert not (self.directory / "failed.part").exists()
+            (self.directory / "video.mp4").write_bytes(b"fixture video")
+            return {"id": "fixture"}
+
+    monkeypatch.setattr(downloader, "YoutubeDL", RoutedVideo)
+    monkeypatch.setattr(downloader, "ffprobe", lambda path: {"duration": 1})
+    result = downloader.download("https://youtu.be/fixture", Settings(
+        _env_file=None, work_dir=tmp_path,
+        youtube_download_proxy_url="socks5://127.0.0.1:1080",
+        youtube_download_cookie_file=tmp_path / "must-not-be-read.cookies",
+    ))
+    assert len(attempts) == 2
+    assert "proxy" not in attempts[0]
+    assert attempts[1]["proxy"] == "socks5://127.0.0.1:1080"
+    assert result.source_metadata["youtube_access_mode"] == "approved_route"
+    assert "proxy" not in str(result.source_metadata)
+
+
+def test_route_failure_is_bounded_and_never_exposes_credentials(tmp_path, monkeypatch, capsys):
+    import pytest
+
+    from katcha.config import Settings
+    from katcha.integrations import download as downloader
+    from katcha.orchestration.failure_details import failure_details
+
+    attempts = []
+
+    class FailingRoute:
+        def __init__(self, options):
+            attempts.append(options)
+            self.route = options.get("proxy")
+            if self.route:
+                options["logger"].error("proxy password=fixture-secret")
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            pass
+
+        def extract_info(self, *args, **kwargs):
+            if self.route:
+                raise RuntimeError("connection failed: socks5://user:fixture-secret@host:1080")
+            raise RuntimeError("Sign in to confirm you're not a bot")
+
+    monkeypatch.setattr(downloader, "YoutubeDL", FailingRoute)
+    with pytest.raises(downloader.DownloadRouteUnavailable) as caught:
+        downloader.download("https://youtu.be/fixture", Settings(
+            _env_file=None, work_dir=tmp_path,
+            youtube_download_proxy_url="socks5://user:fixture-secret@host:1080",
+        ))
+    assert len(attempts) == 2
+    detail = failure_details(caught.value)
+    assert detail["code"] == "youtube_download_route_unavailable"
+    assert detail["retryable"] is False
+    assert "fixture-secret" not in str(detail)
+    assert "fixture-secret" not in str(capsys.readouterr())
+    assert caught.value.__cause__ is None
+    assert caught.value.__suppress_context__
+    assert not list(tmp_path.iterdir())
+
+
+def test_download_route_configuration_is_private_and_validated():
+    import pytest
+
+    from katcha.config import Settings
+
+    settings = Settings(_env_file=None, youtube_download_proxy_url="https://user:secret@proxy:443")
+    assert "user:secret" not in repr(settings)
+    for url in ("file:///tmp/proxy", "http://", "https://proxy/path", "http://proxy:99999"):
+        with pytest.raises(ValueError):
+            Settings(_env_file=None, youtube_download_proxy_url=url)
+
+
+def test_configured_route_is_not_used_for_other_errors_or_platforms(tmp_path, monkeypatch):
+    import pytest
+
+    from katcha.config import Settings
+    from katcha.integrations import download as downloader
+
+    attempts = []
+    message = "HTTP Error 429"
+
+    class NoRoute:
+        def __init__(self, options):
+            attempts.append(options)
+            assert "proxy" not in options
+            assert "cookiefile" not in options
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            pass
+
+        def extract_info(self, *args, **kwargs):
+            raise RuntimeError(message)
+
+    monkeypatch.setattr(downloader, "YoutubeDL", NoRoute)
+    settings = Settings(_env_file=None, work_dir=tmp_path,
+                        youtube_download_proxy_url="http://proxy:8080")
+    with pytest.raises(downloader.MediaDownloadError):
+        downloader.download("https://youtu.be/fixture", settings)
+    message = "Sign in to confirm you're not a bot"
+    with pytest.raises(downloader.MediaDownloadError):
+        downloader.download("https://example.com/video.mp4", settings)
+    assert len(attempts) == 2
+    assert not list(tmp_path.iterdir())

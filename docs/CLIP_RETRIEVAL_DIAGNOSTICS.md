@@ -141,3 +141,39 @@ for public media or guarantees that one will solve a challenge.
 
 Upstream requirements: https://github.com/yt-dlp/yt-dlp/wiki/EJS and
 https://github.com/yt-dlp/yt-dlp/wiki/Extractors#youtube.
+
+## Optional approved download route
+
+The repaired ARM64 image at `32b94d4b3637bd9f64afeabe684de2e23a294ecc`
+still received bot challenges for both incident URLs on the OCI host. The same
+extractor version with EJS/Node downloaded `PRBwFwZC6kU` without cookies on the
+operator's local network (34.701 seconds, 3,045,004 bytes, SHA-256
+`f7ed550e6806f2d0d61a538a1478027b870a8e1979666d1c9ef90a48060eb3f0`).
+This separates missing dependencies from production-network access restrictions.
+
+`KATCHA_YOUTUBE_DOWNLOAD_PROXY_URL` optionally supplies an operator-managed HTTP(S)
+or SOCKS5 proxy origin. It is a secret setting, never a user-submitted tool
+argument. Keep credential-bearing values out of Git and chat. No route is enabled
+by default. Public direct access is attempted first. Only a YouTube sign-in
+challenge triggers one anonymous attempt through the configured route, after
+removing partial direct output. Successful provenance records `approved_route`.
+The route receives no cookie jar, even if a server session is also configured;
+when a route is configured it takes precedence over account-session fallback.
+Other platforms and unrelated errors never select this route. Route failures
+are sanitized and non-retryable until the operator checks connectivity.
+
+This option does not provision a proxy or promise that it remains reachable.
+Use a route you are authorized to operate. An operator-machine SSH relay depends
+on that machine and tunnel remaining online; a temporary diagnostic tunnel is
+not an always-on production service. Do not publish a proxy listener to the
+Internet. This capability does not establish scene identity or reuse rights.
+
+Live candidate validation: an isolated ARM64 container on the production host,
+with only these candidate source files mounted read-only and no application
+credentials/data, first received the direct YouTube challenge, then downloaded
+the incident video through a temporary loopback-only SSH SOCKS relay. It returned
+`youtube_access_mode=approved_route`, 34.701 seconds, 3,045,004 bytes, and the
+same SHA-256 above. The container, source-file mounts and temporary relay were
+removed afterward. This proves downloader recovery via that route, not installed
+worker configuration, database/library ingestion, autonomous scene verification,
+or an always-on relay. No running application service was changed by this test.

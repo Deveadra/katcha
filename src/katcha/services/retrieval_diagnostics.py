@@ -32,6 +32,8 @@ def retrieval_capabilities() -> dict:
         },
         "media_download": {
             "engine": "yt-dlp",
+            "youtube_download_route_configured": get_settings().youtube_download_proxy_url
+            is not None,
             "youtube_server_session_configured": get_settings().youtube_download_cookie_file
             is not None,
             "authentication_help": "Public videos normally need no sign-in. YouTube can "

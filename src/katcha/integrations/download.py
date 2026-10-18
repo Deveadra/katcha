@@ -38,6 +38,28 @@ class DownloadSessionConfigurationError(MediaDownloadError):
     )
 
 
+class DownloadRouteUnavailable(MediaDownloadError):
+    diagnostic_code = "youtube_download_route_unavailable"
+    diagnostic_retryable = False
+    diagnostic_recovery = (
+        "The configured download route could not acquire this video. Check route "
+        "availability before retrying, or choose another accessible approved source."
+    )
+
+
+class _PrivateRouteLogger:
+    # Proxy libraries may include credential-bearing URLs in diagnostics.
+    # Return a typed safe failure below instead of logging those raw messages.
+    def debug(self, message):
+        pass
+
+    def warning(self, message):
+        pass
+
+    def error(self, message):
+        pass
+
+
 @dataclass(slots=True)
 class DownloadedMedia:
     path: Path
@@ -126,6 +148,7 @@ def download(url: str, settings: Settings | None = None) -> DownloadedMedia:
     stage = "download"
     cookie_copy = job_dir / "server-session.cookies"
     session_attempted = False
+    route_attempted = False
     try:
         # Public videos commonly work without a login. Never expose the
         # operator-managed session unless anonymous access actually fails
@@ -134,34 +157,52 @@ def download(url: str, settings: Settings | None = None) -> DownloadedMedia:
             with YoutubeDL(options) as ydl:
                 info = ydl.extract_info(canonical, download=True)
         except Exception as first_error:
-            if (
-                platform != "youtube"
-                or settings.youtube_download_cookie_file is None
-                or not _is_youtube_auth_challenge(first_error)
-            ):
+            if platform != "youtube" or not _is_youtube_auth_challenge(first_error):
                 raise
-
-            # A failed extractor may leave fragments or partial outputs.
-            # Retry in a clean private directory, not against those files.
-            shutil.rmtree(job_dir)
-            job_dir.mkdir(mode=0o700)
-            stage = "download authentication configuration"
-            try:
-                # yt-dlp may rewrite cookies on exit; isolate every job from
-                # the read-only operator secret and other concurrent jobs.
-                fd = os.open(cookie_copy, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-                os.close(fd)
-                shutil.copyfile(settings.youtube_download_cookie_file, cookie_copy)
-            except OSError:
-                raise DownloadSessionConfigurationError(
-                    stage,
-                    RuntimeError("The configured server session file could not be loaded"),
-                ) from None
-            options["cookiefile"] = str(cookie_copy)
-            session_attempted = True
-            stage = "download"
-            with YoutubeDL(options) as ydl:
-                info = ydl.extract_info(canonical, download=True)
+            proxy = settings.youtube_download_proxy_url
+            if proxy is not None:
+                # An operator-approved route is an anonymous alternative. Never
+                # send an account session to it or retry with more identities.
+                shutil.rmtree(job_dir)
+                job_dir.mkdir(mode=0o700)
+                route_attempted = True
+                route_options = {
+                    **options, "proxy": proxy.get_secret_value(),
+                    "logger": _PrivateRouteLogger(),
+                }
+                try:
+                    with YoutubeDL(route_options) as ydl:
+                        info = ydl.extract_info(canonical, download=True)
+                except Exception as route_error:
+                    if _is_youtube_auth_challenge(route_error):
+                        raise DownloadAuthenticationRequired(
+                            "download", RuntimeError("YouTube challenged the configured route")
+                        ) from None
+                    raise DownloadRouteUnavailable(
+                        "download", RuntimeError("The configured download route failed")
+                    ) from None
+            else:
+                if settings.youtube_download_cookie_file is None:
+                    raise
+                # A failed extractor may leave fragments or partial outputs.
+                shutil.rmtree(job_dir)
+                job_dir.mkdir(mode=0o700)
+                stage = "download authentication configuration"
+                try:
+                    # yt-dlp may rewrite cookies on exit; isolate every job.
+                    fd = os.open(cookie_copy, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+                    os.close(fd)
+                    shutil.copyfile(settings.youtube_download_cookie_file, cookie_copy)
+                except OSError:
+                    raise DownloadSessionConfigurationError(
+                        stage,
+                        RuntimeError("The configured server session file could not be loaded"),
+                    ) from None
+                options["cookiefile"] = str(cookie_copy)
+                session_attempted = True
+                stage = "download"
+                with YoutubeDL(options) as ydl:
+                    info = ydl.extract_info(canonical, download=True)
 
         stage = "download output"
         candidates = [
@@ -199,14 +240,18 @@ def download(url: str, settings: Settings | None = None) -> DownloadedMedia:
             canonical_url=canonical,
             source_metadata={
                 **{k: v for k, v in safe_info.items() if v is not None},
-                **({"youtube_access_mode": "session_fallback" if session_attempted else "public"}
+                **({"youtube_access_mode": "approved_route" if route_attempted
+                    else "session_fallback" if session_attempted else "public"}
                    if platform == "youtube" else {}),
             },
             media_metadata=probe,
         )
     except Exception as exc:
         shutil.rmtree(job_dir, ignore_errors=True)
-        if isinstance(exc, DownloadSessionConfigurationError):
+        if isinstance(exc, (
+            DownloadSessionConfigurationError, DownloadRouteUnavailable,
+            DownloadAuthenticationRequired,
+        )):
             raise
         message = str(exc).casefold()
         if platform == "youtube" and session_attempted and (
