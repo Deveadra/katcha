@@ -59,7 +59,8 @@ async def test_ingest_saves_cause_instead_of_temporal_wrapper(monkeypatch):
 async def test_preparation_requires_clip_and_preserves_diagnostics(monkeypatch, mode):
     prepared = {
         "prepared": [
-            {"source_id": "media-source", "candidate_id": "candidate", "workflow_id": "ingest-1"}
+            {"source_id": "media-source", "candidate_id": "candidate",
+             "source_route": "press.example.org", "workflow_id": "ingest-1"}
         ],
         "skipped": False,
     }
@@ -81,9 +82,17 @@ async def test_preparation_requires_clip_and_preserves_diagnostics(monkeypatch, 
     entry = result["ingests"][0]
     assert entry["source_item_id"] == "media-source"
     assert entry["candidate_id"] == "candidate"
+    assert entry["source_route"] == "press.example.org"
     assert entry["success"] == (mode == "acquired")
     assert result["status"] == ("completed" if mode == "acquired" else "failed")
     assert result["scene_verified"] is False
+    lifecycle = activities.await_args_list[-1].kwargs["args"][3]
+    assert lifecycle["ingest_attempts"][0]["candidate_id"] == "candidate"
+    assert lifecycle["ingest_attempts"][0]["source_route"] == "press.example.org"
+    assert lifecycle["ingest_attempts"][0]["workflow_id"] == "ingest-1"
+    assert lifecycle["ingest_attempts"][0]["success"] == (mode == "acquired")
+    if mode == "acquired":
+        assert lifecycle["ingest_attempts"][0]["clip_id"] == "clip"
     if mode == "failure":
         assert "HTTP 403" in entry["error"]
         assert "hidden" not in str(entry)

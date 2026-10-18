@@ -4,6 +4,7 @@ import re
 import uuid
 from datetime import UTC, datetime
 from typing import Any
+from urllib.parse import urlsplit
 
 from sqlalchemy import select
 from temporalio import activity
@@ -475,6 +476,74 @@ def _matches_command_media(
     return not trailers_only or bool(re.search(r"\b(trailer|teaser)\b", title, re.I))
 
 
+def _command_source_route(platform: str, source_url: str) -> str:
+    """Group equivalent discovery hosts without trusting their metadata as verification."""
+    try:
+        hostname = (urlsplit(source_url).hostname or "").lower().removeprefix("www.")
+    except ValueError:
+        hostname = ""
+    if hostname in {"youtube.com", "youtu.be", "youtube-nocookie.com"} or (
+        hostname.endswith(".youtube.com") or hostname.endswith(".youtu.be")
+    ):
+        return "youtube"
+    # An untrusted platform label must not replace a concrete host identity.
+    # Distinct publisher sites should remain independent alternatives.
+    return hostname or ("platform:" + platform.casefold().strip() if platform else "unknown")
+
+
+def select_command_media_candidates(
+    candidate_rows: list[tuple[uuid.UUID, str, dict[str, object], str, str]],
+    match_terms: list[str],
+    *,
+    trailers_only: bool,
+    max_candidates: int,
+) -> tuple[list[tuple[uuid.UUID, str]], dict[str, object]]:
+    """Try diverse acquisition routes before spending the limited budget on repeats.
+
+    All candidates still pass through existing promotion, channel, and rights checks;
+    this changes selection only and never treats a title as verified video evidence.
+    """
+    matched = [
+        (candidate_id, _command_source_route(platform, source_url))
+        for candidate_id, title, metadata, platform, source_url in candidate_rows
+        if _matches_command_media(
+            title, metadata, match_terms, trailers_only=trailers_only
+        )
+    ]
+    matched = list(dict.fromkeys(matched))
+    selected: list[tuple[uuid.UUID, str]] = []
+    selected_ids: set[uuid.UUID] = set()
+    seen_routes: set[str] = set()
+    limit = max(1, min(int(max_candidates), 20))
+
+    # First pass: one distinct source route per slot, preserving observed order.
+    for candidate_id, route in matched:
+        if route in seen_routes or candidate_id in selected_ids:
+            continue
+        selected.append((candidate_id, route))
+        selected_ids.add(candidate_id)
+        seen_routes.add(route)
+        if len(selected) == limit:
+            break
+
+    # Fill unused slots with additional candidates from already selected routes.
+    for candidate_id, route in matched:
+        if len(selected) == limit:
+            break
+        if candidate_id not in selected_ids:
+            selected.append((candidate_id, route))
+            selected_ids.add(candidate_id)
+
+    return selected, {
+        "matching_candidate_count": len({candidate_id for candidate_id, _ in matched}),
+        "selected_candidate_count": len(selected),
+        "distinct_selected_routes": len({route for _, route in selected}),
+        "diversified": [candidate_id for candidate_id, _ in selected] != [
+            candidate_id for candidate_id, _ in matched[:limit]
+        ],
+    }
+
+
 @activity.defn
 def prepare_command_discovery_candidates_activity(
     run_id: str,
@@ -508,6 +577,8 @@ def prepare_command_discovery_candidates_activity(
                 str(candidate.title or ""),
                 str(candidate.creator or ""),
                 dict(candidate.candidate_metadata or {}),
+                str(candidate.platform or ""),
+                str(candidate.source_url or ""),
             )
             for candidate in session.scalars(
                 select(DiscoveryCandidate)
@@ -524,20 +595,20 @@ def prepare_command_discovery_candidates_activity(
             )
         ]
 
-    candidate_ids: list[uuid.UUID] = []
-    for candidate_id, title, _creator, metadata in candidate_rows:
-        if not _matches_command_media(
-            title, metadata, match_terms, trailers_only=trailers_only,
-        ):
-            continue
-        if candidate_id not in candidate_ids:
-            candidate_ids.append(candidate_id)
-        if len(candidate_ids) >= max_candidates:
-            break
+    selected, selection = select_command_media_candidates(
+        [
+            (candidate_id, title, metadata, platform, source_url)
+            for candidate_id, title, _creator, metadata, platform, source_url
+            in candidate_rows
+        ],
+        match_terms,
+        trailers_only=trailers_only,
+        max_candidates=max_candidates,
+    )
 
     prepared: list[dict[str, object]] = []
     errors: list[dict[str, str]] = []
-    for candidate_id in candidate_ids:
+    for candidate_id, route in selected:
         try:
             source = promote_discovery_candidate(
                 candidate_id,
@@ -547,6 +618,7 @@ def prepare_command_discovery_candidates_activity(
             prepared.append(
                 {
                     "candidate_id": str(candidate_id),
+                    "source_route": route,
                     "source_id": str(source.id),  # compatibility for existing histories
                     "source_item_id": str(source.id),
                     "source_status": source.status,
@@ -559,7 +631,8 @@ def prepare_command_discovery_candidates_activity(
             errors.append(
                 {
                     "candidate_id": str(candidate_id),
-                    "error": str(exc)[:1000],
+                    "source_route": route,
+                    "error": safe_failure_text(str(exc))[:1000],
                 }
             )
 
@@ -569,6 +642,7 @@ def prepare_command_discovery_candidates_activity(
         "errors": errors,
         "skipped": False,
         "match_terms": match_terms,
+        "selection": selection,
     }
 
 
