@@ -277,7 +277,7 @@ async def _run_scheduled_trend_activation_cycle(
 
     try:
         refreshed = await workflow.execute_activity(
-            "refresh_channel_trends_activity",
+            "refresh_scheduled_channel_trends_activity",
             args=[channel_profile_id, run_key],
             task_queue=TREND_TASK_QUEUE,
             start_to_close_timeout=timedelta(minutes=5),
@@ -295,7 +295,7 @@ async def _run_scheduled_trend_activation_cycle(
         else:
             allowed = {
                 "completed", "awaiting_configuration",
-                "withheld_source_coverage",
+                "withheld_source_coverage", "planning_disabled",
             }
             status = refreshed.get("status", "completed")
             receipt = {
