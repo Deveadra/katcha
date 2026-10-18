@@ -45,8 +45,8 @@ const clips = [
         platform: "reddit",
         candidate_score: 86.4,
         channels: [{ id: channelA, name: "RankSnaxx" }],
-        active_reference_count: 0,
-        reference_count: 0,
+        active_reference_count: 3,
+        reference_count: 3,
     },
     {
         id: clipB,
@@ -327,6 +327,10 @@ const clips = [
                     detail: "Confirmed terminal; media still protected by other work.",
                 });
             }
+            if (url.pathname === `/v1/clips/${clipB}/references` &&
+                request.method() === "GET") {
+                return json({clip_id: clipB, active: [], active_count: 0});
+            }
             if (url.pathname === `/v1/clips/${clipA}/references` &&
                 request.method() === "GET") {
                 if (failDependencyLookupOnce) {
@@ -448,6 +452,16 @@ const clips = [
         assert.equal(await page.locator("#count-hot").innerText(), "2");
         assert.match(await page.locator(".clip-library-head").innerText(), /Source media, in context/);
         assert.equal(await page.locator("[data-clip-detail-tab]").count(), 4);
+        assert.match(await page.locator(`[data-clip-id="${clipA}"]`).innerText(), /IN USE · 3/);
+        await page.locator("#clip-work-references .clip-work-reference").first().waitFor();
+        assert.equal(await page.locator(".clip-work-reference").count(), 3);
+        assert.match(await page.locator("#clip-work-references").innerText(), /Ranked episode for Friday/);
+        assert.match(await page.locator("#clip-work-references").innerText(), /Autumn compilation/);
+        assert.equal(
+            await page.locator(".clip-work-reference a").first().getAttribute("href"),
+            `/channels?channel=${channelA}&production=${productionId}#content`,
+        );
+        assert.equal(await page.locator('[data-manage-work]').count(), 1);
         assert.equal(
             await page.locator('[data-clip-detail-tab="overview"]').getAttribute("aria-selected"),
             "true",
@@ -469,6 +483,7 @@ const clips = [
         await page.waitForTimeout(350);
 
         await page.locator(`[data-clip-id="${clipB}"]`).click();
+        await page.getByText("No unfinished productions depend on this clip.").waitFor();
         const retryAnalysis = page.getByRole("button", { name: "Retry analysis", exact: true });
         await retryAnalysis.waitFor();
         assert.match(await page.locator("#clip-detail").innerText(), /Fixture model analysis failed/);
