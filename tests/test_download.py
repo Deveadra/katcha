@@ -419,6 +419,6 @@ def test_configured_route_is_not_used_for_other_errors_or_platforms(tmp_path, mo
         downloader.download("https://youtu.be/fixture", settings)
     message = "Sign in to confirm you're not a bot"
     with pytest.raises(downloader.MediaDownloadError):
-        downloader.download("https://example.com/video.mp4", settings)
+        downloader.download("https://example.com/watch?v=fixture", settings)
     assert len(attempts) == 2
     assert not list(tmp_path.iterdir())
