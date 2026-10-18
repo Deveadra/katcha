@@ -37,6 +37,8 @@ from katcha.services.packaging_seed import seed_channel_packaging
 from katcha.services.reach_cadence import eligible_reach_connection, reach_sync_identity
 from katcha.services.trend_activation_performance import refresh_activation_performance
 from katcha.services.trend_auto_activation import run_autonomous_trend_activation
+from katcha.services.trend_editorial_dispatch import dispatch_planned_trend_editorial
+from katcha.trend_activation_models import TrendActivationRun
 
 
 @activity.defn
@@ -261,15 +263,31 @@ def run_clip_lifecycle_maintenance_activity(
 
 
 @activity.defn
-def run_channel_trend_activation_activity(
+async def run_channel_trend_activation_activity(
     channel_profile_id: str,
     run_key: str,
 ) -> dict[str, object]:
-    summary = run_autonomous_trend_activation(
-        uuid.UUID(channel_profile_id),
-        run_key=run_key,
-    )
-    return summary.as_dict()
+    channel_id = uuid.UUID(channel_profile_id)
+    summary = run_autonomous_trend_activation(channel_id, run_key=run_key)
+    try:
+        dispatch = await dispatch_planned_trend_editorial(channel_id)
+    except Exception:
+        # Do not discard a completed deterministic activation run if the
+        # optional editorial dispatcher or its dependencies are unavailable.
+        dispatch = {
+            "status": "blocked",
+            "reason": "editorial_dispatch_unavailable",
+            "started": [],
+            "failed": [],
+        }
+    with session_scope() as session:
+        row = session.get(TrendActivationRun, summary.run_id)
+        if row is not None:
+            row.run_metadata = {
+                **dict(row.run_metadata or {}),
+                "editorial_dispatch": dispatch,
+            }
+    return {**summary.as_dict(), "editorial_dispatch": dispatch}
 
 
 @activity.defn
