@@ -136,29 +136,34 @@ class SeekableObjectReader(io.RawIOBase):
         count = min(READ_AHEAD_BYTES, self.size - self.position)
         if size > 0:
             count = min(size, count)
-        if not (self.window_start <= self.position < self.window_start + len(self.window)):
-            start = self.position
-            end = min(self.size - 1, start + READ_AHEAD_BYTES - 1)
-            response = self.store.client.get_object(
-                Bucket=self.store.settings.s3_bucket,
-                Key=self.key,
-                Range=f"bytes={start}-{end}",
-            )
-            expected_range = f"bytes {start}-{end}/{self.size}"
-            body = response["Body"]
-            try:
-                if response.get("ContentRange") != expected_range:
-                    raise ValueError("Object store ignored the requested media range")
-                self.window = body.read(READ_AHEAD_BYTES + 1)
-            finally:
-                body.close()
-            if len(self.window) != end - start + 1:
-                raise ValueError("Incomplete range read while inspecting the media")
-            self.window_start = start
-        within = self.position - self.window_start
-        payload = self.window[within : within + count]
-        self.position += len(payload)
-        return payload
+        result = bytearray()
+        while len(result) < count:
+            if not (self.window_start <= self.position < self.window_start + len(self.window)):
+                start = self.position
+                end = min(self.size - 1, start + READ_AHEAD_BYTES - 1)
+                response = self.store.client.get_object(
+                    Bucket=self.store.settings.s3_bucket,
+                    Key=self.key,
+                    Range=f"bytes={start}-{end}",
+                )
+                expected_range = f"bytes {start}-{end}/{self.size}"
+                body = response["Body"]
+                try:
+                    if response.get("ContentRange") != expected_range:
+                        raise ValueError("Object store ignored the requested media range")
+                    self.window = body.read(READ_AHEAD_BYTES + 1)
+                finally:
+                    body.close()
+                if len(self.window) != end - start + 1:
+                    raise ValueError("Incomplete range read while inspecting the media")
+                self.window_start = start
+            within = self.position - self.window_start
+            payload = self.window[within : within + count - len(result)]
+            if not payload:
+                raise ValueError("Incomplete seekable media read")
+            result.extend(payload)
+            self.position += len(payload)
+        return bytes(result)
 
 
 def inspect_stored_media(store: ObjectStore, key: str, size: int) -> dict[str, object]:
