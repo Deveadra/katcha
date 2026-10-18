@@ -141,8 +141,12 @@ def _ingest_source(source_id: str) -> dict[str, str | bool]:
                 raise RuntimeError(f"source disappeared during ingest: {source_id}")
             source.clip_id = clip.id
             source.status = SourceStatus.READY.value
-            source.title = media.title
-            source.creator = media.creator
+            # Direct publisher files usually have no extractor title/creator.
+            # Preserve the candidate's existing editorial provenance instead.
+            if media.title is not None:
+                source.title = media.title
+            if media.creator is not None:
+                source.creator = media.creator
             source.platform = media.platform
             source.canonical_url = media.canonical_url
             # Provider metadata must not erase (or replace) Katcha's channel and
