@@ -236,8 +236,17 @@ async def read_goal(http_request: Request, goal_id: uuid.UUID) -> dict:
             response = snapshot(goal)
             response["workflow_status_unverified"] = True
             response["diagnostic"] = workflow_diagnostic(
-                goal, code="goal_workflow_status_unverified",
-                stage="workflow_status", error_type=type(exc).__name__,
+                goal,
+                code=(
+                    "goal_dispatch_unavailable"
+                    if response.get("dispatch_pending")
+                    else "goal_workflow_status_unverified"
+                ),
+                stage=(
+                    "workflow_dispatch" if response.get("dispatch_pending")
+                    else "workflow_status"
+                ),
+                error_type=type(exc).__name__,
             )
             return response
         if description.status in {
