@@ -5,6 +5,7 @@ import uuid
 from temporalio import activity
 
 from katcha.config import get_settings
+from katcha.services.trend_auto_activation import active_activation_policy
 from katcha.services.trend_calibration import refresh_trend_calibration
 from katcha.services.trend_source_reliability import (
     channel_trend_source_health,
@@ -41,6 +42,23 @@ def refresh_channel_trends_activity(
         "status": result.get("status", "completed"),
         "source_health": health,
     }
+
+
+@activity.defn
+def refresh_scheduled_channel_trends_activity(
+    channel_profile_id: str,
+    run_key: str,
+) -> dict[str, object]:
+    """Score existing trend signals only while channel planning is enabled."""
+    policy = active_activation_policy(uuid.UUID(channel_profile_id))
+    if policy is None or not policy.enabled:
+        return {
+            "status": "planning_disabled",
+            "topics_scored": 0,
+            "qualified_opportunities": 0,
+            "evidence_packets_built": 0,
+        }
+    return refresh_channel_trends_activity(channel_profile_id, run_key)
 
 
 @activity.defn
