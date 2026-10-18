@@ -3,6 +3,8 @@ from __future__ import annotations
 import logging
 import shutil
 import uuid
+from contextlib import suppress
+from urllib.parse import urlsplit
 from decimal import Decimal
 from pathlib import Path
 
@@ -13,7 +15,13 @@ from temporalio.exceptions import ApplicationError
 
 from katcha.db import session_scope
 from katcha.domain import ClipStatus, SourceStatus
-from katcha.integrations.download import download
+from katcha.integrations.direct_media import is_direct_media_url, stream_direct_media
+from katcha.integrations.download import canonicalize_url, detect_platform, download
+from katcha.integrations.object_streaming import (
+    MultipartObjectWriter,
+    inspect_stored_media,
+    verify_stored_sha256,
+)
 from katcha.integrations.storage import ObjectStore
 from katcha.models import Clip, DomainEvent, SourceItem
 from katcha.orchestration.failure_details import MediaPreparationError, failure_details
@@ -87,6 +95,10 @@ def _ingest_source(source_id: str) -> dict[str, str | bool]:
         source.status = SourceStatus.INGESTING.value
         source.error = None
         source_url = source.source_url
+
+    canonical = canonicalize_url(source_url)
+    if detect_platform(canonical) == "generic" and is_direct_media_url(canonical):
+        return _ingest_direct_source(source_uuid, canonical)
 
     media = download(source_url)
     stage = "object storage setup"
@@ -178,6 +190,110 @@ def _ingest_source(source_id: str) -> dict[str, str | bool]:
         raise MediaPreparationError(stage, exc) from exc
     finally:
         shutil.rmtree(Path(media.path).parent, ignore_errors=True)
+
+
+def _ingest_direct_source(source_uuid: uuid.UUID, canonical: str) -> dict[str, str | bool]:
+    """Stream eligible publisher media to R2, then inspect and persist its real bytes."""
+    stage = "direct object storage setup"
+    store = ObjectStore()
+    stage_key = ""
+    writer: MultipartObjectWriter | None = None
+    try:
+        store.ensure_bucket()
+        extension = urlsplit(canonical).path.rsplit(".", 1)[-1].lower()
+        stage_key = f"staging/direct/{source_uuid}/{uuid.uuid4().hex}.{extension}"
+        stage = "direct HTTPS multipart acquisition"
+        writer = MultipartObjectWriter(store, stage_key, content_type="video/" + extension)
+        transferred = stream_direct_media(canonical, writer.write)
+        writer.finish()
+
+        stage = "stored media SHA-256 verification"
+        verify_stored_sha256(store, stage_key, transferred.sha256, transferred.size_bytes)
+        stage = "stored media video inspection"
+        metadata = inspect_stored_media(store, stage_key, transferred.size_bytes)
+        duration, width, height = _extract_video_shape(metadata)
+
+        stage = "clip deduplication lookup"
+        with session_scope() as session:
+            existing = session.scalar(select(Clip).where(Clip.sha256 == transferred.sha256))
+            deduped = existing is not None
+            storage_key = existing.storage_key if existing else store.raw_key(
+                transferred.sha256, transferred.extension
+            )
+
+        stage = "content-addressed object reconciliation"
+        if not deduped and not store.exists(storage_key):
+            store.move(stage_key, storage_key)
+
+        stage = "direct clip persistence"
+        with session_scope() as session:
+            stmt = (
+                pg_insert(Clip)
+                .values(
+                    sha256=transferred.sha256,
+                    storage_key=storage_key,
+                    extension=transferred.extension,
+                    size_bytes=transferred.size_bytes,
+                    duration_seconds=duration,
+                    width=width,
+                    height=height,
+                    status=ClipStatus.INGESTED.value,
+                    media_metadata=metadata,
+                )
+                .on_conflict_do_nothing(index_elements=[Clip.sha256])
+                .returning(Clip.id)
+            )
+            new_id = session.execute(stmt).scalar_one_or_none()
+            if new_id is None:
+                clip = session.scalar(select(Clip).where(Clip.sha256 == transferred.sha256))
+                if clip is None:
+                    raise RuntimeError("Direct clip reconciliation failed after SHA conflict")
+                deduped = True
+            else:
+                clip = session.get(Clip, new_id)
+                if clip is None:
+                    raise RuntimeError("New direct clip was not persisted")
+
+            source = session.get(SourceItem, source_uuid)
+            if source is None:
+                raise RuntimeError("Direct source disappeared during ingestion")
+            source.clip_id = clip.id
+            source.status = SourceStatus.READY.value
+            source.platform = "generic"
+            source.canonical_url = canonical
+            source.error = None
+            source.source_metadata = {
+                **dict(source.source_metadata or {}),
+                "acquisition_transport": "pinned_https_r2_multipart",
+                "direct_media_host": transferred.final_host,
+                "direct_media_redirects": transferred.redirects,
+                "direct_media_content_type": transferred.content_type,
+            }
+            source.source_metadata.pop("ingestion_diagnostic", None)
+            session.add(
+                DomainEvent(
+                    aggregate_type="source",
+                    aggregate_id=str(source.id),
+                    event_type="source.ingested",
+                    payload={
+                        "source_id": str(source.id),
+                        "clip_id": str(clip.id),
+                        "sha256": clip.sha256,
+                        "deduped": deduped,
+                        "acquisition_transport": "pinned_https_r2_multipart",
+                    },
+                )
+            )
+            return {"source_id": str(source.id), "clip_id": str(clip.id), "deduped": deduped}
+    except Exception as exc:
+        raise MediaPreparationError(stage, exc) from exc
+    finally:
+        if writer is not None:
+            writer.abort()
+        if stage_key:
+            with suppress(Exception):
+                if store.exists(stage_key):
+                    store.delete(stage_key)
 
 
 @activity.defn
