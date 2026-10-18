@@ -1220,6 +1220,21 @@ const analytics = [
     assert.equal(writes.length, 1);
     assert.equal(writes[0].body.interval_hours, 3);
     assert.equal(channelSchedules["channel-1"].runtime_verified, false);
+    channelSchedules["channel-1"].scan_health = "scan_overdue";
+    channelSchedules["channel-1"].scan_overdue = true;
+    channelSchedules["channel-1"].last_scheduled_scan_started_at = "2026-10-18T08:00:00Z";
+    channelSchedules["channel-1"].last_scheduled_scan_status = "completed";
+    await page.locator("#refresh-trend-automation").click();
+    await page.waitForFunction(() => document.querySelector("#trend-schedule-status")
+        .textContent.includes("OVERDUE: no new scheduled scan"));
+    assert.match(await page.locator("#trend-schedule-status").innerText(),
+        /Latest scheduled scan:.*Completed/);
+    assert.match(await page.locator("#trend-schedule-status").innerText(),
+        /not current worker availability/);
+    channelSchedules["channel-1"].scan_health = null;
+    channelSchedules["channel-1"].scan_overdue = false;
+    channelSchedules["channel-1"].last_scheduled_scan_started_at = null;
+    channelSchedules["channel-1"].last_scheduled_scan_status = null;
     assert.equal(await page.locator("#save-trend-automation").isEnabled(), true,
         "schedule registration must not lock subsequent policy changes");
 
