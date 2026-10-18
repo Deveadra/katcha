@@ -53,8 +53,10 @@ class FakeOci:
         self.primary = {"lifecycle-state": "RUNNING"}
         self.terminated = []
         self.boot_inventory = [{"id": "ocid1.bootvolume.test", "lifecycle-state": "AVAILABLE"}]
+        self.calls = []
 
     def read(self, *args):
+        self.calls.append(args)
         key = args[:3]
         if key == ("compute", "instance", "get"):
             return self.primary if args[-1] == "ocid1.instance.primary" else self.candidate
@@ -192,7 +194,8 @@ def test_launch_command_contains_only_isolated_probe_inputs(tmp_path):
 
 
 def test_verify_confirms_running_private_diskless_candidate_and_primary():
-    result = probe.verify(FakeOci(), plan(), "ocid1.instance.candidate")
+    oci = FakeOci()
+    result = probe.verify(oci, plan(), "ocid1.instance.candidate")
     assert result == {
         "status": "ISOLATED_INSTANCE_VERIFIED",
         "instance_id": "ocid1.instance.candidate",
@@ -203,6 +206,10 @@ def test_verify_confirms_running_private_diskless_candidate_and_primary():
         "vault_candidate_tag": False,
         "recovery_enabled": False,
     }
+    boot_query = next(
+        call for call in oci.calls if call[:3] == ("compute", "boot-volume-attachment", "list")
+    )
+    assert boot_query[boot_query.index("--availability-domain") + 1] == "TEST:AD-3"
 
 
 @pytest.mark.parametrize(
@@ -284,6 +291,15 @@ def test_cleanup_removes_only_exact_tagged_test_instance_and_new_boot():
     assert result["status"] == "TEST_RESOURCES_REMOVED"
     assert result["test_boot_volume_removed"] is True
     assert result["primary_running"] is True
+    boot_queries = [
+        call for call in oci.calls
+        if call[:3] == ("compute", "boot-volume-attachment", "list")
+    ]
+    assert len(boot_queries) == 2
+    assert all(
+        call[call.index("--availability-domain") + 1] == "TEST:AD-3"
+        for call in boot_queries
+    )
 
 
 def test_cleanup_rejects_name_tag_mismatch_before_mutation():

@@ -525,6 +525,24 @@ def launch_args(plan: dict[str, Any], key_path: Path, probe_id: str) -> list[str
     ]
 
 
+def boot_volume_attachment_args(
+    compartment_id: str, instance_id: str, availability_domain: str
+) -> list[str]:
+    """OCI requires the AD when listing boot-volume attachments."""
+    return [
+        "compute",
+        "boot-volume-attachment",
+        "list",
+        "--compartment-id",
+        compartment_id,
+        "--instance-id",
+        instance_id,
+        "--availability-domain",
+        availability_domain,
+        "--all",
+    ]
+
+
 def verify(
     oci: Oci,
     plan: dict[str, Any],
@@ -569,16 +587,9 @@ def verify(
     if any(_active(row) for row in attachments):
         raise ProbeError("candidate unexpectedly has a data volume")
     boot_attachments = _rows(
-        oci.read(
-            "compute",
-            "boot-volume-attachment",
-            "list",
-            "--compartment-id",
-            plan["compartment_id"],
-            "--instance-id",
-            instance_id,
-            "--all",
-        ),
+        oci.read(*boot_volume_attachment_args(
+            plan["compartment_id"], instance_id, plan["availability_domain"],
+        )),
         "boot volume attachment",
     )
     active_boot = [row for row in boot_attachments if _active(row)]
@@ -740,16 +751,9 @@ def cleanup(
     ):
         raise ProbeError("cleanup refused: instance identity is not the exact probe")
     boots = _rows(
-        oci.read(
-            "compute",
-            "boot-volume-attachment",
-            "list",
-            "--compartment-id",
-            plan["compartment_id"],
-            "--instance-id",
-            instance_id,
-            "--all",
-        ),
+        oci.read(*boot_volume_attachment_args(
+            plan["compartment_id"], instance_id, plan["availability_domain"],
+        )),
         "boot volume attachment",
     )
     attached = [row for row in boots if _active(row)]
