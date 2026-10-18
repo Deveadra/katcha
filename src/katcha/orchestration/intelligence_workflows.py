@@ -245,7 +245,7 @@ class ChannelIntelligenceScheduleWorkflow:
 async def _run_trend_activation(
     channel_profile_id: str,
     run_key: str,
-    trend_refresh: dict[str, object] | None = None,
+    trend_refresh: dict[str, Any] | None = None,
 ) -> dict[str, object]:
     retry = RetryPolicy(
         initial_interval=timedelta(seconds=5),
