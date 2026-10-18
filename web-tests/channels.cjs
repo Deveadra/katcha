@@ -1168,18 +1168,6 @@ const analytics = [
     await page.locator("#refresh-trend-automation").click();
     await page.waitForFunction(() => document.querySelector("#trend-automation-message")
         .textContent.includes("Policy v5"));
-    // Switching channels must not leak another channel's saved spending permission.
-    await page.locator("#channel").selectOption("channel-2");
-    await page.waitForFunction(() => document.querySelector("#trend-automation-badge")
-        .textContent === "Not configured");
-    assert.equal(await page.locator("#trend-editorial-enabled").isChecked(), false);
-    assert.match(await page.locator("#trend-automation-runs").innerText(), /No autonomous trend scans/);
-    assert.equal(requests.filter((row) =>
-        row.path === "/v1/channels/channel-2/trends/activation-policy" &&
-        row.method === "POST").length, 0);
-    await page.locator("#channel").selectOption("channel-1");
-    await page.waitForFunction(() => document.querySelector("#trend-automation-badge")
-        .textContent === "Editorial authorized");
     await page.locator('[data-channel-tab="overview"]').click();
 
     assert.equal(await page.locator("#elevenlabs-state").innerText(), "CONNECTED");
@@ -1368,6 +1356,18 @@ const analytics = [
     await page.getByText(/Channel added to Katcha and selected/).waitFor();
     assert.equal(await page.locator("#channel").inputValue(), "channel-2");
     assert.match(await page.locator("#channel").innerText(), /Fixture News/);
+    // Channel isolation after OAuth has made the second profile selectable.
+    await page.waitForFunction(() => document.querySelector("#trend-automation-badge")
+        .textContent === "Not configured");
+    assert.equal(await page.locator("#trend-editorial-enabled").isChecked(), false);
+    assert.match(await page.locator("#trend-automation-runs").innerText(), /No autonomous trend scans/);
+    assert.equal(requests.filter((row) =>
+        row.path === "/v1/channels/channel-2/trends/activation-policy" &&
+        row.method === "POST").length, 0);
+    await page.locator("#channel").selectOption("channel-1");
+    await page.waitForFunction(() => document.querySelector("#trend-automation-badge")
+        .textContent === "Editorial authorized");
+
     assert(
         requests.some(
             (request) =>
