@@ -336,63 +336,7 @@ body[data-katcha-page="trends"] .explorer {
         min-width: 340px;
     }
 
-    body[data-katcha-page="trends"] {
-        overflow: hidden;
-    }
 
-    body[data-katcha-page="trends"] .app-shell,
-    body[data-katcha-page="trends"] main {
-        height: 100dvh;
-        min-height: 0;
-        overflow: hidden;
-    }
-
-    body[data-katcha-page="trends"] .main-content {
-        height: calc(100dvh - 60px);
-        overflow: hidden;
-    }
-
-    body[data-katcha-page="trends"] .explorer {
-        height: 100%;
-        grid-template-rows: auto auto auto minmax(0, 1fr) auto;
-        min-height: 0;
-    }
-
-    body[data-katcha-page="trends"] .workspace-grid {
-        min-height: 0;
-    }
-
-    body[data-katcha-page="trends"] .learning-drawer,
-    body[data-katcha-page="trends"] .workspace-help {
-        position: absolute;
-        bottom: 0;
-    }
-
-    body[data-katcha-page="trends"] .learning-drawer {
-        left: 0;
-    }
-
-    body[data-katcha-page="trends"] .workspace-help {
-        left: 230px;
-    }
-
-    body[data-katcha-page="trends"] .learning-drawer[open],
-    body[data-katcha-page="trends"] .workspace-help[open] {
-        max-height: 45vh;
-        overflow: auto;
-        background: rgba(16, 18, 29, 0.98) !important;
-        box-shadow: var(--ae-shadow-overlay);
-        z-index: 60;
-    }
-
-    body[data-katcha-page="trends"] .learning-drawer[open] {
-        width: min(430px, calc(42% - 12px));
-        min-width: 320px;
-    }
-
-    body[data-katcha-page="trends"] .workspace-help[open] {
-        width: min(520px, calc(100% - 250px));
-    }
 }
 
 @media (max-width: 1000px) {
@@ -587,37 +531,114 @@ body[data-katcha-page="trends"] .trends-support-strip details[open] {
     box-shadow: var(--ae-shadow-panel);
 }
 
-@media (min-width: 1001px) {
-    body[data-katcha-page="trends"] {
-        overflow: hidden;
-    }
 
-    body[data-katcha-page="trends"] .app-shell,
-    body[data-katcha-page="trends"] main {
-        height: 100dvh;
-        min-height: 0;
-        overflow: hidden;
-    }
-
-    body[data-katcha-page="trends"] .main-content {
-        height: calc(100dvh - 60px);
-        min-height: 0;
-        overflow: hidden;
-    }
-
-    body[data-katcha-page="trends"] .explorer {
-        height: 100%;
-        grid-template-rows: auto auto auto auto minmax(0, 1fr) auto;
-        min-height: 0;
-    }
-
-    body[data-katcha-page="trends"] .workspace-grid {
-        min-height: 0;
-    }
-}
 
 @media (max-width: 700px) {
     .trends-support-strip {
         grid-template-columns: 1fr;
+    }
+}
+
+/* Allow normal page scrolling. Previously two desktop media queries locked the
+   body, shell and main content to 100dvh and silently clipped controls. */
+body[data-katcha-page="trends"] {
+    height: auto;
+    min-height: 100dvh;
+    overflow-y: auto;
+}
+body[data-katcha-page="trends"] .app-shell,
+body[data-katcha-page="trends"] main,
+body[data-katcha-page="trends"] .main-content,
+body[data-katcha-page="trends"] .explorer {
+    height: auto;
+    max-height: none;
+    overflow: visible;
+}
+body[data-katcha-page="trends"] .explorer {
+    display: grid;
+    grid-template-rows: none;
+    align-content: start;
+    gap: 14px;
+}
+body[data-katcha-page="trends"] .workspace-grid {
+    min-height: 360px;
+    align-items: start;
+}
+body[data-katcha-page="trends"] .workspace-grid > .list-panel,
+body[data-katcha-page="trends"] .workspace-grid > .detail-panel {
+    max-height: min(72vh, 760px);
+    min-height: 340px;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+}
+body[data-katcha-page="trends"] .board-toolbar {
+    flex-wrap: wrap;
+    gap: 12px;
+}
+body[data-katcha-page="trends"] .toolbar-left {
+    flex: 1 1 340px;
+    flex-wrap: wrap;
+    min-width: 0;
+}
+body[data-katcha-page="trends"] .search-wrap {
+    flex: 1 1 210px;
+    min-width: 0;
+    width: auto;
+}
+body[data-katcha-page="trends"] .search-wrap,
+body[data-katcha-page="trends"] .select-wrap {
+    height: 42px;
+    min-height: 42px;
+    margin: 0;
+    position: static;
+    padding-inline: 12px;
+}
+body[data-katcha-page="trends"] .search-wrap input {
+    flex: 1 1 0%;
+    width: 0;
+    min-width: 0;
+    max-width: 100%;
+    height: 100%;
+    min-height: 0;
+    padding: 0;
+    border: 0 !important;
+    position: static;
+    box-shadow: none;
+    background: transparent !important;
+}
+body[data-katcha-page="trends"] .select-wrap select {
+    max-width: none;
+    min-width: 145px;
+    height: 100%;
+    min-height: 0;
+    padding: 0;
+    border: 0 !important;
+    position: static;
+    background: transparent !important;
+}
+body[data-katcha-page="trends"] .connection-tools {
+    min-width: 0;
+}
+body[data-katcha-page="trends"] .connection-tools > summary {
+    color: var(--ae-text-secondary);
+    font-size: 12px;
+    cursor: pointer;
+    width: fit-content;
+}
+body[data-katcha-page="trends"] .connection-tools:not([open]) {
+    justify-self: end;
+}
+body[data-katcha-page="trends"] .compact-connect {
+    margin-top: 8px;
+}
+@media (max-width: 1000px) {
+    body[data-katcha-page="trends"] .workspace-grid {
+        grid-template-columns: minmax(0, 1fr);
+    }
+    body[data-katcha-page="trends"] .workspace-grid > .list-panel,
+    body[data-katcha-page="trends"] .workspace-grid > .detail-panel {
+        max-height: none;
+        min-height: 230px;
+        overflow: visible;
     }
 }
