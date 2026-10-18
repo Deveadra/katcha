@@ -277,6 +277,13 @@ async function assertGoalSummaryReadable(goal, shouldBeFinished) {
         } else if (url.pathname === "/v1/ai/goals/" + goalId) {
             data = {goal_id: goalId, thread_id: threadId, channel_profile_id: channelId,
                 retryable: goalPhase === "blocked",
+                diagnostic: goalPhase === "blocked" ? {
+                    code: "youtube_authentication_required",
+                    stage: "download",
+                    workflow_id: "command-goal-" + goalId,
+                    message: "The Katcha server was challenged, not the operator browser.",
+                    next_action: "Use an authorized direct file.",
+                } : null,
                 status: goalPhase, summary: goalPhase === "cancelled" ? "Planning stopped" :
                     "Saved workflow result received", result: goalPhase === "completed" ? {
                     thread_id: threadId, answer: "Durable goal completed from its saved result",
@@ -955,6 +962,15 @@ async function assertGoalSummaryReadable(goal, shouldBeFinished) {
     const retryButton = page.getByRole("button", {name: "Try request again"});
     await retryButton.waitFor();
     await assertGoalSummaryReadable(page.locator(".goal-progress-message").last(), true);
+    const diagnostics = page.locator(".goal-progress-message").last().locator(".goal-diagnostics");
+    await diagnostics.locator("summary").click();
+    const diagnosticText = await diagnostics.locator("pre").innerText();
+    assert.match(diagnosticText, /youtube_authentication_required/);
+    assert.match(diagnosticText, /command-goal-cccccccc/);
+    assert.match(diagnosticText, /operator browser/);
+    assert(!diagnosticText.includes("Find the scene I requested"),
+        "Diagnostic export must not include the private prompt");
+    assert.equal(await diagnostics.getByRole("button", {name: "Copy diagnostics"}).count(), 1);
     await page.waitForFunction(() => !document.getElementById("send").disabled);
     await page.locator("#prompt").fill("Keep this unsent follow-up");
     await retryButton.click();
