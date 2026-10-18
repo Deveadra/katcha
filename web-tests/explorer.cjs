@@ -217,15 +217,18 @@ let browser;
     // Desktop must allow the page to scroll rather than clip lower controls.
     await page.setViewportSize({ width: 1440, height: 650 });
     const scrollState = await page.evaluate(() => {
-        window.scrollTo(0, document.documentElement.scrollHeight);
+        window.scrollTo({top: document.documentElement.scrollHeight, behavior: "instant"});
         return {
             scrollY: window.scrollY,
             overflow: getComputedStyle(document.body).overflowY,
+            scrollHeight: document.documentElement.scrollHeight,
+            viewportHeight: innerHeight,
             visible: document.querySelector(".trends-support-strip")
                 .getBoundingClientRect().bottom <= innerHeight + 2,
         };
     });
-    assert(scrollState.scrollY > 0, "Trends page was locked to the viewport");
+    assert(scrollState.scrollY > 0,
+        "Trends page was locked to the viewport: " + JSON.stringify(scrollState));
     assert.notEqual(scrollState.overflow, "hidden");
     assert.equal(scrollState.visible, true);
     const toolbar = await page.locator("#search").evaluate((input) => {
