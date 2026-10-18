@@ -1,0 +1,23 @@
+# Selected by the supervisor only with KATCHA_DOWNLOAD_ROUTE_ENABLED=true.
+# The helper shares the existing worker process lifecycle; no extra service or port.
+services:
+  worker:
+    environment:
+      KATCHA_DOWNLOAD_ROUTE_ENABLED: "true"
+      KATCHA_YOUTUBE_DOWNLOAD_PROXY_URL: socks5://127.0.0.1:18081
+      KATCHA_DOWNLOAD_ROUTE_HOST: ${KATCHA_DOWNLOAD_ROUTE_HOST:?Set an accepted always-on download host}
+      KATCHA_DOWNLOAD_ROUTE_USER: ${KATCHA_DOWNLOAD_ROUTE_USER:?Set the dedicated non-root SSH user}
+      KATCHA_DOWNLOAD_ROUTE_PORT: ${KATCHA_DOWNLOAD_ROUTE_PORT:-22}
+    volumes:
+      - type: bind
+        source: ${KATCHA_DOWNLOAD_ROUTE_KEY_FILE:?Set the dedicated private-key path}
+        target: /run/secrets/download_route_key
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${KATCHA_DOWNLOAD_ROUTE_KNOWN_HOSTS_FILE:?Set the verified host-key file path}
+        target: /run/secrets/download_route_known_hosts
+        read_only: true
+        bind:
+          create_host_path: false

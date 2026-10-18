@@ -13,6 +13,7 @@ from temporalio.worker import Worker
 from katcha.config import get_settings
 from katcha.db import session_scope
 from katcha.models import SourceItem
+from katcha.ops.download_route import managed_route
 from katcha.orchestration.activities import (
     enqueue_ingested_analysis_activity,
     ingest_source,
@@ -197,7 +198,8 @@ async def main() -> None:
             ],
             activity_executor=activity_executor,
         )
-        await run_worker_group([ingest_worker, publishing_worker])
+        async with managed_route():
+            await run_worker_group([ingest_worker, publishing_worker])
 
 
 if __name__ == "__main__":

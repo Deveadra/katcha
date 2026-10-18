@@ -11,7 +11,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONPATH=/app/src
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ffmpeg curl \
+    && apt-get install -y --no-install-recommends ffmpeg curl openssh-client \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -23,7 +23,7 @@ RUN --mount=type=cache,target=/root/.cache/pip \
     python -c 'import subprocess,tomllib; data=tomllib.load(open("pyproject.toml","rb")); deps=data["project"]["dependencies"]+data["project"]["optional-dependencies"]["ai"]; subprocess.check_call(["python","-m","pip","install",*deps])'
 
 # Fail the image build if the bundled extractor runtime cannot execute.
-RUN node --version && python -c "import yt_dlp_ejs"
+RUN node --version && ssh -V && python -c "import yt_dlp_ejs"
 
 RUN useradd --create-home --uid 10001 katcha \
     && mkdir -p /tmp/katcha \
