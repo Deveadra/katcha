@@ -163,10 +163,27 @@ sudo /usr/local/sbin/katcha-production-deploy --readiness
 ~~~
 
 This is **read-only** and does not require the production deployment flag.
-It validates the current release, exact PostgreSQL Alembic starting revision
-`0063_authoritative_search_ledger`, absence of the new table, and every
-running Temporal execution for pending activities/child tasks. It never
-changes data or cancels workflows.
+It validates the current running release, the **actual** PostgreSQL schema,
+and every running Temporal execution for pending activities/child tasks.
+It never changes data or cancels workflows.
+
+There are **two explicitly reviewed database states**:
+
+- **Already at `0064_application_ai_settings`**: the deployer checks that the
+  `application_ai_settings` table, column types/nullability, and primary key
+  match the approved 0064 schema. This state is required for **migration-free**
+  releases. The signed deployment input remains `migration_policy=refuse`.
+- **Still at `0063_authoritative_search_ledger`**: the deployer checks that
+  the 0064 table is absent. Only a release whose *actual accepted Git diff*
+  adds the exact reviewed 0064 migration is eligible for
+  `migration_policy=approve-additive-0064`. A migration-free release is
+  **blocked** at 0063 even if the read-only readiness rehearsal succeeds.
+
+Readiness returns `database_start_revision` and `database_schema_state`
+to show which case it observed; **neither case authorizes deployment**.
+Unknown revisions, wrong primary keys, extra/different columns, and mismatched
+migration policy must remain blocked. The executor rechecks the appropriate
+schema immediately before the stop/restart and verifies 0064 afterward.
 
 - `REVIEW_REQUIRED`: read-only checks passed, **not** permission to deploy.
 - `BLOCKED`: stop; collect sanitized output for review. A long-running
@@ -186,8 +203,8 @@ supervised forward repair. Other migrations are rejected.
 **Do not run during installation.** Require: full current-main CI and six
 verified published images; successful rehearsal; no pending Temporal
 activities; fresh three-database R2 restore; verified leadership fence;
-approved forward-only migration plan; a maintenance window and recovery
-operator available.
+approved migration classification (or proof no migration is needed);
+a maintenance window and recovery operator available.
 
 Then on **OCI** only, create the distinct root-owned opt-in:
 
@@ -207,8 +224,10 @@ select branch `main`, exact current 40-character SHA, and inputs:
 
 - `running_workflows=refuse` by default; `approved-resume` only with a
   reviewed quiescence/idempotence decision.
-- `migration_policy=refuse` by default; `approve-additive-0064` only when
-  the reviewed 0064 preflight passes. Both policies are signed.
+- `migration_policy=refuse` for an already-0064 database and a migration-free
+  comparison. Use `approve-additive-0064` **only** when starting at 0063
+  and the accepted comparison adds the exact reviewed 0064 file. Both policies
+  are signed. Do not request an already-applied migration.
 - `confirmation=DEPLOY KATCHA PRODUCTION`.
 
 The protected job publishes a 20-minute signed request, **not a completed
