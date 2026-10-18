@@ -177,3 +177,32 @@ same SHA-256 above. The container, source-file mounts and temporary relay were
 removed afterward. This proves downloader recovery via that route, not installed
 worker configuration, database/library ingestion, autonomous scene verification,
 or an always-on relay. No running application service was changed by this test.
+
+## Goal workflow dispatch and status visibility (2026-10-18)
+
+A saved goal is not evidence that its Temporal workflow started. The goals API
+now preserves a typed `goal_dispatch_unavailable` diagnostic when dispatch
+cannot be confirmed, including its exact workflow ID and exception class. The
+saved request identity remains unchanged; a subsequent confirmed dispatch
+clears the stale failure. Neither a connection failure nor an unsuccessful
+status probe can be relabeled as credential revocation or goal completion.
+
+A read of a running goal that cannot reach Temporal now returns
+`workflow_status_unverified` and a diagnostic rather than silently displaying
+the last saved "working" state as current execution proof. If Temporal confirms a
+failed goal execution, the API attempts a bounded read of its nested failure
+cause and retains the sanitized message in the terminal receipt. Diagnostic
+response data excludes credentials and does not include the original prompt
+in the UI's copyable troubleshooting record.
+
+Katcha AI shows a **Technical details for troubleshooting** disclosure with
+goal ID, workflow ID, stage, code and exception class. Queued dispatch uses
+bounded 2–30-second exponential backoff with the **same** saved command
+identity; it does not spawn a new goal for each poll. The operator can stop
+planning with the existing control permission; active work is never
+automatically cancelled by a diagnostic check.
+
+Validation includes dispatch outage/recovery and idempotence, failed status
+probe without a false terminal state, nested failure explanation, and browser
+diagnostic disclosure. These are controlled fixtures, **not** a production
+Temporal outage drill or proof that either requested scene has been acquired.
