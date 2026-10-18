@@ -165,3 +165,18 @@ def test_trend_schedule_status_detects_missing_stale_and_stalled_receipts(
     assert stalled.scan_health == "scan_stalled"
     assert stalled.scan_overdue is False
     assert stalled.runtime_verified is False
+
+    with session_scope() as session:
+        scan = session.scalar(
+            select(TrendActivationRun).where(
+                TrendActivationRun.channel_profile_id == channel,
+                TrendActivationRun.run_key == "scheduled-20261018T000000Z",
+            )
+        )
+        assert scan is not None
+        scan.status = "disabled"
+        scan.started_at = now - timedelta(minutes=5)
+        scan.completed_at = now - timedelta(minutes=4)
+    paused = get_trend_activation_schedule(channel)
+    assert paused.scan_health == "scan_policy_disabled"
+    assert paused.scan_overdue is False
