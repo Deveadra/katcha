@@ -219,6 +219,7 @@ function renderList() {
             </div>
             <div class="clip-row-meta">
                 ${lifecycleChip(clip)}
+                ${clip.active_reference_count ? `<span class="clip-chip work-in-use" title="Select this clip to see which productions need it">IN USE · ${escapeHTML(clip.active_reference_count)}</span>` : ""}
                 <span class="clip-chip ${clip.status === "failed" ? "failed" : clip.status === "published" || clip.status === "measured" ? "published" : ""}">${escapeHTML(clip.status.replaceAll("_", " ").toUpperCase())}</span>
                 <span class="clip-chip">${escapeHTML(formatDuration(clip.duration_seconds))}</span>
                 <span class="clip-chip">${escapeHTML(formatBytes(clip.size_bytes))}</span>
@@ -317,6 +318,16 @@ function renderDetail(clip, features, sources) {
             <span class="clip-chip ${escapeHTML(clip.lifecycle_state)}">${escapeHTML(clip.lifecycle_state.toUpperCase())}</span>
         </div>
 
+        <section class="clip-work-section" aria-labelledby="clip-work-heading">
+            <div class="clip-work-section-title">
+                <strong id="clip-work-heading">Productions using this clip</strong>
+                <button class="mini" type="button" data-refresh-work="${escapeHTML(clip.id)}">Refresh links</button>
+            </div>
+            <div id="clip-work-references" aria-live="polite">
+                <p class="clip-work-note">Looking up linked productions…</p>
+            </div>
+        </section>
+
         ${analysisFailed ? `<div class="empty error analysis-failure"><strong>Latest analysis failed</strong><br>${escapeHTML(clip.analysis_error || "No failure detail was recorded.")}</div>` : ""}
 
         <div id="clip-preview" class="clip-preview">
@@ -390,6 +401,50 @@ function renderDetail(clip, features, sources) {
         </div>
     `;
     setClipDetailView(state.detailView, { updateFocus: false });
+}
+
+function renderClipWorkReferences(clipId, rows, error = "") {
+    if (state.selectedId !== clipId) return;
+    const host = $("clip-work-references");
+    if (!host) return;
+    if (error) {
+        host.innerHTML = `<p class="clip-work-note error">${escapeHTML(error)}</p>`;
+        return;
+    }
+    if (!rows.length) {
+        host.innerHTML = '<p class="clip-work-note">No unfinished productions depend on this clip. Historical uses are preserved in its metadata.</p>';
+        return;
+    }
+    host.innerHTML = rows.map((row) => {
+        const names = {
+            production: "Standalone video",
+            short_episode: "Ranked episode",
+            compilation: "Compilation",
+        };
+        const kind = names[row.kind] || "Production";
+        const href = String(row.href || "");
+        const safeHref = href.startsWith("/") && !href.startsWith("//") ? href : "";
+        return `<div class="clip-work-reference">
+            <div class="clip-work-reference-info">
+                <strong>${escapeHTML(row.title || kind)}</strong>
+                <span>${escapeHTML(kind)} · ${escapeHTML(row.channel_name || "Unassigned")} · ${escapeHTML(row.status)} / ${escapeHTML(row.stage)}</span>
+                <code>${escapeHTML(row.id)}</code>
+            </div>
+            ${safeHref ? `<a class="mini" href="${escapeHTML(safeHref)}" target="_blank" rel="noopener noreferrer">Open production ↗</a>` : ""}
+        </div>`;
+    }).join("") + `<button class="mini" type="button" data-manage-work="${escapeHTML(clipId)}">Manage / stop linked work</button>`;
+}
+
+async function loadClipWorkReferences(clipId) {
+    if (state.selectedId !== clipId) return;
+    const host = $("clip-work-references");
+    if (host) host.innerHTML = '<p class="clip-work-note">Checking linked productions…</p>';
+    try {
+        const response = await api(`/v1/clips/${encodeURIComponent(clipId)}/references`);
+        renderClipWorkReferences(clipId, response.active || []);
+    } catch (error) {
+        renderClipWorkReferences(clipId, [], "Couldn't load linked productions: " + error.message);
+    }
 }
 
 function setClipDetailView(view, { updateFocus = false } = {}) {
@@ -527,8 +582,10 @@ async function selectClip(id) {
     }
     try {
         await Promise.all(jobs);
+        if (state.selectedId !== id) return;
         renderDetail(clip, features, sources || []);
         renderList();
+        await loadClipWorkReferences(id);
     } catch (error) {
         message(error.message, true);
         $("clip-detail").innerHTML = '<div class="empty">Clip detail could not be loaded.</div>';
@@ -1095,6 +1152,10 @@ $("clip-detail").addEventListener("click", (event) => {
     if (archiveButton) void archiveClip(archiveButton.dataset.archive);
     const restoreButton = event.target.closest("[data-restore]");
     if (restoreButton) void restoreClip(restoreButton.dataset.restore);
+    const refreshWork = event.target.closest("[data-refresh-work]");
+    if (refreshWork) void loadClipWorkReferences(refreshWork.dataset.refreshWork);
+    const manageWork = event.target.closest("[data-manage-work]");
+    if (manageWork) openPurgeDialog(manageWork.dataset.manageWork);
     const purgeButton = event.target.closest("[data-purge]");
     if (purgeButton) openPurgeDialog(purgeButton.dataset.purge);
 });
