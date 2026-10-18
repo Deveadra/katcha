@@ -144,7 +144,7 @@ def test_activity_reaches_non_youtube_candidate_and_keeps_existing_promotion_gat
         assert actor == "katcha-ai" and for_review is True
         attempts.append(candidate_id)
         if candidate_id == row(106, host="press.example.org", platform="web")[0]:
-            raise ValueError("Rights review not yet satisfied")
+            raise ValueError("Media source is unavailable for preparation")
         return SimpleNamespace(
             id=uuid.uuid5(uuid.NAMESPACE_DNS, str(candidate_id)),
             status="queued", error=None, workflow_id=f"ingest-{candidate_id}",
@@ -157,7 +157,7 @@ def test_activity_reaches_non_youtube_candidate_and_keeps_existing_promotion_gat
     assert len(result["prepared"]) == 2
     assert result["errors"][0]["candidate_id"] == str(row(106)[0])
     assert result["errors"][0]["source_route"] == "press.example.org"
-    assert result["errors"][0]["error"] == "Rights review not yet satisfied"
+    assert result["errors"][0]["error"] == "Media source is unavailable for preparation"
     assert result["selection"]["matching_candidate_count"] == 6
     assert result["selection"]["distinct_selected_routes"] == 2
     assert result["selection"]["diversified"] is True
