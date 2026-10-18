@@ -124,6 +124,11 @@ compose=(
   -f deploy/docker-compose.production.yml
 )
 
+route_enabled=$(PYTHONPATH="${ROOT}/src" python3 -m katcha.ops.download_route --enabled "${ENV_FILE}")
+if [[ "$route_enabled" == "true" ]]; then
+  compose+=(-f deploy/docker-compose.download-route.yml)
+fi
+
 "${compose[@]}" config --quiet
 "${compose[@]}" pull
 
