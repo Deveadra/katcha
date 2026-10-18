@@ -11,8 +11,8 @@ import hashlib
 import http.client
 import shutil
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Callable
 from pathlib import Path
 from urllib.parse import urljoin, urlsplit
 
