@@ -74,6 +74,24 @@ def fake_network(monkeypatch, *responses):
     return calls
 
 
+def test_direct_stream_sends_chunks_to_sink_without_creating_a_file(
+    monkeypatch, tmp_path
+):
+    data = (b"video" * 270_000) + b"end"
+    response = Response(content=data)
+    fake_network(monkeypatch, response)
+    chunks = []
+    result = direct_media.stream_direct_media(
+        "https://press.example.org/media/clip.mp4", chunks.append
+    )
+    assert b"".join(chunks) == data
+    assert result.sha256 == hashlib.sha256(data).hexdigest()
+    assert result.size_bytes == len(data)
+    assert all(len(chunk) <= direct_media.READ_CHUNK for chunk in chunks)
+    assert len(chunks) >= 2
+    assert not list(tmp_path.iterdir())
+
+
 def test_direct_public_media_streams_and_hashes_without_extractors(monkeypatch, tmp_path):
     data = (b"video!" * 180_000) + b"end"
     response = Response(content=data)
