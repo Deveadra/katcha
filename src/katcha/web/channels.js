@@ -2441,8 +2441,19 @@ async function registerTrendSchedule() {
         if (channelId !== state.channelId) return;
         state.trendSchedule = await api(prefix + "activation-schedule");
         if (channelId !== state.channelId) return;
+        // Re-read runtime after registration; the previous pre-registration
+        // observation is no longer valid. Probe errors never undo registration.
+        state.trendRuntime = null;
+        state.trendRuntimeError = "";
+        const runtime = await api(prefix + "activation-runtime").then(
+            (value) => ({value, error: ""}),
+            (error) => ({value: null, error: error.message}),
+        );
+        if (channelId !== state.channelId) return;
+        state.trendRuntime = runtime.value;
+        state.trendRuntimeError = runtime.error;
         renderTrendAutomation();
-        setStatus("Recurring trend scan registered. Verify worker health and actual scan receipts.", "success");
+        setStatus("Recurring trend scan registered. Verify scan receipts and actual media output.", "success");
     } catch (error) {
         if (channelId !== state.channelId) return;
         $("trend-schedule-status").textContent = "Schedule registration failed: " + error.message;
