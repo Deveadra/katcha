@@ -11,6 +11,7 @@ import hashlib
 import http.client
 import shutil
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urljoin, urlsplit
@@ -69,6 +70,16 @@ class DirectMediaResult:
     redirects: int
 
 
+@dataclass(frozen=True, slots=True)
+class DirectMediaStreamResult:
+    sha256: str
+    size_bytes: int
+    extension: str
+    content_type: str
+    final_host: str
+    redirects: int
+
+
 def is_direct_media_url(url: str) -> bool:
     try:
         parsed = urlsplit(url)
@@ -101,8 +112,17 @@ def _validate_media_response(response, declared: int | None) -> str:
     return content_type
 
 
-def fetch_direct_media(url: str, job_dir: Path) -> DirectMediaResult:
-    """Save at most 4 GiB in 1 MiB chunks, validating each redirect's public IP."""
+def stream_direct_media(
+    url: str,
+    on_chunk: Callable[[bytes], None],
+    *,
+    scratch_dir: Path | None = None,
+) -> DirectMediaStreamResult:
+    """Validate public HTTPS hops and deliver bounded chunks to a caller-owned sink.
+
+    No disk required unless the optional legacy scratch preflight is requested.
+    The caller owns abort/cleanup of any storage writes on a raised exception.
+    """
     if not is_direct_media_url(url):
         raise DirectMediaRejected("Not an explicit direct video-file URL")
     extension = Path(urlsplit(url).path.lower()).suffix
@@ -152,42 +172,39 @@ def fetch_direct_media(url: str, job_dir: Path) -> DirectMediaResult:
 
             declared = _content_length(response.getheader("Content-Length"))
             content_type = _validate_media_response(response, declared)
-            # Fast-fail when the full file cannot fit the known scratch volume.
-            if declared is not None and (
-                declared + SCRATCH_RESERVE_BYTES > shutil.disk_usage(job_dir).free
+            # Legacy local-file callers still receive the scratch-space preflight.
+            if scratch_dir is not None and declared is not None and (
+                declared + SCRATCH_RESERVE_BYTES > shutil.disk_usage(scratch_dir).free
             ):
                 raise DirectMediaRejected(
                     "Insufficient local acquisition scratch space for the direct file"
                 )
 
-            destination = job_dir / ("source" + extension)
             digest = hashlib.sha256()
             total = 0
-            with destination.open("xb") as output:
-                while True:
-                    if time.monotonic() - started > MAX_ELAPSED_SECONDS:
-                        raise DirectMediaTransportError(
-                            "Direct media transfer exceeded its time budget"
-                        )
-                    chunk = response.read(READ_CHUNK)
-                    if not chunk:
-                        break
-                    total += len(chunk)
-                    if total > MAX_DIRECT_BYTES:
-                        raise DirectMediaTooLarge("The direct media file exceeds the 4 GiB limit")
-                    if declared is not None and total > declared:
-                        raise DirectMediaRejected(
-                            "The source transferred more bytes than its stated length"
-                        )
-                    output.write(chunk)
-                    digest.update(chunk)
+            while True:
+                if time.monotonic() - started > MAX_ELAPSED_SECONDS:
+                    raise DirectMediaTransportError(
+                        "Direct media transfer exceeded its time budget"
+                    )
+                chunk = response.read(READ_CHUNK)
+                if not chunk:
+                    break
+                total += len(chunk)
+                if total > MAX_DIRECT_BYTES:
+                    raise DirectMediaTooLarge("The direct media file exceeds the 4 GiB limit")
+                if declared is not None and total > declared:
+                    raise DirectMediaRejected(
+                        "The source transferred more bytes than its stated length"
+                    )
+                on_chunk(chunk)
+                digest.update(chunk)
 
             if not total or (declared is not None and total != declared):
                 raise DirectMediaTransportError(
                     "The direct media file was empty or its transfer was incomplete"
                 )
-            return DirectMediaResult(
-                path=destination,
+            return DirectMediaStreamResult(
                 sha256=digest.hexdigest(),
                 size_bytes=total,
                 extension=extension.lstrip("."),
@@ -203,3 +220,36 @@ def fetch_direct_media(url: str, job_dir: Path) -> DirectMediaResult:
         finally:
             connection.close()
     raise DirectMediaRejected("The direct media source exceeded the redirect limit")
+
+
+
+def fetch_direct_media(url: str, job_dir: Path) -> DirectMediaResult:
+    """Legacy scratch-file wrapper over the same pinned, checked stream."""
+    destination = job_dir / ("source" + Path(urlsplit(url).path.lower()).suffix)
+    output = None
+
+    def write_chunk(chunk: bytes) -> None:
+        nonlocal output
+        if output is None:
+            output = destination.open("xb")
+        output.write(chunk)
+
+    try:
+        transferred = stream_direct_media(url, write_chunk, scratch_dir=job_dir)
+    except BaseException:
+        if output is not None:
+            output.close()
+        destination.unlink(missing_ok=True)
+        raise
+    else:
+        if output is not None:
+            output.close()
+    return DirectMediaResult(
+        path=destination,
+        sha256=transferred.sha256,
+        size_bytes=transferred.size_bytes,
+        extension=transferred.extension,
+        content_type=transferred.content_type,
+        final_host=transferred.final_host,
+        redirects=transferred.redirects,
+    )
