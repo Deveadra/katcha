@@ -2280,6 +2280,37 @@ function renderTrendAutomation() {
         : "Registered every " + schedule.interval_hours + " hour(s), generation " +
             schedule.generation + (schedule.reconcile_pending ? "; reconciliation pending" : "") +
             ". Live Temporal worker health has not been verified.";
+    if (schedule?.registered && schedule.enabled && schedule.scan_health) {
+        const scanHealth = {
+            awaiting_first_scan: "Waiting for the first scheduled scan receipt.",
+            first_scan_overdue: "OVERDUE: no scheduled scan has been recorded after the grace window.",
+            scan_in_progress: "A scheduled scan has started; completion is not yet recorded.",
+            scan_stalled: "POSSIBLY STALLED: a scheduled scan has been running for over 30 minutes.",
+            scan_policy_disabled: "The scheduled scan ran, but the channel's planning policy was disabled.",
+            last_scan_not_completed: "The latest scheduled scan did not complete successfully.",
+            scan_overdue: "OVERDUE: no new scheduled scan within the expected observation window.",
+            recent_scan: "Recent scheduled scan receipt recorded.",
+            reconcile_pending: "Schedule reconciliation is pending; execution may be interrupted.",
+        };
+        const label = scanHealth[schedule.scan_health] || "Scan execution status is unknown.";
+        $("trend-schedule-status").textContent += " " + label;
+        if (schedule.last_scheduled_scan_started_at) {
+            const started = new Date(schedule.last_scheduled_scan_started_at);
+            const observedAt = Number.isNaN(started.getTime())
+                ? schedule.last_scheduled_scan_started_at
+                : started.toLocaleString(undefined, {
+                    month: "short", day: "numeric", hour: "numeric", minute: "2-digit",
+                });
+            $("trend-schedule-status").textContent += " Latest scheduled scan: " +
+                observedAt + " (" +
+                friendly(schedule.last_scheduled_scan_status || "unknown") + ").";
+        }
+        if (schedule.scan_overdue && !["scan_overdue", "first_scan_overdue"].includes(schedule.scan_health)) {
+            $("trend-schedule-status").textContent += " Scan cadence is also overdue.";
+        }
+        $("trend-schedule-status").textContent +=
+            " A scan receipt confirms past execution, not current worker availability.";
+    }
     const description = $("trend-automation-message");
     if (state.trendLoadError) {
         description.textContent = "Cannot load policy or scan history: " +
