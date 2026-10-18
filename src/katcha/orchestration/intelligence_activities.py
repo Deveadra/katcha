@@ -266,6 +266,7 @@ def run_clip_lifecycle_maintenance_activity(
 async def run_channel_trend_activation_activity(
     channel_profile_id: str,
     run_key: str,
+    trend_refresh: dict[str, object] | None = None,
 ) -> dict[str, object]:
     channel_id = uuid.UUID(channel_profile_id)
     summary = run_autonomous_trend_activation(channel_id, run_key=run_key)
@@ -282,11 +283,36 @@ async def run_channel_trend_activation_activity(
         }
     with session_scope() as session:
         row = session.get(TrendActivationRun, summary.run_id)
-        if row is not None:
-            row.run_metadata = {
+        if row is not None and row.channel_profile_id == channel_id:
+            metadata = {
                 **dict(row.run_metadata or {}),
                 "editorial_dispatch": dispatch,
             }
+            # Only the scheduled path adds a refresh receipt; manual scans
+            # preserve their existing metadata contract.
+            if run_key.startswith("scheduled-") and trend_refresh is not None:
+                allowed = {
+                    "completed", "awaiting_configuration",
+                    "withheld_source_coverage", "planning_disabled",
+                    "refresh_failed", "invalid_refresh_result",
+                    "unexpected_refresh_status",
+                }
+                raw_status = trend_refresh.get("status")
+                receipt: dict[str, object] = {
+                    "status": (
+                        raw_status if isinstance(raw_status, str)
+                        and raw_status in allowed else "invalid_refresh_result"
+                    ),
+                }
+                for key in (
+                    "topics_scored", "qualified_opportunities",
+                    "evidence_packets_built",
+                ):
+                    value = trend_refresh.get(key)
+                    if type(value) is int and value >= 0:
+                        receipt[key] = value
+                metadata["trend_refresh"] = receipt
+            row.run_metadata = metadata
     return {**summary.as_dict(), "editorial_dispatch": dispatch}
 
 
