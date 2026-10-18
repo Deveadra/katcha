@@ -30,6 +30,10 @@ const state = {
     elevenlabsModels: [],
     elevenlabsPreviewUrl: null,
     providerError: "",
+    trendPolicy: null,
+    trendRuns: [],
+    trendLoadError: "",
+    trendBusy: false,
     voiceToggleBusy: false,
     oauthResult: launchParams.get("youtube") || "",
     oauthConnectionId: launchParams.get("connection") || "",
@@ -863,6 +867,7 @@ async function loadChannel() {
         clearProductionPreviews();
         state.summary = null; state.operations = null; state.publications=[];state.productions=[];state.brands=[];
         state.analytics.clear();state.packagingVariants.clear();state.loadedChannelId=channelId;
+        state.trendPolicy = null; state.trendRuns = []; state.trendLoadError = "";
     }
     const channel = activeChannel();
     try {
@@ -879,14 +884,19 @@ async function loadChannel() {
             ),
             api("/v1/productions?limit=100&channel_profile_id=" + encodeURIComponent(state.channelId)),
             api("/v1/channels/" + state.channelId + "/brands"),
+            api("/v1/channels/" + encodeURIComponent(channelId) + "/trends/activation-policy"),
+            api("/v1/channels/" + encodeURIComponent(channelId) + "/trends/activation-runs?limit=5"),
         ]);
         if (epoch !== state.loadEpoch || channelId !== state.channelId) return;
-        const names = ["summary", "operations", "publications", "productions", "brands"];
+        const names = ["summary", "operations", "publications", "productions", "brands", "trendPolicy", "trendRuns"];
         const failures = [];
+        const trendFailures = [];
         panels.forEach((result, index) => {
             if (result.status === "fulfilled") state[names[index]] = result.value;
+            else if (index >= 5) trendFailures.push(names[index] + ": " + result.reason.message);
             else failures.push(names[index] + ": " + result.reason.message);
         });
+        state.trendLoadError = trendFailures.join("; ");
         state.pageOffsets.publications = state.publications.length;
         state.pageOffsets.productions = state.productions.length;
         $("more-publications").hidden = state.publications.length < 250;
@@ -978,6 +988,7 @@ function renderAll() {
     renderGrowth();
     renderProductions();
     renderControls();
+    renderTrendAutomation();
     renderProviders();
 }
 
@@ -2238,6 +2249,141 @@ function renderControls() {
     }
 }
 
+function trendStatusReason(value) {
+    return friendly(String(value || "unavailable")).replaceAll(" Ai ", " AI ");
+}
+
+function renderTrendAutomation() {
+    const policy = state.trendPolicy;
+    const metadata = policy?.policy_metadata || {};
+    const enabled = policy?.enabled === true;
+    const editorial = metadata.auto_start_editorial === true;
+    const badge = $("trend-automation-badge");
+    badge.textContent = !policy ? "Not configured" : !enabled ? "Paused" :
+        editorial ? "Editorial authorized" : "Planning only";
+    $("trend-plan-enabled").checked = enabled;
+    $("trend-editorial-enabled").checked = editorial;
+    const max = Number(metadata.editorial_max_starts_per_scan);
+    $("trend-editorial-limit").value = max === 2 ? "2" : "1";
+    $("save-trend-automation").disabled = Boolean(state.trendLoadError) || state.trendBusy;
+    const description = $("trend-automation-message");
+    if (state.trendLoadError) {
+        description.textContent = "Cannot load policy or scan history: " +
+            state.trendLoadError + ". Refresh before making changes.";
+    } else if (!policy) {
+        description.textContent = "No policy exists yet. Both planning and AI editorial are off. Saving creates a versioned channel policy.";
+    } else {
+        description.textContent = "Policy v" + policy.version +
+            ". Planning " + (enabled ? "on" : "off") +
+            "; AI editorial " + (editorial ? "authorized" : "off") +
+            ". Saving does not launch a scan or publish a video.";
+    }
+    const runs = Array.isArray(state.trendRuns) ? state.trendRuns : [];
+    const host = $("trend-automation-runs");
+    if (!runs.length) {
+        host.textContent = state.trendLoadError
+            ? "Scan history unavailable."
+            : "No autonomous trend scans recorded for this channel yet. A schedule must also be running.";
+        return;
+    }
+    host.innerHTML = runs.map((run) => {
+        const dispatch = run.run_metadata?.editorial_dispatch;
+        let detail = !dispatch ? "No editorial handoff recorded (planning-only or older scan)." :
+            dispatch.status === "blocked" ? "Editorial blocked: " + trendStatusReason(dispatch.reason) :
+            dispatch.status === "dispatched" ? (dispatch.started?.length || 0) + " editorial workflow(s) started" :
+            dispatch.status === "partial_failure" ? "Dispatch retry needed; " + (dispatch.failed?.length || 0) + " failed" :
+            "No new eligible editorial work";
+        if ((dispatch?.skipped || []).length) detail += " · " + dispatch.skipped.length + " plan(s) skipped";
+        return '<div class="trend-automation-run"><strong>' +
+            escapeHtml(friendly(run.status)) + '</strong> <small>' +
+            escapeHtml(dateText(run.completed_at || run.started_at)) +
+            '</small><p>' + escapeHtml(Number(run.activated_count || 0) +
+                " episode plan(s) created · " + detail) + '</p></div>';
+    }).join("");
+}
+
+async function refreshTrendAutomation() {
+    if (!state.channelId || state.trendBusy) return;
+    const channelId = state.channelId;
+    const prefix = "/v1/channels/" + encodeURIComponent(channelId) + "/trends/";
+    const button = $("refresh-trend-automation");
+    button.disabled = true;
+    try {
+        const [policy, runs] = await Promise.all([
+            api(prefix + "activation-policy"),
+            api(prefix + "activation-runs?limit=5"),
+        ]);
+        if (channelId !== state.channelId) return;
+        state.trendPolicy = policy;
+        state.trendRuns = runs;
+        state.trendLoadError = "";
+        renderTrendAutomation();
+    } catch (error) {
+        if (channelId !== state.channelId) return;
+        state.trendLoadError = error.message;
+        renderTrendAutomation();
+    } finally {
+        button.disabled = false;
+    }
+}
+
+async function saveTrendAutomation(event) {
+    event.preventDefault();
+    if (state.trendBusy || !state.channelId || state.trendLoadError) return;
+    const channelId = state.channelId;
+    const enabled = $("trend-plan-enabled").checked;
+    const editorial = $("trend-editorial-enabled").checked;
+    const limit = Number($("trend-editorial-limit").value);
+    if (editorial && !enabled) {
+        $("trend-automation-message").textContent = "Enable automatic trend planning before authorizing AI editorial.";
+        return;
+    }
+    if (editorial && state.trendPolicy?.policy_metadata?.auto_start_editorial !== true &&
+        !window.confirm("Allow Katcha to start paid AI script and voice work for qualified " +
+            "episodes on this channel? Budget and review controls remain active.")) return;
+    const button = $("save-trend-automation");
+    state.trendBusy = true;
+    button.disabled = true;
+    $("trend-automation-message").textContent = "Checking for concurrent channel-policy changes…";
+    try {
+        const prefix = "/v1/channels/" + encodeURIComponent(channelId) + "/trends/";
+        const current = await api(prefix + "activation-policy");
+        if (channelId !== state.channelId) return;
+        if ((current?.version || null) !== (state.trendPolicy?.version || null)) {
+            throw new Error("Channel policy changed elsewhere. Refresh and review before saving.");
+        }
+        const fields = [
+            "min_opportunity_score", "min_confidence", "min_calibrated_score",
+            "min_rights_readiness", "min_lead_time_minutes",
+            "max_activations_per_day", "cooldown_minutes", "max_backlog",
+            "min_budget_headroom_usd", "max_opportunities_per_run",
+        ];
+        const payload = {
+            enabled,
+            auto_start_editorial: editorial,
+            editorial_max_starts_per_scan: limit,
+            metadata: { ...(current?.policy_metadata || {}) },
+            actor: "channel-studio",
+        };
+        for (const key of fields) if (current?.[key] != null) payload[key] = current[key];
+        const saved = await api(prefix + "activation-policy", {
+            method: "POST", body: JSON.stringify(payload),
+        });
+        if (channelId !== state.channelId) return;
+        state.trendPolicy = saved;
+        state.trendLoadError = "";
+        renderTrendAutomation();
+        setStatus("Autonomous editorial settings saved for this channel. No scan was started.", "success");
+    } catch (error) {
+        if (channelId !== state.channelId) return;
+        $("trend-automation-message").textContent = "Save failed: " + error.message;
+        setStatus(error.message, "error");
+    } finally {
+        state.trendBusy = false;
+        button.disabled = Boolean(state.trendLoadError);
+    }
+}
+
 async function refreshIntelligence() {
     try {
         setStatus("Starting channel intelligence refresh…");
@@ -2357,6 +2503,8 @@ $("channel-activity-list").addEventListener("click", openChannelActivityCard);
 $("channel-activity-list").addEventListener("keydown", openChannelActivityCard);
 $("reload").addEventListener("click", loadChannel);
 $("refresh-intelligence").addEventListener("click", refreshIntelligence);
+$("trend-automation-form").addEventListener("submit", saveTrendAutomation);
+$("refresh-trend-automation").addEventListener("click", refreshTrendAutomation);
 $("elevenlabs-enabled").addEventListener("change", async (event) => {
     await setElevenLabsEnabled(event.target.checked);
 });
