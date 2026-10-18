@@ -719,7 +719,7 @@ const analytics = [
                 };
             } else data = channelSchedules[channelId];
         } else if (
-            /^\\/v1\\/channels\\/channel-[12]\\/trends\\/activation-runtime$/.test(url.pathname)
+            /^\/v1\/channels\/channel-[12]\/trends\/activation-runtime$/.test(url.pathname)
         ) {
             data = channelRuntimes[url.pathname.split("/")[3]];
         } else if (
