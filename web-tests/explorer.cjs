@@ -238,7 +238,7 @@ let browser;
             height: r.height, width: r.width};
     });
     assert(toolbar.inside && toolbar.height <= 44 && toolbar.width > 80,
-        "Search input must fit its toolbar field");
+        "Search input must fit its toolbar field: " + JSON.stringify(toolbar));
     await page.setViewportSize({ width: 1440, height: 1000 });
     await page.locator("#token").fill("fixture-token");
     await page.locator("#connect-form button").click();
