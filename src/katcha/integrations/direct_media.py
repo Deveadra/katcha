@@ -112,7 +112,7 @@ def fetch_direct_media(url: str, job_dir: Path) -> DirectMediaResult:
         # public_addresses validates HTTPS, credentials, ports and *all* DNS results.
         try:
             host, addresses = public_addresses(current_url)
-        except (OSError, ValueError, UnicodeError):
+        except (OSError, ValueError):
             raise DirectMediaRejected(
                 "The direct source is not a validated public HTTPS destination"
             ) from None
@@ -196,7 +196,7 @@ def fetch_direct_media(url: str, job_dir: Path) -> DirectMediaResult:
             )
         except DirectMediaError:
             raise
-        except (OSError, TimeoutError, ConnectionError):
+        except OSError:
             # Transport errors can include signed URLs or socket details.
             raise DirectMediaTransportError("The direct media HTTPS transfer failed") from None
         finally:
