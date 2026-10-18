@@ -33,6 +33,8 @@ const state = {
     trendPolicy: null,
     trendRuns: [],
     trendSchedule: null,
+    trendRuntime: null,
+    trendRuntimeError: "",
     trendLoadError: "",
     trendBusy: false,
     voiceToggleBusy: false,
@@ -869,6 +871,7 @@ async function loadChannel() {
         state.summary = null; state.operations = null; state.publications=[];state.productions=[];state.brands=[];
         state.analytics.clear();state.packagingVariants.clear();state.loadedChannelId=channelId;
         state.trendPolicy = null; state.trendRuns = []; state.trendSchedule = null;
+        state.trendRuntime = null; state.trendRuntimeError = "";
         state.trendLoadError = "";
     }
     const channel = activeChannel();
@@ -889,13 +892,15 @@ async function loadChannel() {
             api("/v1/channels/" + encodeURIComponent(channelId) + "/trends/activation-policy"),
             api("/v1/channels/" + encodeURIComponent(channelId) + "/trends/activation-runs?limit=5"),
             api("/v1/channels/" + encodeURIComponent(channelId) + "/trends/activation-schedule"),
+            api("/v1/channels/" + encodeURIComponent(channelId) + "/trends/activation-runtime"),
         ]);
         if (epoch !== state.loadEpoch || channelId !== state.channelId) return;
-        const names = ["summary", "operations", "publications", "productions", "brands", "trendPolicy", "trendRuns", "trendSchedule"];
+        const names = ["summary", "operations", "publications", "productions", "brands", "trendPolicy", "trendRuns", "trendSchedule", "trendRuntime"];
         const failures = [];
         const trendFailures = [];
         panels.forEach((result, index) => {
             if (result.status === "fulfilled") state[names[index]] = result.value;
+            else if (index === 8) state.trendRuntimeError = result.reason.message;
             else if (index >= 5) trendFailures.push(names[index] + ": " + result.reason.message);
             else failures.push(names[index] + ": " + result.reason.message);
         });
@@ -2311,6 +2316,24 @@ function renderTrendAutomation() {
         $("trend-schedule-status").textContent +=
             " A scan receipt confirms past execution, not current worker availability.";
     }
+    const runtime = state.trendRuntime;
+    if (schedule?.registered && schedule.enabled) {
+        const states = {
+            queues_recently_polled: "Temporal confirms the schedule is running; both intelligence and editorial queues have recent workflow and activity pollers.",
+            editorial_worker_not_observed: "Temporal sees the schedule and intelligence pollers, but no recent editorial/production pollers.",
+            editorial_queue_unavailable: "Temporal schedule and intelligence pollers observed; production queue check failed.",
+            intelligence_worker_not_observed: "The schedule is running, but intelligence workflow/activity pollers were not both observed recently.",
+            intelligence_queue_unavailable: "Schedule found, but intelligence task queue polling could not be verified.",
+            workflow_not_running: "Registered schedule is not running in Temporal.",
+            workflow_unavailable: "Temporal could not describe the registered schedule.",
+            probe_timeout: "Temporal diagnostic timed out; current readiness is unknown.",
+            unavailable: "Temporal connection unavailable; current readiness is unknown.",
+        };
+        $("trend-schedule-status").textContent += " Runtime: " +
+            (runtime ? (states[runtime.status] || friendly(runtime.status)) :
+                "Unknown" + (state.trendRuntimeError ? " (diagnostic request failed)" : " (not checked)")) +
+            " Pollers are readiness evidence, not proof of rendered content.";
+    }
     const description = $("trend-automation-message");
     if (state.trendLoadError) {
         description.textContent = "Cannot load policy or scan history: " +
@@ -2354,15 +2377,21 @@ async function refreshTrendAutomation() {
     const button = $("refresh-trend-automation");
     button.disabled = true;
     try {
-        const [policy, runs, schedule] = await Promise.all([
+        const [policy, runs, schedule, runtime] = await Promise.all([
             api(prefix + "activation-policy"),
             api(prefix + "activation-runs?limit=5"),
             api(prefix + "activation-schedule"),
+            api(prefix + "activation-runtime").then(
+                (value) => ({value, error: ""}),
+                (error) => ({value: null, error: error.message}),
+            ),
         ]);
         if (channelId !== state.channelId) return;
         state.trendPolicy = policy;
         state.trendRuns = runs;
         state.trendSchedule = schedule;
+        state.trendRuntime = runtime.value;
+        state.trendRuntimeError = runtime.error;
         state.trendLoadError = "";
         renderTrendAutomation();
     } catch (error) {
