@@ -2295,8 +2295,14 @@ function renderTrendAutomation() {
         const label = scanHealth[schedule.scan_health] || "Scan execution status is unknown.";
         $("trend-schedule-status").textContent += " " + label;
         if (schedule.last_scheduled_scan_started_at) {
+            const started = new Date(schedule.last_scheduled_scan_started_at);
+            const observedAt = Number.isNaN(started.getTime())
+                ? schedule.last_scheduled_scan_started_at
+                : started.toLocaleString(undefined, {
+                    month: "short", day: "numeric", hour: "numeric", minute: "2-digit",
+                });
             $("trend-schedule-status").textContent += " Latest scheduled scan: " +
-                dateText(schedule.last_scheduled_scan_started_at) + " (" +
+                observedAt + " (" +
                 friendly(schedule.last_scheduled_scan_status || "unknown") + ").";
         }
         if (schedule.scan_overdue && !["scan_overdue", "first_scan_overdue"].includes(schedule.scan_health)) {
