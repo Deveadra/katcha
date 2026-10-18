@@ -343,6 +343,19 @@
                                     <button class="studio-button primary" id="save-trend-automation" type="submit">Save channel automation</button>
                                 </form>
                                 <p id="trend-automation-message" role="status" aria-live="polite">Loading channel policy…</p>
+                                <div class="trend-automation-schedule">
+                                    <div><strong>Recurring trend scans</strong><p id="trend-schedule-status" role="status" aria-live="polite">Checking schedule registration…</p></div>
+                                    <label for="trend-schedule-hours">Scan interval</label>
+                                    <select id="trend-schedule-hours">
+                                        <option value="1">Every hour</option>
+                                        <option value="3">Every 3 hours</option>
+                                        <option value="6">Every 6 hours</option>
+                                        <option value="12">Every 12 hours</option>
+                                        <option value="24">Daily</option>
+                                    </select>
+                                    <button id="register-trend-schedule" class="studio-button secondary small" type="button">Register recurring scans</button>
+                                    <small>Registration alone does not confirm that the Temporal worker is running. A new schedule may start a scan immediately.</small>
+                                </div>
                                 <div class="trend-automation-runs-head">
                                     <strong>Recent automation scans</strong>
                                     <button id="refresh-trend-automation" class="studio-button secondary small" type="button">Refresh status</button>
