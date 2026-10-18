@@ -274,6 +274,7 @@ async def main() -> None:
                 compute_channel_schedule_activity,
                 apply_channel_safety_demotion_activity,
                 run_channel_trend_activation_activity,
+                refresh_scheduled_channel_trends_activity,
                 refresh_trend_activation_performance_activity,
                 schedule_channel_reach_sync_activity,
             ],
