@@ -8,7 +8,10 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query, status
 from pydantic import BaseModel, ConfigDict, Field
+from sqlalchemy import select
 
+from katcha.automation_schedule_models import AutomationSchedule
+from katcha.db import session_scope
 from katcha.orchestration.client import (
     start_channel_trend_activation,
     start_channel_trend_activation_performance,
@@ -97,6 +100,18 @@ class TrendActivationScheduleResponse(BaseModel):
     channel_profile_id: uuid.UUID
     workflow_id: str
     interval_hours: int
+
+
+class TrendActivationScheduleStatusResponse(BaseModel):
+    channel_profile_id: uuid.UUID
+    registered: bool
+    enabled: bool
+    interval_hours: int | None = None
+    workflow_id: str | None = None
+    generation: int | None = None
+    reconcile_pending: bool = False
+    # Registration is persisted evidence, NOT proof Temporal is healthy.
+    runtime_verified: bool = False
 
 
 class TrendActivationRunResponse(BaseModel):
@@ -226,6 +241,38 @@ async def scan_trend_activation(
         workflow_id=workflow_id,
         run_key=run_key,
     )
+
+
+@router.get(
+    "/channels/{channel_profile_id}/trends/activation-schedule",
+    response_model=TrendActivationScheduleStatusResponse,
+)
+def get_trend_activation_schedule(
+    channel_profile_id: uuid.UUID,
+) -> TrendActivationScheduleStatusResponse:
+    """Read the durable registration without implying live Temporal availability."""
+    with session_scope() as session:
+        schedule = session.scalar(
+            select(AutomationSchedule).where(
+                AutomationSchedule.schedule_key ==
+                f"channel_trend_activation:{channel_profile_id}"
+            )
+        )
+        if schedule is None:
+            return TrendActivationScheduleStatusResponse(
+                channel_profile_id=channel_profile_id,
+                registered=False,
+                enabled=False,
+            )
+        return TrendActivationScheduleStatusResponse(
+            channel_profile_id=channel_profile_id,
+            registered=True,
+            enabled=schedule.enabled,
+            interval_hours=int((schedule.schedule_config or {}).get("interval_hours") or 0) or None,
+            workflow_id=schedule.workflow_id,
+            generation=schedule.generation,
+            reconcile_pending=schedule.supersedes_workflow_id is not None,
+        )
 
 
 @router.post(

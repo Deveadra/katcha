@@ -34,6 +34,18 @@ const channelPolicies = {
     },
     "channel-2": null,
 };
+const channelSchedules = {
+    "channel-1": {
+        channel_profile_id: "channel-1", registered: false, enabled: false,
+        interval_hours: null, workflow_id: null, generation: null,
+        reconcile_pending: false, runtime_verified: false,
+    },
+    "channel-2": {
+        channel_profile_id: "channel-2", registered: false, enabled: false,
+        interval_hours: null, workflow_id: null, generation: null,
+        reconcile_pending: false, runtime_verified: false,
+    },
+};
 const channelRuns = {
     "channel-1": [
         {
@@ -673,6 +685,28 @@ const analytics = [
             }
             data = channelPolicies[channelId];
         } else if (
+            /^\/v1\/channels\/channel-[12]\/trends\/activation-schedule$/.test(url.pathname)
+        ) {
+            const channelId = url.pathname.split("/")[3];
+            if (req.method() === "POST") {
+                const previous = channelSchedules[channelId];
+                channelSchedules[channelId] = {
+                    ...previous,
+                    registered: true,
+                    enabled: true,
+                    interval_hours: body.interval_hours,
+                    workflow_id: "trend-activation-schedule-" + channelId,
+                    generation: (previous.generation || 0) + 1,
+                    reconcile_pending: false,
+                    runtime_verified: false,
+                };
+                data = {
+                    channel_profile_id: channelId,
+                    interval_hours: body.interval_hours,
+                    workflow_id: channelSchedules[channelId].workflow_id,
+                };
+            } else data = channelSchedules[channelId];
+        } else if (
             /^\/v1\/channels\/channel-[12]\/trends\/activation-runs$/.test(url.pathname)
         ) {
             data = channelRuns[url.pathname.split("/")[3]];
@@ -1165,6 +1199,30 @@ const analytics = [
     assert.equal(policyWrites[0].body.min_budget_headroom_usd, "6.50");
     assert.equal(policyWrites[0].body.metadata.retained_custom_guard, "important");
     assert.equal(channelPolicies["channel-1"].version, 5);
+    assert.equal(await page.locator("#register-trend-schedule").isEnabled(), true,
+        "saving enabled channel policy must unlock recurring scan registration");
+    assert.match(await page.locator("#trend-schedule-status").innerText(), /No recurring trend scan registered/);
+    assert.equal(requests.filter((row) => row.path.endsWith("/trends/activation-schedule") &&
+        row.method === "POST").length, 0, "loading automation status cannot register scans");
+    await page.locator("#trend-schedule-hours").selectOption("3");
+    page.once("dialog", (dialog) => dialog.dismiss());
+    await page.locator("#register-trend-schedule").click();
+    assert.equal(requests.filter((row) => row.path.endsWith("/trends/activation-schedule") &&
+        row.method === "POST").length, 0, "cancelled schedule confirmation has no side effects");
+    page.once("dialog", (dialog) => dialog.accept());
+    await page.locator("#register-trend-schedule").click();
+    await page.waitForFunction(() => document.querySelector("#trend-schedule-status")
+        .textContent.includes("Registered every 3 hour"));
+    assert.match(await page.locator("#trend-schedule-status").innerText(), /Live Temporal worker health has not been verified/);
+    const writes = requests.filter((row) =>
+        row.path === "/v1/channels/channel-1/trends/activation-schedule" &&
+        row.method === "POST");
+    assert.equal(writes.length, 1);
+    assert.equal(writes[0].body.interval_hours, 3);
+    assert.equal(channelSchedules["channel-1"].runtime_verified, false);
+    assert.equal(await page.locator("#save-trend-automation").isEnabled(), true,
+        "schedule registration must not lock subsequent policy changes");
+
     await page.locator("#refresh-trend-automation").click();
     await page.waitForFunction(() => document.querySelector("#trend-automation-message")
         .textContent.includes("Policy v5"));
@@ -1361,6 +1419,8 @@ const analytics = [
         .textContent === "Not configured");
     assert.equal(await page.locator("#trend-editorial-enabled").isChecked(), false);
     assert.match(await page.locator("#trend-automation-runs").innerText(), /No autonomous trend scans/);
+    assert.match(await page.locator("#trend-schedule-status").innerText(), /No recurring trend scan registered/);
+    assert.equal(channelSchedules["channel-2"].registered, false);
     assert.equal(requests.filter((row) =>
         row.path === "/v1/channels/channel-2/trends/activation-policy" &&
         row.method === "POST").length, 0);
