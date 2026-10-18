@@ -105,7 +105,7 @@ def test_forged_workflow_success_without_anonymous_verification_blocks(
         release.check_release(SHA)
 
 
-def test_missing_sixth_build_blocks_even_if_workflow_success(
+def test_missing_runtime_build_blocks_even_if_workflow_success(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     image = run(release.IMAGES_WORKFLOW, "workflow_run", 22)
@@ -113,7 +113,7 @@ def test_missing_sixth_build_blocks_even_if_workflow_success(
     build_jobs["jobs"].pop(1)
     build_jobs["total_count"] -= 1
     mock_api(monkeypatch, [image], {22: build_jobs})
-    with pytest.raises(release.ReleaseNotEligible, match="six"):
+    with pytest.raises(release.ReleaseNotEligible, match="seven"):
         release.check_release(SHA)
 
 

@@ -1,0 +1,23 @@
+# syntax=docker/dockerfile:1.7
+FROM python:3.12-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PYTHONPATH=/app/src \
+    PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright
+WORKDIR /app
+
+COPY pyproject.toml ./
+RUN --mount=type=cache,target=/root/.cache/pip \
+    python -c 'import subprocess,tomllib; data=tomllib.load(open("pyproject.toml","rb")); deps=data["project"]["dependencies"]+data["project"]["optional-dependencies"]["browser"]; subprocess.check_call(["python","-m","pip","install",*deps])'
+# Install the browser revision matching this Python Playwright package into a
+# shared path, rather than root's inaccessible per-user browser cache.
+RUN python -m playwright install --with-deps chromium \
+    && chmod -R a+rX /opt/ms-playwright \
+    && rm -rf /var/lib/apt/lists/* \
+    && useradd --create-home --uid 10001 katcha
+COPY --chown=katcha:katcha src ./src
+USER katcha
+EXPOSE 8010
+CMD ["uvicorn", "katcha.services.server_browser:app", "--host", "0.0.0.0", "--port", "8010", "--workers", "1"]

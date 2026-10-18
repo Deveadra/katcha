@@ -297,3 +297,20 @@
 .ai-readiness{margin:10px 0 18px;padding:12px 15px;border-radius:10px;font:500 13px/1.55 system-ui,sans-serif}
 .ai-readiness.live{background:rgba(130,215,160,.1);color:#b7f1cc;border:1px solid rgba(130,215,160,.25)}
 .ai-readiness.unavailable{background:rgba(244,189,105,.12);color:#f9d8a1;border:1px solid rgba(244,189,105,.3)}
+
+.goal-browser { margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--line); min-width: 0; }
+.goal-browser summary { cursor: pointer; min-height: 44px; display: list-item; align-content: center; }
+.goal-browser p { font-size: 13px; line-height: 1.5; overflow-wrap: anywhere; }
+.goal-browser label { display: grid; gap: 4px; min-width: 0; font-size: 13px; }
+.goal-browser form, .browser-controls { display: flex; flex-wrap: wrap; gap: 8px; margin-block: 12px; align-items: end; }
+.goal-browser form > label { flex: 1 1 180px; }
+.goal-browser input, .goal-browser select { width: 100%; min-width: 0; max-width: 100%; min-height: 44px; box-sizing: border-box; }
+.goal-browser button { min-height: 44px; max-width: 100%; white-space: normal; }
+.goal-browser [hidden] { display: none !important; }
+.browser-view { min-width: 0; }
+.browser-title { margin-block: 12px 4px; overflow-wrap: anywhere; }
+.browser-location { overflow-wrap: anywhere; }
+.browser-screenshot { display: block; box-sizing: border-box; width: 100%; height: auto; border: 1px solid var(--line); }
+.browser-text { max-height: 300px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; }
+.browser-status { border-left: 3px solid var(--lime); padding-left: 8px; }
+@media(max-width:650px) { .goal-browser form > label { flex-basis: 100%; } }
