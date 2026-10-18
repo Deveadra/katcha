@@ -378,6 +378,18 @@ def database_migration_postflight() -> None:
         raise Blocked("approved AI settings table schema differs from reviewed migration")
 
 
+def database_release_preflight(migration: bool) -> None:
+    """Validate the actual database state for the exact reviewed Git diff.
+
+    A migration-free release must already be at 0064 with its exact schema.
+    Only an independently approved 0064-addition may start at 0063.
+    """
+    if migration:
+        database_migration_preflight()
+    else:
+        database_migration_postflight()
+
+
 def stage_images(target: str) -> dict[str, str]:
     staged: dict[str, str] = {}
     for name in IMAGES:
@@ -569,8 +581,7 @@ def deploy(target: str, policy: str, migration_policy: str = "refuse") -> dict[s
     runtime(current)
     authority()
     migration = eligible(current, target, migration_policy)
-    if migration:
-        database_migration_preflight()
+    database_release_preflight(migration)
     before = temporal_inventory(policy)
     staged = stage_images(target)
     backup_and_restore()
@@ -581,8 +592,7 @@ def deploy(target: str, policy: str, migration_policy: str = "refuse") -> dict[s
         raise Blocked("running Temporal executions changed during backup/preparation")
     if eligible(current, target, migration_policy) != migration:
         raise Blocked("migration classification changed during deployment review")
-    if migration:
-        database_migration_preflight()
+    database_release_preflight(migration)
     run("git", "-C", str(REPO), "fetch", "origin", "main", timeout=60)
     if run("git", "-C", str(REPO), "rev-parse", "origin/main") != target:
         raise Blocked("fetched main differs from approved candidate")
@@ -616,8 +626,9 @@ def deploy(target: str, policy: str, migration_policy: str = "refuse") -> dict[s
         # The successor must obtain the same private lease itself.
         run("systemctl", "start", "katcha.service", timeout=900)
         healthy(target, staged=staged)
-        if migration:
-            database_migration_postflight()
+        # Both approved 0063→0064 migrations and migration-free releases
+        # must finish with the independently verified 0064 schema.
+        database_migration_postflight()
         resumed = workflows("approved-resume")
         recovered = verify_temporal_recovery(before)
         outcome = {"status": "DEPLOYED", "sha": target, "previous_sha": current,
@@ -670,12 +681,21 @@ def readiness() -> dict[str, Any]:
     run("mountpoint", "-q", "/srv/katcha")
     old, _ = pinned(ENV)
     runtime(old)
-    database_migration_preflight()
+    revision = database_query("revision")
+    if revision == BEFORE_REVISION:
+        database_migration_preflight()
+        schema_state = "requires_approved_additive_0064_if_release_adds_migration"
+    elif revision == AFTER_REVISION:
+        database_migration_postflight()
+        schema_state = "0064_already_applied_and_verified"
+    else:
+        raise Blocked("database revision is outside the reviewed 0063/0064 boundary")
     open_executions = temporal_inventory("approved-resume")
     return {
         "status": "REVIEW_REQUIRED",
         "migration": AFTER_REVISION,
-        "database_start_revision": BEFORE_REVISION,
+        "database_start_revision": revision,
+        "database_schema_state": schema_state,
         "temporal_running_count": len(open_executions),
         "temporal_pending_activity_check": "PASSED",
         "note": "Read-only preflight. Not a deployment authorization.",
