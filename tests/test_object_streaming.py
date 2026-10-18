@@ -168,9 +168,11 @@ def test_reader_rejects_wrong_range_and_different_stored_hash():
         return response
 
     fake.get_object = wrong_range
-    with streaming.SeekableObjectReader(store, "clip.mp4", 14) as reader:
-        with pytest.raises(ValueError, match="ignored"):
-            reader.read(2)
+    with (
+        streaming.SeekableObjectReader(store, "clip.mp4", 14) as reader,
+        pytest.raises(ValueError, match="ignored"),
+    ):
+        reader.read(2)
 
 
 def test_pyav_reads_real_non_faststart_mp4_from_ranged_r2_fixture(tmp_path):
