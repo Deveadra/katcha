@@ -17,6 +17,7 @@ from katcha.orchestration.client import (
     start_channel_trend_activation_performance,
     start_channel_trend_activation_schedule,
 )
+from katcha.orchestration.trend_runtime_readiness import inspect_trend_schedule_runtime
 from katcha.services.automation_schedules import (
     locked_schedule_for_reconcile,
     register_channel_trend_activation_schedule,
@@ -120,6 +121,20 @@ class TrendActivationScheduleStatusResponse(BaseModel):
     last_scheduled_scan_status: str | None = None
     scan_health: str = "not_registered"
     scan_overdue: bool = False
+
+
+class TrendActivationRuntimeResponse(BaseModel):
+    channel_profile_id: uuid.UUID
+    checked_at: datetime
+    status: str
+    schedule_running: bool = False
+    intelligence_workflow_pollers_recent: bool = False
+    intelligence_activity_pollers_recent: bool = False
+    production_workflow_pollers_recent: bool = False
+    production_activity_pollers_recent: bool = False
+    runtime_verified: bool = False
+    editorial_queue_ready: bool = False
+    reason: str | None = None
 
 
 class TrendActivationRunResponse(BaseModel):
@@ -334,6 +349,33 @@ def get_trend_activation_schedule(
             scan_health=scan_health,
             scan_overdue=overdue,
         )
+
+
+@router.get(
+    "/channels/{channel_profile_id}/trends/activation-runtime",
+    response_model=TrendActivationRuntimeResponse,
+)
+async def get_trend_activation_runtime(
+    channel_profile_id: uuid.UUID,
+) -> TrendActivationRuntimeResponse:
+    """Observe Temporal without triggering registration, scans, or spend."""
+    schedule = get_trend_activation_schedule(channel_profile_id)
+    if not schedule.registered or not schedule.enabled or not schedule.workflow_id:
+        return TrendActivationRuntimeResponse(
+            channel_profile_id=channel_profile_id,
+            checked_at=datetime.now(UTC),
+            status="not_registered" if not schedule.registered else "schedule_disabled",
+            reason=(
+                "no_registered_schedule"
+                if not schedule.registered
+                else "registered_schedule_disabled"
+            ),
+        )
+    data = await inspect_trend_schedule_runtime(schedule.workflow_id)
+    return TrendActivationRuntimeResponse(
+        channel_profile_id=channel_profile_id,
+        **data,
+    )
 
 
 @router.post(
