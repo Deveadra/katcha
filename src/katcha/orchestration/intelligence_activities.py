@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
+from typing import Any
 
 from sqlalchemy import select
 from temporalio import activity
@@ -266,7 +267,7 @@ def run_clip_lifecycle_maintenance_activity(
 async def run_channel_trend_activation_activity(
     channel_profile_id: str,
     run_key: str,
-    trend_refresh: dict[str, object] | None = None,
+    trend_refresh: dict[str, Any] | None = None,
 ) -> dict[str, object]:
     channel_id = uuid.UUID(channel_profile_id)
     summary = run_autonomous_trend_activation(channel_id, run_key=run_key)
