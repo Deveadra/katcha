@@ -1199,6 +1199,8 @@ const analytics = [
     assert.equal(policyWrites[0].body.min_budget_headroom_usd, "6.50");
     assert.equal(policyWrites[0].body.metadata.retained_custom_guard, "important");
     assert.equal(channelPolicies["channel-1"].version, 5);
+    assert.equal(await page.locator("#register-trend-schedule").isEnabled(), true,
+        "saving enabled channel policy must unlock recurring scan registration");
     assert.match(await page.locator("#trend-schedule-status").innerText(), /No recurring trend scan registered/);
     assert.equal(requests.filter((row) => row.path.endsWith("/trends/activation-schedule") &&
         row.method === "POST").length, 0, "loading automation status cannot register scans");
@@ -1218,6 +1220,8 @@ const analytics = [
     assert.equal(writes.length, 1);
     assert.equal(writes[0].body.interval_hours, 3);
     assert.equal(channelSchedules["channel-1"].runtime_verified, false);
+    assert.equal(await page.locator("#save-trend-automation").isEnabled(), true,
+        "schedule registration must not lock subsequent policy changes");
 
     await page.locator("#refresh-trend-automation").click();
     await page.waitForFunction(() => document.querySelector("#trend-automation-message")
