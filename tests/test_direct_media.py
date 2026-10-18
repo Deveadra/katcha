@@ -220,6 +220,39 @@ def test_incomplete_file_cleans_up_and_reports_typed_transport_failure(
     assert list(tmp_path.iterdir()) == []
 
 
+def test_http_incomplete_read_is_classified_and_partial_storage_removed(
+    monkeypatch, tmp_path
+):
+    import http.client
+
+    class Truncated(Response):
+        def read(self, size):
+            raise http.client.IncompleteRead(b"partial", 10)
+
+    fake_network(monkeypatch, Truncated())
+    with pytest.raises(downloader.MediaDownloadError) as caught:
+        downloader.download(
+            "https://press.example.org/media/trailer.mp4",
+            Settings(_env_file=None, work_dir=tmp_path),
+        )
+    assert failure_details(caught.value)["code"] == "direct_media_transport_failed"
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_unknown_length_cannot_exceed_streaming_limit(monkeypatch, tmp_path):
+    response = Response(content=b"some oversized fixture data")
+    response.headers.pop("Content-Length")
+    fake_network(monkeypatch, response)
+    monkeypatch.setattr(direct_media, "MAX_DIRECT_BYTES", 8)
+    with pytest.raises(downloader.MediaDownloadError) as caught:
+        downloader.download(
+            "https://press.example.org/media/trailer.mp4",
+            Settings(_env_file=None, work_dir=tmp_path),
+        )
+    assert failure_details(caught.value)["code"] == "direct_media_exceeds_transfer_limit"
+    assert list(tmp_path.iterdir()) == []
+
+
 def test_non_video_bytes_cannot_be_marked_ingested(monkeypatch, tmp_path):
     fake_network(monkeypatch, Response(content=b"audio-only"))
     monkeypatch.setattr(
