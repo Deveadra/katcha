@@ -4,7 +4,15 @@ P7.2 adds a zero-token planning loop between qualified TrendOpportunity records 
 
 ## Boundary
 
-Autonomous activation creates or reuses **planned** ShortEpisode records only. It does not start paid script generation, TTS, rendering, review approval, or publication. Those stages continue to use the existing automation and review controls.
+Autonomous activation creates or reuses **planned** ShortEpisode records. An optional, explicitly operator-authorized handoff now starts the existing ShortEpisode editorial workflow for qualified planned episodes; it never creates a parallel render or publication engine.
+
+Paid script/TTS execution is **off by default**. To allow it for a channel, submit `auto_start_editorial: true` on that channel's versioned activation-policy request (or `metadata.auto_start_editorial: true`). The active activation policy must also be enabled. Set `editorial_max_starts_per_scan` to 1 or 2 (default 1). A policy that previously authorized **planning only** does not authorize new spend.
+
+Before a handoff, Katcha requires: enabled AI execution; a usable provider; an economics snapshot no older than 24 hours with at least $2 headroom and the policy minimum; a planned, root, channel-owned trend episode; eligible frozen acquisition evidence; and a fresh check of every clip's rights ledger. All other episodes stay untouched. A scan starts at most two editorial workflows and reuses the deterministic `<episode-workflow-id>-editorial-script` Temporal ID on retries.
+
+The existing editorial workflow produces script and narration, then obeys **existing channel review policy** before rendering, and existing render approval/publication policy afterward. Enabling auto start does not automatically authorize publication. Handoff outcomes or explicit block reasons are stored in `TrendActivationRun.run_metadata.editorial_dispatch`; an unavailable Temporal worker leaves the planned episode intact for retry.
+
+This is not evidence of a live production rollout: provider health, budget snapshots, channel policy enablement, production worker and actual rendered output must all be independently verified.
 
 The scanner calls the same P7.1 `preview_trend_activation` and `activate_trend_opportunity` services used by the manual API. There is no second planner.
 
