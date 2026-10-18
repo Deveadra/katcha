@@ -85,7 +85,9 @@ class MultipartObjectWriter:
             return
         # Do not hide the original transfer failure behind cleanup problems.
         with suppress(Exception):
-            assert_mutation_authority("storage.multipart_upload_abort", settings=self.store.settings)
+            assert_mutation_authority(
+                "storage.multipart_upload_abort", settings=self.store.settings
+            )
             self.store.client.abort_multipart_upload(
                 Bucket=self.store.settings.s3_bucket,
                 Key=self.key,
@@ -170,34 +172,33 @@ def inspect_stored_media(store: ObjectStore, key: str, size: int) -> dict[str, o
     """PyAV's seekable file-object interface handles MP4 metadata at the tail."""
     import av
 
-    with SeekableObjectReader(store, key, size) as reader:
-        with av.open(reader, mode="r") as container:
-            streams = [
-                {
-                    "index": int(stream.index),
-                    "codec_type": stream.type,
-                    "codec_name": str(stream.codec_context.name or ""),
-                    "width": int(stream.codec_context.width or 0)
-                    if stream.type == "video" else None,
-                    "height": int(stream.codec_context.height or 0)
-                    if stream.type == "video" else None,
-                }
-                for stream in container.streams
-            ]
-            if not any(item["codec_type"] == "video" for item in streams):
-                raise ValueError("Stored media has no decodable video stream")
-            duration = (
-                str(Decimal(container.duration) / Decimal(1_000_000))
-                if container.duration is not None else None
-            )
-            return {
-                "format": {
-                    "duration": duration,
-                    "size": str(size),
-                    "format_name": container.format.name if container.format else None,
-                },
-                "streams": streams,
+    with SeekableObjectReader(store, key, size) as reader, av.open(reader, mode="r") as container:
+        streams = [
+            {
+                "index": int(stream.index),
+                "codec_type": stream.type,
+                "codec_name": str(stream.codec_context.name or ""),
+                "width": int(stream.codec_context.width or 0)
+                if stream.type == "video" else None,
+                "height": int(stream.codec_context.height or 0)
+                if stream.type == "video" else None,
             }
+            for stream in container.streams
+        ]
+        if not any(item["codec_type"] == "video" for item in streams):
+            raise ValueError("Stored media has no decodable video stream")
+        duration = (
+            str(Decimal(container.duration) / Decimal(1_000_000))
+            if container.duration is not None else None
+        )
+        return {
+            "format": {
+                "duration": duration,
+                "size": str(size),
+                "format_name": container.format.name if container.format else None,
+            },
+            "streams": streams,
+        }
 
 
 def verify_stored_sha256(store: ObjectStore, key: str, expected: str, size: int) -> None:
