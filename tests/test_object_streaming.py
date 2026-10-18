@@ -207,7 +207,7 @@ def test_pyav_rejects_audio_only_stream(tmp_path):
         audio.setnchannels(1)
         audio.setsampwidth(2)
         audio.setframerate(8000)
-        audio.writeframes(b"\\x00\\x00" * 800)
+        audio.writeframes(bytes(1600))
     data = sample.read_bytes()
     fake = FakeClient()
     fake.objects["audio.wav"] = data
