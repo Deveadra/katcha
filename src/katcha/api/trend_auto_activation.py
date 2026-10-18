@@ -313,6 +313,8 @@ def get_trend_activation_schedule(
                 > timedelta(minutes=30)
                 else "scan_in_progress"
             )
+        elif latest_scan.status == "disabled":
+            scan_health = "scan_policy_disabled"
         elif latest_scan.status != "completed":
             scan_health = "last_scan_not_completed"
         else:
