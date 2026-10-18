@@ -594,8 +594,10 @@ body[data-katcha-page="trends"] .select-wrap {
     padding-inline: 12px;
 }
 body[data-katcha-page="trends"] .search-wrap input {
-    width: 100%;
+    flex: 1 1 0%;
+    width: 0;
     min-width: 0;
+    max-width: 100%;
     height: 100%;
     padding: 0;
     border: 0;
