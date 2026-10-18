@@ -7,7 +7,6 @@ from sqlalchemy import CheckConstraint, UniqueConstraint, select
 from katcha.api.trend_auto_activation import get_trend_activation_schedule
 from katcha.automation_schedule_models import AutomationSchedule
 from katcha.db import session_scope
-from katcha.trend_activation_models import TrendActivationRun
 from katcha.orchestration.recovery_registry import (
     WORKFLOW_RECOVERY_CONTRACTS,
     RecoveryMode,
@@ -16,6 +15,7 @@ from katcha.services.automation_schedules import (
     mark_schedule_reconciled,
     register_channel_trend_activation_schedule,
 )
+from katcha.trend_activation_models import TrendActivationRun
 
 
 def _unique_columns() -> set[tuple[str, ...]]:
