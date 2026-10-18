@@ -9,8 +9,7 @@ import pytest
 from temporalio import workflow
 
 from katcha.db import session_scope
-from katcha.orchestration import intelligence_activities, intelligence_workflows
-from katcha.orchestration import trend_activities
+from katcha.orchestration import intelligence_activities, intelligence_workflows, trend_activities
 from katcha.trend_activation_models import TrendActivationRun
 from katcha.trends.runtime import TREND_TASK_QUEUE
 
