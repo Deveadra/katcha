@@ -7,8 +7,8 @@ from decimal import Decimal
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query, status
-from sqlalchemy import select
 from pydantic import BaseModel, ConfigDict, Field
+from sqlalchemy import select
 
 from katcha.automation_schedule_models import AutomationSchedule
 from katcha.db import session_scope
