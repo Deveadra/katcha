@@ -72,14 +72,14 @@ def audit(
                 output["distinct_from_primary"] = observed != primary
                 if observed == primary:
                     errors.append("egress_ip_matches_primary")
-    except (ValueError, TypeError, KeyError, OSError, TimeoutError) as exc:
+    except (ValueError, TypeError, KeyError, OSError) as exc:
         errors.append(f"egress_identity_failed:{type(exc).__name__}")
 
     try:
         output["api_discovery_reachable"] = bool(api_probe())
         if not output["api_discovery_reachable"]:
             errors.append("youtube_data_api_unreachable")
-    except (ValueError, OSError, TimeoutError) as exc:
+    except (ValueError, OSError) as exc:
         errors.append(f"youtube_data_api_probe_failed:{type(exc).__name__}")
 
     output["errors"] = errors
