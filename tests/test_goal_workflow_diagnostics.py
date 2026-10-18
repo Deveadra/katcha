@@ -1,6 +1,5 @@
 """Goal workflow status must never hide dispatch/runner failures or leak credentials."""
 
-import uuid
 from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
