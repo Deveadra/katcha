@@ -8,7 +8,6 @@ import uuid
 import pytest
 from sqlalchemy import select
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
-
 from test_command_goals import saved as saved_fixture
 
 from katcha import db
