@@ -86,6 +86,13 @@ async def test_preparation_requires_clip_and_preserves_diagnostics(monkeypatch, 
     assert entry["success"] == (mode == "acquired")
     assert result["status"] == ("completed" if mode == "acquired" else "failed")
     assert result["scene_verified"] is False
+    lifecycle = activities.await_args_list[-1].kwargs["args"][3]
+    assert lifecycle["ingest_attempts"][0]["candidate_id"] == "candidate"
+    assert lifecycle["ingest_attempts"][0]["source_route"] == "press.example.org"
+    assert lifecycle["ingest_attempts"][0]["workflow_id"] == "ingest-1"
+    assert lifecycle["ingest_attempts"][0]["success"] == (mode == "acquired")
+    if mode == "acquired":
+        assert lifecycle["ingest_attempts"][0]["clip_id"] == "clip"
     if mode == "failure":
         assert "HTTP 403" in entry["error"]
         assert "hidden" not in str(entry)
