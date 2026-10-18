@@ -63,6 +63,7 @@ from katcha.orchestration.research_activities import prepare_research_jobs_activ
 from katcha.orchestration.research_workflows import AutomaticResearchWorkflow
 from katcha.orchestration.trend_activities import (
     refresh_channel_trends_activity,
+    refresh_scheduled_channel_trends_activity,
     refresh_trend_calibration_activity,
 )
 from katcha.orchestration.trend_workflows import (
@@ -242,6 +243,7 @@ async def main() -> None:
             ],
             activities=[
                 refresh_channel_trends_activity,
+                refresh_scheduled_channel_trends_activity,
                 refresh_trend_calibration_activity,
             ],
             activity_executor=activity_executor,
