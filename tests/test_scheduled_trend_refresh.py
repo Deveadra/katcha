@@ -6,7 +6,8 @@ from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
-from temporalio import workflow
+from temporalio import activity, workflow
+from temporalio.converter import value_to_type
 
 from katcha.db import session_scope
 from katcha.orchestration import intelligence_activities, intelligence_workflows, trend_activities
@@ -211,3 +212,14 @@ async def test_manual_activation_does_not_gain_scheduled_refresh_metadata(
     with session_scope() as session:
         saved = session.get(TrendActivationRun, run_id)
         assert "trend_refresh" not in saved.run_metadata
+
+
+def test_temporal_scheduled_refresh_receipt_decodes_heterogeneous_json() -> None:
+    argument_types = activity._Definition.must_from_callable(
+        intelligence_activities.run_channel_trend_activation_activity
+    ).arg_types
+    receipt = {
+        "status": "completed", "topics_scored": 3,
+        "qualified_opportunities": 1, "evidence_packets_built": 2,
+    }
+    assert value_to_type(argument_types[2], receipt) == receipt
