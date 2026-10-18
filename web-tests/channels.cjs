@@ -64,6 +64,10 @@ const channelRuns = {
             id: "trend-run-1", status: "completed",
             started_at: now, completed_at: now, activated_count: 2,
             run_metadata: {
+                trend_refresh: {
+                    status: "completed", topics_scored: 3,
+                    qualified_opportunities: 1, evidence_packets_built: 2,
+                },
                 editorial_dispatch: {
                     status: "blocked", reason: "editorial_auto_start_not_authorized",
                     started: [], failed: [],
@@ -1197,6 +1201,8 @@ const analytics = [
         row.method === "POST").length, 0, "page load cannot enable spending");
 
     await page.locator('[data-channel-tab="settings"]').click();
+    assert.match(await page.locator("#trend-automation-runs").innerText(),
+        /Trend scoring: 3 topic\\(s\\), 1 qualified/);
     await page.locator("#trend-editorial-enabled").check();
     page.once("dialog", (dialog) => dialog.dismiss());
     await page.locator("#save-trend-automation").click();
