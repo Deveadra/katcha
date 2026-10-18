@@ -264,9 +264,13 @@ async def read_goal(http_request: Request, goal_id: uuid.UUID) -> dict:
                 try:
                     async def failed_result():
                         client = await get_temporal_client()
-                        return await client.get_workflow_handle(
-                            f"command-goal-{goal.id}"
-                        ).result()
+                        handle = client.get_workflow_handle(f"command-goal-{goal.id}")
+                        # Older Temporal fixtures and limited handles expose only
+                        # execution status. Lack of details must not replace FAILED
+                        # with an incidental AttributeError.
+                        if not callable(getattr(handle, "result", None)):
+                            return None
+                        return await handle.result()
 
                     await asyncio.wait_for(failed_result(), timeout=3)
                 except Exception as exc:
