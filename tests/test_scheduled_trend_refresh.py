@@ -17,7 +17,10 @@ from katcha.trends.runtime import TREND_TASK_QUEUE
 @pytest.mark.asyncio
 async def test_scheduled_cycle_scores_before_activation_on_trend_queue(monkeypatch):
     calls = []
-    monkeypatch.setattr(workflow, "patched", lambda marker: marker == "scheduled-trend-refresh-before-activation-v1")
+    monkeypatch.setattr(
+        workflow, "patched",
+        lambda marker: marker == "scheduled-trend-refresh-before-activation-v1",
+    )
 
     async def execute(name, **kwargs):
         calls.append((name, kwargs))
