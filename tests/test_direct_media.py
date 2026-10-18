@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import hashlib
 import socket
-from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 
@@ -37,10 +35,9 @@ class Response:
         return result
 
 
-def fake_network(monkeypatch, *responses, hosts=None):
+def fake_network(monkeypatch, *responses):
     calls = []
     remaining = list(responses)
-    expected_hosts = hosts
 
     def public_addresses(url):
         from urllib.parse import urlsplit
@@ -108,7 +105,10 @@ def test_redirect_to_another_public_host_is_validated_and_no_credentials_forward
     monkeypatch, tmp_path
 ):
     responses = [
-        Response(status=302, headers={"Location": "https://cdn.example.net/assets/opaque?sig=private"}),
+        Response(
+            status=302,
+            headers={"Location": "https://cdn.example.net/assets/opaque?sig=private"},
+        ),
         Response(content=b"direct media"),
     ]
     calls = fake_network(monkeypatch, *responses)
