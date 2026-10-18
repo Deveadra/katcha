@@ -94,7 +94,17 @@ async def test_real_javascript_forms_cookies_isolation_tabs_and_screenshot(real_
 
     first = await act("open", url="https://fixture.test/")
     assert "Fixture login" in first["text"]
-    filled = await act("fill", ref=control(first, "Name"), text="Ada")
+    await act("hover", ref=control(first, "Name"))
+    page = pool.sessions[scope].page
+    box = await page.locator("input").bounding_box()
+    await act("mouse_click", x=int(box["x"] + 5), y=int(box["y"] + 5))
+    await act("type", text="Typed through the keyboard")
+    assert await page.locator("input").input_value() == "Typed through the keyboard"
+    await act("press", key="ControlOrMeta+A")
+    await act("type", text="Ada")
+    assert await page.locator("input").input_value() == "Ada"
+    refreshed = await act("snapshot")
+    filled = await act("fill", ref=control(refreshed, "Name"), text="Ada")
     signed = await act("click", ref=control(filled, "Sign in"))
     assert "Hello Ada" in signed["text"]
     selected = await act("select", ref=control(signed, "Choice"), text="b")

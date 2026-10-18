@@ -23,7 +23,12 @@ from katcha.editorial.retrieval import public_addresses
 class BrowserAction(BaseModel):
     model_config = ConfigDict(extra="forbid")
     action: Literal["open", "snapshot", "click", "fill", "press", "select", "scroll", "wait",
-                    "back", "tabs", "switch_tab", "close_tab", "close", "screenshot"]
+                    "back", "tabs", "switch_tab", "close_tab", "close", "screenshot",
+                    "mouse_click", "hover", "type", "drag"]
+    x: int = Field(default=0, ge=0, le=1279)
+    y: int = Field(default=0, ge=0, le=799)
+    x2: int = Field(default=0, ge=0, le=1279)
+    y2: int = Field(default=0, ge=0, le=799)
     url: str | None = Field(default=None, max_length=2000)
     ref: str | None = Field(default=None, pattern=r"^e[0-9]+$", max_length=12)
     text: str = Field(default="", max_length=10000)
@@ -36,7 +41,7 @@ class BrowserAction(BaseModel):
     def required_fields(self):
         if self.action == "open" and not self.url:
             raise ValueError("Enter a public HTTPS address")
-        if self.action in {"click", "fill", "press", "select"} and not self.ref:
+        if self.action in {"click", "fill", "select", "hover"} and not self.ref:
             raise ValueError("Choose an element from the current page")
         return self
 
@@ -278,7 +283,20 @@ class BrowserPool:
             if action.action == "open":
                 await asyncio.to_thread(public_addresses, action.url)
                 await page.goto(action.url, wait_until="domcontentloaded")
-            elif action.action in {"click", "fill", "press", "select"}:
+            elif action.action == "mouse_click":
+                await page.mouse.click(action.x, action.y)
+            elif action.action == "drag":
+                await page.mouse.move(action.x, action.y)
+                await page.mouse.down()
+                try:
+                    await page.mouse.move(action.x2, action.y2, steps=12)
+                finally:
+                    await page.mouse.up()
+            elif action.action == "type":
+                await page.keyboard.insert_text(action.text)
+            elif action.action == "press" and not action.ref:
+                await page.keyboard.press(action.key)
+            elif action.action in {"click", "fill", "press", "select", "hover"}:
                 element = session.refs.get(action.ref)
                 if not element:
                     raise ValueError("Refresh the page view and choose the control again.")
@@ -289,6 +307,8 @@ class BrowserPool:
                     await element.fill(action.text)
                 elif action.action == "select":
                     await element.select_option(action.text)
+                elif action.action == "hover":
+                    await element.hover()
                 else:
                     await element.press(action.key)
                 if len(session.context.pages) > 1 and session.context.pages[-1] != page:

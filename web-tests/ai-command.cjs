@@ -36,6 +36,7 @@ let retryFailsOnce = true;
 let replacementGoal = null;
 let browserSessionOpen = false;
 let failBrowserFillOnce = true;
+let browserScreenshotAvailable = false;
 const goalBodies = [];
 let goalId = "88888888-8888-4888-8888-888888888888";
 let browser;
@@ -257,6 +258,10 @@ async function assertGoalSummaryReadable(goal, shouldBeFinished) {
             data = {goal_id: goalId, thread_id: threadId, channel_profile_id: channelId,
                 status: goalPhase, summary: "Saved goal status", result: {}};
         } else if (url.pathname === "/v1/ai/goals/" + goalId + "/browser/screenshot") {
+            if (browserScreenshotAvailable) {
+                await route.fulfill({contentType: "image/svg+xml", body: '<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="800"><rect width="1280" height="800" fill="white"/><text x="20" y="40">Fixture browser canvas</text></svg>'});
+                return;
+            }
             await route.fulfill({status: 409, json: {detail: "Fixture screenshot unavailable"}});
             return;
         } else if (url.pathname === "/v1/ai/goals/" + goalId + "/browser") {
@@ -960,6 +965,7 @@ async function assertGoalSummaryReadable(goal, shouldBeFinished) {
     await browserPanel.getByRole("button", {name: "Visit website"}).click();
     await browserPanel.getByText("Fixture browser page", {exact: true}).waitFor();
     await browserPanel.getByText(/The screenshot is unavailable/).waitFor();
+    await browserPanel.locator('select[name="ref"]').selectOption("e1");
     await browserPanel.getByLabel("Action", {exact: true}).selectOption("fill");
     await browserPanel.getByLabel("Text or option value").fill("fixture-secret");
     await browserPanel.getByRole("button", {name: "Apply action"}).click();
@@ -969,6 +975,44 @@ async function assertGoalSummaryReadable(goal, shouldBeFinished) {
     await browserPanel.getByText(/The screenshot is unavailable/).waitFor();
     assert.equal(await browserPanel.getByLabel("Text or option value").inputValue(), "");
     assert(!(await page.evaluate(() => sessionStorage.getItem("katcha.goalReceipts"))).includes("fixture-secret"));
+    // Fixture image is 1280x800, scaled down in the conversation. A pointer click
+    // must use server viewport coordinates rather than the displayed image size.
+    browserScreenshotAvailable = true;
+    await browserPanel.getByRole("button", {name: "Refresh page view"}).click();
+    await browserPanel.locator(".browser-screenshot").waitFor();
+    await page.waitForFunction(() => document.querySelector(".browser-screenshot").naturalWidth === 1280);
+    const screen = browserPanel.locator(".browser-screenshot");
+    const screenBounds = await screen.boundingBox();
+    await screen.click({position: {x: screenBounds.width / 4, y: screenBounds.height * 3 / 4}});
+    await browserPanel.getByRole("button", {name: "Apply action"}).waitFor({state: "visible"});
+    await page.waitForFunction(() => !document.querySelector('.browser-interaction button').disabled);
+    const pointerAction = requests.filter((request) => request.body?.action === "mouse_click").at(-1).body;
+    assert(Math.abs(pointerAction.x - 320) < 3 && Math.abs(pointerAction.y - 600) < 3, JSON.stringify(pointerAction));
+    await browserPanel.getByRole("button", {name: "Click server browser page", exact: true}).focus();
+    await page.keyboard.press("Enter");
+    assert.equal(await browserPanel.getByLabel("Horizontal position").evaluate((element) => document.activeElement === element), true);
+    await browserPanel.getByLabel("Horizontal position").fill("77");
+    await browserPanel.getByLabel("Vertical position").fill("88");
+    await browserPanel.getByRole("button", {name: "Click this position"}).click();
+    await page.waitForFunction(() => !document.querySelector('.browser-interaction button').disabled);
+    assert.deepEqual(requests.filter((request) => request.body?.action === "mouse_click").at(-1).body, {action: "mouse_click", x: 77, y: 88});
+    await browserPanel.locator('select[name="ref"]').selectOption("");
+    await browserPanel.getByLabel("Action", {exact: true}).selectOption("type");
+    await browserPanel.getByLabel("Text or option value").fill("fixture-focused-secret");
+    await browserPanel.getByRole("button", {name: "Apply action"}).click();
+    await page.waitForFunction(() => !document.querySelector('.browser-interaction button').disabled);
+    assert.deepEqual(requests.filter((request) => request.body?.action === "type").at(-1).body, {action: "type", text: "fixture-focused-secret"});
+    assert.equal(await browserPanel.getByLabel("Text or option value").inputValue(), "");
+    await browserPanel.getByLabel("Action", {exact: true}).selectOption("press");
+    await browserPanel.getByLabel("Key or shortcut").fill("Control+a");
+    await browserPanel.getByRole("button", {name: "Apply action"}).click();
+    await page.waitForFunction(() => !document.querySelector('.browser-interaction button').disabled);
+    assert.deepEqual(requests.filter((request) => request.body?.action === "press").at(-1).body, {action: "press", key: "Control+a"});
+    await browserPanel.locator('select[name="ref"]').selectOption("e1");
+    await browserPanel.getByLabel("Action", {exact: true}).selectOption("hover");
+    await browserPanel.getByRole("button", {name: "Apply action"}).click();
+    await page.waitForFunction(() => !document.querySelector('.browser-interaction button').disabled);
+    assert.deepEqual(requests.filter((request) => request.body?.action === "hover").at(-1).body, {action: "hover", ref: "e1"});
     assert(requests.filter((request) => request.path.includes("/browser")).every((request) => request.auth === "Bearer fixture-token"));
     await page.setViewportSize({width: 390, height: 844});
     assert(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth));

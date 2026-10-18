@@ -985,15 +985,20 @@ function attachGoalBrowser(progress, goal) {
         <div class="browser-controls"><button type="button" data-browser-action="snapshot">Refresh page view</button><button type="button" data-browser-action="back">Go back</button><button type="button" data-browser-action="close">Close browser session</button></div>
         <div class="browser-view" hidden>
             <h4 class="browser-title"></h4><p class="browser-location"></p>
-            <img class="browser-screenshot" alt="Current server browser page" hidden>
+            <p>Click a position in the page image to use menus, maps, or other visual controls. For keyboard access, use the position controls below, then type or press a key.</p>
+            <button type="button" class="browser-screen" aria-label="Click server browser page" hidden><img class="browser-screenshot" alt="Current server browser page"></button>
+            <details class="ae-help"><summary>Click a page position with the keyboard</summary>
+                <p>The page is 1280 pixels wide and 800 pixels tall. Positions start at the top left.</p>
+                <form class="browser-position"><label>Horizontal position<input name="x" type="number" min="0" max="1279" value="640" required></label><label>Vertical position<input name="y" type="number" min="0" max="799" value="400" required></label><button type="submit">Click this position</button></form>
+            </details>
             <details class="ae-help"><summary>Read page text</summary><pre class="browser-text"></pre></details>
             <label>Browser tab<select class="browser-tabs"></select></label>
             <div class="browser-controls"><button type="button" data-browser-action="tabs">Refresh tabs</button><button type="button" data-browser-action="close_tab">Close current tab</button></div>
             <form class="browser-interaction">
                 <label>Page element<select name="ref"><option value="">No page elements available</option></select></label>
-                <label>Action<select name="action" aria-label="Action"><option value="click">Click element</option><option value="fill">Enter text</option><option value="select">Choose option</option><option value="press">Press key</option></select></label>
+                <label>Action<select name="action" aria-label="Action"><option value="click">Click element</option><option value="fill">Enter text in element</option><option value="select">Choose option</option><option value="hover">Move pointer over element</option><option value="type">Type at current position</option><option value="press">Press key</option></select></label>
                 <label class="browser-value-label" hidden>Text or option value<input name="text" type="password" autocomplete="off"></label>
-                <label class="browser-key-label" hidden>Key<select name="key"><option>Enter</option><option>Tab</option><option>Escape</option><option>ArrowDown</option><option>ArrowUp</option><option>Space</option></select></label>
+                <label class="browser-key-label" hidden>Key or shortcut<input name="key" value="Enter" maxlength="40" placeholder="Enter, Tab, Control+a" autocomplete="off"></label>
                 <button type="submit">Apply action</button>
             </form>
             <div class="browser-controls"><button type="button" data-browser-action="scroll" data-scroll="-600">Scroll up</button><button type="button" data-browser-action="scroll" data-scroll="600">Scroll down</button><button type="button" data-browser-action="wait">Wait for page</button></div>
@@ -1003,6 +1008,7 @@ function attachGoalBrowser(progress, goal) {
     const message = panel.querySelector(".browser-status");
     const view = panel.querySelector(".browser-view");
     const screenshot = panel.querySelector(".browser-screenshot");
+    const screenButton = panel.querySelector(".browser-screen");
     const interaction = panel.querySelector(".browser-interaction");
     const tabs = panel.querySelector(".browser-tabs");
     let busy = false;
@@ -1023,7 +1029,7 @@ function attachGoalBrowser(progress, goal) {
     panel.addEventListener("browserpermissions", updatePermissions);
     updatePermissions();
     function clearScreenshot() {
-        screenshot.hidden = true;
+        screenButton.hidden = true;
         screenshot.removeAttribute("src");
         if (imageUrl) URL.revokeObjectURL(imageUrl);
         imageUrl = null;
@@ -1061,13 +1067,13 @@ function attachGoalBrowser(progress, goal) {
             panel.querySelector(".browser-title").textContent = result.title || "Browser page";
             panel.querySelector(".browser-location").textContent = result.url || "";
             panel.querySelector(".browser-text").textContent = result.text || "No readable page text yet. Try waiting for the page.";
-            replaceOptions(interaction.elements.ref, (result.elements || []).map((element) => [
+            replaceOptions(interaction.elements.ref, [["", "Current position (typing or keyboard)"], ...(result.elements || []).map((element) => [
                 String(element.ref), (element.name || "Unnamed element") + " · " + (element.role || element.tag || element.type || "element"),
-            ]), "No page elements available. Refresh or wait for the page.");
+            ])], "No page elements available. Refresh or wait for the page.");
             replaceOptions(tabs, (result.tabs || []).map((tab) => [String(tab.index), "Tab " + (tab.index + 1) + ": " + (tab.title || tab.url || "New page")]), "No open tabs");
             if (result.active_tab !== undefined) tabs.value = String(result.active_tab);
             message.textContent = result.message || "Browser ready. Choose a page element to interact with it.";
-            if (action === "fill") interaction.elements.text.value = "";
+            if (["fill", "type"].includes(action)) interaction.elements.text.value = "";
             try {
                 const response = await fetch(endpoint + "/screenshot", {headers: headers(), cache: "no-store"});
                 if (!response.ok || !(response.headers.get("Content-Type") || "").startsWith("image/")) throw new Error("Screenshot unavailable");
@@ -1075,7 +1081,7 @@ function attachGoalBrowser(progress, goal) {
                 if (panel.isConnected && panel.open) {
                     imageUrl = URL.createObjectURL(blob);
                     screenshot.src = imageUrl;
-                    screenshot.hidden = false;
+                    screenButton.hidden = false;
                 }
             } catch {
                 message.textContent += " The screenshot is unavailable. You can still use page text and element controls; refresh to retry.";
@@ -1099,18 +1105,43 @@ function attachGoalBrowser(progress, goal) {
     };
     interaction.elements.action.onchange = () => {
         const action = interaction.elements.action.value;
-        panel.querySelector(".browser-value-label").hidden = !["fill", "select"].includes(action);
+        panel.querySelector(".browser-value-label").hidden = !["fill", "select", "type"].includes(action);
         panel.querySelector(".browser-key-label").hidden = action !== "press";
     };
     interaction.onsubmit = (event) => {
         event.preventDefault();
         const fields = interaction.elements;
         const action = fields.action.value;
-        if (!fields.ref.value) { message.textContent = "Choose a page element, or refresh to find elements."; return; }
-        const args = fields.ref.value ? {ref: fields.ref.value} : {};
-        if (["fill", "select"].includes(action)) args.text = fields.text.value;
+        if (!["type", "press"].includes(action) && !fields.ref.value) { message.textContent = "Choose a page element, or refresh to find elements."; return; }
+        const args = fields.ref.value && action !== "type" ? {ref: fields.ref.value} : {};
+        if (["fill", "select", "type"].includes(action)) args.text = fields.text.value;
         if (action === "press") args.key = fields.key.value;
         perform(action, args);
+    };
+    screenButton.onclick = (event) => {
+        if (!event.detail) {
+            const positionForm = panel.querySelector(".browser-position");
+            positionForm.closest("details").open = true;
+            positionForm.elements.x.focus();
+            message.textContent = "Choose a horizontal and vertical position, then select Click this position.";
+            return;
+        }
+        if (!screenshot.naturalWidth || !screenshot.naturalHeight) {
+            message.textContent = "The page image is still loading. Wait a moment, or refresh the page view.";
+            return;
+        }
+        const rect = screenshot.getBoundingClientRect();
+        const x = (event.clientX - rect.left) / rect.width;
+        const y = (event.clientY - rect.top) / rect.height;
+        perform("mouse_click", {
+            x: Math.max(0, Math.min(1279, Math.floor(x * screenshot.naturalWidth))),
+            y: Math.max(0, Math.min(799, Math.floor(y * screenshot.naturalHeight))),
+        });
+    };
+    panel.querySelector(".browser-position").onsubmit = (event) => {
+        event.preventDefault();
+        const fields = event.currentTarget.elements;
+        perform("mouse_click", {x: Number(fields.x.value), y: Number(fields.y.value)});
     };
     tabs.onchange = () => { if (tabs.value !== "") perform("switch_tab", {tab: Number(tabs.value)}); };
     panel.querySelectorAll("[data-browser-action]").forEach((button) => {

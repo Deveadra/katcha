@@ -317,7 +317,9 @@ TOOLS = {
         GoalTool(
             "browser_action",
             "Interact with server-side Chromium: open public HTTPS pages, click controls, fill "
-            "forms, press keys, select options, scroll, wait, navigate back and switch/close tabs. "
+            "forms, press keys, type, hover, click/drag viewport coordinates, select options, "
+            "scroll, "
+            "wait, navigate back and switch/close tabs. "
             "Use current snapshot element refs. Cookies stay isolated to this goal. "
             "Actions may submit external changes and require confirmation. Never supply secrets "
             "in AI arguments; use the operator browser panel for sign-in. Do not retry an "

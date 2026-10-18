@@ -1,7 +1,8 @@
 # Server browser
 
 Katcha AI can use a real Chromium browser to open public HTTPS pages, execute page
-JavaScript, read rendered content, follow links, complete forms, use tabs and
+JavaScript, read rendered content, follow links, complete forms, click/drag viewport
+coordinates, hover, type into focused controls, press keys, use tabs and
 retain sign-in cookies during a goal. Operators can inspect and interact with the
 same session through the goal's browser panel. The browser runs on the server;
 signing in to a browser on your own computer does not sign in this session.
