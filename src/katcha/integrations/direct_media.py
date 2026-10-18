@@ -8,6 +8,7 @@ redirect credentials, or browser state. Upload and rights gates remain elsewhere
 from __future__ import annotations
 
 import hashlib
+import http.client
 import shutil
 import time
 from dataclasses import dataclass
@@ -196,7 +197,7 @@ def fetch_direct_media(url: str, job_dir: Path) -> DirectMediaResult:
             )
         except DirectMediaError:
             raise
-        except OSError:
+        except (OSError, http.client.HTTPException):
             # Transport errors can include signed URLs or socket details.
             raise DirectMediaTransportError("The direct media HTTPS transfer failed") from None
         finally:
