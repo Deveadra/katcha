@@ -146,6 +146,9 @@ async def test_rpc_errors_and_missing_workflow_fail_closed(monkeypatch):
 def test_old_or_future_pollers_do_not_verify_runtime():
     now = datetime.now(UTC)
     assert readiness._recent_poller_present([_poller(now)], now=now)
+    assert readiness._recent_poller_present(
+        [_poller(now + timedelta(milliseconds=1))], now=now
+    )
     assert not readiness._recent_poller_present(
         [_poller(now - timedelta(minutes=6))], now=now
     )
