@@ -8,7 +8,8 @@ import socket
 import pytest
 
 from katcha.config import Settings
-from katcha.integrations import direct_media, download as downloader
+from katcha.integrations import direct_media
+from katcha.integrations import download as downloader
 from katcha.orchestration.failure_details import failure_details
 
 
