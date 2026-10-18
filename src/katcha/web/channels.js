@@ -2390,6 +2390,7 @@ async function registerTrendSchedule() {
     } finally {
         state.trendBusy = false;
         button.disabled = !state.trendPolicy?.enabled || Boolean(state.trendLoadError);
+        $("save-trend-automation").disabled = Boolean(state.trendLoadError);
     }
 }
 
@@ -2447,6 +2448,8 @@ async function saveTrendAutomation(event) {
     } finally {
         state.trendBusy = false;
         button.disabled = Boolean(state.trendLoadError);
+        $("register-trend-schedule").disabled =
+            !state.trendPolicy?.enabled || Boolean(state.trendLoadError);
     }
 }
 
