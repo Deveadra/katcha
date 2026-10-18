@@ -9,8 +9,8 @@ import pytest
 
 from katcha import db
 from katcha.intelligence_models import ChannelEconomicsSnapshot
-from katcha.services.trend_auto_activation import create_activation_policy
 from katcha.services import trend_editorial_dispatch as dispatcher
+from katcha.services.trend_auto_activation import create_activation_policy
 from katcha.short_episode_models import ShortEpisode, ShortEpisodeItem
 
 
