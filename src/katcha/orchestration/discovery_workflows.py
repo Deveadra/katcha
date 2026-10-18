@@ -233,6 +233,23 @@ class CommandSourcePrepareWorkflow:
                         "preparation_error_count": len(preparation_errors),
                         "preparation_errors": preparation_errors,
                         "source_selection": prepared.get("selection"),
+                        "ingest_attempts": [
+                            {
+                                "candidate_id": item.get("candidate_id"),
+                                "source_item_id": item.get("source_item_id"),
+                                "source_route": item.get("source_route"),
+                                "workflow_id": item.get("workflow_id"),
+                                "success": bool(item.get("success")),
+                                "clip_id": (
+                                    item.get("clip_id")
+                                    or (item.get("result") or {}).get("clip_id")
+                                ),
+                                "error": str(item.get("error") or "")[:1000] or None,
+                                "failure_stage": (item.get("diagnostic") or {}).get("stage"),
+                                "failure_code": (item.get("diagnostic") or {}).get("code"),
+                            }
+                            for item in ingests[:20]
+                        ],
                         "error": error,
                     },
                 ],
