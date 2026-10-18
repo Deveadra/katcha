@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from sqlalchemy import CheckConstraint, UniqueConstraint
 
+from katcha.api.trend_auto_activation import get_trend_activation_schedule
 from katcha.automation_schedule_models import AutomationSchedule
+from katcha.services.automation_schedules import register_channel_trend_activation_schedule
 from katcha.orchestration.recovery_registry import (
     WORKFLOW_RECOVERY_CONTRACTS,
     RecoveryMode,
@@ -39,3 +41,31 @@ def test_all_recurring_schedules_are_persisted_reconcile_workflows() -> None:
             WORKFLOW_RECOVERY_CONTRACTS[workflow].mode
             == RecoveryMode.PERSISTED_RECONCILE
         )
+
+
+def test_trend_schedule_status_distinguishes_registration_from_worker_health(
+    fixture_work,
+) -> None:
+    _, channel, other, _ = fixture_work
+    absent = get_trend_activation_schedule(channel)
+    assert not absent.registered
+    assert not absent.enabled
+    assert absent.interval_hours is None
+    assert absent.runtime_verified is False
+
+    registration = register_channel_trend_activation_schedule(
+        channel, interval_hours=6
+    )
+    present = get_trend_activation_schedule(channel)
+    assert present.registered
+    assert present.enabled
+    assert present.interval_hours == 6
+    assert present.workflow_id == registration.schedule.workflow_id
+    assert present.generation == 1
+    assert present.reconcile_pending
+    assert present.runtime_verified is False
+
+    # Another channel does not inherit a schedule just because it shares a
+    # configured operator or a running intelligence worker.
+    unrelated = get_trend_activation_schedule(other)
+    assert not unrelated.registered
