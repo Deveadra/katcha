@@ -380,6 +380,26 @@ class Settings(BaseSettings):
     work_dir: Path = Path("/tmp/katcha")
     # Operator-managed server session; never extract cookies from a client browser.
     youtube_download_cookie_file: Path | None = None
+    youtube_download_proxy_url: SecretStr | None = None
+
+    @field_validator("youtube_download_proxy_url")
+    @classmethod
+    def validate_youtube_download_proxy(cls, value):
+        if value is None:
+            return value
+        parts = urlsplit(value.get_secret_value())
+        if (
+            parts.scheme not in {"http", "https", "socks5", "socks5h"}
+            or not parts.hostname
+            or parts.path not in {"", "/"}
+            or parts.query
+            or parts.fragment
+        ):
+            raise ValueError("download route must be an HTTP(S) or SOCKS5 proxy origin")
+        # Accessing port also validates malformed/out-of-range ports.
+        _ = parts.port
+        return value
+
     intelligence_handoff_dir: Path = Path("/tmp/katcha/handoff")
     analysis_frame_count: int = Field(default=6, ge=3, le=12)
     whisper_model: str = "base.en"
