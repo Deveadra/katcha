@@ -182,6 +182,7 @@ class CommandSourcePrepareWorkflow:
                             "source_route": item.get("source_route"),
                             "workflow_id": ingest_workflow_id,
                             "success": acquired,
+                            "clip_id": result.get("clip_id") if acquired else None,
                             "error": None if acquired else "Ingestion returned no acquired clip",
                             "result": result,
                         }
@@ -240,10 +241,7 @@ class CommandSourcePrepareWorkflow:
                                 "source_route": item.get("source_route"),
                                 "workflow_id": item.get("workflow_id"),
                                 "success": bool(item.get("success")),
-                                "clip_id": (
-                                    item.get("clip_id")
-                                    or (item.get("result") or {}).get("clip_id")
-                                ),
+                                "clip_id": item.get("clip_id"),
                                 "error": str(item.get("error") or "")[:1000] or None,
                                 "failure_stage": (item.get("diagnostic") or {}).get("stage"),
                                 "failure_code": (item.get("diagnostic") or {}).get("code"),
