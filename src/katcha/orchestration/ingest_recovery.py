@@ -50,7 +50,20 @@ def _persist_ingest_diagnostic(
                 return False
             metadata.pop(RECOVERY_KEY, None)
             event_type = "source.ingest_execution_observed_running"
-            event_payload = {"workflow_id": workflow_id, "previous": previous}
+            event_payload = {
+                "workflow_id": workflow_id,
+                "previous_code": (
+                    previous.get("code")
+                    if isinstance(previous, dict)
+                    and isinstance(previous.get("code"), str)
+                    and previous.get("code") in {
+                        "ingest_temporal_not_running",
+                        "ingest_temporal_execution_missing",
+                        "ingest_temporal_visibility_unavailable",
+                    }
+                    else "unknown"
+                ),
+            }
         else:
             if isinstance(previous, dict) and all(
                 previous.get(key) == value for key, value in diagnostic.items()
