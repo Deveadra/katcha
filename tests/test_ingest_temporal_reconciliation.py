@@ -5,6 +5,7 @@ These are database-backed tests, not proof of a live Temporal/R2 cutover.
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 from types import SimpleNamespace
 
@@ -173,6 +174,33 @@ async def test_missing_or_unreachable_temporal_never_dispatches_or_exposes_secre
         "ingest_temporal_execution_missing" if missing
         else "ingest_temporal_visibility_unavailable"
     ) in text
+    assert client.started == []
+
+
+@pytest.mark.asyncio
+async def test_temporal_describe_timeout_does_not_trigger_ingest_retry(
+    saved, monkeypatch
+):
+    source_id = add_source()
+    monkeypatch.setattr(ingest_recovery, "TEMPORAL_DESCRIBE_TIMEOUT_SECONDS", 0.001)
+
+    class NeverHandle:
+        async def describe(self):
+            await asyncio.Future()
+
+    class NeverClient(FakeTemporal):
+        def get_workflow_handle(self, workflow_id):
+            self.lookups.append(workflow_id)
+            return NeverHandle()
+
+    client = NeverClient(None)
+    with db.session_scope() as session:
+        row = session.get(SourceItem, source_id)
+    assert await ingest_recovery.check_ingesting_source(client, row) is False
+    diagnostic = stored(source_id)["metadata"][ingest_recovery.RECOVERY_KEY]
+    assert diagnostic["code"] == "ingest_temporal_visibility_unavailable"
+    assert diagnostic["workflow_status"] == "UNVERIFIED"
+    assert diagnostic["retryable_visibility_check"] is True
     assert client.started == []
 
 
