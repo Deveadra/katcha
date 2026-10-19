@@ -15,6 +15,7 @@ import json
 import logging
 import os
 import shutil
+import ssl
 import threading
 import time
 import uuid
@@ -88,6 +89,7 @@ class Worker:
         storage_client=None,
         cookie_file=None,
         access_headers=None,
+        control_ca_file=None,
     ):
         parsed = urlsplit(api_url)
         if (
@@ -108,7 +110,8 @@ class Worker:
         self.state_dir = state_dir
         self.state_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
         self.client = client or httpx.Client(
-            timeout=httpx.Timeout(30, connect=5), trust_env=False, follow_redirects=False
+            timeout=httpx.Timeout(30, connect=5), trust_env=False, follow_redirects=False,
+            verify=ssl.create_default_context(cafile=control_ca_file),
         )
         # Separate clients: bearer authority must NEVER reach a source or signed storage URL.
         self.storage_client = storage_client or httpx.Client(
@@ -432,6 +435,7 @@ def main():
         Path(os.environ.get("KATCHA_ACQUISITION_STATE_DIR", "/var/lib/katcha-acquisition")),
         cookie_file=os.environ.get("KATCHA_ACQUISITION_COOKIE_FILE"),
         access_headers=access_headers,
+        control_ca_file=os.environ.get("KATCHA_ACQUISITION_CONTROL_CA_FILE"),
     )
     lock = (worker.state_dir / "worker.lock").open("a")
     fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)

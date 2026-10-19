@@ -40,7 +40,10 @@ credential as well, or use an authorized private HTTPS API origin. Optional
 point to private credential files (systemd LoadCredential drop-ins are suitable).
 Both are required together. These headers stay on control requests and never reach
 source or storage requests. The API still authenticates the narrow worker principal;
-a broad interactive operator/Access session cannot replace it.
+a broad interactive operator/Access session cannot replace it. For a private HTTPS
+origin with an internal CA, set `KATCHA_ACQUISITION_CONTROL_CA_FILE` to its CA bundle.
+Certificate and hostname verification remain mandatory; this CA applies only to
+control requests, never to source or storage connections.
 
 The primary supervisor scans persisted jobs and starts deterministic Temporal
 workflows. A failed dispatch is repaired on the next pass or restart. The worker

@@ -275,3 +275,15 @@ change the coordinator epoch, downgrade a migrated database, overwrite R2,
 reset the Git checkout, or enable OCI paid recovery to repair routine deploys.
 Existing PostgreSQL/Temporal histories remain on their durable volumes, but
 workflow retries and post-deployment public UI behavior require verification.
+
+## Remote acquisition handoff schema (0066)
+
+`approve-additive-through-0066` permits only the immutable added file
+`0066_acquisition_handoff.py`, starting from a catalog-verified 0065 database.
+Earlier migration policies cannot authorize it. This forward-only migration
+adds the transfer cursor table and job media/source fields, adds the completed
+status, and widens historic byte counters to bigint without narrowing data.
+The deployer checks the exact migration blob, job and transfer columns, defaults,
+constraints, indexes, and widened byte counters after startup. Migration-free
+0066 releases require the same verified schema. Readiness does not activate
+remote acquisition; configure and admit a host separately.

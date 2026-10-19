@@ -44,7 +44,11 @@ AFTER_REVISION = "0064_application_ai_settings"
 MIGRATION_0065_FILE = "migrations/versions/0065_acquisition_jobs.py"
 MIGRATION_0065_BLOB = "1a7debea0c609bd3a6a5f19c3b310b64077e9013"
 LATEST_REVISION = "0065_acquisition_jobs"
-MIGRATION_POLICIES = {"refuse", "approve-additive-0064", "approve-additive-through-0065"}
+HANDOFF_REVISION = "0066_acquisition_handoff"
+HANDOFF_FILE = "migrations/versions/0066_acquisition_handoff.py"
+HANDOFF_BLOB = "5e5facd8557a97ab788d529f0b40b8740b414df2"
+MIGRATION_POLICIES = {"refuse", "approve-additive-0064", "approve-additive-through-0065",
+                      "approve-additive-through-0066"}
 REVIEWED_MIGRATIONS = {
     MIGRATION_FILE: MIGRATION_BLOB,
     MIGRATION_0065_FILE: MIGRATION_0065_BLOB,
@@ -186,6 +190,8 @@ def eligible(old: str, target: str, migration_policy: str = "refuse") -> bool:
         raise Blocked("unrecognized migration approval")
     if migration_paths:
         allowed = ({MIGRATION_FILE} if migration_policy == "approve-additive-0064"
+                   else {HANDOFF_FILE}
+                   if migration_policy == "approve-additive-through-0066"
                    else set(REVIEWED_MIGRATIONS)
                    if migration_policy == "approve-additive-through-0065" else set())
         if (not set(migration_paths) <= allowed
@@ -209,6 +215,11 @@ def eligible(old: str, target: str, migration_policy: str = "refuse") -> bool:
                for item in inventory)):
         raise Blocked("target migration inventory unavailable")
     by_name = {item["name"]: item for item in inventory}
+    if migration_policy == "approve-additive-through-0066" or (
+        migration_policy == "refuse" and Path(HANDOFF_FILE).name in by_name
+    ):
+        reviewed = {**REVIEWED_MIGRATIONS, HANDOFF_FILE: HANDOFF_BLOB}
+        max_revision = 66
     if (len(by_name) != len(inventory)
         or any(name.endswith(".py") and name[:4].isdigit()
                and int(name[:4]) > max_revision for name in by_name)
@@ -416,7 +427,8 @@ def database_query(sql: str) -> str:
         ),
     }
     for prefix, table in (("settings", "application_ai_settings"),
-                          ("acquisition", "acquisition_jobs")):
+                          ("acquisition", "acquisition_jobs"),
+                          ("transfer", "acquisition_transfers")):
         statements[prefix + "_table"] = (
             "SELECT COALESCE(to_regclass('public." + table + "')::text, '')"
         )
@@ -447,6 +459,13 @@ def database_query(sql: str) -> str:
             "AND table_name = '" + table + "' AND column_default IS NOT NULL "
             "ORDER BY column_name"
         )
+    statements["handoff_byte_types"] = (
+        "SELECT table_name || ':' || column_name || ':' || data_type "
+        "FROM information_schema.columns WHERE table_schema = 'public' AND "
+        "((table_name = 'acquisition_receipts' AND column_name = 'bytes_received') "
+        "OR (table_name = 'media_asset_validations' AND column_name = 'size_bytes')) "
+        "ORDER BY table_name"
+    )
     if sql not in statements:
         raise Blocked("unapproved database observation")
     query = statements[sql].replace("'", "'\\''")
@@ -488,10 +507,10 @@ def verify_ai_settings_schema() -> None:
         raise Blocked("approved AI settings table schema differs from reviewed migration")
 
 
-def verify_acquisition_jobs_schema() -> None:
+def verify_acquisition_jobs_schema(handoff: bool = False) -> None:
     if database_query("acquisition_table") != "acquisition_jobs":
         raise Blocked("approved acquisition jobs table missing")
-    if database_query("acquisition_columns").splitlines() != [
+    expected_columns = [
         "id:uuid:NO:", "receipt_id:uuid:NO:", "channel_profile_id:uuid:NO:",
         "status:character varying:NO:32", "generation:integer:NO:",
         "max_bytes:bigint:NO:", "bytes_received:bigint:NO:",
@@ -500,9 +519,17 @@ def verify_acquisition_jobs_schema() -> None:
         "last_heartbeat_at:timestamp with time zone:YES:", "phase:character varying:NO:32",
         "pending_result:json:NO:", "failure_code:character varying:YES:64",
         "created_at:timestamp with time zone:NO:", "updated_at:timestamp with time zone:NO:",
-    ]:
+    ]
+    if handoff:
+        expected_columns += ["media_type:character varying:NO:16", "source_item_id:uuid:YES:"]
+    if database_query("acquisition_columns").splitlines() != expected_columns:
         raise Blocked("approved acquisition jobs column schema differs from reviewed migration")
-    if database_query("acquisition_constraints").splitlines() != ACQUISITION_CONSTRAINTS:
+    constraints = list(ACQUISITION_CONSTRAINTS)
+    if handoff:
+        constraints = [c.replace(
+            "varying]::text[]))", "varying, 'completed'::character varying]::text[]))")
+                       if c.startswith("ck_acquisition_job_status:") else c for c in constraints]
+    if database_query("acquisition_constraints").splitlines() != constraints:
         raise Blocked("approved acquisition jobs constraints differ from reviewed migration")
     if database_query("acquisition_indexes").splitlines() != [
         'acquisition_jobs_pkey:CREATE UNIQUE INDEX acquisition_jobs_pkey ON '
@@ -514,10 +541,37 @@ def verify_acquisition_jobs_schema() -> None:
         'public.acquisition_jobs USING btree (status)',
         'uq_acquisition_job_receipt:CREATE UNIQUE INDEX uq_acquisition_job_receipt '
         'ON public.acquisition_jobs USING btree (receipt_id)',
-    ] or database_query("acquisition_defaults").splitlines() != [
-        "created_at:now()", "updated_at:now()",
-    ]:
+    ] or database_query("acquisition_defaults").splitlines() != (
+        ["created_at:now()"] + (["media_type:'video'::character varying"] if handoff else [])
+        + ["updated_at:now()"]
+    ):
         raise Blocked("approved acquisition jobs indexes/defaults differ from reviewed migration")
+
+
+def verify_handoff_schema() -> None:
+    verify_ai_settings_schema()
+    verify_acquisition_jobs_schema(handoff=True)
+    if (database_query("transfer_table") != "acquisition_transfers"
+        or database_query("transfer_columns").splitlines() != [
+            "job_id:uuid:NO:", "generation:integer:NO:", "sha256:character varying:NO:64",
+            "size_bytes:bigint:NO:", "upload_id:text:NO:", "parts:json:NO:",
+            "completed:boolean:NO:",
+        ]
+        or database_query("transfer_constraints").splitlines() != [
+            "acquisition_transfers_job_id_fkey:f:FOREIGN KEY (job_id) "
+            "REFERENCES acquisition_jobs(id)",
+            "acquisition_transfers_pkey:p:PRIMARY KEY (job_id)",
+            "ck_acquisition_transfer_size:c:CHECK (size_bytes > 0)",
+        ]
+        or database_query("transfer_indexes") !=
+            "acquisition_transfers_pkey:CREATE UNIQUE INDEX acquisition_transfers_pkey "
+            "ON public.acquisition_transfers USING btree (job_id)"
+        or database_query("transfer_defaults")
+        or database_query("handoff_byte_types").splitlines() != [
+            "acquisition_receipts:bytes_received:bigint",
+            "media_asset_validations:size_bytes:bigint",
+        ]):
+        raise Blocked("approved acquisition handoff schema differs from reviewed migration")
 
 
 def database_release_preflight(migration: bool, migration_policy: str = "refuse") -> None:
@@ -532,6 +586,19 @@ def database_release_preflight(migration: bool, migration_policy: str = "refuse"
             raise Blocked("acquisition jobs table exists before reviewed migration")
         return
     revision = database_query("revision")
+    if revision == HANDOFF_REVISION:
+        if migration_policy not in {"refuse", "approve-additive-through-0066"}:
+            raise Blocked("0066 schema exceeds migration policy")
+        verify_handoff_schema()
+        return
+    if migration_policy == "approve-additive-through-0066":
+        if revision != LATEST_REVISION:
+            raise Blocked("0066 approval requires verified 0065 base")
+        verify_ai_settings_schema()
+        verify_acquisition_jobs_schema()
+        if database_query("transfer_table"):
+            raise Blocked("acquisition transfers table already exists before migration")
+        return
     if revision == LATEST_REVISION:
         verify_ai_settings_schema()
         verify_acquisition_jobs_schema()
@@ -549,6 +616,13 @@ def database_release_preflight(migration: bool, migration_policy: str = "refuse"
 
 
 def database_release_postflight(migration_policy: str = "refuse") -> None:
+    if migration_policy == "approve-additive-through-0066" or (
+        migration_policy == "refuse" and database_query("revision") == HANDOFF_REVISION
+    ):
+        if database_query("revision") != HANDOFF_REVISION:
+            raise Blocked("database was not upgraded to reviewed 0066 target revision")
+        verify_handoff_schema()
+        return
     if migration_policy == "approve-additive-0064":
         database_migration_postflight()
         return
@@ -750,6 +824,12 @@ def deploy(target: str, policy: str, migration_policy: str = "refuse") -> dict[s
     authority()
     migration = eligible(current, target, migration_policy)
     database_release_preflight(migration, migration_policy)
+    target_has_handoff = any(
+        item.get("name") == Path(HANDOFF_FILE).name
+        for item in github("/contents/migrations/versions?ref=" + target)
+    )
+    if not migration and target_has_handoff and database_query("revision") != HANDOFF_REVISION:
+        raise Blocked("migration-free target requires reviewed 0066 schema")
     before = temporal_inventory(policy)
     staged = stage_images(target)
     backup_and_restore()
@@ -765,7 +845,9 @@ def deploy(target: str, policy: str, migration_policy: str = "refuse") -> dict[s
     if run("git", "-C", str(REPO), "rev-parse", "origin/main") != target:
         raise Blocked("fetched main differs from approved candidate")
     run("git", "-C", str(REPO), "merge-base", "--is-ancestor", current, target)
-    for path, blob in (REVIEWED_MIGRATIONS.items()
+    for path, blob in (({**REVIEWED_MIGRATIONS, HANDOFF_FILE: HANDOFF_BLOB}.items()
+                       if migration_policy == "approve-additive-through-0066"
+                       else REVIEWED_MIGRATIONS.items())
                        if migration_policy != "approve-additive-0064"
                        else {MIGRATION_FILE: MIGRATION_BLOB}.items()):
         if run("git", "-C", str(REPO), "rev-parse", target + ":" + path) != blob:
@@ -804,6 +886,7 @@ def deploy(target: str, policy: str, migration_policy: str = "refuse") -> dict[s
                    "predeploy_workflow_recovery": recovered,
                    "migration_revision": (
                        AFTER_REVISION if migration_policy == "approve-additive-0064"
+                       else HANDOFF_REVISION if migration_policy == "approve-additive-through-0066"
                        else LATEST_REVISION) if migration else "unchanged",
                    "migration_rollback": "FORWARD_ONLY" if migration else "not_applicable",
                    "public_browser_acceptance": "REQUIRED"}
@@ -815,7 +898,9 @@ def deploy(target: str, policy: str, migration_policy: str = "refuse") -> dict[s
             outcome = {
                 "status": "RECOVERY_REQUIRED", "sha": target,
                 "previous_sha": current, "migration": (AFTER_REVISION
-                    if migration_policy == "approve-additive-0064" else LATEST_REVISION),
+                    if migration_policy == "approve-additive-0064"
+                    else HANDOFF_REVISION if migration_policy == "approve-additive-through-0066"
+                    else LATEST_REVISION),
                 "reason": "forward-only migration release needs supervised repair",
             }
             (record_dir / "result.json").write_text(json.dumps(outcome) + "\n")
@@ -862,6 +947,9 @@ def readiness() -> dict[str, Any]:
         if database_query("acquisition_table"):
             raise Blocked("acquisition jobs table already exists before migration")
         schema_state = "0064_verified_requires_approved_additive_through_0065"
+    elif revision == HANDOFF_REVISION:
+        database_release_postflight()
+        schema_state = "0066_already_applied_and_verified"
     elif revision == LATEST_REVISION:
         database_release_postflight()
         schema_state = "0065_already_applied_and_verified"

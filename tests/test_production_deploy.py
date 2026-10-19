@@ -294,8 +294,10 @@ def test_workflow_is_manual_approved_and_has_no_public_host_runner() -> None:
     assert "deployments: write" in source
     assert "KATCHA_PRODUCTION_DEPLOY_HMAC_KEY" in source
     assert "MIGRATION_POLICY: ${{ inputs.migration_policy }}" in source
-    assert "options: [refuse, approve-additive-0064, approve-additive-through-0065]" in source
-    assert '["refuse", "approve-additive-0064", "approve-additive-through-0065"]' in source
+    assert ("options: [refuse, approve-additive-0064, approve-additive-through-0065, "
+            "approve-additive-through-0066]") in source
+    assert ('["refuse", "approve-additive-0064", "approve-additive-through-0065", '
+            '"approve-additive-through-0066"]') in source
     assert "crypto.createHmac" in source
     assert "github.rest.repos.createDeployment" in source
     assert "KATCHA_PRODUCTION_DEPLOY_ENABLED" in source
@@ -977,3 +979,36 @@ def test_signed_request_binds_exact_reviewed_migration_policy(policy):
     payload["migration_policy"] = "refuse"
     with pytest.raises(app.RequestBlocked, match="signature"):
         app.authorized_request(request, key, 1500)
+
+
+@pytest.mark.parametrize("status", ["added", "modified", "removed"])
+def test_handoff_policy_pins_exact_migration_and_target_inventory(monkeypatch, status):
+    app = module()
+    fixture = responses()
+    fixture["/compare/" + OLD + "..." + NEW]["files"] = [
+        {"filename": app.HANDOFF_FILE, "status": status},
+    ]
+    fixture["/contents/migrations/versions?ref=" + NEW].append({
+        "name": Path(app.HANDOFF_FILE).name, "type": "file", "sha": app.HANDOFF_BLOB,
+    })
+    key = "/contents/" + app.HANDOFF_FILE + "?ref=" + NEW
+    fixture[key] = {"path": app.HANDOFF_FILE, "type": "file", "sha": app.HANDOFF_BLOB}
+    monkeypatch.setattr(app, "github", lambda path: fixture[path])
+    monkeypatch.setattr(app, "run", lambda *args, **kwargs: json.dumps({
+        "status": "ELIGIBLE_FOR_PREDEPLOY_REVIEW", "sha": NEW,
+        "ci_run_id": 100, "image_run_id": 101,
+    }))
+    with pytest.raises(app.Blocked):
+        app.eligible(OLD, NEW, "approve-additive-through-0065")
+    if status != "added":
+        with pytest.raises(app.Blocked):
+            app.eligible(OLD, NEW, "approve-additive-through-0066")
+        return
+    assert app.eligible(OLD, NEW, "approve-additive-through-0066")
+    source = (ROOT / app.HANDOFF_FILE).read_bytes()
+    assert hashlib.sha1(f"blob {len(source)}".encode() + b"\0" + source).hexdigest() == (
+        app.HANDOFF_BLOB
+    )
+    fixture[key]["sha"] = "f" * 40
+    with pytest.raises(app.Blocked):
+        app.eligible(OLD, NEW, "approve-additive-through-0066")

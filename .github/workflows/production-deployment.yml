@@ -29,7 +29,7 @@ on:
         required: true
         default: refuse
         type: choice
-        options: [refuse, approve-additive-0064, approve-additive-through-0065]
+        options: [refuse, approve-additive-0064, approve-additive-through-0065, approve-additive-through-0066]
       confirmation:
         description: Type DEPLOY KATCHA PRODUCTION
         required: true
@@ -125,7 +125,7 @@ jobs:
             if (process.env.ENABLED !== "true" ||
                 !/^[0-9a-f]{40}$/.test(sha || "") ||
                 !["refuse", "approved-resume"].includes(policy) ||
-                !["refuse", "approve-additive-0064", "approve-additive-through-0065"].includes(migrationPolicy) ||
+                !["refuse", "approve-additive-0064", "approve-additive-through-0065", "approve-additive-through-0066"].includes(migrationPolicy) ||
                 !/^[0-9a-f]{64}$/.test(key) ||
                 context.ref !== "refs/heads/main") {
               throw new Error("Production deployment request authorization missing or invalid");
