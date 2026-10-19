@@ -88,6 +88,7 @@ async def test_ingest_passthrough_decodes_activity_and_final_workflow_payloads(m
     async def execute(name, arg, **kwargs):
         calls.append((name, arg))
         value = {
+            "remote_source_acquisition": {},
             "ingest_source": ingest,
             "enqueue_ingested_analysis_activity": {"analysis_run_id": "analysis"},
             "prepare_authorized_passthrough_activity": prepared,
@@ -102,6 +103,7 @@ async def test_ingest_passthrough_decodes_activity_and_final_workflow_payloads(m
     expected = {**ingest, "post_ingest": prepared}
     assert result == expected
     assert calls == [
+        ("remote_source_acquisition", "source"),
         ("ingest_source", "source"),
         ("enqueue_ingested_analysis_activity", "saved-clip"),
         ("prepare_authorized_passthrough_activity", "source"),

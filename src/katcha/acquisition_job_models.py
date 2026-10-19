@@ -14,6 +14,7 @@ from sqlalchemy import (
     ForeignKeyConstraint,
     Integer,
     String,
+    Text,
     UniqueConstraint,
     Uuid,
     func,
@@ -25,6 +26,7 @@ from katcha.db import Base
 
 class AcquisitionJob(Base):
     __tablename__ = "acquisition_jobs"
+    __mapper_args__ = {"eager_defaults": True}
     __table_args__ = (
         UniqueConstraint("receipt_id", name="uq_acquisition_job_receipt"),
         ForeignKeyConstraint(
@@ -34,7 +36,7 @@ class AcquisitionJob(Base):
         ),
         CheckConstraint(
             "status IN ('queued', 'leased', 'awaiting_validation', 'failed', "
-            "'cancelled', 'recovery_required')",
+            "'cancelled', 'recovery_required', 'completed')",
             name="ck_acquisition_job_status",
         ),
         CheckConstraint("generation >= 0", name="ck_acquisition_job_generation"),
@@ -57,6 +59,8 @@ class AcquisitionJob(Base):
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="queued", index=True)
     generation: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     max_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    media_type: Mapped[str] = mapped_column(String(16), nullable=False, default="video")
+    source_item_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
     bytes_received: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
     heartbeat_sequence: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     worker_principal: Mapped[str | None] = mapped_column(String(64), nullable=True)
@@ -72,3 +76,26 @@ class AcquisitionJob(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
     )
+
+    @property
+    def media_verified(self) -> bool:
+        return self.status == "completed"
+
+
+class AcquisitionTransfer(Base):
+    """Server-owned multipart cursor. Workers never receive bucket credentials."""
+
+    __tablename__ = "acquisition_transfers"
+    __table_args__ = (
+        ForeignKeyConstraint(["job_id"], ["acquisition_jobs.id"]),
+        CheckConstraint("size_bytes > 0", name="ck_acquisition_transfer_size"),
+    )
+
+    job_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
+    generation: Mapped[int] = mapped_column(Integer, nullable=False)
+    sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    size_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    upload_id: Mapped[str] = mapped_column(Text, nullable=False)
+    # Part MD5 and length are frozen before a URL is issued. S3 checks Content-MD5.
+    parts: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    completed: Mapped[bool] = mapped_column(default=False, nullable=False)

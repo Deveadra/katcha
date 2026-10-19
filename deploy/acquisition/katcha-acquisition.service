@@ -1,0 +1,33 @@
+[Unit]
+Description=Katcha acquisition worker
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+DynamicUser=yes
+StateDirectory=katcha-acquisition
+StateDirectoryMode=0700
+WorkingDirectory=/opt/katcha-acquisition
+EnvironmentFile=/etc/katcha-acquisition/worker.env
+LoadCredential=worker-token:/etc/katcha-acquisition/worker-token
+Environment=KATCHA_ACQUISITION_TOKEN_FILE=%d/worker-token
+Environment=KATCHA_ACQUISITION_STATE_DIR=/var/lib/katcha-acquisition
+ExecStart=/opt/katcha-acquisition/.venv/bin/python -m katcha.acquisition.worker
+Restart=always
+RestartSec=5
+TimeoutStopSec=90
+UMask=0077
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+MemoryMax=4G
+CPUQuota=200%
+LimitNOFILE=4096
+
+[Install]
+WantedBy=multi-user.target

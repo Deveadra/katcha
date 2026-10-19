@@ -14,8 +14,13 @@ from katcha.acquisition.job_contracts import (
     HeartbeatJob,
     JobStatus,
     JobView,
+    LeaseMessage,
     LeaseView,
+    PartView,
+    ReleaseSource,
     ReportJob,
+    TransferView,
+    UploadPart,
 )
 from katcha.api.control_auth import (
     control_actor,
@@ -27,6 +32,7 @@ from katcha.api.control_auth import (
     require_control_scope_any,
 )
 from katcha.config import get_settings
+from katcha.services import acquisition_handoff as handoff
 from katcha.services import acquisition_jobs as jobs
 
 router = APIRouter(
@@ -119,7 +125,7 @@ def claim(
         job=JobView.model_validate(row),
         claim_id=body.claim_id,
         fetch_url=url,
-        staging_key=jobs.staging_key(row),
+        staging_key=handoff.staging_key_for_job(row),
         permission=permission.model_dump(mode="json"),
     )
 
@@ -160,3 +166,91 @@ def cancel(channel_profile_id: uuid.UUID, job_id: uuid.UUID, request: Request):
 def reconcile(channel_profile_id: uuid.UUID, job_id: uuid.UUID, request: Request):
     _operator(request, channel_profile_id, "production:create")
     return _call(jobs.reconcile_expired_job, channel_profile_id, job_id, control_actor(request))
+
+
+@router.post("/{job_id}/upload", response_model=TransferView)
+def upload(
+    channel_profile_id: uuid.UUID,
+    job_id: uuid.UUID,
+    body: ReportJob,
+    request: Request,
+    response: Response,
+):
+    worker = _worker(request, channel_profile_id)
+    _enabled()
+    response.headers["Cache-Control"] = "no-store"
+    return _call(handoff.prepare_upload, channel_profile_id, job_id, worker, body)
+
+
+@router.post("/{job_id}/upload/parts/{part_number}", response_model=PartView)
+def upload_part(
+    channel_profile_id: uuid.UUID,
+    job_id: uuid.UUID,
+    part_number: int,
+    body: UploadPart,
+    request: Request,
+    response: Response,
+):
+    worker = _worker(request, channel_profile_id)
+    _enabled()
+    response.headers["Cache-Control"] = "no-store"
+    return _call(
+        handoff.authorize_part,
+        channel_profile_id,
+        job_id,
+        worker,
+        body,
+        part_number,
+        body.content_md5,
+    )
+
+
+@router.post("/{job_id}/upload/complete", response_model=JobView)
+def upload_complete(
+    channel_profile_id: uuid.UUID, job_id: uuid.UUID, body: LeaseMessage, request: Request
+):
+    worker = _worker(request, channel_profile_id)
+    _enabled()
+    return _call(handoff.complete_upload, channel_profile_id, job_id, worker, body)
+
+
+@router.post("/{job_id}/upload/recover", response_model=LeaseView)
+def recover_upload(
+    channel_profile_id: uuid.UUID,
+    job_id: uuid.UUID,
+    body: ReportJob,
+    request: Request,
+    response: Response,
+):
+    worker = _worker(request, channel_profile_id)
+    _enabled()
+    row, url, permission = _call(handoff.recover_upload, channel_profile_id, job_id, worker, body)
+    response.headers["Cache-Control"] = "no-store"
+    return LeaseView(
+        job=JobView.model_validate(row),
+        claim_id=body.claim_id,
+        fetch_url=url,
+        staging_key=handoff.staging_key_for_job(row),
+        permission=permission.model_dump(mode="json"),
+    )
+
+
+@router.post("/{job_id}/validate", response_model=JobView)
+def validate_upload(channel_profile_id: uuid.UUID, job_id: uuid.UUID, request: Request):
+    _operator(request, channel_profile_id, "production:create")
+    # Validation makes no new provider request and is allowed while draining.
+    return _call(handoff.finalize_job, channel_profile_id, job_id)
+
+
+@router.post("/{job_id}/upload/cleanup", response_model=JobView)
+def cleanup_upload(channel_profile_id: uuid.UUID, job_id: uuid.UUID, request: Request):
+    _operator(request, channel_profile_id, "production:create")
+    return _call(handoff.cleanup_transfer, channel_profile_id, job_id)
+
+
+@router.post("/{job_id}/release-source", response_model=JobView)
+def release_source(
+    channel_profile_id: uuid.UUID, job_id: uuid.UUID, body: ReleaseSource, request: Request
+):
+    _operator(request, channel_profile_id, "production:create")
+    return _call(handoff.release_source, channel_profile_id, job_id, control_actor(request))

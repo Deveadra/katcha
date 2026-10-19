@@ -23,7 +23,7 @@ from katcha.acquisition.job_contracts import (
     LeaseMessage,
     ReportJob,
 )
-from katcha.acquisition_job_models import AcquisitionJob
+from katcha.acquisition_job_models import AcquisitionJob, AcquisitionTransfer
 from katcha.acquisition_models import DiscoveryCandidate
 from katcha.db import session_scope
 from katcha.editorial.media_intake.contracts import ProviderPermissionV1
@@ -163,8 +163,9 @@ def _leased(worker: str, message: LeaseMessage, now: datetime) -> tuple:
     )
 
 
-def staging_key(row: AcquisitionJob) -> str:
-    return f"acquisition-staging/{row.channel_profile_id}/{row.id}/{row.generation}/media"
+def staging_key(row: AcquisitionJob, *, generation: int | None = None) -> str:
+    generation = row.generation if generation is None else generation
+    return f"acquisition-staging/{row.channel_profile_id}/{row.id}/{generation}/media"
 
 
 def enqueue_job(
@@ -180,7 +181,7 @@ def enqueue_job(
             )
         )
         if existing is not None:
-            if existing.max_bytes != message.max_bytes:
+            if existing.max_bytes != message.max_bytes or existing.media_type != message.media_type:
                 raise JobConflict("This receipt already has a different acquisition byte limit")
             return existing
         _permission(session, receipt)
@@ -202,16 +203,24 @@ def enqueue_job(
                     AcquisitionJob.receipt_id == receipt.id,
                 )
             )
-            if existing is not None and existing.max_bytes == message.max_bytes:
+            if (
+                existing is not None
+                and existing.max_bytes == message.max_bytes
+                and existing.media_type == message.media_type
+            ):
                 return existing
             raise JobConflict("Receipt is active or final; reconcile it before starting work")
         row = AcquisitionJob(
             receipt_id=receipt.id,
             channel_profile_id=channel_id,
             max_bytes=message.max_bytes,
+            media_type=message.media_type,
         )
         session.add(row)
         session.flush()
+        from katcha.services.acquisition_handoff import bind_source
+
+        bind_source(session, receipt, row)
         _event(session, row, "queued", actor)
         return row
 
@@ -236,7 +245,9 @@ def list_jobs(
         return list(
             session.scalars(
                 query.order_by(
-                    AcquisitionJob.created_at.desc(),
+                    AcquisitionJob.created_at.asc()
+                    if status == "queued"
+                    else AcquisitionJob.created_at.desc(),
                     AcquisitionJob.id,
                 ).limit(limit)
             )
@@ -256,6 +267,10 @@ def claim_job(
         permission = _permission(session, receipt)
         if receipt.status != "acquiring":
             raise JobConflict("Receipt is no longer available for remote execution")
+        if row.source_item_id is None:
+            from katcha.services.acquisition_handoff import bind_source
+
+            bind_source(session, receipt, row)
         if row.status == "leased" and row.claim_id == message.claim_id:
             if row.worker_principal != worker or _utc(row.lease_expires_at) <= now:
                 raise JobConflict("The original lease is expired or owned by another worker")
@@ -336,10 +351,13 @@ def report_job(
     now = _now()
     with session_scope() as session:
         row = _job(session, channel_id, job_id)
+        transfer = session.get(AcquisitionTransfer, row.id)
         result = {
             "sha256": message.sha256,
             "size_bytes": message.size_bytes,
-            "object_store_key": staging_key(row),
+            "object_store_key": staging_key(
+                row, generation=transfer.generation if transfer else None
+            ),
         }
         receipt = _receipt(session, channel_id, row.receipt_id)
         _permission(session, receipt)

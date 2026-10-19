@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import concurrent.futures
+import contextlib
 import logging
 
 from sqlalchemy import select
@@ -14,6 +15,12 @@ from katcha.config import get_settings
 from katcha.db import session_scope
 from katcha.models import SourceItem
 from katcha.ops.download_route import managed_route
+from katcha.orchestration.acquisition_activities import (
+    reconcile_remote_acquisition,
+    remote_source_acquisition,
+    supervise_acquisitions,
+)
+from katcha.orchestration.acquisition_workflows import RemoteAcquisitionWorkflow
 from katcha.orchestration.activities import (
     enqueue_ingested_analysis_activity,
     ingest_source,
@@ -172,9 +179,11 @@ async def main() -> None:
         ingest_worker = Worker(
             client,
             task_queue=settings.temporal_task_queue,
-            workflows=[ClipIngestWorkflow],
+            workflows=[ClipIngestWorkflow, RemoteAcquisitionWorkflow],
             activities=[
                 ingest_source,
+                remote_source_acquisition,
+                reconcile_remote_acquisition,
                 mark_source_failed,
                 enqueue_ingested_analysis_activity,
                 prepare_authorized_passthrough_activity,
@@ -213,7 +222,13 @@ async def main() -> None:
             activity_executor=activity_executor,
         )
         async with managed_route():
-            await run_worker_group([ingest_worker, publishing_worker])
+            supervisor = asyncio.create_task(supervise_acquisitions(client, settings))
+            try:
+                await run_worker_group([ingest_worker, publishing_worker])
+            finally:
+                supervisor.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await supervisor
 
 
 if __name__ == "__main__":

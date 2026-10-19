@@ -20,13 +20,13 @@ from katcha.acquisition.job_contracts import (
     HeartbeatJob,
     ReportJob,
 )
-from katcha.acquisition_job_models import AcquisitionJob
+from katcha.acquisition_job_models import AcquisitionJob, AcquisitionTransfer
 from katcha.acquisition_models import DiscoveryCandidate
 from katcha.editorial.media_intake.contracts import ProviderPermissionV1
 from katcha.editorial.media_intake.receipts import claim_acquisition, start_acquisition
-from katcha.editorial_models import AcquisitionReceipt
+from katcha.editorial_models import AcquisitionReceipt, MediaAssetValidation
 from katcha.intelligence_models import ChannelProfile
-from katcha.models import DomainEvent
+from katcha.models import Clip, DomainEvent, SourceItem
 from katcha.services import acquisition_jobs as jobs
 
 
@@ -44,6 +44,10 @@ def job_db(monkeypatch, tmp_path):
             AcquisitionReceipt.__table__,
             AcquisitionJob.__table__,
             DomainEvent.__table__,
+            SourceItem.__table__,
+            Clip.__table__,
+            AcquisitionTransfer.__table__,
+            MediaAssetValidation.__table__,
         ],
     )
     monkeypatch.setattr(db, "SessionLocal", sessionmaker(bind=engine, expire_on_commit=False))
@@ -709,7 +713,7 @@ def test_job_migration_upgrade_and_downgrade_match_model(tmp_path):
         inspector = inspect(connection)
         assert {column["name"] for column in inspector.get_columns("acquisition_jobs")} == set(
             AcquisitionJob.__table__.columns.keys()
-        )
+        ) - {"media_type", "source_item_id"}
         foreign_keys = inspector.get_foreign_keys("acquisition_jobs")
         assert foreign_keys[0]["constrained_columns"] == ["receipt_id", "channel_profile_id"]
         module.downgrade()

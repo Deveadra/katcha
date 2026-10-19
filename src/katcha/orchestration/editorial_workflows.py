@@ -60,6 +60,14 @@ class EditorialProjectWorkflow:
                     if source.get("blocked"):
                         return {"editorial_run_id": run_id, "status": "blocked"}
                     if not source.get("clip_id"):
+                        if workflow.patched("editorial-remote-acquisition-handoff-v1"):
+                            from katcha.orchestration.acquisition_workflows import (
+                                wait_for_remote_source,
+                            )
+
+                            await wait_for_remote_source(
+                                source["source_id"], task_queue=context["ingest_queue"]
+                            )
                         source = await workflow.execute_activity(
                             "ingest_source",
                             source["source_id"],
@@ -72,6 +80,14 @@ class EditorialProjectWorkflow:
             for position in range(context["source_count"]):
                 source = await step("editorial_prepare_source", position)
                 if not source.get("clip_id"):
+                    if workflow.patched("editorial-remote-acquisition-intake-v1"):
+                        from katcha.orchestration.acquisition_workflows import (
+                            wait_for_remote_source,
+                        )
+
+                        await wait_for_remote_source(
+                            source["source_id"], task_queue=context["ingest_queue"]
+                        )
                     # Use the managed ingest activity directly: the generic ingest workflow
                     # also schedules unrelated AI/passthrough work, outside this project's policy.
                     source = await workflow.execute_activity(
