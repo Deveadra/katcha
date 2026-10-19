@@ -213,6 +213,7 @@ class CloudflareAccessPrincipalSettings(BaseModel):
 
 
 class Settings(BaseSettings):
+    remote_acquisition_enabled: bool = False
     model_config = SettingsConfigDict(
         env_prefix="KATCHA_",
         env_file=".env",

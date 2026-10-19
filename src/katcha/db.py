@@ -26,6 +26,7 @@ def load_model_metadata() -> None:
         return
 
     from katcha import (  # noqa: F401
+        acquisition_job_models,
         acquisition_models,
         automation_schedule_models,
         brand_models,
