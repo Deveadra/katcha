@@ -7,8 +7,6 @@ from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
 import pytest
-from sqlalchemy import select
-
 from test_command_goals import saved as saved_fixture
 
 from katcha import db
@@ -134,7 +132,7 @@ def test_active_unknown_recent_or_malformed_staging_is_never_modified(saved):
         [{"Uploads": [upload(key(active), upload_id="in-flight")], "IsTruncated": False}],
     )
     summary = recon.reconcile_direct_staging(store=store, now=NOW, apply=True)
-    assert summary["counts"]["removed"] if "removed" in summary["counts"] else 0 == 0
+    assert summary["counts"].get("removed", 0) == 0
     assert summary["counts"]["source_not_terminal"] == 3
     assert summary["counts"]["unknown_source"] == 1
     assert summary["counts"]["recent_or_undated"] == 1
