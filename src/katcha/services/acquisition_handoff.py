@@ -536,12 +536,12 @@ def reject_job(channel, job_id, generation, code):
 
 
 def cleanup_transfer(channel, job_id, *, store=None):
-    """Operator cleanup of unaccepted bytes. Never remove completed canonical media."""
+    """Operator cleanup of staging bytes, including a failed post-acceptance delete."""
     store = store or ObjectStore()
     with session_scope() as session:
         row = jobs._job(session, channel, job_id)
-        if row.status not in {"failed", "cancelled", "recovery_required"}:
-            raise jobs.JobConflict("Only stopped, unaccepted transfers can be cleaned up")
+        if row.status not in {"failed", "cancelled", "recovery_required", "completed"}:
+            raise jobs.JobConflict("Only stopped or accepted staging transfers can be cleaned up")
         transfer = session.get(AcquisitionTransfer, job_id)
         if transfer is None:
             return row
@@ -550,15 +550,17 @@ def cleanup_transfer(channel, job_id, *, store=None):
         assert_mutation_authority("storage.acquisition_cleanup", settings=store.settings)
         from botocore.exceptions import ClientError
 
-        try:
-            store.client.abort_multipart_upload(
-                Bucket=store.settings.s3_bucket, Key=key, UploadId=transfer.upload_id
-            )
-        except ClientError as exc:
-            if exc.response.get("Error", {}).get("Code") != "NoSuchUpload":
-                raise
+        if not transfer.completed:
+            try:
+                store.client.abort_multipart_upload(
+                    Bucket=store.settings.s3_bucket, Key=key, UploadId=transfer.upload_id
+                )
+            except ClientError as exc:
+                if exc.response.get("Error", {}).get("Code") != "NoSuchUpload":
+                    raise
         store.delete(key)
-        session.delete(transfer)
+        if row.status != "completed":
+            session.delete(transfer)
         return row
 
 

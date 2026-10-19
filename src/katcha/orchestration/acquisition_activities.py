@@ -150,7 +150,10 @@ async def supervise_acquisitions(client, settings):
                         args=[str(channel), str(job_id)],
                         id=f"acquisition-{job_id}",
                         task_queue=settings.temporal_task_queue,
-                        id_reuse_policy=WorkflowIDReusePolicy.ALLOW_DUPLICATE_FAILED_ONLY,
+                        # A known frozen upload may reopen after the previous workflow
+                        # completed in quarantine. Only persisted active jobs are scanned;
+                        # the new workflow resumes validation, never provider execution.
+                        id_reuse_policy=WorkflowIDReusePolicy.ALLOW_DUPLICATE,
                     )
         except Exception as exc:
             logging.getLogger(__name__).warning(

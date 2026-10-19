@@ -902,3 +902,66 @@ def test_supervised_queue_only_mode_preserves_unlinked_ingest(job_db, monkeypatc
         "job_id": str(row.id),
         "channel_id": str(job_db[0]),
     }
+
+
+def test_operator_retries_post_acceptance_staging_cleanup_without_deleting_asset(job_db, store):
+    row, identity = transfer(job_db, store)
+    handoff.complete_upload(job_db[0], row.id, "worker-a", identity, store=store)
+    original_delete = store.delete
+
+    def interrupted(_key):
+        raise OSError("synthetic staging delete outage")
+
+    store.delete = interrupted
+    assert handoff.finalize_job(job_db[0], row.id, store=store).status == "completed"
+    store.delete = original_delete
+    assert any(key.startswith("acquisition-staging/") for key in store.client.objects)
+    handoff.cleanup_transfer(job_db[0], row.id, store=store)
+    assert not any(key.startswith("acquisition-staging/") for key in store.client.objects)
+    assert any(key.startswith("media/sha256/") for key in store.client.objects)
+    with db.session_scope() as session:
+        assert session.get(AcquisitionReceipt, job_db[2]).status == "succeeded"
+
+
+@pytest.mark.asyncio
+async def test_recovered_upload_dispatches_after_previous_quarantine_workflow_closed(
+    job_db, store, monkeypatch
+):
+    import asyncio
+
+    from temporalio.common import WorkflowIDReusePolicy
+    from temporalio.exceptions import WorkflowAlreadyStartedError
+
+    from katcha.config import Settings
+    from katcha.orchestration import acquisition_activities as module
+
+    row, identity = transfer(job_db, store)
+    foundation.expire(row)
+    jobs.reconcile_expired_job(job_db[0], row.id)
+    handoff.recover_upload(
+        job_db[0],
+        row.id,
+        "worker-a",
+        ReportJob(
+            **identity.model_dump(),
+            sha256=hashlib.sha256(png()).hexdigest(),
+            size_bytes=len(png()),
+        ),
+    )
+    started = []
+
+    class ClosedQuarantineWorkflowClient:
+        async def start_workflow(self, name, **kwargs):
+            if kwargs["id_reuse_policy"] != WorkflowIDReusePolicy.ALLOW_DUPLICATE:
+                raise WorkflowAlreadyStartedError(kwargs["id"], name)
+            started.append(kwargs["id"])
+
+    async def finish_pass(_seconds):
+        raise asyncio.CancelledError
+
+    monkeypatch.setattr(module.asyncio, "sleep", finish_pass)
+    with pytest.raises(asyncio.CancelledError):
+        await module.supervise_acquisitions(
+            ClosedQuarantineWorkflowClient(), Settings(_env_file=None)
+        )
+    assert started == [f"acquisition-{row.id}"]
