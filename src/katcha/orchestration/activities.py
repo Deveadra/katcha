@@ -93,6 +93,17 @@ def _ingest_source(source_id: str) -> dict[str, str | bool]:
             raise ValueError(f"source not found: {source_id}")
         if source.status == SourceStatus.READY.value and source.clip_id is not None:
             return {"source_id": str(source.id), "clip_id": str(source.clip_id), "deduped": True}
+        from katcha.config import get_settings
+
+        if (
+            (source.source_metadata or {}).get("remote_acquisition_job_id")
+            or (get_settings().remote_acquisition_enabled
+                and get_settings().remote_acquisition_auto_dispatch_enabled)
+        ):
+            raise ApplicationError(
+                "Remote acquisition is still pending; wait for its verified handoff",
+                type="RemoteAcquisitionPending", non_retryable=True,
+            )
         source.status = SourceStatus.INGESTING.value
         source.error = None
         source_url = source.source_url

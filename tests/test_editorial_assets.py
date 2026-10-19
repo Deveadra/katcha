@@ -275,6 +275,8 @@ async def test_asset_acquisition_reuses_managed_ingest_and_requires_rights_revie
     async def execute(name, *positional, args=None, **kwargs):
         calls.append(name)
         values = args if args is not None else positional
+        if name == "remote_source_acquisition":
+            return {}
         if name == "ingest_source":
             clip_id = uuid.uuid4()
             with db.session_scope() as session:
@@ -296,6 +298,7 @@ async def test_asset_acquisition_reuses_managed_ingest_and_requires_rights_revie
         return registry[name](*values)
 
     monkeypatch.setattr(workflows.workflow, "execute_activity", execute)
+    monkeypatch.setattr(workflows.workflow, "patched", lambda _name: True)
     result = await workflows.EditorialProjectWorkflow().run(str(row.id), 1)
     assert result["stage"] == "assets_acquired_for_review"
     current = get_run(row.channel_profile_id, row.project_id, row.id)

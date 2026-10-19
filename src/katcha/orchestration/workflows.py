@@ -20,6 +20,10 @@ class ClipIngestWorkflow:
             maximum_attempts=4,
         )
         try:
+            if workflow.patched("remote-acquisition-handoff-v1"):
+                from katcha.orchestration.acquisition_workflows import wait_for_remote_source
+
+                await wait_for_remote_source(source_id)
             result = await workflow.execute_activity(
                 "ingest_source",
                 source_id,

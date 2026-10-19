@@ -352,11 +352,15 @@ def _require_named_principal_route_access(request: Request) -> None:
 
     if re.fullmatch(
         r"/v1/channels/[^/]+/acquisition-jobs(?:/[^/]+"
-        r"(?:/(?:claim|heartbeat|report|fail|cancel|reconcile))?)?", path
+        r"(?:/(?:claim|heartbeat|report|fail|cancel|reconcile|validate|release-source|"
+        r"upload(?:/(?:parts/[0-9]+|complete|recover|cleanup))?))?)?", path
     ):
         if method in {"GET", "HEAD"}:
             require_control_scope_any(request, "channels:read", "acquisition:work")
-        elif method == "POST" and path.endswith(("/claim", "/heartbeat", "/report", "/fail")):
+        elif method == "POST" and (
+            path.endswith(("/claim", "/heartbeat", "/report", "/fail"))
+            or re.search(r"/upload(?:/(?:parts/[0-9]+|complete|recover))?$", path)
+        ):
             require_control_scope(request, "acquisition:work")
         else:
             require_control_scope(request, "production:create")

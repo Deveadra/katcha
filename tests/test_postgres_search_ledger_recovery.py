@@ -109,8 +109,9 @@ def database():
     engine = create_engine(url.set(database=name), pool_pre_ping=True)
     try:
         import katcha.search_ledger_models  # noqa: F401
-        from katcha.db import Base
+        from katcha.db import Base, load_model_metadata
 
+        load_model_metadata()
         Base.metadata.create_all(
             engine,
             tables=[
@@ -827,7 +828,7 @@ def test_upgrade_old_postgres_schema_keeps_evidence_uninitialized(database):
         )
     with database.connect() as connection:
         assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == (
-            "0065_acquisition_jobs"
+            "0066_acquisition_handoff"
         )
         assert (
             connection.execute(text("SELECT COUNT(*) FROM source_search_ledger_head")).scalar_one()

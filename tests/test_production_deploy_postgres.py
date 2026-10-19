@@ -147,3 +147,24 @@ def test_real_postgres_rejects_preexisting_additive_tables(postgres_gate, base):
         sql("CREATE TABLE application_ai_settings (key text, value text)")
     with pytest.raises(app.Blocked):
         app.database_release_preflight(True, POLICY)
+
+
+def test_real_postgres_handoff_upgrade_and_catalog_drift(postgres_gate):
+    app, sql, migrate = postgres_gate
+    sql("ALTER TABLE acquisition_receipts ADD COLUMN bytes_received integer; "
+        "CREATE TABLE media_asset_validations (size_bytes integer); "
+        "INSERT INTO media_asset_validations VALUES (123)")
+    migrate("0064_application_ai_settings")
+    migrate("0065_acquisition_jobs")
+    policy = "approve-additive-through-0066"
+    app.database_release_preflight(True, policy)
+    with pytest.raises(app.Blocked):
+        app.database_release_preflight(False, policy)
+    migrate("0066_acquisition_handoff")
+    app.database_release_postflight(policy)
+    app.database_release_preflight(False)
+    sql("UPDATE media_asset_validations SET size_bytes=3221225472")
+    assert sql("SELECT size_bytes FROM media_asset_validations") == "3221225472"
+    sql("ALTER TABLE acquisition_transfers DROP CONSTRAINT ck_acquisition_transfer_size")
+    with pytest.raises(app.Blocked, match="handoff schema"):
+        app.database_release_postflight(policy)
