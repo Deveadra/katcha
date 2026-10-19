@@ -12,7 +12,6 @@ from types import SimpleNamespace
 import pytest
 from sqlalchemy import select
 from temporalio.client import WorkflowExecutionStatus
-
 from test_command_goals import saved as saved_fixture
 
 from katcha import db
