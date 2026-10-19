@@ -7,6 +7,7 @@ recorded Temporal execution and persist a diagnostic for non-running outcomes.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import uuid
 from datetime import UTC, datetime
@@ -20,6 +21,7 @@ from katcha.models import DomainEvent, SourceItem
 
 logger = logging.getLogger(__name__)
 
+TEMPORAL_DESCRIBE_TIMEOUT_SECONDS = 8.0
 RECOVERY_KEY = "ingest_recovery"
 _RECOVERY_TEXT = (
     "Inspect this SourceItem, its Temporal execution history, R2 staging and "
@@ -99,7 +101,10 @@ async def check_ingesting_source(client, source) -> bool:
     workflow_id = str(source.workflow_id)
     status = None
     try:
-        description = await client.get_workflow_handle(workflow_id).describe()
+        description = await asyncio.wait_for(
+            client.get_workflow_handle(workflow_id).describe(),
+            timeout=TEMPORAL_DESCRIBE_TIMEOUT_SECONDS,
+        )
         status = description.status
     except RPCError as exc:
         if exc.status == RPCStatusCode.NOT_FOUND:
