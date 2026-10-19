@@ -7,6 +7,8 @@ from typing import Any
 from temporalio import workflow
 from temporalio.common import RetryPolicy
 
+from katcha.trends.runtime import TREND_TASK_QUEUE
+
 # Both deployed activity sequences predate patch markers. This frozen recovery
 # epoch separates the audited legacy schedules from schedules already recording
 # growth and lifecycle activities. Never substitute the current wall clock.
@@ -243,6 +245,7 @@ class ChannelIntelligenceScheduleWorkflow:
 async def _run_trend_activation(
     channel_profile_id: str,
     run_key: str,
+    trend_refresh: dict[str, Any] | None = None,
 ) -> dict[str, object]:
     retry = RetryPolicy(
         initial_interval=timedelta(seconds=5),
@@ -252,11 +255,67 @@ async def _run_trend_activation(
     )
     return await workflow.execute_activity(
         "run_channel_trend_activation_activity",
-        args=[channel_profile_id, run_key],
+        args=(
+            [channel_profile_id, run_key]
+            if trend_refresh is None
+            else [channel_profile_id, run_key, trend_refresh]
+        ),
         start_to_close_timeout=timedelta(minutes=5),
         retry_policy=retry,
 
     )
+
+
+async def _run_scheduled_trend_activation_cycle(
+    channel_profile_id: str,
+    run_key: str,
+) -> dict[str, object]:
+    # Preserve old Temporal event histories. Existing runs have already
+    # scheduled the activation activity without any preceding refresh.
+    if not workflow.patched("scheduled-trend-refresh-before-activation-v1"):
+        return await _run_trend_activation(channel_profile_id, run_key)
+
+    try:
+        refreshed = await workflow.execute_activity(
+            "refresh_scheduled_channel_trends_activity",
+            args=[channel_profile_id, run_key],
+            task_queue=TREND_TASK_QUEUE,
+            start_to_close_timeout=timedelta(minutes=5),
+            retry_policy=RetryPolicy(
+                initial_interval=timedelta(seconds=3),
+                backoff_coefficient=2.0,
+                maximum_interval=timedelta(seconds=30),
+                maximum_attempts=2,
+            ),
+        )
+        # Persist only bounded operator diagnostics. Never put arbitrary
+        # source/provider payloads or credentials into activation run metadata.
+        if not isinstance(refreshed, dict):
+            receipt: dict[str, object] = {"status": "invalid_refresh_result"}
+        else:
+            allowed = {
+                "completed", "awaiting_configuration",
+                "withheld_source_coverage", "planning_disabled",
+            }
+            status = refreshed.get("status", "completed")
+            receipt = {
+                "status": status if status in allowed else "unexpected_refresh_status",
+            }
+            for key in (
+                "topics_scored",
+                "qualified_opportunities",
+                "evidence_packets_built",
+            ):
+                value = refreshed.get(key)
+                if type(value) is int and value >= 0:
+                    receipt[key] = value
+    except Exception:
+        # A transient trend worker outage must be visible, not silently turn
+        # into a successful refresh. Existing eligible opportunities can still
+        # be evaluated independently by the activation's own gates.
+        receipt = {"status": "refresh_failed"}
+
+    return await _run_trend_activation(channel_profile_id, run_key, receipt)
 
 
 @workflow.defn
@@ -287,7 +346,7 @@ class ChannelTrendActivationScheduleWorkflow:
         for _ in range(cycles_before_continue):
             now = workflow.now()
             run_key = f"scheduled-{now.strftime('%Y%m%dT%H%M%SZ')}"
-            await _run_trend_activation(channel_profile_id, run_key)
+            await _run_scheduled_trend_activation_cycle(channel_profile_id, run_key)
             await workflow.sleep(timedelta(hours=interval_hours))
 
         workflow.continue_as_new(args=[channel_profile_id, interval_hours, cycles_before_continue])

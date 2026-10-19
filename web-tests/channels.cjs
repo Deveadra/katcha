@@ -46,12 +46,28 @@ const channelSchedules = {
         reconcile_pending: false, runtime_verified: false,
     },
 };
+const channelRuntimes = {
+    "channel-1": {
+        channel_profile_id: "channel-1", status: "not_registered",
+        runtime_verified: false, editorial_queue_ready: false,
+        schedule_running: false,
+    },
+    "channel-2": {
+        channel_profile_id: "channel-2", status: "not_registered",
+        runtime_verified: false, editorial_queue_ready: false,
+        schedule_running: false,
+    },
+};
 const channelRuns = {
     "channel-1": [
         {
             id: "trend-run-1", status: "completed",
             started_at: now, completed_at: now, activated_count: 2,
             run_metadata: {
+                trend_refresh: {
+                    status: "completed", topics_scored: 3,
+                    qualified_opportunities: 1, evidence_packets_built: 2,
+                },
                 editorial_dispatch: {
                     status: "blocked", reason: "editorial_auto_start_not_authorized",
                     started: [], failed: [],
@@ -707,6 +723,10 @@ const analytics = [
                 };
             } else data = channelSchedules[channelId];
         } else if (
+            /^\/v1\/channels\/channel-[12]\/trends\/activation-runtime$/.test(url.pathname)
+        ) {
+            data = channelRuntimes[url.pathname.split("/")[3]];
+        } else if (
             /^\/v1\/channels\/channel-[12]\/trends\/activation-runs$/.test(url.pathname)
         ) {
             data = channelRuns[url.pathname.split("/")[3]];
@@ -1181,6 +1201,8 @@ const analytics = [
         row.method === "POST").length, 0, "page load cannot enable spending");
 
     await page.locator('[data-channel-tab="settings"]').click();
+    assert.match(await page.locator("#trend-automation-runs").innerText(),
+        /Trend scoring: 3 topic/);
     await page.locator("#trend-editorial-enabled").check();
     page.once("dialog", (dialog) => dialog.dismiss());
     await page.locator("#save-trend-automation").click();
@@ -1220,6 +1242,21 @@ const analytics = [
     assert.equal(writes.length, 1);
     assert.equal(writes[0].body.interval_hours, 3);
     assert.equal(channelSchedules["channel-1"].runtime_verified, false);
+    channelRuntimes["channel-1"] = {
+        channel_profile_id: "channel-1", status: "queues_recently_polled",
+        schedule_running: true, runtime_verified: true,
+        editorial_queue_ready: true, checked_at: "2026-10-18T17:00:00Z",
+    };
+    await page.locator("#refresh-trend-automation").click();
+    await page.waitForFunction(() => document.querySelector("#trend-schedule-status")
+        .textContent.includes("both intelligence and editorial queues"));
+    assert.equal(requests.filter((row) => row.path.endsWith("/trends/activation-runtime") &&
+        row.method === "POST").length, 0,
+        "read-only runtime checks cannot dispatch work");
+    channelRuntimes["channel-1"].status = "editorial_worker_not_observed";
+    await page.locator("#refresh-trend-automation").click();
+    await page.waitForFunction(() => document.querySelector("#trend-schedule-status")
+        .textContent.includes("no recent editorial/production pollers"));
     channelSchedules["channel-1"].scan_health = "scan_overdue";
     channelSchedules["channel-1"].scan_overdue = true;
     channelSchedules["channel-1"].last_scheduled_scan_started_at = "2026-10-18T08:00:00Z";

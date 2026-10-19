@@ -24,7 +24,7 @@ from katcha.services.trend_source_reliability import (
     channel_trend_source_health,
     source_health_allows_refresh,
 )
-from katcha.short_episode_models import ShortEpisode
+from katcha.short_episode_models import ShortEpisode, ShortEpisodeItem
 from katcha.trend_activation_models import (
     TrendActivationDecision,
     TrendActivationPolicyVersion,
@@ -273,6 +273,55 @@ def _episode_for_activation_key(
         planning = dict((episode.plan_snapshot or {}).get("planning_metadata") or {})
         trend_activation = dict(planning.get("trend_activation") or {})
         if str(trend_activation.get("activation_key") or "") == activation_key:
+            return episode
+    return None
+
+
+def _episode_for_same_topic_and_media(
+    session: object,
+    channel_profile_id: uuid.UUID,
+    opportunity: TrendOpportunity,
+    *,
+    format_key: str,
+    clip_ids: tuple[uuid.UUID, ...],
+) -> ShortEpisode | None:
+    """Avoid repeating the same topic and exact eligible media across refresh IDs.
+
+    A new scoring run creates a new TrendOpportunity identity even when it
+    covers unchanged source media. A distinct media set is eligible for fresh
+    editorial treatment; a failed/rejected episode can be replaced.
+    """
+    media = set(clip_ids)
+    if not media:
+        return None
+    prior_roots = session.scalars(
+        select(ShortEpisode)
+        .join(
+            TrendOpportunity,
+            ShortEpisode.trend_opportunity_id == TrendOpportunity.id,
+        )
+        .where(
+            ShortEpisode.channel_profile_id == channel_profile_id,
+            TrendOpportunity.channel_profile_id == channel_profile_id,
+            TrendOpportunity.trend_topic_id == opportunity.trend_topic_id,
+            ShortEpisode.trend_opportunity_id != opportunity.id,
+            ShortEpisode.parent_episode_id.is_(None),
+            ShortEpisode.generation == 1,
+            ShortEpisode.format_key == format_key,
+            ShortEpisode.status.not_in(("failed", "rejected")),
+        )
+        .order_by(ShortEpisode.created_at.desc())
+        .limit(50)
+    )
+    for episode in prior_roots:
+        prior_media = set(
+            session.scalars(
+                select(ShortEpisodeItem.clip_id).where(
+                    ShortEpisodeItem.short_episode_id == episode.id
+                )
+            )
+        )
+        if prior_media == media:
             return episode
     return None
 
@@ -736,6 +785,32 @@ def run_autonomous_trend_activation(
                 rights_readiness=rights_readiness,
                 remaining_lead_minutes=lead_minutes,
                 packet_id=preview.evidence_packet_id,
+                activation_key=preview.activation_key,
+                snapshot=preview_snapshot,
+            )
+            continue
+
+        # Scoring the same topic again creates a *new* opportunity ID. Keep
+        # that from bypassing the original per-opportunity activation key when
+        # the eligible source media set and editorial format are unchanged.
+        with session_scope() as session:
+            repeated_episode = _episode_for_same_topic_and_media(
+                session,
+                channel_profile_id,
+                opportunity,
+                format_key=preview.format_key,
+                clip_ids=preview.ordered_clip_ids,
+            )
+        if repeated_episode is not None:
+            _record_decision(
+                run_id,
+                opportunity,
+                decision=_DECISION_ALREADY,
+                reason="same_topic_and_media_already_planned",
+                rights_readiness=rights_readiness,
+                remaining_lead_minutes=lead_minutes,
+                packet_id=preview.evidence_packet_id,
+                short_episode_id=repeated_episode.id,
                 activation_key=preview.activation_key,
                 snapshot=preview_snapshot,
             )

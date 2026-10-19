@@ -13,6 +13,11 @@ from urllib.parse import urlsplit, urlunsplit
 from yt_dlp import YoutubeDL
 
 from katcha.config import Settings, get_settings
+from katcha.integrations.direct_media import (
+    DirectMediaRejected,
+    fetch_direct_media,
+    is_direct_media_url,
+)
 from katcha.orchestration.failure_details import (
     YOUTUBE_DOWNLOAD_AUTH_RECOVERY,
     MediaPreparationError,
@@ -150,6 +155,35 @@ def download(url: str, settings: Settings | None = None) -> DownloadedMedia:
     session_attempted = False
     route_attempted = False
     try:
+        if platform == "generic" and is_direct_media_url(canonical):
+            stage = "direct HTTPS media acquisition"
+            transferred = fetch_direct_media(canonical, job_dir)
+            stage = "media inspection (ffprobe)"
+            probe = ffprobe(transferred.path)
+            streams = probe.get("streams") if isinstance(probe, dict) else None
+            if not isinstance(streams, list) or not any(
+                isinstance(stream, dict) and stream.get("codec_type") == "video"
+                for stream in streams
+            ):
+                raise DirectMediaRejected("Downloaded file contains no verifiable video stream")
+            return DownloadedMedia(
+                path=transferred.path,
+                sha256=transferred.sha256,
+                size_bytes=transferred.size_bytes,
+                extension=transferred.extension,
+                title=None,
+                creator=None,
+                platform="generic",
+                canonical_url=canonical,
+                source_metadata={
+                    "acquisition_transport": "pinned_https_direct_file",
+                    "direct_media_host": transferred.final_host,
+                    "direct_media_redirects": transferred.redirects,
+                    "direct_media_content_type": transferred.content_type,
+                },
+                media_metadata=probe,
+            )
+
         # Public videos commonly work without a login. Never expose the
         # operator-managed session unless anonymous access actually fails
         # with a recognized YouTube authentication challenge.
