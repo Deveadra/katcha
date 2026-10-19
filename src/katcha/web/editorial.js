@@ -633,13 +633,28 @@ window.KatchaEditorial = (() => {
             if (state.project) renderActions();
         }
     }
+    async function saveStoryboardBeforeReload(id = state.project?.id) {
+        if (
+            state.project?.id === id && state.project && state.revision
+            && !state.stale && !read(storageKey(`pending.${id}`), null)
+            && (state.storyboardDirty || state.storyboardSaving)
+        ) {
+            await ensureStoryboardWorkspaceSaved();
+        }
+    }
     async function load(channel) {
+        const beforeSaveEpoch = state.epoch;
+        if (channel === state.channel) await saveStoryboardBeforeReload();
+        if (beforeSaveEpoch !== state.epoch) return;
         saveBrief();
         clearTimeout(state.timer);
         const epoch = ++state.epoch;
         const changed = state.channel !== channel;
         state.channel = channel;
         if (changed) {
+            clearTimeout(state.storyboardSaveTimer);
+            state.storyboardDirty = false;
+            state.storyboardSaving = false;
             window.KatchaFrameInspector.reset();
             el("editorial-auto-regions").checked = false;
             el("editorial-narration-confirm").checked = false;
@@ -661,14 +676,18 @@ window.KatchaEditorial = (() => {
                 <article class="item"><div><h3>${esc(row.brief.prompt)}</h3><p>${row.brief.source_urls.length} source(s) · ${Object.keys(row.brief.source_clip_bindings || {}).length} managed${row.brief.script_seed ? " · script seed" : ""} · Revision ${row.revision}</p></div>
                 <button type="button" class="mini" data-open-editorial="${esc(row.id)}">Open project</button></article>`).join("")
                 : '<div class="empty">No editorial projects yet. Add a brief and choose a source link or managed clip.</div>';
-            if (state.project) await open(state.project.id, { focus: false });
+            if (state.project) await open(state.project.id, { focus: false, saveStoryboard: true });
         } catch (error) {
             if (epoch !== state.epoch) return;
             el("editorial-projects").innerHTML = '<div class="empty">Projects are unavailable. Use Refresh projects to try again.</div>';
             feedback(error.message, true);
         }
     }
-    async function open(id, { focus = true } = {}) {
+    async function open(id, { focus = true, saveStoryboard = false } = {}) {
+        const beforeSaveEpoch = state.epoch;
+        if (saveStoryboard) await saveStoryboardBeforeReload(id);
+        if (beforeSaveEpoch !== state.epoch) return;
+        const storyboardEditVersion = state.storyboardEditVersion || 0;
         if (state.project?.id !== id) window.KatchaFrameInspector.reset();
         if (state.project?.id !== id) el("editorial-narration-confirm").checked = false;
         clearTimeout(state.timer);
@@ -702,6 +721,10 @@ window.KatchaEditorial = (() => {
         const directed = runs.find(item => item.target === "direction" && item.status === "completed" && item.input_revision === project.revision);
         const directionRun = directed ? (directed.editorial_run_id === run?.editorial_run_id ? run : await api(`${base}/runs/${encodeURIComponent(directed.editorial_run_id)}`)) : null;
         if (epoch !== state.epoch) return;
+        if (storyboardEditVersion !== (state.storyboardEditVersion || 0)) {
+            feedback("Your Storyboard edits were kept. Refresh again to load project progress.");
+            return;
+        }
         state.directionRun = run?.target === "direction" && run.status !== "completed" ? null : directionRun;
         if (state.project?.id !== id || state.run?.editorial_run_id !== run?.editorial_run_id) clearPreview();
         window.KatchaEditorialHistory.context(channel, id);
@@ -743,7 +766,7 @@ window.KatchaEditorial = (() => {
         if (focus) el("editorial-title").focus();
         if (run && ["queued", "running"].includes(run.status)) {
             state.timer = setTimeout(() => {
-                if (epoch === state.epoch && !state.busy) void open(id, { focus: false }).catch((error) => feedback(`Progress unavailable: ${error.message}. Refresh projects to reconnect.`, true));
+                if (epoch === state.epoch && !state.busy) void open(id, { focus: false, saveStoryboard: true }).catch((error) => feedback(`Progress unavailable: ${error.message}. Refresh projects to reconnect.`, true));
             }, 10000);
         }
     }
@@ -1310,6 +1333,7 @@ window.KatchaEditorial = (() => {
     }
     function scheduleStoryboardWorkspaceSave() {
         if (!state.project || !state.revision) return;
+        state.storyboardEditVersion = (state.storyboardEditVersion || 0) + 1;
         if (state.stale || read(storageKey(`pending.${state.project.id}`), null)) {
             storyboardSyncStatus(
                 "Save or discard script edits before saving Storyboard changes.",
@@ -2335,10 +2359,12 @@ window.KatchaEditorial = (() => {
                 if (channel === state.channel) { await load(channel); await open(row.id); }
             });
         });
-        el("editorial-refresh").addEventListener("click", () => { if (!state.busy) void load(state.channel); });
+        el("editorial-refresh").addEventListener("click", () => {
+            if (!state.busy) void load(state.channel).catch(error => feedback(error.message, true));
+        });
         el("editorial-projects").addEventListener("click", (event) => {
             const target = event.target.closest("[data-open-editorial]");
-            if (target && !state.busy) void open(target.dataset.openEditorial).catch((error) => feedback(error.message, true));
+            if (target && !state.busy) void open(target.dataset.openEditorial, {saveStoryboard: true}).catch((error) => feedback(error.message, true));
         });
         el("editorial-actions").addEventListener("click", (event) => {
             const target = event.target.closest("[data-editorial-action]");
